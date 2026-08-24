@@ -21,6 +21,10 @@ use tex_state::hyphenation::PatternSpec;
 use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
+use crate::scanners::structured::{
+    PendingStructuredScalarPhase, PendingStructuredScanner, PendingStructuredScannerPhase,
+    StructuredScannerChildDestination,
+};
 use crate::{CommandError, CommandProcessor};
 
 const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
@@ -65,6 +69,19 @@ pub struct ScannedHyphenationData {
     pub patterns: Vec<PatternSpec>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct PendingHyphenationData {
+    kind: HyphenationDataKind,
+    words: Vec<Vec<char>>,
+    current: Vec<char>,
+    patterns: Vec<PatternSpec>,
+    pattern_letters: Vec<char>,
+    pattern_values: Vec<u8>,
+    pattern_digit_sensed: bool,
+    pattern_language: u8,
+    pending_pattern_paths: BTreeMap<Vec<char>, bool>,
+}
+
 impl<G> CommandProcessor<'_, '_, G> {
     /// Reports whether TeX82 §960 may still add patterns to the uninitialized
     /// hyphenation trie.
@@ -84,16 +101,60 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         kind: HyphenationDataKind,
     ) -> Result<ScannedHyphenationData, CommandError> {
-        // §403: a left brace must follow `\patterns`/`\hyphenation`.
-        self.scan_left_brace(true)?;
-        let mut words: Vec<Vec<char>> = Vec::new();
-        let mut current: Vec<char> = Vec::new();
-        let mut patterns: Vec<PatternSpec> = Vec::new();
-        let mut pattern_letters: Vec<char> = Vec::new();
-        let mut pattern_values = vec![0];
-        let mut pattern_digit_sensed = false;
-        let pattern_language = u8::try_from(self.state.int_param(IntParam::LANGUAGE)).unwrap_or(0);
-        let mut pending_pattern_paths = BTreeMap::<Vec<char>, bool>::new();
+        let pending = self.take_pending_structured_scanner()?;
+        let mut progress = match pending {
+            Some(PendingStructuredScanner { phase, mut child }) => {
+                let PendingStructuredScannerPhase::Scalar(
+                    PendingStructuredScalarPhase::Hyphenation(progress),
+                ) = phase
+                else {
+                    if let Some(child) = child.take() {
+                        self.abort_continuation(child.restore().0)?;
+                    }
+                    return Err(CommandError::input_invariant());
+                };
+                if progress.kind != kind {
+                    if let Some(child) = child.take() {
+                        self.abort_continuation(child.restore().0)?;
+                    }
+                    return Err(CommandError::input_invariant());
+                }
+                self.restore_structured_scanner_child(
+                    &mut child,
+                    StructuredScannerChildDestination::Scalar,
+                )?;
+                let result = self.scan_character_number_retained();
+                let (ch, phase) = self.retain_structured_scalar_progress(
+                    result,
+                    PendingStructuredScalarPhase::Hyphenation(progress),
+                )?;
+                let PendingStructuredScalarPhase::Hyphenation(mut progress) = phase else {
+                    unreachable!("hyphenation progress was returned unchanged")
+                };
+                if let Some(normalized) =
+                    self.exception_word_character(progress.pattern_language, ch)?
+                {
+                    progress.current.push(normalized);
+                }
+                progress
+            }
+            None => {
+                // §403: a left brace must follow `\patterns`/`\hyphenation`.
+                self.scan_left_brace(true)?;
+                PendingHyphenationData {
+                    kind,
+                    words: Vec::new(),
+                    current: Vec::new(),
+                    patterns: Vec::new(),
+                    pattern_letters: Vec::new(),
+                    pattern_values: vec![0],
+                    pattern_digit_sensed: false,
+                    pattern_language: u8::try_from(self.state.int_param(IntParam::LANGUAGE))
+                        .unwrap_or(0),
+                    pending_pattern_paths: BTreeMap::new(),
+                }
+            }
+        };
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let character = match static_meaning(command.meaning()) {
@@ -103,8 +164,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     cat: Catcode::Letter | Catcode::Other,
                 } => {
                     if kind == HyphenationDataKind::Patterns {
-                        let k = pattern_letters.len();
-                        if pattern_digit_sensed || !ch.is_ascii_digit() {
+                        let k = progress.pattern_letters.len();
+                        if progress.pattern_digit_sensed || !ch.is_ascii_digit() {
                             let normalized = if ch == '.' {
                                 '.'
                             } else {
@@ -123,18 +184,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // classified (and can report Nonletter), but do
                             // not change the pattern state.
                             if k < 63 {
-                                pattern_letters.push(normalized);
-                                pattern_values.push(0);
-                                pattern_digit_sensed = false;
+                                progress.pattern_letters.push(normalized);
+                                progress.pattern_values.push(0);
+                                progress.pattern_digit_sensed = false;
                             }
                         } else if k < 63 {
-                            *pattern_values.last_mut().expect("pattern has hyf[0]") =
+                            *progress
+                                .pattern_values
+                                .last_mut()
+                                .expect("pattern has hyf[0]") =
                                 ch.to_digit(10).expect("ASCII digit has a value") as u8;
-                            pattern_digit_sensed = true;
+                            progress.pattern_digit_sensed = true;
                         }
                     }
                     if kind == HyphenationDataKind::Exceptions {
-                        match self.exception_word_character(pattern_language, ch)? {
+                        match self.exception_word_character(progress.pattern_language, ch)? {
                             Some(normalized) => Some(normalized),
                             // §935 ignores the character it just read.
                             None => continue,
@@ -145,7 +209,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 // §935's `char_given`, which §961 does not accept.
                 Meaning::CharGiven(ch) if kind == HyphenationDataKind::Exceptions => {
-                    match self.exception_word_character(pattern_language, ch)? {
+                    match self.exception_word_character(progress.pattern_language, ch)? {
                         Some(normalized) => Some(normalized),
                         None => continue,
                     }
@@ -155,8 +219,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                     if kind == HyphenationDataKind::Exceptions =>
                 {
-                    let ch = self.scan_character_number()?;
-                    match self.exception_word_character(pattern_language, ch)? {
+                    let result = self.scan_character_number_retained();
+                    let (ch, phase) = self.retain_structured_scalar_progress(
+                        result,
+                        PendingStructuredScalarPhase::Hyphenation(progress),
+                    )?;
+                    let PendingStructuredScalarPhase::Hyphenation(returned) = phase else {
+                        unreachable!("hyphenation progress was returned unchanged")
+                    };
+                    progress = returned;
+                    match self.exception_word_character(progress.pattern_language, ch)? {
                         Some(normalized) => Some(normalized),
                         None => continue,
                     }
@@ -167,41 +239,44 @@ impl<G> CommandProcessor<'_, '_, G> {
                     cat: Catcode::Space,
                     ..
                 } => {
-                    if !pattern_letters.is_empty() {
+                    if !progress.pattern_letters.is_empty() {
                         let pattern = PatternSpec {
-                            letters: std::mem::take(&mut pattern_letters),
-                            values: std::mem::replace(&mut pattern_values, vec![0]),
+                            letters: std::mem::take(&mut progress.pattern_letters),
+                            values: std::mem::replace(&mut progress.pattern_values, vec![0]),
                         };
                         self.report_duplicate_pattern_if_needed(
-                            pattern_language,
-                            &mut pending_pattern_paths,
+                            progress.pattern_language,
+                            &mut progress.pending_pattern_paths,
                             &pattern,
                         )?;
-                        patterns.push(pattern);
+                        progress.patterns.push(pattern);
                     }
-                    pattern_digit_sensed = false;
+                    progress.pattern_digit_sensed = false;
                     None
                 }
                 Meaning::CharToken {
                     cat: Catcode::EndGroup,
                     ..
                 } => {
-                    if !current.is_empty() {
-                        words.push(current);
+                    if !progress.current.is_empty() {
+                        progress.words.push(progress.current);
                     }
-                    if !pattern_letters.is_empty() {
+                    if !progress.pattern_letters.is_empty() {
                         let pattern = PatternSpec {
-                            letters: pattern_letters,
-                            values: pattern_values,
+                            letters: progress.pattern_letters,
+                            values: progress.pattern_values,
                         };
                         self.report_duplicate_pattern_if_needed(
-                            pattern_language,
-                            &mut pending_pattern_paths,
+                            progress.pattern_language,
+                            &mut progress.pending_pattern_paths,
                             &pattern,
                         )?;
-                        patterns.push(pattern);
+                        progress.patterns.push(pattern);
                     }
-                    return Ok(ScannedHyphenationData { words, patterns });
+                    return Ok(ScannedHyphenationData {
+                        words: progress.words,
+                        patterns: progress.patterns,
+                    });
                 }
                 // §§936/961: diagnose and resume with the offending command
                 // consumed. In particular, this does not end or reset the
@@ -212,10 +287,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             };
             match character {
-                Some(character) => current.push(character),
+                Some(character) => progress.current.push(character),
                 None => {
-                    if !current.is_empty() {
-                        words.push(std::mem::take(&mut current));
+                    if !progress.current.is_empty() {
+                        progress.words.push(std::mem::take(&mut progress.current));
                     }
                 }
             }

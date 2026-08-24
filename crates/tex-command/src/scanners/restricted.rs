@@ -140,11 +140,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The ordinary `scan_int` runs first and completes its normal delivery
     /// and backup lifecycle; only then is the result range-checked and, if
     /// necessary, replaced by zero.
-    pub(crate) fn scan_restricted_integer(
+    pub(crate) fn finish_restricted_integer(
         &mut self,
         class: RestrictedIntegerClass,
+        scanned: crate::ScannedScalar<i32>,
     ) -> Result<RestrictedInteger, CommandError> {
-        let scanned = self.scan_integer()?;
         let accepted = class.accepts(self.command.profile(), scanned.value);
         let recovered = !accepted;
         if recovered {
@@ -193,7 +193,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         class: RestrictedIntegerClass,
     ) -> crate::RetainedScalarScan<G, RestrictedInteger> {
-        let result = self.scan_restricted_integer(class);
-        self.detach_retained_scalar(result)
+        match self.scan_integer_retained() {
+            crate::RetainedScalarScan::Complete(scanned) => {
+                match self.finish_restricted_integer(class, scanned) {
+                    Ok(value) => crate::RetainedScalarScan::Complete(value),
+                    Err(error) => crate::RetainedScalarScan::Failed(error),
+                }
+            }
+            crate::RetainedScalarScan::Suspended { error, child } => {
+                crate::RetainedScalarScan::Suspended { error, child }
+            }
+            crate::RetainedScalarScan::Failed(error) => crate::RetainedScalarScan::Failed(error),
+        }
     }
 }

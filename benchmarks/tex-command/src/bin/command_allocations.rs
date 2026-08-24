@@ -224,12 +224,21 @@ fn run_one<G>(
             );
         }
         Workload::KeywordScanning => {
-            let scanned = processor.scan_keyword("dimension").expect("keyword scans");
+            let tex_command::RetainedScalarScan::Complete(scanned) =
+                processor.scan_keyword_retained("dimension")
+            else {
+                panic!("preloaded keyword scan must complete synchronously")
+            };
             assert!(scanned.value);
             black_box(scanned);
         }
         Workload::DimensionScanning => {
-            black_box(processor.scan_dimension().expect("dimension scans"));
+            let tex_command::RetainedScalarScan::Complete(scanned) =
+                processor.scan_dimension_retained()
+            else {
+                panic!("preloaded dimension scan must complete synchronously")
+            };
+            black_box(scanned);
         }
         Workload::AlignmentPreambleScanning => {
             black_box(

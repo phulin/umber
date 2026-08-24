@@ -299,14 +299,14 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(collector.contains("pending_expansion.take()"));
     assert!(collector.contains("PendingCollectorExpansion"));
     assert!(collector.contains("self.expand(&command)"));
-    assert!(collector.contains("self.append_direct_the_toks(output)"));
+    assert!(collector.contains("self.append_direct_the_toks(output, &mut expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
         "the replacement collector must not enter a second ordinary expansion loop"
     );
     assert!(
-        splice.contains("let target = self.get_x_token()?"),
-        "\\the must expand its internal-value target before selecting a token list"
+        splice.contains("*target = Some(self.get_x_token()?"),
+        "\\the must retain its expanded internal-value target before selecting a token list"
     );
     assert!(splice.contains("self.push_attempt_token(output, token)?"));
     assert!(
@@ -317,6 +317,103 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         !splice.contains("self.get_next()?"),
         "direct token-list splicing must not redeliver its contents through the collector"
     );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
+    let repository = test_support::repository_root();
+    let manifest_dir = repository.join("crates/tex-command");
+    let scalar = fs::read_to_string(manifest_dir.join("src/scanners/scalar.rs"))
+        .expect("read scalar scanner implementation");
+    let font = fs::read_to_string(manifest_dir.join("src/scanners/font.rs"))
+        .expect("read font scanner implementation");
+    let structured = fs::read_to_string(manifest_dir.join("src/scanners/structured.rs"))
+        .expect("read structured scanner implementation");
+
+    for forbidden in [
+        "pub fn scan_optional_equals(",
+        "pub fn scan_keyword(",
+        "pub fn scan_integer(",
+        "pub fn scan_dimension(",
+        "pub fn scan_mu_dimension(",
+        "pub fn scan_glue(",
+        "pub fn scan_internal_value_or_zero(",
+        "pub fn scan_the_internal_value(",
+        "pub fn scan_character_number(",
+        "pub fn scan_eight_bit_register_index(",
+        "pub fn scan_profile_register_index(",
+        "pub fn scan_extended_register_index(",
+    ] {
+        assert!(
+            !scalar.contains(forbidden),
+            "resource-capable scalar entry must stay private: {forbidden}"
+        );
+    }
+    assert!(!font.contains("pub fn scan_font_selector("));
+    assert!(!structured.contains("pub fn scan_file_name("));
+
+    let scalar_frame = scalar
+        .split("pub(crate) enum PendingScalarFrame")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> PendingScalarFrame").next())
+        .expect("locate scalar continuation variants");
+    for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
+        assert!(
+            !scalar_frame.contains(forbidden),
+            "scalar continuation must remain inline and allocation-free: {forbidden}"
+        );
+    }
+
+    let raw_callers = [
+        "src/conditionals.rs",
+        "src/processor/expand.rs",
+        "src/scan_toks.rs",
+        "src/scanners/expression.rs",
+        "src/scanners/hyphenation.rs",
+        "src/scanners/restricted.rs",
+        "src/scanners/structured.rs",
+        "src/scanners/token_list.rs",
+    ];
+    let forbidden_calls = [
+        ".scan_optional_equals()",
+        ".scan_keyword(",
+        ".scan_integer()",
+        ".scan_dimension()",
+        ".scan_mu_dimension()",
+        ".scan_glue(",
+        ".scan_internal_value_or_zero()",
+        ".scan_the_internal_value(",
+        ".scan_character_number()",
+        ".scan_eight_bit_register_index()",
+        ".scan_profile_register_index()",
+        ".scan_extended_register_index()",
+        ".scan_font_selector()",
+    ];
+    for relative in raw_callers {
+        let source = fs::read_to_string(manifest_dir.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        for forbidden in forbidden_calls {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} bypasses an owned scalar parent through {forbidden}"
+            );
+        }
+    }
+
+    let main_control = fs::read_to_string(repository.join("crates/tex-exec/src/main_control.rs"))
+        .expect("read main-control continuation architecture");
+    let operation_scan = main_control
+        .split("struct PendingOperationScan")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> PendingPreflightCommand").next())
+        .expect("locate singular operation-scan parent");
+    assert!(operation_scan.contains("command: tex_command::CurrentCommand<G>"));
+    assert!(operation_scan.contains("phase: PendingOperationScanPhase"));
+    assert!(operation_scan.contains("child: tex_command::ScannerFrameKey<G>"));
+    for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
+        assert!(!operation_scan.contains(forbidden));
+    }
 }
 
 #[test]
@@ -344,7 +441,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     let ifx = conditionals
         .split("fn evaluate_ifx(")
         .nth(1)
-        .and_then(|tail| tail.split("fn evaluate_numeric_comparison(").next())
+        .and_then(|tail| tail.split("fn ifx_meaning_eq(").next())
         .expect("locate raw ifx operand comparison");
     // TeX82 §507 reads both operands with `get_next`. The distinction is not
     // cosmetic: §365 clears `no_new_control_sequence` only inside

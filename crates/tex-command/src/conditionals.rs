@@ -473,10 +473,47 @@ pub(crate) struct PassTextStop {
 /// The classified `<`, `=`, or `>` relation token TeX.web §503 requires
 /// between an `\ifnum`/`\ifdim` pair of operands.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum IfRelation {
+pub(crate) enum IfRelation {
     Less,
     Equal,
     Greater,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PendingConditionalScanPhase {
+    Start,
+    IfCase,
+    IfOdd,
+    BoxIndex,
+    EofStream,
+    Font,
+    FontCharacter {
+        font: tex_state::ids::FontId,
+    },
+    IntegerLeft {
+        absolute: bool,
+    },
+    IntegerRelation {
+        absolute: bool,
+        left: i64,
+    },
+    IntegerRight {
+        absolute: bool,
+        left: i64,
+        relation: IfRelation,
+    },
+    DimensionLeft {
+        absolute: bool,
+    },
+    DimensionRelation {
+        absolute: bool,
+        left: i64,
+    },
+    DimensionRight {
+        absolute: bool,
+        left: i64,
+        relation: IfRelation,
+    },
 }
 
 impl IfRelation {
@@ -507,7 +544,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let kind =
             ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
         let retained = std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch);
-        let condition = match retained {
+        let (condition, phase) = match retained {
             crate::state::PendingExpansionResume::Dispatch => {
                 let source_line =
                     u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
@@ -523,7 +560,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .ok_or(CommandError::input_invariant())?;
                 self.trace_conditional_enter(&frame);
                 self.observe_condition("push", &frame, None);
-                condition
+                (condition, PendingConditionalScanPhase::Start)
             }
             crate::state::PendingExpansionResume::IfCsName {
                 condition,
@@ -532,21 +569,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             } if kind == ConditionalKind::IfCsName && retained_inverted == inverted => {
                 return self.resume_if_csname(condition, inverted, name, suspended);
             }
+            crate::state::PendingExpansionResume::Conditional {
+                condition,
+                inverted: retained_inverted,
+                kind: retained_kind,
+                phase,
+            } if retained_inverted == inverted && retained_kind == kind => (condition, phase),
             _ => return Err(CommandError::input_invariant()),
         };
         if kind == ConditionalKind::IfCsName {
             return self.resume_if_csname(condition, inverted, String::new(), suspended);
         }
-        match kind {
-            ConditionalKind::IfCase => {
-                let selected = self.scan_integer()?.value;
-                self.complete_ifcase(condition, selected)
-            }
-            _ => {
-                let result = self.evaluate_boolean(kind)?;
-                self.complete_boolean(condition, result ^ inverted)
-            }
-        }
+        self.resume_conditional_scalar(condition, inverted, kind, phase, suspended)
     }
 
     /// e-TeX's `\\unless` has no independent condition state: it consumes
@@ -567,6 +601,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 inverted: true,
                 name,
             } => return self.resume_if_csname(condition, true, name, suspended),
+            crate::state::PendingExpansionResume::Conditional {
+                condition,
+                inverted: true,
+                kind,
+                phase,
+            } => {
+                return self.resume_conditional_scalar(condition, true, kind, phase, suspended);
+            }
             _ => return Err(CommandError::input_invariant()),
         }
         // The following conditional is an operand of `\unless`, not an
@@ -635,6 +677,276 @@ impl<G> CommandProcessor<'_, '_, G> {
             .known_control_sequence(&name)
             .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined);
         self.complete_boolean(condition, result ^ inverted)
+    }
+
+    fn retain_conditional_scalar<T>(
+        &mut self,
+        scan: crate::RetainedScalarScan<G, T>,
+        condition: ConditionId,
+        inverted: bool,
+        kind: ConditionalKind,
+        phase: PendingConditionalScanPhase,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<T, CommandError> {
+        match scan {
+            crate::RetainedScalarScan::Complete(value) => Ok(value),
+            crate::RetainedScalarScan::Suspended { error, child } => {
+                self.install_scanner_resume(Some(child));
+                *suspended = Some(crate::state::PendingExpansionResume::Conditional {
+                    condition,
+                    inverted,
+                    kind,
+                    phase,
+                });
+                Err(error)
+            }
+            crate::RetainedScalarScan::Failed(error) => Err(error),
+        }
+    }
+
+    fn resume_conditional_scalar(
+        &mut self,
+        condition: ConditionId,
+        inverted: bool,
+        kind: ConditionalKind,
+        phase: PendingConditionalScanPhase,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let result = match kind {
+            ConditionalKind::IfCase => {
+                let scan = self.scan_integer_retained();
+                let selected = self.retain_conditional_scalar(
+                    scan,
+                    condition,
+                    inverted,
+                    kind,
+                    PendingConditionalScanPhase::IfCase,
+                    suspended,
+                )?;
+                return self.complete_ifcase(condition, selected.value);
+            }
+            ConditionalKind::IfOdd => {
+                let scan = self.scan_integer_retained();
+                self.retain_conditional_scalar(
+                    scan,
+                    condition,
+                    inverted,
+                    kind,
+                    PendingConditionalScanPhase::IfOdd,
+                    suspended,
+                )?
+                .value
+                    & 1
+                    != 0
+            }
+            ConditionalKind::IfNum | ConditionalKind::IfPdfAbsNum => {
+                return self.resume_integer_comparison(condition, inverted, kind, phase, suspended);
+            }
+            ConditionalKind::IfDim | ConditionalKind::IfPdfAbsDim => {
+                return self
+                    .resume_dimension_comparison(condition, inverted, kind, phase, suspended);
+            }
+            ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
+                let scan = self.scan_profile_register_index_retained();
+                let index = self.retain_conditional_scalar(
+                    scan,
+                    condition,
+                    inverted,
+                    kind,
+                    PendingConditionalScanPhase::BoxIndex,
+                    suspended,
+                )?;
+                let box_kind = self.state.box_kind(index);
+                match kind {
+                    ConditionalKind::IfVoid => box_kind.is_none(),
+                    ConditionalKind::IfHBox => {
+                        box_kind == Some(tex_state::CommandBoxKind::Horizontal)
+                    }
+                    ConditionalKind::IfVBox => {
+                        box_kind == Some(tex_state::CommandBoxKind::Vertical)
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            ConditionalKind::IfEof => {
+                let scan = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
+                let scanned = self.retain_conditional_scalar(
+                    scan,
+                    condition,
+                    inverted,
+                    kind,
+                    PendingConditionalScanPhase::EofStream,
+                    suspended,
+                )?;
+                if scanned.recovered {
+                    self.record_bad_number();
+                }
+                let stream = scanned.value as u8;
+                self.state
+                    .read_stream_at_eof(tex_state::world::StreamSlot::new(stream))
+            }
+            ConditionalKind::IfFontChar => {
+                let font = match phase {
+                    PendingConditionalScanPhase::FontCharacter { font } => font,
+                    PendingConditionalScanPhase::Start | PendingConditionalScanPhase::Font => {
+                        let scan = self.scan_font_selector_retained();
+                        self.retain_conditional_scalar(
+                            scan,
+                            condition,
+                            inverted,
+                            kind,
+                            PendingConditionalScanPhase::Font,
+                            suspended,
+                        )?
+                    }
+                    _ => return Err(CommandError::input_invariant()),
+                };
+                let scan =
+                    self.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode);
+                let character = self
+                    .retain_conditional_scalar(
+                        scan,
+                        condition,
+                        inverted,
+                        kind,
+                        PendingConditionalScanPhase::FontCharacter { font },
+                        suspended,
+                    )?
+                    .value;
+                u8::try_from(character)
+                    .ok()
+                    .is_some_and(|code| self.state.font_char_metrics(font, code).is_some())
+            }
+            _ if phase == PendingConditionalScanPhase::Start => self.evaluate_boolean(kind)?,
+            _ => return Err(CommandError::input_invariant()),
+        };
+        self.complete_boolean(condition, result ^ inverted)
+    }
+
+    fn resume_integer_comparison(
+        &mut self,
+        condition: ConditionId,
+        inverted: bool,
+        kind: ConditionalKind,
+        phase: PendingConditionalScanPhase,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let absolute = kind == ConditionalKind::IfPdfAbsNum;
+        let left = match phase {
+            PendingConditionalScanPhase::Start
+            | PendingConditionalScanPhase::IntegerLeft { .. } => {
+                let scan = self.scan_integer_retained();
+                let value = i64::from(
+                    self.retain_conditional_scalar(
+                        scan,
+                        condition,
+                        inverted,
+                        kind,
+                        PendingConditionalScanPhase::IntegerLeft { absolute },
+                        suspended,
+                    )?
+                    .value,
+                );
+                if absolute { value.abs() } else { value }
+            }
+            PendingConditionalScanPhase::IntegerRelation { left, .. }
+            | PendingConditionalScanPhase::IntegerRight { left, .. } => left,
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let relation = match phase {
+            PendingConditionalScanPhase::IntegerRight { relation, .. } => relation,
+            _ => {
+                *suspended = Some(crate::state::PendingExpansionResume::Conditional {
+                    condition,
+                    inverted,
+                    kind,
+                    phase: PendingConditionalScanPhase::IntegerRelation { absolute, left },
+                });
+                self.scan_if_relation(kind.canonical_name())?
+            }
+        };
+        let scan = self.scan_integer_retained();
+        let value = i64::from(
+            self.retain_conditional_scalar(
+                scan,
+                condition,
+                inverted,
+                kind,
+                PendingConditionalScanPhase::IntegerRight {
+                    absolute,
+                    left,
+                    relation,
+                },
+                suspended,
+            )?
+            .value,
+        );
+        let right = if absolute { value.abs() } else { value };
+        self.complete_boolean(condition, relation.compare(left, right) ^ inverted)
+    }
+
+    fn resume_dimension_comparison(
+        &mut self,
+        condition: ConditionId,
+        inverted: bool,
+        kind: ConditionalKind,
+        phase: PendingConditionalScanPhase,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let absolute = kind == ConditionalKind::IfPdfAbsDim;
+        let left = match phase {
+            PendingConditionalScanPhase::Start
+            | PendingConditionalScanPhase::DimensionLeft { .. } => {
+                let scan = self.scan_dimension_retained();
+                let value = i64::from(
+                    self.retain_conditional_scalar(
+                        scan,
+                        condition,
+                        inverted,
+                        kind,
+                        PendingConditionalScanPhase::DimensionLeft { absolute },
+                        suspended,
+                    )?
+                    .value
+                    .raw(),
+                );
+                if absolute { value.abs() } else { value }
+            }
+            PendingConditionalScanPhase::DimensionRelation { left, .. }
+            | PendingConditionalScanPhase::DimensionRight { left, .. } => left,
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let relation = match phase {
+            PendingConditionalScanPhase::DimensionRight { relation, .. } => relation,
+            _ => {
+                *suspended = Some(crate::state::PendingExpansionResume::Conditional {
+                    condition,
+                    inverted,
+                    kind,
+                    phase: PendingConditionalScanPhase::DimensionRelation { absolute, left },
+                });
+                self.scan_if_relation(kind.canonical_name())?
+            }
+        };
+        let scan = self.scan_dimension_retained();
+        let value = i64::from(
+            self.retain_conditional_scalar(
+                scan,
+                condition,
+                inverted,
+                kind,
+                PendingConditionalScanPhase::DimensionRight {
+                    absolute,
+                    left,
+                    relation,
+                },
+                suspended,
+            )?
+            .value
+            .raw(),
+        );
+        let right = if absolute { value.abs() } else { value };
+        self.complete_boolean(condition, relation.compare(left, right) ^ inverted)
     }
 
     fn complete_boolean(
@@ -752,9 +1064,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             // TeX.web deliberately uses get_token, not get_x_token, here:
             // macro meanings are compared as raw operands rather than expanded.
             ConditionalKind::IfX => self.evaluate_ifx(),
-            ConditionalKind::IfNum => self.evaluate_numeric_comparison(),
-            ConditionalKind::IfDim => self.evaluate_dimension_comparison(),
-            ConditionalKind::IfOdd => Ok(self.scan_integer()?.value & 1 != 0),
+            ConditionalKind::IfNum | ConditionalKind::IfDim | ConditionalKind::IfOdd => {
+                unreachable!("typed conditional scalar parent owns numeric operands")
+            }
             ConditionalKind::IfVMode => Ok(matches!(
                 self.host.conditional_state().mode(),
                 crate::ConditionalMode::Vertical
@@ -773,25 +1085,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `scan_register_num; fetch_box(p)`. The shared profile scan keeps
             // TeX82's recover-to-zero behavior and reads e-TeX's sparse bank.
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
-                let index = self.scan_profile_register_index()?;
-                let box_kind = self.state.box_kind(index);
-                Ok(match kind {
-                    ConditionalKind::IfVoid => box_kind.is_none(),
-                    ConditionalKind::IfHBox => {
-                        box_kind == Some(tex_state::CommandBoxKind::Horizontal)
-                    }
-                    ConditionalKind::IfVBox => {
-                        box_kind == Some(tex_state::CommandBoxKind::Vertical)
-                    }
-                    _ => unreachable!(),
-                })
+                unreachable!("typed conditional scalar parent owns box selectors")
             }
             // TeX.web §501: `scan_four_bit_int; b:=(read_open[cur_val]=closed)`.
             ConditionalKind::IfEof => {
-                let stream = self.scan_four_bit_int()?;
-                Ok(self
-                    .state
-                    .read_stream_at_eof(tex_state::world::StreamSlot::new(stream)))
+                unreachable!("typed conditional scalar parent owns stream selectors")
             }
             ConditionalKind::IfDefined => self.evaluate_ifdefined(),
             // e-TeX 2.6 etex.ch [17.4765--4779] expands the same character-name
@@ -808,11 +1106,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // and the immutable metric lookup works identically for fonts
             // restored from a format and fonts loaded in this session.
             ConditionalKind::IfFontChar => {
-                let font = self.scan_font_selector()?;
-                let character = self.scan_character_number()?;
-                Ok(u8::try_from(u32::from(character))
-                    .ok()
-                    .is_some_and(|code| self.state.font_char_metrics(font, code).is_some()))
+                unreachable!("typed conditional scalar parent owns font-character operands")
             }
             // pdfTeX §57.2 compares the live meaning of the following raw
             // control sequence with the immutable primitive-table entry of
@@ -829,16 +1123,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             // pdfTeX §57.3 applies comparison to mathematical magnitudes;
             // widening first preserves abs(INT_MIN) without overflow.
             ConditionalKind::IfPdfAbsNum => {
-                let left = i64::from(self.scan_integer()?.value).abs();
-                let relation = self.scan_if_relation("ifpdfabsnum")?;
-                let right = i64::from(self.scan_integer()?.value).abs();
-                Ok(relation.compare(left, right))
+                unreachable!("typed conditional scalar parent owns absolute-number operands")
             }
             ConditionalKind::IfPdfAbsDim => {
-                let left = i64::from(self.scan_dimension()?.value.raw()).abs();
-                let relation = self.scan_if_relation("ifpdfabsdim")?;
-                let right = i64::from(self.scan_dimension()?.value.raw()).abs();
-                Ok(relation.compare(left, right))
+                unreachable!("typed conditional scalar parent owns absolute-dimension operands")
             }
             // pdfTeX section 57.1 reads the dynamically scoped flag maintained
             // by both canonical control-sequence-name scanners.
@@ -965,20 +1253,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             && first.replacement_text() == second.replacement_text()
     }
 
-    fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {
-        let left = self.scan_integer()?.value;
-        let relation = self.scan_if_relation("ifnum")?;
-        let right = self.scan_integer()?.value;
-        Ok(relation.compare(left, right))
-    }
-
-    fn evaluate_dimension_comparison(&mut self) -> Result<bool, CommandError> {
-        let left = self.scan_dimension()?.value;
-        let relation = self.scan_if_relation("ifdim")?;
-        let right = self.scan_dimension()?.value;
-        Ok(relation.compare(left, right))
-    }
-
     /// TeX.web §503's relation lookahead for `\ifnum`/`\ifdim`: fetches the
     /// expanded token after the first operand and classifies it as `<`, `=`,
     /// or `>`. A token outside that set is not a scan failure: §503 reports
@@ -1006,18 +1280,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(IfRelation::Equal)
             }
         }
-    }
-
-    /// TeX.web §435's `scan_four_bit_int`: an ordinary integer scan whose
-    /// result must name one of TeX's sixteen streams. Anything outside
-    /// `0..=15` reports "Bad number" and recovers as stream zero rather than
-    /// truncating; the scan itself has already completed normally.
-    fn scan_four_bit_int(&mut self) -> Result<u8, CommandError> {
-        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
-        if scanned.recovered {
-            self.record_bad_number();
-        }
-        Ok(scanned.value as u8)
     }
 
     fn record_bad_number(&mut self) {

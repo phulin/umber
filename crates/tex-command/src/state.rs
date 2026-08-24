@@ -243,6 +243,48 @@ pub(crate) enum PendingExpansionResume {
         inverted: bool,
         name: String,
     },
+    Conditional {
+        condition: crate::processor::status::ConditionId,
+        inverted: bool,
+        kind: crate::conditionals::ConditionalKind,
+        phase: crate::conditionals::PendingConditionalScanPhase,
+    },
+    Number {
+        roman: bool,
+    },
+    PdfFontSize,
+    PdfMarginKern {
+        primitive: tex_state::meaning::ExpandablePrimitive,
+    },
+    The,
+    FontName,
+    MarkClass {
+        primitive: tex_state::meaning::ExpandablePrimitive,
+    },
+    PdfInsertHeight,
+    PdfUniformDeviate,
+    PdfXImageObject,
+    PdfXImageCoordinate {
+        object: u32,
+    },
+    PdfXFormName,
+    PdfPageRef,
+    PdfLastMatch,
+    PdfMatchOptions {
+        case_insensitive: bool,
+        subcount: u32,
+        phase: u8,
+    },
+    PdfColorStackInitOptions {
+        restore_at_page_start: bool,
+        phase: u8,
+    },
+    PdfFileDumpOptions {
+        offset: i32,
+        length: i32,
+        phase: u8,
+    },
+    PdfMdFiveSumFile,
     PdfMatchPattern {
         case_insensitive: bool,
         subcount: u32,

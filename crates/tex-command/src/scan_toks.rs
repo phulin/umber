@@ -255,6 +255,7 @@ impl<G> ReplacementProgress<G> {
 struct PendingCollectorExpansion<G> {
     command: crate::CurrentCommand<G>,
     route: CollectorExpansionRoute,
+    operand: Option<crate::CurrentCommand<G>>,
     child: Option<crate::execution_scratch::ChildContinuation<G, CollectorExpansionRoute>>,
 }
 
@@ -482,8 +483,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)
             }
             crate::execution_scratch::ContinuationFrame::Scalar(mut pending) => {
+                let expression_stack_mark = pending.expression_stack_mark();
                 if let Some(child) = pending.take_child() {
                     self.abort_continuation(child)?;
+                }
+                if let Some(mark) = expression_stack_mark {
+                    self.command
+                        .scratch
+                        .truncate_expression_stack(mark)
+                        .map_err(scratch_command_error)?;
                 }
                 Ok(())
             }
@@ -1161,26 +1169,30 @@ impl<G> CommandProcessor<'_, '_, G> {
             let delivered;
             let spelling = {
                 let resumed_expansion = pending_expansion.take();
-                let (resumed_command, resumed_route) = if let Some(mut pending) = resumed_expansion
-                {
-                    self.resume_current_command(&pending.command);
-                    if let Some(child) = pending.child.take() {
-                        let (key, destination) = child.restore();
-                        if destination != pending.route {
-                            return Err(replacement_failure(
-                                CommandError::input_invariant(),
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                None,
-                            ));
+                let (resumed_command, resumed_route, mut expansion_operand) =
+                    if let Some(mut pending) = resumed_expansion {
+                        self.resume_current_command(&pending.command);
+                        if let Some(child) = pending.child.take() {
+                            let (key, destination) = child.restore();
+                            if destination != pending.route {
+                                return Err(replacement_failure(
+                                    CommandError::input_invariant(),
+                                    output,
+                                    depth,
+                                    &mut pending_parameter,
+                                    None,
+                                ));
+                            }
+                            self.scanner_resume = Some(key);
                         }
-                        self.scanner_resume = Some(key);
-                    }
-                    (Some(pending.command), Some(pending.route))
-                } else {
-                    (None, None)
-                };
+                        (
+                            Some(pending.command),
+                            Some(pending.route),
+                            pending.operand.take(),
+                        )
+                    } else {
+                        (None, None, None)
+                    };
                 let command = if resumed_command.is_some() {
                     resumed_command
                 } else if expansion.is_expanded() {
@@ -1235,7 +1247,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // expanded-fetch loop. It therefore has only the raw
                         // delivery produced by `get_next`; the resulting
                         // `the_toks` splice is the canonical expansion event.
-                        match self.append_direct_the_toks(output) {
+                        match self.append_direct_the_toks(output, &mut expansion_operand) {
                             Ok(true) => continue,
                             Ok(false) => {}
                             Err(error) => {
@@ -1247,6 +1259,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     Some(PendingCollectorExpansion {
                                         command,
                                         route,
+                                        operand: expansion_operand,
                                         child: crate::execution_scratch::ChildContinuation::capture(
                                             &mut self.scanner_resume,
                                             route,
@@ -1268,6 +1281,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     Some(PendingCollectorExpansion {
                                         command,
                                         route,
+                                        operand: None,
                                         child: crate::execution_scratch::ChildContinuation::capture(
                                             &mut self.scanner_resume,
                                             route,
@@ -1289,6 +1303,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     Some(PendingCollectorExpansion {
                                         command,
                                         route,
+                                        operand: None,
                                         child: crate::execution_scratch::ChildContinuation::capture(
                                             &mut self.scanner_resume,
                                             route,
@@ -1336,6 +1351,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     Some(PendingCollectorExpansion {
                                         command,
                                         route,
+                                        operand: None,
                                         child: crate::execution_scratch::ChildContinuation::capture(
                                             &mut self.scanner_resume,
                                             route,
@@ -1540,12 +1556,26 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn append_direct_the_toks(
         &mut self,
         output: AttemptTokenBufferId,
+        target: &mut Option<crate::CurrentCommand<G>>,
     ) -> Result<bool, CommandError> {
-        let target = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        let Some(value) = self.scan_the_internal_value(&target)? else {
-            self.back_input(target)?;
+        if target.is_none() {
+            *target = Some(self.get_x_token()?.ok_or(CommandError::input_invariant())?);
+        }
+        let retained_target = target.as_ref().expect("target was installed");
+        let scan = self.scan_the_internal_value_retained(retained_target);
+        let value = match scan {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Suspended { error, child } => {
+                self.install_scanner_resume(Some(child));
+                return Err(error);
+            }
+            crate::RetainedScalarScan::Failed(error) => return Err(error),
+        };
+        let Some(value) = value else {
+            self.back_input(target.take().expect("target was installed"))?;
             return Ok(false);
         };
+        target.take();
         let tokens = match value {
             crate::InternalValue::Font(symbol) => {
                 vec![TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN)]

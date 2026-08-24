@@ -18,7 +18,7 @@ const INTEGER_LIMIT: i64 = i32::MAX as i64;
 const DIMENSION_LIMIT: i64 = Scaled::MAX_DIMEN.raw() as i64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpressionKind {
+pub(crate) enum ExpressionKind {
     Integer,
     Dimension,
     Glue,
@@ -61,7 +61,7 @@ impl ExpressionKind {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct ExpressionGlue<G> {
+pub(crate) struct ExpressionGlue<G> {
     width: i64,
     stretch: i64,
     stretch_order: Order,
@@ -129,7 +129,7 @@ impl<G> ExpressionGlue<G> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum ExpressionValue<G> {
+pub(crate) enum ExpressionValue<G> {
     Number(i64),
     Glue(ExpressionGlue<G>),
 }
@@ -168,7 +168,7 @@ impl ExpressionOperator {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct ExpressionFrame<G> {
+pub(crate) struct ExpressionFrame<G> {
     kind: ExpressionKind,
     expression_operator: ExpressionOperator,
     expression: ExpressionValue<G>,
@@ -206,9 +206,26 @@ impl<G> ExpressionFrame<G> {
     }
 }
 
-enum ScannedFactor<G> {
-    Value(ExpressionValue<G>),
-    OpenParenthesis,
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum PendingExpressionPhase<G> {
+    FactorLeading,
+    FactorScalar,
+    Operator { factor: ExpressionValue<G> },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct PendingExpressionScan<G> {
+    primitive: UnexpandablePrimitive,
+    stack_mark: usize,
+    frame: ExpressionFrame<G>,
+    overflow: bool,
+    phase: PendingExpressionPhase<G>,
+}
+
+impl<G> PendingExpressionScan<G> {
+    pub(crate) fn stack_mark(&self) -> usize {
+        self.stack_mark
+    }
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -232,7 +249,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::Fatal(fatal));
         }
 
-        let result = self.scan_expression(kind);
+        let result = self.scan_expression(primitive, kind);
         self.expression_depth -= 1;
         let (mut value, overflow) = result?;
         if overflow {
@@ -262,7 +279,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             UnexpandablePrimitive::GlueToMu => (false, "glue_to_mu", true),
             _ => unreachable!("only e-TeX glue conversions reach this scanner"),
         };
-        let value = self.scan_glue(scan_mu)?.value;
+        let scan = self.scan_glue_retained(scan_mu);
+        let value = self.restore_retained_expression_child(scan)?.value;
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: scanner,
             value: glue_value(value),
@@ -279,88 +297,210 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// expansion depth and do not recurse on the Rust stack.
     fn scan_expression(
         &mut self,
+        primitive: UnexpandablePrimitive,
         kind: ExpressionKind,
     ) -> Result<(ExpressionValue<G>, bool), CommandError> {
-        let mut stack = Vec::new();
-        let mut frame = ExpressionFrame::new(kind);
-        let mut overflow = false;
-
-        'scan_factor: loop {
-            let factor_kind = frame.factor_kind();
-            let mut factor = match self.scan_expression_factor(factor_kind)? {
-                ScannedFactor::Value(value) => value,
-                ScannedFactor::OpenParenthesis => {
-                    stack.push(frame);
-                    frame = ExpressionFrame::new(factor_kind);
-                    continue 'scan_factor;
+        let pending = self.take_pending_scalar_frame()?;
+        let (stack_mark, mut frame, mut overflow, mut phase, mut child) = match pending {
+            Some(crate::scanners::PendingScalarFrame::Expression { progress, child })
+                if progress.primitive == primitive =>
+            {
+                (
+                    progress.stack_mark,
+                    progress.frame,
+                    progress.overflow,
+                    progress.phase,
+                    child,
+                )
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
                 }
+                return Err(CommandError::input_invariant());
+            }
+            None => (
+                self.command.scratch.expression_stack_len(),
+                ExpressionFrame::new(kind),
+                false,
+                PendingExpressionPhase::FactorLeading,
+                None,
+            ),
+        };
+        self.restore_scalar_child(
+            &mut child,
+            crate::scanners::ScalarChildDestination::Expression,
+        )?;
+
+        loop {
+            let factor = match phase {
+                PendingExpressionPhase::FactorLeading => {
+                    let first = match self.next_non_blank_x_token() {
+                        Ok(first) => first,
+                        Err(error) => {
+                            return self.suspend_expression(
+                                error,
+                                PendingExpressionScan {
+                                    primitive,
+                                    stack_mark,
+                                    frame,
+                                    overflow,
+                                    phase: PendingExpressionPhase::FactorLeading,
+                                },
+                            );
+                        }
+                    };
+                    if first
+                        .as_ref()
+                        .is_some_and(|command| is_other_character(command, '('))
+                    {
+                        let factor_kind = frame.factor_kind();
+                        self.command
+                            .scratch
+                            .push_expression_frame(frame)
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        frame = ExpressionFrame::new(factor_kind);
+                        phase = PendingExpressionPhase::FactorLeading;
+                        continue;
+                    }
+                    if let Some(command) = first {
+                        self.back_input(command)?;
+                    }
+                    phase = PendingExpressionPhase::FactorScalar;
+                    continue;
+                }
+                PendingExpressionPhase::FactorScalar => {
+                    let factor_kind = frame.factor_kind();
+                    let value = match factor_kind {
+                        ExpressionKind::Integer => {
+                            let result = self.scan_integer_retained();
+                            self.restore_retained_expression_child(result)
+                                .map(|value| ExpressionValue::Number(i64::from(value.value)))
+                        }
+                        ExpressionKind::Dimension => {
+                            let result = self.scan_dimension_retained();
+                            self.restore_retained_expression_child(result)
+                                .map(|value| ExpressionValue::Number(i64::from(value.value.raw())))
+                        }
+                        ExpressionKind::Glue => {
+                            let result = self.scan_glue_retained(false);
+                            self.restore_retained_expression_child(result).map(|value| {
+                                ExpressionValue::Glue(ExpressionGlue::from_spec(
+                                    value.value,
+                                    self.scanned_glue_identity,
+                                    self.scanned_glue_register,
+                                ))
+                            })
+                        }
+                        ExpressionKind::MuGlue => {
+                            let result = self.scan_glue_retained(true);
+                            self.restore_retained_expression_child(result).map(|value| {
+                                ExpressionValue::Glue(ExpressionGlue::from_spec(
+                                    value.value,
+                                    self.scanned_glue_identity,
+                                    self.scanned_glue_register,
+                                ))
+                            })
+                        }
+                    };
+                    match value {
+                        Ok(value) => value,
+                        Err(error) => {
+                            return self.suspend_expression(
+                                error,
+                                PendingExpressionScan {
+                                    primitive,
+                                    stack_mark,
+                                    frame,
+                                    overflow,
+                                    phase: PendingExpressionPhase::FactorScalar,
+                                },
+                            );
+                        }
+                    }
+                }
+                PendingExpressionPhase::Operator { factor } => factor,
             };
 
-            // `found:` in etex.ch. A completed parenthesized expression
-            // returns here as the current factor of the restored frame.
-            loop {
-                let mut operator = self.scan_expression_operator(!stack.is_empty())?;
-                factor = validate_factor(factor, frame.kind, frame.term_operator, &mut overflow);
-                operator = apply_factor(&mut frame, factor, operator, &mut overflow);
-
-                if operator.continues_term() {
-                    frame.term_operator = operator;
-                    continue 'scan_factor;
+            let parenthesized = self.command.scratch.expression_stack_len() > stack_mark;
+            let mut operator = match self.scan_expression_operator(parenthesized) {
+                Ok(operator) => operator,
+                Err(error) => {
+                    return self.suspend_expression(
+                        error,
+                        PendingExpressionScan {
+                            primitive,
+                            stack_mark,
+                            frame,
+                            overflow,
+                            phase: PendingExpressionPhase::Operator { factor },
+                        },
+                    );
                 }
-                evaluate_term(&mut frame, operator, &mut overflow);
-                if !matches!(operator, ExpressionOperator::None) {
-                    continue 'scan_factor;
-                }
+            };
+            let factor = validate_factor(factor, frame.kind, frame.term_operator, &mut overflow);
+            operator = apply_factor(&mut frame, factor, operator, &mut overflow);
 
-                let completed = frame.expression;
-                let Some(parent) = stack.pop() else {
-                    return Ok((completed, overflow));
-                };
-                factor = completed;
-                frame = parent;
+            if operator.continues_term() {
+                frame.term_operator = operator;
+                phase = PendingExpressionPhase::FactorLeading;
+                continue;
+            }
+            evaluate_term(&mut frame, operator, &mut overflow);
+            if !matches!(operator, ExpressionOperator::None) {
+                phase = PendingExpressionPhase::FactorLeading;
+                continue;
+            }
+
+            let completed = frame.expression;
+            let parent = self
+                .command
+                .scratch
+                .pop_expression_frame(stack_mark)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            let Some(parent) = parent else {
+                self.command
+                    .scratch
+                    .truncate_expression_stack(stack_mark)
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+                return Ok((completed, overflow));
+            };
+            frame = parent;
+            phase = PendingExpressionPhase::Operator { factor: completed };
+        }
+    }
+
+    fn restore_retained_expression_child<T>(
+        &mut self,
+        result: crate::RetainedScalarScan<G, T>,
+    ) -> Result<T, CommandError> {
+        match result {
+            crate::RetainedScalarScan::Complete(value) => Ok(value),
+            crate::RetainedScalarScan::Failed(error) => Err(error),
+            crate::RetainedScalarScan::Suspended { error, child } => {
+                self.install_scanner_resume(Some(child));
+                Err(error)
             }
         }
     }
 
-    fn scan_expression_factor(
+    fn suspend_expression(
         &mut self,
-        kind: ExpressionKind,
-    ) -> Result<ScannedFactor<G>, CommandError> {
-        let first = self.next_non_blank_x_token()?;
-        if first
-            .as_ref()
-            .is_some_and(|command| is_other_character(command, '('))
-        {
-            return Ok(ScannedFactor::OpenParenthesis);
+        error: CommandError,
+        progress: PendingExpressionScan<G>,
+    ) -> Result<(ExpressionValue<G>, bool), CommandError> {
+        if error.is_resource_suspension() {
+            self.retain_scalar_frame(crate::scanners::PendingScalarFrame::Expression {
+                progress,
+                child: None,
+            })?;
+        } else {
+            self.command
+                .scratch
+                .truncate_expression_stack(progress.stack_mark)
+                .map_err(crate::scan_toks::scratch_command_error)?;
         }
-        if let Some(command) = first {
-            self.back_input(command)?;
-        }
-        let value = match kind {
-            ExpressionKind::Integer => {
-                ExpressionValue::Number(i64::from(self.scan_integer()?.value))
-            }
-            ExpressionKind::Dimension => {
-                ExpressionValue::Number(i64::from(self.scan_dimension()?.value.raw()))
-            }
-            ExpressionKind::Glue => {
-                let value = self.scan_glue(false)?.value;
-                ExpressionValue::Glue(ExpressionGlue::from_spec(
-                    value,
-                    self.scanned_glue_identity,
-                    self.scanned_glue_register,
-                ))
-            }
-            ExpressionKind::MuGlue => {
-                let value = self.scan_glue(true)?.value;
-                ExpressionValue::Glue(ExpressionGlue::from_spec(
-                    value,
-                    self.scanned_glue_identity,
-                    self.scanned_glue_register,
-                ))
-            }
-        };
-        Ok(ScannedFactor::Value(value))
+        Err(error)
     }
 
     fn scan_expression_operator(

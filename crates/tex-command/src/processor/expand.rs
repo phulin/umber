@@ -1065,6 +1065,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut report_trace: bool,
     ) -> Result<(), CommandError> {
         let mut expansion_resume = crate::state::PendingExpansionResume::Dispatch;
+        if self.scanner_resume.is_some()
+            && !self
+                .scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_expansion)
+        {
+            return Err(CommandError::input_invariant());
+        }
         if self
             .scanner_resume
             .as_ref()
@@ -1195,7 +1203,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
                     self.expand_number(command, true, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => self.expand_the(command),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => {
+                    self.expand_the(command, &mut expansion_resume, &mut suspended_resume)
+                }
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                     self.expand_unexpanded()
                 }
@@ -1208,42 +1218,32 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
                     self.expand_scantokens()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
-                    self.expand_fontname(command.copy_for_backup())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => self
+                    .expand_fontname(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 // pdftex.web §470's `pdf_font_size_code` conversion prints the
                 // selected font size as an ordinary scaled dimension.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
-                    let font = self.scan_font_selector()?;
-                    let size = format_scaled(self.state.tracked_font_size(font));
-                    self.push_rendered_text(&size, command.origin());
-                    Ok(())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => self
+                    .expand_pdf_font_size(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 // pdftex.web §470 scans e-TeX's extended box-register domain,
                 // then queries typed hlist state for the first non-skipable node
                 // at the requested edge.
                 Meaning::ExpandablePrimitive(
                     primitive @ (ExpandablePrimitive::LeftMarginKern
                     | ExpandablePrimitive::RightMarginKern),
-                ) => {
-                    let index = self.scan_extended_register_index()?;
-                    let side = match primitive {
-                        ExpandablePrimitive::LeftMarginKern => {
-                            tex_state::node::MarginKernSide::Left
-                        }
-                        ExpandablePrimitive::RightMarginKern => {
-                            tex_state::node::MarginKernSide::Right
-                        }
-                        _ => unreachable!("the dispatch pattern admits only margin-kern enquiries"),
-                    };
-                    let Some(amount) = self.state.box_margin_kern(index, side) else {
-                        return Err(CommandError::PdfNavigation(
-                            "pdfTeX error (marginkern): a non-empty hbox expected",
-                        ));
-                    };
-                    self.push_rendered_text(&format_scaled(amount), command.origin());
-                    Ok(())
-                }
+                ) => self.expand_margin_kern(
+                    command.copy_for_backup(),
+                    primitive,
+                    &mut expansion_resume,
+                    &mut suspended_resume,
+                ),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
                     self.expand_input(command.copy_for_backup())
                 }
@@ -1285,12 +1285,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // the signed uniform bound, then advance the single checkpointed
                 // MetaPost-derived stream shared with the operand-free normal
                 // deviate conversion.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
-                    let bound = self.scan_integer()?.value;
-                    let value = self.state.pdf_uniform_deviate(bound);
-                    self.push_rendered_text(&value.to_string(), command.origin());
-                    Ok(())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => self
+                    .expand_pdf_uniform_deviate(
+                        command,
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
                     let value = self.state.pdf_normal_deviate();
                     self.push_rendered_text(&value.to_string(), command.origin());
@@ -1342,9 +1342,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
-                    self.expand_pdf_last_match(command.copy_for_backup())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => self
+                    .expand_pdf_last_match(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => self
                     .expand_pdf_file_dump(
                         command.copy_for_backup(),
@@ -1369,66 +1372,31 @@ impl<G> CommandProcessor<'_, '_, G> {
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
-                    self.expand_pdf_insert_height(command.copy_for_backup())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => self
+                    .expand_pdf_insert_height(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 // pdftex.web §470's `pdf_ximage_bbox_code` conversion scans an
                 // existing image object before its one-based page-box coordinate.
                 // The enquiry reads detached metadata only; it never reserves an
                 // image or writer object while expanding.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => {
-                    let object = self.scan_integer()?.value;
-                    let id = u32::try_from(object)
-                        .ok()
-                        .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
-                    let Some(metadata) = id.and_then(|id| self.state.pdf_external_image(id)) else {
-                        return Err(CommandError::PdfNavigation(
-                            "pdfTeX error (ext1): cannot find referenced object.",
-                        ));
-                    };
-                    let index = self.scan_integer()?.value;
-                    let Some(coordinate) = u8::try_from(index)
-                        .ok()
-                        .and_then(|index| metadata.bbox_coordinate(index))
-                    else {
-                        return Err(CommandError::PdfNavigation(
-                            "pdfTeX error (pdfximagebbox): invalid parameter.",
-                        ));
-                    };
-                    self.push_rendered_text(&format_scaled(coordinate), command.origin());
-                    Ok(())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => self
+                    .expand_pdf_ximage_bbox(command, &mut expansion_resume, &mut suspended_resume),
                 // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
                 // form object number and prints its independent resource identity.
                 // Unknown object numbers produce zero, matching the other PDF
                 // object enquiries rather than manufacturing ledger state.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => {
-                    let object = self.scan_integer()?.value;
-                    let resource = u32::try_from(object)
-                        .ok()
-                        .and_then(|object| self.state.pdf_form_resource(object))
-                        .unwrap_or(0);
-                    self.push_rendered_text(&resource.to_string(), command.origin());
-                    Ok(())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => self
+                    .expand_pdf_xform_name(command, &mut expansion_resume, &mut suspended_resume),
                 // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
                 // shipped-page number and prints its page-object identity. Pages
                 // that do not exist yet expand to zero without reserving
                 // speculative writer state; nonpositive operands are rejected by
                 // the conversion's `pdf_error` guard.
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef) => {
-                    let page = self.scan_integer()?.value;
-                    if page <= 0 {
-                        return Err(CommandError::PdfNavigation(
-                            "pdfTeX error (pageref): invalid page number",
-                        ));
-                    }
-                    let object = u32::try_from(page)
-                        .ok()
-                        .and_then(|page| self.state.pdf_page_object(page))
-                        .unwrap_or(0);
-                    self.push_rendered_text(&object.to_string(), command.origin());
-                    Ok(())
+                    self.expand_pdf_page_ref(command, &mut expansion_resume, &mut suspended_resume)
                 }
                 // pdfTeX §57.1 consumes one raw token and, only for a registered
                 // primitive spelling, replays the immutable frozen primitive.
@@ -1460,7 +1428,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | ExpandablePrimitive::BotMarks
                     | ExpandablePrimitive::SplitFirstMarks
                     | ExpandablePrimitive::SplitBotMarks),
-                ) => self.expand_mark_class(primitive),
+                ) => {
+                    self.expand_mark_class(primitive, &mut expansion_resume, &mut suspended_resume)
+                }
                 Meaning::ExpandablePrimitive(primitive) => {
                     Err(CommandError::UnsupportedExpandablePrimitive(primitive))
                 }
@@ -1496,20 +1466,47 @@ impl<G> CommandProcessor<'_, '_, G> {
             .as_ref()
             .is_err_and(CommandError::is_resource_suspension)
         {
-            let key = self
-                .command
-                .scratch
-                .store_expansion_frame(crate::state::PendingExpansion {
-                    command: *command,
-                    resume: suspended_resume
-                        .take()
-                        .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
-                    child: crate::execution_scratch::ChildContinuation::capture(
-                        &mut self.scanner_resume,
-                        crate::state::PendingExpansionChildDestination::Dispatch,
-                    ),
-                })
-                .map_err(crate::scan_toks::scratch_command_error)?;
+            let key =
+                match self
+                    .command
+                    .scratch
+                    .store_expansion_frame(crate::state::PendingExpansion {
+                        command: *command,
+                        resume: suspended_resume
+                            .take()
+                            .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
+                        child: None,
+                    }) {
+                    Ok(key) => key,
+                    Err(store_error) => {
+                        if let Some(child) = self.scanner_resume.take() {
+                            self.abort_continuation(child)?;
+                        }
+                        return Err(crate::scan_toks::scratch_command_error(store_error));
+                    }
+                };
+            let child = crate::execution_scratch::ChildContinuation::capture(
+                &mut self.scanner_resume,
+                crate::state::PendingExpansionChildDestination::Dispatch,
+            );
+            match self.command.scratch.expansion_frame_mut(&key) {
+                Ok(pending) => pending.child = child,
+                Err(store_error) => {
+                    let abort_result = if let Some(child) = child {
+                        self.abort_continuation(child.restore().0)
+                    } else {
+                        Ok(())
+                    };
+                    let discard_result = self
+                        .command
+                        .scratch
+                        .discard_expansion_frame(key)
+                        .map_err(crate::scan_toks::scratch_command_error);
+                    abort_result?;
+                    discard_result?;
+                    return Err(crate::scan_toks::scratch_command_error(store_error));
+                }
+            }
             self.scanner_resume = Some(key);
         } else if let Some(child) = self.scanner_resume.take() {
             self.abort_continuation(child)?;
@@ -2039,12 +2036,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         opener: &CurrentCommand<G>,
         roman: bool,
         resume: &mut crate::state::PendingExpansionResume,
-        _suspended: &mut Option<crate::state::PendingExpansionResume>,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        if !matches!(resume, crate::state::PendingExpansionResume::Dispatch) {
-            return Err(CommandError::input_invariant());
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch => {}
+            crate::state::PendingExpansionResume::Number {
+                roman: retained_roman,
+            } if retained_roman == roman => {}
+            _ => return Err(CommandError::input_invariant()),
         }
-        let value = self.scan_integer()?.value;
+        let scan = self.scan_integer_retained();
+        let value = self
+            .retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::Number { roman },
+                suspended,
+            )?
+            .value;
         let text = if roman {
             roman_numeral(value)
         } else {
@@ -2054,6 +2062,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
+    fn retain_expansion_scalar<T>(
+        &mut self,
+        scan: crate::RetainedScalarScan<G, T>,
+        phase: crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<T, CommandError> {
+        match scan {
+            crate::RetainedScalarScan::Complete(value) => Ok(value),
+            crate::RetainedScalarScan::Suspended { error, child } => {
+                self.install_scanner_resume(Some(child));
+                *suspended = Some(phase);
+                Err(error)
+            }
+            crate::RetainedScalarScan::Failed(error) => Err(error),
+        }
+    }
+
     /// Expands TeX82 `the_toks` after command-owned internal-quantity scanning.
     ///
     /// The internal scanner owns a primitive register's `scan_eight_bit_int`
@@ -2061,8 +2086,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// before it backs up the next source token and installs rendered output.
     /// Reaching into the target meaning here would leave that index to a later
     /// scanner and changes the observable input ordering.
-    fn expand_the(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
-        let target = self.scan_internal_value_or_zero()?;
+    fn expand_the(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        if !matches!(
+            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
+            crate::state::PendingExpansionResume::Dispatch
+                | crate::state::PendingExpansionResume::The
+        ) {
+            return Err(CommandError::input_invariant());
+        }
+        let scan = self.scan_internal_value_or_zero_retained();
+        let target = self.retain_expansion_scalar(
+            scan,
+            crate::state::PendingExpansionResume::The,
+            suspended,
+        )?;
         self.expand_the_value(opener.origin(), target.value)
     }
 
@@ -2112,8 +2154,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `\fontname` owns no operand reading of its own: §577's
     /// `scan_font_ident` is the only routine that turns a command into a
     /// font, including its invalid-identifier recovery to `nullfont`.
-    fn expand_fontname(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let font = self.scan_font_selector()?;
+    fn expand_fontname(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        if !matches!(
+            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
+            crate::state::PendingExpansionResume::Dispatch
+                | crate::state::PendingExpansionResume::FontName
+        ) {
+            return Err(CommandError::input_invariant());
+        }
+        let scan = self.scan_font_selector_retained();
+        let font = self.retain_expansion_scalar(
+            scan,
+            crate::state::PendingExpansionResume::FontName,
+            suspended,
+        )?;
         let mut name = self.state.font_name(font);
         let size = self.state.font_size(font);
         if size != self.state.font_design_size(font) {
@@ -2126,6 +2185,64 @@ impl<G> CommandProcessor<'_, '_, G> {
             name.push_str("pt");
         }
         self.push_rendered_text(&name, opener.origin());
+        Ok(())
+    }
+
+    fn expand_pdf_font_size(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        if !matches!(
+            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
+            crate::state::PendingExpansionResume::Dispatch
+                | crate::state::PendingExpansionResume::PdfFontSize
+        ) {
+            return Err(CommandError::input_invariant());
+        }
+        let scan = self.scan_font_selector_retained();
+        let font = self.retain_expansion_scalar(
+            scan,
+            crate::state::PendingExpansionResume::PdfFontSize,
+            suspended,
+        )?;
+        let size = format_scaled(self.state.tracked_font_size(font));
+        self.push_rendered_text(&size, opener.origin());
+        Ok(())
+    }
+
+    fn expand_margin_kern(
+        &mut self,
+        opener: CurrentCommand<G>,
+        primitive: ExpandablePrimitive,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch => {}
+            crate::state::PendingExpansionResume::PdfMarginKern {
+                primitive: retained,
+            } if retained == primitive => {}
+            _ => return Err(CommandError::input_invariant()),
+        }
+        let scan = self.scan_extended_register_index_retained();
+        let index = self.retain_expansion_scalar(
+            scan,
+            crate::state::PendingExpansionResume::PdfMarginKern { primitive },
+            suspended,
+        )?;
+        let side = match primitive {
+            ExpandablePrimitive::LeftMarginKern => tex_state::node::MarginKernSide::Left,
+            ExpandablePrimitive::RightMarginKern => tex_state::node::MarginKernSide::Right,
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let Some(amount) = self.state.box_margin_kern(index, side) else {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (marginkern): a non-empty hbox expected",
+            ));
+        };
+        self.push_rendered_text(&format_scaled(amount), opener.origin());
         Ok(())
     }
 
@@ -2186,10 +2303,27 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    fn expand_mark_class(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
+    fn expand_mark_class(
+        &mut self,
+        primitive: ExpandablePrimitive,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
         // e-TeX 2.6 `etex.ch` [26.1178] uses the same
         // `scan_register_num` as numbered marks and sparse registers.
-        let class = self.scan_extended_register_index()?;
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch => {}
+            crate::state::PendingExpansionResume::MarkClass {
+                primitive: retained,
+            } if retained == primitive => {}
+            _ => return Err(CommandError::input_invariant()),
+        }
+        let scan = self.scan_extended_register_index_retained();
+        let class = self.retain_expansion_scalar(
+            scan,
+            crate::state::PendingExpansionResume::MarkClass { primitive },
+            suspended,
+        )?;
         // e-TeX 2.6 etex.ch [25.386] makes class zero an exact alias for
         // TeX82's `cur_mark`, including its null-versus-empty pointer state.
         let tokens = self
@@ -2213,32 +2347,86 @@ impl<G> CommandProcessor<'_, '_, G> {
         suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
         let pending = std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch);
-        let (case_insensitive, subcount, retained_pattern) = match pending {
-            crate::state::PendingExpansionResume::Dispatch => {
-                let mut case_insensitive = false;
-                let mut subcount = 10_u32;
-                loop {
-                    if self.scan_keyword("icase")?.value {
-                        case_insensitive = true;
-                    } else if self.scan_keyword("subcount")?.value {
-                        subcount = self.scan_integer()?.value.max(0) as u32;
-                    } else {
-                        break;
-                    }
-                }
-                (case_insensitive, subcount, None)
-            }
+        let (mut case_insensitive, mut subcount, mut option_phase, retained_pattern) = match pending
+        {
+            crate::state::PendingExpansionResume::Dispatch => (false, 10_u32, Some(0_u8), None),
+            crate::state::PendingExpansionResume::PdfMatchOptions {
+                case_insensitive,
+                subcount,
+                phase,
+            } => (case_insensitive, subcount, Some(phase), None),
             crate::state::PendingExpansionResume::PdfMatchPattern {
                 case_insensitive,
                 subcount,
-            } => (case_insensitive, subcount, None),
+            } => (case_insensitive, subcount, None, None),
             crate::state::PendingExpansionResume::PdfMatchHaystack {
                 case_insensitive,
                 subcount,
                 pattern,
-            } => (case_insensitive, subcount, Some(pattern)),
+            } => (case_insensitive, subcount, None, Some(pattern)),
             _ => return Err(CommandError::input_invariant()),
         };
+        while let Some(phase) = option_phase {
+            match phase {
+                0 => {
+                    let scan = self.scan_keyword_retained("icase");
+                    if self
+                        .retain_expansion_scalar(
+                            scan,
+                            crate::state::PendingExpansionResume::PdfMatchOptions {
+                                case_insensitive,
+                                subcount,
+                                phase,
+                            },
+                            suspended,
+                        )?
+                        .value
+                    {
+                        case_insensitive = true;
+                    } else {
+                        option_phase = Some(1);
+                        continue;
+                    }
+                }
+                1 => {
+                    let scan = self.scan_keyword_retained("subcount");
+                    if self
+                        .retain_expansion_scalar(
+                            scan,
+                            crate::state::PendingExpansionResume::PdfMatchOptions {
+                                case_insensitive,
+                                subcount,
+                                phase,
+                            },
+                            suspended,
+                        )?
+                        .value
+                    {
+                        option_phase = Some(2);
+                        continue;
+                    }
+                    option_phase = None;
+                    continue;
+                }
+                2 => {
+                    let scan = self.scan_integer_retained();
+                    subcount = self
+                        .retain_expansion_scalar(
+                            scan,
+                            crate::state::PendingExpansionResume::PdfMatchOptions {
+                                case_insensitive,
+                                subcount,
+                                phase,
+                            },
+                            suspended,
+                        )?
+                        .value
+                        .max(0) as u32;
+                }
+                _ => return Err(CommandError::input_invariant()),
+            }
+            option_phase = Some(0);
+        }
         let pattern = if let Some(pattern) = retained_pattern {
             pattern
         } else {
@@ -2310,25 +2498,53 @@ impl<G> CommandProcessor<'_, '_, G> {
         resume: &mut crate::state::PendingExpansionResume,
         suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let (restore_at_page_start, mode) =
+        let (mut restore_at_page_start, mut option_phase, retained_mode) =
             match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-                crate::state::PendingExpansionResume::Dispatch => {
-                    let restore_at_page_start = self.scan_keyword("page")?.value;
-                    let mode = if self.scan_keyword("direct")?.value {
-                        tex_state::PdfColorStackMode::Direct
-                    } else if self.scan_keyword("page")?.value {
-                        tex_state::PdfColorStackMode::Page
-                    } else {
-                        tex_state::PdfColorStackMode::Origin
-                    };
-                    (restore_at_page_start, mode)
-                }
+                crate::state::PendingExpansionResume::Dispatch => (false, Some(0_u8), None),
+                crate::state::PendingExpansionResume::PdfColorStackInitOptions {
+                    restore_at_page_start,
+                    phase,
+                } => (restore_at_page_start, Some(phase), None),
                 crate::state::PendingExpansionResume::PdfColorStackInitText {
                     restore_at_page_start,
                     mode,
-                } => (restore_at_page_start, mode),
+                } => (restore_at_page_start, None, Some(mode)),
                 _ => return Err(CommandError::input_invariant()),
             };
+        let mode = if let Some(mut phase) = option_phase.take() {
+            loop {
+                let keyword = match phase {
+                    0 => "page",
+                    1 => "direct",
+                    2 => "page",
+                    _ => return Err(CommandError::input_invariant()),
+                };
+                let scan = self.scan_keyword_retained(keyword);
+                let matched = self
+                    .retain_expansion_scalar(
+                        scan,
+                        crate::state::PendingExpansionResume::PdfColorStackInitOptions {
+                            restore_at_page_start,
+                            phase,
+                        },
+                        suspended,
+                    )?
+                    .value;
+                match phase {
+                    0 => {
+                        restore_at_page_start = matched;
+                        phase = 1;
+                    }
+                    1 if matched => break tex_state::PdfColorStackMode::Direct,
+                    1 => phase = 2,
+                    2 if matched => break tex_state::PdfColorStackMode::Page,
+                    2 => break tex_state::PdfColorStackMode::Origin,
+                    _ => unreachable!(),
+                }
+            }
+        } else {
+            retained_mode.expect("completed color-stack options retain their mode")
+        };
         let initial = match self.scan_balanced_text(true) {
             Ok(initial) => initial.tokens,
             Err(error) => {
@@ -2365,8 +2581,162 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    fn expand_pdf_last_match(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let mut index = self.scan_integer()?.value;
+    fn expand_pdf_uniform_deviate(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch
+            | crate::state::PendingExpansionResume::PdfUniformDeviate => {}
+            _ => return Err(CommandError::input_invariant()),
+        }
+        let scan = self.scan_integer_retained();
+        let bound = self
+            .retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::PdfUniformDeviate,
+                suspended,
+            )?
+            .value;
+        let value = self.state.pdf_uniform_deviate(bound);
+        self.push_rendered_text(&value.to_string(), opener.origin());
+        Ok(())
+    }
+
+    fn expand_pdf_ximage_bbox(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let object = match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch)
+        {
+            crate::state::PendingExpansionResume::Dispatch
+            | crate::state::PendingExpansionResume::PdfXImageObject => {
+                let scan = self.scan_integer_retained();
+                let object = self
+                    .retain_expansion_scalar(
+                        scan,
+                        crate::state::PendingExpansionResume::PdfXImageObject,
+                        suspended,
+                    )?
+                    .value;
+                u32::try_from(object).ok()
+            }
+            crate::state::PendingExpansionResume::PdfXImageCoordinate { object } => Some(object),
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let id = object.and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
+        let Some(id) = id.filter(|id| self.state.pdf_external_image(*id).is_some()) else {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): cannot find referenced object.",
+            ));
+        };
+        let object = id.raw();
+        let scan = self.scan_integer_retained();
+        let index = self
+            .retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::PdfXImageCoordinate { object },
+                suspended,
+            )?
+            .value;
+        let metadata = self
+            .state
+            .pdf_external_image(id)
+            .expect("validated external image remains present");
+        let Some(coordinate) = u8::try_from(index)
+            .ok()
+            .and_then(|index| metadata.bbox_coordinate(index))
+        else {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (pdfximagebbox): invalid parameter.",
+            ));
+        };
+        self.push_rendered_text(&format_scaled(coordinate), opener.origin());
+        Ok(())
+    }
+
+    fn expand_pdf_xform_name(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch
+            | crate::state::PendingExpansionResume::PdfXFormName => {}
+            _ => return Err(CommandError::input_invariant()),
+        }
+        let scan = self.scan_integer_retained();
+        let object = self
+            .retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::PdfXFormName,
+                suspended,
+            )?
+            .value;
+        let resource = u32::try_from(object)
+            .ok()
+            .and_then(|object| self.state.pdf_form_resource(object))
+            .unwrap_or(0);
+        self.push_rendered_text(&resource.to_string(), opener.origin());
+        Ok(())
+    }
+
+    fn expand_pdf_page_ref(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch
+            | crate::state::PendingExpansionResume::PdfPageRef => {}
+            _ => return Err(CommandError::input_invariant()),
+        }
+        let scan = self.scan_integer_retained();
+        let page = self
+            .retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::PdfPageRef,
+                suspended,
+            )?
+            .value;
+        if page <= 0 {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (pageref): invalid page number",
+            ));
+        }
+        let object = u32::try_from(page)
+            .ok()
+            .and_then(|page| self.state.pdf_page_object(page))
+            .unwrap_or(0);
+        self.push_rendered_text(&object.to_string(), opener.origin());
+        Ok(())
+    }
+
+    fn expand_pdf_last_match(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch
+            | crate::state::PendingExpansionResume::PdfLastMatch => {}
+            _ => return Err(CommandError::input_invariant()),
+        }
+        let scan = self.scan_integer_retained();
+        let mut index = self
+            .retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::PdfLastMatch,
+                suspended,
+            )?
+            .value;
         if index < 0 {
             self.pdftex_match_number_diagnostic(index);
             index = 1;
@@ -2398,13 +2768,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         resume: &mut crate::state::PendingExpansionResume,
         suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let (pending, scanned_range) =
+        let (pending, scanned_range, scanned_options) =
             match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-                crate::state::PendingExpansionResume::Dispatch => (None, None),
+                crate::state::PendingExpansionResume::Dispatch => (None, None, Some((0, 0, 0))),
+                crate::state::PendingExpansionResume::PdfFileDumpOptions {
+                    offset,
+                    length,
+                    phase,
+                } => (None, None, Some((offset, length, phase))),
                 crate::state::PendingExpansionResume::PdfFileDumpText { offset, length } => {
-                    (None, Some((offset, length)))
+                    (None, Some((offset, length)), None)
                 }
-                crate::state::PendingExpansionResume::PdfFileDump(pending) => (Some(pending), None),
+                crate::state::PendingExpansionResume::PdfFileDump(pending) => {
+                    (Some(pending), None, None)
+                }
                 _ => return Err(CommandError::input_invariant()),
             };
         let (request, offset, length) = if let Some(pending) = pending {
@@ -2413,20 +2790,87 @@ impl<G> CommandProcessor<'_, '_, G> {
             let (offset, length) = if let Some(range) = scanned_range {
                 range
             } else {
-                let mut offset = 0_i32;
-                let mut length = 0_i32;
-                if self.scan_keyword("offset")?.value {
-                    offset = self.scan_integer()?.value;
-                    if offset < 0 {
-                        self.pdftex_file_range_diagnostic("offset", offset);
-                        offset = 0;
-                    }
-                }
-                if self.scan_keyword("length")?.value {
-                    length = self.scan_integer()?.value;
-                    if length < 0 {
-                        self.pdftex_file_range_diagnostic("length", length);
-                        length = 0;
+                let (mut offset, mut length, mut phase) =
+                    scanned_options.expect("unscanned dump options retain their cursor");
+                loop {
+                    match phase {
+                        0 => {
+                            let scan = self.scan_keyword_retained("offset");
+                            if self
+                                .retain_expansion_scalar(
+                                    scan,
+                                    crate::state::PendingExpansionResume::PdfFileDumpOptions {
+                                        offset,
+                                        length,
+                                        phase,
+                                    },
+                                    suspended,
+                                )?
+                                .value
+                            {
+                                phase = 1;
+                            } else {
+                                phase = 2;
+                            }
+                        }
+                        1 => {
+                            let scan = self.scan_integer_retained();
+                            offset = self
+                                .retain_expansion_scalar(
+                                    scan,
+                                    crate::state::PendingExpansionResume::PdfFileDumpOptions {
+                                        offset,
+                                        length,
+                                        phase,
+                                    },
+                                    suspended,
+                                )?
+                                .value;
+                            if offset < 0 {
+                                self.pdftex_file_range_diagnostic("offset", offset);
+                                offset = 0;
+                            }
+                            phase = 2;
+                        }
+                        2 => {
+                            let scan = self.scan_keyword_retained("length");
+                            if self
+                                .retain_expansion_scalar(
+                                    scan,
+                                    crate::state::PendingExpansionResume::PdfFileDumpOptions {
+                                        offset,
+                                        length,
+                                        phase,
+                                    },
+                                    suspended,
+                                )?
+                                .value
+                            {
+                                phase = 3;
+                            } else {
+                                break;
+                            }
+                        }
+                        3 => {
+                            let scan = self.scan_integer_retained();
+                            length = self
+                                .retain_expansion_scalar(
+                                    scan,
+                                    crate::state::PendingExpansionResume::PdfFileDumpOptions {
+                                        offset,
+                                        length,
+                                        phase,
+                                    },
+                                    suspended,
+                                )?
+                                .value;
+                            if length < 0 {
+                                self.pdftex_file_range_diagnostic("length", length);
+                                length = 0;
+                            }
+                            break;
+                        }
+                        _ => return Err(CommandError::input_invariant()),
                     }
                 }
                 (offset, length)
@@ -2586,14 +3030,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
-        let (pending, scanned_file) =
+        let (pending, scanned_file, scan_file_keyword) =
             match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-                crate::state::PendingExpansionResume::Dispatch => (None, None),
+                crate::state::PendingExpansionResume::Dispatch => (None, None, true),
+                crate::state::PendingExpansionResume::PdfMdFiveSumFile => (None, None, true),
                 crate::state::PendingExpansionResume::PdfMdFiveSumText { file } => {
-                    (None, Some(file))
+                    (None, Some(file), false)
                 }
                 crate::state::PendingExpansionResume::PdfMdFiveSum(pending) => {
-                    (Some(pending), None)
+                    (Some(pending), None, false)
                 }
                 _ => return Err(CommandError::input_invariant()),
             };
@@ -2601,8 +3046,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             true
         } else if let Some(file) = scanned_file {
             file
+        } else if scan_file_keyword {
+            let scan = self.scan_keyword_retained("file");
+            self.retain_expansion_scalar(
+                scan,
+                crate::state::PendingExpansionResume::PdfMdFiveSumFile,
+                suspended,
+            )?
+            .value
         } else {
-            self.scan_keyword("file")?.value
+            return Err(CommandError::input_invariant());
         };
         let mut bytes = if let Some(pending) = &pending {
             pending.request.name.as_bytes().to_vec()
@@ -2666,8 +3119,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// accumulated in the live page-builder insertion record. Missing classes
     /// use pdfTeX's literal `0pt`; present zero heights use `print_scaled` and
     /// therefore remain distinguishable as `0.0pt`.
-    fn expand_pdf_insert_height(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let class = self.scan_extended_register_index()?;
+    fn expand_pdf_insert_height(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        if !matches!(
+            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
+            crate::state::PendingExpansionResume::Dispatch
+                | crate::state::PendingExpansionResume::PdfInsertHeight
+        ) {
+            return Err(CommandError::input_invariant());
+        }
+        let scan = self.scan_extended_register_index_retained();
+        let class = self.retain_expansion_scalar(
+            scan,
+            crate::state::PendingExpansionResume::PdfInsertHeight,
+            suspended,
+        )?;
         let rendered = self
             .host
             .page_insertion_height(class)

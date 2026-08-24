@@ -21,7 +21,32 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// family index and then that size bank's font. Anything else is "Missing
     /// font identifier", whose `back_error` leaves the rejected command for
     /// its normal delivery and takes `null_font`.
-    pub(crate) fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
+    fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
+        if let Some(pending) = self.take_pending_scalar_frame()? {
+            let crate::scanners::PendingScalarFrame::FontSelector { size, mut child } = pending
+            else {
+                let mut pending = pending;
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            };
+            self.restore_scalar_child(
+                &mut child,
+                crate::scanners::ScalarChildDestination::FontSelector,
+            )?;
+            return match self.scan_math_family(size) {
+                Ok(family) => Ok(self.state.math_family_font(size.into(), family.family)),
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        self.retain_scalar_frame(
+                            crate::scanners::PendingScalarFrame::FontSelector { size, child: None },
+                        )?;
+                    }
+                    Err(error)
+                }
+            };
+        }
         // §577's `@<Get the next non-blank non-call token@>` (§406).
         let command = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
@@ -45,8 +70,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 let size = MathFamilySize::of_primitive(primitive)
                     .expect("the guard proved this is `def_family`");
-                let family = self.scan_math_family(size)?;
-                Ok(self.state.math_family_font(size.into(), family.family))
+                match self.scan_math_family(size) {
+                    Ok(family) => Ok(self.state.math_family_font(size.into(), family.family)),
+                    Err(error) => {
+                        if error.is_resource_suspension() {
+                            self.retain_scalar_frame(
+                                crate::scanners::PendingScalarFrame::FontSelector {
+                                    size,
+                                    child: None,
+                                },
+                            )?;
+                        }
+                        Err(error)
+                    }
+                }
             }
             _ => {
                 // §577 reports before §327's `back_error` backs up the

@@ -8,6 +8,7 @@ mod scalar;
 mod structured;
 mod token_list;
 
+pub(crate) use expression::{ExpressionFrame, PendingExpressionScan};
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{

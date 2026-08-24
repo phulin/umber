@@ -101,6 +101,98 @@ fn failed_keyword_replays_the_matched_prefix_before_the_offender() {
     });
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_keyword_success_path_allocates_zero_heap() {
+    crate::test_harness::with_universe(|universe| {
+        const SCANS: usize = 257;
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            (0..SCANS).flat_map(|_| "dimension".chars().map(letter)),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let crate::RetainedScalarScan::Complete(warm) =
+            processor.scan_keyword_retained("dimension")
+        else {
+            panic!("preloaded keyword scan must complete synchronously")
+        };
+        assert!(warm.value);
+
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 1..SCANS {
+                let crate::RetainedScalarScan::Complete(scanned) =
+                    processor.scan_keyword_retained("dimension")
+                else {
+                    panic!("preloaded keyword scan must complete synchronously")
+                };
+                assert!(scanned.value);
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
+    crate::test_harness::with_universe(|universe| {
+        const SCANS: usize = 257;
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            (0..SCANS).flat_map(|_| "dimensiox".chars().map(letter)),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let run = |processor: &mut crate::CommandProcessor<'_, '_, _>| {
+            let crate::RetainedScalarScan::Complete(scanned) =
+                processor.scan_keyword_retained("dimension")
+            else {
+                panic!("preloaded keyword scan must complete synchronously")
+            };
+            assert!(!scanned.value);
+            for _ in 0..9 {
+                processor
+                    .get_x_token()
+                    .expect("replayed delivery")
+                    .expect("replayed token");
+            }
+        };
+        run(&mut processor);
+
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 1..SCANS {
+                run(&mut processor);
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    });
+}
+
 #[test]
 fn dimension_scanner_preserves_fractional_points_and_following_input() {
     crate::test_harness::with_universe(|universe| {

@@ -100,6 +100,16 @@ impl<G, D> ChildContinuation<G, D> {
     pub(crate) fn restore(self) -> (ScannerFrameKey<G>, D) {
         (self.key, self.destination)
     }
+
+    pub(crate) fn from_key(key: ScannerFrameKey<G>, destination: D) -> Self {
+        Self { key, destination }
+    }
+}
+
+impl<G, D: Copy> ChildContinuation<G, D> {
+    pub(crate) fn destination(&self) -> D {
+        self.destination
+    }
 }
 
 // Keeping the heterogeneous payload inline is deliberate: boxing a live
@@ -167,6 +177,13 @@ impl<T, G> ResumeFrameLane<T, G> {
         self.slot(id)?
             .payload
             .as_ref()
+            .ok_or(ScratchError::InvalidCoordinate)
+    }
+
+    fn get_mut(&mut self, id: ResumeFrameId<G>) -> Result<&mut T, ScratchError> {
+        self.slot_mut(id)?
+            .payload
+            .as_mut()
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
@@ -460,6 +477,7 @@ pub(crate) struct ExecutionScratch<G> {
     delimiter_tail: u32,
     delimiter_len: u32,
     scanner_resumes: ResumeFrameLane<ContinuationFrame<G>, G>,
+    expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
     copied_macro_words: u64,
@@ -477,6 +495,7 @@ impl<G> Default for ExecutionScratch<G> {
             delimiter_tail: NO_CHUNK,
             delimiter_len: 0,
             scanner_resumes: ResumeFrameLane::default(),
+            expression_frames: Vec::new(),
             _generation: PhantomData,
             #[cfg(test)]
             copied_macro_words: 0,
@@ -485,6 +504,41 @@ impl<G> Default for ExecutionScratch<G> {
 }
 
 impl<G> ExecutionScratch<G> {
+    pub(crate) fn expression_stack_len(&self) -> usize {
+        self.expression_frames.len()
+    }
+
+    pub(crate) fn push_expression_frame(
+        &mut self,
+        frame: crate::scanners::ExpressionFrame<G>,
+    ) -> Result<(), ScratchError> {
+        self.expression_frames
+            .try_reserve(1)
+            .map_err(|_| ScratchError::AllocationFailed)?;
+        self.expression_frames.push(frame);
+        Ok(())
+    }
+
+    pub(crate) fn pop_expression_frame(
+        &mut self,
+        mark: usize,
+    ) -> Result<Option<crate::scanners::ExpressionFrame<G>>, ScratchError> {
+        if self.expression_frames.len() < mark {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        Ok((self.expression_frames.len() > mark)
+            .then(|| self.expression_frames.pop())
+            .flatten())
+    }
+
+    pub(crate) fn truncate_expression_stack(&mut self, mark: usize) -> Result<(), ScratchError> {
+        if self.expression_frames.len() < mark {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.expression_frames.truncate(mark);
+        Ok(())
+    }
+
     pub(crate) fn take_continuation_frame(
         &mut self,
         key: ScannerFrameKey<G>,
@@ -639,6 +693,26 @@ impl<G> ExecutionScratch<G> {
         }
     }
 
+    pub(crate) fn expansion_frame_mut(
+        &mut self,
+        key: &ScannerFrameKey<G>,
+    ) -> Result<&mut crate::state::PendingExpansion<G>, ScratchError> {
+        if !key.is_expansion() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.get_mut(key.id)? {
+            ContinuationFrame::Expansion(pending) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
+    }
+
+    pub(crate) fn discard_expansion_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<(), ScratchError> {
+        self.take_expansion_frame(key).map(drop)
+    }
+
     pub(crate) fn store_expandafter_frame(
         &mut self,
         pending: crate::processor::expand::PendingExpandAfter<G>,
@@ -714,6 +788,26 @@ impl<G> ExecutionScratch<G> {
         }
     }
 
+    pub(crate) fn alignment_preamble_frame_mut(
+        &mut self,
+        key: &ScannerFrameKey<G>,
+    ) -> Result<&mut crate::scanners::PendingAlignmentPreamble<G>, ScratchError> {
+        if !key.is_alignment_preamble() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.get_mut(key.id)? {
+            ContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
+    }
+
+    pub(crate) fn discard_alignment_preamble_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<(), ScratchError> {
+        self.take_alignment_preamble_frame(key).map(drop)
+    }
+
     pub(crate) fn store_structured_scanner_frame(
         &mut self,
         pending: crate::scanners::PendingStructuredScanner<G>,
@@ -737,6 +831,26 @@ impl<G> ExecutionScratch<G> {
             ContinuationFrame::StructuredScanner(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
+    }
+
+    pub(crate) fn structured_scanner_frame_mut(
+        &mut self,
+        key: &ScannerFrameKey<G>,
+    ) -> Result<&mut crate::scanners::PendingStructuredScanner<G>, ScratchError> {
+        if !key.is_structured_scanner() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.get_mut(key.id)? {
+            ContinuationFrame::StructuredScanner(pending) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
+    }
+
+    pub(crate) fn discard_structured_scanner_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<(), ScratchError> {
+        self.take_structured_scanner_frame(key).map(drop)
     }
 
     pub(crate) fn begin_macro_match(&mut self) -> Result<MacroMatch<G>, ScratchError> {

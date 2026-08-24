@@ -54,7 +54,10 @@ fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        assert_eq!(processor.scan_integer().expect("expression").value, 14);
+        let crate::RetainedScalarScan::Complete(scanned) = processor.scan_integer_retained() else {
+            panic!("preloaded expression must complete synchronously")
+        };
+        assert_eq!(scanned.value, 14);
         assert_eq!(
             processor
                 .get_x_token()
