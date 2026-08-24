@@ -586,6 +586,12 @@ paragraph and shipout checkpoints only when the boundary-forming operation's
 active external file frame is the registered root main input; the decision is
 frozen before queued publication and does not inspect token provenance or file
 names. General source-role policy is deferred to Bead `umber2-66p0.11`.
+Its command summary directly owns the captured aggregate command root; the
+command timeline owns only a monotonic identity serial. The retained executor
+store reuses serial-validated physical slots and tracks their exact live
+indices, so pruning drops unretained roots in O(live checkpoints) without
+scanning full capacity, relocating survivors, or allowing a stale key to alias
+a reused slot.
 
 Commit moves structural node/content roots, publishes ordered effects and
 artifacts, and releases transaction-local history. Failed validation restores

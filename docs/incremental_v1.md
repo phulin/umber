@@ -575,10 +575,14 @@ Artifact ids and detached artifact bytes needed to assemble the accepted
 output are revision output metadata and survive checkpoint-root eviction.
 Eviction removes the complete restart record and asks one aggregate session
 API to release its roots: record-exclusive metadata is released immediately,
-and substrate storage is released when the substrate's last record goes.
-It cannot leave a hash-only record behind. An edit before the oldest useful
-remaining checkpoint simply restarts at `JobStart`, so pruning changes latency
-but not output.
+and substrate storage is released when the substrate's last record goes. The
+executor checkpoint store validates generation and capture serial, marks only
+the requested live keys, and walks only its exact live-slot index while
+pruning. Freed physical slots are reused without relocating survivors; a fresh
+serial prevents an old key from aliasing a replacement checkpoint. It cannot
+leave a hash-only record or a second command-timeline root behind. An edit
+before the oldest useful remaining checkpoint simply restarts at `JobStart`,
+so pruning changes latency but not output.
 
 Discarding the scratch fork after convergence drops its diverged-span roots;
 replacing the substrate at job end drops the old generation's storage once its

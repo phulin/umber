@@ -487,14 +487,24 @@ An operation mark is a fixed-size value containing journal cursors, stack
 lengths, scratch-lane lengths, durable storage cursors, mode/page cursors,
 source/effect ledger cursors, and the identity of the generation it addresses.
 A named checkpoint refers to either the current candidate or the prior
-accepted generation; it cannot retain a third generation. It contains the same
-kind of compact marks, plus any optional coarse packed-bank snapshot. It does
-not clone the live definition, node, provenance, input, or page object graph.
+accepted generation; it cannot retain a third generation. Its command owner
+directly retains the one aggregate copy-on-write root and exact attempt mark
+selected at capture; the command timeline contributes only a monotonic
+identity serial and owns no root row. The retained executor store is the sole
+checkpoint container. It reuses physical slots with generation-plus-serial
+validation and exact live-index backreferences, so pruning drops unretained
+owners in O(live checkpoints) without scanning full capacity. A checkpoint
+also contains compact marks and any optional coarse packed-bank snapshot. It
+does not clone the live definition, node, provenance, input, or page object
+graph.
 
 Marks can be created only at a boundary whose live builders are sealed and
 whose execution scratch is quiescent. A mark is not an owning reference to
-each value it can restore. The session's prior/current generation slots
-provide lifetime; checkpoint cursors provide position.
+each value it can restore. The session's prior/current generation slots and
+the checkpoint's direct aggregate owners provide lifetime; checkpoint cursors
+provide position. Dropping or pruning the checkpoint releases those owners
+immediately. Slot reuse never revalidates an old key, relocates a surviving
+checkpoint, or compacts live coordinates.
 
 Restore is atomic and follows this order:
 
