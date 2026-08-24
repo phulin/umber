@@ -1735,6 +1735,41 @@ fn tracingrestores_reports_math_family_font_restoration() {
 }
 
 #[test]
+fn tracingrestores_prints_nonprintable_font_identifiers_through_the_live_selector() {
+    // TeX82 §§59--60/252 and pdftex.web §252: `restore_trace` delegates to
+    // `show_eqtb`, whose math-family font arm reaches `print_esc` and hence
+    // `slow_print` for every byte of the frozen font identifier.  The two
+    // `\newlinechar` cases challenge the printer rule rather than pinning a
+    // replacement spelling for byte zero; the printable-name test above is
+    // the control that must remain unchanged.
+    for (newline_char, expected) in [
+        (-1, "{restoring \\textfont3=\\bigtr^^@p}\n"),
+        (0, "{restoring \\textfont3=\\bigtr\np}\n"),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            register_source(
+                &mut control,
+                format!(
+                    "\\catcode0=11 \\font\\bigtr^^@p=cmr10 \\font\\other=cmr10 at 9pt \\textfont3=\\bigtr^^@p \\newlinechar={newline_char} \\tracingrestores=1 \\tracingonline=1 {{\\textfont3=\\other}}\\end"
+                )
+                .as_bytes(),
+            );
+
+            run_to_end(&mut control, stores);
+
+            let terminal = pending_sink_text(stores, true);
+            let log = pending_sink_text(stores, false);
+            assert_eq!(terminal, expected);
+            assert_eq!(log, expected);
+            assert!(!terminal.contains('\0'), "{terminal:?}");
+            assert!(!log.contains('\0'), "{log:?}");
+        });
+    }
+}
+
+#[test]
 fn output_routine_box255_error_reports_live_command_context() {
     // TeX82 §§1026/1028 reach §82's error after retiring the output token
     // list, while the command-owned source level beneath it remains live.

@@ -155,7 +155,13 @@ pub(crate) fn trace_group_restorations<G>(
         if box_value && value != "void" {
             diagnostic.print_ln().print_rendered(&value);
         } else {
-            diagnostic.print_rendered(&value);
+            // TeX82 §§59--60/252 and pdftex.web §252 route every non-box
+            // `show_eqtb` value through the live print primitives.  In
+            // particular, a math-family font identifier reaches
+            // `print_esc`/`slow_print`, so an embedded eight-bit character
+            // observes `\newlinechar` and printable `^^` notation.  Only the
+            // box dump above is already a completed multi-line rendering.
+            diagnostic.print(&value);
         }
         diagnostic.print_char('}');
         diagnostic.end(false);
