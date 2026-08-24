@@ -671,6 +671,9 @@ enum OperationDelivery<G> {
         main_loop: bool,
         cursor: tex_command::CommandDeliveryCursor,
     },
+    /// Exact scalar operand phase whose command delivery and earlier operands
+    /// already committed before an immutable host request.
+    OperationScan(PendingOperationScan<G>),
     /// `\immediate` already consumed its recursive PDF command before a
     /// pre-operand DVI rejection. Retry resumes that PDF operand scanner
     /// directly; rewinding the outer command/input aggregate is unnecessary.
@@ -709,6 +712,36 @@ enum PendingPreflightCommand<G> {
         scanner: Option<tex_command::ScannerFrameKey<G>>,
     },
     ImmediatePdfRetry(UnexpandablePrimitive),
+    OperationScan(PendingOperationScan<G>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CountScanPhase {
+    RegisterIndex,
+    OptionalEquals,
+    Integer,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PendingOperationScanPhase {
+    Count {
+        index: Option<u16>,
+        global: bool,
+        phase: CountScanPhase,
+    },
+}
+
+/// Singular direct-operation parent for an in-progress scalar operand scan.
+///
+/// The command and observation cursor identify the exact settled caller;
+/// `phase` owns completed fixed-sequence operands, and `child` is the sole
+/// non-Copy continuation capability for the scalar currently in progress.
+#[derive(Debug)]
+struct PendingOperationScan<G> {
+    command: tex_command::CurrentCommand<G>,
+    cursor: tex_command::CommandDeliveryCursor,
+    phase: PendingOperationScanPhase,
+    child: tex_command::ScannerFrameKey<G>,
 }
 
 impl<G> PendingPreflightCommand<G> {
@@ -743,6 +776,7 @@ impl<G> PendingPreflightCommand<G> {
             OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
                 Some(Self::ImmediatePdfRetry(*primitive))
             }
+            OperationDelivery::<G>::OperationScan(_) => None,
             OperationDelivery::<G>::Replay(None)
             | OperationDelivery::<G>::Alignment(_)
             | OperationDelivery::<G>::AlignmentRetry { .. }
@@ -792,6 +826,9 @@ impl<G> PendingPreflightCommand<G> {
             Self::ImmediatePdfRetry(_) => {
                 unreachable!("immediate PDF retry cannot own an expandable child")
             }
+            Self::OperationScan(_) => {
+                unreachable!("an operand-scan retry cannot acquire another delivery command")
+            }
         }
     }
 
@@ -823,6 +860,7 @@ impl<G> PendingPreflightCommand<G> {
                 scanner,
             },
             Self::ImmediatePdfRetry(primitive) => Self::ImmediatePdfRetry(primitive),
+            Self::OperationScan(pending) => Self::OperationScan(pending),
         }
     }
 
@@ -832,6 +870,7 @@ impl<G> PendingPreflightCommand<G> {
             | Self::Raw { scanner, .. }
             | Self::Expanding { scanner, .. } => *scanner = key,
             Self::ImmediatePdfRetry(_) => assert!(key.is_none()),
+            Self::OperationScan(_) => assert!(key.is_none()),
         }
         self
     }
@@ -4346,6 +4385,16 @@ impl<G> MainControl<G> {
                             scanner: None,
                         }
                         }
+                        PendingPreflightCommand::<G>::OperationScan(pending) => {
+                            PreflightDelivery::<G> {
+                                capabilities:
+                                    crate::transaction_protocol::canonical_command_capabilities(
+                                        pending.command.meaning(),
+                                    ),
+                                delivery: OperationDelivery::<G>::OperationScan(pending),
+                                scanner: None,
+                            }
+                        }
                     },
                 }
             } else {
@@ -7818,6 +7867,37 @@ impl<G> MainControl<G> {
                             &mut diagnostics,
                         )?
                     }
+                    OperationDelivery::<G>::OperationScan(pending) => {
+                        let PendingOperationScan {
+                            command,
+                            cursor,
+                            phase,
+                            child,
+                        } = pending;
+                        processor.resume_current_command(&command);
+                        processor.resume_delivery_cursor(cursor);
+                        processor.install_scanner_resume(Some(child));
+                        let mut suspended = None;
+                        let result =
+                            resume_pending_operation_scan(&mut processor, phase, &mut suspended);
+                        if let Err(error) = &result
+                            && execution_error_needs_command_retry(error)
+                            && let Some(phase) = suspended
+                        {
+                            let child = processor.take_scanner_resume().expect(
+                                "a resuspended scalar scan retains its exact child capability",
+                            );
+                            retry_command = Some(PendingPreflightCommand::OperationScan(
+                                PendingOperationScan {
+                                    command,
+                                    cursor: processor.delivery_cursor(),
+                                    phase,
+                                    child,
+                                },
+                            ));
+                        }
+                        result?.into()
+                    }
                     OperationDelivery::<G>::ImmediatePdfRetry(primitive) => match primitive {
                         UnexpandablePrimitive::PdfObject => ColdOperation::<G>::ImmediateExtension(
                             ImmediateExtension::PdfObject(
@@ -7896,7 +7976,16 @@ impl<G> MainControl<G> {
             let cursor = processor.delivery_cursor();
             let retry_expansion = processor.pending_expansion_command().cloned();
             let scanner_resume = processor.take_scanner_resume();
-            let (retry, alignment_scanner) = if let Some(command) = retry_expansion {
+            let retained_operation_scan = retry_command
+                .as_ref()
+                .is_some_and(|retry| matches!(retry, PendingPreflightCommand::OperationScan(_)));
+            let (retry, alignment_scanner) = if retained_operation_scan {
+                assert!(
+                    scanner_resume.is_none(),
+                    "the direct-operation parent already owns its scalar child"
+                );
+                (retry_command, None)
+            } else if let Some(command) = retry_expansion {
                 (
                     Some(PendingPreflightCommand::Expanding {
                         command,
@@ -10142,6 +10231,61 @@ fn execution_error_needs_command_retry(error: &ExecError) -> bool {
     }
 }
 
+fn scan_count_register_assignment<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    mut index: Option<u16>,
+    global: bool,
+    phase: CountScanPhase,
+    suspended: &mut Option<PendingOperationScanPhase>,
+) -> Result<ColdOperation<G>, ExecError> {
+    if phase == CountScanPhase::RegisterIndex {
+        *suspended = Some(PendingOperationScanPhase::Count {
+            index,
+            global,
+            phase: CountScanPhase::RegisterIndex,
+        });
+        index = Some(
+            processor
+                .scan_profile_register_index()
+                .map_err(command_error)?,
+        );
+    }
+    if phase != CountScanPhase::Integer {
+        *suspended = Some(PendingOperationScanPhase::Count {
+            index,
+            global,
+            phase: CountScanPhase::OptionalEquals,
+        });
+        let _ = processor.scan_optional_equals().map_err(command_error)?;
+    }
+    *suspended = Some(PendingOperationScanPhase::Count {
+        index,
+        global,
+        phase: CountScanPhase::Integer,
+    });
+    let value = processor.scan_integer().map_err(command_error)?.value;
+    *suspended = None;
+    Ok(ColdOperation::Count {
+        index: index.expect("count assignment retains its completed register index"),
+        value,
+        global,
+    })
+}
+
+fn resume_pending_operation_scan<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    pending: PendingOperationScanPhase,
+    suspended: &mut Option<PendingOperationScanPhase>,
+) -> Result<ColdOperation<G>, ExecError> {
+    match pending {
+        PendingOperationScanPhase::Count {
+            index,
+            global,
+            phase,
+        } => scan_count_register_assignment(processor, index, global, phase, suspended),
+    }
+}
+
 /// Whether a settled command can reach the ranked hot scanner without first
 /// crossing a transaction, resource, diagnostic, or contextual dispatcher
 /// barrier. Prefixes deliberately do not qualify: their substantive command
@@ -10566,7 +10710,8 @@ fn dispatch_main_control_command_inner<G>(
                 scanner: None,
             });
         }
-        let mut scanned = scan_command(
+        let mut suspended_operation_scan = None;
+        let scanned_result = scan_command(
             processor,
             command,
             global,
@@ -10578,7 +10723,27 @@ fn dispatch_main_control_command_inner<G>(
             display_eq_no,
             set_box_allowed,
             shown_mode,
-        )?;
+            &mut suspended_operation_scan,
+        );
+        if let Err(error) = &scanned_result
+            && execution_error_needs_command_retry(error)
+            && let Some(phase) = suspended_operation_scan
+        {
+            let child = processor
+                .take_scanner_resume()
+                .expect("a suspended scalar scan retains its exact child capability");
+            let pending = PendingOperationScan {
+                command,
+                cursor: processor.delivery_cursor(),
+                phase,
+                child,
+            };
+            let retry = retry
+                .as_deref_mut()
+                .expect("resource-capable direct scanning has a retained parent destination");
+            *retry = Some(PendingPreflightCommand::OperationScan(pending));
+        }
+        let mut scanned = scanned_result?;
         if suppress_left_boundary
             && let ScannedOperation::<G>::Cold(
                 ColdOperation::<G>::Character {
@@ -10890,6 +11055,7 @@ fn scan_command<G>(
     display_eq_no: bool,
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
+    suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
@@ -11187,6 +11353,7 @@ fn scan_command<G>(
         display_eq_no,
         set_box_allowed,
         shown_mode,
+        suspended_operation_scan,
     )
     .map(Into::into)
 }

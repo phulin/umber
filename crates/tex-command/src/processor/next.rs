@@ -805,11 +805,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §407 guards its call with `if p<>backup_head`, so an empty list is the
     /// caller's business; pushing one here would observe a level that retires
     /// without ever delivering a token.
-    pub(crate) fn back_list(&mut self, tokens: Vec<BackedUpToken>) {
-        debug_assert!(
-            !tokens.is_empty(),
-            "TeX82 §407 guards back_list with `p<>backup_head`"
-        );
+    pub(crate) fn back_list(&mut self, tokens: impl IntoIterator<Item = BackedUpToken>) {
         let level = self.command.push_token_level(
             TokenPayload::backed_up(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),

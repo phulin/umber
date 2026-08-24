@@ -2039,24 +2039,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         opener: &CurrentCommand<G>,
         roman: bool,
         resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
+        _suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let pending =
-            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-                crate::state::PendingExpansionResume::Dispatch => None,
-                crate::state::PendingExpansionResume::Number(pending) => Some(pending),
-                _ => return Err(CommandError::input_invariant()),
-            };
-        let mut pending_integer = None;
-        let value = match self.scan_expanded_integer(pending, &mut pending_integer) {
-            Ok(value) => value.value,
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    *suspended = pending_integer.map(crate::state::PendingExpansionResume::Number);
-                }
-                return Err(error);
-            }
-        };
+        if !matches!(resume, crate::state::PendingExpansionResume::Dispatch) {
+            return Err(CommandError::input_invariant());
+        }
+        let value = self.scan_integer()?.value;
         let text = if roman {
             roman_numeral(value)
         } else {

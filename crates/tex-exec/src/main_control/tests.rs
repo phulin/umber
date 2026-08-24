@@ -5895,6 +5895,38 @@ fn nested_csname_and_ifcsname_accumulators_resume_their_typed_parents() {
     assert_eq!(staged_terminal, preloaded_terminal);
 }
 
+#[test]
+fn count_assignment_resumes_exact_integer_operand_after_file_probe() {
+    // The literal prefix has already committed when `\pdffilesize` asks the
+    // host for `second`. Restarting the assignment or the integer scanner
+    // loses that prefix; the retained direct-operation and scalar frames must
+    // instead continue the same radix tail, yielding 12 followed by 2.
+    for (source, resources, expected) in [
+        (
+            br"\count0=12\pdffilesize{second}\message{[\the\count0]}\end".as_slice(),
+            &["second"][..],
+            "[122]",
+        ),
+        (
+            br"\count0=12\pdffilesize{second}\pdffilesize{third}\message{[\the\count0]}\end"
+                .as_slice(),
+            &["second", "third"][..],
+            "[1222]",
+        ),
+    ] {
+        let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, resources);
+        assert!(preloaded_requests.is_empty());
+        assert!(
+            preloaded_terminal.contains(expected),
+            "{preloaded_terminal:?}"
+        );
+
+        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+        assert_eq!(staged_requests, resources);
+        assert_eq!(staged_terminal, preloaded_terminal);
+    }
+}
+
 fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<String>) {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);

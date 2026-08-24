@@ -28,6 +28,7 @@ pub(in crate::main_control) fn scan<G>(
     display_eq_no: bool,
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
+    suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
 ) -> Result<ColdOperation<G>, ExecError> {
     let tex_state::meaning::ResolvedMeaning::Static(meaning) = command.meaning() else {
         unreachable!("expanded macro reached cold stomach dispatch")
@@ -137,26 +138,21 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::EjectResidualPage)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-            let index = processor
-                .scan_profile_register_index()
-                .map_err(command_error)?;
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_integer().map_err(command_error)?.value;
-            Ok(ColdOperation::Count {
-                index,
-                value,
+            scan_count_register_assignment(
+                processor,
+                None,
                 global,
-            })
+                CountScanPhase::RegisterIndex,
+                suspended_operation_scan,
+            )
         }
-        Meaning::CountRegister(index) => {
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_integer().map_err(command_error)?.value;
-            Ok(ColdOperation::Count {
-                index,
-                value,
-                global,
-            })
-        }
+        Meaning::CountRegister(index) => scan_count_register_assignment(
+            processor,
+            Some(index),
+            global,
+            CountScanPhase::OptionalEquals,
+            suspended_operation_scan,
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             let index = processor
                 .scan_profile_register_index()

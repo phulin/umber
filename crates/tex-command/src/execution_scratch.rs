@@ -43,6 +43,7 @@ pub struct ScannerFrameKey<G> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ContinuationKind {
     Scanner,
+    Scalar,
     Expansion,
     ExpandAfter,
     PdfStringCompare,
@@ -57,6 +58,10 @@ impl<G> ScannerFrameKey<G> {
 
     pub(crate) fn is_expansion(&self) -> bool {
         self.kind == ContinuationKind::Expansion
+    }
+
+    pub(crate) fn is_scalar(&self) -> bool {
+        self.kind == ContinuationKind::Scalar
     }
 
     pub(crate) fn is_expandafter(&self) -> bool {
@@ -103,6 +108,7 @@ impl<G, D> ChildContinuation<G, D> {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ContinuationFrame<G> {
     Scanner(crate::scan_toks::PendingScanToks<G>),
+    Scalar(crate::scanners::PendingScalarFrame<G>),
     Expansion(crate::state::PendingExpansion<G>),
     ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
     PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
@@ -487,6 +493,7 @@ impl<G> ExecutionScratch<G> {
         let matches_kind = matches!(
             (&frame, key.kind),
             (ContinuationFrame::Scanner(_), ContinuationKind::Scanner)
+                | (ContinuationFrame::Scalar(_), ContinuationKind::Scalar)
                 | (ContinuationFrame::Expansion(_), ContinuationKind::Expansion)
                 | (
                     ContinuationFrame::ExpandAfter(_),
@@ -509,6 +516,31 @@ impl<G> ExecutionScratch<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(frame)
+    }
+
+    pub(crate) fn store_scalar_frame(
+        &mut self,
+        pending: crate::scanners::PendingScalarFrame<G>,
+    ) -> Result<ScannerFrameKey<G>, ScratchError> {
+        self.scanner_resumes
+            .insert(ContinuationFrame::Scalar(pending))
+            .map(|id| ScannerFrameKey {
+                id,
+                kind: ContinuationKind::Scalar,
+            })
+    }
+
+    pub(crate) fn take_scalar_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<crate::scanners::PendingScalarFrame<G>, ScratchError> {
+        if !key.is_scalar() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.take(key.id)? {
+            ContinuationFrame::Scalar(pending) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
     }
 
     pub(crate) fn store_scanner_frame(

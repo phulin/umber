@@ -481,6 +481,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .discard_attempt_scope_suffix(pending.scope)
                     .map_err(attempt_command_error)
             }
+            crate::execution_scratch::ContinuationFrame::Scalar(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                Ok(())
+            }
             crate::execution_scratch::ContinuationFrame::Expansion(mut pending) => {
                 if let Some(child) = pending.take_child() {
                     self.abort_continuation(child)?;

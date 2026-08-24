@@ -243,7 +243,6 @@ pub(crate) enum PendingExpansionResume {
         inverted: bool,
         name: String,
     },
-    Number(crate::scanners::PendingIntegerScan),
     PdfMatchPattern {
         case_insensitive: bool,
         subcount: u32,

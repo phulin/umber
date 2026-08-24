@@ -31,8 +31,8 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
 
 /// Inline capacity for TeX/e-TeX/pdfTeX's current keyword vocabulary.
 ///
-/// The longest production keyword is 13 characters. `scan_keyword` remains
-/// open to callers with longer strings and moves to `spill` when necessary.
+/// The longest production keyword is 13 characters. Longer or non-ASCII
+/// spellings are rejected because they are outside the canonical vocabulary.
 const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
 
 /// TeX82 §§440--445 scalar state whose next expanded token crossed an
@@ -56,12 +56,40 @@ pub(crate) enum PendingIntegerScan {
         provenance: OriginId,
         value: i32,
     },
+    CharacterCode {
+        negative: bool,
+        provenance: OriginId,
+    },
 }
 
-struct MatchedKeywordPrefix<G> {
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct InlineKeyword {
+    bytes: [u8; KEYWORD_PREFIX_INLINE_CAPACITY],
+    len: u8,
+}
+
+impl InlineKeyword {
+    fn parse(keyword: &str) -> Result<Self, CommandError> {
+        if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
+            return Err(CommandError::input_invariant());
+        }
+        let mut bytes = [0; KEYWORD_PREFIX_INLINE_CAPACITY];
+        bytes[..keyword.len()].copy_from_slice(keyword.as_bytes());
+        Ok(Self {
+            bytes,
+            len: keyword.len() as u8,
+        })
+    }
+
+    fn get(self, index: usize) -> Option<char> {
+        (index < usize::from(self.len)).then(|| char::from(self.bytes[index]))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct MatchedKeywordPrefix<G> {
     inline: [Option<CurrentCommand<G>>; KEYWORD_PREFIX_INLINE_CAPACITY],
     len: usize,
-    spill: Option<Vec<CurrentCommand<G>>>,
 }
 
 impl<G> MatchedKeywordPrefix<G> {
@@ -69,7 +97,6 @@ impl<G> MatchedKeywordPrefix<G> {
         Self {
             inline: std::array::from_fn(|_| None),
             len: 0,
-            spill: None,
         }
     }
 
@@ -78,27 +105,96 @@ impl<G> MatchedKeywordPrefix<G> {
     }
 
     fn push(&mut self, command: CurrentCommand<G>) {
-        if let Some(spill) = &mut self.spill {
-            spill.push(command);
-        } else if self.len < KEYWORD_PREFIX_INLINE_CAPACITY {
-            self.inline[self.len] = Some(command);
-        } else {
-            let mut spill = Vec::with_capacity(KEYWORD_PREFIX_INLINE_CAPACITY * 2);
-            spill.extend(self.inline.iter_mut().filter_map(Option::take));
-            spill.push(command);
-            self.spill = Some(spill);
-        }
+        debug_assert!(self.len < KEYWORD_PREFIX_INLINE_CAPACITY);
+        self.inline[self.len] = Some(command);
         self.len += 1;
     }
 
-    fn into_vec(mut self) -> Vec<CurrentCommand<G>> {
-        self.spill.take().unwrap_or_else(|| {
-            self.inline
-                .iter_mut()
-                .take(self.len)
-                .filter_map(Option::take)
-                .collect()
-        })
+    fn into_backed_up(self) -> impl Iterator<Item = crate::input::BackedUpToken> {
+        self.inline
+            .into_iter()
+            .take(self.len)
+            .flatten()
+            .map(|command| crate::input::BackedUpToken {
+                spelling: command.spelling(),
+                source_provenance: command.source_provenance(),
+            })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ScalarChildDestination {
+    OptionalEqualsToken,
+    KeywordToken,
+    IntegerLeadingToken,
+    IntegerComplete,
+    IntegerCharacterCode,
+    IntegerOptionalSpace,
+    IntegerRadixToken,
+}
+
+/// One allocation-free scalar continuation in the current generation's
+/// reusable ABA-tagged scratch lane.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum PendingScalarFrame<G> {
+    OptionalEquals {
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    Keyword {
+        keyword: InlineKeyword,
+        matched: MatchedKeywordPrefix<G>,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    Integer {
+        progress: PendingIntegerScan,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    IntegerComplete {
+        first: CurrentCommand<G>,
+        negative: bool,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+}
+
+impl<G> PendingScalarFrame<G> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        match self {
+            Self::OptionalEquals { child, .. }
+            | Self::Keyword { child, .. }
+            | Self::Integer { child, .. }
+            | Self::IntegerComplete { child, .. } => child.take().map(|child| child.restore().0),
+        }
+    }
+
+    fn capture_child(&mut self, baton: &mut Option<crate::ScannerFrameKey<G>>) {
+        let (child, destination) = match self {
+            Self::OptionalEquals { child, .. } => {
+                (child, ScalarChildDestination::OptionalEqualsToken)
+            }
+            Self::Keyword { child, .. } => (child, ScalarChildDestination::KeywordToken),
+            Self::Integer {
+                progress: PendingIntegerScan::Leading { .. },
+                child,
+            } => (child, ScalarChildDestination::IntegerLeadingToken),
+            Self::Integer {
+                progress: PendingIntegerScan::Radix { .. },
+                child,
+            } => (child, ScalarChildDestination::IntegerRadixToken),
+            Self::Integer {
+                progress: PendingIntegerScan::CharacterCode { .. },
+                child,
+            } => (child, ScalarChildDestination::IntegerCharacterCode),
+            Self::Integer {
+                progress: PendingIntegerScan::CharacterOptionalSpace { .. },
+                child,
+            } => (child, ScalarChildDestination::IntegerOptionalSpace),
+            Self::IntegerComplete { child, .. } => (child, ScalarChildDestination::IntegerComplete),
+        };
+        debug_assert!(child.is_none());
+        *child = crate::execution_scratch::ChildContinuation::capture(baton, destination);
     }
 }
 
@@ -360,11 +456,116 @@ struct ScannedUnits {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    fn take_pending_scalar_frame(&mut self) -> Result<Option<PendingScalarFrame<G>>, CommandError> {
+        if !self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_scalar)
+        {
+            return Ok(None);
+        }
+        let key = self
+            .scanner_resume
+            .take()
+            .expect("matched scalar continuation");
+        self.command
+            .scratch
+            .take_scalar_frame(key)
+            .map(Some)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    fn restore_scalar_child(
+        &mut self,
+        child: &mut Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+        expected: ScalarChildDestination,
+    ) -> Result<(), CommandError> {
+        if let Some(child) = child.take() {
+            let (key, destination) = child.restore();
+            if destination != expected {
+                self.abort_continuation(key)?;
+                return Err(CommandError::input_invariant());
+            }
+            self.install_scanner_resume(Some(key));
+        }
+        Ok(())
+    }
+
+    fn retain_scalar_frame(
+        &mut self,
+        mut pending: PendingScalarFrame<G>,
+    ) -> Result<(), CommandError> {
+        pending.capture_child(&mut self.scanner_resume);
+        let key = self
+            .command
+            .scratch
+            .store_scalar_frame(pending)
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        if self.scanner_resume.replace(key).is_some() {
+            return Err(CommandError::input_invariant());
+        }
+        Ok(())
+    }
+
+    fn finish_scalar_call<T>(
+        &mut self,
+        result: Result<T, CommandError>,
+        suspended: Option<PendingScalarFrame<G>>,
+    ) -> Result<T, CommandError> {
+        match result {
+            Err(error) if error.is_resource_suspension() => {
+                self.retain_scalar_frame(suspended.ok_or_else(CommandError::input_invariant)?)?;
+                Err(error)
+            }
+            Err(error) => {
+                if let Some(child) = self.scanner_resume.take() {
+                    self.abort_continuation(child)?;
+                }
+                Err(error)
+            }
+            Ok(value) => {
+                if let Some(child) = self.scanner_resume.take() {
+                    self.abort_continuation(child)?;
+                    return Err(CommandError::input_invariant());
+                }
+                Ok(value)
+            }
+        }
+    }
+
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     pub fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
-        let mut provenance = OriginId::UNKNOWN;
+        let pending = self.take_pending_scalar_frame()?;
+        let mut provenance = match pending {
+            Some(PendingScalarFrame::OptionalEquals {
+                provenance,
+                mut child,
+            }) => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::OptionalEqualsToken)?;
+                provenance
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => OriginId::UNKNOWN,
+        };
         loop {
-            let Some(command) = self.get_x_token()? else {
+            let command = match self.get_x_token() {
+                Ok(command) => command,
+                Err(error) => {
+                    return self.finish_scalar_call(
+                        Err(error),
+                        Some(PendingScalarFrame::OptionalEquals {
+                            provenance,
+                            child: None,
+                        }),
+                    );
+                }
+            };
+            let Some(command) = command else {
                 return Ok(ScannedScalar {
                     value: false,
                     recovery: ScalarRecovery::None,
@@ -449,17 +650,48 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
     pub fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
+        let keyword = InlineKeyword::parse(keyword)?;
+        let pending = self.take_pending_scalar_frame()?;
         // `link(backup_head)`: the tokens matched so far, in delivery order.
-        let mut matched = MatchedKeywordPrefix::new();
-        let mut provenance = OriginId::UNKNOWN;
-        let mut letters = keyword.chars().peekable();
-        while let Some(&letter) = letters.peek() {
-            let Some(command) = self.get_x_token()? else {
+        let (mut matched, mut provenance) = match pending {
+            Some(PendingScalarFrame::Keyword {
+                keyword: retained,
+                matched,
+                provenance,
+                mut child,
+            }) if retained == keyword => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::KeywordToken)?;
+                (matched, provenance)
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => (MatchedKeywordPrefix::new(), OriginId::UNKNOWN),
+        };
+        while let Some(letter) = keyword.get(matched.len) {
+            let command = match self.get_x_token() {
+                Ok(command) => command,
+                Err(error) => {
+                    return self.finish_scalar_call(
+                        Err(error),
+                        Some(PendingScalarFrame::Keyword {
+                            keyword,
+                            matched,
+                            provenance,
+                            child: None,
+                        }),
+                    );
+                }
+            };
+            let Some(command) = command else {
                 // tex.web cannot reach this: `get_x_token` always yields, and
                 // exhausted input is `\\end`'s business. Restore the prefix
                 // the same way a mismatch would and report no keyword.
                 if !matched.is_empty() {
-                    self.back_matched_keyword_prefix(matched.into_vec());
+                    self.back_matched_keyword_prefix(matched);
                 }
                 return Ok(Self::keyword_result(false, provenance));
             };
@@ -473,7 +705,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             {
                 matched.push(command);
-                letters.next();
             } else if matched.is_empty()
                 && matches!(
                     scalar_meaning(command.meaning()),
@@ -488,7 +719,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             } else {
                 self.back_input(command)?;
                 if !matched.is_empty() {
-                    self.back_matched_keyword_prefix(matched.into_vec());
+                    self.back_matched_keyword_prefix(matched);
                 }
                 return Ok(Self::keyword_result(false, provenance));
             }
@@ -501,16 +732,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §407's `back_list(link(backup_head))`, over commands rather than raw
     /// tokens so the replayed prefix keeps each delivery's exact spelling and
     /// source provenance.
-    fn back_matched_keyword_prefix(&mut self, matched: Vec<CurrentCommand<G>>) {
-        self.back_list(
-            matched
-                .into_iter()
-                .map(|command| crate::input::BackedUpToken {
-                    spelling: command.spelling(),
-                    source_provenance: command.source_provenance(),
-                })
-                .collect(),
-        );
+    fn back_matched_keyword_prefix(&mut self, matched: MatchedKeywordPrefix<G>) {
+        self.back_list(matched.into_backed_up());
     }
 
     const fn keyword_result(value: bool, primary: OriginId) -> ScannedScalar<bool> {
@@ -523,17 +746,71 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans an integer or an internal integer quantity.
     pub fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
-        self.scan_integer_with_resource_continuation(false, None, &mut None)
-    }
-
-    /// Scans the operand of an expandable integer conversion whose opener is
-    /// retained by the expanded-delivery machine across immutable host input.
-    pub(crate) fn scan_expanded_integer(
-        &mut self,
-        pending: Option<PendingIntegerScan>,
-        suspended: &mut Option<PendingIntegerScan>,
-    ) -> Result<ScannedScalar<i32>, CommandError> {
-        self.scan_integer_with_resource_continuation(true, pending, suspended)
+        let pending = self.take_pending_scalar_frame()?;
+        let mut suspended_integer = None;
+        let mut suspended_frame = None;
+        let result = match pending {
+            Some(PendingScalarFrame::Integer {
+                progress,
+                mut child,
+            }) => {
+                let expected = match progress {
+                    PendingIntegerScan::Leading { .. } => {
+                        ScalarChildDestination::IntegerLeadingToken
+                    }
+                    PendingIntegerScan::Radix { .. } => ScalarChildDestination::IntegerRadixToken,
+                    PendingIntegerScan::CharacterCode { .. } => {
+                        ScalarChildDestination::IntegerCharacterCode
+                    }
+                    PendingIntegerScan::CharacterOptionalSpace { .. } => {
+                        ScalarChildDestination::IntegerOptionalSpace
+                    }
+                };
+                self.restore_scalar_child(&mut child, expected)?;
+                self.scan_integer_with_resource_continuation(
+                    true,
+                    Some(progress),
+                    &mut suspended_integer,
+                    &mut suspended_frame,
+                )
+            }
+            Some(PendingScalarFrame::IntegerComplete {
+                first,
+                negative,
+                provenance,
+                mut child,
+            }) => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::IntegerComplete)?;
+                self.complete_integer(
+                    first,
+                    negative,
+                    provenance,
+                    true,
+                    &mut suspended_integer,
+                    &mut suspended_frame,
+                )
+                .map(|completed| completed.0)
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => self.scan_integer_with_resource_continuation(
+                true,
+                None,
+                &mut suspended_integer,
+                &mut suspended_frame,
+            ),
+        };
+        if suspended_frame.is_none() {
+            suspended_frame = suspended_integer.map(|progress| PendingScalarFrame::Integer {
+                progress,
+                child: None,
+            });
+        }
+        self.finish_scalar_call(result, suspended_frame)
     }
 
     fn scan_integer_with_resource_continuation(
@@ -541,6 +818,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         retain_continuation: bool,
         pending: Option<PendingIntegerScan>,
         suspended: &mut Option<PendingIntegerScan>,
+        suspended_frame: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<i32>, CommandError> {
         if let Some(PendingIntegerScan::Radix {
             negative,
@@ -583,6 +861,24 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
         }
+        if let Some(PendingIntegerScan::CharacterCode {
+            negative,
+            provenance,
+        }) = pending
+        {
+            let (value, recovery, optional_space) = self.scan_character_code()?;
+            if optional_space && let Err(error) = self.scan_optional_space() {
+                if error.is_resource_suspension() {
+                    *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
+                        negative,
+                        provenance,
+                        value,
+                    });
+                }
+                return Err(error);
+            }
+            return Ok(self.finish_integer(value, negative, provenance, recovery));
+        }
         let (mut negative, mut provenance) = match pending {
             Some(PendingIntegerScan::Leading {
                 negative,
@@ -591,6 +887,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             None => (false, OriginId::UNKNOWN),
             Some(
                 PendingIntegerScan::Radix { .. }
+                | PendingIntegerScan::CharacterCode { .. }
                 | PendingIntegerScan::CharacterOptionalSpace { .. },
             ) => unreachable!(),
         };
@@ -626,7 +923,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         Ok(self
-            .complete_integer(first, negative, provenance, retain_continuation, suspended)?
+            .complete_integer(
+                first,
+                negative,
+                provenance,
+                retain_continuation,
+                suspended,
+                suspended_frame,
+            )?
             .0)
     }
 
@@ -647,6 +951,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         provenance: OriginId,
         retain_continuation: bool,
         suspended: &mut Option<PendingIntegerScan>,
+        suspended_frame: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<i32>, u8), CommandError> {
         // TeX82 §440's `scan_int` calls `scan_something_internal(int_val,
         // false)`, so §413's §429 loop lowers every numeric level to an
@@ -655,96 +960,120 @@ impl<G> CommandProcessor<'_, '_, G> {
         // dimension step because `\z@` is a dimension register, not a numeric
         // literal; `\ifnum\parskip>0` and `\count0=\skip3` rely on the glue
         // step.
-        let (value, radix, recovery) =
-            match self.scan_something_internal(&first, InternalLevel::Integer, false)? {
-                InternalScan::Value(InternalValue::Integer(value)) => {
-                    (value, NO_RADIX, ScalarRecovery::None)
+        let internal = match self.scan_something_internal(&first, InternalLevel::Integer, false) {
+            Ok(internal) => internal,
+            Err(error) => {
+                if retain_continuation && error.is_resource_suspension() {
+                    *suspended_frame = Some(PendingScalarFrame::IntegerComplete {
+                        first,
+                        negative,
+                        provenance,
+                        child: None,
+                    });
                 }
-                InternalScan::Value(_) => {
-                    unreachable!("TeX82 §429 lowers an int_val request to an integer")
-                }
-                InternalScan::NotInternal => match scalar_meaning(first.meaning()) {
-                    Meaning::CharToken {
-                        ch,
-                        cat: Catcode::Other,
-                    } if ch.is_ascii_digit() => (
-                        self.scan_radix_tail(
-                            Some(ch as u8 - b'0'),
-                            DECIMAL_RADIX,
-                            retain_continuation.then_some((negative, provenance)),
-                            suspended,
-                        )?
-                        .0,
+                return Err(error);
+            }
+        };
+        let (value, radix, recovery) = match internal {
+            InternalScan::Value(InternalValue::Integer(value)) => {
+                (value, NO_RADIX, ScalarRecovery::None)
+            }
+            InternalScan::Value(_) => {
+                unreachable!("TeX82 §429 lowers an int_val request to an integer")
+            }
+            InternalScan::NotInternal => match scalar_meaning(first.meaning()) {
+                Meaning::CharToken {
+                    ch,
+                    cat: Catcode::Other,
+                } if ch.is_ascii_digit() => (
+                    self.scan_radix_tail(
+                        Some(ch as u8 - b'0'),
                         DECIMAL_RADIX,
-                        ScalarRecovery::None,
-                    ),
-                    // TeX.web `scan_int` treats an apostrophe or double quote as
-                    // an octal or hexadecimal introducer. The following digits
-                    // still travel through `get_x_token`, so their deliveries are
-                    // observable before the completed scanner result.
-                    Meaning::CharToken {
-                        ch: '\'',
-                        cat: Catcode::Other,
-                    } => {
-                        let (value, vacuous) = self.scan_radix_tail(
-                            None,
-                            8,
-                            retain_continuation.then_some((negative, provenance)),
-                            suspended,
-                        )?;
-                        if vacuous {
-                            self.missing_number_error()?;
-                            return Ok((self.inserted_zero_integer(provenance), 8));
-                        }
-                        (value, 8, ScalarRecovery::None)
+                        retain_continuation.then_some((negative, provenance)),
+                        suspended,
+                    )?
+                    .0,
+                    DECIMAL_RADIX,
+                    ScalarRecovery::None,
+                ),
+                // TeX.web `scan_int` treats an apostrophe or double quote as
+                // an octal or hexadecimal introducer. The following digits
+                // still travel through `get_x_token`, so their deliveries are
+                // observable before the completed scanner result.
+                Meaning::CharToken {
+                    ch: '\'',
+                    cat: Catcode::Other,
+                } => {
+                    let (value, vacuous) = self.scan_radix_tail(
+                        None,
+                        8,
+                        retain_continuation.then_some((negative, provenance)),
+                        suspended,
+                    )?;
+                    if vacuous {
+                        self.missing_number_error()?;
+                        return Ok((self.inserted_zero_integer(provenance), 8));
                     }
-                    Meaning::CharToken {
-                        ch: '"',
-                        cat: Catcode::Other,
-                    } => {
-                        let (value, vacuous) = self.scan_radix_tail(
-                            None,
-                            16,
-                            retain_continuation.then_some((negative, provenance)),
-                            suspended,
-                        )?;
-                        if vacuous {
-                            self.missing_number_error()?;
-                            return Ok((self.inserted_zero_integer(provenance), 16));
-                        }
-                        (value, 16, ScalarRecovery::None)
+                    (value, 8, ScalarRecovery::None)
+                }
+                Meaning::CharToken {
+                    ch: '"',
+                    cat: Catcode::Other,
+                } => {
+                    let (value, vacuous) = self.scan_radix_tail(
+                        None,
+                        16,
+                        retain_continuation.then_some((negative, provenance)),
+                        suspended,
+                    )?;
+                    if vacuous {
+                        self.missing_number_error()?;
+                        return Ok((self.inserted_zero_integer(provenance), 16));
                     }
-                    // TeX's `\` character-code form consumes its following token
-                    // through raw delivery: that token supplies a character code,
-                    // rather than participating in ordinary expansion.  The
-                    // optional following space remains an expanded scanner token.
-                    // §442 never enters §444, so `radix` stays zero.
-                    Meaning::CharToken {
-                        ch: '`',
-                        cat: Catcode::Other,
-                    } => {
-                        let (value, recovery, optional_space) = self.scan_character_code()?;
-                        if optional_space && let Err(error) = self.scan_optional_space() {
+                    (value, 16, ScalarRecovery::None)
+                }
+                // TeX's `\` character-code form consumes its following token
+                // through raw delivery: that token supplies a character code,
+                // rather than participating in ordinary expansion.  The
+                // optional following space remains an expanded scanner token.
+                // §442 never enters §444, so `radix` stays zero.
+                Meaning::CharToken {
+                    ch: '`',
+                    cat: Catcode::Other,
+                } => {
+                    let (value, recovery, optional_space) = match self.scan_character_code() {
+                        Ok(value) => value,
+                        Err(error) => {
                             if retain_continuation && error.is_resource_suspension() {
-                                *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
+                                *suspended = Some(PendingIntegerScan::CharacterCode {
                                     negative,
                                     provenance,
-                                    value,
                                 });
                             }
                             return Err(error);
                         }
-                        (value, NO_RADIX, recovery)
+                    };
+                    if optional_space && let Err(error) = self.scan_optional_space() {
+                        if retain_continuation && error.is_resource_suspension() {
+                            *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
+                                negative,
+                                provenance,
+                                value,
+                            });
+                        }
+                        return Err(error);
                     }
-                    _ => {
-                        // §444's `vacuous` case. `radix:=10` is assigned before
-                        // the accumulation loop, so it survives §446's recovery.
-                        self.back_input(first)?;
-                        self.missing_number_error()?;
-                        return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
-                    }
-                },
-            };
+                    (value, NO_RADIX, recovery)
+                }
+                _ => {
+                    // §444's `vacuous` case. `radix:=10` is assigned before
+                    // the accumulation loop, so it survives §446's recovery.
+                    self.back_input(first)?;
+                    self.missing_number_error()?;
+                    return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
+                }
+            },
+        };
         let scanned = self.finish_integer(value, negative, provenance, recovery);
         Ok((scanned, radix))
     }
@@ -1001,8 +1330,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             (0, true, ScalarRecovery::None)
         } else {
             let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            let (scanned, radix) =
-                self.complete_integer(replayed, false, provenance.primary, false, &mut None)?;
+            let (scanned, radix) = self.complete_integer(
+                replayed,
+                false,
+                provenance.primary,
+                false,
+                &mut None,
+                &mut None,
+            )?;
             let decimal = radix == DECIMAL_RADIX
                 && self
                     .last_integer_terminator
