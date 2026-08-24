@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import http.server
 import importlib.util
+import json
 import tarfile
 import tempfile
 import threading
@@ -25,6 +26,15 @@ def expect_error(action, fragment: str) -> None:
         assert fragment in str(error), (fragment, str(error))
     else:
         raise AssertionError(f"expected ProvisionError containing {fragment!r}")
+
+
+def expect_texlive_error(action, fragment: str) -> None:
+    try:
+        action()
+    except provision.texlive.TexliveError as error:
+        assert fragment in str(error), (fragment, str(error))
+    else:
+        raise AssertionError(f"expected TexliveError containing {fragment!r}")
 
 
 def main() -> None:
@@ -123,6 +133,95 @@ def main() -> None:
         assert (staged / "tex/latex-dev/base/latex.ltx").read_bytes() == b"dev kernel\n"
         assert (staged / "fonts/tfm/public/cm/cmr10.tfm").read_bytes() == b"metric\n"
         assert (staged / "tex/language.dat").read_bytes() == language_configuration
+
+        seed = root / "snapshot-seed"
+        seed_objects = seed / "objects"
+        seed_texmf = seed / "texmf-dist"
+        seed_objects.mkdir(parents=True)
+        (seed_texmf / "tex").mkdir(parents=True)
+        from_object = b"from object root\n"
+        from_texmf = b"from texmf root\n"
+        object_digest = hashlib.sha256(from_object).hexdigest()
+        texmf_digest = hashlib.sha256(from_texmf).hexdigest()
+        (seed_objects / f"sha256-{object_digest}").write_bytes(from_object)
+        (seed_texmf / "tex/from-texmf.tex").write_bytes(from_texmf)
+        shard = (
+            json.dumps(
+                {
+                    "schema": 1,
+                    "distribution": "fixture-snapshot",
+                    "index": 0,
+                    "files": {
+                        "tex:from-object.tex": {
+                            "virtualPath": "/texlive/tex/from-object.tex",
+                            "object": f"sha256-{object_digest}",
+                            "sha256": object_digest,
+                            "bytes": len(from_object),
+                        },
+                        "tex:from-texmf.tex": {
+                            "virtualPath": "/texlive/tex/from-texmf.tex",
+                            "object": f"sha256-{texmf_digest}",
+                            "sha256": texmf_digest,
+                            "bytes": len(from_texmf),
+                        },
+                    },
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+        shard_digest = hashlib.sha256(shard).hexdigest()
+        (seed_objects / f"sha256-{shard_digest}").write_bytes(shard)
+        root_manifest = (
+            json.dumps(
+                {
+                    "schema": 3,
+                    "distribution": "fixture-snapshot",
+                    "objectsBaseUrl": "https://example.invalid/objects/",
+                    "formats": {},
+                    "shardBits": 0,
+                    "shardCount": 1,
+                    "shards": [shard_digest],
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+        root_digest = hashlib.sha256(root_manifest).hexdigest()
+        source_root = seed / "manifest-v3.json"
+        source_root.write_bytes(root_manifest)
+        mirror = root / "mirror"
+        result = provision.texlive.materialize_snapshot(
+            mirror,
+            root_sha256=root_digest,
+            source_root_path=source_root,
+            object_roots=(seed_objects,),
+            texmf_roots=(seed_texmf,),
+            keys=("tex:from-object.tex", "tex:from-texmf.tex"),
+            offline=True,
+        )
+        assert result["root_sha256"] == root_digest
+        assert result["shards"] == 1
+        assert result["keys"] == 2
+        assert result["payload_objects"] == 2
+        assert (mirror / "texmf-dist/tex/from-object.tex").read_bytes() == from_object
+        assert (mirror / "texmf-dist/tex/from-texmf.tex").read_bytes() == from_texmf
+        provision.texlive.materialize_snapshot(
+            mirror,
+            root_sha256=root_digest,
+            keys=("tex:from-object.tex", "tex:from-texmf.tex"),
+            offline=True,
+        )
+        (mirror / "objects" / f"sha256-{object_digest}").write_bytes(b"corrupt\n")
+        expect_texlive_error(
+            lambda: provision.texlive.materialize_snapshot(
+                mirror,
+                root_sha256=root_digest,
+                keys=("tex:from-object.tex", "tex:from-texmf.tex"),
+                offline=True,
+            ),
+            "cached snapshot object",
+        )
         server.shutdown()
     print("test-provision: PASS")
 

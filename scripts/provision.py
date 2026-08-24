@@ -321,7 +321,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
     distribution, expected_tree = texlive.verify_runtime_tree(
         texmf_dist, repo_root / SNAPSHOT_LOCK
     )
-    format_distribution = next(
+    format_source_distribution = next(
         (
             fields[1]
             for raw_line in (repo_root / "tests/latex-source.lock").read_text().splitlines()
@@ -329,11 +329,29 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
         ),
         "",
     )
-    if format_distribution != distribution:
+    if format_source_distribution != distribution:
         raise ProvisionError(
-            f"format source distribution {format_distribution or '<missing>'} "
+            f"format source distribution {format_source_distribution or '<missing>'} "
             f"differs from snapshot distribution {distribution}"
         )
+    format_distribution_sha256 = next(
+        (
+            fields[1]
+            for raw_line in (repo_root / "tests/latex-source.lock").read_text().splitlines()
+            if (fields := raw_line.split())[:1] == ["distribution_sha256"]
+            and len(fields) == 2
+        ),
+        "",
+    )
+    if not texlive.valid_digest(format_distribution_sha256, 64):
+        raise ProvisionError("format source lock has no valid distribution SHA-256")
+    if args.format_distribution_sha256 is not None:
+        format_distribution_sha256 = args.format_distribution_sha256
+    if not texlive.valid_digest(format_distribution_sha256, 64):
+        raise ProvisionError("invalid format distribution SHA-256")
+    format_distribution = (
+        args.format_distribution or repo_root / "target/texlive-snapshot"
+    ).resolve()
     package_database = args.package_database
     if not args.without_package_database:
         package_database = package_database or texmf_dist.parent / "tlpkg/texlive.tlpdb"
@@ -365,6 +383,10 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                     "--publish-input-closure",
                     "--texmf-dist",
                     str(texmf_dist),
+                    "--distribution",
+                    str(format_distribution),
+                    "--distribution-sha256",
+                    format_distribution_sha256,
                     "--output-dir",
                     str(format_root / engine),
                 ],
@@ -436,6 +458,9 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
 def _add_materialize_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root-url", default=texlive.DEFAULT_ROOT_URL)
     parser.add_argument("--root-sha256", default=texlive.DEFAULT_ROOT_SHA256)
+    parser.add_argument("--root-path", type=Path)
+    parser.add_argument("--object-root", action="append", type=Path, default=[])
+    parser.add_argument("--texmf-root", action="append", type=Path, default=[])
     parser.add_argument("--output-dir", type=Path, default=Path("target/texlive-snapshot"))
     parser.add_argument("--format", action="append", default=[])
     parser.add_argument("--key", action="append", default=[])
@@ -469,6 +494,8 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     snapshot.add_argument("--pdftex-map", type=Path)
     snapshot.add_argument("--package-database", type=Path)
     snapshot.add_argument("--without-package-database", action="store_true")
+    snapshot.add_argument("--format-distribution", type=Path)
+    snapshot.add_argument("--format-distribution-sha256")
     snapshot.add_argument("--output-dir", type=Path, default=Path("target/texlive-snapshot"))
     snapshot.add_argument("--objects-base-url", default="https://example.invalid/umber/texlive/objects/")
     snapshot.add_argument("--shard-bits", type=int, choices=range(17), default=8)
@@ -488,6 +515,9 @@ def main(arguments: list[str] | None = None) -> int:
             args.output_dir,
             root_url=args.root_url,
             root_sha256=args.root_sha256,
+            source_root_path=args.root_path,
+            object_roots=tuple(args.object_root),
+            texmf_roots=tuple(args.texmf_root),
             formats_requested=tuple(args.format),
             keys=tuple(args.key),
             lock_paths=tuple(args.keys_from),

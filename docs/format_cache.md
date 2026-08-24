@@ -49,6 +49,15 @@ otherwise they use the platform Umber cache directory. Published distribution
 workflows continue to identify snapshots from authenticated root-manifest
 bytes rather than from a mutable path.
 
+Generated-format cache identity is not resource authority. The builder
+requires `--distribution PATH` and `--distribution-sha256 SHA256`, checks the
+local root against the digest pinned in `tests/latex-source.lock`, resolves the
+path before entering any scratch directory, and passes the same absolute path,
+pin, and `--offline` to both clean generations and both sides of the
+source-versus-loaded equivalence gate. A missing mirror object is therefore a
+hard local-authority failure even when the native cache is warm or the hosted
+default is reachable.
+
 On a hit, `restore` revalidates the entry envelope, SHA-256, and full Universe
 decode, then atomically materializes the requested `.fmt` output. The builder
 does not require or open the TeX Live source tree on this path. A mismatch or

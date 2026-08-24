@@ -13,8 +13,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 
 - `texlive.py`: import-only authenticated TeX Live 2026 source/runtime library;
   it owns source extraction, linked-worktree source symlinks, selective hosted
-  snapshot materialization from bare keys, source locks, or accepted PDF font
-  closure receipts, and locked runtime staging.
+  or explicitly seeded local snapshot materialization from bare keys, source
+  locks, or accepted PDF font closure receipts, and locked runtime staging.
 - `provision.py`: the sole provisioning CLI for primary/linked worktrees,
   TeX Live source, reference oracles, hosted subsets, and publisher snapshots;
   snapshot publication stages the complete locked format-construction closure
@@ -83,6 +83,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `build-initex-format-matrix.sh` and
   `test-build-initex-format-matrix.sh`: serial guarded Plain, LaTeX, and
   pdfLaTeX INITEX reproduction plus hermetic argument-routing coverage.
+- `test-build-latex-format.sh`: hermetic required-argument, root-pin,
+  all-engine-run passthrough, and forced-offline format-authority coverage.
 - `sync-github-issues.sh`: explicit Beads-to-GitHub issue, epic-label, and
   project synchronization helper.
 - `build-tex82-oracle.sh`: hash-pinned TeX Live source acquisition and

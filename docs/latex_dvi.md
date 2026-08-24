@@ -95,7 +95,9 @@ Build the pinned format and run a format-loaded LaTeX-DVI job with explicit
 TeX Live lookup roots:
 
 ```sh
-scripts/build-latex-format.sh
+scripts/build-latex-format.sh \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
 TEXINPUTS=/usr/local/texlive/2026/texmf-dist/tex/latex/base:/usr/local/texlive/2026/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend \
 TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
   cargo run-dev -p umber -- run --latex document.tex \
@@ -115,6 +117,13 @@ on a hit, or `--check` to regenerate and compare the valid cache plus existing
 output without changing either. `UMBER_FORMAT_CACHE_ROOT` selects an explicit
 cache root for hermetic build or acquisition workflows.
 
+The explicit distribution must be a local authenticated mirror. Its root
+digest is also pinned in `tests/latex-source.lock`. Every engine invocation
+uses that same resolved path and digest with offline acquisition, independently
+of generated-format cache identity. Materialize and recheck the required
+selection as described in [Sharded Distribution Manifest](distribution_manifest.md)
+before running the builder.
+
 Every Umber subprocess started by the builder, including format-cache restore
 and publication, runs through `scripts/run-umber-guarded.py`. The shared guard
 sets finite engine fuel, enforces aggregate process-group RSS and wall-time
@@ -130,7 +139,10 @@ Build and run the corresponding pdfLaTeX mode with the same pinned common
 source closure plus its explicitly locked PDF configuration inputs:
 
 ```sh
-scripts/build-latex-format.sh --engine pdflatex
+scripts/build-latex-format.sh \
+  --engine pdflatex \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
 TEXINPUTS=/usr/local/texlive/2026/texmf-dist/tex/latex/base:/usr/local/texlive/2026/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend \
 TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
   cargo run-dev -p umber -- run --pdflatex document.tex \

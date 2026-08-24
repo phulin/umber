@@ -238,6 +238,14 @@ and cross-package prefetch hints so common package closures start concurrently
 without allowing one large package to exceed client resource limits.
 Production inventory floors reject seed-sized output.
 
+Format construction during publication is independently bound to an existing
+authenticated local distribution. The snapshot command defaults that authority
+to `target/texlive-snapshot` and the root digest committed in
+`tests/latex-source.lock`; `--format-distribution` and
+`--format-distribution-sha256` select another explicit prior mirror. Every
+builder engine runs offline against that path, so publication cannot bootstrap
+from a hosted default or an unlabelled warm cache.
+
 Publication hands the completed staging directory to `rclone` configured for
 R2. Object upload uses bounded transfers and an immutable snapshot prefix;
 re-running the command is the supported resumable, idempotent recovery path.

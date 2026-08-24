@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
+format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
+format_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
 output_dir="${repo_root}/target/latex-wasm"
 format_output=""
@@ -11,6 +13,8 @@ objects_base_url="https://example.invalid/umber/latex/objects/"
 usage() {
   cat <<'EOF'
 usage: scripts/build-wasm-latex-bundle.sh [--texmf-dist PATH] [--output-dir PATH]
+                                          [--distribution PATH]
+                                          [--distribution-sha256 SHA256]
                                           [--format-output PATH] [--objects-base-url URL]
 
 Builds the deterministic Umber-native LaTeX format, stages the exact pinned
@@ -27,6 +31,16 @@ while [[ $# -gt 0 ]]; do
     --texmf-dist)
       [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --texmf-dist' >&2; exit 2; }
       texmf_dist="$2"
+      shift 2
+      ;;
+    --distribution)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --distribution' >&2; exit 2; }
+      format_distribution="$2"
+      shift 2
+      ;;
+    --distribution-sha256)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --distribution-sha256' >&2; exit 2; }
+      format_distribution_sha256="$2"
       shift 2
       ;;
     --output-dir)
@@ -88,7 +102,10 @@ format_dir="${tmp_root}/format"
 runtime_root="${tmp_root}/texmf-dist"
 mkdir -p "$runtime_root"
 "${repo_root}/scripts/build-latex-format.sh" --publish-input-closure \
-  --texmf-dist "$texmf_dist" --output-dir "$format_dir"
+  --texmf-dist "$texmf_dist" \
+  --distribution "$format_distribution" \
+  --distribution-sha256 "$format_distribution_sha256" \
+  --output-dir "$format_dir"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$runtime_lock")"
 [[ -n "$distribution" ]] || fail "runtime closure is missing its distribution"

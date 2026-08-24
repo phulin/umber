@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
+format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
+format_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "${repo_root}/tests/latex-source.lock")"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
@@ -25,7 +27,10 @@ sha256() {
   fail "reference LaTeX is not from pinned TeX Live 2026"
 
 cd "$repo_root"
-scripts/build-latex-format.sh --texmf-dist "$texmf_dist"
+scripts/build-latex-format.sh \
+  --texmf-dist "$texmf_dist" \
+  --distribution "$format_distribution" \
+  --distribution-sha256 "$format_distribution_sha256"
 cargo build --release -p umber
 cargo build -p refexec
 

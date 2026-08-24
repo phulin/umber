@@ -386,6 +386,37 @@ def _acquire_snapshot_object(url: str, path: Path, identity: Identity, offline: 
     return data
 
 
+def _seed_snapshot_object(
+    path: Path, identity: Identity, object_roots: tuple[Path, ...]
+) -> bytes | None:
+    name = f"sha256-{identity.digest}"
+    for root in object_roots:
+        candidate = root / name
+        if not candidate.exists():
+            continue
+        verify_file(candidate, identity, "sha256", "seed snapshot object")
+        data = candidate.read_bytes()
+        _write_atomic(path, data)
+        return data
+    return None
+
+
+def _seed_snapshot_shard(
+    path: Path, digest: str, object_roots: tuple[Path, ...]
+) -> bytes | None:
+    name = f"sha256-{digest}"
+    for root in object_roots:
+        candidate = root / name
+        if not candidate.exists():
+            continue
+        data = candidate.read_bytes()
+        if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
+            raise TexliveError(f"seed snapshot shard failed verification: {candidate}")
+        _write_atomic(path, data)
+        return data
+    return None
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -410,23 +441,36 @@ def materialize_snapshot(
     *,
     root_url: str = DEFAULT_ROOT_URL,
     root_sha256: str = DEFAULT_ROOT_SHA256,
+    source_root_path: Path | None = None,
+    object_roots: tuple[Path, ...] = (),
+    texmf_roots: tuple[Path, ...] = (),
     formats_requested: tuple[str, ...] = (),
     keys: tuple[str, ...] = (),
     lock_paths: tuple[Path, ...] = (),
     offline: bool = False,
 ) -> dict[str, int | str]:
-    if not root_url.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
+    if source_root_path is None and not root_url.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
         raise TexliveError("root URL must use HTTPS")
     if not valid_digest(root_sha256, 64):
         raise TexliveError("invalid root SHA-256")
+    object_roots = tuple(root.resolve() for root in object_roots)
+    texmf_roots = tuple(root.resolve() for root in texmf_roots)
+    for root in (*object_roots, *texmf_roots):
+        if not root.is_dir():
+            raise TexliveError(f"snapshot seed root is not a directory: {root}")
     output = output.resolve()
-    root_identity = Identity(MAX_MANIFEST_BYTES, root_sha256)
     root_path = output / "manifest-v3.json"
     if root_path.exists():
         data = root_path.read_bytes()
         if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != root_sha256:
             raise TexliveError(f"existing root manifest failed verification: {root_path}")
         root_data = data
+    elif source_root_path is not None:
+        source_root_path = source_root_path.resolve()
+        root_data = source_root_path.read_bytes()
+        if len(root_data) > MAX_MANIFEST_BYTES or hashlib.sha256(root_data).hexdigest() != root_sha256:
+            raise TexliveError(f"root manifest identity mismatch for {source_root_path}")
+        _write_atomic(root_path, root_data)
     else:
         if offline:
             raise TexliveError(f"missing {root_path} while running --offline")
@@ -458,6 +502,7 @@ def materialize_snapshot(
             if previous != identity:
                 raise TexliveError(f"conflicting locked identity for {key}")
     objects: dict[str, Identity] = {}
+    object_virtuals: dict[str, Path] = {}
     views: dict[Path, str] = {}
     for name in formats_requested:
         record = formats.get(name)
@@ -477,14 +522,16 @@ def materialize_snapshot(
             if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
                 raise TexliveError(f"existing shard failed verification: {path}")
         else:
-            if offline:
-                raise TexliveError(f"missing {path} while running --offline")
-            request = urllib.request.Request(urljoin(objects_url, name), headers={"User-Agent": "umber-texlive/1"})
-            with urllib.request.urlopen(request, timeout=60) as response:
-                data = response.read(MAX_MANIFEST_BYTES + 1)
-            if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
-                raise TexliveError(f"shard identity mismatch: {name}")
-            _write_atomic(path, data)
+            data = _seed_snapshot_shard(path, digest, object_roots)
+            if data is None:
+                if offline:
+                    raise TexliveError(f"missing {path} while running --offline")
+                request = urllib.request.Request(urljoin(objects_url, name), headers={"User-Agent": "umber-texlive/1"})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    data = response.read(MAX_MANIFEST_BYTES + 1)
+                if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
+                    raise TexliveError(f"shard identity mismatch: {name}")
+                _write_atomic(path, data)
         shard = _json_document(data, f"shard {index}")
         if shard.get("schema") != 1 or shard.get("distribution") != root.get("distribution") or shard.get("index") != index:
             raise TexliveError(f"shard {index} identity mismatch")
@@ -498,12 +545,30 @@ def materialize_snapshot(
             raise TexliveError(f"requested key differs from pinned lock identity: {key}")
         objects[record["object"]] = identity
         virtual = str(record.get("virtualPath", "")).removeprefix("/texlive/")
-        views[_safe_relative(virtual, label=f"virtual path for {key}")] = record["object"]
+        virtual_path = _safe_relative(virtual, label=f"virtual path for {key}")
+        views[virtual_path] = record["object"]
+        object_virtuals.setdefault(record["object"], virtual_path)
     total = 0
     for name, identity in sorted(objects.items()):
         if name != f"sha256-{identity.digest}" or identity.bytes < 0:
             raise TexliveError(f"invalid object record: {name}")
-        _acquire_snapshot_object(urljoin(objects_url, name), output / "objects" / name, identity, offline)
+        object_path = output / "objects" / name
+        data = _read_verified_bytes(object_path, identity)
+        if data is None:
+            data = _seed_snapshot_object(object_path, identity, object_roots)
+        if data is None:
+            virtual = object_virtuals.get(name)
+            if virtual is not None:
+                for texmf_root in texmf_roots:
+                    candidate = texmf_root / virtual
+                    if not candidate.exists():
+                        continue
+                    verify_file(candidate, identity, "sha256", "seed TEXMF object")
+                    data = candidate.read_bytes()
+                    _write_atomic(object_path, data)
+                    break
+        if data is None:
+            _acquire_snapshot_object(urljoin(objects_url, name), object_path, identity, offline)
         total += identity.bytes
     for virtual, name in sorted(views.items(), key=lambda item: str(item[0])):
         source = output / "objects" / name

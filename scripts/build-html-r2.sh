@@ -4,13 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-2026/texmf-dist}"
 snapshot_lock="${repo_root}/tests/texlive-snapshot.lock"
+format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
+format_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 output_dir="${repo_root}/target/html-r2"
 objects_base_url="https://assets.umber.ink/html/umber-html-mvp-v1/objects/"
 shard_bits=4
 
 usage() {
   cat <<'EOF'
-usage: scripts/build-html-r2.sh [--texmf-dist PATH] [--output-dir PATH]
+usage: scripts/build-html-r2.sh [--texmf-dist PATH]
+       [--distribution PATH] [--distribution-sha256 SHA256] [--output-dir PATH]
        [--objects-base-url HTTPS-URL] [--shard-bits BITS]
 
 Builds two byte-identical copies of the immutable contract-v1 HTML-only R2
@@ -35,6 +38,8 @@ sha256() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --texmf-dist) texmf_dist="${2:-}"; shift 2 ;;
+    --distribution) format_distribution="${2:-}"; shift 2 ;;
+    --distribution-sha256) format_distribution_sha256="${2:-}"; shift 2 ;;
     --output-dir) output_dir="${2:-}"; shift 2 ;;
     --objects-base-url) objects_base_url="${2:-}"; shift 2 ;;
     --shard-bits) shard_bits="${2:-}"; shift 2 ;;
@@ -64,11 +69,15 @@ format_dir="$tmp_root/formats"
   --engine latex \
   --publish-input-closure \
   --texmf-dist "$texmf_dist" \
+  --distribution "$format_distribution" \
+  --distribution-sha256 "$format_distribution_sha256" \
   --output-dir "$format_dir/latex"
 "$repo_root/scripts/build-latex-format.sh" \
   --engine pdflatex \
   --publish-input-closure \
   --texmf-dist "$texmf_dist" \
+  --distribution "$format_distribution" \
+  --distribution-sha256 "$format_distribution_sha256" \
   --output-dir "$format_dir/pdflatex"
 
 # The format trace includes two repository-owned configuration inputs. Give

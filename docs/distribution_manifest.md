@@ -357,6 +357,11 @@ construction closure as the highest-precedence TEXMF root, and publishes both
 format closures in the schema-3 root. This prevents a basename winner from a
 different LaTeX release line from drifting away from the frozen format's input
 receipt. Two clean publications must still be byte-identical.
+Format construction requires an already materialized local authority selected
+with `--format-distribution` and `--format-distribution-sha256`; their
+authenticated checkout-local defaults are the existing
+`target/texlive-snapshot` root and the digest pinned by
+`tests/latex-source.lock`.
 `scripts/publish-texlive-r2.sh` retains manifest-last upload order for full
 snapshots and authenticated sparse successors; a successor must use a unique
 schema-3 root key and may reuse only the base's immutable content-addressed
@@ -409,6 +414,33 @@ and proves that the explicit checkout-local distribution is complete for the
 same selection. Add canonical `kind:name` records with `--key` or a one-key-per-
 line file with `--keys-from`; repository lock records of the form
 `source KIND PATH BYTES SHA256` are also accepted.
+
+An authenticated local producer can seed the identical selective workflow
+without contacting the hosted origin:
+
+```sh
+python3 scripts/provision.py materialize \
+  --root-path /path/to/pinned/manifest-v3.json \
+  --root-sha256 <pinned-root-sha256> \
+  --object-root /path/to/digest-named/objects \
+  --texmf-root /path/to/authenticated/texmf-dist \
+  --keys-from /path/to/request-keys.txt \
+  --output-dir target/texlive-snapshot \
+  --offline
+python3 scripts/provision.py materialize \
+  --root-sha256 <pinned-root-sha256> \
+  --keys-from /path/to/request-keys.txt \
+  --output-dir target/texlive-snapshot \
+  --offline
+```
+
+`--object-root` names only a directory of raw `sha256-<digest>` objects; it
+does not accept or copy a native cache namespace. `--texmf-root` supplies
+payload candidates by the manifest's authenticated virtual path. The
+materializer selects only required shards and payloads, verifies their exact
+declared lengths and SHA-256 identities, writes only verified objects into the
+checkout-local mirror, and then constructs its sparse TEXMF view. The seed-free
+second command is the offline completeness proof for that exact selection.
 
 An accepted native PDF run may write the engine-owned classic-font closure with
 `--pdf-font-closure-out`. Its schema-1 TSV retains the semantic request kind,

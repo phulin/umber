@@ -6,6 +6,8 @@ lock_file="${repo_root}/tests/latex-source.lock"
 engine="latex"
 output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
+distribution_path=""
+distribution_sha256=""
 publish_input_closure=0
 force_regeneration=0
 check_only=0
@@ -17,6 +19,8 @@ engine_fuel="${UMBER_LATEX_FORMAT_ENGINE_FUEL:-500000000}"
 usage() {
   cat <<'EOF'
 usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
+                                     --distribution PATH
+                                     --distribution-sha256 SHA256
                                      [--texmf-dist PATH] [--output-dir PATH]
                                      [--publish-input-closure] [--force|--check]
 
@@ -24,7 +28,8 @@ Restores a validated pinned Umber-native LaTeX format from the generated-format
 cache, or verifies the exact mode-specific locked input closure, builds twice,
 checks source/loaded equivalence, and atomically publishes the miss. --force
 always regenerates. --check regenerates and compares the cache and output
-without changing either. The default output is target/<engine>-format.
+without changing either. Every engine run uses the same authenticated local
+distribution in offline mode. The default output is target/<engine>-format.
 EOF
 }
 
@@ -38,6 +43,16 @@ while [[ $# -gt 0 ]]; do
     --texmf-dist)
       [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --texmf-dist' >&2; exit 2; }
       texmf_dist="$2"
+      shift 2
+      ;;
+    --distribution)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --distribution' >&2; exit 2; }
+      distribution_path="$2"
+      shift 2
+      ;;
+    --distribution-sha256)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --distribution-sha256' >&2; exit 2; }
+      distribution_sha256="$2"
       shift 2
       ;;
     --output-dir)
@@ -93,6 +108,19 @@ output_dir="${output_dir:-${repo_root}/target/${format_name}-format}"
   exit 2
 }
 
+[[ -n "$distribution_path" ]] || {
+  printf '%s\n' 'build-latex-format.sh: --distribution PATH is required' >&2
+  exit 2
+}
+[[ -n "$distribution_sha256" ]] || {
+  printf '%s\n' 'build-latex-format.sh: --distribution-sha256 SHA256 is required' >&2
+  exit 2
+}
+[[ "$distribution_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+  printf '%s\n' 'build-latex-format.sh: --distribution-sha256 must be 64 lowercase hexadecimal characters' >&2
+  exit 2
+}
+
 fail() {
   printf 'build-latex-format.sh: %s\n' "$*" >&2
   exit 1
@@ -109,10 +137,38 @@ sha256() {
 [[ -f "$lock_file" ]] || fail "missing source lock: $lock_file"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$lock_file")"
+locked_distribution_sha256="$(awk '$1 == "distribution_sha256" { print $2 }' "$lock_file")"
 format_schema="$(awk '$1 == "format_schema" { print $2 }' "$lock_file")"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$lock_file")"
-[[ -n "$distribution" && -n "$format_schema" && -n "$source_date_epoch" ]] || \
+[[ -n "$distribution" && -n "$locked_distribution_sha256" && \
+  -n "$format_schema" && -n "$source_date_epoch" ]] || \
   fail "source lock is missing required metadata"
+[[ "$locked_distribution_sha256" =~ ^[0-9a-f]{64}$ ]] || \
+  fail "source lock has an invalid distribution SHA-256"
+[[ "$distribution_sha256" == "$locked_distribution_sha256" ]] || \
+  fail "distribution SHA-256 does not match the source lock: expected $locked_distribution_sha256, got $distribution_sha256"
+
+if [[ -d "$distribution_path" ]]; then
+  distribution_path="$(cd "$distribution_path" && pwd -P)"
+  if [[ -f "$distribution_path/manifest-v3.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v3.json"
+  elif [[ -f "$distribution_path/manifest-v2.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v2.json"
+  elif [[ -f "$distribution_path/manifest.json" ]]; then
+    distribution_manifest="$distribution_path/manifest.json"
+  else
+    fail "distribution directory has no manifest-v3.json, manifest-v2.json, or manifest.json: $distribution_path"
+  fi
+elif [[ -f "$distribution_path" ]]; then
+  distribution_directory="$(cd "$(dirname "$distribution_path")" && pwd -P)"
+  distribution_path="${distribution_directory}/$(basename "$distribution_path")"
+  distribution_manifest="$distribution_path"
+else
+  fail "distribution path is not a local file or directory: $distribution_path"
+fi
+actual_distribution_sha256="$(sha256 "$distribution_manifest")"
+[[ "$actual_distribution_sha256" == "$distribution_sha256" ]] || \
+  fail "distribution root digest mismatch for $distribution_manifest: expected $distribution_sha256, got $actual_distribution_sha256"
 
 scratch_parent="${UMBER_LATEX_FORMAT_WORK_ROOT:-${output_dir}/work}"
 mkdir -p "$scratch_parent"
@@ -224,7 +280,11 @@ run_engine() {
   (
     cd "$directory"
     SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
-      run_umber run "--${engine}" "$@"
+      run_umber run "--${engine}" \
+        --distribution "$distribution_path" \
+        --distribution-sha256 "$distribution_sha256" \
+        --offline \
+        "$@"
   )
 }
 

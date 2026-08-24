@@ -6,12 +6,15 @@ plain_builder="${UMBER_PLAIN_FORMAT_BUILDER:-${repo_root}/scripts/build-wasm-pla
 latex_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
 plain_texmf_dist="${UMBER_PLAIN_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 latex_texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/target/texlive-snapshot/texmf-dist}"
+latex_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
+latex_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 output_root="${repo_root}/target/initex-format-matrix"
 
 usage() {
   cat <<'EOF'
 usage: scripts/build-initex-format-matrix.sh
        [--plain-texmf-dist PATH] [--latex-texmf-dist PATH]
+       [--latex-distribution PATH] [--latex-distribution-sha256 SHA256]
        [--output-root PATH]
 
 Builds and verifies the supported INITEX format matrix serially. Plain is
@@ -31,6 +34,16 @@ while [[ $# -gt 0 ]]; do
     --latex-texmf-dist)
       [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --latex-texmf-dist' >&2; exit 2; }
       latex_texmf_dist="$2"
+      shift 2
+      ;;
+    --latex-distribution)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --latex-distribution' >&2; exit 2; }
+      latex_distribution="$2"
+      shift 2
+      ;;
+    --latex-distribution-sha256)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --latex-distribution-sha256' >&2; exit 2; }
+      latex_distribution_sha256="$2"
       shift 2
       ;;
     --output-root)
@@ -65,11 +78,15 @@ mkdir -p "$output_root"
 "$latex_builder" \
   --engine latex \
   --texmf-dist "$latex_texmf_dist" \
+  --distribution "$latex_distribution" \
+  --distribution-sha256 "$latex_distribution_sha256" \
   --output-dir "${output_root}/latex" \
   --force
 "$latex_builder" \
   --engine pdflatex \
   --texmf-dist "$latex_texmf_dist" \
+  --distribution "$latex_distribution" \
+  --distribution-sha256 "$latex_distribution_sha256" \
   --output-dir "${output_root}/pdflatex" \
   --force
 

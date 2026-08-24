@@ -951,8 +951,14 @@ the outputs atomically, and reruns the hermetic audit.
 The LaTeX format builder is a separate deterministic integration tier:
 
 ```bash
-scripts/build-latex-format.sh --engine latex
-scripts/build-latex-format.sh --engine pdflatex
+scripts/build-latex-format.sh \
+  --engine latex \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
+scripts/build-latex-format.sh \
+  --engine pdflatex \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
 ```
 
 Both modes verify that two clean format builds are byte-identical and that a
@@ -962,6 +968,9 @@ builder reads the common and mode-specific TeX Live input closure from
 `tests/latex-source.lock`; its pdfLaTeX configuration is pinned locally in
 `tests/latex/pdftexconfig.tex`. Generated formats and comparison artifacts
 remain under `target/` rather than becoming repository fixtures.
+The source lock also pins the schema-3 distribution digest. Both flags are
+required, the local root is authenticated before compilation, and all four
+engine runs use the same absolute path and pin with offline resolution.
 All builder-started Umber and format-cache subprocesses reuse
 `scripts/run-umber-guarded.py` with finite engine fuel, aggregate process-group
 RSS and wall-time ceilings, and TERM-to-KILL/reap enforcement. Compiler-only
@@ -987,7 +996,9 @@ pinned distribution roots for Plain and LaTeX:
 ```bash
 scripts/build-initex-format-matrix.sh \
   --plain-texmf-dist /path/to/texlive-2025/texmf-dist \
-  --latex-texmf-dist target/texlive-snapshot/texmf-dist
+  --latex-texmf-dist target/texlive-snapshot/texmf-dist \
+  --latex-distribution target/texlive-snapshot \
+  --latex-distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
 ```
 
 It delegates to the three builders above without overriding their resource

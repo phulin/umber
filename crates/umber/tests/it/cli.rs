@@ -2142,7 +2142,7 @@ fn run_resolves_area_less_input_through_texinputs_and_advances() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
-fn run_acquires_from_a_local_distribution_then_reuses_cache_offline() {
+fn run_uses_one_pinned_local_distribution_with_a_cold_offline_cache() {
     let temp_dir = tempfile::tempdir().expect("create distribution temp dir");
     let source = temp_dir.path().join("main.tex");
     let distribution = temp_dir.path().join("distribution");
@@ -2164,12 +2164,14 @@ fn run_acquires_from_a_local_distribution_then_reuses_cache_offline() {
         "{{\"schema\":2,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
     );
     fs::write(distribution.join("manifest-v2.json"), &manifest).expect("write manifest");
+    let manifest_digest = hex_sha256(manifest.as_bytes());
 
     let first = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["run", "--show-fixtures", "--distribution"])
+        .args(["run", "--show-fixtures", "--offline", "--distribution"])
         .arg(&distribution)
+        .args(["--distribution-sha256", &manifest_digest])
         .arg(&source)
         .output()
         .expect("run cold local distribution");
@@ -2188,9 +2190,9 @@ fn run_acquires_from_a_local_distribution_then_reuses_cache_offline() {
     let second = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .env("XDG_CACHE_HOME", &cache)
-        .env("UMBER_OFFLINE", "1")
-        .args(["run", "--show-fixtures", "--distribution"])
+        .args(["run", "--show-fixtures", "--offline", "--distribution"])
         .arg(&distribution)
+        .args(["--distribution-sha256", &manifest_digest])
         .arg(&source)
         .output()
         .expect("run warm offline distribution");

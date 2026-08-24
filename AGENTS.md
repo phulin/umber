@@ -143,7 +143,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Snapshot-sensitive corpus and format work must pass the explicit regenerated
   2026-03-01 distribution path to Umber (normally
   `--distribution target/texlive-snapshot`, resolved from the owning checkout)
-  and must not rely on the default hosted manifest. The native cache is shared
+  plus its authenticated `--distribution-sha256` pin and must not rely on the
+  default hosted manifest. The native cache is shared
   and content-addressed rather than snapshot-partitioned: stop concurrent Umber
   runs before purging its `objects`/`manifests` namespaces, then warm only from
   the explicit pinned distribution and verify offline reuse.
