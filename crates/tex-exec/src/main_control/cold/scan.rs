@@ -966,35 +966,14 @@ pub(in crate::main_control) fn scan<G>(
             {
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            let font = matches!(
-                primitive,
-                UnexpandablePrimitive::PdfFontAttr
-                    | UnexpandablePrimitive::PdfIncludeChars
-                    | UnexpandablePrimitive::PdfNoBuiltinToUnicode
-            )
-            .then(|| processor.scan_font_selector().map_err(command_error))
-            .transpose()?;
-            let first = (!matches!(primitive, UnexpandablePrimitive::PdfNoBuiltinToUnicode))
-                .then(|| {
-                    processor
-                        .scan_balanced_text(true)
-                        .map(|text| text.tokens)
-                        .map_err(command_error)
-                })
-                .transpose()?;
-            let second = (primitive == UnexpandablePrimitive::PdfGlyphToUnicode)
-                .then(|| {
-                    processor
-                        .scan_balanced_text(true)
-                        .map(|text| text.tokens)
-                        .map_err(command_error)
-                })
-                .transpose()?;
+            let scanned = processor
+                .scan_pdf_font_action(primitive)
+                .map_err(command_error)?;
             Ok(ColdOperation::PdfFontAction {
                 primitive,
-                font,
-                first,
-                second,
+                font: scanned.font,
+                first: scanned.first,
+                second: scanned.second,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {

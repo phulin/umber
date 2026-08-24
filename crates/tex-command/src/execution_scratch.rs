@@ -47,6 +47,7 @@ enum ContinuationKind {
     ExpandAfter,
     PdfStringCompare,
     AlignmentPreamble,
+    StructuredScanner,
 }
 
 impl<G> ScannerFrameKey<G> {
@@ -68,6 +69,10 @@ impl<G> ScannerFrameKey<G> {
 
     pub(crate) fn is_alignment_preamble(&self) -> bool {
         self.kind == ContinuationKind::AlignmentPreamble
+    }
+
+    pub(crate) fn is_structured_scanner(&self) -> bool {
+        self.kind == ContinuationKind::StructuredScanner
     }
 }
 
@@ -102,6 +107,7 @@ pub(crate) enum ContinuationFrame<G> {
     ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
     PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
     AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
+    StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -494,6 +500,10 @@ impl<G> ExecutionScratch<G> {
                     ContinuationFrame::AlignmentPreamble(_),
                     ContinuationKind::AlignmentPreamble
                 )
+                | (
+                    ContinuationFrame::StructuredScanner(_),
+                    ContinuationKind::StructuredScanner
+                )
         );
         if !matches_kind {
             return Err(ScratchError::InvalidCoordinate);
@@ -648,6 +658,31 @@ impl<G> ExecutionScratch<G> {
         }
         match self.scanner_resumes.take(key.id)? {
             ContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
+    }
+
+    pub(crate) fn store_structured_scanner_frame(
+        &mut self,
+        pending: crate::scanners::PendingStructuredScanner<G>,
+    ) -> Result<ScannerFrameKey<G>, ScratchError> {
+        self.scanner_resumes
+            .insert(ContinuationFrame::StructuredScanner(pending))
+            .map(|id| ScannerFrameKey {
+                id,
+                kind: ContinuationKind::StructuredScanner,
+            })
+    }
+
+    pub(crate) fn take_structured_scanner_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<crate::scanners::PendingStructuredScanner<G>, ScratchError> {
+        if !key.is_structured_scanner() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.take(key.id)? {
+            ContinuationFrame::StructuredScanner(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }

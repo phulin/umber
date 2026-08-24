@@ -5880,6 +5880,7 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
                 "first" => b"ABCD",
                 "second" => b"AB",
                 "third" => b"CD",
+                "4" => b"EF",
                 other => panic!("unexpected file enquiry {other:?}"),
             };
             tex_command::FileEnquiryResource::new(
@@ -6000,6 +6001,154 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
             )
         ));
     });
+}
+
+#[test]
+fn pdf_glyph_to_unicode_operands_resume_their_exact_destinations() {
+    let source = br"\pdfglyphtounicode{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}\message{[done]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_start_link_action_resumes_its_exact_destination() {
+    let source =
+        br"\pdfoutput=1 A\pdfstartlink goto name{\pdffiledump length 2{second}}B\pdfendlink\end";
+
+    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_xform_optional_texts_resume_their_exact_destinations() {
+    let source = br"\pdfoutput=1 \setbox0=\hbox{A}\pdfxform attr{\pdffiledump length 2{second}} resources{\pdffiledump length 2{third}}0\message{[done]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn scalar_optional_space_keeps_a_nested_scanner_as_its_child() {
+    // The nested csname/expandafter shape matches LaTeX's format-time
+    // primitive-name construction. `\number` has finished its scalar before
+    // its optional-space lookahead enters the suspended `\expanded` scanner.
+    let source = br"\edef\result{\csname outer\expandafter\csname inner\expandafter\expandafter\expandafter\number1\expanded{\unexpanded{A}\pdffiledump length 2{second}}\endcsname\endcsname}\message{[done]}\end";
+
+    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(
+        preloaded_terminal.contains("[done]"),
+        "{preloaded_terminal:?}"
+    );
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn nested_file_enquiries_resume_their_typed_owners() {
+    let source = br"\edef\result{\pdfmdfivesum file{\pdffilesize{first}}}\message{[\result]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["first", "4"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(preloaded_terminal.contains("[2C9B682412689D6723E3B31653B5774C]"));
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["first", "4"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_match_operands_resume_their_exact_destinations() {
+    let source = br"\edef\result{\pdfmatch{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}}\message{[\result]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_object_optional_texts_resume_their_exact_destinations() {
+    let source = br"\pdfoutput=1 \pdfobj stream attr{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}\message{[done]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_outline_texts_resume_their_exact_destinations() {
+    let source = br"\pdfoutput=1 \pdfoutline attr{\pdffiledump length 2{first}} goto name{\pdffiledump length 2{second}} count 1 {\pdffiledump length 2{third}}\message{[done]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["first", "second", "third"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["first", "second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_catalog_text_and_action_resume_their_exact_destinations() {
+    let source = br"\pdfoutput=1 \pdfcatalog{\pdffiledump length 2{second}} openaction goto name{\pdffiledump length 2{third}}\message{[done]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(preloaded_requests.is_empty());
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdf_graphics_payloads_resume_their_exact_destinations() {
+    for source in [
+        br"\pdfoutput=1 \pdfliteral direct{\pdffiledump length 2{second}}\message{[done]}\end"
+            .as_slice(),
+        br"\pdfoutput=1 \edef\stack{\pdfcolorstackinit page direct{\pdffiledump length 2{second}}}\pdfcolorstack\stack push{\pdffiledump length 2{third}}\message{[done]}\end"
+            .as_slice(),
+        br"\special{\pdffiledump length 2{second}}\message{[done]}\end".as_slice(),
+    ] {
+        let resources = if source.windows(5).any(|window| window == b"third") {
+            &["second", "third"][..]
+        } else {
+            &["second"][..]
+        };
+        let (preloaded_terminal, preloaded_requests) =
+            run_pdftex_file_probe_job(source, resources);
+        assert!(preloaded_requests.is_empty());
+
+        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+        assert_eq!(staged_requests, resources);
+        assert_eq!(staged_terminal, preloaded_terminal);
+    }
 }
 
 #[test]

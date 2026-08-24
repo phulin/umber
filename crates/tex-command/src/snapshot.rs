@@ -679,11 +679,7 @@ impl<G> CommandState<G> {
         if !self.semantic_diagnostics.is_empty() {
             return Err(CommandSummaryError::PendingSemanticDiagnostic);
         }
-        if self.pending_input_open.is_some()
-            || self.pending_file_enquiry.is_some()
-            || !self.pending_integer_scans.is_empty()
-            || !self.pending_csnames.is_empty()
-        {
+        if self.pending_input_open.is_some() || !self.pending_csnames.is_empty() {
             return Err(CommandSummaryError::ResourceSuspension);
         }
         if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {

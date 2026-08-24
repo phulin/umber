@@ -37,7 +37,7 @@ const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
 
 /// TeX82 §§440--445 scalar state whose next expanded token crossed an
 /// immutable host boundary.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) enum PendingIntegerScan {
     Leading {
         negative: bool,
@@ -523,22 +523,25 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans an integer or an internal integer quantity.
     pub fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
-        self.scan_integer_with_resource_continuation(false)
+        self.scan_integer_with_resource_continuation(false, None, &mut None)
     }
 
     /// Scans the operand of an expandable integer conversion whose opener is
     /// retained by the expanded-delivery machine across immutable host input.
-    pub(crate) fn scan_expanded_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
-        self.scan_integer_with_resource_continuation(true)
+    pub(crate) fn scan_expanded_integer(
+        &mut self,
+        pending: Option<PendingIntegerScan>,
+        suspended: &mut Option<PendingIntegerScan>,
+    ) -> Result<ScannedScalar<i32>, CommandError> {
+        self.scan_integer_with_resource_continuation(true, pending, suspended)
     }
 
     fn scan_integer_with_resource_continuation(
         &mut self,
         retain_continuation: bool,
+        pending: Option<PendingIntegerScan>,
+        suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<ScannedScalar<i32>, CommandError> {
-        let pending = retain_continuation
-            .then(|| self.command.pending_integer_scans.pop())
-            .flatten();
         if let Some(PendingIntegerScan::Radix {
             negative,
             provenance,
@@ -554,6 +557,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 overflowed,
                 radix,
                 Some((negative, provenance)),
+                suspended,
             )?;
             if vacuous {
                 self.missing_number_error()?;
@@ -569,13 +573,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             if let Err(error) = self.scan_optional_space() {
                 if error.is_resource_suspension() {
-                    self.command.pending_integer_scans.push(
-                        PendingIntegerScan::CharacterOptionalSpace {
-                            negative,
-                            provenance,
-                            value,
-                        },
-                    );
+                    *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
+                        negative,
+                        provenance,
+                        value,
+                    });
                 }
                 return Err(error);
             }
@@ -597,12 +599,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(command) => command,
                 Err(error) => {
                     if retain_continuation && error.is_resource_suspension() {
-                        self.command
-                            .pending_integer_scans
-                            .push(PendingIntegerScan::Leading {
-                                negative,
-                                provenance,
-                            });
+                        *suspended = Some(PendingIntegerScan::Leading {
+                            negative,
+                            provenance,
+                        });
                     }
                     return Err(error);
                 }
@@ -626,7 +626,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         Ok(self
-            .complete_integer(first, negative, provenance, retain_continuation)?
+            .complete_integer(first, negative, provenance, retain_continuation, suspended)?
             .0)
     }
 
@@ -646,6 +646,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         negative: bool,
         provenance: OriginId,
         retain_continuation: bool,
+        suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<(ScannedScalar<i32>, u8), CommandError> {
         // TeX82 §440's `scan_int` calls `scan_something_internal(int_val,
         // false)`, so §413's §429 loop lowers every numeric level to an
@@ -671,6 +672,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             Some(ch as u8 - b'0'),
                             DECIMAL_RADIX,
                             retain_continuation.then_some((negative, provenance)),
+                            suspended,
                         )?
                         .0,
                         DECIMAL_RADIX,
@@ -688,6 +690,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             None,
                             8,
                             retain_continuation.then_some((negative, provenance)),
+                            suspended,
                         )?;
                         if vacuous {
                             self.missing_number_error()?;
@@ -703,6 +706,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             None,
                             16,
                             retain_continuation.then_some((negative, provenance)),
+                            suspended,
                         )?;
                         if vacuous {
                             self.missing_number_error()?;
@@ -722,13 +726,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         let (value, recovery, optional_space) = self.scan_character_code()?;
                         if optional_space && let Err(error) = self.scan_optional_space() {
                             if retain_continuation && error.is_resource_suspension() {
-                                self.command.pending_integer_scans.push(
-                                    PendingIntegerScan::CharacterOptionalSpace {
-                                        negative,
-                                        provenance,
-                                        value,
-                                    },
-                                );
+                                *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
+                                    negative,
+                                    provenance,
+                                    value,
+                                });
                             }
                             return Err(error);
                         }
@@ -1000,7 +1002,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let (scanned, radix) =
-                self.complete_integer(replayed, false, provenance.primary, false)?;
+                self.complete_integer(replayed, false, provenance.primary, false, &mut None)?;
             let decimal = radix == DECIMAL_RADIX
                 && self
                     .last_integer_terminator
@@ -1385,6 +1387,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         first: Option<u8>,
         radix: u8,
         integer_continuation: Option<(bool, OriginId)>,
+        suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<(i32, bool), CommandError> {
         self.scan_radix_tail_from(
             i32::from(first.unwrap_or(0)),
@@ -1392,6 +1395,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             false,
             radix,
             integer_continuation,
+            suspended,
         )
     }
 
@@ -1402,6 +1406,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut overflowed: bool,
         radix: u8,
         integer_continuation: Option<(bool, OriginId)>,
+        suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<(i32, bool), CommandError> {
         loop {
             let command = match self.get_x_token() {
@@ -1410,16 +1415,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if error.is_resource_suspension()
                         && let Some((negative, provenance)) = integer_continuation
                     {
-                        self.command
-                            .pending_integer_scans
-                            .push(PendingIntegerScan::Radix {
-                                negative,
-                                provenance,
-                                radix,
-                                value,
-                                vacuous,
-                                overflowed,
-                            });
+                        *suspended = Some(PendingIntegerScan::Radix {
+                            negative,
+                            provenance,
+                            radix,
+                            value,
+                            vacuous,
+                            overflowed,
+                        });
                     }
                     return Err(error);
                 }

@@ -502,6 +502,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             crate::execution_scratch::ContinuationFrame::AlignmentPreamble(pending) => {
                 self.abort_alignment_preamble(pending)
             }
+            crate::execution_scratch::ContinuationFrame::StructuredScanner(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                Ok(())
+            }
         }
     }
 

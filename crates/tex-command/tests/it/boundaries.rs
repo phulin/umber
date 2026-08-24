@@ -236,7 +236,7 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(crate::state::PendingExpansion"));
     assert!(expansion.contains("ChildContinuation::capture("));
-    assert!(expansion.contains("PendingExpansionDestination::Dispatch"));
+    assert!(expansion.contains("PendingExpansionChildDestination::Dispatch"));
     assert!(expansion.contains(".store_expandafter_frame(PendingExpandAfter"));
     assert!(expansion.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
     assert!(expansion.contains("PdfStringComparePhase::Right { left }"));

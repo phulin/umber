@@ -12,7 +12,6 @@ pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub(crate) use scalar::PendingIntegerScan;
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
-pub(crate) use structured::PendingAlignmentPreamble;
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
     FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,
@@ -33,4 +32,5 @@ pub use structured::{
     ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
     ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
+pub(crate) use structured::{PendingAlignmentPreamble, PendingStructuredScanner};
 pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

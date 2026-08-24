@@ -208,6 +208,15 @@ right phase also retains the completed left attempt-list coordinate. A retry
 therefore cannot accidentally deliver the right child to the syntactically
 identical left scan call.
 
+pdfTeX's file enquiries retain their requested intent in the owning expansion
+frame rather than a shared command-state mailbox. The same typed destination
+rule covers `\pdfmatch`, object/form/image/graphics scanners, glyph mappings,
+document fragments, and navigation actions: each optional or repeated
+balanced-text site names its exact phase and moves all already-scanned operands
+into that phase. Success consumes the phase, another resource suspension moves
+it back into the reusable scratch lane, and abort follows its child edge before
+discarding the caller.
+
 Alignment preamble collection is likewise a typed caller. Its reusable scratch
 frame moves the live scanner episode, builder, attempt-buffer coordinates, and
 partially collected columns across suspension. The expansion immediately after
@@ -244,8 +253,11 @@ Nested scanner and expansion suspension uses the same fixed typed scratch lane
 described above. Its backing vectors grow only when a generation reaches a new
 simultaneous high-water mark; freed slots are reused with a new serial, so a
 stale or double-consumed key is rejected. Scalar continuations such as an
-in-progress `\csname` remain in their dedicated typed state. None may become a
-general token, boxed-dynamic, or caller-order mailbox.
+in-progress `\csname` remain in their dedicated typed state. An expandable
+`\number` or `\romannumeral` moves its leading/radix/optional-space phase into
+the owning expansion frame, beside that frame's exact scanner child, instead
+of a command-state stack. None may become a general token, boxed-dynamic, or
+caller-order mailbox.
 
 The handle-free `OwnedCommandContinuation` schema, validation, and atomic
 destination materializer are implemented, but the module still carries a

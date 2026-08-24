@@ -1064,6 +1064,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &CurrentCommand<G>,
         mut report_trace: bool,
     ) -> Result<(), CommandError> {
+        let mut expansion_resume = crate::state::PendingExpansionResume::Dispatch;
         if self
             .scanner_resume
             .as_ref()
@@ -1081,9 +1082,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 return Err(CommandError::input_invariant());
             }
+            expansion_resume = retained.resume;
             if let Some(child) = retained.child.take() {
                 let (key, destination) = child.restore();
-                if destination != crate::state::PendingExpansionDestination::Dispatch {
+                if destination != crate::state::PendingExpansionChildDestination::Dispatch {
                     return Err(CommandError::input_invariant());
                 }
                 self.scanner_resume = Some(key);
@@ -1137,6 +1139,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
+        let mut suspended_resume = None;
         let result = (|| match command.meaning() {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
                 if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
@@ -1182,10 +1185,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.expand_meaning(command)
                 }
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
-                    self.expand_number(command, false)
+                    self.expand_number(command, false, &mut expansion_resume, &mut suspended_resume)
                 }
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
-                    self.expand_number(command, true)
+                    self.expand_number(command, true, &mut expansion_resume, &mut suspended_resume)
                 }
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => self.expand_the(command),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
@@ -1322,27 +1325,45 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
                     self.expand_pdf_unescape_hex(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
-                    self.expand_pdf_color_stack_init(command.copy_for_backup())
-                }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
-                    self.expand_pdf_match(command.copy_for_backup())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => self
+                    .expand_pdf_color_stack_init(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => self
+                    .expand_pdf_match(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
                     self.expand_pdf_last_match(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
-                    self.expand_pdf_file_dump(command.copy_for_backup())
-                }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => {
-                    self.expand_pdf_file_size(command.copy_for_backup())
-                }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => {
-                    self.expand_pdf_file_modification_date(command.copy_for_backup())
-                }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => {
-                    self.expand_pdf_md_five_sum(command.copy_for_backup())
-                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => self
+                    .expand_pdf_file_dump(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => self
+                    .expand_pdf_file_size(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => self
+                    .expand_pdf_file_modification_date(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => self
+                    .expand_pdf_md_five_sum(
+                        command.copy_for_backup(),
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    ),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
                     self.expand_pdf_insert_height(command.copy_for_backup())
                 }
@@ -1475,9 +1496,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .store_expansion_frame(crate::state::PendingExpansion {
                     command: *command,
+                    resume: suspended_resume
+                        .take()
+                        .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
                     child: crate::execution_scratch::ChildContinuation::capture(
                         &mut self.scanner_resume,
-                        crate::state::PendingExpansionDestination::Dispatch,
+                        crate::state::PendingExpansionChildDestination::Dispatch,
                     ),
                 })
                 .map_err(crate::scan_toks::scratch_command_error)?;
@@ -1986,8 +2010,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         opener: &CurrentCommand<G>,
         roman: bool,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let value = self.scan_expanded_integer()?.value;
+        let pending =
+            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+                crate::state::PendingExpansionResume::Dispatch => None,
+                crate::state::PendingExpansionResume::Number(pending) => Some(pending),
+                _ => return Err(CommandError::input_invariant()),
+            };
+        let mut pending_integer = None;
+        let value = match self.scan_expanded_integer(pending, &mut pending_integer) {
+            Ok(value) => value.value,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    *suspended = pending_integer.map(crate::state::PendingExpansionResume::Number);
+                }
+                return Err(error);
+            }
+        };
         let text = if roman {
             roman_numeral(value)
         } else {
@@ -2149,20 +2190,68 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §386 is `begin_token_list(cur_mark[cur_chr], mark_text)`, a distinct
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
-    fn expand_pdf_match(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let mut case_insensitive = false;
-        let mut subcount = 10_u32;
-        loop {
-            if self.scan_keyword("icase")?.value {
-                case_insensitive = true;
-            } else if self.scan_keyword("subcount")?.value {
-                subcount = self.scan_integer()?.value.max(0) as u32;
-            } else {
-                break;
+    fn expand_pdf_match(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let pending = std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch);
+        let (case_insensitive, subcount, retained_pattern) = match pending {
+            crate::state::PendingExpansionResume::Dispatch => {
+                let mut case_insensitive = false;
+                let mut subcount = 10_u32;
+                loop {
+                    if self.scan_keyword("icase")?.value {
+                        case_insensitive = true;
+                    } else if self.scan_keyword("subcount")?.value {
+                        subcount = self.scan_integer()?.value.max(0) as u32;
+                    } else {
+                        break;
+                    }
+                }
+                (case_insensitive, subcount, None)
             }
-        }
-        let pattern = self.scan_balanced_text(true)?.tokens;
-        let haystack = self.scan_balanced_text(true)?.tokens;
+            crate::state::PendingExpansionResume::PdfMatchPattern {
+                case_insensitive,
+                subcount,
+            } => (case_insensitive, subcount, None),
+            crate::state::PendingExpansionResume::PdfMatchHaystack {
+                case_insensitive,
+                subcount,
+                pattern,
+            } => (case_insensitive, subcount, Some(pattern)),
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let pattern = if let Some(pattern) = retained_pattern {
+            pattern
+        } else {
+            match self.scan_balanced_text(true) {
+                Ok(pattern) => pattern.tokens,
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        *suspended = Some(crate::state::PendingExpansionResume::PdfMatchPattern {
+                            case_insensitive,
+                            subcount,
+                        });
+                    }
+                    return Err(error);
+                }
+            }
+        };
+        let haystack = match self.scan_balanced_text(true) {
+            Ok(haystack) => haystack.tokens,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    *suspended = Some(crate::state::PendingExpansionResume::PdfMatchHaystack {
+                        case_insensitive,
+                        subcount,
+                        pattern,
+                    });
+                }
+                return Err(error);
+            }
+        };
         let pattern = pdftex_c_string(self.attempt_token_list_bytes(pattern)?);
         let haystack = pdftex_c_string(self.attempt_token_list_bytes(haystack)?);
         let regex = match PosixRegexBuilder::new(&pattern)
@@ -2202,16 +2291,42 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn expand_pdf_color_stack_init(
         &mut self,
         opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let restore_at_page_start = self.scan_keyword("page")?.value;
-        let mode = if self.scan_keyword("direct")?.value {
-            tex_state::PdfColorStackMode::Direct
-        } else if self.scan_keyword("page")?.value {
-            tex_state::PdfColorStackMode::Page
-        } else {
-            tex_state::PdfColorStackMode::Origin
+        let (restore_at_page_start, mode) =
+            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+                crate::state::PendingExpansionResume::Dispatch => {
+                    let restore_at_page_start = self.scan_keyword("page")?.value;
+                    let mode = if self.scan_keyword("direct")?.value {
+                        tex_state::PdfColorStackMode::Direct
+                    } else if self.scan_keyword("page")?.value {
+                        tex_state::PdfColorStackMode::Page
+                    } else {
+                        tex_state::PdfColorStackMode::Origin
+                    };
+                    (restore_at_page_start, mode)
+                }
+                crate::state::PendingExpansionResume::PdfColorStackInitText {
+                    restore_at_page_start,
+                    mode,
+                } => (restore_at_page_start, mode),
+                _ => return Err(CommandError::input_invariant()),
+            };
+        let initial = match self.scan_balanced_text(true) {
+            Ok(initial) => initial.tokens,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    *suspended = Some(
+                        crate::state::PendingExpansionResume::PdfColorStackInitText {
+                            restore_at_page_start,
+                            mode,
+                        },
+                    );
+                }
+                return Err(error);
+            }
         };
-        let initial = self.scan_balanced_text(true)?.tokens;
         let initial = self.attempt_token_list_bytes(initial)?;
         let id = match self
             .state
@@ -2261,30 +2376,57 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// consulted. An absent capability retains the corrected range and typed
     /// request, so the host retry neither repeats diagnostics nor rescans the
     /// consumed operands.
-    fn expand_pdf_file_dump(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let pending = self
-            .command
-            .take_pending_file_enquiry(crate::FileEnquiryIntent::Dump)?;
+    fn expand_pdf_file_dump(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let (pending, scanned_range) =
+            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+                crate::state::PendingExpansionResume::Dispatch => (None, None),
+                crate::state::PendingExpansionResume::PdfFileDumpText { offset, length } => {
+                    (None, Some((offset, length)))
+                }
+                crate::state::PendingExpansionResume::PdfFileDump(pending) => (Some(pending), None),
+                _ => return Err(CommandError::input_invariant()),
+            };
         let (request, offset, length) = if let Some(pending) = pending {
             (pending.request, pending.offset, pending.length)
         } else {
-            let mut offset = 0_i32;
-            let mut length = 0_i32;
-            if self.scan_keyword("offset")?.value {
-                offset = self.scan_integer()?.value;
-                if offset < 0 {
-                    self.pdftex_file_range_diagnostic("offset", offset);
-                    offset = 0;
+            let (offset, length) = if let Some(range) = scanned_range {
+                range
+            } else {
+                let mut offset = 0_i32;
+                let mut length = 0_i32;
+                if self.scan_keyword("offset")?.value {
+                    offset = self.scan_integer()?.value;
+                    if offset < 0 {
+                        self.pdftex_file_range_diagnostic("offset", offset);
+                        offset = 0;
+                    }
                 }
-            }
-            if self.scan_keyword("length")?.value {
-                length = self.scan_integer()?.value;
-                if length < 0 {
-                    self.pdftex_file_range_diagnostic("length", length);
-                    length = 0;
+                if self.scan_keyword("length")?.value {
+                    length = self.scan_integer()?.value;
+                    if length < 0 {
+                        self.pdftex_file_range_diagnostic("length", length);
+                        length = 0;
+                    }
                 }
-            }
-            let name = self.scan_balanced_text(true)?.tokens;
+                (offset, length)
+            };
+            let name = match self.scan_balanced_text(true) {
+                Ok(name) => name.tokens,
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        *suspended = Some(crate::state::PendingExpansionResume::PdfFileDumpText {
+                            offset,
+                            length,
+                        });
+                    }
+                    return Err(error);
+                }
+            };
             let name = self
                 .attempt_token_list_bytes(name)?
                 .into_iter()
@@ -2301,12 +2443,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
             } else {
-                self.command
-                    .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                *suspended = Some(crate::state::PendingExpansionResume::PdfFileDump(
+                    crate::state::PendingFileEnquiry {
                         request: request.clone(),
                         offset,
                         length,
-                    });
+                    },
+                ));
                 Err(CommandError::MissingInputProbe(request))
             };
         };
@@ -2328,11 +2471,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// pdftex.web §1590's `pdf_file_size_code` conversion.
-    fn expand_pdf_file_size(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let request = if let Some(pending) = self
-            .command
-            .take_pending_file_enquiry(crate::FileEnquiryIntent::Size)?
-        {
+    fn expand_pdf_file_size(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let pending =
+            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+                crate::state::PendingExpansionResume::Dispatch => None,
+                crate::state::PendingExpansionResume::PdfFileSize(pending) => Some(pending),
+                _ => return Err(CommandError::input_invariant()),
+            };
+        let request = if let Some(pending) = pending {
             pending.request
         } else {
             let name = self.scan_balanced_text(true)?.tokens;
@@ -2348,12 +2499,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
             } else {
-                self.command
-                    .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                *suspended = Some(crate::state::PendingExpansionResume::PdfFileSize(
+                    crate::state::PendingFileEnquiry {
                         request: request.clone(),
                         offset: 0,
                         length: 0,
-                    });
+                    },
+                ));
                 Err(CommandError::MissingInputProbe(request))
             };
         };
@@ -2365,11 +2517,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn expand_pdf_file_modification_date(
         &mut self,
         opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let request = if let Some(pending) = self
-            .command
-            .take_pending_file_enquiry(crate::FileEnquiryIntent::ModificationDate)?
-        {
+        let pending =
+            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+                crate::state::PendingExpansionResume::Dispatch => None,
+                crate::state::PendingExpansionResume::PdfFileModificationDate(pending) => {
+                    Some(pending)
+                }
+                _ => return Err(CommandError::input_invariant()),
+            };
+        let request = if let Some(pending) = pending {
             pending.request
         } else {
             crate::FileEnquiryRequest::new(
@@ -2382,12 +2541,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
             } else {
-                self.command
-                    .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
-                        request: request.clone(),
-                        offset: 0,
-                        length: 0,
-                    });
+                *suspended = Some(
+                    crate::state::PendingExpansionResume::PdfFileModificationDate(
+                        crate::state::PendingFileEnquiry {
+                            request: request.clone(),
+                            offset: 0,
+                            length: 0,
+                        },
+                    ),
+                );
                 Err(CommandError::MissingInputProbe(request))
             };
         };
@@ -2401,16 +2563,44 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// pdftex.web §1590's string/file MD5 conversion.
-    fn expand_pdf_md_five_sum(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
+    fn expand_pdf_md_five_sum(
+        &mut self,
+        opener: CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
-        let pending = self
-            .command
-            .take_pending_file_enquiry(crate::FileEnquiryIntent::MdFiveSum)?;
-        let file = pending.is_some() || self.scan_keyword("file")?.value;
+        let (pending, scanned_file) =
+            match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+                crate::state::PendingExpansionResume::Dispatch => (None, None),
+                crate::state::PendingExpansionResume::PdfMdFiveSumText { file } => {
+                    (None, Some(file))
+                }
+                crate::state::PendingExpansionResume::PdfMdFiveSum(pending) => {
+                    (Some(pending), None)
+                }
+                _ => return Err(CommandError::input_invariant()),
+            };
+        let file = if pending.is_some() {
+            true
+        } else if let Some(file) = scanned_file {
+            file
+        } else {
+            self.scan_keyword("file")?.value
+        };
         let mut bytes = if let Some(pending) = &pending {
             pending.request.name.as_bytes().to_vec()
         } else {
-            let tokens = self.scan_balanced_text(true)?.tokens;
+            let tokens = match self.scan_balanced_text(true) {
+                Ok(tokens) => tokens.tokens,
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        *suspended =
+                            Some(crate::state::PendingExpansionResume::PdfMdFiveSumText { file });
+                    }
+                    return Err(error);
+                }
+            };
             self.attempt_token_list_bytes(tokens)?
         };
         if file {
@@ -2426,12 +2616,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return if self.host.input_probe_is_unavailable(&request.name) {
                     Ok(())
                 } else {
-                    self.command
-                        .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                    *suspended = Some(crate::state::PendingExpansionResume::PdfMdFiveSum(
+                        crate::state::PendingFileEnquiry {
                             request: request.clone(),
                             offset: 0,
                             length: 0,
-                        });
+                        },
+                    ));
                     Err(CommandError::MissingInputProbe(request))
                 };
             };

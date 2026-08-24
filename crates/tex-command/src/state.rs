@@ -100,13 +100,6 @@ pub struct CommandStateRoots<G> {
     /// acquisition. Retrying the opener consumes this value instead of
     /// delivering or scanning its operand again.
     pub(crate) pending_input_open: Option<crate::ScannedFileName>,
-    /// A fully scanned expandable pdfTeX file enquiry waiting for immutable
-    /// host resolution. Corrected dump ranges are retained with the request
-    /// so retry neither rescans operands nor repeats diagnostics.
-    pub(crate) pending_file_enquiry: Option<PendingFileEnquiry>,
-    /// TeX82 §§440--445 integer scan state retained when an expandable number
-    /// conversion's operand delivery asks the immutable host.
-    pub(crate) pending_integer_scans: Vec<crate::scanners::PendingIntegerScan>,
     /// Accumulated TeX82 §372 `\csname` characters held across immutable host
     /// suspension. Nested names unwind inner-to-outer and resume in that order.
     pub(crate) pending_csnames: Vec<String>,
@@ -171,8 +164,6 @@ impl<G> Clone for CommandStateRoots<G> {
             afterassignment: self.afterassignment,
             name_in_progress: self.name_in_progress,
             pending_input_open: self.pending_input_open.clone(),
-            pending_file_enquiry: self.pending_file_enquiry.clone(),
-            pending_integer_scans: self.pending_integer_scans.clone(),
             pending_csnames: self.pending_csnames.clone(),
             named_token_list_pushes: self.named_token_list_pushes.clone(),
             file_framing_events: self.file_framing_events.clone(),
@@ -230,13 +221,49 @@ pub(crate) struct PendingFileEnquiry {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingExpansion<G> {
     pub(crate) command: crate::CurrentCommand<G>,
+    pub(crate) resume: PendingExpansionResume,
     pub(crate) child:
-        Option<crate::execution_scratch::ChildContinuation<G, PendingExpansionDestination>>,
+        Option<crate::execution_scratch::ChildContinuation<G, PendingExpansionChildDestination>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PendingExpansionDestination {
+pub(crate) enum PendingExpansionChildDestination {
     Dispatch,
+}
+
+/// Exact operand/result destination retained by one suspended expansion.
+///
+/// File-enquiry requests are deliberately part of the move-only expansion
+/// frame rather than a command-state mailbox. A nested enquiry can therefore
+/// resume its own request before its caller continues scanning its operand.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum PendingExpansionResume {
+    Dispatch,
+    Number(crate::scanners::PendingIntegerScan),
+    PdfMatchPattern {
+        case_insensitive: bool,
+        subcount: u32,
+    },
+    PdfMatchHaystack {
+        case_insensitive: bool,
+        subcount: u32,
+        pattern: crate::attempt::AttemptTokenListId,
+    },
+    PdfColorStackInitText {
+        restore_at_page_start: bool,
+        mode: tex_state::PdfColorStackMode,
+    },
+    PdfFileDumpText {
+        offset: i32,
+        length: i32,
+    },
+    PdfFileDump(PendingFileEnquiry),
+    PdfFileSize(PendingFileEnquiry),
+    PdfFileModificationDate(PendingFileEnquiry),
+    PdfMdFiveSumText {
+        file: bool,
+    },
+    PdfMdFiveSum(PendingFileEnquiry),
 }
 
 impl<G> PendingExpansion<G> {
@@ -263,8 +290,6 @@ impl<G> Default for CommandStateRoots<G> {
             afterassignment: None,
             name_in_progress: false,
             pending_input_open: None,
-            pending_file_enquiry: None,
-            pending_integer_scans: Vec::new(),
             pending_csnames: Vec::new(),
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
@@ -1040,25 +1065,6 @@ impl<G> CommandState<G> {
     pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
         debug_assert!(self.pending_input_open.is_none());
         self.pending_input_open = Some(file_name);
-    }
-
-    pub(crate) fn take_pending_file_enquiry(
-        &mut self,
-        intent: crate::FileEnquiryIntent,
-    ) -> Result<Option<PendingFileEnquiry>, crate::CommandError> {
-        let Some(pending) = self.pending_file_enquiry.take() else {
-            return Ok(None);
-        };
-        if pending.request.intent != intent {
-            self.pending_file_enquiry = Some(pending);
-            return Err(crate::CommandError::input_invariant());
-        }
-        Ok(Some(pending))
-    }
-
-    pub(crate) fn retain_pending_file_enquiry(&mut self, pending: PendingFileEnquiry) {
-        debug_assert!(self.pending_file_enquiry.is_none());
-        self.pending_file_enquiry = Some(pending);
     }
 
     pub(crate) fn take_pending_csname(&mut self) -> Option<String> {

@@ -80,6 +80,173 @@ impl<G> PendingAlignmentPreamble<G> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StructuredScannerChildDestination {
+    PdfObjectStreamAttribute,
+    PdfObjectData,
+    PdfFormAttribute,
+    PdfFormResources,
+    PdfGlyphName,
+    PdfGlyphUnicode,
+    PdfImageAttribute,
+    PdfImagePageName,
+    PdfGraphicsLiteral,
+    PdfColorStackText,
+    SpecialText,
+    PdfNavigationAnnotationEntries,
+    PdfNavigationAttributes,
+    PdfNavigationTitle,
+    PdfNavigationIdentifier,
+    PdfDocumentFragmentText,
+    PdfActionUser,
+    PdfActionFile,
+    PdfActionStructure,
+    PdfActionPageView,
+    PdfActionTargetName,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PendingPdfActionOwner {
+    StartLink {
+        dimensions: tex_state::PdfAnnotationDimensions,
+        attributes: Option<ScannedBalancedText>,
+    },
+    Outline {
+        attributes: Option<ScannedBalancedText>,
+    },
+    DocumentFragment {
+        kind: tex_state::PdfDocumentFragmentKind,
+        text: ScannedBalancedText,
+    },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PendingPdfColorStackAction {
+    Set,
+    Push,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PendingPdfActionPhase {
+    User,
+    File {
+        goto: bool,
+    },
+    StructureRaw {
+        goto: bool,
+        file: AttemptTokenListId,
+    },
+    StructureName {
+        goto: bool,
+        file: Option<AttemptTokenListId>,
+    },
+    PageView {
+        goto: bool,
+        file: Option<AttemptTokenListId>,
+        structure: Option<PdfActionIdentifier>,
+        number: u32,
+    },
+    TargetName {
+        goto: bool,
+        file: Option<AttemptTokenListId>,
+        structure: Option<PdfActionIdentifier>,
+    },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PendingStructuredScannerPhase {
+    PdfObjectStreamAttribute {
+        use_object: Option<i32>,
+    },
+    PdfObjectData {
+        use_object: Option<i32>,
+        stream: bool,
+        stream_attr: Option<ScannedBalancedText>,
+        file: bool,
+    },
+    PdfFormAttribute,
+    PdfFormResources {
+        attr: Option<ScannedBalancedText>,
+    },
+    PdfGlyphName {
+        primitive: UnexpandablePrimitive,
+        font: Option<FontId>,
+    },
+    PdfGlyphUnicode {
+        font: Option<FontId>,
+        first: AttemptTokenListId,
+    },
+    PdfImageAttribute {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
+    PdfImagePageName {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+        attr: Option<AttemptTokenListId>,
+    },
+    PdfGraphicsLiteral {
+        mode: tex_state::node::PdfLiteralMode,
+        deferred: bool,
+    },
+    PdfColorStackText {
+        id: i32,
+        action: PendingPdfColorStackAction,
+    },
+    SpecialText {
+        deferred: bool,
+    },
+    PdfAnnotationEntries {
+        use_object: Option<i32>,
+        dimensions: tex_state::PdfAnnotationDimensions,
+    },
+    PdfStartLinkAttributes {
+        dimensions: tex_state::PdfAnnotationDimensions,
+    },
+    PdfOutlineAttributes,
+    PdfOutlineTitle {
+        attributes: Option<ScannedBalancedText>,
+        action: PdfActionSpec,
+        count: i32,
+    },
+    PdfThreadAttributes {
+        primitive: UnexpandablePrimitive,
+        dimensions: tex_state::PdfAnnotationDimensions,
+    },
+    PdfThreadIdentifier {
+        primitive: UnexpandablePrimitive,
+        dimensions: tex_state::PdfAnnotationDimensions,
+        attributes: Option<ScannedBalancedText>,
+    },
+    PdfDestinationIdentifier {
+        structure: Option<u32>,
+    },
+    PdfDocumentFragmentText {
+        kind: tex_state::PdfDocumentFragmentKind,
+    },
+    PdfAction {
+        owner: PendingPdfActionOwner,
+        phase: PendingPdfActionPhase,
+    },
+}
+
+/// Exact structured-scanner caller and operand destination retained across a
+/// nested immutable-resource suspension.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct PendingStructuredScanner<G> {
+    phase: PendingStructuredScannerPhase,
+    child:
+        Option<crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>>,
+}
+
+impl<G> PendingStructuredScanner<G> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        self.child.take().map(|child| child.restore().0)
+    }
+}
+
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
 const MISSING_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0001;
 const EXTRA_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0002;
@@ -402,6 +569,13 @@ pub enum PdfFormRequest {
     Reference {
         object: i32,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedPdfFontAction {
+    pub font: Option<FontId>,
+    pub first: Option<AttemptTokenListId>,
+    pub second: Option<AttemptTokenListId>,
 }
 
 /// Completed `\\pdfrefobj` operand.
@@ -1128,6 +1302,65 @@ pub enum AlignmentCellOpening {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    fn take_pending_structured_scanner(
+        &mut self,
+    ) -> Result<Option<PendingStructuredScanner<G>>, CommandError> {
+        if !self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
+        {
+            return Ok(None);
+        }
+        let key = self
+            .scanner_resume
+            .take()
+            .expect("matched structured-scanner frame");
+        self.command
+            .scratch
+            .take_structured_scanner_frame(key)
+            .map(Some)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    fn restore_structured_scanner_child(
+        &mut self,
+        child: &mut Option<
+            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
+        >,
+        expected: StructuredScannerChildDestination,
+    ) -> Result<(), CommandError> {
+        if let Some(child) = child.take() {
+            let (key, destination) = child.restore();
+            if destination != expected {
+                self.abort_continuation(key)?;
+                return Err(CommandError::input_invariant());
+            }
+            self.install_scanner_resume(Some(key));
+        }
+        Ok(())
+    }
+
+    fn retain_structured_scanner(
+        &mut self,
+        phase: PendingStructuredScannerPhase,
+        destination: StructuredScannerChildDestination,
+    ) -> Result<(), CommandError> {
+        let child = crate::execution_scratch::ChildContinuation::capture(
+            &mut self.scanner_resume,
+            destination,
+        );
+        let key = self
+            .command
+            .scratch
+            .store_structured_scanner_frame(PendingStructuredScanner { phase, child })
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        if self.scanner_resume.replace(key).is_some() {
+            return Err(CommandError::input_invariant());
+        }
+        Ok(())
+    }
+
     /// Expands a frozen whatsit payload at output traversal time.
     ///
     /// The caller decides how the resulting token spellings are rendered;
@@ -1315,6 +1548,69 @@ impl<G> CommandProcessor<'_, '_, G> {
         use PdfColorStackActionRequest as Action;
         use PdfGraphicsRequest as Request;
 
+        if let Some(pending) = self.take_pending_structured_scanner()? {
+            let PendingStructuredScanner { phase, mut child } = pending;
+            return match phase {
+                PendingStructuredScannerPhase::PdfGraphicsLiteral { mode, deferred } => {
+                    self.restore_structured_scanner_child(
+                        &mut child,
+                        StructuredScannerChildDestination::PdfGraphicsLiteral,
+                    )?;
+                    let text = match self.scan_balanced_text(!deferred) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::PdfGraphicsLiteral {
+                                        mode,
+                                        deferred,
+                                    },
+                                    StructuredScannerChildDestination::PdfGraphicsLiteral,
+                                )?;
+                            }
+                            return Err(error);
+                        }
+                    };
+                    Ok(Some(Request::Literal {
+                        mode,
+                        deferred,
+                        text,
+                    }))
+                }
+                PendingStructuredScannerPhase::PdfColorStackText { id, action } => {
+                    self.restore_structured_scanner_child(
+                        &mut child,
+                        StructuredScannerChildDestination::PdfColorStackText,
+                    )?;
+                    let text = match self.scan_balanced_text(true) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::PdfColorStackText { id, action },
+                                    StructuredScannerChildDestination::PdfColorStackText,
+                                )?;
+                            }
+                            return Err(error);
+                        }
+                    };
+                    Ok(Some(Request::ColorStack {
+                        id,
+                        action: Some(match action {
+                            PendingPdfColorStackAction::Set => Action::Set(text),
+                            PendingPdfColorStackAction::Push => Action::Push(text),
+                        }),
+                    }))
+                }
+                _ => {
+                    if let Some(child) = child.take() {
+                        self.abort_continuation(child.restore().0)?;
+                    }
+                    Err(CommandError::input_invariant())
+                }
+            };
+        }
+
         let request = match primitive {
             UnexpandablePrimitive::PdfLiteral => {
                 let deferred = self.scan_keyword("shipout")?.value;
@@ -1325,10 +1621,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     tex_state::node::PdfLiteralMode::Origin
                 };
+                let text = match self.scan_balanced_text(!deferred) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        if error.is_resource_suspension() {
+                            self.retain_structured_scanner(
+                                PendingStructuredScannerPhase::PdfGraphicsLiteral {
+                                    mode,
+                                    deferred,
+                                },
+                                StructuredScannerChildDestination::PdfGraphicsLiteral,
+                            )?;
+                        }
+                        return Err(error);
+                    }
+                };
                 Request::Literal {
                     mode,
                     deferred,
-                    text: self.scan_balanced_text(!deferred)?,
+                    text,
                 }
             }
             UnexpandablePrimitive::PdfSetMatrix => Request::SetMatrix {
@@ -1339,9 +1650,39 @@ impl<G> CommandProcessor<'_, '_, G> {
             UnexpandablePrimitive::PdfColorStack => {
                 let id = self.scan_integer()?.value;
                 let action = if self.scan_keyword("set")?.value {
-                    Some(Action::Set(self.scan_balanced_text(true)?))
+                    let text = match self.scan_balanced_text(true) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::PdfColorStackText {
+                                        id,
+                                        action: PendingPdfColorStackAction::Set,
+                                    },
+                                    StructuredScannerChildDestination::PdfColorStackText,
+                                )?;
+                            }
+                            return Err(error);
+                        }
+                    };
+                    Some(Action::Set(text))
                 } else if self.scan_keyword("push")?.value {
-                    Some(Action::Push(self.scan_balanced_text(true)?))
+                    let text = match self.scan_balanced_text(true) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::PdfColorStackText {
+                                        id,
+                                        action: PendingPdfColorStackAction::Push,
+                                    },
+                                    StructuredScannerChildDestination::PdfColorStackText,
+                                )?;
+                            }
+                            return Err(error);
+                        }
+                    };
+                    Some(Action::Push(text))
                 } else if self.scan_keyword("pop")?.value {
                     Some(Action::Pop)
                 } else if self.scan_keyword("current")?.value {
@@ -1364,6 +1705,117 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(Some(request))
     }
 
+    fn scan_pdf_navigation_text(
+        &mut self,
+        child: &mut Option<
+            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
+        >,
+        phase: PendingStructuredScannerPhase,
+        destination: StructuredScannerChildDestination,
+    ) -> Result<(ScannedBalancedText, PendingStructuredScannerPhase), CommandError> {
+        self.restore_structured_scanner_child(child, destination)?;
+        match self.scan_balanced_text(true) {
+            Ok(text) => Ok((text, phase)),
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    self.retain_structured_scanner(phase, destination)?;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn finish_pdf_outline(
+        &mut self,
+        attributes: Option<ScannedBalancedText>,
+        action: PdfActionSpec,
+        mut child: Option<
+            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
+        >,
+        retained_count: Option<i32>,
+    ) -> Result<PdfNavigationRequest, CommandError> {
+        let count = if let Some(count) = retained_count {
+            count
+        } else if self.scan_keyword("count")?.value {
+            self.scan_integer()?.value
+        } else {
+            0
+        };
+        let (title, phase) = self.scan_pdf_navigation_text(
+            &mut child,
+            PendingStructuredScannerPhase::PdfOutlineTitle {
+                attributes,
+                action,
+                count,
+            },
+            StructuredScannerChildDestination::PdfNavigationTitle,
+        )?;
+        let PendingStructuredScannerPhase::PdfOutlineTitle {
+            attributes,
+            action,
+            count,
+        } = phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        Ok(PdfNavigationRequest::Outline(PdfOutlineRequest {
+            attributes,
+            action,
+            count,
+            title,
+        }))
+    }
+
+    fn scan_pdf_thread_identifier_owned(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+        dimensions: tex_state::PdfAnnotationDimensions,
+        attributes: Option<ScannedBalancedText>,
+        mut child: Option<
+            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
+        >,
+        resume_name: bool,
+    ) -> Result<PdfNavigationRequest, CommandError> {
+        if resume_name || self.scan_keyword("name")?.value {
+            let (text, phase) = self.scan_pdf_navigation_text(
+                &mut child,
+                PendingStructuredScannerPhase::PdfThreadIdentifier {
+                    primitive,
+                    dimensions,
+                    attributes,
+                },
+                StructuredScannerChildDestination::PdfNavigationIdentifier,
+            )?;
+            let PendingStructuredScannerPhase::PdfThreadIdentifier {
+                primitive,
+                dimensions,
+                attributes,
+            } = phase
+            else {
+                return Err(CommandError::input_invariant());
+            };
+            return Ok(PdfNavigationRequest::Thread(PdfThreadRequest {
+                dimensions,
+                attributes,
+                identifier: PdfActionIdentifier::Name(text.tokens),
+                running: primitive == UnexpandablePrimitive::PdfStartThread,
+            }));
+        }
+        let identifier = if self.scan_keyword("num")?.value {
+            PdfActionIdentifier::Number(self.scan_pdf_positive("thread identifier", true)?)
+        } else {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext4): thread identifier type missing",
+            ));
+        };
+        Ok(PdfNavigationRequest::Thread(PdfThreadRequest {
+            dimensions,
+            attributes,
+            identifier,
+            running: primitive == UnexpandablePrimitive::PdfStartThread,
+        }))
+    }
+
     /// Scans the pdfTeX annotation/link/destination/thread family (pdftex.web
     /// 34847--35208).  `scan_alt_rule` deliberately resets all dimensions on
     /// each invocation and accepts repeated fields, with the last one winning.
@@ -1372,7 +1824,171 @@ impl<G> CommandProcessor<'_, '_, G> {
         primitive: UnexpandablePrimitive,
     ) -> Result<PdfNavigationRequest, CommandError> {
         use PdfNavigationRequest as Request;
-        use tex_state::node::PdfDestinationKind;
+
+        let pending = self.take_pending_structured_scanner()?;
+        if let Some(pending) = pending {
+            let PendingStructuredScanner { phase, mut child } = pending;
+            return match phase {
+                PendingStructuredScannerPhase::PdfAnnotationEntries {
+                    use_object,
+                    dimensions,
+                } => {
+                    let (entries, phase) = self.scan_pdf_navigation_text(
+                        &mut child,
+                        PendingStructuredScannerPhase::PdfAnnotationEntries {
+                            use_object,
+                            dimensions,
+                        },
+                        StructuredScannerChildDestination::PdfNavigationAnnotationEntries,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfAnnotationEntries {
+                        use_object,
+                        dimensions,
+                    } = phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    Ok(Request::Annotation(PdfAnnotationRequest::Define {
+                        use_object,
+                        dimensions,
+                        entries,
+                    }))
+                }
+                PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions } => {
+                    let (attributes, phase) = self.scan_pdf_navigation_text(
+                        &mut child,
+                        PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions },
+                        StructuredScannerChildDestination::PdfNavigationAttributes,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions } =
+                        phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    let (owner, action) = self.scan_pdf_action_for_owner(
+                        PendingPdfActionOwner::StartLink {
+                            dimensions,
+                            attributes: Some(attributes),
+                        },
+                        None,
+                    )?;
+                    let PendingPdfActionOwner::StartLink {
+                        dimensions,
+                        attributes,
+                    } = owner
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    Ok(Request::StartLink(PdfStartLinkRequest {
+                        dimensions,
+                        attributes,
+                        action,
+                    }))
+                }
+                PendingStructuredScannerPhase::PdfOutlineAttributes => {
+                    let (attributes, phase) = self.scan_pdf_navigation_text(
+                        &mut child,
+                        PendingStructuredScannerPhase::PdfOutlineAttributes,
+                        StructuredScannerChildDestination::PdfNavigationAttributes,
+                    )?;
+                    if phase != PendingStructuredScannerPhase::PdfOutlineAttributes {
+                        return Err(CommandError::input_invariant());
+                    }
+                    let (owner, action) = self.scan_pdf_action_for_owner(
+                        PendingPdfActionOwner::Outline {
+                            attributes: Some(attributes),
+                        },
+                        None,
+                    )?;
+                    let PendingPdfActionOwner::Outline { attributes } = owner else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    self.finish_pdf_outline(attributes, action, None, None)
+                }
+                PendingStructuredScannerPhase::PdfOutlineTitle {
+                    attributes,
+                    action,
+                    count,
+                } => self.finish_pdf_outline(attributes, action, child, Some(count)),
+                PendingStructuredScannerPhase::PdfThreadAttributes {
+                    primitive,
+                    dimensions,
+                } => {
+                    let (attributes, phase) = self.scan_pdf_navigation_text(
+                        &mut child,
+                        PendingStructuredScannerPhase::PdfThreadAttributes {
+                            primitive,
+                            dimensions,
+                        },
+                        StructuredScannerChildDestination::PdfNavigationAttributes,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfThreadAttributes {
+                        primitive,
+                        dimensions,
+                    } = phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    self.scan_pdf_thread_identifier_owned(
+                        primitive,
+                        dimensions,
+                        Some(attributes),
+                        None,
+                        false,
+                    )
+                }
+                PendingStructuredScannerPhase::PdfThreadIdentifier {
+                    primitive,
+                    dimensions,
+                    attributes,
+                } => self.scan_pdf_thread_identifier_owned(
+                    primitive, dimensions, attributes, child, true,
+                ),
+                PendingStructuredScannerPhase::PdfDestinationIdentifier { structure } => {
+                    let (identifier, phase) = self.scan_pdf_navigation_text(
+                        &mut child,
+                        PendingStructuredScannerPhase::PdfDestinationIdentifier { structure },
+                        StructuredScannerChildDestination::PdfNavigationIdentifier,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfDestinationIdentifier { structure } =
+                        phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    Ok(Request::Destination(PdfDestinationRequest {
+                        structure,
+                        identifier: PdfActionIdentifier::Name(identifier.tokens),
+                        kind: self.scan_pdf_destination_kind()?,
+                    }))
+                }
+                PendingStructuredScannerPhase::PdfAction { owner, phase } => {
+                    let (owner, action) =
+                        self.scan_pdf_action_for_owner(owner, Some((phase, child)))?;
+                    match owner {
+                        PendingPdfActionOwner::StartLink {
+                            dimensions,
+                            attributes,
+                        } => Ok(Request::StartLink(PdfStartLinkRequest {
+                            dimensions,
+                            attributes,
+                            action,
+                        })),
+                        PendingPdfActionOwner::Outline { attributes } => {
+                            self.finish_pdf_outline(attributes, action, None, None)
+                        }
+                        PendingPdfActionOwner::DocumentFragment { .. } => {
+                            Err(CommandError::input_invariant())
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(child) = child.take() {
+                        self.abort_continuation(child.restore().0)?;
+                    }
+                    Err(CommandError::input_invariant())
+                }
+            };
+        }
 
         match primitive {
             UnexpandablePrimitive::PdfAnnot => {
@@ -1384,95 +2000,193 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .value
                     .then(|| self.scan_integer().map(|value| value.value))
                     .transpose()?;
+                let dimensions = self.scan_pdf_alt_rule()?;
+                let (entries, phase) = self.scan_pdf_navigation_text(
+                    &mut None,
+                    PendingStructuredScannerPhase::PdfAnnotationEntries {
+                        use_object,
+                        dimensions,
+                    },
+                    StructuredScannerChildDestination::PdfNavigationAnnotationEntries,
+                )?;
+                let PendingStructuredScannerPhase::PdfAnnotationEntries {
+                    use_object,
+                    dimensions,
+                } = phase
+                else {
+                    return Err(CommandError::input_invariant());
+                };
                 Ok(Request::Annotation(PdfAnnotationRequest::Define {
                     use_object,
-                    dimensions: self.scan_pdf_alt_rule()?,
-                    entries: self.scan_balanced_text(true)?,
+                    dimensions,
+                    entries,
                 }))
             }
-            UnexpandablePrimitive::PdfStartLink => Ok(Request::StartLink(PdfStartLinkRequest {
-                dimensions: self.scan_pdf_alt_rule()?,
-                attributes: self
-                    .scan_keyword("attr")?
-                    .value
-                    .then(|| self.scan_balanced_text(true))
-                    .transpose()?,
-                action: self.scan_pdf_action()?,
-            })),
-            UnexpandablePrimitive::PdfEndLink => Ok(Request::EndLink),
-            UnexpandablePrimitive::PdfOutline => Ok(Request::Outline(PdfOutlineRequest {
-                attributes: self
-                    .scan_keyword("attr")?
-                    .value
-                    .then(|| self.scan_balanced_text(true))
-                    .transpose()?,
-                action: self.scan_pdf_action()?,
-                count: if self.scan_keyword("count")?.value {
-                    self.scan_integer()?.value
+            UnexpandablePrimitive::PdfStartLink => {
+                let dimensions = self.scan_pdf_alt_rule()?;
+                let (dimensions, attributes) = if self.scan_keyword("attr")?.value {
+                    let (attributes, phase) = self.scan_pdf_navigation_text(
+                        &mut None,
+                        PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions },
+                        StructuredScannerChildDestination::PdfNavigationAttributes,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions } =
+                        phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    (dimensions, Some(attributes))
                 } else {
-                    0
-                },
-                title: self.scan_balanced_text(true)?,
-            })),
+                    (dimensions, None)
+                };
+                let (owner, action) = self.scan_pdf_action_for_owner(
+                    PendingPdfActionOwner::StartLink {
+                        dimensions,
+                        attributes,
+                    },
+                    None,
+                )?;
+                let PendingPdfActionOwner::StartLink {
+                    dimensions,
+                    attributes,
+                } = owner
+                else {
+                    return Err(CommandError::input_invariant());
+                };
+                Ok(Request::StartLink(PdfStartLinkRequest {
+                    dimensions,
+                    attributes,
+                    action,
+                }))
+            }
+            UnexpandablePrimitive::PdfEndLink => Ok(Request::EndLink),
+            UnexpandablePrimitive::PdfOutline => {
+                let attributes = if self.scan_keyword("attr")?.value {
+                    let (attributes, phase) = self.scan_pdf_navigation_text(
+                        &mut None,
+                        PendingStructuredScannerPhase::PdfOutlineAttributes,
+                        StructuredScannerChildDestination::PdfNavigationAttributes,
+                    )?;
+                    if phase != PendingStructuredScannerPhase::PdfOutlineAttributes {
+                        return Err(CommandError::input_invariant());
+                    }
+                    Some(attributes)
+                } else {
+                    None
+                };
+                let (owner, action) = self.scan_pdf_action_for_owner(
+                    PendingPdfActionOwner::Outline { attributes },
+                    None,
+                )?;
+                let PendingPdfActionOwner::Outline { attributes } = owner else {
+                    return Err(CommandError::input_invariant());
+                };
+                self.finish_pdf_outline(attributes, action, None, None)
+            }
             UnexpandablePrimitive::PdfDest => {
                 let structure = if self.scan_keyword("struct")?.value {
                     Some(self.scan_pdf_positive("struct identifier", false)?)
                 } else {
                     None
                 };
-                let identifier = self.scan_pdf_identifier("destination identifier", true)?;
-                // Prefix-sharing names must be tested longest-first.
-                let kind = if self.scan_keyword("xyz")?.value {
-                    let zoom = if self.scan_keyword("zoom")?.value {
-                        let value = self.scan_integer()?.value;
-                        if value > 1_073_741_823 {
-                            return Err(CommandError::PdfNavigation(
-                                "pdfTeX error (ext1): number too big",
-                            ));
-                        }
-                        Some(value)
-                    } else {
-                        None
+                let (structure, identifier) = if self.scan_keyword("name")?.value {
+                    let (identifier, phase) = self.scan_pdf_navigation_text(
+                        &mut None,
+                        PendingStructuredScannerPhase::PdfDestinationIdentifier { structure },
+                        StructuredScannerChildDestination::PdfNavigationIdentifier,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfDestinationIdentifier { structure } =
+                        phase
+                    else {
+                        return Err(CommandError::input_invariant());
                     };
-                    PdfDestinationKind::Xyz { zoom }
-                } else if self.scan_keyword("fitbh")?.value {
-                    PdfDestinationKind::FitBoundingBoxHorizontal
-                } else if self.scan_keyword("fitbv")?.value {
-                    PdfDestinationKind::FitBoundingBoxVertical
-                } else if self.scan_keyword("fitb")?.value {
-                    PdfDestinationKind::FitBoundingBox
-                } else if self.scan_keyword("fith")?.value {
-                    PdfDestinationKind::FitHorizontal
-                } else if self.scan_keyword("fitv")?.value {
-                    PdfDestinationKind::FitVertical
-                } else if self.scan_keyword("fitr")?.value {
-                    PdfDestinationKind::FitRectangle(self.scan_pdf_alt_rule()?)
-                } else if self.scan_keyword("fit")?.value {
-                    PdfDestinationKind::Fit
+                    (structure, PdfActionIdentifier::Name(identifier.tokens))
+                } else if self.scan_keyword("num")?.value {
+                    (
+                        structure,
+                        PdfActionIdentifier::Number(
+                            self.scan_pdf_positive("destination identifier", true)?,
+                        ),
+                    )
                 } else {
                     return Err(CommandError::PdfNavigation(
-                        "pdfTeX error (ext1): destination type missing",
+                        "pdfTeX error (ext1): identifier type missing",
                     ));
                 };
                 Ok(Request::Destination(PdfDestinationRequest {
                     structure,
                     identifier,
-                    kind,
+                    kind: self.scan_pdf_destination_kind()?,
                 }))
             }
             primitive @ (UnexpandablePrimitive::PdfThread
-            | UnexpandablePrimitive::PdfStartThread) => Ok(Request::Thread(PdfThreadRequest {
-                dimensions: self.scan_pdf_alt_rule()?,
-                attributes: self
-                    .scan_keyword("attr")?
-                    .value
-                    .then(|| self.scan_balanced_text(true))
-                    .transpose()?,
-                identifier: self.scan_pdf_identifier("thread identifier", true)?,
-                running: primitive == UnexpandablePrimitive::PdfStartThread,
-            })),
+            | UnexpandablePrimitive::PdfStartThread) => {
+                let dimensions = self.scan_pdf_alt_rule()?;
+                let (primitive, dimensions, attributes) = if self.scan_keyword("attr")?.value {
+                    let (attributes, phase) = self.scan_pdf_navigation_text(
+                        &mut None,
+                        PendingStructuredScannerPhase::PdfThreadAttributes {
+                            primitive,
+                            dimensions,
+                        },
+                        StructuredScannerChildDestination::PdfNavigationAttributes,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfThreadAttributes {
+                        primitive,
+                        dimensions,
+                    } = phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    (primitive, dimensions, Some(attributes))
+                } else {
+                    (primitive, dimensions, None)
+                };
+                self.scan_pdf_thread_identifier_owned(
+                    primitive, dimensions, attributes, None, false,
+                )
+            }
             UnexpandablePrimitive::PdfEndThread => Ok(Request::EndThread),
             _ => Err(CommandError::input_invariant()),
+        }
+    }
+
+    fn scan_pdf_destination_kind(
+        &mut self,
+    ) -> Result<tex_state::node::PdfDestinationKind, CommandError> {
+        use tex_state::node::PdfDestinationKind;
+        // Prefix-sharing names must be tested longest-first.
+        if self.scan_keyword("xyz")?.value {
+            let zoom = if self.scan_keyword("zoom")?.value {
+                let value = self.scan_integer()?.value;
+                if value > 1_073_741_823 {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (ext1): number too big",
+                    ));
+                }
+                Some(value)
+            } else {
+                None
+            };
+            Ok(PdfDestinationKind::Xyz { zoom })
+        } else if self.scan_keyword("fitbh")?.value {
+            Ok(PdfDestinationKind::FitBoundingBoxHorizontal)
+        } else if self.scan_keyword("fitbv")?.value {
+            Ok(PdfDestinationKind::FitBoundingBoxVertical)
+        } else if self.scan_keyword("fitb")?.value {
+            Ok(PdfDestinationKind::FitBoundingBox)
+        } else if self.scan_keyword("fith")?.value {
+            Ok(PdfDestinationKind::FitHorizontal)
+        } else if self.scan_keyword("fitv")?.value {
+            Ok(PdfDestinationKind::FitVertical)
+        } else if self.scan_keyword("fitr")?.value {
+            Ok(PdfDestinationKind::FitRectangle(self.scan_pdf_alt_rule()?))
+        } else if self.scan_keyword("fit")?.value {
+            Ok(PdfDestinationKind::Fit)
+        } else {
+            Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): destination type missing",
+            ))
         }
     }
 
@@ -1512,77 +2226,261 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(value as u32)
     }
 
-    fn scan_pdf_identifier(
+    fn scan_pdf_action_owned_text(
         &mut self,
-        kind: &'static str,
-        bounded_by_halfword: bool,
-    ) -> Result<PdfActionIdentifier, CommandError> {
-        if self.scan_keyword("name")?.value {
-            Ok(PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens,
-            ))
-        } else if self.scan_keyword("num")?.value {
-            Ok(PdfActionIdentifier::Number(
-                self.scan_pdf_positive(kind, bounded_by_halfword)?,
-            ))
-        } else {
-            Err(CommandError::PdfNavigation(match kind {
-                "thread identifier" => "pdfTeX error (ext4): thread identifier type missing",
-                _ => "pdfTeX error (ext1): identifier type missing",
-            }))
+        owner: &mut Option<PendingPdfActionOwner>,
+        child: &mut Option<
+            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
+        >,
+        phase: PendingPdfActionPhase,
+        destination: StructuredScannerChildDestination,
+    ) -> Result<ScannedBalancedText, CommandError> {
+        self.restore_structured_scanner_child(child, destination)?;
+        match self.scan_balanced_text(true) {
+            Ok(text) => Ok(text),
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    self.retain_structured_scanner(
+                        PendingStructuredScannerPhase::PdfAction {
+                            owner: owner
+                                .take()
+                                .expect("suspended PDF action retains its outer owner"),
+                            phase,
+                        },
+                        destination,
+                    )?;
+                }
+                Err(error)
+            }
         }
     }
 
-    fn scan_pdf_action(&mut self) -> Result<PdfActionSpec, CommandError> {
+    fn scan_pdf_action_for_owner(
+        &mut self,
+        owner: PendingPdfActionOwner,
+        pending: Option<(
+            PendingPdfActionPhase,
+            Option<
+                crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
+            >,
+        )>,
+    ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
         use tex_state::PdfActionWindow;
-        if self.scan_keyword("user")?.value {
-            return Ok(PdfActionSpec::User(self.scan_balanced_text(true)?.tokens));
-        }
-        let goto = if self.scan_keyword("goto")?.value {
-            true
-        } else if self.scan_keyword("thread")?.value {
-            false
-        } else {
-            return Err(CommandError::PdfNavigation(
-                "pdfTeX error (ext1): action type missing",
-            ));
+
+        let mut owner = Some(owner);
+        let (phase, mut child) =
+            pending.map_or((None, None), |(phase, child)| (Some(phase), child));
+        let mut retained_structure = None;
+        let mut retained_target = None;
+        let (goto, file) = match phase {
+            Some(PendingPdfActionPhase::User) => {
+                let text = self.scan_pdf_action_owned_text(
+                    &mut owner,
+                    &mut child,
+                    PendingPdfActionPhase::User,
+                    StructuredScannerChildDestination::PdfActionUser,
+                )?;
+                return Ok((
+                    owner.expect("successful PDF action retains its owner"),
+                    PdfActionSpec::User(text.tokens),
+                ));
+            }
+            Some(PendingPdfActionPhase::File { goto }) => {
+                let file = self
+                    .scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::File { goto },
+                        StructuredScannerChildDestination::PdfActionFile,
+                    )?
+                    .tokens;
+                (goto, Some(file))
+            }
+            Some(PendingPdfActionPhase::StructureRaw { goto, file }) => {
+                let structure = self
+                    .scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::StructureRaw { goto, file },
+                        StructuredScannerChildDestination::PdfActionStructure,
+                    )?
+                    .tokens;
+                retained_structure = Some(Some(PdfActionIdentifier::Raw(structure)));
+                (goto, Some(file))
+            }
+            Some(PendingPdfActionPhase::StructureName { goto, file }) => {
+                let structure = self
+                    .scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::StructureName { goto, file },
+                        StructuredScannerChildDestination::PdfActionStructure,
+                    )?
+                    .tokens;
+                retained_structure = Some(Some(PdfActionIdentifier::Name(structure)));
+                (goto, file)
+            }
+            Some(PendingPdfActionPhase::PageView {
+                goto,
+                file,
+                structure,
+                number,
+            }) => {
+                let view = self
+                    .scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::PageView {
+                            goto,
+                            file,
+                            structure,
+                            number,
+                        },
+                        StructuredScannerChildDestination::PdfActionPageView,
+                    )?
+                    .tokens;
+                retained_structure = Some(structure);
+                retained_target = Some(PdfActionTarget::Page { number, view });
+                (goto, file)
+            }
+            Some(PendingPdfActionPhase::TargetName {
+                goto,
+                file,
+                structure,
+            }) => {
+                let name = self
+                    .scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::TargetName {
+                            goto,
+                            file,
+                            structure,
+                        },
+                        StructuredScannerChildDestination::PdfActionTargetName,
+                    )?
+                    .tokens;
+                retained_structure = Some(structure);
+                retained_target = Some(PdfActionTarget::Destination(PdfActionIdentifier::Name(
+                    name,
+                )));
+                (goto, file)
+            }
+            None => {
+                if self.scan_keyword("user")?.value {
+                    let text = self.scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::User,
+                        StructuredScannerChildDestination::PdfActionUser,
+                    )?;
+                    return Ok((
+                        owner.expect("successful PDF action retains its owner"),
+                        PdfActionSpec::User(text.tokens),
+                    ));
+                }
+                let goto = if self.scan_keyword("goto")?.value {
+                    true
+                } else if self.scan_keyword("thread")?.value {
+                    false
+                } else {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (ext1): action type missing",
+                    ));
+                };
+                let file = if self.scan_keyword("file")?.value {
+                    Some(
+                        self.scan_pdf_action_owned_text(
+                            &mut owner,
+                            &mut child,
+                            PendingPdfActionPhase::File { goto },
+                            StructuredScannerChildDestination::PdfActionFile,
+                        )?
+                        .tokens,
+                    )
+                } else {
+                    None
+                };
+                (goto, file)
+            }
         };
-        let file = self
-            .scan_keyword("file")?
-            .value
-            .then(|| self.scan_balanced_text(true).map(|text| text.tokens))
-            .transpose()?;
-        let structure = if self.scan_keyword("struct")?.value {
+        let structure = if let Some(structure) = retained_structure {
+            structure
+        } else if self.scan_keyword("struct")?.value {
             if !goto {
                 return Err(CommandError::PdfNavigation(
                     "pdfTeX error (ext1): only GoTo action can be used with `struct'",
                 ));
             }
-            if file.is_some() {
+            if let Some(file) = file {
                 Some(PdfActionIdentifier::Raw(
-                    self.scan_balanced_text(true)?.tokens,
+                    self.scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::StructureRaw { goto, file },
+                        StructuredScannerChildDestination::PdfActionStructure,
+                    )?
+                    .tokens,
+                ))
+            } else if self.scan_keyword("name")?.value {
+                Some(PdfActionIdentifier::Name(
+                    self.scan_pdf_action_owned_text(
+                        &mut owner,
+                        &mut child,
+                        PendingPdfActionPhase::StructureName { goto, file },
+                        StructuredScannerChildDestination::PdfActionStructure,
+                    )?
+                    .tokens,
+                ))
+            } else if self.scan_keyword("num")?.value {
+                Some(PdfActionIdentifier::Number(
+                    self.scan_pdf_positive("struct identifier", false)?,
                 ))
             } else {
-                Some(self.scan_pdf_identifier("struct identifier", false)?)
+                return Err(CommandError::PdfNavigation(
+                    "pdfTeX error (ext1): identifier type missing",
+                ));
             }
         } else {
             None
         };
-        let target = if self.scan_keyword("page")?.value {
+        let target = if let Some(target) = retained_target {
+            target
+        } else if self.scan_keyword("page")?.value {
             if !goto {
                 return Err(CommandError::PdfNavigation(
                     "pdfTeX error (ext1): only GoTo action can be used with `page'",
                 ));
             }
             let number = self.scan_pdf_positive("page number", false)?;
-            PdfActionTarget::Page {
-                number,
-                view: self.scan_balanced_text(true)?.tokens,
-            }
+            let view = self
+                .scan_pdf_action_owned_text(
+                    &mut owner,
+                    &mut child,
+                    PendingPdfActionPhase::PageView {
+                        goto,
+                        file,
+                        structure,
+                        number,
+                    },
+                    StructuredScannerChildDestination::PdfActionPageView,
+                )?
+                .tokens;
+            PdfActionTarget::Page { number, view }
         } else if self.scan_keyword("name")?.value {
-            PdfActionTarget::Destination(PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens,
-            ))
+            let name = self
+                .scan_pdf_action_owned_text(
+                    &mut owner,
+                    &mut child,
+                    PendingPdfActionPhase::TargetName {
+                        goto,
+                        file,
+                        structure,
+                    },
+                    StructuredScannerChildDestination::PdfActionTargetName,
+                )?
+                .tokens;
+            PdfActionTarget::Destination(PdfActionIdentifier::Name(name))
         } else if self.scan_keyword("num")?.value {
             if goto && file.is_some() {
                 return Err(CommandError::PdfNavigation(
@@ -1615,11 +2513,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             target,
             window,
         };
-        Ok(if goto {
-            PdfActionSpec::GoTo(action)
-        } else {
-            PdfActionSpec::Thread(action)
-        })
+        Ok((
+            owner.expect("successful PDF action retains its owner"),
+            if goto {
+                PdfActionSpec::GoTo(action)
+            } else {
+                PdfActionSpec::Thread(action)
+            },
+        ))
     }
 
     /// Scans pdfTeX's raw-object, form, and document-fragment extensions.
@@ -1628,22 +2529,105 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// cases: `scan_keyword` and expanded `scan_pdf_ext_toks` are complete
     /// before the executor mutates its PDF ledger or mode list.
     pub fn scan_pdf_object_request(&mut self) -> Result<PdfObjectRequest, CommandError> {
-        if self.scan_keyword("reserveobjnum")?.value {
-            return Ok(PdfObjectRequest::Reserve);
-        }
-        let use_object = self
-            .scan_keyword("useobjnum")?
-            .value
-            .then(|| self.scan_integer().map(|value| value.value))
-            .transpose()?;
-        let stream = self.scan_keyword("stream")?.value;
-        let stream_attr = if stream && self.scan_keyword("attr")?.value {
-            Some(self.scan_balanced_text(true)?)
-        } else {
-            None
+        let pending = self.take_pending_structured_scanner()?;
+        let (use_object, stream, stream_attr, retained_file) = match pending {
+            Some(pending) => {
+                let PendingStructuredScanner { phase, mut child } = pending;
+                match phase {
+                    PendingStructuredScannerPhase::PdfObjectStreamAttribute { use_object } => {
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfObjectStreamAttribute,
+                        )?;
+                        let stream_attr = match self.scan_balanced_text(true) {
+                            Ok(value) => Some(value),
+                            Err(error) => {
+                                if error.is_resource_suspension() {
+                                    self.retain_structured_scanner(
+                                        PendingStructuredScannerPhase::PdfObjectStreamAttribute {
+                                            use_object,
+                                        },
+                                        StructuredScannerChildDestination::PdfObjectStreamAttribute,
+                                    )?;
+                                }
+                                return Err(error);
+                            }
+                        };
+                        (use_object, true, stream_attr, None)
+                    }
+                    PendingStructuredScannerPhase::PdfObjectData {
+                        use_object,
+                        stream,
+                        stream_attr,
+                        file,
+                    } => {
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfObjectData,
+                        )?;
+                        (use_object, stream, stream_attr, Some(file))
+                    }
+                    _ => {
+                        if let Some(child) = child.take() {
+                            self.abort_continuation(child.restore().0)?;
+                        }
+                        return Err(CommandError::input_invariant());
+                    }
+                }
+            }
+            None => {
+                if self.scan_keyword("reserveobjnum")?.value {
+                    return Ok(PdfObjectRequest::Reserve);
+                }
+                let use_object = self
+                    .scan_keyword("useobjnum")?
+                    .value
+                    .then(|| self.scan_integer().map(|value| value.value))
+                    .transpose()?;
+                let stream = self.scan_keyword("stream")?.value;
+                let stream_attr = if stream && self.scan_keyword("attr")?.value {
+                    match self.scan_balanced_text(true) {
+                        Ok(value) => Some(value),
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::PdfObjectStreamAttribute {
+                                        use_object,
+                                    },
+                                    StructuredScannerChildDestination::PdfObjectStreamAttribute,
+                                )?;
+                            }
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    None
+                };
+                (use_object, stream, stream_attr, None)
+            }
         };
-        let file = self.scan_keyword("file")?.value;
-        let data = self.scan_balanced_text(true)?;
+        let file = if let Some(file) = retained_file {
+            file
+        } else {
+            self.scan_keyword("file")?.value
+        };
+        let data = match self.scan_balanced_text(true) {
+            Ok(data) => data,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    self.retain_structured_scanner(
+                        PendingStructuredScannerPhase::PdfObjectData {
+                            use_object,
+                            stream,
+                            stream_attr,
+                            file,
+                        },
+                        StructuredScannerChildDestination::PdfObjectData,
+                    )?;
+                }
+                return Err(error);
+            }
+        };
         Ok(PdfObjectRequest::Define {
             use_object,
             stream,
@@ -1662,16 +2646,81 @@ impl<G> CommandProcessor<'_, '_, G> {
                 object: self.scan_integer()?.value,
             });
         }
-        let attr = self
-            .scan_keyword("attr")?
-            .value
-            .then(|| self.scan_balanced_text(true))
-            .transpose()?;
-        let resources = self
-            .scan_keyword("resources")?
-            .value
-            .then(|| self.scan_balanced_text(true))
-            .transpose()?;
+        let pending = self.take_pending_structured_scanner()?;
+        let (attr, resume_resources) = match pending {
+            Some(pending) => {
+                let PendingStructuredScanner { phase, mut child } = pending;
+                match phase {
+                    PendingStructuredScannerPhase::PdfFormAttribute => {
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfFormAttribute,
+                        )?;
+                        let attr = match self.scan_balanced_text(true) {
+                            Ok(attr) => Some(attr),
+                            Err(error) => {
+                                if error.is_resource_suspension() {
+                                    self.retain_structured_scanner(
+                                        PendingStructuredScannerPhase::PdfFormAttribute,
+                                        StructuredScannerChildDestination::PdfFormAttribute,
+                                    )?;
+                                }
+                                return Err(error);
+                            }
+                        };
+                        (attr, false)
+                    }
+                    PendingStructuredScannerPhase::PdfFormResources { attr } => {
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfFormResources,
+                        )?;
+                        (attr, true)
+                    }
+                    _ => {
+                        if let Some(child) = child.take() {
+                            self.abort_continuation(child.restore().0)?;
+                        }
+                        return Err(CommandError::input_invariant());
+                    }
+                }
+            }
+            None => {
+                let attr = if self.scan_keyword("attr")?.value {
+                    match self.scan_balanced_text(true) {
+                        Ok(attr) => Some(attr),
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::PdfFormAttribute,
+                                    StructuredScannerChildDestination::PdfFormAttribute,
+                                )?;
+                            }
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    None
+                };
+                (attr, false)
+            }
+        };
+        let resources = if resume_resources || self.scan_keyword("resources")?.value {
+            match self.scan_balanced_text(true) {
+                Ok(resources) => Some(resources),
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        self.retain_structured_scanner(
+                            PendingStructuredScannerPhase::PdfFormResources { attr },
+                            StructuredScannerChildDestination::PdfFormResources,
+                        )?;
+                    }
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         Ok(PdfFormRequest::Create {
             attr,
             resources,
@@ -1687,24 +2736,181 @@ impl<G> CommandProcessor<'_, '_, G> {
         })
     }
 
+    pub fn scan_pdf_font_action(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<ScannedPdfFontAction, CommandError> {
+        let pending = self.take_pending_structured_scanner()?;
+        let (font, retained_first) = match pending {
+            Some(pending) => {
+                let PendingStructuredScanner { phase, mut child } = pending;
+                match phase {
+                    PendingStructuredScannerPhase::PdfGlyphName {
+                        primitive: owner,
+                        font,
+                    } => {
+                        if owner != primitive {
+                            if let Some(child) = child.take() {
+                                self.abort_continuation(child.restore().0)?;
+                            }
+                            return Err(CommandError::input_invariant());
+                        }
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfGlyphName,
+                        )?;
+                        (font, None)
+                    }
+                    PendingStructuredScannerPhase::PdfGlyphUnicode { font, first }
+                        if primitive == UnexpandablePrimitive::PdfGlyphToUnicode =>
+                    {
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfGlyphUnicode,
+                        )?;
+                        (font, Some(first))
+                    }
+                    _ => {
+                        if let Some(child) = child.take() {
+                            self.abort_continuation(child.restore().0)?;
+                        }
+                        return Err(CommandError::input_invariant());
+                    }
+                }
+            }
+            None => {
+                let font = matches!(
+                    primitive,
+                    UnexpandablePrimitive::PdfFontAttr
+                        | UnexpandablePrimitive::PdfIncludeChars
+                        | UnexpandablePrimitive::PdfNoBuiltinToUnicode
+                )
+                .then(|| self.scan_font_selector())
+                .transpose()?;
+                (font, None)
+            }
+        };
+        if primitive == UnexpandablePrimitive::PdfNoBuiltinToUnicode {
+            return Ok(ScannedPdfFontAction {
+                font,
+                first: None,
+                second: None,
+            });
+        }
+        let first = if let Some(first) = retained_first {
+            first
+        } else {
+            match self.scan_balanced_text(true) {
+                Ok(first) => first.tokens,
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        self.retain_structured_scanner(
+                            PendingStructuredScannerPhase::PdfGlyphName { primitive, font },
+                            StructuredScannerChildDestination::PdfGlyphName,
+                        )?;
+                    }
+                    return Err(error);
+                }
+            }
+        };
+        let second = if primitive == UnexpandablePrimitive::PdfGlyphToUnicode {
+            match self.scan_balanced_text(true) {
+                Ok(second) => Some(second.tokens),
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        self.retain_structured_scanner(
+                            PendingStructuredScannerPhase::PdfGlyphUnicode { font, first },
+                            StructuredScannerChildDestination::PdfGlyphUnicode,
+                        )?;
+                    }
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        Ok(ScannedPdfFontAction {
+            font,
+            first: Some(first),
+            second,
+        })
+    }
+
     pub fn scan_pdf_document_fragment_request(
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<PdfDocumentFragmentRequest, CommandError> {
         use tex_state::PdfDocumentFragmentKind as Kind;
-        let kind = match primitive {
-            UnexpandablePrimitive::PdfInfo => Kind::Info,
-            UnexpandablePrimitive::PdfCatalog => Kind::Catalog,
-            UnexpandablePrimitive::PdfNames => Kind::Names,
-            UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
-            UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
-            _ => return Err(CommandError::input_invariant()),
+        let pending = self.take_pending_structured_scanner()?;
+        let (kind, text) = match pending {
+            Some(pending) => {
+                let PendingStructuredScanner { phase, mut child } = pending;
+                match phase {
+                    PendingStructuredScannerPhase::PdfDocumentFragmentText { kind } => {
+                        let (text, phase) = self.scan_pdf_navigation_text(
+                            &mut child,
+                            PendingStructuredScannerPhase::PdfDocumentFragmentText { kind },
+                            StructuredScannerChildDestination::PdfDocumentFragmentText,
+                        )?;
+                        let PendingStructuredScannerPhase::PdfDocumentFragmentText { kind } = phase
+                        else {
+                            return Err(CommandError::input_invariant());
+                        };
+                        (kind, text)
+                    }
+                    PendingStructuredScannerPhase::PdfAction { owner, phase } => {
+                        let (owner, action) =
+                            self.scan_pdf_action_for_owner(owner, Some((phase, child)))?;
+                        let PendingPdfActionOwner::DocumentFragment { kind, text } = owner else {
+                            return Err(CommandError::input_invariant());
+                        };
+                        return Ok(PdfDocumentFragmentRequest {
+                            kind,
+                            text,
+                            open_action: Some(action),
+                        });
+                    }
+                    _ => {
+                        if let Some(child) = child.take() {
+                            self.abort_continuation(child.restore().0)?;
+                        }
+                        return Err(CommandError::input_invariant());
+                    }
+                }
+            }
+            None => {
+                let kind = match primitive {
+                    UnexpandablePrimitive::PdfInfo => Kind::Info,
+                    UnexpandablePrimitive::PdfCatalog => Kind::Catalog,
+                    UnexpandablePrimitive::PdfNames => Kind::Names,
+                    UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
+                    UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
+                    _ => return Err(CommandError::input_invariant()),
+                };
+                let (text, phase) = self.scan_pdf_navigation_text(
+                    &mut None,
+                    PendingStructuredScannerPhase::PdfDocumentFragmentText { kind },
+                    StructuredScannerChildDestination::PdfDocumentFragmentText,
+                )?;
+                let PendingStructuredScannerPhase::PdfDocumentFragmentText { kind } = phase else {
+                    return Err(CommandError::input_invariant());
+                };
+                (kind, text)
+            }
         };
-        let text = self.scan_balanced_text(true)?;
-        let open_action = if primitive == UnexpandablePrimitive::PdfCatalog
-            && self.scan_keyword("openaction")?.value
-        {
-            Some(self.scan_pdf_action()?)
+        let open_action = if kind == Kind::Catalog && self.scan_keyword("openaction")?.value {
+            let (owner, action) = self.scan_pdf_action_for_owner(
+                PendingPdfActionOwner::DocumentFragment { kind, text },
+                None,
+            )?;
+            let PendingPdfActionOwner::DocumentFragment { kind, text } = owner else {
+                return Err(CommandError::input_invariant());
+            };
+            return Ok(PdfDocumentFragmentRequest {
+                kind,
+                text,
+                open_action: Some(action),
+            });
         } else {
             None
         };
@@ -2414,27 +3620,125 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the first unquoted space or noncharacter remains the request boundary.
     /// Resource acquisition is expressly outside this scanner.
     pub fn scan_pdf_image_request(&mut self) -> Result<PdfImageRequest, CommandError> {
-        let mut width = None;
-        let mut height = None;
-        let mut depth = None;
-        loop {
-            if self.scan_keyword("width")?.value {
-                width = Some(self.scan_dimension()?.value);
-            } else if self.scan_keyword("height")?.value {
-                height = Some(self.scan_dimension()?.value);
-            } else if self.scan_keyword("depth")?.value {
-                depth = Some(self.scan_dimension()?.value);
-            } else {
-                break;
+        let pending = self.take_pending_structured_scanner()?;
+        let (width, height, depth, attr, resume_named) = match pending {
+            Some(pending) => {
+                let PendingStructuredScanner { phase, mut child } = pending;
+                match phase {
+                    PendingStructuredScannerPhase::PdfImageAttribute {
+                        width,
+                        height,
+                        depth,
+                    } => {
+                        let (attr, phase) = self.scan_pdf_navigation_text(
+                            &mut child,
+                            PendingStructuredScannerPhase::PdfImageAttribute {
+                                width,
+                                height,
+                                depth,
+                            },
+                            StructuredScannerChildDestination::PdfImageAttribute,
+                        )?;
+                        let PendingStructuredScannerPhase::PdfImageAttribute {
+                            width,
+                            height,
+                            depth,
+                        } = phase
+                        else {
+                            return Err(CommandError::input_invariant());
+                        };
+                        (width, height, depth, Some(attr.tokens), false)
+                    }
+                    PendingStructuredScannerPhase::PdfImagePageName {
+                        width,
+                        height,
+                        depth,
+                        attr,
+                    } => {
+                        self.restore_structured_scanner_child(
+                            &mut child,
+                            StructuredScannerChildDestination::PdfImagePageName,
+                        )?;
+                        (width, height, depth, attr, true)
+                    }
+                    _ => {
+                        if let Some(child) = child.take() {
+                            self.abort_continuation(child.restore().0)?;
+                        }
+                        return Err(CommandError::input_invariant());
+                    }
+                }
             }
-        }
-        let attr = if self.scan_keyword("attr")?.value {
-            Some(self.scan_balanced_text(true)?.tokens)
-        } else {
-            None
+            None => {
+                let mut width = None;
+                let mut height = None;
+                let mut depth = None;
+                loop {
+                    if self.scan_keyword("width")?.value {
+                        width = Some(self.scan_dimension()?.value);
+                    } else if self.scan_keyword("height")?.value {
+                        height = Some(self.scan_dimension()?.value);
+                    } else if self.scan_keyword("depth")?.value {
+                        depth = Some(self.scan_dimension()?.value);
+                    } else {
+                        break;
+                    }
+                }
+                let (width, height, depth, attr) = if self.scan_keyword("attr")?.value {
+                    let (attr, phase) = self.scan_pdf_navigation_text(
+                        &mut None,
+                        PendingStructuredScannerPhase::PdfImageAttribute {
+                            width,
+                            height,
+                            depth,
+                        },
+                        StructuredScannerChildDestination::PdfImageAttribute,
+                    )?;
+                    let PendingStructuredScannerPhase::PdfImageAttribute {
+                        width,
+                        height,
+                        depth,
+                    } = phase
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    (width, height, depth, Some(attr.tokens))
+                } else {
+                    (width, height, depth, None)
+                };
+                (width, height, depth, attr, false)
+            }
         };
-        let page = if self.scan_keyword("named")?.value {
-            let tokens = self.scan_balanced_text(true)?.tokens;
+        let page = if resume_named || self.scan_keyword("named")?.value {
+            let (text, phase) = self.scan_pdf_navigation_text(
+                &mut None,
+                PendingStructuredScannerPhase::PdfImagePageName {
+                    width,
+                    height,
+                    depth,
+                    attr,
+                },
+                StructuredScannerChildDestination::PdfImagePageName,
+            )?;
+            let PendingStructuredScannerPhase::PdfImagePageName {
+                width: retained_width,
+                height: retained_height,
+                depth: retained_depth,
+                attr: retained_attr,
+            } = phase
+            else {
+                return Err(CommandError::input_invariant());
+            };
+            if (
+                retained_width,
+                retained_height,
+                retained_depth,
+                retained_attr,
+            ) != (width, height, depth, attr)
+            {
+                return Err(CommandError::input_invariant());
+            }
+            let tokens = text.tokens;
             let semantic = self
                 .command
                 .attempt
@@ -3974,14 +5278,53 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The `shipout` form retains the unexpanded balanced tokens so traversal
     /// can expand them against the state current when their box is shipped.
     pub fn scan_special(&mut self) -> Result<(bool, ScannedBalancedText), CommandError> {
+        if let Some(pending) = self.take_pending_structured_scanner()? {
+            let PendingStructuredScanner { phase, mut child } = pending;
+            return match phase {
+                PendingStructuredScannerPhase::SpecialText { deferred } => {
+                    self.restore_structured_scanner_child(
+                        &mut child,
+                        StructuredScannerChildDestination::SpecialText,
+                    )?;
+                    match self.scan_balanced_text(!deferred) {
+                        Ok(text) => Ok((deferred, text)),
+                        Err(error) => {
+                            if error.is_resource_suspension() {
+                                self.retain_structured_scanner(
+                                    PendingStructuredScannerPhase::SpecialText { deferred },
+                                    StructuredScannerChildDestination::SpecialText,
+                                )?;
+                            }
+                            Err(error)
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(child) = child.take() {
+                        self.abort_continuation(child.restore().0)?;
+                    }
+                    Err(CommandError::input_invariant())
+                }
+            };
+        }
         // TeX82 §473 enters `scan_toks` immediately. The preceding optional
         // keyword probe belongs only to pdfTeX 1.40.29 §1534; in particular,
         // an e-TeX job must enter `absorbing` before delivering the opening
         // brace instead of speculatively backing it up and replaying it.
         let deferred =
             self.profile().capabilities().supports_pdftex() && self.scan_keyword("shipout")?.value;
-        self.scan_balanced_text(!deferred)
-            .map(|text| (deferred, text))
+        match self.scan_balanced_text(!deferred) {
+            Ok(text) => Ok((deferred, text)),
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    self.retain_structured_scanner(
+                        PendingStructuredScannerPhase::SpecialText { deferred },
+                        StructuredScannerChildDestination::SpecialText,
+                    )?;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Scans a macro parameter text and replacement text without exposing the
