@@ -2129,11 +2129,17 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterGroup(token) => {
-            command
-                .state
-                .state_mut()
-                .save_aftergroup(&**stores, token)
-                .expect("aftergroup is admitted only for the synchronized open group");
+            match command.state.state_mut().save_aftergroup(&**stores, token) {
+                // TeX82 §280's `save_for_after` consumes the operand at every
+                // level, but creates an `insert_token` save word only when
+                // `cur_level > level_one`. `NoOpenGroup` is therefore the
+                // canonical outer-level no-op; every synchronization failure
+                // remains an invariant violation.
+                Ok(()) | Err(tex_command::CommandGroupError::NoOpenGroup) => {}
+                Err(error) => panic!(
+                    "aftergroup is admitted only for the synchronized group stack: {error:?}"
+                ),
+            }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterAssignment(token) => {

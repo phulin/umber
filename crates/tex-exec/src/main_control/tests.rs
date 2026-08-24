@@ -388,6 +388,50 @@ fn save_stack_high_water_samples_each_checked_push_without_hardcoded_job_totals(
 }
 
 #[test]
+fn outer_level_aftergroup_consumes_its_token_without_saving_or_replaying_it() {
+    // TeX82 §280: `save_for_after` always consumes the following token, but
+    // appends an `insert_token` save word only above `level_one`. The outer-
+    // level case is shared unchanged by e-TeX 2.6 and pdfTeX 1.40.29.
+    for profile in [
+        CommandProfile::TEX82,
+        CommandProfile::ETEX26,
+        CommandProfile::PDFTEX14029,
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = match profile {
+                CommandProfile::TEX82 => MainControl::tex82_initex(stores),
+                CommandProfile::ETEX26 => etex_initex(stores),
+                CommandProfile::PDFTEX14029 => pdftex_initex(stores),
+                _ => unreachable!("test enumerates the three canonical profiles"),
+            };
+            register_source(
+                &mut control,
+                br"\def\unexpected{\global\count0=1}\aftergroup\unexpected\end",
+            );
+            let mut observations = ObservationRecorder::default();
+
+            run_to_end_observed(&mut control, stores, &mut observations);
+
+            assert_eq!(stores.count(0).expect("count register"), 0, "{profile:?}");
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        CommandObservation::Input(record)
+                            if record.transition == InputTransition::Backup
+                                && record.reason == InputReason::Backup
+                    ))
+                    .count(),
+                0,
+                "{profile:?}"
+            );
+        });
+    }
+}
+
+#[test]
 fn finish_job_publishes_each_live_stack_owner() {
     // TeX82 §1334 reports five independently owned maxima. Derive the
     // expected row from those owners after a source that exercises all five;
