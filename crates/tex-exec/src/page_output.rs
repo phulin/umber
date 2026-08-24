@@ -61,6 +61,7 @@ pub(crate) fn select_pending_page_output<G>(
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
         report_output_loop(
             stores,
+            diagnostic_effects,
             dead_cycles,
             diagnostic_context.output_context.clone(),
         )?;
@@ -540,9 +541,13 @@ fn output_penalty_and_rewrite_break<G>(
 /// input summary.
 pub(crate) fn report_output_loop<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     dead_cycles: i32,
     context: String,
 ) -> Result<(), ExecError> {
+    // TeX82 §§1006, 1012, and 1024 print the completed page-break
+    // diagnostic before `fire_up` enters this synchronous error dialogue.
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     let mut report = stores.print_err("Output loop---");
     report
         .print_int(dead_cycles)

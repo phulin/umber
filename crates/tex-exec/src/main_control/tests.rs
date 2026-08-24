@@ -4549,6 +4549,38 @@ fn batch_page_builder_diagnostics_materialize_before_the_shipout_marker() {
     });
 }
 
+#[test]
+fn batch_page_builder_diagnostics_precede_the_output_loop_error() {
+    // TeX82 §§1006, 1012, and 1024: `build_page` completes the forced
+    // break's tracing-pages report before `fire_up` diagnoses the exhausted
+    // dead-cycle allowance. Batch mode changes only the report's sink. A
+    // successful output routine is the negative control: it retains the same
+    // traced forced break without reaching the synchronous error boundary.
+    for (output, expects_loop) in [("\\relax", true), ("\\shipout\\box255", false)] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(
+                &mut control,
+                format!(
+                    "\\batchmode\\tracingpages=1\\maxdeadcycles=1\\output={{{output}}}\\topskip=0pt\\vsize=1pt\\hrule height2pt\\penalty-10000\\end"
+                )
+                .as_bytes(),
+            );
+
+            run_to_end(&mut control, stores);
+
+            let log =
+                String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+            let page_trace = log.rfind("% t=").expect("forced page-break trace");
+            let output_loop = log.find("! Output loop---");
+            assert_eq!(output_loop.is_some(), expects_loop, "{log}");
+            if let Some(output_loop) = output_loop {
+                assert!(page_trace < output_loop, "{log}");
+            }
+        });
+    }
+}
+
 fn etex_initex<G>(stores: &mut Universe<G>) -> MainControl<G> {
     tex_command::install_tex82_expandable_primitives(stores);
     tex_command::install_etex_expandable_primitives(stores);
