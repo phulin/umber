@@ -240,6 +240,24 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     assert!(expansion.contains(".store_expandafter_frame(PendingExpandAfter"));
     assert!(expansion.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
     assert!(expansion.contains("PdfStringComparePhase::Right { left }"));
+    assert!(expansion.contains("PendingExpansionResume::CsName { name }"));
+    let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
+        .expect("read conditional continuation ownership");
+    assert!(conditionals.contains("PendingExpansionResume::IfCsName"));
+    let state = fs::read_to_string(manifest_dir.join("src/state.rs"))
+        .expect("read command-state ownership");
+    for forbidden in [
+        "pending_csnames",
+        "pending_integer_scans",
+        "pending_file_enquiry:",
+        "Vec<crate::scanners::Pending",
+        "Vec<PendingExpansion",
+    ] {
+        assert!(
+            !state.contains(forbidden),
+            "caller-order continuation mailbox {forbidden} must not return to command state"
+        );
+    }
     assert!(
         !expansion.contains("retain_pending_expansion")
             && !expansion.contains("retain_pending_expandafter"),

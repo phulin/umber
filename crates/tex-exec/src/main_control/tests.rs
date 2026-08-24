@@ -5872,6 +5872,29 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
     }
 }
 
+#[test]
+fn nested_csname_and_ifcsname_accumulators_resume_their_typed_parents() {
+    // TeX82 §372 and e-TeX [17.4765--4779] use the same expanded name scan,
+    // but each suspended invocation owns a different accumulated spelling and
+    // `\ifcsname` additionally owns an already-pushed condition frame. A
+    // caller-order name stack can make these examples appear to work only by
+    // matching recursive return order; the continuation must instead move
+    // each name directly with its enclosing expansion or conditional phase.
+    let source = br"\expandafter\def\csname inner4143\endcsname{Z}\expandafter\def\csname outerZtail\endcsname{OK}\expandafter\def\csname inner4\endcsname{Y}\expandafter\def\csname outerYtail\endcsname{YES}\edef\result{\csname outer\csname inner\pdffiledump length 1{second}\pdffiledump length 1{third}\endcsname tail\endcsname}\ifcsname outer\csname inner\pdffilesize{first}\endcsname tail\endcsname\message{[\result:YES]}\else\message{[bad-ifcsname]}\fi\unless\ifcsname missing\pdffilesize{4}\endcsname\message{[UNLESS]}\else\message{[bad-unless]}\fi\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third", "first", "4"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(
+        preloaded_terminal.contains("[OK:YES] [UNLESS]"),
+        "{preloaded_terminal:?}"
+    );
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third", "first", "4"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
 fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<String>) {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);

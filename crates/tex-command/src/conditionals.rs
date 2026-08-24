@@ -497,6 +497,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: &crate::CurrentCommand<G>,
         inverted: bool,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
         let ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) = command.meaning()
         else {
@@ -504,19 +506,37 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let kind =
             ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
-        let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
-        let condition = self
-            .command
-            .conditions
-            .push_with_inversion(kind, source_line, inverted);
-        let frame = self
-            .command
-            .conditions
-            .frame(condition)
-            .cloned()
-            .ok_or(CommandError::input_invariant())?;
-        self.trace_conditional_enter(&frame);
-        self.observe_condition("push", &frame, None);
+        let retained = std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch);
+        let condition = match retained {
+            crate::state::PendingExpansionResume::Dispatch => {
+                let source_line =
+                    u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
+                let condition =
+                    self.command
+                        .conditions
+                        .push_with_inversion(kind, source_line, inverted);
+                let frame = self
+                    .command
+                    .conditions
+                    .frame(condition)
+                    .cloned()
+                    .ok_or(CommandError::input_invariant())?;
+                self.trace_conditional_enter(&frame);
+                self.observe_condition("push", &frame, None);
+                condition
+            }
+            crate::state::PendingExpansionResume::IfCsName {
+                condition,
+                inverted: retained_inverted,
+                name,
+            } if kind == ConditionalKind::IfCsName && retained_inverted == inverted => {
+                return self.resume_if_csname(condition, inverted, name, suspended);
+            }
+            _ => return Err(CommandError::input_invariant()),
+        };
+        if kind == ConditionalKind::IfCsName {
+            return self.resume_if_csname(condition, inverted, String::new(), suspended);
+        }
         match kind {
             ConditionalKind::IfCase => {
                 let selected = self.scan_integer()?.value;
@@ -537,7 +557,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn expand_unless(
         &mut self,
         _command: &crate::CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
+        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch => {}
+            crate::state::PendingExpansionResume::IfCsName {
+                condition,
+                inverted: true,
+                name,
+            } => return self.resume_if_csname(condition, true, name, suspended),
+            _ => return Err(CommandError::input_invariant()),
+        }
         // The following conditional is an operand of `\unless`, not an
         // ordinary expansion result: preserve its primitive command for the
         // shared evaluator to install the one inverted frame.
@@ -574,7 +605,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                 &next,
             ));
         }
-        self.expand_conditional(&next, true)
+        self.expand_conditional(&next, true, resume, suspended)
+    }
+
+    fn resume_if_csname(
+        &mut self,
+        condition: ConditionId,
+        inverted: bool,
+        name: String,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let mut suspended_name = None;
+        let name = match self.scan_csname_characters(name, &mut suspended_name) {
+            Ok(name) => name,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    *suspended =
+                        suspended_name.map(|name| crate::state::PendingExpansionResume::IfCsName {
+                            condition,
+                            inverted,
+                            name,
+                        });
+                }
+                return Err(error);
+            }
+        };
+        let result = self
+            .state
+            .known_control_sequence(&name)
+            .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined);
+        self.complete_boolean(condition, result ^ inverted)
     }
 
     fn complete_boolean(
@@ -739,11 +799,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // with `no_new_control_sequence` set. An absent spelling
             // therefore answers false without entering the hash table.
             ConditionalKind::IfCsName => {
-                let name = self.scan_csname_characters()?;
-                Ok(self
-                    .state
-                    .known_control_sequence(&name)
-                    .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined))
+                unreachable!("the typed conditional caller owns the resumable name scan")
             }
             // e-TeX 2.6 etex.ch [17.4797--4805]: `\iffontchar` uses the
             // ordinary §577 font-identifier scanner followed by §434's

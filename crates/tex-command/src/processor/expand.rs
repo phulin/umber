@@ -1144,10 +1144,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
                 if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
             {
-                self.expand_conditional(command, false)
+                self.expand_conditional(
+                    command,
+                    false,
+                    &mut expansion_resume,
+                    &mut suspended_resume,
+                )
             }
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless)) => {
-                self.expand_unless(command)
+                self.expand_unless(command, &mut expansion_resume, &mut suspended_resume)
             }
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::Else
@@ -1176,7 +1181,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             )) => self.expand_expandafter(),
             ResolvedMeaning::Static(meaning) => match meaning {
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
-                    self.expand_csname(command)
+                    self.expand_csname(command, &mut expansion_resume, &mut suspended_resume)
                 }
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
                     self.expand_string(command)
@@ -1927,8 +1932,28 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web's `\\csname`: collect ordinary expanded character commands
     /// until the inaccessible `\\endcsname` boundary, then inject the one
     /// named control-sequence token through normal input delivery.
-    fn expand_csname(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
-        let name = self.scan_csname_characters()?;
+    fn expand_csname(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        resume: &mut crate::state::PendingExpansionResume,
+        suspended: &mut Option<crate::state::PendingExpansionResume>,
+    ) -> Result<(), CommandError> {
+        let name = match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
+            crate::state::PendingExpansionResume::Dispatch => String::new(),
+            crate::state::PendingExpansionResume::CsName { name } => name,
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let mut suspended_name = None;
+        let name = match self.scan_csname_characters(name, &mut suspended_name) {
+            Ok(name) => name,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    *suspended = suspended_name
+                        .map(|name| crate::state::PendingExpansionResume::CsName { name });
+                }
+                return Err(error);
+            }
+        };
         let symbol = self.state.intern_relaxed_control_sequence(&name);
         self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener.origin()))
     }
@@ -1938,19 +1963,22 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// e-TeX 2.6 etex.ch [17.4765--4779] deliberately reuses this exact
     /// name-building scan for `\\ifcsname`; only the subsequent hash-table
     /// operation differs.
-    pub(crate) fn scan_csname_characters(&mut self) -> Result<String, CommandError> {
+    pub(crate) fn scan_csname_characters(
+        &mut self,
+        mut name: String,
+        suspended: &mut Option<String>,
+    ) -> Result<String, CommandError> {
         // pdfTeX section 57 saves and restores the prior flag so nested name
         // scans remain true to ifincsname and unwind to their caller.
         let previous = std::mem::replace(&mut self.is_in_csname, true);
         let result = (|| {
-            let mut name = self.command.take_pending_csname().unwrap_or_default();
             loop {
                 let command = match self.get_x_token() {
                     Ok(Some(command)) => command,
                     Ok(None) => return Err(CommandError::input_invariant()),
                     Err(error) => {
                         if error.is_resource_suspension() {
-                            self.command.retain_pending_csname(name);
+                            *suspended = Some(name);
                         }
                         return Err(error);
                     }

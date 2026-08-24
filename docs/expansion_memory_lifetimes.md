@@ -253,11 +253,37 @@ Nested scanner and expansion suspension uses the same fixed typed scratch lane
 described above. Its backing vectors grow only when a generation reaches a new
 simultaneous high-water mark; freed slots are reused with a new serial, so a
 stale or double-consumed key is rejected. Scalar continuations such as an
-in-progress `\csname` remain in their dedicated typed state. An expandable
+in-progress `\csname` move their accumulated name into the exact enclosing
+expansion or conditional phase. An expandable
 `\number` or `\romannumeral` moves its leading/radix/optional-space phase into
 the owning expansion frame, beside that frame's exact scanner child, instead
 of a command-state stack. None may become a general token, boxed-dynamic, or
 caller-order mailbox.
+
+The 2026-08-24 continuation audit found one remaining class that does not yet
+meet that rule. Ordinary command calls to the integer scanner disable its
+existing resource continuation, while dimension, glue, keyword, optional-
+equals, and filename scans still keep progress only in Rust locals. The direct
+retry owner then retains the command and nested scanner key but redispatches
+the command from its opcode after input has advanced. This is inferred replay,
+not a continuation: for example, a preloaded
+`\count0=12\pdffilesize{second}` assigns 122, while staged delivery currently
+re-enters the assignment after consuming `12` and assigns zero.
+
+The required replacement is one reusable, allocation-free scalar-frame
+family. Its variants own exact integer, dimension, glue, keyword, optional-
+equals, and filename progress; every nested scalar or expansion is a non-
+`Copy` child edge tagged with its return destination. A direct operation owns
+one outer typed scan phase, while expansion, conditional, alignment, and
+structured-scanner phases own their scalar child directly. Resource-capable
+scanner entry points require that parent capability, so an unretained call is
+not expressible. Success consumes child then parent and moves the result into
+the named destination, resuspension reinstalls the same edge, and abort drops
+the exact chain deepest-first. A root mailbox, per-command retry queue,
+caller-order result tape, search, rollback replay, and destination inference
+remain forbidden. Until that frame family replaces the unowned entry points,
+ordinary scalar and command-specific resource suspension is a known
+implementation gap rather than a safe singular-job exception.
 
 The handle-free `OwnedCommandContinuation` schema, validation, and atomic
 destination materializer are implemented, but the module still carries a

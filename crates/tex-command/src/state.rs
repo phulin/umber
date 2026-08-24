@@ -100,9 +100,6 @@ pub struct CommandStateRoots<G> {
     /// acquisition. Retrying the opener consumes this value instead of
     /// delivering or scanning its operand again.
     pub(crate) pending_input_open: Option<crate::ScannedFileName>,
-    /// Accumulated TeX82 §372 `\csname` characters held across immutable host
-    /// suspension. Nested names unwind inner-to-outer and resume in that order.
-    pub(crate) pending_csnames: Vec<String>,
     /// Named token-list levels installed since the executor last drained
     /// them, in push order.
     ///
@@ -164,7 +161,6 @@ impl<G> Clone for CommandStateRoots<G> {
             afterassignment: self.afterassignment,
             name_in_progress: self.name_in_progress,
             pending_input_open: self.pending_input_open.clone(),
-            pending_csnames: self.pending_csnames.clone(),
             named_token_list_pushes: self.named_token_list_pushes.clone(),
             file_framing_events: self.file_framing_events.clone(),
         }
@@ -239,6 +235,14 @@ pub(crate) enum PendingExpansionChildDestination {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum PendingExpansionResume {
     Dispatch,
+    CsName {
+        name: String,
+    },
+    IfCsName {
+        condition: crate::processor::status::ConditionId,
+        inverted: bool,
+        name: String,
+    },
     Number(crate::scanners::PendingIntegerScan),
     PdfMatchPattern {
         case_insensitive: bool,
@@ -290,7 +294,6 @@ impl<G> Default for CommandStateRoots<G> {
             afterassignment: None,
             name_in_progress: false,
             pending_input_open: None,
-            pending_csnames: Vec::new(),
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
         }
@@ -1065,14 +1068,6 @@ impl<G> CommandState<G> {
     pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
         debug_assert!(self.pending_input_open.is_none());
         self.pending_input_open = Some(file_name);
-    }
-
-    pub(crate) fn take_pending_csname(&mut self) -> Option<String> {
-        self.pending_csnames.pop()
-    }
-
-    pub(crate) fn retain_pending_csname(&mut self, name: String) {
-        self.pending_csnames.push(name);
     }
 
     pub(crate) fn begin_file_name(&mut self) -> Result<(), crate::CommandError> {
