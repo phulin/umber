@@ -259,11 +259,11 @@ impl<G> Clone for InputLevel<G> {
 /// slice directly and does not clone this owner.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct PackedTokenChunk {
-    words: SmallVec<[TracedTokenWord; 1]>,
+    words: SmallVec<[TracedTokenWord; 13]>,
     /// Position-aligned only for backed-up physical-source tokens. Ordinary
     /// generated/stored runs canonically leave this empty: absence already
     /// denotes `None` and must not allocate a redundant per-position vector.
-    source_provenance: SmallVec<[Option<SourceProvenance>; 1]>,
+    source_provenance: SmallVec<[Option<SourceProvenance>; 13]>,
     ownership: PackedTokenOwnership,
 }
 

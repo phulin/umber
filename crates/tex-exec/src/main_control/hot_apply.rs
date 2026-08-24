@@ -131,6 +131,7 @@ pub(super) fn scan<G>(
     global: bool,
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
+    suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
 ) -> Result<Option<HotOperation<G>>, ExecError> {
     let operation = match command.meaning() {
         tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
@@ -148,20 +149,12 @@ pub(super) fn scan<G>(
         },
         tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::CatCode,
-        )) => {
-            let character = processor
-                .scan_restricted_integer(RestrictedIntegerClass::CharacterCode)
-                .map_err(command_error)?
-                .value;
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_integer().map_err(command_error)?.value;
-            HotOperation::CatCode {
-                character: char::from_u32(character as u32)
-                    .expect("scan_char_num returns a valid character"),
-                value,
-                global,
-            }
-        }
+        )) => scan_catcode_assignment(
+            processor,
+            global,
+            CatCodeScanPhase::Character,
+            suspended_operation_scan,
+        )?,
         tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
@@ -188,6 +181,69 @@ pub(super) fn scan<G>(
         _ => return Ok(None),
     };
     Ok(Some(operation))
+}
+
+pub(super) fn scan_catcode_assignment<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    global: bool,
+    phase: CatCodeScanPhase,
+    suspended: &mut Option<PendingOperationScanPhase>,
+) -> Result<HotOperation<G>, ExecError> {
+    let phase = if matches!(phase, CatCodeScanPhase::Character) {
+        let scan =
+            processor.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode);
+        let character = retain_operation_scalar(
+            processor,
+            scan,
+            PendingOperationScanPhase::CatCode {
+                global,
+                phase: CatCodeScanPhase::Character,
+            },
+            suspended,
+        )?
+        .value;
+        CatCodeScanPhase::OptionalEquals {
+            character: char::from_u32(character as u32)
+                .expect("scan_char_num returns a valid character"),
+        }
+    } else {
+        phase
+    };
+    let phase = match phase {
+        CatCodeScanPhase::OptionalEquals { character } => {
+            let scan = processor.scan_optional_equals_retained();
+            let _ = retain_operation_scalar(
+                processor,
+                scan,
+                PendingOperationScanPhase::CatCode {
+                    global,
+                    phase: CatCodeScanPhase::OptionalEquals { character },
+                },
+                suspended,
+            )?;
+            CatCodeScanPhase::Value { character }
+        }
+        phase => phase,
+    };
+    let CatCodeScanPhase::Value { character } = phase else {
+        unreachable!()
+    };
+    let scan = processor.scan_integer_retained();
+    let value = retain_operation_scalar(
+        processor,
+        scan,
+        PendingOperationScanPhase::CatCode {
+            global,
+            phase: CatCodeScanPhase::Value { character },
+        },
+        suspended,
+    )?
+    .value;
+    Ok(HotOperation::CatCode {
+        character,
+        value,
+        global,
+    })
 }
 
 /// Applies one measured common operation to canonical state and journals.

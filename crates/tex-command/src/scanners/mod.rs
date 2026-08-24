@@ -10,8 +10,10 @@ mod token_list;
 
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
-pub(crate) use scalar::PendingScalarFrame;
-pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
+pub use scalar::{
+    InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScannedScalar,
+};
+pub(crate) use scalar::{PendingScalarFrame, ScalarChildDestination};
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
     FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,

@@ -5951,6 +5951,41 @@ fn count_assignment_resumes_exact_integer_operand_after_file_probe() {
     assert_eq!(staged_terminal, preloaded_terminal);
 }
 
+#[test]
+fn dimension_fraction_unit_and_internal_second_operand_resume_exact_phases() {
+    for (source, resources, expected) in [
+        (
+            br"\def\gobble#1X{}\def\pa{\expandafter\gobble\pdffilesize{second}X}\def\pb{\expandafter\gobble\pdffilesize{third}X}\dimen0=1.2\pa3\pb4pt\message{[\the\dimen0]}\end"
+                .as_slice(),
+            &["second", "third"][..],
+            "[1.234pt]",
+        ),
+        (
+            br"\def\gobble#1X{}\def\pause{\expandafter\gobble\pdffilesize{second}X}\dimen0=1c\pause m\message{[\the\dimen0]}\end"
+                .as_slice(),
+            &["second"][..],
+            "[28.45274pt]",
+        ),
+        (
+            br"\def\gobble#1X{}\def\pause{\expandafter\gobble\pdffilesize{second}X}\dimen0=\fontdimen1\pause\font\message{[\the\dimen0]}\end"
+                .as_slice(),
+            &["second"][..],
+            "[0.0pt]",
+        ),
+    ] {
+        let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, resources);
+        assert!(preloaded_requests.is_empty());
+        assert!(
+            preloaded_terminal.contains(expected),
+            "{preloaded_terminal:?}"
+        );
+
+        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+        assert_eq!(staged_requests, resources);
+        assert_eq!(staged_terminal, preloaded_terminal);
+    }
+}
+
 fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<String>) {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
@@ -6318,11 +6353,71 @@ fn resource_retry_fuel_abort_releases_its_scanner_child() {
         );
         control.set_fuel_limit(1).expect("bounded abort fuel");
 
-        assert!(matches!(
-            control.advance_episode(stores),
-            Err(ExecError::Captured { error, .. })
-                if matches!(*error, ExecError::Command(CommandError::FuelExhausted { .. }))
-        ));
+        let aborted = control.advance_episode(stores);
+        assert!(
+            matches!(
+                &aborted,
+                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+            ) || matches!(
+                &aborted,
+                Err(ExecError::Captured { error, .. })
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+            ),
+            "unexpected scalar abort: {aborted:?}"
+        );
+    });
+}
+
+#[test]
+fn scalar_operation_retry_fuel_abort_releases_parent_and_deepest_child() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(
+            &mut control,
+            br"\count0=12\pdffilesize{second}\message{unreachable}\end",
+        );
+
+        let need = loop {
+            match control
+                .advance_episode(stores)
+                .expect("integer operand suspends")
+            {
+                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
+                StepResult::Progress(_) => {}
+                other => panic!("unexpected integer-operand step: {other:?}"),
+            }
+        };
+        let ResourceNeed::InputProbe { request } = &need else {
+            unreachable!();
+        };
+        control.capabilities_mut().register_input_probe(
+            request.name.clone(),
+            tex_command::FileEnquiryResource::new(
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&b"AB"[..]),
+                ),
+                None,
+            ),
+        );
+        control.set_fuel_limit(1).expect("bounded abort fuel");
+
+        let aborted = control.advance_episode(stores);
+        assert!(
+            matches!(
+                &aborted,
+                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+            ) || matches!(
+                &aborted,
+                Err(ExecError::Captured { error, .. })
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+            ),
+            "unexpected scalar operation abort: {aborted:?}"
+        );
+        assert!(
+            control.pending_direct_operation.is_none(),
+            "fuel abort must recursively close the scalar child before its operation parent"
+        );
     });
 }
 

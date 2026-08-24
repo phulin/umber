@@ -140,7 +140,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The ordinary `scan_int` runs first and completes its normal delivery
     /// and backup lifecycle; only then is the result range-checked and, if
     /// necessary, replaced by zero.
-    pub fn scan_restricted_integer(
+    pub(crate) fn scan_restricted_integer(
         &mut self,
         class: RestrictedIntegerClass,
     ) -> Result<RestrictedInteger, CommandError> {
@@ -187,5 +187,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             recovered,
             provenance: scanned.provenance,
         })
+    }
+
+    pub fn scan_restricted_integer_retained(
+        &mut self,
+        class: RestrictedIntegerClass,
+    ) -> crate::RetainedScalarScan<G, RestrictedInteger> {
+        let result = self.scan_restricted_integer(class);
+        self.detach_retained_scalar(result)
     }
 }

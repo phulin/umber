@@ -21,7 +21,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// family index and then that size bank's font. Anything else is "Missing
     /// font identifier", whose `back_error` leaves the rejected command for
     /// its normal delivery and takes `null_font`.
-    pub fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
+    pub(crate) fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
         // §577's `@<Get the next non-blank non-call token@>` (§406).
         let command = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
@@ -75,6 +75,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(tex_state::font::NULL_FONT)
             }
         }
+    }
+
+    pub fn scan_font_selector_retained(&mut self) -> crate::RetainedScalarScan<G, FontId> {
+        let result = self.scan_font_selector();
+        self.detach_retained_scalar(result)
     }
 }
 

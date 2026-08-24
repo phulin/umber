@@ -1146,7 +1146,7 @@ impl FileNameComponents {
         }
     }
 
-    fn push_character(&mut self, ch: char) {
+    pub(crate) fn push_character(&mut self, ch: char) {
         match ch {
             '/' | '\\' | ':' => {
                 self.area.push_str(&self.name);
@@ -1179,7 +1179,7 @@ impl ScannedFileName {
     }
 }
 
-const FILE_NAME_POOL_CAPACITY: usize = 32_000;
+pub(crate) const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 
 /// Completed input-stream operation.  The command core owns every operand;
 /// replay only acquires an already-registered immutable resource and mutates
@@ -3262,6 +3262,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         })
     }
 
+    pub fn scan_math_family_retained(
+        &mut self,
+        size: MathFamilySize,
+    ) -> crate::RetainedScalarScan<G, ScannedMathFamily> {
+        let result = self.scan_math_family(size);
+        self.detach_retained_scalar(result)
+    }
+
     /// Collects the command-owned scalar prefix of TeX82's generalized
     /// fraction forms. Numerator/denominator mlist construction stays in the
     /// executor and is deliberately absent from this scanner boundary.
@@ -5201,6 +5209,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         })
     }
 
+    pub fn scan_balanced_text_retained(
+        &mut self,
+        expanded: bool,
+    ) -> crate::RetainedScalarScan<G, ScannedBalancedText> {
+        let result = self.scan_balanced_text(expanded);
+        self.detach_retained_scalar(result)
+    }
+
     /// Performs TeX82 §1288's complete `shift_case`.
     ///
     /// `\uppercase`/`\lowercase` are `any_mode` main-control cases that never
@@ -5425,16 +5441,75 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX's `scan_file_name`, returning a typed boundary instead of an input
     /// cursor or a backed-up raw command.
-    pub fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
+    pub(crate) fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
         self.command.begin_file_name()?;
         let result = self.scan_file_name_inner();
         self.command.end_file_name();
         result
     }
 
+    pub fn scan_file_name_retained(&mut self) -> crate::RetainedScalarScan<G, ScannedFileName> {
+        let result = self.scan_file_name();
+        self.detach_retained_scalar(result)
+    }
+
     fn scan_file_name_inner(&mut self) -> Result<ScannedFileName, CommandError> {
+        let pending = self.take_pending_scalar_frame()?;
+        let mut suspended = None;
+        let result = match pending {
+            Some(crate::scanners::PendingScalarFrame::FileNameLeading { mut child }) => {
+                self.restore_scalar_child(
+                    &mut child,
+                    crate::scanners::ScalarChildDestination::FileNameLeadingToken,
+                )?;
+                self.scan_file_name_leading(&mut suspended)
+            }
+            Some(crate::scanners::PendingScalarFrame::FileNameCharacters {
+                components,
+                character_count,
+                quoted,
+                grouped,
+                provenance,
+                mut child,
+            }) => {
+                self.restore_scalar_child(
+                    &mut child,
+                    crate::scanners::ScalarChildDestination::FileNameCharacter,
+                )?;
+                self.scan_file_name_characters(
+                    components,
+                    character_count,
+                    quoted,
+                    grouped,
+                    provenance,
+                    &mut suspended,
+                )
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => self.scan_file_name_leading(&mut suspended),
+        };
+        self.finish_scalar_call(result, suspended)
+    }
+
+    fn scan_file_name_leading(
+        &mut self,
+        suspended: &mut Option<crate::scanners::PendingScalarFrame<G>>,
+    ) -> Result<ScannedFileName, CommandError> {
         let first = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            let command = match self.get_x_token() {
+                Ok(Some(command)) => command,
+                Ok(None) => return Err(CommandError::input_invariant()),
+                Err(error) => {
+                    *suspended =
+                        Some(crate::scanners::PendingScalarFrame::FileNameLeading { child: None });
+                    return Err(error);
+                }
+            };
             if !matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::CharToken {
@@ -5459,17 +5534,40 @@ impl<G> CommandProcessor<'_, '_, G> {
         // the filename. TeX82 exposes this `back_input` hand-off, and it
         // keeps the group-opening case on the same ordinary delivery path.
         self.back_input(first)?;
-        let mut components = FileNameComponents::default();
-        let mut character_count = 0usize;
-        let mut quoted = false;
-        let mut next = None;
+        self.scan_file_name_characters(
+            FileNameComponents::default(),
+            0,
+            false,
+            grouped,
+            provenance.primary,
+            suspended,
+        )
+    }
+
+    fn scan_file_name_characters(
+        &mut self,
+        mut components: FileNameComponents,
+        mut character_count: usize,
+        mut quoted: bool,
+        grouped: bool,
+        provenance: OriginId,
+        suspended: &mut Option<crate::scanners::PendingScalarFrame<G>>,
+    ) -> Result<ScannedFileName, CommandError> {
         loop {
-            let command = match next.take() {
-                Some(command) => command,
-                None => match self.get_x_token()? {
-                    Some(command) => command,
-                    None => break,
-                },
+            let command = match self.get_x_token() {
+                Ok(Some(command)) => command,
+                Ok(None) => break,
+                Err(error) => {
+                    *suspended = Some(crate::scanners::PendingScalarFrame::FileNameCharacters {
+                        components,
+                        character_count,
+                        quoted,
+                        grouped,
+                        provenance,
+                        child: None,
+                    });
+                    return Err(error);
+                }
             };
             match static_meaning(command.meaning()) {
                 Some(Meaning::CharToken {
@@ -5515,7 +5613,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         Ok(ScannedFileName {
             components,
-            provenance,
+            provenance: StructuredProvenance {
+                primary: provenance,
+            },
         })
     }
 

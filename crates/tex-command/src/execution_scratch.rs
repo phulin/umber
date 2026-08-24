@@ -543,6 +543,26 @@ impl<G> ExecutionScratch<G> {
         }
     }
 
+    pub(crate) fn scalar_frame_mut(
+        &mut self,
+        key: &ScannerFrameKey<G>,
+    ) -> Result<&mut crate::scanners::PendingScalarFrame<G>, ScratchError> {
+        if !key.is_scalar() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.slot_mut(key.id)?.payload.as_mut() {
+            Some(ContinuationFrame::Scalar(pending)) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
+    }
+
+    pub(crate) fn discard_scalar_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<(), ScratchError> {
+        self.take_scalar_frame(key).map(drop)
+    }
+
     pub(crate) fn store_scanner_frame(
         &mut self,
         pending: crate::scan_toks::PendingScanToks<G>,

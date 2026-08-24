@@ -16,5 +16,8 @@ pub(super) use apply::{apply as apply_cold_operation, enter_group, leave_group_p
 pub(super) use operation::*;
 pub(super) use pdf::*;
 pub(super) use scan::scan as scan_cold_operation;
-pub(super) use scan::{partoken_context_replays, report_incomplete_conditions, scan_off_save};
+pub(super) use scan::{
+    partoken_context_replays, report_incomplete_conditions, scan_arithmetic_assignment,
+    scan_off_save,
+};
 pub(super) use support::*;

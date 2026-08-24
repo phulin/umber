@@ -68,6 +68,52 @@ pub(crate) struct InlineKeyword {
     len: u8,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum DimensionUnitProgress<G> {
+    Fraction {
+        special_fil: bool,
+    },
+    SpecialFilF,
+    SpecialFilI,
+    SpecialFilL,
+    InfiniteSuffix {
+        order: Order,
+    },
+    ProbeLeading,
+    ProbeInternal {
+        command: CurrentCommand<G>,
+    },
+    Keyword {
+        cursor: u8,
+        magnification: Option<i32>,
+    },
+    InternalOptionalSpace {
+        unit: Scaled,
+    },
+}
+
+impl<G> Copy for DimensionUnitProgress<G> {}
+impl<G> Clone for DimensionUnitProgress<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct PendingDimensionUnits<G> {
+    integer: i32,
+    fraction: [u8; 17],
+    fraction_len: u8,
+    progress: DimensionUnitProgress<G>,
+}
+
+impl<G> Copy for PendingDimensionUnits<G> {}
+impl<G> Clone for PendingDimensionUnits<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 impl InlineKeyword {
     fn parse(keyword: &str) -> Result<Self, CommandError> {
         if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
@@ -143,6 +189,26 @@ pub(crate) enum ScalarChildDestination {
     GlueStretch,
     GlueMinusKeyword,
     GlueShrink,
+    FileNameLeadingToken,
+    FileNameCharacter,
+    InternalValue,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InternalScanPhase {
+    Start,
+    FontDimenFont {
+        number: i32,
+    },
+    FontCharacter {
+        primitive: UnexpandablePrimitive,
+        font: FontId,
+    },
+    PdfFontCodeCharacter {
+        primitive: UnexpandablePrimitive,
+        font: FontId,
+    },
+    FontIdentifier,
 }
 
 /// One allocation-free scalar continuation in the current generation's
@@ -192,8 +258,7 @@ pub(crate) enum PendingScalarFrame<G> {
         child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
     },
     DimensionUnits {
-        integer: i32,
-        decimal: bool,
+        progress: PendingDimensionUnits<G>,
         negative: bool,
         provenance: OriginId,
         allow_infinite: bool,
@@ -256,6 +321,24 @@ pub(crate) enum PendingScalarFrame<G> {
         provenance: OriginId,
         child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
     },
+    FileNameLeading {
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    FileNameCharacters {
+        components: crate::FileNameComponents,
+        character_count: usize,
+        quoted: bool,
+        grouped: bool,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    InternalValue {
+        command: CurrentCommand<G>,
+        level: InternalLevel,
+        negative: bool,
+        phase: InternalScanPhase,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
 }
 
 impl<G> PendingScalarFrame<G> {
@@ -276,7 +359,10 @@ impl<G> PendingScalarFrame<G> {
             | Self::GluePlusKeyword { child, .. }
             | Self::GlueStretch { child, .. }
             | Self::GlueMinusKeyword { child, .. }
-            | Self::GlueShrink { child, .. } => child.take().map(|child| child.restore().0),
+            | Self::GlueShrink { child, .. }
+            | Self::FileNameLeading { child }
+            | Self::FileNameCharacters { child, .. }
+            | Self::InternalValue { child, .. } => child.take().map(|child| child.restore().0),
         }
     }
 
@@ -325,6 +411,13 @@ impl<G> PendingScalarFrame<G> {
                 (child, ScalarChildDestination::GlueMinusKeyword)
             }
             Self::GlueShrink { child, .. } => (child, ScalarChildDestination::GlueShrink),
+            Self::FileNameLeading { child } => {
+                (child, ScalarChildDestination::FileNameLeadingToken)
+            }
+            Self::FileNameCharacters { child, .. } => {
+                (child, ScalarChildDestination::FileNameCharacter)
+            }
+            Self::InternalValue { child, .. } => (child, ScalarChildDestination::InternalValue),
         };
         debug_assert!(child.is_none());
         *child = crate::execution_scratch::ChildContinuation::capture(baton, destination);
@@ -378,6 +471,33 @@ pub struct ScannedScalar<T> {
     pub value: T,
     pub recovery: ScalarRecovery,
     pub provenance: ScalarProvenance,
+}
+
+/// Move-only result of an executor-facing scalar scan.
+///
+/// Resource suspension carries the exact scratch capability out of the
+/// processor. Callers must move it into their typed parent or explicitly
+/// abort it; unlike `Result`, this type cannot be propagated with `?` while
+/// silently abandoning live scanner progress.
+#[must_use]
+#[derive(Debug)]
+pub enum RetainedScalarScan<G, T> {
+    Complete(T),
+    Suspended {
+        error: CommandError,
+        child: crate::ScannerFrameKey<G>,
+    },
+    Failed(CommandError),
+}
+
+impl<G, T> RetainedScalarScan<G, T> {
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> RetainedScalarScan<G, U> {
+        match self {
+            Self::Complete(value) => RetainedScalarScan::Complete(map(value)),
+            Self::Suspended { error, child } => RetainedScalarScan::Suspended { error, child },
+            Self::Failed(error) => RetainedScalarScan::Failed(error),
+        }
+    }
 }
 
 /// A value accepted by TeX's internal-quantity scanner.
@@ -443,7 +563,7 @@ enum InternalScan {
 
 /// TeX82 §410's six internal-quantity levels, in their defining order.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum InternalLevel {
+pub(crate) enum InternalLevel {
     /// `int_val`.
     Integer,
     /// `dimen_val`.
@@ -589,13 +709,13 @@ struct ScannedUnits {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    fn take_pending_scalar_frame(&mut self) -> Result<Option<PendingScalarFrame<G>>, CommandError> {
-        if !self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_scalar)
-        {
-            return Ok(None);
+    pub(crate) fn take_pending_scalar_frame(
+        &mut self,
+    ) -> Result<Option<PendingScalarFrame<G>>, CommandError> {
+        match self.scanner_resume.as_ref() {
+            None => return Ok(None),
+            Some(key) if key.is_scalar() => {}
+            Some(_) => return Err(CommandError::input_invariant()),
         }
         let key = self
             .scanner_resume
@@ -608,7 +728,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    fn restore_scalar_child(
+    pub(crate) fn restore_scalar_child(
         &mut self,
         child: &mut Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
         expected: ScalarChildDestination,
@@ -624,23 +744,97 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    fn retain_scalar_frame(
-        &mut self,
-        mut pending: PendingScalarFrame<G>,
-    ) -> Result<(), CommandError> {
-        pending.capture_child(&mut self.scanner_resume);
-        let key = self
-            .command
+    fn retain_scalar_frame(&mut self, pending: PendingScalarFrame<G>) -> Result<(), CommandError> {
+        let key = match self.command.scratch.store_scalar_frame(pending) {
+            Ok(key) => key,
+            Err(error) => {
+                if let Some(child) = self.scanner_resume.take() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(crate::scan_toks::scratch_command_error(error));
+            }
+        };
+        if let Err(error) = self.command.scratch.scalar_frame_mut(&key) {
+            if let Some(child) = self.scanner_resume.take() {
+                self.abort_continuation(child)?;
+            }
+            self.command
+                .scratch
+                .discard_scalar_frame(key)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            return Err(crate::scan_toks::scratch_command_error(error));
+        }
+        self.command
             .scratch
-            .store_scalar_frame(pending)
-            .map_err(crate::scan_toks::scratch_command_error)?;
+            .scalar_frame_mut(&key)
+            .expect("fresh scalar frame remains addressable")
+            .capture_child(&mut self.scanner_resume);
         if self.scanner_resume.replace(key).is_some() {
             return Err(CommandError::input_invariant());
         }
         Ok(())
     }
 
-    fn finish_scalar_call<T>(
+    pub(crate) fn detach_retained_scalar<T>(
+        &mut self,
+        result: Result<T, CommandError>,
+    ) -> RetainedScalarScan<G, T> {
+        match result {
+            Ok(value) => {
+                debug_assert!(self.scanner_resume.is_none());
+                RetainedScalarScan::Complete(value)
+            }
+            Err(error) if error.is_resource_suspension() => {
+                let child = self
+                    .scanner_resume
+                    .take()
+                    .expect("resource suspension retains one exact scalar frame");
+                RetainedScalarScan::Suspended { error, child }
+            }
+            Err(error) => {
+                debug_assert!(self.scanner_resume.is_none());
+                RetainedScalarScan::Failed(error)
+            }
+        }
+    }
+
+    pub fn scan_optional_equals_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<bool>> {
+        let result = self.scan_optional_equals();
+        self.detach_retained_scalar(result)
+    }
+
+    pub fn scan_keyword_retained(
+        &mut self,
+        keyword: &str,
+    ) -> RetainedScalarScan<G, ScannedScalar<bool>> {
+        let result = self.scan_keyword(keyword);
+        self.detach_retained_scalar(result)
+    }
+
+    pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<i32>> {
+        let result = self.scan_integer();
+        self.detach_retained_scalar(result)
+    }
+
+    pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<Scaled>> {
+        let result = self.scan_dimension();
+        self.detach_retained_scalar(result)
+    }
+
+    pub fn scan_mu_dimension_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<Scaled>> {
+        let result = self.scan_mu_dimension();
+        self.detach_retained_scalar(result)
+    }
+
+    pub fn scan_glue_retained(
+        &mut self,
+        mu: bool,
+    ) -> RetainedScalarScan<G, ScannedScalar<GlueSpec>> {
+        let result = self.scan_glue(mu);
+        self.detach_retained_scalar(result)
+    }
+
+    pub(crate) fn finish_scalar_call<T>(
         &mut self,
         result: Result<T, CommandError>,
         suspended: Option<PendingScalarFrame<G>>,
@@ -667,7 +861,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
-    pub fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
+    pub(crate) fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
         let pending = self.take_pending_scalar_frame()?;
         let mut provenance = match pending {
             Some(PendingScalarFrame::OptionalEquals {
@@ -782,7 +976,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The comparison itself is on `cur_chr` alone, so a keyword letter
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
-    pub fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
+    pub(crate) fn scan_keyword(
+        &mut self,
+        keyword: &str,
+    ) -> Result<ScannedScalar<bool>, CommandError> {
         let keyword = InlineKeyword::parse(keyword)?;
         let pending = self.take_pending_scalar_frame()?;
         // `link(backup_head)`: the tokens matched so far, in delivery order.
@@ -878,7 +1075,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Scans an integer or an internal integer quantity.
-    pub fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
+    pub(crate) fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
         let pending = self.take_pending_scalar_frame()?;
         let mut suspended_integer = None;
         let mut suspended_frame = None;
@@ -1261,14 +1458,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Scans a dimension or an internal dimension quantity.
-    pub fn scan_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
+    pub(crate) fn scan_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
         Ok(self.scan_dimension_with_order(false, false)?.0)
     }
 
     /// Scans a dimension requiring TeX's `mu` unit. This is public only at
     /// the command-scanner boundary; replay receives the completed scaled
     /// value and never performs unit recognition itself.
-    pub fn scan_mu_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
+    pub(crate) fn scan_mu_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
         Ok(self.scan_dimension_with_order(false, true)?.0)
     }
 
@@ -1334,8 +1531,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             }
             Some(PendingScalarFrame::DimensionUnits {
-                integer,
-                decimal,
+                progress,
                 negative,
                 provenance,
                 allow_infinite: retained_allow_infinite,
@@ -1344,9 +1540,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 mut child,
             }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
                 self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionUnits)?;
-                self.scan_dimension_units(
-                    integer,
-                    decimal,
+                self.scan_dimension_units_from(
+                    progress,
                     negative,
                     provenance,
                     allow_infinite,
@@ -1583,7 +1778,63 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         integer: i32,
         decimal: bool,
-        mut negative: bool,
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        recovery: ScalarRecovery,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+        let flip = integer < 0;
+        let integer = if flip {
+            integer.saturating_neg()
+        } else {
+            integer
+        };
+        let special_fil = allow_infinite
+            && !decimal
+            && self
+                .last_integer_terminator
+                .as_ref()
+                .is_some_and(|command| {
+                    matches!(
+                        scalar_meaning(command.meaning()),
+                        Meaning::CharToken { ch: 'f', .. }
+                    )
+                });
+        let progress = PendingDimensionUnits {
+            integer,
+            fraction: [0; 17],
+            fraction_len: 0,
+            progress: if decimal {
+                DimensionUnitProgress::Fraction { special_fil }
+            } else if special_fil {
+                DimensionUnitProgress::SpecialFilF
+            } else if allow_infinite {
+                DimensionUnitProgress::Keyword {
+                    cursor: 0,
+                    magnification: None,
+                }
+            } else {
+                DimensionUnitProgress::ProbeLeading
+            },
+        };
+        self.scan_dimension_units_from(
+            progress,
+            negative ^ flip,
+            provenance,
+            allow_infinite,
+            mu,
+            recovery,
+            suspended,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scan_dimension_units_from(
+        &mut self,
+        progress: PendingDimensionUnits<G>,
+        negative: bool,
         provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
@@ -1591,8 +1842,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         *suspended = Some(PendingScalarFrame::DimensionUnits {
-            integer,
-            decimal,
+            progress,
             negative,
             provenance,
             allow_infinite,
@@ -1600,8 +1850,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             recovery,
             child: None,
         });
-        let (units, flip) = self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
-        negative ^= flip;
+        let units = self.scan_decimal_dimension_from(
+            progress,
+            allow_infinite,
+            mu,
+            suspended,
+            negative,
+            provenance,
+            recovery,
+        )?;
         // TeX82 §448's trailing `<Scan an optional space>` sits between the
         // unit scan and `attach_sign:`, so every path that reached
         // `attach_sign` by a `goto` -- §449's whole internal dimension and
@@ -1776,7 +2033,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Scans a normal or mu glue specification.
-    pub fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    pub(crate) fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         let pending = self.take_pending_scalar_frame()?;
         let mut suspended = None;
         let result = match pending {
@@ -2151,33 +2408,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(scanned)
     }
 
-    /// Scans one internal value without treating other syntax as an error.
-    pub fn scan_internal_value(
-        &mut self,
-    ) -> Result<Option<ScannedScalar<InternalValue>>, CommandError> {
-        let Some(command) = self.get_x_token()? else {
-            return Ok(None);
-        };
-        let provenance = ScalarProvenance {
-            primary: command.origin(),
-        };
-        match self.scan_the_internal_value(&command)? {
-            Some(value) => Ok(Some(ScannedScalar {
-                value,
-                recovery: ScalarRecovery::None,
-                provenance,
-            })),
-            None => {
-                self.back_input(command)?;
-                Ok(None)
-            }
-        }
-    }
-
     /// Runs TeX82 §465's `the_toks` recovery for a non-internal operand.
     ///
-    /// Unlike the probe-shaped [`Self::scan_internal_value`], this operation
-    /// owns the operand: §465 consumes an invalid target, reports `you_cant`,
+    /// This operation owns the operand: §465 consumes an invalid target,
+    /// reports `you_cant`,
     /// and publishes integer zero for both `\the` and `\showthe`.
     pub(crate) fn scan_internal_value_or_zero(
         &mut self,
@@ -2374,6 +2608,317 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok((value, ScalarRecovery::None, true))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn scan_decimal_dimension_from(
+        &mut self,
+        mut pending: PendingDimensionUnits<G>,
+        allow_infinite: bool,
+        mu: bool,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+        negative: bool,
+        provenance: OriginId,
+        recovery: ScalarRecovery,
+    ) -> Result<ScannedUnits, CommandError> {
+        loop {
+            *suspended = Some(PendingScalarFrame::DimensionUnits {
+                progress: pending,
+                negative,
+                provenance,
+                allow_infinite,
+                mu,
+                recovery,
+                child: None,
+            });
+            match pending.progress {
+                DimensionUnitProgress::Fraction { special_fil } => {
+                    let Some(command) = self.get_x_token()? else {
+                        pending.progress = if special_fil {
+                            DimensionUnitProgress::SpecialFilF
+                        } else if allow_infinite {
+                            DimensionUnitProgress::Keyword {
+                                cursor: 0,
+                                magnification: None,
+                            }
+                        } else {
+                            DimensionUnitProgress::ProbeLeading
+                        };
+                        continue;
+                    };
+                    match scalar_meaning(command.meaning()) {
+                        Meaning::CharToken {
+                            ch,
+                            cat: Catcode::Other,
+                        } if ch.is_ascii_digit() => {
+                            if usize::from(pending.fraction_len) < pending.fraction.len() {
+                                pending.fraction[usize::from(pending.fraction_len)] =
+                                    ch as u8 - b'0';
+                                pending.fraction_len += 1;
+                            }
+                        }
+                        _ => {
+                            self.back_input_unless_spacer(command)?;
+                            pending.progress = if special_fil {
+                                DimensionUnitProgress::SpecialFilF
+                            } else if allow_infinite {
+                                DimensionUnitProgress::Keyword {
+                                    cursor: 0,
+                                    magnification: None,
+                                }
+                            } else {
+                                DimensionUnitProgress::ProbeLeading
+                            };
+                        }
+                    }
+                }
+                DimensionUnitProgress::SpecialFilF => {
+                    self.expect_infinite_unit_character('f')?;
+                    pending.progress = DimensionUnitProgress::SpecialFilI;
+                }
+                DimensionUnitProgress::SpecialFilI => {
+                    self.expect_infinite_unit_character('i')?;
+                    pending.progress = DimensionUnitProgress::SpecialFilL;
+                }
+                DimensionUnitProgress::SpecialFilL => {
+                    self.expect_infinite_unit_character('l')?;
+                    pending.progress = DimensionUnitProgress::InfiniteSuffix { order: Order::Fil };
+                }
+                DimensionUnitProgress::InfiniteSuffix { mut order } => {
+                    if self.scan_keyword("l")?.value {
+                        if order == Order::Filll {
+                            self.excess_infinite_order_error()?;
+                        } else {
+                            order = raise_infinite_order(order);
+                        }
+                        pending.progress = DimensionUnitProgress::InfiniteSuffix { order };
+                    } else {
+                        let fraction = round_decimal_fraction(
+                            &pending.fraction[..usize::from(pending.fraction_len)],
+                        );
+                        return self.complete_decimal_dimension(
+                            pending.integer,
+                            fraction,
+                            DimensionUnit::Infinite(order),
+                            None,
+                        );
+                    }
+                }
+                DimensionUnitProgress::ProbeLeading => {
+                    let command = loop {
+                        let Some(command) = self.get_x_token()? else {
+                            pending.progress = DimensionUnitProgress::Keyword {
+                                cursor: if mu { 4 } else { 1 },
+                                magnification: None,
+                            };
+                            break None;
+                        };
+                        if !matches!(
+                            scalar_meaning(command.meaning()),
+                            Meaning::CharToken {
+                                cat: Catcode::Space,
+                                ..
+                            }
+                        ) {
+                            break Some(command);
+                        }
+                    };
+                    if let Some(command) = command {
+                        pending.progress = DimensionUnitProgress::ProbeInternal { command };
+                    }
+                }
+                DimensionUnitProgress::ProbeInternal { command } => {
+                    let level = if mu {
+                        InternalLevel::MuGlue
+                    } else {
+                        InternalLevel::Dimension
+                    };
+                    match self.scan_something_internal(&command, level, false)? {
+                        InternalScan::Value(value) => {
+                            if mu && !matches!(value, InternalValue::MuGlue(_)) {
+                                self.mu_error()?;
+                            }
+                            let unit = match value {
+                                InternalValue::Integer(value) => Scaled::from_raw(value),
+                                InternalValue::Dimension(value) => value,
+                                InternalValue::Glue(value) | InternalValue::MuGlue(value) => {
+                                    value.width
+                                }
+                                InternalValue::Font(_) | InternalValue::Tokens { .. } => {
+                                    unreachable!("internal-unit request recovers nonnumeric values")
+                                }
+                            };
+                            let fraction = round_decimal_fraction(
+                                &pending.fraction[..usize::from(pending.fraction_len)],
+                            );
+                            return self.complete_decimal_dimension(
+                                pending.integer,
+                                fraction,
+                                DimensionUnit::Internal(unit),
+                                None,
+                            );
+                        }
+                        InternalScan::NotInternal => {
+                            self.back_input(command)?;
+                            pending.progress = DimensionUnitProgress::Keyword {
+                                cursor: if mu { 4 } else { 1 },
+                                magnification: None,
+                            };
+                        }
+                    }
+                }
+                DimensionUnitProgress::InternalOptionalSpace { unit } => {
+                    self.scan_optional_space()?;
+                    let fraction = round_decimal_fraction(
+                        &pending.fraction[..usize::from(pending.fraction_len)],
+                    );
+                    return self.complete_decimal_dimension(
+                        pending.integer,
+                        fraction,
+                        DimensionUnit::Internal(unit),
+                        None,
+                    );
+                }
+                DimensionUnitProgress::Keyword {
+                    mut cursor,
+                    mut magnification,
+                } => {
+                    if cursor == 0 {
+                        if self.scan_keyword("fil")?.value {
+                            pending.progress =
+                                DimensionUnitProgress::InfiniteSuffix { order: Order::Fil };
+                        } else {
+                            pending.progress = DimensionUnitProgress::ProbeLeading;
+                        }
+                        continue;
+                    }
+                    if mu && cursor < 4 {
+                        cursor = 4;
+                    } else if !mu && cursor == 4 {
+                        cursor = 5;
+                    }
+                    if cursor == 1 || cursor == 2 {
+                        let (keyword, parameter) = if cursor == 1 { ("em", 6) } else { ("ex", 5) };
+                        if self.scan_keyword(keyword)?.value {
+                            pending.progress = DimensionUnitProgress::InternalOptionalSpace {
+                                unit: self.state.current_font_parameter(parameter),
+                            };
+                        } else {
+                            pending.progress = DimensionUnitProgress::Keyword {
+                                cursor: cursor + 1,
+                                magnification,
+                            };
+                        }
+                        continue;
+                    }
+                    if cursor == 3 {
+                        if self.command.profile().capabilities().supports_pdftex()
+                            && self.scan_keyword("px")?.value
+                        {
+                            pending.progress = DimensionUnitProgress::InternalOptionalSpace {
+                                unit: self.state.dimen_param(DimenParam::PDF_PX_DIMEN),
+                            };
+                        } else {
+                            pending.progress = DimensionUnitProgress::Keyword {
+                                cursor: 5,
+                                magnification,
+                            };
+                        }
+                        continue;
+                    }
+                    if cursor == 4 {
+                        if !self.scan_keyword("mu")?.value {
+                            self.illegal_unit_mu_error()?;
+                        }
+                        let fraction = round_decimal_fraction(
+                            &pending.fraction[..usize::from(pending.fraction_len)],
+                        );
+                        return self.complete_decimal_dimension(
+                            pending.integer,
+                            fraction,
+                            DimensionUnit::Mu,
+                            None,
+                        );
+                    }
+                    if cursor == 5 {
+                        if self.scan_keyword("true")?.value {
+                            let (mag, diagnostic) = self.state.prepare_mag();
+                            if let Some(diagnostic) = diagnostic {
+                                self.prepare_mag_error(diagnostic)?;
+                            }
+                            magnification = Some(mag);
+                        }
+                        pending.progress = DimensionUnitProgress::Keyword {
+                            cursor: 6,
+                            magnification,
+                        };
+                        continue;
+                    }
+                    if cursor >= 14
+                        && cursor <= 15
+                        && !self.command.profile().capabilities().supports_pdftex()
+                    {
+                        cursor = 16;
+                    }
+                    let physical = match cursor {
+                        6 => Some(("pt", PhysicalUnit::Pt)),
+                        7 => Some(("in", PhysicalUnit::In)),
+                        8 => Some(("pc", PhysicalUnit::Pc)),
+                        9 => Some(("cm", PhysicalUnit::Cm)),
+                        10 => Some(("mm", PhysicalUnit::Mm)),
+                        11 => Some(("bp", PhysicalUnit::Bp)),
+                        12 => Some(("dd", PhysicalUnit::Dd)),
+                        13 => Some(("cc", PhysicalUnit::Cc)),
+                        14 => Some(("nd", PhysicalUnit::Nd)),
+                        15 => Some(("nc", PhysicalUnit::Nc)),
+                        16 => Some(("sp", PhysicalUnit::Sp)),
+                        _ => None,
+                    };
+                    if let Some((keyword, unit)) = physical {
+                        if self.scan_keyword(keyword)?.value {
+                            let fraction = round_decimal_fraction(
+                                &pending.fraction[..usize::from(pending.fraction_len)],
+                            );
+                            return self.complete_decimal_dimension(
+                                pending.integer,
+                                fraction,
+                                DimensionUnit::Physical(unit),
+                                magnification,
+                            );
+                        }
+                        pending.progress = DimensionUnitProgress::Keyword {
+                            cursor: cursor + 1,
+                            magnification,
+                        };
+                    } else {
+                        self.illegal_unit_pt_error()?;
+                        let fraction = round_decimal_fraction(
+                            &pending.fraction[..usize::from(pending.fraction_len)],
+                        );
+                        return self.complete_decimal_dimension(
+                            pending.integer,
+                            fraction,
+                            DimensionUnit::Physical(PhysicalUnit::Pt),
+                            magnification,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn expect_infinite_unit_character(&mut self, expected: char) -> Result<(), CommandError> {
+        let command = self
+            .get_x_token()?
+            .ok_or_else(CommandError::input_invariant)?;
+        if matches!(
+            scalar_meaning(command.meaning()),
+            Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)
+        ) {
+            Ok(())
+        } else {
+            Err(CommandError::input_invariant())
+        }
+    }
+
     fn scan_decimal_dimension(
         &mut self,
         integer: i32,
@@ -2438,6 +2983,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.scan_dimension_unit(allow_infinite, mu)?
         };
         let fraction = round_decimal_fraction(&fraction[..fraction_len]);
+        self.complete_decimal_dimension(integer, fraction, unit, magnification)
+    }
+
+    fn complete_decimal_dimension(
+        &mut self,
+        integer: i32,
+        fraction: i32,
+        unit: DimensionUnit,
+        magnification: Option<i32>,
+    ) -> Result<ScannedUnits, CommandError> {
         // TeX82 §457's "Adjust for the magnification ratio", applied between
         // recognizing `true` and converting the physical unit: the unit scan
         // above has already run `prepare_mag`, which validates and freezes
@@ -3044,6 +3599,46 @@ impl<G> CommandProcessor<'_, '_, G> {
         level: InternalLevel,
         negative: bool,
     ) -> Result<InternalScan, CommandError> {
+        let pending = self.take_pending_scalar_frame()?;
+        let (command, phase, mut child) = match pending {
+            Some(PendingScalarFrame::InternalValue {
+                command,
+                level: retained_level,
+                negative: retained_negative,
+                phase,
+                child,
+            }) if retained_level == level && retained_negative == negative => {
+                (command, phase, child)
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => (*command, InternalScanPhase::Start, None),
+        };
+        self.restore_scalar_child(&mut child, ScalarChildDestination::InternalValue)?;
+        let mut suspended = Some(PendingScalarFrame::InternalValue {
+            command,
+            level,
+            negative,
+            phase,
+            child: None,
+        });
+        let result =
+            self.scan_something_internal_from(command, level, negative, phase, &mut suspended);
+        self.finish_scalar_call(result, suspended)
+    }
+
+    fn scan_something_internal_from(
+        &mut self,
+        command: CurrentCommand<G>,
+        level: InternalLevel,
+        negative: bool,
+        phase: InternalScanPhase,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<InternalScan, CommandError> {
         // §416 is titled "Fetch a token list or font identifier, provided that
         // |level=tok_val|", and its `level<>tok_val` test runs BEFORE any
         // operand is scanned: the whole branch is `back_error;
@@ -3054,13 +3649,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         if level != InternalLevel::Tokens
             && is_token_list_or_font_identifier(scalar_meaning(command.meaning()))
         {
-            return self.missing_number_internal_result(command, level);
+            return self.missing_number_internal_result(&command, level);
         }
-        let Some(value) = self.fetch_internal_value(command)? else {
+        let Some(value) = self.fetch_internal_value(&command, phase, level, negative, suspended)?
+        else {
             return Ok(InternalScan::NotInternal);
         };
         let Some(value) = self.coerce_internal_value(value, level)? else {
-            return self.missing_number_internal_result(command, level);
+            return self.missing_number_internal_result(&command, level);
         };
         let value = if negative {
             negated_internal_value(value)
@@ -3117,7 +3713,47 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn fetch_internal_value(
         &mut self,
         command: &CurrentCommand<G>,
+        phase: InternalScanPhase,
+        level: InternalLevel,
+        negative: bool,
+        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<Option<InternalValue>, CommandError> {
+        let retain_phase = |phase| {
+            Some(PendingScalarFrame::InternalValue {
+                command: *command,
+                level,
+                negative,
+                phase,
+                child: None,
+            })
+        };
+        match phase {
+            InternalScanPhase::FontDimenFont { number } => {
+                *suspended = retain_phase(phase);
+                let font = self.scan_font_selector()?;
+                return Ok(Some(self.internal_font_dimen(number, font)));
+            }
+            InternalScanPhase::FontCharacter { primitive, font } => {
+                *suspended = retain_phase(phase);
+                let character = self.scan_character_number()?;
+                return Ok(Some(
+                    self.internal_font_character(primitive, font, character),
+                ));
+            }
+            InternalScanPhase::PdfFontCodeCharacter { primitive, font } => {
+                *suspended = retain_phase(phase);
+                let character = self.scan_character_number()?;
+                return Ok(Some(
+                    self.internal_pdf_font_code(primitive, font, character),
+                ));
+            }
+            InternalScanPhase::FontIdentifier => {
+                *suspended = retain_phase(phase);
+                let font = self.scan_font_selector()?;
+                return Ok(Some(self.font_identity(font)));
+            }
+            InternalScanPhase::Start => {}
+        }
         let value = match scalar_meaning(command.meaning()) {
             // TeX82 `scan_something_internal` owns a register primitive's
             // restricted (`scan_eight_bit_int`) index scan. e-TeX 2.6
@@ -3191,19 +3827,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `current_font_parameter`).
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
                 let number = self.scan_integer()?.value;
+                *suspended = retain_phase(InternalScanPhase::FontDimenFont { number });
                 let font = self.scan_font_selector()?;
-                // TeX82 §§578--579 calls `find_font_dimen(false)` for
-                // enquiries: unlike assignment, even the newest font cannot
-                // grow. The rejected location is the zero-valued scratch
-                // cell, but the error context belongs at this scanner cursor.
-                if !self.font_dimen_readable(font, number) {
-                    let context = self.error_context();
-                    self.command.semantic_diagnostics.push(
-                        crate::CommandSemanticDiagnostic::FontDimenUnavailable { font, context },
-                    );
-                }
-                let number = u32::try_from(number).unwrap_or(0);
-                InternalValue::Dimension(self.state.font_dimen(font, number))
+                self.internal_font_dimen(number, font)
             }
             // e-TeX 2.6 etex.ch [17.3413--3453]'s four font-character
             // enquiries are read-only dimensions.  They scan the font
@@ -3217,21 +3843,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::FontCharIc),
             ) => {
                 let font = self.scan_font_selector()?;
+                *suspended = retain_phase(InternalScanPhase::FontCharacter { primitive, font });
                 let character = self.scan_character_number()?;
-                let metrics = u8::try_from(u32::from(character))
-                    .ok()
-                    .and_then(|code| self.state.font_char_metrics(font, code));
-                let dimension = metrics.map_or_else(
-                    || Scaled::from_raw(0),
-                    |metrics| match primitive {
-                        UnexpandablePrimitive::FontCharWd => metrics.width,
-                        UnexpandablePrimitive::FontCharHt => metrics.height,
-                        UnexpandablePrimitive::FontCharDp => metrics.depth,
-                        UnexpandablePrimitive::FontCharIc => metrics.italic_correction,
-                        _ => unreachable!("outer match restricts primitive"),
-                    },
-                );
-                InternalValue::Dimension(dimension)
+                self.internal_font_character(primitive, font, character)
             }
             // TeX82 §426's "Fetch a font integer": `assign_font_int` runs
             // `scan_font_ident` and then reads `hyphen_char[cur_val]` (`m=0`,
@@ -3268,14 +3882,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::PdfKnacCode),
             ) => {
                 let font = self.scan_font_selector()?;
+                *suspended =
+                    retain_phase(InternalScanPhase::PdfFontCodeCharacter { primitive, font });
                 let character = self.scan_character_number()?;
-                let code = u8::try_from(u32::from(character))
-                    .expect("pdfTeX character scanner is byte bounded");
-                InternalValue::Integer(self.state.pdf_font_code(
-                    pdf_font_code_table(primitive),
-                    font,
-                    code,
-                ))
+                self.internal_pdf_font_code(primitive, font, character)
             }
             // TeX82 §414's "Fetch a character code from some table":
             // `scan_char_num` selects the entry and every code table reads at
@@ -3625,6 +4235,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::ScriptScriptFont,
             ) => {
                 self.back_input(command.copy_for_backup())?;
+                *suspended = retain_phase(InternalScanPhase::FontIdentifier);
                 let font = self.scan_font_selector()?;
                 self.font_identity(font)
             }
@@ -3655,6 +4266,57 @@ impl<G> CommandProcessor<'_, '_, G> {
             InternalInteger::CurrentIfBranch => self.command.conditions.current_etex_values().2,
             _ => self.state.internal_integer(integer).unwrap_or(0),
         }
+    }
+
+    fn internal_font_dimen(&mut self, number: i32, font: FontId) -> InternalValue {
+        // TeX82 §§578--579 calls `find_font_dimen(false)` for enquiries:
+        // unlike assignment, even the newest font cannot grow. The rejected
+        // location is the zero-valued scratch cell, but the error context
+        // belongs at this scanner cursor.
+        if !self.font_dimen_readable(font, number) {
+            let context = self.error_context();
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::FontDimenUnavailable { font, context });
+        }
+        let number = u32::try_from(number).unwrap_or(0);
+        InternalValue::Dimension(self.state.font_dimen(font, number))
+    }
+
+    fn internal_font_character(
+        &self,
+        primitive: UnexpandablePrimitive,
+        font: FontId,
+        character: char,
+    ) -> InternalValue {
+        let metrics = u8::try_from(u32::from(character))
+            .ok()
+            .and_then(|code| self.state.font_char_metrics(font, code));
+        let dimension = metrics.map_or_else(
+            || Scaled::from_raw(0),
+            |metrics| match primitive {
+                UnexpandablePrimitive::FontCharWd => metrics.width,
+                UnexpandablePrimitive::FontCharHt => metrics.height,
+                UnexpandablePrimitive::FontCharDp => metrics.depth,
+                UnexpandablePrimitive::FontCharIc => metrics.italic_correction,
+                _ => unreachable!("internal font-character phase retains its primitive"),
+            },
+        );
+        InternalValue::Dimension(dimension)
+    }
+
+    fn internal_pdf_font_code(
+        &self,
+        primitive: UnexpandablePrimitive,
+        font: FontId,
+        character: char,
+    ) -> InternalValue {
+        let code =
+            u8::try_from(u32::from(character)).expect("pdfTeX character scanner is byte bounded");
+        InternalValue::Integer(
+            self.state
+                .pdf_font_code(pdf_font_code_table(primitive), font, code),
+        )
     }
 
     /// Commits TeX82 §413's single internal scanner result.
@@ -3733,7 +4395,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// rather than truncating or addressing an extended bank. e-TeX replaces
     /// those register scans with `scan_register_num` at [26.415], [26.420],
     /// and [26.427].
-    pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
+    pub(crate) fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?;
         Ok(scanned.value as u16)
     }
@@ -3743,7 +4405,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §1237 uses `scan_eight_bit_int`. e-TeX 2.6 change [49.1237]
     /// replaces it with `scan_register_num`, accepting sparse registers up to
     /// 32767 in extended mode; pdfTeX inherits that behavior.
-    pub fn scan_profile_register_index(&mut self) -> Result<u16, CommandError> {
+    pub(crate) fn scan_profile_register_index(&mut self) -> Result<u16, CommandError> {
         if self.profile().capabilities().supports_etex() {
             self.scan_extended_register_index()
         } else {
@@ -3756,9 +4418,29 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Extension primitives using this scanner are absent from TeX82.
     /// e-TeX and pdfTeX accept `0..=32767`, with invalid selectors diagnosed
     /// and recovered to zero.
-    pub fn scan_extended_register_index(&mut self) -> Result<u16, CommandError> {
+    pub(crate) fn scan_extended_register_index(&mut self) -> Result<u16, CommandError> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::Register)?;
         Ok(scanned.value as u16)
+    }
+
+    pub fn scan_profile_register_index_retained(&mut self) -> RetainedScalarScan<G, u16> {
+        let class = if self.profile().capabilities().supports_etex() {
+            RestrictedIntegerClass::Register
+        } else {
+            RestrictedIntegerClass::EightBit
+        };
+        self.scan_restricted_integer_retained(class)
+            .map(|scanned| scanned.value as u16)
+    }
+
+    pub fn scan_eight_bit_register_index_retained(&mut self) -> RetainedScalarScan<G, u16> {
+        self.scan_restricted_integer_retained(RestrictedIntegerClass::EightBit)
+            .map(|scanned| scanned.value as u16)
+    }
+
+    pub fn scan_extended_register_index_retained(&mut self) -> RetainedScalarScan<G, u16> {
+        self.scan_restricted_integer_retained(RestrictedIntegerClass::Register)
+            .map(|scanned| scanned.value as u16)
     }
 }
 
