@@ -231,6 +231,12 @@ pub struct MainControl<G> {
     /// Whether root exhaustion is TeX82 §360's missing-`\end` path or an
     /// explicit host-owned fragment boundary.
     root_completion: RootCompletionPolicy,
+    /// Scalar identity of the one host-selected root main input file.
+    ///
+    /// This is execution policy, not a source-role classification. Boundary
+    /// formation compares it with command state's active external file frame;
+    /// token provenance and file names never participate.
+    root_main_source: Option<tex_state::SourceId>,
     /// The ordered publication transaction produced by
     /// `fire_pending_page_output` after the contributing step's own records.
     /// It first receives any earlier named-list pushes still owned by that
@@ -274,7 +280,7 @@ pub struct MainControl<G> {
     completed_boundaries: Vec<crate::EngineBoundary>,
     /// Ordered named-boundary intents waiting for command-owned scanner,
     /// macro, resource, and structural continuations to become quiescent.
-    pending_named_boundaries: VecDeque<crate::EngineBoundary>,
+    pending_named_boundaries: VecDeque<PendingNamedBoundary>,
     /// Source site of the most recent typed resource suspension. This is
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
@@ -792,6 +798,7 @@ struct PreparedColdOperation<G> {
 #[derive(Clone, Copy)]
 struct OperationOutputStart {
     outer_paragraph_was_active: bool,
+    root_main_file_origin: bool,
     artifact_count: usize,
     effect_count: usize,
     prepared_page_count: usize,
@@ -986,6 +993,18 @@ struct ObservationBuffer {
 struct OperationReceiptStart {
     effect: u64,
     artifact: usize,
+}
+
+/// One checkpoint intent frozen at the operation that formed its boundary.
+///
+/// Input retirement may expose an enclosing source before command state is
+/// quiescent enough to publish a checkpoint. Retaining the active external
+/// file decision here prevents that later stack transition from changing the
+/// boundary's origin eligibility.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingNamedBoundary {
+    boundary: crate::EngineBoundary,
+    root_main_file_origin: bool,
 }
 
 /// Explicit live-observer boundary for detached shipout geometry.
@@ -1390,6 +1409,7 @@ impl<G> Default for MainControl<G> {
             startup_terminal_line: String::new(),
             terminal_line_was_empty: None,
             root_completion: RootCompletionPolicy::default(),
+            root_main_source: None,
             page_output_observations: ObservationBuffer::default(),
             operation_observations: None,
             operation_receipt_start: None,
@@ -2291,12 +2311,17 @@ impl<G> MainControl<G> {
         &mut self,
         source: SourceRegistration,
     ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        debug_assert!(
+            self.root_main_source.is_none(),
+            "one MainControl has exactly one root main source"
+        );
         let id = self.command.register_source(source)?;
         // `id` was just allocated by this command state, so this can fail
         // only if the state implementation has violated its own invariant.
         self.command
             .open_registered_source(id)
             .expect("freshly registered source must be openable");
+        self.root_main_source = Some(id);
         Ok(id)
     }
 
@@ -2816,15 +2841,19 @@ impl<G> MainControl<G> {
         artifact_count: usize,
         _effect_count: usize,
         stores: &mut Universe<G>,
+        root_main_file_origin: bool,
     ) {
         let committed = stores
             .world()
             .artifact_commits()
             .len()
             .saturating_sub(artifact_count);
+        let intent = PendingNamedBoundary {
+            boundary: crate::EngineBoundary::ShipoutComplete,
+            root_main_file_origin,
+        };
         for _ in 0..committed {
-            self.pending_named_boundaries
-                .push_back(crate::EngineBoundary::ShipoutComplete);
+            self.pending_named_boundaries.push_back(intent);
         }
     }
 
@@ -3160,20 +3189,43 @@ impl<G> MainControl<G> {
             output_start.artifact_count,
             output_start.effect_count,
             stores,
+            output_start.root_main_file_origin,
         );
-        self.finish_paragraph_boundary(output_start.outer_paragraph_was_active);
+        self.finish_paragraph_boundary(
+            output_start.outer_paragraph_was_active,
+            output_start.root_main_file_origin,
+            stores,
+        );
         Ok(applied)
     }
 
     /// Publishes the ordinary cold paragraph boundary after `end_graf`.
-    fn finish_paragraph_boundary(&mut self, outer_paragraph_was_active: bool) {
+    fn finish_paragraph_boundary(
+        &mut self,
+        outer_paragraph_was_active: bool,
+        root_main_file_origin: bool,
+        stores: &mut Universe<G>,
+    ) {
         if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
+            && stores
+                .command_context()
+                .expect("paragraph-boundary admission")
+                .execution_group_depth()
+                == 0
         {
             self.pending_named_boundaries
-                .push_back(crate::EngineBoundary::OuterParagraphEnd);
+                .push_back(PendingNamedBoundary {
+                    boundary: crate::EngineBoundary::OuterParagraphEnd,
+                    root_main_file_origin,
+                });
         }
+    }
+
+    fn active_external_file_is_root_main(&self) -> bool {
+        self.root_main_source
+            .is_some_and(|root| self.command.current_file_source_id() == Some(root))
     }
 
     /// Publishes at most one queued named boundary after every command-owned
@@ -3183,60 +3235,65 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<Option<crate::EngineBoundary>, ExecError> {
-        let Some(boundary) = self.pending_named_boundaries.front().copied() else {
-            return Ok(None);
-        };
-        if self.has_external_attempt_owner() {
-            return Ok(None);
-        }
-        if boundary == crate::EngineBoundary::ShipoutComplete
-            && (self.boxes.output_routine_active
-                || self.modes.depth() != 1
-                || stores
-                    .command_context()
-                    .expect("shipout-boundary admission")
-                    .execution_group_depth()
-                    != 0)
-        {
-            return Ok(None);
-        }
-        let mut diagnostic_effects = DiagnosticEffects::new();
-        let attempt = self.command.begin_attempt_operation();
-        let retirement = {
-            let mut processor = command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                &mut diagnostic_effects,
-                stores.command_context().expect("named-boundary admission"),
-            );
-            processor.retire_exhausted_token_levels_for_named_boundary()
-        };
-        if let Err(error) = retirement {
+        loop {
+            let Some(pending) = self.pending_named_boundaries.front().copied() else {
+                return Ok(None);
+            };
+            if self.has_external_attempt_owner() {
+                return Ok(None);
+            }
+            if pending.boundary == crate::EngineBoundary::ShipoutComplete
+                && (self.boxes.output_routine_active
+                    || self.modes.depth() != 1
+                    || stores
+                        .command_context()
+                        .expect("shipout-boundary admission")
+                        .execution_group_depth()
+                        != 0)
+            {
+                return Ok(None);
+            }
+            let mut diagnostic_effects = DiagnosticEffects::new();
+            let attempt = self.command.begin_attempt_operation();
+            let retirement = {
+                let mut processor = command_processor(
+                    &mut self.command,
+                    self.fuel.fuel_mut(),
+                    &mut self.capabilities,
+                    &mut self.operation_observations,
+                    &mut diagnostic_effects,
+                    stores.command_context().expect("named-boundary admission"),
+                );
+                processor.retire_exhausted_token_levels_for_named_boundary()
+            };
+            if let Err(error) = retirement {
+                self.command
+                    .rollback_attempt_operation(attempt)
+                    .expect("named-boundary retirement owns its attempt scope");
+                return Err(command_error(error));
+            }
             self.command
-                .rollback_attempt_operation(attempt)
-                .expect("named-boundary retirement owns its attempt scope");
-            return Err(command_error(error));
+                .commit_attempt_operation(attempt)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "named-boundary attempt scope",
+                })?;
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(diagnostic_effects);
+            if !self.command.named_boundary_is_quiescent() {
+                return Ok(None);
+            }
+            let published = self
+                .pending_named_boundaries
+                .pop_front()
+                .expect("inspected named-boundary intent remains queued");
+            debug_assert_eq!(published, pending);
+            if !published.root_main_file_origin {
+                continue;
+            }
+            self.completed_boundaries.push(published.boundary);
+            return Ok(Some(published.boundary));
         }
-        self.command
-            .commit_attempt_operation(attempt)
-            .map_err(|_| ExecError::MissingToken {
-                context: "named-boundary attempt scope",
-            })?;
-        stores
-            .world_mut()
-            .publish_diagnostic_effects(diagnostic_effects);
-        if !self.command.named_boundary_is_quiescent() {
-            return Ok(None);
-        }
-        let published = self
-            .pending_named_boundaries
-            .pop_front()
-            .expect("inspected named-boundary intent remains queued");
-        debug_assert_eq!(published, boundary);
-        self.completed_boundaries.push(published);
-        Ok(Some(published))
     }
 
     /// Publishes every named boundary that became quiescent during terminal
@@ -7296,6 +7353,7 @@ impl<G> MainControl<G> {
         self.drain_file_framing_events(stores);
         self.refresh_host_capabilities(stores);
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
+        let root_main_file_origin = self.active_external_file_is_root_main();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let (innermost_group, job_is_all_over) = {
             let context = stores.command_context().expect("live generation");
@@ -7582,6 +7640,7 @@ impl<G> MainControl<G> {
                     operation,
                     OperationOutputStart {
                         outer_paragraph_was_active,
+                        root_main_file_origin,
                         artifact_count: stores.world().artifact_commits().len(),
                         effect_count: stores.world().effect_records().len(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
@@ -7652,6 +7711,7 @@ impl<G> MainControl<G> {
                 alignment_preamble,
                 output_start: OperationOutputStart {
                     outer_paragraph_was_active,
+                    root_main_file_origin,
                     artifact_count: stores.world().artifact_commits().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
@@ -7778,8 +7838,13 @@ impl<G> MainControl<G> {
                 output_start.artifact_count,
                 output_start.effect_count,
                 stores,
+                output_start.root_main_file_origin,
             );
-            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active);
+            self.finish_paragraph_boundary(
+                output_start.outer_paragraph_was_active,
+                output_start.root_main_file_origin,
+                stores,
+            );
         }
         result
     }
@@ -8411,8 +8476,13 @@ impl<G> MainControl<G> {
                 output_start.artifact_count,
                 output_start.effect_count,
                 stores,
+                output_start.root_main_file_origin,
             );
-            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active);
+            self.finish_paragraph_boundary(
+                output_start.outer_paragraph_was_active,
+                output_start.root_main_file_origin,
+                stores,
+            );
         }
         result
     }

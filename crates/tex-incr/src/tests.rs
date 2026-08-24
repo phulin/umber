@@ -288,6 +288,57 @@ fn no_op_edit_reports_detached_history_convergence() {
 }
 
 #[test]
+fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
+    let source = r"\font\tenrm=cmr10 \tenrm
+\begingroup A\par\endgroup
+\input child
+\finish
+\shipout\vbox{}
+\end";
+    let child = br"\def\finish{B\par}C\par\shipout\vbox{}\endinput";
+    let mut session = session(RevisionId::new(1), source);
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font registers");
+    session
+        .register_input_file(Path::new("child.tex"), child.to_vec())
+        .expect("nested input registers");
+    session.cold().expect("baseline");
+
+    let before = session
+        .history()
+        .iter()
+        .map(BoundaryRecord::key)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        before.iter().map(|key| key.boundary).collect::<Vec<_>>(),
+        [
+            EngineBoundary::JobStart,
+            EngineBoundary::ShipoutComplete,
+            EngineBoundary::OuterParagraphEnd,
+            EngineBoundary::ShipoutComplete,
+            EngineBoundary::ShipoutComplete,
+        ],
+        "the grouped root paragraph and nested paragraph/shipouts are absent; root-origin page output remains"
+    );
+
+    let output = session
+        .advance(RevisionId::new(2), edit(&session, 0..0, ""))
+        .expect("no-op revision");
+    assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert!(output.reuse.convergence_boundary.is_some());
+    assert_eq!(
+        session
+            .history()
+            .iter()
+            .map(BoundaryRecord::key)
+            .collect::<Vec<_>>(),
+        before,
+        "filtered nested occurrences do not perturb accepted schedule keys"
+    );
+}
+
+#[test]
 fn semantic_change_does_not_claim_suffix_adoption() {
     let original = page_source(10);
     let mut session = session(RevisionId::new(1), &original);

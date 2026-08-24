@@ -196,17 +196,12 @@ fn font_by_name<G>(stores: &mut Universe<G>, name: &str) -> FontId {
 }
 
 fn register_source<G>(control: &mut MainControl<G>, bytes: &[u8]) {
-    let source = control
-        .command_mut()
-        .register_source(SourceRegistration::new(
+    control
+        .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
             Arc::<[u8]>::from(bytes),
         ))
-        .expect("source registers");
-    control
-        .command_mut()
-        .open_registered_source(source)
-        .expect("source opens");
+        .expect("root source registers and opens");
 }
 
 fn page_vec<G>(stores: &Universe<G>, root: tex_state::node_arena::PageListId) -> Vec<Node> {
@@ -5934,16 +5929,171 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
     }
 }
 
+fn checkpoint_boundaries<G>(
+    checkpoints: &[crate::EngineCheckpoint<G>],
+) -> Vec<crate::EngineBoundary> {
+    checkpoints
+        .iter()
+        .map(crate::EngineCheckpoint::boundary)
+        .collect()
+}
+
+#[test]
+fn named_checkpoints_require_root_main_file_and_level_zero() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        control.capabilities_mut().register_input(
+            "child.tex",
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&br"\def\finish{B\par}C\par\shipout\vbox{}\endinput"[..]),
+            ),
+        );
+        register_source(
+            &mut control,
+            br"\begingroup A\par\endgroup\input child \finish\shipout\vbox{}\end",
+        );
+
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        ledger
+            .commit_job_start(&mut control, stores, &mut checkpoints)
+            .expect("JobStart captures");
+        let cancellation = crate::Cancellation::new();
+        for _ in 0..64 {
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation);
+            assert!(
+                !matches!(result, crate::CanonicalStepResult::Failed(_)),
+                "checkpoint-origin job failed: {result:?}"
+            );
+            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
+                break;
+            }
+        }
+
+        assert_eq!(
+            checkpoint_boundaries(&checkpoints),
+            [
+                crate::EngineBoundary::JobStart,
+                crate::EngineBoundary::OuterParagraphEnd,
+                crate::EngineBoundary::ShipoutComplete,
+                crate::EngineBoundary::ShipoutComplete,
+            ],
+            "the grouped root paragraph and both nested-file boundaries are filtered; the package-defined macro invoked from root, explicit root shipout, and final root paragraph shipout remain"
+        );
+    });
+}
+
+#[test]
+fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control.capabilities_mut().register_input(
+            "child.tex",
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&br"\shipout\vbox{}\endinput"[..]),
+            ),
+        );
+        register_source(
+            &mut control,
+            br"\begingroup\input child \input missing \endgroup\shipout\vbox{}\end",
+        );
+
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        ledger
+            .commit_job_start(&mut control, stores, &mut checkpoints)
+            .expect("JobStart captures");
+        let cancellation = crate::Cancellation::new();
+        let need = loop {
+            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation)
+            {
+                crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => {
+                    break need;
+                }
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                other => panic!("unexpected pre-suspension step: {other:?}"),
+            }
+        };
+        assert_eq!(
+            checkpoint_boundaries(&checkpoints),
+            [crate::EngineBoundary::JobStart]
+        );
+        assert_eq!(control.pending_named_boundaries.len(), 1);
+        assert_eq!(
+            control.pending_named_boundaries.front(),
+            Some(&PendingNamedBoundary {
+                boundary: crate::EngineBoundary::ShipoutComplete,
+                root_main_file_origin: false,
+            })
+        );
+        assert_eq!(
+            control.command.current_file_source_id(),
+            control.root_main_source,
+            "resource suspension occurs after nested input retirement returned to root"
+        );
+
+        let name = match &need {
+            ResourceNeed::Input { name, .. } => name.clone(),
+            _ => unreachable!(),
+        };
+        ledger
+            .fulfill(
+                &mut control,
+                &need,
+                crate::ResourceFulfillment::Input {
+                    name,
+                    source: SourceRegistration::new(
+                        RegisteredSourceKind::Generated,
+                        Arc::<[u8]>::from(&b""[..]),
+                    ),
+                },
+            )
+            .expect("missing input fulfillment matches");
+
+        for _ in 0..64 {
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation);
+            assert!(
+                !matches!(result, crate::CanonicalStepResult::Failed(_)),
+                "resumed checkpoint-origin job failed: {result:?}"
+            );
+            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
+                break;
+            }
+        }
+        assert_eq!(
+            checkpoint_boundaries(&checkpoints),
+            [
+                crate::EngineBoundary::JobStart,
+                crate::EngineBoundary::ShipoutComplete,
+            ],
+            "the nested shipout remains filtered after return and retry; the later root shipout remains eligible"
+        );
+    });
+}
+
 #[test]
 fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         control
             .pending_named_boundaries
-            .push_back(crate::EngineBoundary::OuterParagraphEnd);
+            .push_back(PendingNamedBoundary {
+                boundary: crate::EngineBoundary::OuterParagraphEnd,
+                root_main_file_origin: true,
+            });
         control
             .pending_named_boundaries
-            .push_back(crate::EngineBoundary::ShipoutComplete);
+            .push_back(PendingNamedBoundary {
+                boundary: crate::EngineBoundary::ShipoutComplete,
+                root_main_file_origin: true,
+            });
 
         control
             .publish_terminal_named_boundaries(stores)

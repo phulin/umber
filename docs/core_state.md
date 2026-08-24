@@ -581,7 +581,11 @@ identity contracts and are merely framed as inputs where needed.
 Snapshots are not public restart points. `tex-exec` alone may publish complete
 `EngineCheckpoint`s at `JobStart`, eligible `OuterParagraphEnd`, and outermost
 `ShipoutComplete`. A checkpoint structurally owns every root needed for later
-validation and restoration.
+validation and restoration. The current conservative schedule retains
+paragraph and shipout checkpoints only when the boundary-forming operation's
+active external file frame is the registered root main input; the decision is
+frozen before queued publication and does not inspect token provenance or file
+names. General source-role policy is deferred to Bead `umber2-66p0.11`.
 
 Commit moves structural node/content roots, publishes ordered effects and
 artifacts, and releases transaction-local history. Failed validation restores

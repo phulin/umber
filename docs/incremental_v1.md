@@ -59,8 +59,15 @@ fallback to a paragraph-specific path.
 V1 has exactly three executor-named boundary kinds:
 
 - `JobStart`;
-- eligible `OuterParagraphEnd`; and
-- outermost `ShipoutComplete`.
+- eligible root-main-file `OuterParagraphEnd`; and
+- eligible root-main-file outermost `ShipoutComplete`.
+
+The root-main-file restriction is a temporary conservative source policy.
+`JobStart` remains available, but paragraph and shipout boundaries formed while
+any nested external input is active are not retained, including user includes,
+class/package inputs, and distribution inputs. General source-role
+classification and broader eligibility are deferred to Bead
+`umber2-66p0.11`; v1 does not infer a role from a file name or extension.
 
 Every record retained by the incremental session owns a complete,
 schema-versioned `EngineCheckpoint`. There are no observation-only records and
@@ -96,6 +103,17 @@ A logical revision has one ordered schedule. The schedule is part of the
 meaning of its `state_hash`; it is lineage telemetry rather than semantic
 state equality. Canonical live-state equality is the separate optional identity
 captured from current reachable roots.
+
+For paragraph and shipout boundaries, `tex-exec` freezes source eligibility at
+the operation that forms the boundary. It compares the active external file
+frame's compact source identity with the one root main source registered by
+the host. Token-list and macro frames do not replace that external frame: a
+macro defined by a package but invoked while the root document is active is
+root-originated, while commands being read from the package file are not.
+Token provenance, definition sites, paths, names, and extensions do not enter
+the decision. A queued nested-input boundary remains ineligible if input
+retirement, structural unwinding, or resource resumption later exposes the
+root frame before checkpoint publication.
 
 ### `JobStart`
 
@@ -139,6 +157,11 @@ Paragraphs built inside `\vbox`, `\hbox`, insertions, alignments, math, output
 routines, or another nested main-control invocation are not outer paragraphs
 and never publish this boundary.
 
+An otherwise eligible paragraph is retained only when its frozen active
+external file frame is the root main input. A paragraph read from any nested
+input is omitted from incremental history without changing ordinary paragraph
+execution, input retirement, rollback, or resource suspension.
+
 ### `ShipoutComplete`
 
 `ShipoutComplete` denotes completion of one outermost shipout transaction, not
@@ -166,6 +189,12 @@ The retained-lineage capability in `retained_group_roots.md` may later expand
 both paragraph and shipout eligibility. That rollout must be expressed as an
 aggregate state-layer capability and tested before `tex-exec` loosens the
 depth-zero rule; executor-side inspection of group shape is not sufficient.
+
+The shipout boundary also requires the frozen root-main-file origin described
+above. A nested-file shipout still commits its artifact and effects normally;
+only its named incremental checkpoint is filtered. This source restriction is
+independent of the existing outermost-output, mode, output-routine, and group
+safety checks.
 
 When one outer dispatch makes both a shipout and an outer paragraph eligible,
 the order is `ShipoutComplete` followed by `OuterParagraphEnd`. This is the
@@ -624,6 +653,11 @@ Implementation is not complete until tests prove all of the following:
 - no publication from scanners, alignments, boxes, math, output routines, or
   nested shipouts;
 - group-depth-zero eligibility for both paragraph and shipout checkpoints;
+- `JobStart` retention plus root-main-file-only paragraph and shipout
+  retention, using the active external file frame rather than token
+  provenance;
+- frozen rejection across nested-input retirement and resource suspension,
+  followed by ordinary retention of later root-file boundaries;
 - rollback across logical shipout restores effects, streams, artifacts, nodes,
   input, modes, groups, and semantic state atomically;
 - at most one generation substrate is retained at rest and two while an edit
