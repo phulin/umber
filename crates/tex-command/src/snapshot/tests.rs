@@ -1,5 +1,7 @@
 use core::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
@@ -257,11 +259,123 @@ fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
         let snapshot = command
             .snapshot(universe)
             .expect("empty command attempt snapshots");
-        let (_, retained) = command
-            .timeline
+        let (_, retained) = snapshot
+            .generation
             .resolve(snapshot.cursor())
-            .expect("timeline row resolves");
+            .expect("snapshot owner resolves");
         assert!(retained.is_empty());
+    });
+}
+
+#[test]
+fn dropping_a_summary_releases_its_unreachable_aggregate_root() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let summary = command
+            .publish_summary(universe)
+            .expect("quiescent command state publishes");
+        let retained = Arc::downgrade(&summary.generation.roots);
+
+        command.begin_file_name().expect("command root forks");
+        assert!(retained.upgrade().is_some());
+
+        drop(summary);
+        assert!(
+            retained.upgrade().is_none(),
+            "the dropped summary was the old aggregate root's last owner"
+        );
+    });
+}
+
+#[test]
+fn surviving_summary_restarts_identically_after_a_newer_summary_is_dropped() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let survivor = command
+            .publish_summary(universe)
+            .expect("surviving summary publishes");
+        command.begin_file_name().expect("later state mutates");
+        let discarded = command
+            .publish_summary(universe)
+            .expect("newer summary publishes");
+
+        drop(discarded);
+        command
+            .restore_summary(&survivor, universe)
+            .expect("surviving summary restores");
+
+        assert!(!command.name_in_progress());
+    });
+}
+
+#[test]
+fn stale_cursor_cannot_resolve_through_a_later_summary_owner() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let stale = command
+            .publish_summary(universe)
+            .expect("first summary publishes")
+            .cursor();
+        let mut later = command
+            .publish_summary(universe)
+            .expect("later summary publishes");
+        later.cursor = stale;
+        command.begin_file_name().expect("live state mutates");
+
+        assert!(matches!(
+            command.prepare_summary_restore(&later, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert!(command.name_in_progress());
+    });
+}
+
+#[test]
+fn repeated_8192_capture_prune_cycles_retain_constant_metadata() {
+    crate::test_harness::with_universe(|universe| {
+        let command = crate::CommandState::default();
+        let root_owners = Arc::strong_count(&command.roots);
+        let timeline_owners = Arc::strong_count(&command.timeline);
+
+        for _ in 0..8_192 {
+            let summary = command
+                .publish_summary(universe)
+                .expect("summary publishes");
+            drop(summary);
+        }
+
+        assert_eq!(Arc::strong_count(&command.roots), root_owners);
+        assert_eq!(Arc::strong_count(&command.timeline), timeline_owners);
+        assert_eq!(command.timeline.next_serial.load(Ordering::Relaxed), 8_192);
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_8192_capture_prune_cycles_allocate_zero_heap() {
+    crate::test_harness::with_universe(|universe| {
+        let command = crate::CommandState::default();
+        let warm = command
+            .publish_summary(universe)
+            .expect("warm summary publishes");
+        drop(warm);
+        let owner = tex_state::measurement::HotCoreAllocationOwner::EvidencePublication;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 0..8_192 {
+                let summary = command
+                    .publish_summary(universe)
+                    .expect("summary publishes");
+                drop(summary);
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(Arc::strong_count(&command.roots), 1);
+        assert_eq!(Arc::strong_count(&command.timeline), 1);
     });
 }
 

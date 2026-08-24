@@ -8,7 +8,8 @@
 
 use core::fmt;
 use core::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use tex_state::{GenerationOwner, Universe};
 
@@ -17,24 +18,22 @@ use crate::processor::ScannerStatus;
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
 use crate::state::{CommandState, CommandStateRoots};
 
-/// Immutable aggregate roots retained by one command generation.
+/// Monotonic identity source for in-session command checkpoints.
 ///
-/// Rows own copy-on-write command roots, not individual token, input, or
-/// provenance values. A snapshot owns this timeline only through the single
-/// coarse [`CommandGenerationOwner`].
+/// The snapshot or summary is the sole owner of its copy-on-write aggregate
+/// roots. The timeline retains no root row or per-checkpoint metadata; it only
+/// prevents an old cursor from being paired with a later checkpoint on the
+/// same live command machine.
 pub(crate) struct CommandTimeline<G> {
-    rows: Mutex<Vec<CommandTimelineRow<G>>>,
-}
-
-struct CommandTimelineRow<G> {
-    roots: Arc<CommandStateRoots<G>>,
-    attempt: AttemptMark,
+    next_serial: AtomicU32,
+    brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Default for CommandTimeline<G> {
     fn default() -> Self {
         Self {
-            rows: Mutex::new(Vec::new()),
+            next_serial: AtomicU32::new(0),
+            brand: PhantomData,
         }
     }
 }
@@ -48,7 +47,6 @@ impl<G> fmt::Debug for CommandTimeline<G> {
 impl<G> CommandTimeline<G> {
     pub(crate) fn retain(
         &self,
-        roots: Arc<CommandStateRoots<G>>,
         attempt: AttemptMark,
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
@@ -56,37 +54,23 @@ impl<G> CommandTimeline<G> {
         if !attempt.is_empty() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
-        self.retain_transient(roots, attempt, arenas, stacks)
+        self.retain_transient(arenas, stacks)
     }
 
     fn retain_transient(
         &self,
-        roots: Arc<CommandStateRoots<G>>,
-        attempt: AttemptMark,
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
     ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
-        let mut rows = self.rows.lock().expect("command timeline is not poisoned");
-        let row = u32::try_from(rows.len()).map_err(|_| CommandSummaryError::TimelineCapacity)?;
-        rows.push(CommandTimelineRow { roots, attempt });
-        Ok(CommandSnapshotCursor::new(
-            row.checked_add(1)
-                .ok_or(CommandSummaryError::TimelineCapacity)?,
-            arenas,
-            stacks,
-        ))
-    }
-
-    pub(crate) fn resolve(
-        &self,
-        cursor: CommandSnapshotCursor,
-    ) -> Option<(Arc<CommandStateRoots<G>>, AttemptMark)> {
-        let row = cursor.command_journal().checked_sub(1)? as usize;
-        self.rows
-            .lock()
-            .expect("command timeline is not poisoned")
-            .get(row)
-            .map(|row| (Arc::clone(&row.roots), row.attempt))
+        let serial = self
+            .next_serial
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |serial| {
+                serial.checked_add(1)
+            })
+            .map_err(|_| CommandSummaryError::TimelineCapacity)?
+            .checked_add(1)
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        Ok(CommandSnapshotCursor::new(serial, arenas, stacks))
     }
 }
 
@@ -94,6 +78,9 @@ impl<G> CommandTimeline<G> {
 pub struct CommandGenerationOwner<G> {
     generation: GenerationOwner<G>,
     timeline: Arc<CommandTimeline<G>>,
+    roots: Arc<CommandStateRoots<G>>,
+    attempt: AttemptMark,
+    serial: u32,
 }
 
 impl<G> Clone for CommandGenerationOwner<G> {
@@ -101,6 +88,9 @@ impl<G> Clone for CommandGenerationOwner<G> {
         Self {
             generation: self.generation.clone(),
             timeline: Arc::clone(&self.timeline),
+            roots: Arc::clone(&self.roots),
+            attempt: self.attempt,
+            serial: self.serial,
         }
     }
 }
@@ -112,10 +102,19 @@ impl<G> fmt::Debug for CommandGenerationOwner<G> {
 }
 
 impl<G> CommandGenerationOwner<G> {
-    pub(crate) fn new(generation: GenerationOwner<G>, timeline: Arc<CommandTimeline<G>>) -> Self {
+    pub(crate) fn new(
+        generation: GenerationOwner<G>,
+        timeline: Arc<CommandTimeline<G>>,
+        roots: Arc<CommandStateRoots<G>>,
+        attempt: AttemptMark,
+        cursor: CommandSnapshotCursor,
+    ) -> Self {
         Self {
             generation,
             timeline,
+            roots,
+            attempt,
+            serial: cursor.command_journal(),
         }
     }
 
@@ -131,7 +130,7 @@ impl<G> CommandGenerationOwner<G> {
         &self,
         cursor: CommandSnapshotCursor,
     ) -> Option<(Arc<CommandStateRoots<G>>, AttemptMark)> {
-        self.timeline.resolve(cursor)
+        (cursor.command_journal() == self.serial).then(|| (Arc::clone(&self.roots), self.attempt))
     }
 }
 
@@ -717,8 +716,7 @@ impl<G> CommandState<G> {
     ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
         let arenas = self.checkpoint_arenas(attempt)?;
         let stacks = self.checkpoint_stacks()?;
-        self.timeline
-            .retain(Arc::clone(&self.roots), attempt, arenas, stacks)
+        self.timeline.retain(attempt, arenas, stacks)
     }
 
     fn resolve_restore(
@@ -770,8 +768,8 @@ impl<G> CommandState<G> {
     }
 
     /// Captures one exact in-session command root without cloning its live
-    /// graph. The attempt arena stays on the command machine and is addressed
-    /// only by the bounded mark retained in the coarse timeline row.
+    /// graph. The returned owner directly retains the aggregate roots and the
+    /// bounded attempt mark; the timeline retains no per-snapshot row.
     pub fn snapshot(
         &self,
         universe: &Universe<G>,
@@ -782,7 +780,13 @@ impl<G> CommandState<G> {
         let attempt = self.attempt.arena().mark();
         let cursor = self.retain_cursor(attempt)?;
         Ok(CommandStateSnapshot::new(
-            CommandGenerationOwner::new(generation, Arc::clone(&self.timeline)),
+            CommandGenerationOwner::new(
+                generation,
+                Arc::clone(&self.timeline),
+                Arc::clone(&self.roots),
+                attempt,
+                cursor,
+            ),
             cursor,
         ))
     }
@@ -802,11 +806,15 @@ impl<G> CommandState<G> {
         let attempt = self.attempt.arena().mark();
         let arenas = self.checkpoint_arenas(attempt)?;
         let stacks = self.checkpoint_stacks()?;
-        let cursor =
-            self.timeline
-                .retain_transient(Arc::clone(&self.roots), attempt, arenas, stacks)?;
+        let cursor = self.timeline.retain_transient(arenas, stacks)?;
         Ok(TransientCommandSnapshot::new(
-            CommandGenerationOwner::new(generation, Arc::clone(&self.timeline)),
+            CommandGenerationOwner::new(
+                generation,
+                Arc::clone(&self.timeline),
+                Arc::clone(&self.roots),
+                attempt,
+                cursor,
+            ),
             cursor,
         ))
     }
@@ -830,7 +838,13 @@ impl<G> CommandState<G> {
             Some(source.cursor.next_physical_offset)
         });
         Ok(CommandSummary::new(
-            CommandGenerationOwner::new(generation, Arc::clone(&self.timeline)),
+            CommandGenerationOwner::new(
+                generation,
+                Arc::clone(&self.timeline),
+                Arc::clone(&self.roots),
+                attempt,
+                cursor,
+            ),
             cursor,
             self.checkpoint_profile_fingerprint().get(),
             root_source_anchor,

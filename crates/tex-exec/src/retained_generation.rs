@@ -47,24 +47,16 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     }
 
     pub fn retain_checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) -> RetainedCheckpointKey {
-        let slot = self.sidecars.checkpoints.len();
-        self.sidecars.checkpoints.push(Some(checkpoint));
-        RetainedCheckpointKey {
-            generation: self.generation,
-            slot,
-        }
+        self.sidecars
+            .checkpoints
+            .retain(self.generation, checkpoint)
     }
 
     pub fn checkpoint(
         &self,
         key: &RetainedCheckpointKey,
     ) -> Result<&EngineCheckpoint<G>, RetainedEngineAccessError> {
-        validate_checkpoint_key(self.generation, key)?;
-        self.sidecars
-            .checkpoints
-            .get(key.slot)
-            .and_then(Option::as_ref)
-            .ok_or(RetainedEngineAccessError::StaleCheckpoint)
+        self.sidecars.checkpoints.get(self.generation, key)
     }
 
     pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
@@ -109,17 +101,12 @@ impl<G> AdmittedEngineGeneration<'_, G> {
 /// Restricted checkpoint-store borrow used by a synchronous sink.
 pub struct RetainedCheckpointStore<'a, G> {
     generation: u64,
-    checkpoints: &'a mut Vec<Option<EngineCheckpoint<G>>>,
+    checkpoints: &'a mut RetainedCheckpointSlots<G>,
 }
 
 impl<G> RetainedCheckpointStore<'_, G> {
     pub fn retain(&mut self, checkpoint: EngineCheckpoint<G>) -> RetainedCheckpointKey {
-        let slot = self.checkpoints.len();
-        self.checkpoints.push(Some(checkpoint));
-        RetainedCheckpointKey {
-            generation: self.generation,
-            slot,
-        }
+        self.checkpoints.retain(self.generation, checkpoint)
     }
 }
 
@@ -131,6 +118,7 @@ impl<G> RetainedCheckpointStore<'_, G> {
 pub struct RetainedCheckpointKey {
     generation: u64,
     slot: usize,
+    serial: u64,
 }
 
 /// Owner-relative key for one unpublished executor episode sidecar.
@@ -156,12 +144,25 @@ pub enum RetainedEngineAccessError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CheckpointPruningReceipt {
     released: usize,
+    retained: usize,
+    slots: usize,
 }
 
 impl CheckpointPruningReceipt {
     #[must_use]
     pub const fn released(self) -> usize {
         self.released
+    }
+
+    #[must_use]
+    pub const fn retained(self) -> usize {
+        self.retained
+    }
+
+    /// Physical checkpoint slots retained for exact O(1) reuse.
+    #[must_use]
+    pub const fn slots(self) -> usize {
+        self.slots
     }
 }
 
@@ -303,16 +304,10 @@ impl RetainedEngineOperation for PreflightTerminal<'_> {
             return Err(RetainedEngineAccessError::LiveAttachment);
         }
         for key in self.retained {
-            validate_checkpoint_key(admitted.generation, key)?;
-            if admitted
+            admitted
                 .sidecars
                 .checkpoints
-                .get(key.slot)
-                .and_then(Option::as_ref)
-                .is_none()
-            {
-                return Err(RetainedEngineAccessError::StaleCheckpoint);
-            }
+                .get(admitted.generation, key)?;
         }
         Ok(())
     }
@@ -322,40 +317,145 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
     type Output = Result<CheckpointPruningReceipt, RetainedEngineAccessError>;
 
     fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        let mut keep = vec![false; admitted.sidecars.checkpoints.len()];
-        for key in self.retained {
-            validate_checkpoint_key(admitted.generation, key)?;
-            if admitted
-                .sidecars
-                .checkpoints
-                .get(key.slot)
-                .and_then(Option::as_ref)
-                .is_none()
-            {
-                return Err(RetainedEngineAccessError::StaleCheckpoint);
-            }
-            keep[key.slot] = true;
-        }
-        let before = admitted
+        admitted
             .sidecars
             .checkpoints
-            .iter()
-            .filter(|checkpoint| checkpoint.is_some())
-            .count();
-        for (slot, checkpoint) in admitted.sidecars.checkpoints.iter_mut().enumerate() {
-            if !keep[slot] {
-                *checkpoint = None;
+            .prune(admitted.generation, self.retained)
+    }
+}
+
+struct RetainedCheckpointSlots<G> {
+    slots: Vec<RetainedCheckpointSlot<G>>,
+    live: Vec<usize>,
+    free: Vec<usize>,
+    next_serial: u64,
+}
+
+impl<G> Default for RetainedCheckpointSlots<G> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            live: Vec::new(),
+            free: Vec::new(),
+            next_serial: 0,
+        }
+    }
+}
+
+struct RetainedCheckpointSlot<G> {
+    checkpoint: Option<EngineCheckpoint<G>>,
+    serial: u64,
+    live_index: Option<usize>,
+    keep: bool,
+}
+
+impl<G> RetainedCheckpointSlots<G> {
+    fn retain(
+        &mut self,
+        generation: u64,
+        checkpoint: EngineCheckpoint<G>,
+    ) -> RetainedCheckpointKey {
+        self.next_serial = self
+            .next_serial
+            .checked_add(1)
+            .expect("retained checkpoint serial space is exhausted");
+        let serial = self.next_serial;
+        let slot = if let Some(slot) = self.free.pop() {
+            let row = &mut self.slots[slot];
+            debug_assert!(row.checkpoint.is_none());
+            debug_assert!(row.live_index.is_none());
+            row.checkpoint = Some(checkpoint);
+            row.serial = serial;
+            row.keep = false;
+            slot
+        } else {
+            let slot = self.slots.len();
+            self.slots.push(RetainedCheckpointSlot {
+                checkpoint: Some(checkpoint),
+                serial,
+                live_index: None,
+                keep: false,
+            });
+            slot
+        };
+        let live_index = self.live.len();
+        self.live.push(slot);
+        self.slots[slot].live_index = Some(live_index);
+        RetainedCheckpointKey {
+            generation,
+            slot,
+            serial,
+        }
+    }
+
+    fn get(
+        &self,
+        generation: u64,
+        key: &RetainedCheckpointKey,
+    ) -> Result<&EngineCheckpoint<G>, RetainedEngineAccessError> {
+        validate_checkpoint_key(generation, key)?;
+        let row = self
+            .slots
+            .get(key.slot)
+            .filter(|row| row.serial == key.serial)
+            .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        row.checkpoint
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleCheckpoint)
+    }
+
+    fn prune(
+        &mut self,
+        generation: u64,
+        retained: &[RetainedCheckpointKey],
+    ) -> Result<CheckpointPruningReceipt, RetainedEngineAccessError> {
+        for key in retained {
+            self.get(generation, key)?;
+        }
+        for key in retained {
+            self.slots[key.slot].keep = true;
+        }
+        let before = self.live.len();
+        let mut live_index = 0;
+        while live_index < self.live.len() {
+            let slot = self.live[live_index];
+            if self.slots[slot].keep {
+                self.slots[slot].keep = false;
+                live_index += 1;
+            } else {
+                self.release(slot);
             }
         }
         Ok(CheckpointPruningReceipt {
-            released: before.saturating_sub(self.retained.len()),
+            released: before - self.live.len(),
+            retained: self.live.len(),
+            slots: self.slots.len(),
         })
+    }
+
+    fn release(&mut self, slot: usize) {
+        let live_index = self.slots[slot]
+            .live_index
+            .take()
+            .expect("only a live checkpoint slot can be released");
+        let removed = self.live.swap_remove(live_index);
+        debug_assert_eq!(removed, slot);
+        if let Some(&moved) = self.live.get(live_index) {
+            self.slots[moved].live_index = Some(live_index);
+        }
+        self.slots[slot].keep = false;
+        let checkpoint = self.slots[slot]
+            .checkpoint
+            .take()
+            .expect("a live checkpoint slot owns a checkpoint");
+        self.free.push(slot);
+        drop(checkpoint);
     }
 }
 
 struct EngineGenerationSidecars<G> {
     generation: u64,
-    checkpoints: Vec<Option<EngineCheckpoint<G>>>,
+    checkpoints: RetainedCheckpointSlots<G>,
     attachments: Vec<Option<Box<dyn Any + Send>>>,
 }
 
@@ -369,7 +469,7 @@ impl RetainedStateOperation for InitializeSidecars {
     fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
         admitted.attach(EngineGenerationSidecars::<G> {
             generation: self.generation,
-            checkpoints: Vec::new(),
+            checkpoints: RetainedCheckpointSlots::default(),
             attachments: Vec::new(),
         })
     }
@@ -429,6 +529,8 @@ fn next_generation() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tex_command::CommandState;
+    use tex_state::env::AssignmentScope;
     use tex_state::interner::InternerBudget;
 
     fn epoch() -> SessionInternerEpoch {
@@ -470,6 +572,172 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct CheckpointStorageMetrics {
+        slots_len: usize,
+        slots_capacity: usize,
+        live_len: usize,
+        live_capacity: usize,
+        free_len: usize,
+        free_capacity: usize,
+    }
+
+    impl<G> RetainedCheckpointSlots<G> {
+        fn metrics(&self) -> CheckpointStorageMetrics {
+            CheckpointStorageMetrics {
+                slots_len: self.slots.len(),
+                slots_capacity: self.slots.capacity(),
+                live_len: self.live.len(),
+                live_capacity: self.live.capacity(),
+                free_len: self.free.len(),
+                free_capacity: self.free.capacity(),
+            }
+        }
+    }
+
+    struct RepeatedCheckpointPruning<'a>(&'a RetainedCheckpointKey);
+
+    impl RetainedEngineOperation for RepeatedCheckpointPruning<'_> {
+        type Output = Result<
+            (
+                CheckpointStorageMetrics,
+                CheckpointStorageMetrics,
+                CheckpointPruningReceipt,
+            ),
+            RetainedEngineAccessError,
+        >;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            admitted
+                .sidecars
+                .checkpoints
+                .get(admitted.generation, self.0)?;
+            let generation = admitted.generation;
+            let (universe, mut checkpoints) = admitted.parts();
+            let mut control = crate::MainControl::tex82_initex(universe);
+            let capture = |control: &mut crate::MainControl<G>, universe: &mut Universe<G>| {
+                control
+                    .capture_checkpoint(
+                        crate::EngineBoundary::JobStart,
+                        universe,
+                        crate::ExecutionBudgetCounters::default(),
+                    )
+                    .expect("quiescent checkpoint")
+            };
+
+            let warm = checkpoints.retain(capture(&mut control, universe));
+            let receipt = checkpoints
+                .checkpoints
+                .prune(generation, std::slice::from_ref(self.0))?;
+            assert_eq!(receipt.released(), 1);
+            assert!(matches!(
+                checkpoints.checkpoints.get(generation, &warm),
+                Err(RetainedEngineAccessError::StaleCheckpoint)
+            ));
+            let warmed = checkpoints.checkpoints.metrics();
+
+            let mut last_receipt = receipt;
+            for _ in 0..8_192 {
+                let key = checkpoints.retain(capture(&mut control, universe));
+                last_receipt = checkpoints
+                    .checkpoints
+                    .prune(generation, std::slice::from_ref(self.0))?;
+                assert!(matches!(
+                    checkpoints.checkpoints.get(generation, &key),
+                    Err(RetainedEngineAccessError::StaleCheckpoint)
+                ));
+            }
+            Ok((warmed, checkpoints.checkpoints.metrics(), last_receipt))
+        }
+    }
+
+    struct RestartFixture<G> {
+        command: CommandState<G>,
+        modes: crate::ModeNest,
+    }
+
+    struct CaptureRestorablePair;
+
+    impl RetainedEngineOperation for CaptureRestorablePair {
+        type Output = (
+            RetainedCheckpointKey,
+            RetainedCheckpointKey,
+            RetainedEngineAttachmentKey,
+        );
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            let mut command = CommandState::default();
+            let mut modes = crate::ModeNest::new();
+            let first = {
+                let universe = admitted.universe();
+                universe
+                    .assign_count(0, 10, AssignmentScope::Global)
+                    .expect("baseline count");
+                crate::EngineCheckpoint::capture_checkpoint(
+                    crate::EngineBoundary::JobStart,
+                    &mut command,
+                    &mut modes,
+                    universe,
+                    crate::ExecutionBudgetCounters::default(),
+                    true,
+                )
+                .expect("first checkpoint")
+            };
+            let first = admitted.retain_checkpoint(first);
+            let second = {
+                let universe = admitted.universe();
+                universe
+                    .assign_count(0, 20, AssignmentScope::Global)
+                    .expect("later count");
+                crate::EngineCheckpoint::capture_checkpoint(
+                    crate::EngineBoundary::ShipoutComplete,
+                    &mut command,
+                    &mut modes,
+                    universe,
+                    crate::ExecutionBudgetCounters::default(),
+                    true,
+                )
+                .expect("second checkpoint")
+            };
+            let second = admitted.retain_checkpoint(second);
+            let fixture = admitted.attach(RestartFixture { command, modes });
+            (first, second, fixture)
+        }
+    }
+
+    struct RestoreCount<'a> {
+        checkpoint: &'a RetainedCheckpointKey,
+        fixture: &'a RetainedEngineAttachmentKey,
+    }
+
+    impl RetainedEngineOperation for RestoreCount<'_> {
+        type Output = i32;
+
+        fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            validate_attachment_key(admitted.generation, self.fixture)
+                .expect("fixture belongs to generation");
+            let checkpoint = admitted
+                .sidecars
+                .checkpoints
+                .get(admitted.generation, self.checkpoint)
+                .expect("surviving checkpoint");
+            let fixture = admitted.sidecars.attachments[self.fixture.slot]
+                .as_deref_mut()
+                .expect("restart fixture")
+                .downcast_mut::<RestartFixture<G>>()
+                .expect("restart fixture type");
+            checkpoint
+                .restore_state(&mut fixture.command, &mut fixture.modes, admitted.universe)
+                .expect("surviving checkpoint restores");
+            admitted
+                .universe
+                .command_context()
+                .expect("command context")
+                .count(0)
+                .expect("restored count")
+        }
+    }
+
     #[test]
     fn checkpoint_keys_are_owner_relative_across_live_generations() {
         let epoch = epoch();
@@ -484,6 +752,97 @@ mod tests {
         assert_eq!(
             second.with_admitted(Read(&key)),
             Ok(Err(RetainedEngineAccessError::ForeignGeneration))
+        );
+    }
+
+    #[test]
+    fn pruning_releases_checkpoint_and_reuses_its_slot_without_aba() {
+        let epoch = epoch();
+        let mut generation =
+            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+        let survivor = generation.with_admitted(Capture).expect("survivor");
+        let stale = generation
+            .with_admitted(Capture)
+            .expect("discarded checkpoint");
+
+        let receipt = generation
+            .prune_checkpoints(std::slice::from_ref(&survivor))
+            .expect("checkpoint pruning");
+        assert_eq!(receipt.released(), 1);
+        assert_eq!(receipt.retained(), 1);
+        assert_eq!(receipt.slots(), 2);
+        assert_eq!(
+            generation.with_admitted(Read(&survivor)),
+            Ok(Ok(crate::EngineBoundary::JobStart))
+        );
+        assert_eq!(
+            generation.with_admitted(Read(&stale)),
+            Ok(Err(RetainedEngineAccessError::StaleCheckpoint))
+        );
+
+        let replacement = generation
+            .with_admitted(Capture)
+            .expect("replacement checkpoint");
+        assert_eq!(replacement.slot, stale.slot);
+        assert_ne!(replacement.serial, stale.serial);
+        assert_eq!(
+            generation.with_admitted(Read(&stale)),
+            Ok(Err(RetainedEngineAccessError::StaleCheckpoint))
+        );
+        assert_eq!(
+            generation.with_admitted(Read(&replacement)),
+            Ok(Ok(crate::EngineBoundary::JobStart))
+        );
+    }
+
+    #[test]
+    fn repeated_8192_checkpoint_prunes_keep_storage_at_warmed_high_water() {
+        let epoch = epoch();
+        let mut generation =
+            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+        let survivor = generation.with_admitted(Capture).expect("survivor");
+
+        let (warmed, after, receipt) = generation
+            .with_admitted(RepeatedCheckpointPruning(&survivor))
+            .expect("generation admission")
+            .expect("checkpoint pruning");
+
+        assert_eq!(after, warmed);
+        assert_eq!(after.slots_len, 2);
+        assert_eq!(after.live_len, 1);
+        assert_eq!(after.free_len, 1);
+        assert_eq!(receipt.released(), 1);
+        assert_eq!(receipt.retained(), 1);
+        assert_eq!(receipt.slots(), 2);
+        assert_eq!(
+            generation.with_admitted(Read(&survivor)),
+            Ok(Ok(crate::EngineBoundary::JobStart))
+        );
+    }
+
+    #[test]
+    fn surviving_checkpoint_restarts_identically_after_newer_root_pruning() {
+        let epoch = epoch();
+        let mut generation =
+            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+        let (survivor, discarded, fixture) = generation
+            .with_admitted(CaptureRestorablePair)
+            .expect("checkpoint pair");
+
+        let receipt = generation
+            .prune_checkpoints(std::slice::from_ref(&survivor))
+            .expect("checkpoint pruning");
+        assert_eq!(receipt.released(), 1);
+        assert_eq!(
+            generation.with_admitted(Read(&discarded)),
+            Ok(Err(RetainedEngineAccessError::StaleCheckpoint))
+        );
+        assert_eq!(
+            generation.with_admitted(RestoreCount {
+                checkpoint: &survivor,
+                fixture: &fixture,
+            }),
+            Ok(10)
         );
     }
 }
