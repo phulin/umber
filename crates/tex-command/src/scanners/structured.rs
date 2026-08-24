@@ -2734,6 +2734,22 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
+        let transient_words = self.command.transient_dynamic_words();
+        let expanded_words = self
+            .command
+            .attempt
+            .arena()
+            .token_words(expanded)
+            .map_err(|_| CommandError::input_invariant())?
+            .len();
+        // TeX82 §1370 keeps the source list, expanded result, live command
+        // buffers, and three artificial tokens until the stopper is read.
+        self.state.observe_transient_token_words(
+            write_words
+                .saturating_add(expanded_words)
+                .saturating_add(transient_words)
+                .saturating_add(4),
+        );
         let mut stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;

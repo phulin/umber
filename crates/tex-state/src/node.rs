@@ -281,6 +281,46 @@ enum SemanticNodeRef<'a, List, Glue, Tokens> {
 }
 
 impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
+    /// TeX82 §§125/133--157's main-memory words owned by this node.
+    ///
+    /// The pair is `(variable-size, one-word)`. It describes the canonical
+    /// allocation event only; Rust enum size and arena representation are
+    /// deliberately irrelevant. Character cells and a ligature's source
+    /// characters come from the one-word arena, while every other node uses
+    /// its WEB-declared variable-size record.
+    pub(crate) fn tex_memory_words(&self, etex_node_sizes: bool) -> (usize, usize) {
+        let synctex_extra = usize::from(etex_node_sizes) * 2;
+        let variable = match self {
+            Self::Char { .. } => return (0, 1),
+            Self::Lig { orig, .. } => return (2, orig.len()),
+            Self::HList(_) | Self::VList(_) | Self::Unset(_) => 7 + synctex_extra,
+            Self::Rule { .. } => 4 + synctex_extra,
+            Self::Ins { .. } => 5,
+            Self::MathNoad(noad) => match noad.kind {
+                crate::math::NoadKind::Radical { .. } | crate::math::NoadKind::Accent { .. } => 5,
+                _ => 4,
+            },
+            Self::FractionNoad(_) => 6,
+            Self::MathStyle(_) => 3,
+            Self::MathChoice(_) => 3,
+            Self::MarginKern { .. } => 3,
+            Self::Kern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Nonscript => 2 + synctex_extra,
+            Self::Direction(_) if etex_node_sizes => 2 + synctex_extra,
+            Self::Disc { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::Direction(_)
+            | Self::MathList(_)
+            | Self::Adjust(_) => 2,
+        };
+        (variable, 0)
+    }
+
     fn semantic_ref(&self) -> SemanticNodeRef<'_, List, Glue, Tokens> {
         match self {
             Self::Char { font, ch, .. } => SemanticNodeRef::Char(font, ch),
@@ -509,6 +549,25 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
             | Self::Direction(_)
             | Self::MathStyle(_)
             | Self::Nonscript => {}
+        }
+    }
+
+    pub(crate) fn visit_diagnostic_node_lists(&self, mut visit: impl FnMut(&List, u32)) {
+        match self {
+            Self::HList(node) | Self::VList(node) => {
+                if let Some(children) = &node.diagnostic_children {
+                    visit(children, node.allocator_high_cell_overlap);
+                }
+            }
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => {
+                if let Some(children) = &node.diagnostic_children {
+                    visit(children, node.allocator_high_cell_overlap);
+                }
+            }
+            _ => {}
         }
     }
 

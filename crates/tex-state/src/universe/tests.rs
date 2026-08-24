@@ -186,6 +186,37 @@ fn runtime_checkpoint_restores_string_pool_accounting() {
 }
 
 #[test]
+fn runtime_checkpoint_restores_main_memory_extents() {
+    with_universe(budget(), |universe| {
+        let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
+        universe
+            .command_context()
+            .expect("context")
+            .observe_transient_token_words(600);
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .detach_engine_usage_statistics()
+                .memory_words,
+            1_635
+        );
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore checkpoint");
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .detach_engine_usage_statistics()
+                .memory_words,
+            1_035
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn universe_terminal_input_cursor_replays_only_its_caller_world() {
     let position = with_universe(budget(), |universe| {
         universe

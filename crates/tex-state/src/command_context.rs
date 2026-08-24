@@ -161,6 +161,151 @@ pub(crate) struct StringPoolFormatState {
     max_strings: usize,
     pool_size: usize,
     recycled: std::collections::BTreeSet<String>,
+    memory: MainMemoryFormatState,
+}
+
+/// Aggregate TeX82 main-memory state retained by a dumped format.
+///
+/// TeX's observable statistics need the live low/high word totals and the
+/// persistent allocator extents, but not `mem` addresses, free-list links, or
+/// Rust allocation sizes. Keeping only these four coordinates makes the
+/// compatibility boundary explicit without recreating TeX's heap layout.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct MainMemoryFormatState {
+    variable_live: usize,
+    dynamic_live: usize,
+    low_extent: usize,
+    high_extent: usize,
+}
+
+const TEX82_STATIC_VARIABLE_WORDS: usize = 20;
+const TEX82_STATIC_DYNAMIC_WORDS: usize = 14;
+const TEX82_INITIAL_LOW_EXTENT: usize = 1_021;
+const TEX82_LOW_GROWTH_WORDS: usize = 1_000;
+const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
+
+#[derive(Clone, Debug)]
+struct MainMemoryRuntime {
+    variable_live: usize,
+    dynamic_live: usize,
+    low_extent: usize,
+    high_extent: usize,
+}
+
+impl Default for MainMemoryRuntime {
+    fn default() -> Self {
+        Self {
+            variable_live: TEX82_STATIC_VARIABLE_WORDS,
+            dynamic_live: TEX82_STATIC_DYNAMIC_WORDS,
+            low_extent: TEX82_INITIAL_LOW_EXTENT,
+            high_extent: TEX82_STATIC_DYNAMIC_WORDS,
+        }
+    }
+}
+
+impl MainMemoryRuntime {
+    fn allocate(&mut self, variable: usize, dynamic: usize) {
+        self.variable_live = self
+            .variable_live
+            .checked_add(variable)
+            .expect("TeX variable-memory accounting overflow");
+        self.dynamic_live = self
+            .dynamic_live
+            .checked_add(dynamic)
+            .expect("TeX dynamic-memory accounting overflow");
+        let variable_peak = self.variable_live;
+        while self.low_extent < variable_peak {
+            self.low_extent = self
+                .low_extent
+                .checked_add(TEX82_LOW_GROWTH_WORDS)
+                .expect("TeX low-memory extent overflow");
+        }
+        self.high_extent = self.high_extent.max(self.dynamic_live);
+    }
+
+    fn free(&mut self, variable: usize, dynamic: usize) {
+        self.variable_live = self
+            .variable_live
+            .checked_sub(variable)
+            .expect("freed more TeX variable memory than was live");
+        self.dynamic_live = self
+            .dynamic_live
+            .checked_sub(dynamic)
+            .expect("freed more TeX dynamic memory than was live");
+    }
+
+    fn observe_transient(&mut self, variable: usize, dynamic: usize) {
+        self.allocate(variable, dynamic);
+        self.free(variable, dynamic);
+    }
+
+    fn capture_format_state(
+        &self,
+        variable_live: usize,
+        dynamic_live: usize,
+    ) -> MainMemoryFormatState {
+        let mut state = Self {
+            variable_live,
+            dynamic_live,
+            low_extent: self.low_extent,
+            high_extent: self.high_extent,
+        };
+        state.observe_transient(0, 0);
+        MainMemoryFormatState {
+            variable_live: state.variable_live,
+            dynamic_live: state.dynamic_live,
+            low_extent: state.low_extent,
+            high_extent: state.high_extent,
+        }
+    }
+
+    fn restore_format_state(state: MainMemoryFormatState) -> Result<Self, &'static str> {
+        if state.variable_live < TEX82_STATIC_VARIABLE_WORDS
+            || state.dynamic_live < TEX82_STATIC_DYNAMIC_WORDS
+            || state.low_extent < TEX82_INITIAL_LOW_EXTENT
+            || state.low_extent < state.variable_live
+            || state.high_extent < state.dynamic_live
+            || state.low_extent.saturating_add(state.high_extent) > TEX82_MEMORY_WORD_CAPACITY
+        {
+            return Err("invalid main-memory format coordinates");
+        }
+        Ok(Self {
+            variable_live: state.variable_live,
+            dynamic_live: state.dynamic_live,
+            low_extent: state.low_extent,
+            high_extent: state.high_extent,
+        })
+    }
+
+    fn reported_words(&self) -> usize {
+        self.low_extent.saturating_add(self.high_extent)
+    }
+}
+
+#[cfg(test)]
+mod main_memory_tests {
+    use super::*;
+
+    #[test]
+    fn allocation_and_free_preserve_allocator_extents() {
+        let mut memory = MainMemoryRuntime::default();
+        memory.allocate(1_002, 600);
+        assert_eq!((memory.low_extent, memory.high_extent), (2_021, 614));
+        memory.free(1_002, 600);
+        assert_eq!((memory.variable_live, memory.dynamic_live), (20, 14));
+        assert_eq!(memory.reported_words(), 2_635);
+    }
+
+    #[test]
+    fn format_restore_rejects_impossible_coordinates() {
+        let state = MainMemoryFormatState {
+            variable_live: 20,
+            dynamic_live: 15,
+            low_extent: 1_021,
+            high_extent: 14,
+        };
+        assert!(MainMemoryRuntime::restore_format_state(state).is_err());
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -172,6 +317,7 @@ pub(crate) struct EngineUsageRuntime {
     max_strings: usize,
     pool_size: usize,
     recycled: std::collections::BTreeSet<String>,
+    memory: MainMemoryRuntime,
 }
 
 impl Default for EngineUsageRuntime {
@@ -184,6 +330,7 @@ impl Default for EngineUsageRuntime {
             max_strings: MAX_STRINGS,
             pool_size: POOL_SIZE,
             recycled: std::collections::BTreeSet::new(),
+            memory: MainMemoryRuntime::default(),
         }
     }
 }
@@ -216,21 +363,28 @@ impl EngineUsageRuntime {
         self.init_pool_ptr = self.init_pool_ptr.max(ETEX26_CHARACTER_BASELINE);
     }
 
-    pub(crate) fn capture_format_state(&self) -> StringPoolFormatState {
+    pub(crate) fn capture_format_state(
+        &self,
+        variable_live: usize,
+        dynamic_live: usize,
+    ) -> StringPoolFormatState {
         StringPoolFormatState {
-            version: 1,
+            version: 2,
             strings: self.strings,
             characters: self.characters,
             max_strings: self.max_strings,
             pool_size: self.pool_size,
             recycled: self.recycled.clone(),
+            memory: self
+                .memory
+                .capture_format_state(variable_live, dynamic_live),
         }
     }
 
     pub(crate) fn restore_format_state(
         state: &StringPoolFormatState,
     ) -> Result<Self, &'static str> {
-        if state.version != 1
+        if state.version != 2
             || state.max_strings != MAX_STRINGS
             || state.pool_size != POOL_SIZE
             || state.strings < TEX82_STRING_BASELINE
@@ -242,6 +396,7 @@ impl EngineUsageRuntime {
         {
             return Err("invalid string-pool format coordinates");
         }
+        let memory = MainMemoryRuntime::restore_format_state(state.memory.clone())?;
         Ok(Self {
             strings: state.strings,
             characters: state.characters,
@@ -250,7 +405,30 @@ impl EngineUsageRuntime {
             max_strings: state.max_strings,
             pool_size: state.pool_size,
             recycled: state.recycled.clone(),
+            memory,
         })
+    }
+
+    pub(crate) fn observe_transient_memory(&mut self, variable: usize, dynamic: usize) {
+        self.memory.observe_transient(variable, dynamic);
+    }
+
+    pub(crate) fn observe_node_copy(
+        &mut self,
+        variable: usize,
+        current_dynamic: usize,
+        copied_dynamic: usize,
+    ) {
+        self.memory.observe_transient(
+            variable,
+            current_dynamic
+                .saturating_sub(self.memory.dynamic_live)
+                .saturating_add(copied_dynamic),
+        );
+    }
+
+    pub(crate) fn uses_etex_node_sizes(&self) -> bool {
+        self.init_str_ptr >= ETEX26_STRING_BASELINE
     }
 }
 
@@ -340,6 +518,11 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    /// Records scanner-owned one-word nodes while their owners coexist.
+    pub fn observe_transient_token_words(&mut self, words: usize) {
+        self.engine_usage.observe_transient_memory(0, words);
+    }
+
     /// Detaches the state-owned portion of TeX82's terminal usage report.
     #[must_use]
     pub fn detach_engine_usage_statistics(&self) -> EngineUsageStatistics {
@@ -362,8 +545,8 @@ impl<'a, G> CommandContext<'a, G> {
                 .engine_usage
                 .pool_size
                 .saturating_sub(self.engine_usage.init_pool_ptr),
-            memory_words: 0,
-            memory_word_capacity: 250_000,
+            memory_words: self.engine_usage.memory.reported_words(),
+            memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
             control_sequences: self.interner.multiletter_len(),
             font_info_words: self.admitted.state_ref().font_parameter_words(),
             fonts: fonts.saturating_sub(1),
@@ -523,14 +706,19 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn allocate_glue(&mut self, value: GlueSpec) -> Result<GlueId<G>, DurableAllocationError> {
-        self.admitted.allocate_glue(value)
+        let id = self.admitted.allocate_glue(value)?;
+        self.engine_usage.observe_transient_memory(4, 0);
+        Ok(id)
     }
 
     pub fn allocate_token_list(
         &mut self,
         words: &[TokenWord],
     ) -> Result<TokenListId<G>, DurableAllocationError> {
-        self.admitted.allocate_token_list(words)
+        let id = self.admitted.allocate_token_list(words)?;
+        self.engine_usage
+            .observe_transient_memory(0, words.len().saturating_add(1));
+        Ok(id)
     }
 
     /// Begins destination-directed construction in this generation's final
@@ -567,7 +755,11 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         builder: TokenListBuilder<G>,
     ) -> Result<TokenListId<G>, DurableAllocationError> {
-        self.admitted.seal_token_list_builder(builder)
+        let id = self.admitted.seal_token_list_builder(builder)?;
+        let words = self.admitted.token_list(id).len();
+        self.engine_usage
+            .observe_transient_memory(0, words.saturating_add(1));
+        Ok(id)
     }
 
     /// Returns an unpublished builder's chain to the generation-owned pool.
@@ -947,11 +1139,25 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         let root = self.box_register(index).ok().flatten()?;
-        Some(
-            self.admitted
-                .copy_nodes_into_page(&[root], self.page_nodes)
-                .expect("durable box closure belongs to the admitted generation")[0],
-        )
+        let words = self
+            .admitted
+            .copied_node_closure_tex_memory_words(root, self.engine_usage.uses_etex_node_sizes())
+            .expect("durable box closure belongs to the admitted generation");
+        let current_dynamic = self
+            .admitted
+            .current_dynamic_memory_words(self.engine_usage.uses_etex_node_sizes())
+            .expect("admitted state owns valid durable node roots")
+            .saturating_add(
+                self.page
+                    .dynamic_memory_words(self.engine_usage.uses_etex_node_sizes()),
+            );
+        let copied = self
+            .admitted
+            .copy_nodes_into_page(&[root], self.page_nodes)
+            .expect("durable box closure belongs to the admitted generation")[0];
+        self.engine_usage
+            .observe_node_copy(words.0, current_dynamic, words.1);
+        Some(copied)
     }
 
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
@@ -2693,12 +2899,23 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Publishes one complete page-lifetime list inside this admitted episode.
     pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
+        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
+        let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
+            let node_words = node.tex_memory_words(etex_node_sizes);
+            (
+                words.0.saturating_add(node_words.0),
+                words.1.saturating_add(node_words.1),
+            )
+        });
         for node in &nodes {
             self.assert_live_node_font_roots(node);
         }
-        self.page_nodes
+        let list = self
+            .page_nodes
             .publish(nodes)
-            .expect("page construction contains only live page-arena children")
+            .expect("page construction contains only live page-arena children");
+        self.engine_usage.observe_transient_memory(words.0, words.1);
+        list
     }
 
     /// Resolves one page-lifetime list while the admitted context is live.

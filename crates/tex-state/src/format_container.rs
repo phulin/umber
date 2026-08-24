@@ -22,7 +22,7 @@ const DEFLATE_FLAG: u32 = 1;
 pub(crate) const TRANSITIONAL_SEMANTIC_SECTION: u32 = 1;
 
 pub(crate) const ABI_FINGERPRINT: u64 = fingerprint(
-    b"umber.format.container.v7;le;header=80;directory=40;refs=relative-or-index;sections=deflate;font-info-words=u32;names-hash-occupied=u8;string-pool=v1;pool-accounting=canonical-v3;checksum=fnv1a64-zero-field",
+    b"umber.format.container.v7;le;header=80;directory=40;refs=relative-or-index;sections=deflate;font-info-words=u32;names-hash-occupied=u8;string-pool=v2;pool-accounting=canonical-v4;main-memory=aggregate-live-extents;checksum=fnv1a64-zero-field",
 );
 pub(crate) const LOOKUP_CONFIGURATION_FINGERPRINT: u64 = fingerprint(
     b"umber.format.lookup.v2;fnv1a64;seed=cbf29ce484222325;capacity=pow2-lte-3/4;probe=linear;empty=ffffffff;tokens=direct-target-u32",

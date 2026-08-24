@@ -188,6 +188,120 @@ impl<L, Glue, Tokens> Default for NodeArena<L, Glue, Tokens> {
 }
 
 impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
+    /// Returns TeX main-memory words in the exact closure of `root`.
+    pub(crate) fn closure_tex_memory_words(
+        &self,
+        root: NodeListId<L>,
+        etex_node_sizes: bool,
+    ) -> Result<(usize, usize), NodeArenaError> {
+        let mut state = vec![0_u8; self.rows.len()];
+        let mut closure = Vec::new();
+        self.postorder(root, &mut state, &mut closure)?;
+        let mut variable = 0_usize;
+        let mut dynamic = 0_usize;
+        for list in closure {
+            let index = list.index().expect("postorder excludes empty lists");
+            for node in self.rows[index]
+                .as_ref()
+                .expect("postorder contains only live rows")
+                .nodes
+                .iter()
+            {
+                let (node_variable, node_dynamic) = node.tex_memory_words(etex_node_sizes);
+                variable = variable.saturating_add(node_variable);
+                dynamic = dynamic.saturating_add(node_dynamic);
+            }
+        }
+        Ok((variable, dynamic))
+    }
+
+    pub(crate) fn semantic_closure_tex_memory_words(
+        &self,
+        root: NodeListId<L>,
+        etex_node_sizes: bool,
+    ) -> Result<(usize, usize), NodeArenaError> {
+        let mut state = vec![0_u8; self.rows.len()];
+        let mut closure = Vec::new();
+        self.semantic_postorder(root, &mut state, &mut closure)?;
+        Ok(closure
+            .into_iter()
+            .flat_map(|list| {
+                self.rows[list.index().expect("postorder excludes empty lists")]
+                    .as_ref()
+                    .expect("postorder contains only live rows")
+                    .nodes
+                    .iter()
+            })
+            .fold((0_usize, 0_usize), |words, node| {
+                let node_words = node.tex_memory_words(etex_node_sizes);
+                (
+                    words.0.saturating_add(node_words.0),
+                    words.1.saturating_add(node_words.1),
+                )
+            }))
+    }
+
+    pub(crate) fn semantic_closure_payloads(
+        &self,
+        root: NodeListId<L>,
+    ) -> Result<(Vec<Glue>, Vec<Tokens>), NodeArenaError>
+    where
+        Glue: Clone,
+        Tokens: Clone,
+    {
+        let mut state = vec![0_u8; self.rows.len()];
+        let mut closure = Vec::new();
+        self.semantic_postorder(root, &mut state, &mut closure)?;
+        let mut glue = Vec::new();
+        let mut tokens = Vec::new();
+        for list in closure {
+            for node in self.rows[list.index().expect("postorder excludes empty lists")]
+                .as_ref()
+                .expect("postorder contains only live rows")
+                .nodes
+                .iter()
+            {
+                node.visit_payloads(
+                    |value| glue.push(value.clone()),
+                    |value| tokens.push(value.clone()),
+                );
+            }
+        }
+        Ok((glue, tokens))
+    }
+
+    pub(crate) fn diagnostic_dynamic_extent(
+        &self,
+        root: NodeListId<L>,
+        etex_node_sizes: bool,
+    ) -> Result<usize, NodeArenaError> {
+        let mut state = vec![0_u8; self.rows.len()];
+        let mut semantic = Vec::new();
+        self.semantic_postorder(root, &mut state, &mut semantic)?;
+        let mut diagnostic = Vec::new();
+        for list in semantic {
+            for node in self.rows[list.index().expect("postorder excludes empty lists")]
+                .as_ref()
+                .expect("postorder contains only live rows")
+                .nodes
+                .iter()
+            {
+                node.visit_diagnostic_node_lists(|child, overlap| {
+                    diagnostic.push((*child, overlap));
+                });
+            }
+        }
+        let mut extent = 0_usize;
+        for (child, overlap) in diagnostic {
+            extent = extent.max(
+                self.closure_tex_memory_words(child, etex_node_sizes)?
+                    .1
+                    .saturating_sub(overlap as usize),
+            );
+        }
+        Ok(extent)
+    }
+
     /// Creates an empty lifetime owner.
     #[must_use]
     pub fn new() -> Self {
@@ -485,6 +599,44 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             node.visit_node_lists(|child| {
                 if result.is_ok() {
                     result = self.postorder(*child, state, order);
+                }
+            });
+            result?;
+        }
+        state[index] = 2;
+        order.push(id);
+        Ok(())
+    }
+
+    fn semantic_postorder(
+        &self,
+        id: NodeListId<L>,
+        state: &mut [u8],
+        order: &mut Vec<NodeListId<L>>,
+    ) -> Result<(), NodeArenaError> {
+        let Some(index) = id.index() else {
+            return Ok(());
+        };
+        if id.owner != self.owner {
+            return Err(NodeArenaError::InvalidList);
+        }
+        let Some(row) = self.rows.get(index).and_then(Option::as_ref) else {
+            return Err(NodeArenaError::InvalidList);
+        };
+        if row.generation != id.generation {
+            return Err(NodeArenaError::InvalidList);
+        }
+        match state[index] {
+            2 => return Ok(()),
+            1 => return Err(NodeArenaError::CyclicList),
+            _ => {}
+        }
+        state[index] = 1;
+        for node in row.nodes.iter() {
+            let mut result = Ok(());
+            node.visit_semantic_node_lists(|child| {
+                if result.is_ok() {
+                    result = self.semantic_postorder(*child, state, order);
                 }
             });
             result?;

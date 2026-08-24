@@ -399,6 +399,16 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn dynamic_memory_words(&self, etex_node_sizes: bool) -> usize {
+        self.contribution
+            .iter()
+            .chain(self.current_page.iter())
+            .chain(self.page_discards.iter())
+            .chain(self.split_discards.iter())
+            .map(|node| node.tex_memory_words(etex_node_sizes).1)
+            .sum()
+    }
+
     pub(crate) fn font_roots_are_live(
         &self,
         mut is_live: impl FnMut(crate::ids::FontId) -> bool,

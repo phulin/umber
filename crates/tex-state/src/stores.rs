@@ -141,6 +141,80 @@ impl<G> StateCore<G> {
     }
 }
 
+fn current_dynamic_memory_words<G>(
+    generation: &Generation<G>,
+    nodes: &DurableNodeArena<G>,
+    state: &DenseState<G>,
+    etex_node_sizes: bool,
+) -> Result<usize, NodeArenaError> {
+    use crate::format::schema::{FormatCell, FormatMeaning};
+
+    let mut roots = Vec::new();
+    let cells = state
+        .capture_format_cells(|root| {
+            roots.push(root);
+            Ok(roots.len() as u32)
+        })
+        .map_err(|_| NodeArenaError::InvalidList)?;
+    let definitions = generation.definitions().capture_format_rows();
+    let token_lists = generation.token_lists().capture_format_rows();
+    let mut owned_definitions = std::collections::BTreeSet::new();
+    let mut owned_tokens = std::collections::BTreeSet::new();
+    for cell in cells {
+        match cell {
+            FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) => {
+                owned_definitions.insert(definition as usize);
+            }
+            FormatCell::TokenRegister(_, row) | FormatCell::TokenParameter(_, row) => {
+                owned_tokens.insert(row as usize);
+            }
+            _ => {}
+        }
+    }
+    let mut node_words = 0_usize;
+    let mut detached_extent = 0_usize;
+    for root in roots {
+        node_words = node_words.saturating_add(
+            nodes
+                .semantic_closure_tex_memory_words(root, etex_node_sizes)?
+                .1,
+        );
+        let (_, tokens) = nodes.semantic_closure_payloads(root)?;
+        owned_tokens.extend(
+            tokens
+                .into_iter()
+                .map(TokenListId::format_index)
+                .map(|row| row as usize),
+        );
+        detached_extent =
+            detached_extent.max(nodes.diagnostic_dynamic_extent(root, etex_node_sizes)?);
+    }
+    let definition_words = owned_definitions
+        .into_iter()
+        .map(|index| {
+            let definition = &definitions[index];
+            definition
+                .parameter_text
+                .len()
+                .saturating_add(definition.replacement_text.len())
+                .saturating_add(2)
+                .saturating_add(usize::from(
+                    !definition.parameter_text.is_empty()
+                        || !definition.replacement_text.is_empty(),
+                ))
+        })
+        .sum::<usize>();
+    let token_words = owned_tokens
+        .into_iter()
+        .map(|index| token_lists[index].len().saturating_add(1))
+        .sum::<usize>();
+    Ok(14_usize
+        .saturating_add(definition_words)
+        .saturating_add(token_words)
+        .saturating_add(node_words)
+        .saturating_add(detached_extent))
+}
+
 /// Immutable, already-admitted hot view.
 pub(crate) struct AdmittedState<'a, G> {
     generation: RwLockReadGuard<'a, Generation<G>>,
@@ -149,6 +223,12 @@ pub(crate) struct AdmittedState<'a, G> {
 }
 
 impl<'a, G> AdmittedState<'a, G> {
+    pub(crate) fn current_dynamic_memory_words(
+        &self,
+        etex_node_sizes: bool,
+    ) -> Result<usize, NodeArenaError> {
+        current_dynamic_memory_words(&self.generation, self.nodes, self.state, etex_node_sizes)
+    }
     #[must_use]
     pub(crate) const fn state(&self) -> &'a DenseState<G> {
         self.state
@@ -190,6 +270,17 @@ impl<'a, G> AdmittedState<'a, G> {
         )
     }
 
+    pub(crate) fn copied_node_closure_tex_memory_words(
+        &self,
+        root: DurableListId<G>,
+        etex_node_sizes: bool,
+    ) -> Result<(usize, usize), NodeArenaError> {
+        let (variable, dynamic) = self
+            .nodes
+            .semantic_closure_tex_memory_words(root, etex_node_sizes)?;
+        Ok((variable.saturating_mul(2), dynamic))
+    }
+
     #[cfg(test)]
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
@@ -204,6 +295,12 @@ pub(crate) struct AdmittedStateMut<'a, G> {
 }
 
 impl<'a, G> AdmittedStateMut<'a, G> {
+    pub(crate) fn current_dynamic_memory_words(
+        &self,
+        etex_node_sizes: bool,
+    ) -> Result<usize, NodeArenaError> {
+        current_dynamic_memory_words(&self.generation, self.nodes, self.state, etex_node_sizes)
+    }
     pub(crate) const fn state_ref(&self) -> &DenseState<G> {
         self.state
     }
@@ -327,6 +424,17 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         id: DurableListId<G>,
     ) -> Result<NodeList<'_, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
         self.nodes.get(id)
+    }
+
+    pub(crate) fn copied_node_closure_tex_memory_words(
+        &self,
+        root: DurableListId<G>,
+        etex_node_sizes: bool,
+    ) -> Result<(usize, usize), NodeArenaError> {
+        let (variable, dynamic) = self
+            .nodes
+            .semantic_closure_tex_memory_words(root, etex_node_sizes)?;
+        Ok((variable.saturating_mul(2), dynamic))
     }
 
     pub(crate) fn allocate_provenance(

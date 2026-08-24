@@ -319,10 +319,20 @@ impl DetachedFormatImage {
             })
             .collect::<Vec<_>>();
         let node_lists = node_lists.finish();
+        let (variable_memory_words, dynamic_memory_words) = format_main_memory_live_words(
+            &definitions,
+            &token_lists,
+            &glue,
+            &node_lists,
+            &cells,
+            universe.engine_usage.uses_etex_node_sizes(),
+        )?;
         let metadata = bincode::serialize(&FormatMetadata {
             version: SECTION_VERSION,
             interaction_mode: encode_interaction_mode(universe.interaction_mode),
-            string_pool: universe.engine_usage.capture_format_state(),
+            string_pool: universe
+                .engine_usage
+                .capture_format_state(variable_memory_words, dynamic_memory_words),
             pdf,
         })
         .map_err(|error| FormatError::InvalidState(error.to_string()))?;
@@ -355,6 +365,96 @@ impl DetachedFormatImage {
         });
         Self::try_from_bytes(crate::format_container::encode(&sections)?)
     }
+}
+
+fn format_main_memory_live_words(
+    definitions: &[FormatDefinition],
+    token_lists: &[Vec<u32>],
+    _glue: &[FormatGlue],
+    node_lists: &[FormatNodeList],
+    cells: &[FormatCell],
+    etex_node_sizes: bool,
+) -> Result<(usize, usize), FormatError> {
+    // Immutable stores retain overwritten rows, whereas TeX frees them. The
+    // detached environment cells are the format's actual owners, so only
+    // their referenced rows enter the dumped `var_used`/`dyn_used` baseline.
+    let mut owned_definitions = std::collections::BTreeSet::new();
+    let mut owned_tokens = std::collections::BTreeSet::new();
+    let mut owned_glue = std::collections::BTreeSet::new();
+    let mut pending_nodes = Vec::new();
+    for cell in cells {
+        match *cell {
+            FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) => {
+                owned_definitions.insert(definition as usize);
+            }
+            FormatCell::TokenRegister(_, row) | FormatCell::TokenParameter(_, row) => {
+                owned_tokens.insert(row as usize);
+            }
+            FormatCell::GlueRegister(_, row)
+            | FormatCell::MuGlueRegister(_, row)
+            | FormatCell::GlueParameter(_, row) => {
+                owned_glue.insert(row as usize);
+            }
+            FormatCell::BoxRegister(_, row) => pending_nodes.push(row as usize),
+            _ => {}
+        }
+    }
+
+    let mut owned_nodes = std::collections::BTreeSet::new();
+    while let Some(row) = pending_nodes.pop() {
+        if row == 0 || !owned_nodes.insert(row) {
+            continue;
+        }
+        let list = node_lists
+            .get(row - 1)
+            .ok_or_else(|| FormatError::InvalidState("invalid format node owner".to_owned()))?;
+        for encoded in &list.nodes {
+            let node: crate::node::Node<u32, u32, u32> = bincode::deserialize(encoded)
+                .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+            node.visit_node_lists(|child| pending_nodes.push(*child as usize));
+            node.visit_payloads(
+                |value| {
+                    owned_glue.insert(*value as usize);
+                },
+                |value| {
+                    owned_tokens.insert(*value as usize);
+                },
+            );
+        }
+    }
+
+    // TeX82 §§130/133 reserve the five static glue specifications and the
+    // fixed high-memory list heads before any format-owned value is loaded.
+    let mut variable = 20_usize.saturating_add(owned_glue.len().saturating_mul(4));
+    let mut dynamic = 14_usize;
+    for index in owned_tokens {
+        let tokens = &token_lists[index];
+        dynamic = dynamic.saturating_add(tokens.len().saturating_add(1));
+    }
+    for index in owned_definitions {
+        let definition = &definitions[index];
+        dynamic = dynamic
+            .saturating_add(definition.parameter_text.len())
+            .saturating_add(definition.replacement_text.len())
+            .saturating_add(2)
+            // A nonempty definition has a live environment link beside the
+            // reference head and `end_match`; the shared empty definition
+            // does not allocate another one-word node.
+            .saturating_add(usize::from(
+                !definition.parameter_text.is_empty() || !definition.replacement_text.is_empty(),
+            ));
+    }
+    for index in owned_nodes {
+        let row = &node_lists[index - 1];
+        for encoded in &row.nodes {
+            let node: crate::node::Node<u32, u32, u32> = bincode::deserialize(encoded)
+                .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+            let (node_variable, node_dynamic) = node.tex_memory_words(etex_node_sizes);
+            variable = variable.saturating_add(node_variable);
+            dynamic = dynamic.saturating_add(node_dynamic);
+        }
+    }
+    Ok((variable, dynamic))
 }
 
 fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {

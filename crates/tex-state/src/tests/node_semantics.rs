@@ -17,6 +17,20 @@ fn assert_same_semantics(left: Node, right: Node) {
 }
 
 #[test]
+fn canonical_node_words_are_profiled_not_host_sized() {
+    let character: Node<PageListId> = Node::Char {
+        font: crate::font::NULL_FONT,
+        ch: 'x',
+        origin: OriginId::UNKNOWN,
+    };
+    let penalty: Node<PageListId> = Node::Penalty(0);
+    assert_eq!(character.tex_memory_words(false), (0, 1));
+    assert_eq!(character.tex_memory_words(true), (0, 1));
+    assert_eq!(penalty.tex_memory_words(false), (2, 0));
+    assert_eq!(penalty.tex_memory_words(true), (4, 0));
+}
+
+#[test]
 fn equality_and_hash_exclude_every_diagnostic_sidecar() {
     let sourced = OriginId::from_raw(41);
     assert_same_semantics(

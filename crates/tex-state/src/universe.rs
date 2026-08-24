@@ -36,6 +36,16 @@ use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
 
+fn tex_memory_words(nodes: &[Node], etex_node_sizes: bool) -> (usize, usize) {
+    nodes.iter().fold((0_usize, 0_usize), |words, node| {
+        let node_words = node.tex_memory_words(etex_node_sizes);
+        (
+            words.0.saturating_add(node_words.0),
+            words.1.saturating_add(node_words.1),
+        )
+    })
+}
+
 /// Canonical projection builder for executor-owned roots at memo/checkpoint
 /// boundaries. Runtime coordinates are resolved and masked before hashing.
 pub struct EngineBoundaryHasher<'a, G> {
@@ -1165,12 +1175,20 @@ impl<G> Universe<G> {
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
     ) -> Result<DefinitionId<G>, UniverseError> {
-        Ok(self
+        let id = self
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
-            .allocate_definition(parameter_text, replacement_text)?)
+            .allocate_definition(parameter_text, replacement_text)?;
+        self.engine_usage.observe_transient_memory(
+            0,
+            parameter_text
+                .len()
+                .saturating_add(replacement_text.len())
+                .saturating_add(2),
+        );
+        Ok(id)
     }
 
     /// Promotes exact-size semantic token streams directly into one durable
@@ -1184,7 +1202,10 @@ impl<G> Universe<G> {
         Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
     {
-        self.core
+        let parameter_words = parameter_text.len();
+        let replacement_words = replacement_text.len();
+        let id = self
+            .core
             .as_mut()
             .ok_or(PromotionError::Retired)?
             .admit_mut()
@@ -1193,7 +1214,14 @@ impl<G> Universe<G> {
                 _ => PromotionError::AllocationFailed,
             })?
             .allocate_definition_from_iter(parameter_text, replacement_text)
-            .map_err(PromotionError::from)
+            .map_err(PromotionError::from)?;
+        self.engine_usage.observe_transient_memory(
+            0,
+            parameter_words
+                .saturating_add(replacement_words)
+                .saturating_add(2),
+        );
+        Ok(id)
     }
 
     pub(crate) fn glue_value(&self, id: GlueId<G>) -> GlueSpec {
@@ -1217,21 +1245,26 @@ impl<G> Universe<G> {
         &mut self,
         words: &[TokenWord],
     ) -> Result<TokenListId<G>, UniverseError> {
-        Ok(self
+        let id = self
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
-            .allocate_token_list(words)?)
+            .allocate_token_list(words)?;
+        self.engine_usage
+            .observe_transient_memory(0, words.len().saturating_add(1));
+        Ok(id)
     }
 
     pub fn allocate_glue(&mut self, value: GlueSpec) -> Result<GlueId<G>, UniverseError> {
-        Ok(self
+        let id = self
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
-            .allocate_glue(value)?)
+            .allocate_glue(value)?;
+        self.engine_usage.observe_transient_memory(4, 0);
+        Ok(id)
     }
 
     pub fn allocate_provenance(
@@ -1385,17 +1418,23 @@ impl<G> Universe<G> {
         &mut self,
         root: DurableListId<G>,
     ) -> Result<PageListId, NodeArenaError> {
+        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
         let (core, page_nodes) = (&self.core, &mut self.page_nodes);
-        Ok(core
-            .as_ref()
-            .ok_or(NodeArenaError::InvalidList)?
-            .admit()
-            .copy_nodes_into_page(&[root], page_nodes)?[0])
+        let admitted = core.as_ref().ok_or(NodeArenaError::InvalidList)?.admit();
+        let words = admitted.copied_node_closure_tex_memory_words(root, etex_node_sizes)?;
+        let current_dynamic = admitted
+            .current_dynamic_memory_words(etex_node_sizes)?
+            .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
+        let copied = admitted.copy_nodes_into_page(&[root], page_nodes)?[0];
+        self.engine_usage
+            .observe_node_copy(words.0, current_dynamic, words.1);
+        Ok(copied)
     }
 
     /// Publishes one complete page-lifetime node list.
     #[must_use]
     pub fn publish_page_nodes(&mut self, nodes: &[Node]) -> PageListId {
+        let words = tex_memory_words(nodes, self.engine_usage.uses_etex_node_sizes());
         for node in nodes {
             node.visit_fonts(|font| {
                 assert!(
@@ -1404,13 +1443,17 @@ impl<G> Universe<G> {
                 );
             });
         }
-        self.page_nodes
+        let list = self
+            .page_nodes
             .publish(nodes.to_vec())
-            .expect("page construction contains only live page-arena children")
+            .expect("page construction contains only live page-arena children");
+        self.engine_usage.observe_transient_memory(words.0, words.1);
+        list
     }
 
     /// Publishes a page-lifetime node list by moving the caller's buffer.
     pub fn publish_page_nodes_owned(&mut self, nodes: &mut Vec<Node>) -> PageListId {
+        let words = tex_memory_words(nodes, self.engine_usage.uses_etex_node_sizes());
         for node in nodes.iter() {
             node.visit_fonts(|font| {
                 assert!(
@@ -1419,9 +1462,12 @@ impl<G> Universe<G> {
                 );
             });
         }
-        self.page_nodes
+        let list = self
+            .page_nodes
             .publish(core::mem::take(nodes))
-            .expect("page construction contains only live page-arena children")
+            .expect("page construction contains only live page-arena children");
+        self.engine_usage.observe_transient_memory(words.0, words.1);
+        list
     }
 
     /// Resolves one list through this episode's page arena.
