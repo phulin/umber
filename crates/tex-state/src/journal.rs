@@ -108,6 +108,42 @@ pub(crate) enum JournalEntry<G> {
     GroupExit(GroupFrame),
 }
 
+/// Allocation-free projection of the state-owned part of TeX's save stack.
+///
+/// Command-owned `\aftergroup` words and executor-owned box-spec words are
+/// merged by main control. `latest_push` orders state pushes against the
+/// command owner's journal-relative aftergroup position so §§1334/273 can
+/// report the depth immediately before the newest checked push.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SaveStackProjection {
+    words: usize,
+    latest_push: Option<(u32, usize)>,
+}
+
+impl SaveStackProjection {
+    fn push<G>(&mut self, entry: JournalEntry<G>, position: u32) {
+        match entry {
+            JournalEntry::Mutation(mutation) => {
+                let Some(words) = canonical_restore_words(mutation) else {
+                    return;
+                };
+                self.words = self.words.saturating_add(words);
+                self.latest_push = Some((position, words));
+            }
+            JournalEntry::GroupEnter(frame) => {
+                debug_assert_eq!(self.words, frame.save_stack_words_before);
+                debug_assert_eq!(self.latest_push, frame.latest_save_push_before);
+                self.words = self.words.saturating_add(1);
+                self.latest_push = Some((position, 1));
+            }
+            JournalEntry::GroupExit(frame) => {
+                self.words = frame.save_stack_words_before;
+                self.latest_push = frame.latest_save_push_before;
+            }
+        }
+    }
+}
+
 impl<G> Clone for JournalEntry<G> {
     fn clone(&self) -> Self {
         *self
@@ -130,6 +166,7 @@ impl<G> core::fmt::Debug for JournalEntry<G> {
 pub(crate) struct SaveJournal<G> {
     owner: u64,
     entries: Vec<JournalEntry<G>>,
+    save_stack: SaveStackProjection,
 }
 
 impl<G> SaveJournal<G> {
@@ -143,6 +180,7 @@ impl<G> SaveJournal<G> {
         Self {
             owner,
             entries: Vec::new(),
+            save_stack: SaveStackProjection::default(),
         }
     }
 
@@ -155,7 +193,16 @@ impl<G> SaveJournal<G> {
     }
 
     pub(crate) fn push(&mut self, entry: JournalEntry<G>) {
+        let position = u32::try_from(self.entries.len().saturating_add(1))
+            .expect("state journal exceeds u32 entries");
+        self.save_stack.push(entry, position);
         self.entries.push(entry);
+    }
+
+    /// State-owned live words and the journal-relative newest checked push.
+    #[must_use]
+    pub(crate) const fn save_stack_projection(&self) -> (usize, Option<(u32, usize)>) {
+        (self.save_stack.words, self.save_stack.latest_push)
     }
 
     #[must_use]
@@ -191,12 +238,47 @@ impl<G> SaveJournal<G> {
             "journal cursor is past the end"
         );
         self.entries.truncate(position);
+        self.rebuild_save_stack_projection();
     }
 
     #[must_use]
     pub(crate) fn validate_cursor(&self, cursor: JournalCursor<G>) -> bool {
         cursor.owner == self.owner && cursor.position() as usize <= self.entries.len()
     }
+
+    fn rebuild_save_stack_projection(&mut self) {
+        let mut projection = SaveStackProjection::default();
+        for (index, &entry) in self.entries.iter().enumerate() {
+            let position =
+                u32::try_from(index.saturating_add(1)).expect("state journal exceeds u32 entries");
+            projection.push(entry, position);
+        }
+        self.save_stack = projection;
+    }
+}
+
+fn canonical_restore_words<G>(mutation: Mutation<G>) -> Option<usize> {
+    mutation.saved_at?;
+    // TeX82 §§275--276 uses one word for `restore_zero` and two for
+    // `restore_old_value`. Undefined meanings are physically level zero.
+    // Section 240 gives null token-list parameters the same level-zero
+    // representation even though Umber's fixed typed bank stores its
+    // virtual default at level one.
+    Some(
+        if mutation.before_level == crate::env::banks::LEVEL_ZERO
+            || matches!(
+                (mutation.cell, mutation.before),
+                (
+                    crate::env::StateCell::TokenParameter(_),
+                    crate::env::StateWord::TokenList(None)
+                )
+            )
+        {
+            1
+        } else {
+            2
+        },
+    )
 }
 
 impl<G> Default for SaveJournal<G> {

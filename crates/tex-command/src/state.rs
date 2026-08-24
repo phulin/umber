@@ -461,6 +461,11 @@ impl<G> CommandPayload<G> {
 pub(crate) struct CommandGroupPayload<G> {
     pub(crate) frame: GroupFrame,
     pub(crate) tokens: Vec<CommandPayload<G>>,
+    /// State-journal position of this level's newest §276 push.
+    ///
+    /// Tokens remain command-owned. This scalar only orders their newest
+    /// physical save word against state-owned group/restore records.
+    latest_aftergroup_position: Option<u32>,
 }
 
 impl<G> Clone for CommandGroupPayload<G> {
@@ -468,6 +473,7 @@ impl<G> Clone for CommandGroupPayload<G> {
         Self {
             frame: self.frame,
             tokens: self.tokens.clone(),
+            latest_aftergroup_position: self.latest_aftergroup_position,
         }
     }
 }
@@ -477,6 +483,7 @@ impl<G> CommandGroupPayload<G> {
         Self {
             frame,
             tokens: Vec::new(),
+            latest_aftergroup_position: None,
         }
     }
 }
@@ -599,8 +606,24 @@ impl<G> CommandState<G> {
         let Some(group) = self.group_payloads.last_mut() else {
             return Err(CommandGroupError::NoOpenGroup);
         };
+        group.latest_aftergroup_position = Some(state.save_stack_order_position());
         group.tokens.push(CommandPayload::new(spelling));
         Ok(())
+    }
+
+    /// Command-owned live §276 words and the state-journal coordinate of
+    /// their newest push. The fold borrows existing payloads and allocates
+    /// nothing.
+    #[must_use]
+    pub fn aftergroup_save_stack_projection(&self) -> (usize, Option<u32>) {
+        self.group_payloads
+            .iter()
+            .fold((0_usize, None), |(words, latest), group| {
+                (
+                    words.saturating_add(group.tokens.len()),
+                    latest.max(group.latest_aftergroup_position),
+                )
+            })
     }
 
     /// Restores one exact state save level and returns its ordered restoration

@@ -363,6 +363,62 @@ fn box_save_stack_projection_distinguishes_scan_spec_callers() {
     assert_eq!(ReplayBoxKind::Insert(7, false).save_stack_spec_words(), 0);
 }
 
+#[test]
+fn save_stack_high_water_samples_each_checked_push_without_hardcoded_job_totals() {
+    // TeX82 §§273/275--276 and §645: the high-water mark is the depth
+    // immediately before a checked push, not the completed live depth. These
+    // cases separate one/two-word restores, global no-save assignment,
+    // command-owned aftergroup ordering, and executor-owned box specs.
+    for (source, expected) in [
+        (br"{}\end".as_slice(), 0),
+        (br"{\global\count0=1}\end", 0),
+        (br"{\count0=1}\end", 1),
+        (br"{\def\fresh{}\count0=1}\end", 2),
+        (br"{\count0=1\count1=1}\end", 3),
+        (br"{\count0=1\aftergroup\relax\count1=1}\end", 4),
+        (br"\setbox0=\hbox{}\end", 3),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source);
+            run_to_end(&mut control, stores);
+            assert_eq!(control.max_save_stack, expected, "source: {source:?}");
+        });
+    }
+}
+
+#[test]
+fn finish_job_publishes_each_live_stack_owner() {
+    // TeX82 §1334 reports five independently owned maxima. Derive the
+    // expected row from those owners after a source that exercises all five;
+    // this catches a zero-filled detachment seam without pinning any corpus
+    // fixture's totals.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingstats=1\def\m#1{#1}\m{\relax}\setbox0=\hbox{\hbox{{\count0=1\aftergroup\relax}}}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let command = control.command.stack_usage();
+        let nest = control.modes.maximum_saved_depth();
+        let save = control.max_save_stack.saturating_add(6);
+        assert!(command.input_stack > 0);
+        assert!(nest > 0);
+        assert!(command.parameter_stack > 0);
+        assert!(command.buffer_stack > 0);
+        assert!(save > 6);
+        let expected = format!(
+            "{}i,{}n,{}p,{}b,{}s stack positions",
+            command.input_stack, nest, command.parameter_stack, command.buffer_stack, save
+        );
+
+        control.finish_job(stores, None, None);
+        assert!(pending_sink_text(stores, false).contains(&expected));
+    });
+}
+
 fn box_child_nodes<G>(stores: &mut Universe<G>, register: u16) -> Vec<Node> {
     let list = stores
         .copy_box_to_page(register)

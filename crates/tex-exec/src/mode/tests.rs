@@ -180,6 +180,22 @@ fn nest_usage_records_tex82_pre_push_depth_and_survives_pop() {
 }
 
 #[test]
+fn independent_mode_summary_materialization_resets_usage_high_water() {
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal push");
+    nest.push(Mode::Math).expect("math push");
+    assert_eq!(nest.maximum_saved_depth(), 1);
+
+    let restored = ModeNest::from_summary(nest.summary()).expect("summary materializes");
+    assert_eq!(restored.depth(), 3);
+    assert_eq!(
+        restored.maximum_saved_depth(),
+        0,
+        "a fresh format/session does not inherit construction-job maxima"
+    );
+}
+
+#[test]
 fn mode_summary_restores_an_independent_semantic_builder() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal).expect("test mode push");

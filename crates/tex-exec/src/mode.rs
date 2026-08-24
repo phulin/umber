@@ -1338,6 +1338,14 @@ impl ModeNest {
         self.max_nest_stack
     }
 
+    /// Retains a job's operational high-water mark across restoration of an
+    /// earlier semantic mode summary. The summary itself remains free of
+    /// diagnostic accounting, so fresh format/session materialization still
+    /// starts from zero.
+    pub(crate) fn retain_maximum_saved_depth(&mut self, maximum: usize) {
+        self.max_nest_stack = self.max_nest_stack.max(maximum);
+    }
+
     #[must_use]
     pub fn current_mode(&self) -> Mode {
         self.levels

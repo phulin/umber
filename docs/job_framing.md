@@ -90,9 +90,12 @@ Three of those lines are conditional:
   Its §1334 stack fields are runtime-only high-water
   projections supplied by their semantic owners: `tex-command` records
   §§31/374 buffer use, §321 input depth, and §390 macro parameters;
-  `tex-exec` records §216's mode nest and §§273--280's typed save journal,
-  including §645's box-specification words. Formats, checkpoints, semantic
-  hashes, and rollback do not include these diagnostic counters.
+  `tex-state` projects §§273--280's boundary and restore words from its typed
+  journal, `tex-command` contributes command-owned `\aftergroup` words, and
+  `tex-exec` merges those with §645's box-specification words while recording
+  §216's mode nest. Formats and semantic hashes do not include these
+  diagnostic counters; rollback restores live save-stack projections while
+  retaining job-lifetime high-water marks.
 
 ## Where each piece lives
 

@@ -1350,6 +1350,29 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.state_ref().group_frames().len()
     }
 
+    /// Journal-relative ordering coordinate for a command-owned
+    /// `\aftergroup` save. The coordinate names no value or owner and is
+    /// meaningful only while this admitted generation remains live.
+    #[must_use]
+    pub fn save_stack_order_position(&self) -> u32 {
+        self.admitted.state_ref().save_stack_order_position()
+    }
+
+    /// Returns TeX's checked state/aftergroup save depth for §1334.
+    #[must_use]
+    pub fn checked_save_stack_words(
+        &self,
+        aftergroup_words: usize,
+        latest_aftergroup_position: Option<u32>,
+        save_group_source_lines: bool,
+    ) -> usize {
+        self.admitted.state_ref().checked_save_stack_words(
+            aftergroup_words,
+            latest_aftergroup_position,
+            save_group_source_lines,
+        )
+    }
+
     #[must_use]
     pub fn innermost_group_kind(&self) -> Option<crate::GroupKind> {
         self.admitted

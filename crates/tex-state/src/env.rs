@@ -1353,6 +1353,45 @@ impl<G> DenseState<G> {
         &self.groups
     }
 
+    /// Returns the state-journal coordinate used to order a command-owned
+    /// `\aftergroup` push against state-owned save records.
+    #[must_use]
+    pub(crate) fn save_stack_order_position(&self) -> u32 {
+        u32::try_from(self.journal.len()).expect("state journal exceeds u32 entries")
+    }
+
+    /// TeX82 §§273/275's depth immediately before the newest checked
+    /// push, merged with command-owned `\aftergroup` words.
+    #[must_use]
+    pub(crate) fn checked_save_stack_words(
+        &self,
+        aftergroup_words: usize,
+        latest_aftergroup_position: Option<u32>,
+        save_group_source_lines: bool,
+    ) -> usize {
+        let (state_words, latest_state_push) = self.journal.save_stack_projection();
+        let latest_push_words = match (latest_state_push, latest_aftergroup_position) {
+            (Some((state_position, _)), Some(aftergroup_position))
+                if aftergroup_position >= state_position =>
+            {
+                1
+            }
+            (Some((_, words)), _) => words,
+            (None, Some(_)) => 1,
+            (None, None) => 0,
+        };
+        state_words
+            .saturating_add(aftergroup_words)
+            // e-TeX [19.274] stores one source-line word immediately before
+            // every §273 boundary, so it contributes to the checked depth.
+            .saturating_add(if save_group_source_lines {
+                self.groups.len()
+            } else {
+                0
+            })
+            .saturating_sub(latest_push_words)
+    }
+
     pub(crate) fn begin_group(
         &mut self,
         kind: GroupKind,
@@ -1369,7 +1408,17 @@ impl<G> DenseState<G> {
             .ok_or(StateError::GroupLineageExhausted)?;
         let journal_start =
             u32::try_from(self.journal.len() + 1).map_err(|_| StateError::GroupDepthExhausted)?;
-        let frame = GroupFrame::new(kind, entered_line, lineage, journal_start, level);
+        let (save_stack_words_before, latest_save_push_before) =
+            self.journal.save_stack_projection();
+        let frame = GroupFrame::new(
+            kind,
+            entered_line,
+            lineage,
+            journal_start,
+            level,
+            save_stack_words_before,
+            latest_save_push_before,
+        );
         self.journal.push(JournalEntry::GroupEnter(frame));
         self.groups.push(frame);
         Ok(frame)

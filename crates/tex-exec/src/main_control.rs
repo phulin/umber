@@ -2051,10 +2051,18 @@ impl<G> MainControl<G> {
         dvi: Option<crate::DviJobOutput>,
         pdf: Option<&mut crate::PdfJobFinalizationReport>,
     ) {
-        let usage = stores
+        let mut usage = stores
             .command_context()
             .expect("job usage admission")
             .detach_engine_usage_statistics();
+        let command_usage = self.command.stack_usage();
+        usage.input_stack = command_usage.input_stack;
+        usage.nest_stack = self.modes.maximum_saved_depth();
+        usage.parameter_stack = command_usage.parameter_stack;
+        usage.buffer_stack = command_usage.buffer_stack;
+        // TeX82 §1334 prints `max_save_stack+6`; §273's conservative
+        // check reserves room for six subsequent unchecked words.
+        usage.save_stack = self.max_save_stack.saturating_add(6);
         crate::job::finish_job(
             stores,
             self.command_profile(),
@@ -3609,10 +3617,16 @@ impl<G> MainControl<G> {
             .iter()
             .map(|active| active.kind.save_stack_spec_words())
             .fold(0_usize, usize::saturating_add);
+        let (aftergroup_words, latest_aftergroup_position) =
+            self.command.aftergroup_save_stack_projection();
         let checked = stores
             .command_context()
             .expect("save-stack admission")
-            .execution_group_depth()
+            .checked_save_stack_words(
+                aftergroup_words,
+                latest_aftergroup_position,
+                self.command_profile().capabilities().supports_etex(),
+            )
             .saturating_add(box_spec_words);
         self.max_save_stack = self.max_save_stack.max(checked);
     }

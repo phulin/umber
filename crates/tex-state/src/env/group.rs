@@ -29,6 +29,13 @@ pub struct GroupFrame {
     lineage: u64,
     pub(super) journal_start: u32,
     pub(super) level: u32,
+    /// State-owned TeX82 save words immediately before this boundary.
+    ///
+    /// The matching `GroupExit` uses these two scalars to restore the
+    /// incremental diagnostic projection without retaining or copying any
+    /// saved value outside the ordered journal.
+    pub(crate) save_stack_words_before: usize,
+    pub(crate) latest_save_push_before: Option<(u32, usize)>,
 }
 
 impl GroupFrame {
@@ -38,6 +45,8 @@ impl GroupFrame {
         lineage: u64,
         journal_start: u32,
         level: u32,
+        save_stack_words_before: usize,
+        latest_save_push_before: Option<(u32, usize)>,
     ) -> Self {
         Self {
             kind,
@@ -45,6 +54,8 @@ impl GroupFrame {
             lineage,
             journal_start,
             level,
+            save_stack_words_before,
+            latest_save_push_before,
         }
     }
 

@@ -89,6 +89,59 @@ fn repeated_local_writes_restore_the_first_prior_value() {
 }
 
 #[test]
+fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
+    // TeX82 §§273/275--276 samples before each boundary, restore, and
+    // aftergroup push. The command owner supplies aftergroup words and their
+    // state-journal-relative ordering; no token payload enters this state
+    // projection.
+    let mut names = interner();
+    let fresh = names.intern("fresh").expect("intern fresh meaning");
+    let mut state = state();
+    state.admit_symbol(fresh.symbol()).expect("admit meaning");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    assert_eq!(state.checked_save_stack_words(0, None, false), 0);
+
+    state
+        .assign_meaning(
+            fresh.symbol(),
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Local,
+        )
+        .expect("level-zero meaning save");
+    assert_eq!(state.checked_save_stack_words(0, None, false), 1);
+
+    state
+        .assign_count(0, 1, AssignmentScope::Local)
+        .expect("two-word count save");
+    assert_eq!(state.checked_save_stack_words(0, None, false), 2);
+
+    let aftergroup_position = state.save_stack_order_position();
+    assert_eq!(
+        state.checked_save_stack_words(1, Some(aftergroup_position), false),
+        4,
+        "the command-owned one-word push is newer than the tied state record"
+    );
+    let checkpoint = state.journal_cursor();
+
+    state
+        .assign_dimension(0, Scaled::from_raw(1), AssignmentScope::Local)
+        .expect("later two-word restore");
+    assert_eq!(
+        state.checked_save_stack_words(1, Some(aftergroup_position), false),
+        5,
+        "the later state record supersedes aftergroup ordering"
+    );
+    state.restore(checkpoint).expect("projection rollback");
+    assert_eq!(
+        state.checked_save_stack_words(1, Some(aftergroup_position), false),
+        4
+    );
+
+    state.end_group(GroupKind::Simple).expect("group closes");
+    assert_eq!(state.checked_save_stack_words(0, None, false), 0);
+}
+
+#[test]
 fn ordered_journal_carries_each_exact_prior_word_and_only_the_tex_save() {
     let mut state = state();
     state

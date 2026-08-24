@@ -170,8 +170,13 @@ impl<G> EngineCheckpoint<G> {
                 tex_state::StateError::InvalidCursor,
             )));
         }
-        let restored_modes =
+        let maximum_saved_depth = nest.maximum_saved_depth();
+        let mut restored_modes =
             ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
+        // TeX's maxima are job-lifetime diagnostics, not semantic checkpoint
+        // state. Rolling back live modes must not refund an already observed
+        // §216 high-water mark.
+        restored_modes.retain_maximum_saved_depth(maximum_saved_depth);
         restore_validated_roots(
             command,
             nest,

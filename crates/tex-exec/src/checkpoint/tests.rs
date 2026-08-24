@@ -8,7 +8,8 @@ use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::{CheckpointRestoreError, EngineBoundary, EngineCheckpoint};
 use crate::{
-    AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, ExecutionBudgetCounters, ModeNest,
+    AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, ExecutionBudgetCounters, Mode,
+    ModeNest,
 };
 
 #[test]
@@ -210,6 +211,41 @@ fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
                 .expect("count"),
             20,
             "command validation must precede runtime mutation"
+        );
+    });
+}
+
+#[test]
+fn checkpoint_restore_does_not_refund_nest_high_water() {
+    // TeX82 §§216/1334: semantic mode roots roll back, but a job-lifetime
+    // maximum already observed by `push_nest` does not.
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        modes.push(Mode::Horizontal).expect("horizontal mode");
+        modes.push(Mode::Math).expect("math mode");
+        let checkpoint = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::OuterParagraphEnd,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+            false,
+        )
+        .expect("checkpoint captures");
+
+        modes
+            .push(Mode::RestrictedHorizontal)
+            .expect("later nested mode");
+        assert_eq!(modes.maximum_saved_depth(), 2);
+        checkpoint
+            .restore_state(&mut command, &mut modes, universe)
+            .expect("checkpoint restores");
+        assert_eq!(modes.depth(), 3, "semantic mode summary rolled back");
+        assert_eq!(
+            modes.maximum_saved_depth(),
+            2,
+            "operational high-water survives rollback"
         );
     });
 }
