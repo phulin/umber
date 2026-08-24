@@ -5968,6 +5968,54 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
     let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
     assert_eq!(staged_requests, ["second"]);
     assert_eq!(staged_terminal, preloaded_terminal);
+
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(&mut control, source);
+        loop {
+            if matches!(
+                control.advance_episode(stores).expect("alignment advances"),
+                StepResult::Suspended(ResourceNeed::InputProbe { .. })
+            ) {
+                break;
+            }
+        }
+        assert!(matches!(
+            control.pending_direct_operation.as_ref(),
+            Some(PendingDirectOperation::Retained {
+                destination: PendingDirectDestination::Preflight(
+                    PendingPreflightCommand::Settled {
+                        command,
+                        scanner: Some(_),
+                        ..
+                    }
+                ),
+                ..
+            }) if matches!(
+                command.meaning(),
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Edef
+                ))
+            )
+        ));
+    });
+}
+
+#[test]
+fn settled_alignment_scanner_retry_has_one_exact_operation_destination() {
+    // Alignment interception replaces the generic settled-command retry: the
+    // alignment destination owns both the delivery cursor and `\edef`'s live
+    // file-enquiry scanner. Retaining both destinations would let two callers
+    // reuse one command-operation coordinate after the first caller commits.
+    let source = br"\setbox0=\vbox{\halign{#\cr \edef\result{\pdffiledump length 2{second}}\message{[\result]}\cr}}\end";
+
+    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(preloaded_terminal.contains("[4142]"));
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
@@ -6005,6 +6053,48 @@ fn pdfstrcmp_right_operand_resumes_its_exact_child_scanner() {
         assert_eq!(staged_requests, ["second"]);
         assert_eq!(staged_terminal, preloaded_terminal);
     }
+}
+
+#[test]
+fn resource_retry_fuel_abort_releases_its_scanner_child() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(
+            &mut control,
+            br"\edef\result{\expanded{\pdffiledump length 2{second}}}\end",
+        );
+
+        let need = loop {
+            match control
+                .advance_episode(stores)
+                .expect("file enquiry suspends")
+            {
+                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
+                StepResult::Progress(_) => {}
+                other => panic!("unexpected file-enquiry step: {other:?}"),
+            }
+        };
+        let ResourceNeed::InputProbe { request } = &need else {
+            unreachable!();
+        };
+        control.capabilities_mut().register_input_probe(
+            request.name.clone(),
+            tex_command::FileEnquiryResource::new(
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&b"AB"[..]),
+                ),
+                None,
+            ),
+        );
+        control.set_fuel_limit(1).expect("bounded abort fuel");
+
+        assert!(matches!(
+            control.advance_episode(stores),
+            Err(ExecError::Captured { error, .. })
+                if matches!(*error, ExecError::Command(CommandError::FuelExhausted { .. }))
+        ));
+    });
 }
 
 #[test]
@@ -6642,15 +6732,14 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
             }
         }
         assert!(
-            retried_control
-                .pending_alignment_delivery
-                .as_ref()
-                .is_some_and(|pending| pending.scanner.is_some()),
+            matches!(
+                retried_control.pending_direct_operation.as_ref(),
+                Some(PendingDirectOperation::Retained {
+                    destination: PendingDirectDestination::Alignment(pending),
+                    ..
+                }) if pending.scanner.is_some()
+            ),
             "alignment retry must own its exact expanded child"
-        );
-        assert!(
-            retried_control.pending_alignment_delivery.is_some(),
-            "expanded input retry must retain its alignment destination"
         );
         retried_control
             .capabilities_mut()

@@ -320,6 +320,7 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
+        let coordinate = operation.coordinate();
         let parameter = state
             .attempt
             .arena_mut()
@@ -343,7 +344,7 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
             .commit_attempt_operation(operation)
             .expect("operation scope commits");
         assert!(matches!(
-            state.rollback_attempt_operation(operation),
+            state.rollback_attempt_operation(crate::CommandAttemptOperation::new(coordinate)),
             Err(AttemptError::InvalidCoordinate)
         ));
         assert!(state.attempt.is_empty());
@@ -370,6 +371,7 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .symbol();
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
+        let coordinate = operation.coordinate();
         let matching = state.scratch.begin_macro_match().expect("macro match");
         let frame = state
             .scratch
@@ -397,14 +399,14 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .resume_attempt(universe, pending)
             .ok()
             .expect("attempt resumption");
-        assert_eq!(resumed, operation);
+        assert_eq!(resumed.coordinate(), coordinate);
         assert_eq!(request, "resource");
         state
             .retire_exhausted_input(level)
             .expect("macro body retirement");
         assert!(state.scratch.is_quiescent());
         state
-            .commit_attempt_operation(operation)
+            .commit_attempt_operation(resumed)
             .expect("operation commit");
     });
 }
@@ -419,6 +421,7 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
             .allocate_token_list([word('a')])
             .expect("pre-operation attempt value");
         let opening = state.begin_attempt_operation();
+        let opening_coordinate = opening.coordinate();
         let rejected = state
             .attempt
             .arena_mut()
@@ -435,13 +438,6 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
             .suspend_attempt(universe, opening, resume, "font request")
             .expect("live generation owner");
         assert!(state.attempt.is_empty());
-        assert!(
-            matches!(
-                state.commit_attempt_operation(opening),
-                Err(AttemptError::InvalidCoordinate | AttemptError::ForeignAttempt)
-            ),
-            "an operation moved into a continuation cannot commit from empty command state"
-        );
         assert_eq!(
             universe.retire(),
             Err(tex_state::UniverseError::State(
@@ -453,7 +449,7 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
             .resume_attempt(universe, pending)
             .ok()
             .expect("same admitted generation");
-        assert_eq!(restored_opening, opening);
+        assert_eq!(restored_opening.coordinate(), opening_coordinate);
         assert_eq!(restored_resume, resume);
         assert_eq!(request, "font request");
         state
@@ -469,6 +465,7 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
+        let coordinate = operation.coordinate();
         let scanner = state.begin_attempt_scanner_scope().expect("scanner scope");
         let scanner_child = state.begin_attempt_scanner_scope().expect("scanner child");
         let child_value = state
@@ -489,7 +486,7 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
             .resume_attempt(universe, pending)
             .ok()
             .expect("nested scopes resume into the same state");
-        assert_eq!(resumed, operation);
+        assert_eq!(resumed.coordinate(), coordinate);
         assert_eq!(state.attempt_token_words(child_value), Ok(&[word('x')][..]));
         state
             .discard_attempt_scope_suffix(scanner_child)
@@ -498,11 +495,11 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
             .defer_attempt_scope_retirement(scanner)
             .expect("scanner defers until commit");
         state
-            .commit_attempt_operation(operation)
+            .commit_attempt_operation(resumed)
             .expect("commit consumes each owner exactly once");
         assert!(state.attempt.is_empty());
         assert!(matches!(
-            state.commit_attempt_operation(operation),
+            state.commit_attempt_operation(crate::CommandAttemptOperation::new(coordinate)),
             Err(AttemptError::InvalidCoordinate)
         ));
     });
@@ -520,17 +517,21 @@ fn failed_resource_suspension_keeps_the_live_attempt_installed() {
         let opening = state.begin_attempt_operation();
         universe.retire().expect("unowned generation retires");
 
-        assert!(
-            state
-                .suspend_attempt(
-                    universe,
-                    opening,
-                    crate::AttemptResumePoint::default(),
-                    "input request",
-                )
-                .is_err()
-        );
+        let failure = match state.suspend_attempt(
+            universe,
+            opening,
+            crate::AttemptResumePoint::default(),
+            "input request",
+        ) {
+            Ok(_) => panic!("retired generation must reject suspension"),
+            Err(failure) => failure,
+        };
+        let (opening, error) = failure.into_parts();
+        assert!(matches!(error, crate::AttemptSuspendError::Generation(_)));
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+        state
+            .commit_attempt_operation(opening)
+            .expect("rejected suspension returns the live operation owner");
     });
 }
 
@@ -544,6 +545,7 @@ fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
             .allocate_token_list([word('x')])
             .expect("retained attempt value");
         let live = state.begin_attempt_operation();
+        let live_coordinate = live.coordinate();
         state
             .attempt
             .arena_mut()
@@ -553,15 +555,16 @@ fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
             .rollback_attempt_operation(live)
             .expect("operation rolls back");
 
-        let error = match state.suspend_attempt(
+        let failure = match state.suspend_attempt(
             universe,
-            live,
+            crate::CommandAttemptOperation::new(live_coordinate),
             crate::AttemptResumePoint::default(),
             "input request",
         ) {
             Ok(_) => panic!("truncated opening mark must be stale"),
-            Err(error) => error,
+            Err(failure) => failure,
         };
+        let (_, error) = failure.into_parts();
         assert!(matches!(
             error,
             crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate)

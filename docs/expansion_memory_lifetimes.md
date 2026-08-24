@@ -220,11 +220,15 @@ promotion, so the complete hot-path invariant is not yet implemented.
 
 An ordinary function local cannot survive suspension. Every value needed on
 resume is moved into a typed pending state. For the resource path,
-`PendingCommandAttempt` owns the complete attempt, its opening mark, a fixed
-resume point, the typed requested operation, and one coarse generation owner.
-`MainControl` also has typed singular pending slots for preflight, resource,
-alignment, and diagnostic work. Resume consumes the owner; cancellation drops
-it. This keeps exactly the current generation alive, not one owner per token.
+`PendingCommandAttempt` owns the complete attempt, a non-`Copy`
+`CommandAttemptOperation` capability, a fixed resume point, the typed requested
+operation, and one coarse generation owner. `MainControl` owns one singular
+direct-retry slot: the same operation capability moves together with exactly
+one preflight or alignment destination. A settled command discovered by
+alignment dispatch installs its command/cursor destination before operand
+scanning, so a resource failure cannot resume alignment past that command and
+strand its scanner child. Resume consumes the owner; cancellation drops it.
+This keeps exactly the current generation alive, not one owner per token.
 
 Nested scanner and expansion suspension uses the same fixed typed scratch lane
 described above. Its backing vectors grow only when a generation reaches a new

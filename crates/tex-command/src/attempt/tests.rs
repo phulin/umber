@@ -431,10 +431,10 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
         assert!(
             attempt
                 .arena()
-                .validate_mark(opening.attempt_mark())
+                .validate_mark(opening.coordinate().attempt_mark())
                 .is_ok()
         );
-        assert!(attempt.validate_operation(opening).is_ok());
+        assert!(attempt.validate_operation(opening.coordinate()).is_ok());
         assert_eq!(resume.command, 7);
         assert_eq!(request, "font request");
         assert!(attempt.arena().mark().traced_words == 0);

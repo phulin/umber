@@ -2798,14 +2798,16 @@ return it through the ordinary conversion-token path.
 A missing resource returns a typed `NeedResource`. No async future or callback
 is stored in `CommandState`. The unfinished operation moves exactly once into
 `PendingCommandAttempt<G, R>`, the sole in-session suspension package: it owns
-the complete `AttemptArena`, one coarse `GenerationOwner<G>`, the typed request,
-and integer-only command, scanner, expansion, and subordinate resume cursors.
-Resume consumes that package, validates the generation, reinstalls the same
-attempt, and continues without rescanning the request operands. Cancellation
-drops the package wholesale. Before a suspension leaves the session it detaches
-to the handle-free command-continuation schema; the detached form contains
-logical recipes and DTO-local indices rather than the arena, owner, or runtime
-coordinates.
+the complete `AttemptArena`, one coarse `GenerationOwner<G>`, a non-`Copy`
+operation capability, the typed request, and integer-only command, scanner,
+expansion, and subordinate resume cursors. Resume consumes that package,
+validates the generation, reinstalls the same attempt, and returns the same
+operation capability without rescanning the request operands. A rejected
+suspension likewise returns the still-live capability to its caller.
+Cancellation drops the package wholesale. Before a suspension leaves the
+session it detaches to the handle-free command-continuation schema; the
+detached form contains logical recipes and DTO-local indices rather than the
+arena, owner, or runtime coordinates.
 
 For canonical `\input`, that negative response is evidence, not presentation:
 the resumed opener reaches `open_registered_input` with the retained filename,
@@ -3582,9 +3584,14 @@ Execution cannot:
 - attach sticky suppression to tokens; or
 - access raw provenance stores.
 
-An explicit `CurrentCommand` is consumed once. Re-execution after resource
-rollback begins from the enclosing executor step, not from a retained command
-value.
+An explicit `CurrentCommand` is delivered once. If its operand scanner
+suspends, main control moves the command, delivery cursor, non-`Copy` scanner
+child, and non-`Copy` operation capability into one typed retry destination.
+Alignment dispatch records the substantive command destination before calling
+its scanner; alignment itself remains the destination only when suspension
+occurred while alignment still owned delivery. Retry therefore resumes the
+exact caller rather than fetching past a settled command or reconstructing an
+owner coordinate from command state.
 
 Each bounded `MainControl` episode settles commands through the sole live
 command, mode, Universe, output, and World owners. A command-core

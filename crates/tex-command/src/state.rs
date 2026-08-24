@@ -743,8 +743,7 @@ impl<G> CommandState<G> {
 
     /// Captures every attempt-local table and subordinate builder cursor for
     /// an executor operation.
-    #[must_use]
-    pub fn begin_attempt_operation(&mut self) -> crate::CommandAttemptMark {
+    pub fn begin_attempt_operation(&mut self) -> crate::CommandAttemptOperation {
         assert!(
             self.active_attempt_operation.is_none(),
             "direct command operations do not nest"
@@ -754,24 +753,7 @@ impl<G> CommandState<G> {
             .begin_operation(self.parameters.activations.len())
             .expect("command operation scope capacity is bounded");
         self.active_attempt_operation = Some(mark);
-        mark
-    }
-
-    /// Returns the direct non-owning coordinate for an operation deliberately
-    /// retained across an in-process retry.
-    ///
-    /// The sole [`crate::attempt::OwnedAttemptScope`] remains inside the
-    /// move-only command-attempt owner. Callers use this only to open the disjoint state,
-    /// mode, and page journals around the resumed operation; it neither opens
-    /// nor clones an attempt owner.
-    pub fn retained_attempt_operation(
-        &self,
-    ) -> Result<crate::CommandAttemptMark, crate::AttemptError> {
-        let operation = self
-            .active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.attempt.validate_operation(operation)?;
-        Ok(operation)
+        crate::CommandAttemptOperation::new(mark)
     }
 
     /// Opens one move-only synchronous child of the active direct operation.
@@ -829,8 +811,9 @@ impl<G> CommandState<G> {
     /// this method, so no surviving command coordinate can name the suffix.
     pub fn rollback_attempt_operation(
         &mut self,
-        mark: crate::CommandAttemptMark,
+        operation: crate::CommandAttemptOperation,
     ) -> Result<(), crate::AttemptError> {
+        let mark = operation.coordinate();
         if self.active_attempt_operation != Some(mark) {
             return Err(crate::AttemptError::InvalidCoordinate);
         }
@@ -852,12 +835,13 @@ impl<G> CommandState<G> {
     /// the disjoint generation-owned scratch lanes until input retirement.
     pub fn commit_attempt_operation(
         &mut self,
-        operation: crate::CommandAttemptMark,
+        operation: crate::CommandAttemptOperation,
     ) -> Result<(), crate::AttemptError> {
-        if self.active_attempt_operation != Some(operation) {
+        let mark = operation.coordinate();
+        if self.active_attempt_operation != Some(mark) {
             return Err(crate::AttemptError::InvalidCoordinate);
         }
-        self.attempt.commit_operation(operation)?;
+        self.attempt.commit_operation(mark)?;
         self.active_attempt_operation = None;
         Ok(())
     }
@@ -866,28 +850,41 @@ impl<G> CommandState<G> {
     pub fn suspend_attempt<R>(
         &mut self,
         universe: &tex_state::Universe<G>,
-        opening: crate::CommandAttemptMark,
+        operation: crate::CommandAttemptOperation,
         resume: crate::AttemptResumePoint,
         pending: R,
-    ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendError> {
+    ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendFailure> {
+        let opening = operation.coordinate();
         if self.active_attempt_operation != Some(opening) {
-            return Err(crate::AttemptSuspendError::StaleMark(
-                crate::AttemptError::InvalidCoordinate,
+            return Err(crate::AttemptSuspendFailure::new(
+                operation,
+                crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate),
             ));
         }
-        self.attempt
-            .arena()
-            .validate_mark(opening.attempt_mark())
-            .map_err(crate::AttemptSuspendError::StaleMark)?;
-        self.attempt
-            .validate_operation(opening)
-            .map_err(crate::AttemptSuspendError::StaleMark)?;
-        let generation = universe
-            .generation_owner()
-            .map_err(crate::AttemptSuspendError::Generation)?;
+        if let Err(error) = self.attempt.arena().validate_mark(opening.attempt_mark()) {
+            return Err(crate::AttemptSuspendFailure::new(
+                operation,
+                crate::AttemptSuspendError::StaleMark(error),
+            ));
+        }
+        if let Err(error) = self.attempt.validate_operation(opening) {
+            return Err(crate::AttemptSuspendFailure::new(
+                operation,
+                crate::AttemptSuspendError::StaleMark(error),
+            ));
+        }
+        let generation = match universe.generation_owner() {
+            Ok(generation) => generation,
+            Err(error) => {
+                return Err(crate::AttemptSuspendFailure::new(
+                    operation,
+                    crate::AttemptSuspendError::Generation(error),
+                ));
+            }
+        };
         let attempt = core::mem::take(&mut self.attempt);
         Ok(crate::PendingCommandAttempt::new_at_validated_mark(
-            attempt, generation, opening, resume, pending,
+            attempt, generation, operation, resume, pending,
         ))
     }
 
@@ -901,15 +898,17 @@ impl<G> CommandState<G> {
         universe: &tex_state::Universe<G>,
         pending: crate::PendingCommandAttempt<G, R>,
     ) -> Result<
-        (crate::CommandAttemptMark, crate::AttemptResumePoint, R),
+        (crate::CommandAttemptOperation, crate::AttemptResumePoint, R),
         crate::PendingCommandAttempt<G, R>,
     > {
-        if !self.attempt.is_empty() || self.active_attempt_operation != Some(pending.opening()) {
+        if !self.attempt.is_empty()
+            || self.active_attempt_operation != Some(pending.operation_coordinate())
+        {
             return Err(pending);
         }
-        let (attempt, opening, resume, pending) = pending.resume(universe)?;
+        let (attempt, operation, resume, pending) = pending.resume(universe)?;
         self.attempt = attempt;
-        Ok((opening, resume, pending))
+        Ok((operation, resume, pending))
     }
 
     pub(crate) fn observe_active_source_dependencies(&self, state: &mut CommandContext<'_, G>) {

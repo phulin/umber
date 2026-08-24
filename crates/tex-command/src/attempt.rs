@@ -393,6 +393,35 @@ pub enum AttemptSuspendError {
     Generation(tex_state::UniverseError),
 }
 
+/// Rejected suspension together with the still-live operation capability.
+///
+/// Suspension validates every coordinate before moving the attempt arena, so
+/// failure leaves command state unchanged. Returning the capability prevents
+/// that unchanged operation from losing its only caller owner.
+#[derive(Debug)]
+pub struct AttemptSuspendFailure {
+    operation: CommandAttemptOperation,
+    error: AttemptSuspendError,
+}
+
+impl AttemptSuspendFailure {
+    pub(crate) const fn new(
+        operation: CommandAttemptOperation,
+        error: AttemptSuspendError,
+    ) -> Self {
+        Self { operation, error }
+    }
+
+    #[must_use]
+    pub const fn error(&self) -> &AttemptSuspendError {
+        &self.error
+    }
+
+    pub fn into_parts(self) -> (CommandAttemptOperation, AttemptSuspendError) {
+        (self.operation, self.error)
+    }
+}
+
 impl From<PromotionError> for AttemptError {
     fn from(error: PromotionError) -> Self {
         Self::Promotion(error)
@@ -1304,11 +1333,33 @@ pub struct CommandAttempt<G> {
 /// carries no storage owner and is valid only while the matching live attempt
 /// remains installed in that state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommandAttemptMark {
+pub(crate) struct CommandAttemptMark {
     opening: AttemptMark,
     operation: AttemptScopeCoordinate,
     parent: AttemptScopeSerial,
     macro_depth: u32,
+}
+
+/// Move-only caller capability for one active command operation.
+///
+/// Command state retains the matching non-owning coordinate for validation,
+/// while the executor must move this value into the exact continuation that
+/// can resume, commit, or roll the operation back.  It cannot reconstruct an
+/// owner from command state after discarding the caller edge.
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "an active command operation must be finished or moved into its continuation"]
+pub struct CommandAttemptOperation {
+    mark: CommandAttemptMark,
+}
+
+impl CommandAttemptOperation {
+    pub(crate) const fn new(mark: CommandAttemptMark) -> Self {
+        Self { mark }
+    }
+
+    pub(crate) const fn coordinate(&self) -> CommandAttemptMark {
+        self.mark
+    }
 }
 
 impl CommandAttemptMark {
@@ -1515,14 +1566,14 @@ pub struct AttemptResumePoint {
 pub struct PendingCommandAttempt<G, R> {
     attempt: Box<CommandAttempt<G>>,
     generation: GenerationOwner<G>,
-    opening: CommandAttemptMark,
+    operation: CommandAttemptOperation,
     resume: AttemptResumePoint,
     pending: R,
 }
 
 impl<G, R> PendingCommandAttempt<G, R> {
-    pub(crate) const fn opening(&self) -> CommandAttemptMark {
-        self.opening
+    pub(crate) const fn operation_coordinate(&self) -> CommandAttemptMark {
+        self.operation.coordinate()
     }
 
     #[must_use]
@@ -1541,7 +1592,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
         Self {
             attempt: Box::new(attempt),
             generation,
-            opening,
+            operation: CommandAttemptOperation::new(opening),
             resume,
             pending,
         }
@@ -1550,10 +1601,11 @@ impl<G, R> PendingCommandAttempt<G, R> {
     pub(crate) fn new_at_validated_mark(
         attempt: CommandAttempt<G>,
         generation: GenerationOwner<G>,
-        opening: CommandAttemptMark,
+        operation: CommandAttemptOperation,
         resume: AttemptResumePoint,
         pending: R,
     ) -> Self {
+        let opening = operation.coordinate();
         debug_assert!(
             attempt
                 .arena()
@@ -1565,7 +1617,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
         Self {
             attempt: Box::new(attempt),
             generation,
-            opening,
+            operation,
             resume,
             pending,
         }
@@ -1578,25 +1630,34 @@ impl<G, R> PendingCommandAttempt<G, R> {
     pub(crate) fn resume(
         self,
         universe: &Universe<G>,
-    ) -> Result<(CommandAttempt<G>, CommandAttemptMark, AttemptResumePoint, R), Self> {
+    ) -> Result<
+        (
+            CommandAttempt<G>,
+            CommandAttemptOperation,
+            AttemptResumePoint,
+            R,
+        ),
+        Self,
+    > {
+        let opening = self.operation.coordinate();
         if !universe.owns_generation(&self.generation)
             || self
                 .attempt
                 .arena()
-                .validate_mark(self.opening.attempt_mark())
+                .validate_mark(opening.attempt_mark())
                 .is_err()
-            || self.attempt.validate_operation(self.opening).is_err()
+            || self.attempt.validate_operation(opening).is_err()
         {
             return Err(self);
         }
         let Self {
             attempt,
             generation,
-            opening,
+            operation,
             resume,
             pending,
         } = self;
         drop(generation);
-        Ok((*attempt, opening, resume, pending))
+        Ok((*attempt, operation, resume, pending))
     }
 }
