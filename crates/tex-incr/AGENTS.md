@@ -26,7 +26,9 @@ long-lived editor-session strategy over executor-named checkpoints.
   budgeted/evictable artifact-root/recipe queries, terminal recognition of
   complete-job and explicit-fragment outcomes, candidate acceptance, and
   detached accepted output views, and opaque coarse generation/checkpoint
-  ownership whose runtime coordinates remain inside generic admission.
+  ownership whose runtime coordinates remain inside generic admission. One
+  external session reachability store owns the fixed prior/current physical
+  slots across rejection, acceptance, and suspension.
 - `src/trace.rs`: derived ordered leaf/parent trace summaries, dependency reduction, and atomic replay.
 - `src/trace/tests.rs`: parent composition, leaf-equivalence, ordering, and atomic-miss coverage.
 - `src/tests.rs`: synthetic edit, convergence, retention, and cold-parity tests.

@@ -44,6 +44,18 @@ fn downstream_crate_cannot_construct_or_mutate_raw_content_stores() {
 }
 
 #[test]
+fn downstream_crate_cannot_forge_or_open_reachability_store_slots() {
+    assert_live_boundary(
+        "reachability-store-boundary-forbidden",
+        &[
+            "method `epoch` is private",
+            "field `storage` of struct `ReachabilityStore` is private",
+            "module `reachability_store` is private",
+        ],
+    );
+}
+
+#[test]
 fn downstream_crate_cannot_construct_or_mutate_raw_source_map() {
     assert_live_boundary(
         "source-map-boundary-forbidden",

@@ -18,7 +18,12 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 
 ## 2. Store overview
 
-`Universe` owns the complete live engine substrate:
+One session `ReachabilityStore` physically owns two inline retained-generation
+slots. Each slot contains one `Universe` plus its dense state, journals, save
+stacks, checkpoints, continuations, and generation-typed executor sidecars.
+`RetainedStateGeneration` and `RetainedEngineGeneration` are move-only slot
+leases, not self-contained arena owners. Inside an admitted slot, `Universe`
+coordinates the following live engine stores:
 
 | Store                | Contents                                            | History model            |
 | -------------------- | --------------------------------------------------- | ------------------------ |
@@ -27,7 +32,7 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 | Environment          | meanings, parameters, registers, current fonts      | journaled writes         |
 | Sparse registers     | e-TeX register overflow                             | journaled map/page roots |
 | Code tables          | cat/lc/uc/sf/math/del codes                         | copy-on-write pages      |
-| Durable value arenas | token lists, definitions, glue, and provenance      | generation owner         |
+| Durable value arenas | token lists, definitions, glue, and provenance      | external store slot      |
 | Provenance           | origins, frames, and source ranges                  | typed arena coordinates  |
 | Source fragments/map | immutable bytes and current editor layout           | roots + watermarks       |
 | Glue store           | canonical immutable glue specs                      | frozen + watermark       |
@@ -40,6 +45,12 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
+
+The slot-local durable arenas are a migration representation. The external
+topology is implemented; moving their rows/chunks into store-level storage and
+installing safe non-`Copy` roots with direct row release is the immediate next
+step. That work may not introduce per-value `Arc`/`Weak`, a registry or search,
+unsafe pointers, compaction, relocation, rehome, or another historical slot.
 
 The private HotCore substrate additionally defines the runtime values adopted
 by canonical command-input delivery. `TokenWord` is a 4-byte exact
@@ -64,17 +75,13 @@ remains authoritative until one command-level chunk admission retains the live
 token and provenance closure. Continuation and schema-11 DTOs remain
 handle-free and reconstruct fresh runtime chunks.
 
-A private incremental revision additionally owns one disposable allocation
-domain. The domain is absent from templates and accepted generations at rest.
-Each aggregate executor operation opens one owner- and serial-exact mark;
-success retains that suffix once inside the private revision, while ordinary
-failure or resource suspension truncates it exactly. Revision rejection drops
-the complete domain. Acceptance consumes an explicit typed root set and moves
-only those individually reference-counted immutable payloads into accepted
-ownership; an unrooted nonempty domain is an ownership error. Token-list
-allocation is wired into that domain; the remaining immutable families retain
-their existing owners until their corresponding migrations. See
-[Private revision allocation domains](patch_allocation_domains.md).
+An incremental session uses the external store's optional prior slot and one
+exclusive current slot. Candidate operations mutate only current; resource
+suspension retains the same slot lease and typed continuation across host
+turns. Rejection clears current and preserves prior. Acceptance clears the old
+prior and changes the current lease's role without moving rows or creating a
+third allocation domain. The existing durable arenas remain partitioned by
+slot until their bodies migrate into store-level reachability storage.
 
 The same boundary owns TeX82-shaped allocator diagnostics:
 `Universe::engine_usage_statistics` combines live usage from the interner,
@@ -181,8 +188,9 @@ store.
 
 Box slots additionally retain the group depth that owns their visible value.
 Each nonvoid slot contains an `Option<DurableListId<G>>` into the admitted
-generation's durable node arena. The generation owner, not the packed word or
-individual box cell, is lifetime authority. Box undo records journal the old
+slot's durable node arena. The external reachability store and its move-only
+slot lease, not the packed word or individual box cell, are the current
+lifetime authority. Box undo records journal the old
 and new coordinates with their exact TeX levels.
 Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
 owner depth even when executed inside a nested box-construction group: the
@@ -331,31 +339,34 @@ owning boundary, validate all child handles, compute canonical identity, and
 publish only complete values.
 
 Durable token lists, macro definitions, glue, and exact origin lists are exact
-immutable rows in one runtime value-region registry. Control sequences
-contribute interner semantic atoms, so allocation order does not affect
-identity. Copy-only generation coordinates select rows; canonical root sets
-own sealed regions, and admitted registry views borrow payload. Cold exact
-matches are followed by content comparison, so a collision may cost lookup
-work but cannot alias content. Token semantic identities and node semantic
-identities remain versioned and domain-separated; their compact hash
-projections are convergence evidence rather than an external cryptographic
-content-verification contract. Execution-transient token flows stay in pooled
-lexer buffers and enter a value region only when crossing a durable boundary.
+immutable rows in append-only arenas inside one of the external
+`ReachabilityStore`'s two physical slots. Control sequences contribute
+interner semantic atoms, so allocation order does not affect identity. Private
+copy-only generation coordinates currently select rows by direct indexing;
+there is no runtime value-region registry, root-set lookup, content search, or
+ordinary-read liveness operation. Token and node semantic identities remain
+versioned and domain-separated; their compact hash projections are convergence
+evidence rather than an external cryptographic content-verification contract.
+Execution-transient token flows stay in pooled lexer buffers and enter durable
+storage only when crossing a durable boundary.
 
 An immutable store entry does not become semantic state merely because it was
 allocated. A live environment cell, input frame, page root, node edge, PDF
 record, or other future-relevant root contributes the referenced value's
 canonical identity recursively. Unreferenced token lists, macro definitions,
 glue specifications, fonts, node lists, and provenance do not contribute.
-Their watermarks, dense slots, generation tags, capacities, interning tables,
-and derived identity caches are physical retention or acceleration metadata.
+Their dense slots, generation tags, capacities, interning tables, and derived
+identity caches are physical retention or acceleration metadata. Today an
+unreferenced durable row remains until its containing slot is cleared. Direct
+non-`Copy` root ownership and store row release are the next implementation
+step.
 
 Schema-11 format loading installs names, token lists, macro definitions, glue,
 fonts, sparse code-table roots, and hyphenation tries as validated frozen
-bases. Loading reserves destination-local value-region rows, attaches fresh
-runtime identity tags, validates every dense record and reference, and seals
-the complete root set only after the image is valid. It does not build a weak
-runtime liveness index or replay assignment APIs. Dense record indices remain
+bases. Loading reserves destination-local arena rows, attaches fresh
+runtime identity tags, validates every dense record and reference, and
+publishes the complete destination slot only after the image is valid. It does
+not build a weak runtime liveness index or replay assignment APIs. Dense record indices remain
 the canonical raw ids. Job-created value content uses reusable
 generation-safe dynamic slots while code-table/hyphenation mutations extend
 their bases; both follow the same snapshot and rollback rules as a cold store,
@@ -393,8 +404,10 @@ coordinates, and changes payload coordinates at the lifetime boundary.
 Box cells and undo records contain generation-branded durable coordinates.
 PDF form records do likewise. Open modes and the page builder contain
 page-lifetime coordinates, while synchronous transforms use operation scratch.
-Only a whole generation, page arena, or operation owns storage; no list or
-payload has an individual reference count or root-set entry.
+The external store currently owns whole revision slots; page arenas and
+operations own their narrower storage. No list or payload has an individual
+reference count or root-set entry. The forthcoming durable-row migration adds
+move-only roots with explicit store release, not per-value reference counts.
 
 ## 8. External effects: the virtualized world
 
@@ -614,7 +627,7 @@ Every engine/session lookup structure has one of these authorities:
 
 | Structure                                                                                                                               | Authority and lifetime                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Token, macro, glue, and structural-provenance cold exact lookup                                                                         | Collision-checked borrowed comparison over the runtime value registry. It owns no candidate, weak entry, or per-value liveness marker; sealed `RegionRootSet` values are the ownership boundary.                                                                                      |
+| Token, macro, glue, and structural-provenance resolution                                                                                | Direct typed indexing in the admitted store slot. It performs no content lookup and owns no candidate, weak entry, registry, or per-value heap authority. The next body migration replaces copy-only durable roots with move-only owners under the same store.                        |
 | State-hash projections, page-tree projections, font/hash fragments, hyphenation dependency fingerprints, and editor line/layout indexes | Rebuildable values keyed by exact immutable roots or the current layout generation. They are absent from semantic identity; a miss recomputes the same projection. Fixed-size root projections may travel with a checkpoint, while variable query indexes are charged to their owner. |
 | Pretolerance, page, and shipout pure memos                                                                                              | Detached, handle-free results under explicit entry and retained-byte limits. CLOCK eviction and explicit full eviction change only operational counters and future hit rate. Eviction-key telemetry is bounded by both limits.                                                        |
 | Incremental boundary history                                                                                                            | Explicitly charged to the checkpoint/history byte budget. `JobStart` and the newest restart root are protected and report any unavoidable overage; optional paragraph and shipout boundaries are pruned deterministically. History is never copied into published output.             |
@@ -672,9 +685,10 @@ effects. This is a type boundary as well as a testing convention.
 
 ### 10.6 Concurrency
 
-One `Universe` is single-owner mutable state. Parallel work uses separate
-universes or immutable detached artifacts; no interior mutability is used to
-share a live engine.
+One admitted `Universe` is single-owner mutable state. The session store uses
+one coarse mutex only to admit a retained slot across host turns; ordinary
+value reads borrow the already-admitted universe and take no lock. Parallel
+work uses separate session stores or immutable detached artifacts.
 
 ### 10.7 Future JIT
 

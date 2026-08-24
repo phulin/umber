@@ -4,19 +4,36 @@ Status: normative end-state architecture contract.
 
 Implementation boundary: the legacy runtime-value region registry, per-value
 root facades, reachability search, node-list strong/weak ownership, provenance
-archive ownership, and their snapshot/private-revision/profiling adapters were
-deleted together by `umber2-66p0.2`. The branch is intentionally compiler-red
-until children `.3` through `.7` install the lifetime owners defined here; no
-compatibility storage path is available during that interval.
+archive ownership, and their snapshot/private-revision/profiling adapters are
+deleted. The current state core has direct dense banks, exact journals,
+node/page storage, execution scratch, cold detachment, and exactly two retained
+revision slots.
 
-The `.3` state core owns one bounded append-only interning epoch, one coarse
-generation bundle, direct contiguous and page/index dense current-value banks,
-generation-typed definition/token/glue coordinates, and one exact ordered TeX
-save/operation-undo journal. Code-table INITEX defaults are virtual values of
-page/index dense banks rather than persistent roots. Journal cursors are
-generation-branded and dynamically owner-checked; interning is outside their
-rollback domain. Later children installed node/page storage, execution
-scratch, cold detachment, and incremental generation retention.
+The structural reachability prerequisite is implemented. One
+`ReachabilityStore` is created with the session interning epoch and physically
+owns two inline slots for the optional accepted prior and exclusive current
+candidate. `RetainedStateGeneration` and `RetainedEngineGeneration` are
+move-only slot leases; the `Universe`, dense state, journals, save stacks,
+checkpoints, continuations, and generation-typed sidecars reside below the
+same external store. A suspended candidate keeps the coarse store allocation
+alive across host turns without a self-reference. Slot creation and reuse
+allocate no reachability-control storage, and no runtime value clones the
+coarse owner.
+
+The existential admission seam is narrowed to its real shape: one executor
+aggregate per state slot and one suspended runtime per executor generation.
+Neither seam is a vector, registry, or searchable attachment set. Both values
+are stored below the external store and recovered only through the universally
+generic admitted operation; formats and cross-process continuations remain
+detached and handle-free.
+
+The slot payloads still contain the existing append-only definition,
+token-list, glue, and provenance arenas. The immediate next implementation
+step is to migrate those body rows/chunks into store-level reachability storage
+and replace copy-only durable roots with safe non-`Copy` owners that release
+rows directly. That migration must not add per-value `Arc`/`Weak`, a registry,
+search, tracing collection, unsafe pointers, relocation, rehome, or another
+historical generation.
 
 The current implementation's per-operation and per-scanner scope tokens,
 loans, owner rows, watermarks, and handoff machinery are transitional. They
@@ -48,21 +65,23 @@ The runtime has the following ownership hierarchy:
 
 ```text
 process
-  `-- engine session and its interning epoch
-        +-- prior accepted generation (read-only, optional)
-        `-- current candidate generation (exclusive execution lease)
+  `-- engine session + interning epoch + ReachabilityStore
+        +-- prior accepted slot lease (read-only, optional)
+        `-- current candidate slot lease (exclusive execution lease)
               +-- dense current-value banks and TeX save journal
-              +-- immutable DefinitionArena
-              +-- durable node, value, source, mode, and page storage
+              +-- current partition of store-owned immutable arenas
+              +-- durable node, source, mode, and page storage
               `-- one reusable ExecutionScratch<G>
 ```
 
 An owner may keep a coarser owner alive, but an individual stored value never
 owns itself. Runtime values use compact, copyable ids or offsets. Strong
-ownership exists only at the session, generation, checkpoint, or detached-
-artifact level. A generation owns its coarse arenas and storage classes. A
-macro call, scanner, TeX group, input frame, or individual value never owns an
-arena. There is no per-value `Arc` ownership.
+ownership currently exists only at the session store, slot lease, checkpoint,
+or detached-artifact level. The external store owns both physical slot
+payloads. A macro call, scanner, TeX group, input frame, or individual value
+never owns an arena. There is no per-value `Arc` ownership. The next durable-
+row migration adds move-only row owners under this store, not another coarse
+arena owner.
 
 The following matrix is normative:
 
@@ -70,10 +89,10 @@ The following matrix is normative:
 | ------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
 | Interned control-sequence name and token spelling             | Session interning epoch        | Session epoch retirement                                        | Never rolled back                                                               | Detached spelling or semantic atom               |
 | Current meaning, parameter, register, or code value           | Dense current-value bank       | Overwritten or bank retirement                                  | Exact undo through the TeX save journal                                         | Packed value in a checkpoint or DTO              |
-| Immutable macro definition and its definition token lists     | Revision `DefinitionArena`     | Owning generation retirement                                    | Candidate suffix truncation before publication; published rows remain immutable | Handle-free recipe at a cold boundary            |
+| Immutable macro definition and its definition token lists     | Store-owned revision partition | Current slot retirement; row-owner release after body migration | Candidate suffix truncation before publication; published rows remain immutable | Handle-free recipe at a cold boundary            |
 | Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch     | Operation completion, rollback, or continuation disposal        | Reset the applicable lane lengths to saved cursors                              | None; surviving output is built in final storage |
 | Pending mode material and page-builder nodes                  | Current generation storage     | Mode close, rollback, or shipout                                | Storage suffix truncation after roots are restored                              | Direct construction or shipout lowering          |
-| Box-register or checkpoint-surviving node                     | Durable generation arena       | Generation retirement                                           | Generation ownership restores before abandoned storage drops                    | Detached output or node recipe                   |
+| Box-register or checkpoint-surviving node                     | Store-owned revision slot      | Slot retirement                                                 | Slot ownership restores before abandoned storage drops                          | Detached output or node recipe                   |
 | Source registration and compact provenance record             | Session or revision generation | Last owning generation, live input, or output recipe retirement | Cursor restoration and suffix discard                                           | Handle-free source recipe                        |
 | Structural diagnostic or rendered-source presentation         | Diagnostic or artifact DTO     | DTO disposal                                                    | Not live runtime state                                                          | Already detached and handle-free                 |
 | Shipped page                                                  | `tex-out` value                | Output disposal                                                 | Outside engine rollback after publication                                       | Serialized artifact bytes or output DTO          |
@@ -197,11 +216,12 @@ widths remain operational state outside the format and dense banks.
 
 ## Immutable definitions
 
-Every incremental revision generation owns an append-only
-`DefinitionArena`. The arena stores complete immutable macro definitions and
-the token lists which constitute their parameter and replacement text.
-Definition token lists use definition-arena spans; they are not independently
-owned objects.
+The session `ReachabilityStore` physically owns each retained slot. Each slot
+currently contains one append-only `DefinitionArena` holding complete immutable
+macro definitions and the token lists which constitute their parameter and
+replacement text. A retained generation is only the move-only lease that
+admits its slot; it does not self-own a sibling arena. Definition token lists
+use definition-arena spans and are not independently owned objects yet.
 
 A `DefinitionId` is scoped to exactly one generation and is a dense row index.
 Resolution is O(1) direct indexing. Construction is private to the arena
@@ -240,23 +260,25 @@ prevents callers from forging ids, changing row numbers, constructing views,
 or indexing the backing vectors. The borrow on `DefinitionView` prevents a
 resolved reference from outliving the arena borrow.
 
-Rust branding does not keep bytes alive, decide when a generation may retire,
+Rust branding does not keep bytes alive, decide when a slot may retire,
 or prove that a serialized integer belongs to an arena. Those are storage
-invariants: the generation owner retains every arena named by its dense state,
-journal, stacks, and checkpoints; rows never move or mutate while that
-generation is live; dynamic or type-erased admission validates the generation
-key and bounds once; and retirement occurs only after every owning revision,
-checkpoint, or continuation has released the generation. A raw copied id in an
-unowned local is never lifetime authority.
+invariants: the external store owns every slot payload named by dense state,
+journal, stacks, and checkpoints; rows never move or mutate while that slot is
+live; dynamic or type-erased admission validates the slot key and bounds once;
+and retirement removes the slot only after every revision, checkpoint, and
+continuation root below it has dropped. A raw copied id in an unowned local is
+never lifetime authority.
 
 Other immutable values which outlive an operation, including token-register
-lists and glue specifications, use their own typed append-only generation
-arenas with the same private-id, admission, and coarse-ownership rules. They do
-not share the `DefinitionId` namespace, and definition-text spans remain
-physically owned by `DefinitionArena`.
+lists and glue specifications, currently use typed append-only arenas in the
+same store-owned slot. They do not share the `DefinitionId` namespace, and
+definition-text spans remain physically owned by `DefinitionArena`. Moving
+these bodies into shared store-level row storage is the next migration; the
+logical row/chunk format need not change for that ownership cutover.
 
-Durable token lists store their semantic `TokenWord` lane in generation-owned
-fixed-size chunks. A sealed row contains only its head coordinate and logical
+Durable token lists currently store their semantic `TokenWord` lane in fixed-
+size chunks inside the store-owned revision slot. A sealed row contains only
+its head coordinate and logical
 length; immutable replay retains a branded chunk cursor and hops only at fixed
 chunk boundaries. The destination builder owns no word buffer: it appends a
 `TokenWord`, or accepts a `TracedTokenWord` and extracts its already-packed
@@ -427,11 +449,12 @@ Nodes have three storage lifetimes:
    checkpoint roots, and any list known at construction time to survive its
    originating mode/page lifetime.
 
-All three storage classes are owned by the generation, not by a mode, group,
-box, or node. Builders select the final class before emitting a surviving node
-and seal it there. A TeX box copy may share an immutable durable segment by
-coordinate under the same generation owner; it never adds a per-node or per-
-list reference count. No live node closure is copied between storage classes.
+All three storage classes are owned below the external store's current slot,
+not by a mode, group, box, or node. Builders select the final class before
+emitting a surviving node and seal it there. A TeX box copy may share an
+immutable durable segment by coordinate under the same slot lease; it never
+adds a per-node or per-list reference count. No live node closure is copied
+between storage classes.
 
 Shipout traverses the completed page once and emits a handle-free page plan,
 artifact data, and any selected detached source recipes for `tex-out`. After
@@ -539,22 +562,24 @@ caller cannot issue a concurrent candidate. Candidate execution may compare
 detached evidence from prior, but an accepted current root cannot contain a
 prior-generation id or owner.
 
-Rejection consumes the exclusive lease, drops current wholesale, and leaves
-prior unchanged. Acceptance first requires quiescent scratch and validates
-current-generation locality without mutation. It then consumes the lease,
-drops the complete former prior generation, and changes current's role to
+Rejection consumes the exclusive lease, clears the current store slot, and
+leaves prior unchanged. Acceptance first requires quiescent scratch and
+validates current-generation locality without mutation. It then consumes the
+lease, clears the complete former prior slot, and changes current's role to
 prior. No row, slab, or value moves. History retains only detached semantic
 evidence, hashes, schedules, and output prefixes. It never retains a live
 checkpoint or generation owner.
 
 There is no runtime compactor, relocation map, generation graph, forwarding
-pointer, slab splice, row-level collector, or content-equality merge. Routine
+pointer, slab splice, tracing collector, or content-equality merge. Routine
 edits do not clone the prior runtime graph. The current generation rebuilds
 only the state required by execution in its own append-only arenas; explicit
 format, artifact, and detached-continuation boundaries are the only cold copy
-paths. Reclamation is the O(1) drop of a whole untracked generation. Obsolete
-rows inside the accepted current generation therefore remain until that
-generation is replaced or the session resets.
+paths. Reclamation is currently the O(1) removal of a whole store slot.
+Obsolete rows inside the accepted slot therefore remain until it is replaced
+or the session resets. The immediate next migration replaces that over-
+retention with direct non-`Copy` root ownership and row release; it is not a
+collector or registry.
 
 ## Detached boundaries
 
@@ -590,7 +615,8 @@ not serialize, memoize, or emit the journal's publication sidecars.
 
 ## Crate and module responsibilities
 
-`tex-state` owns the session interning epoch, generation brands and owners,
+`tex-state` owns the session interning epoch, external `ReachabilityStore`,
+move-only retained slot leases, generation brands,
 dense current-value banks, exact TeX save journal, definition arenas, durable
 node arenas, source/provenance arenas, opaque ids, admission, marks, and atomic
 restore. It exposes borrowed views and typed mutation APIs, not backing
@@ -642,13 +668,13 @@ perform zero heap allocation. An ordinary read requires:
 - no generation/root registry search;
 - no binary search;
 - no content hash or content comparison; and
-- no per-value owner construction.
+- no per-value heap-owner construction.
 
 Generation validation occurs once when the exclusive current lease, a
 continuation, checkpoint, or detached value is admitted. Within that admitted
-borrow, ids resolve by typed direct indexing. Coarse owners may use `Arc` at a
-generation boundary when required by the outer session envelope, but no
-operation retains such an owner per value or per read.
+borrow, ids resolve by typed direct indexing. The coarse session store uses
+one `Arc` allocation so long-lived suspended host sessions need no self-
+reference, but no operation retains that owner per value or per read.
 
 ## Non-goals and forbidden designs
 
@@ -667,8 +693,8 @@ The following designs are forbidden:
 - content interning, hash lookup, binary lookup, or liveness search for
   `DefinitionId` resolution;
 - rollback by cloning a live object graph or scanning all live values;
-- per-value `Arc`, `Weak`, reference counts, owner markers, or drop-driven
-  reachability;
+- per-value `Arc`, `Weak`, reference counts, or implicit drop-driven store
+  callbacks; move-only durable owners release through admitted store APIs;
 - a global generation/root registry consulted by ordinary reads;
 - per-macro, per-scanner, per-operation, or per-TeX-group arenas;
 - scope tokens, scope owner rows, loan registries, watermarks, mailboxes, or

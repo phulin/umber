@@ -60,11 +60,13 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     }
 
     pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
-        let slot = self.sidecars.attachments.len();
-        self.sidecars.attachments.push(Some(Box::new(attachment)));
+        assert!(
+            self.sidecars.attachment.is_none(),
+            "one retained engine generation accepts one suspended runtime"
+        );
+        self.sidecars.attachment = Some(Box::new(attachment));
         RetainedEngineAttachmentKey {
             generation: self.generation,
-            slot,
         }
     }
 
@@ -74,9 +76,8 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     ) -> Result<&mut T, RetainedEngineAccessError> {
         validate_attachment_key(self.generation, key)?;
         self.sidecars
-            .attachments
-            .get_mut(key.slot)
-            .and_then(Option::as_deref_mut)
+            .attachment
+            .as_deref_mut()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?
             .downcast_mut::<T>()
             .ok_or(RetainedEngineAccessError::AttachmentTypeMismatch)
@@ -88,9 +89,8 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     ) -> Result<T, RetainedEngineAccessError> {
         validate_attachment_key(self.generation, &key)?;
         self.sidecars
-            .attachments
-            .get_mut(key.slot)
-            .and_then(Option::take)
+            .attachment
+            .take()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?
             .downcast::<T>()
             .map(|attachment| *attachment)
@@ -125,7 +125,6 @@ pub struct RetainedCheckpointKey {
 #[derive(Debug, Eq, PartialEq)]
 pub struct RetainedEngineAttachmentKey {
     generation: u64,
-    slot: usize,
 }
 
 /// Mutation-free retained executor admission failure.
@@ -187,8 +186,9 @@ impl From<RetainedStateAccessError> for RetainedEngineAccessError {
 
 /// Public non-generic aggregate owner of one revision generation.
 ///
-/// The state layer owns physical storage. Main-control and checkpoint roots
-/// remain generation-typed sidecars under that exact physical owner.
+/// The session reachability store owns physical storage. This move-only lease
+/// names one of its two slots; main-control and checkpoint roots remain
+/// generation-typed sidecars below that same store owner.
 pub struct RetainedEngineGeneration {
     generation: u64,
     state: RetainedStateGeneration,
@@ -306,7 +306,7 @@ impl RetainedEngineOperation for PreflightTerminal<'_> {
     type Output = Result<(), RetainedEngineAccessError>;
 
     fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        if admitted.sidecars.attachments.iter().any(Option::is_some) {
+        if admitted.sidecars.attachment.is_some() {
             return Err(RetainedEngineAccessError::LiveAttachment);
         }
         for key in self.retained {
@@ -462,7 +462,7 @@ impl<G> RetainedCheckpointSlots<G> {
 struct EngineGenerationSidecars<G> {
     generation: u64,
     checkpoints: RetainedCheckpointSlots<G>,
-    attachments: Vec<Option<Box<dyn Any + Send>>>,
+    attachment: Option<Box<dyn Any + Send>>,
 }
 
 struct InitializeSidecars {
@@ -476,7 +476,7 @@ impl RetainedStateOperation for InitializeSidecars {
         admitted.attach(EngineGenerationSidecars::<G> {
             generation: self.generation,
             checkpoints: RetainedCheckpointSlots::default(),
-            attachments: Vec::new(),
+            attachment: None,
         })
     }
 }
@@ -727,7 +727,9 @@ mod tests {
                 .checkpoints
                 .get(admitted.generation, self.checkpoint)
                 .expect("surviving checkpoint");
-            let fixture = admitted.sidecars.attachments[self.fixture.slot]
+            let fixture = admitted
+                .sidecars
+                .attachment
                 .as_deref_mut()
                 .expect("restart fixture")
                 .downcast_mut::<RestartFixture<G>>()
@@ -764,9 +766,9 @@ mod tests {
 
     #[test]
     fn pruning_releases_checkpoint_and_reuses_its_slot_without_aba() {
-        let epoch = epoch();
+        let store = store();
         let mut generation =
-            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+            RetainedEngineGeneration::new(&store, World::default()).expect("generation");
         let survivor = generation.with_admitted(Capture).expect("survivor");
         let stale = generation
             .with_admitted(Capture)
@@ -804,9 +806,9 @@ mod tests {
 
     #[test]
     fn repeated_8192_checkpoint_prunes_keep_storage_at_warmed_high_water() {
-        let epoch = epoch();
+        let store = store();
         let mut generation =
-            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+            RetainedEngineGeneration::new(&store, World::default()).expect("generation");
         let survivor = generation.with_admitted(Capture).expect("survivor");
 
         let (warmed, after, receipt) = generation
@@ -829,9 +831,9 @@ mod tests {
 
     #[test]
     fn surviving_checkpoint_restarts_identically_after_newer_root_pruning() {
-        let epoch = epoch();
+        let store = store();
         let mut generation =
-            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+            RetainedEngineGeneration::new(&store, World::default()).expect("generation");
         let (survivor, discarded, fixture) = generation
             .with_admitted(CaptureRestorablePair)
             .expect("checkpoint pair");

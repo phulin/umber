@@ -787,11 +787,21 @@ fn rejection_drops_only_current_and_acceptance_drops_whole_prior() {
         .as_ref()
         .expect("current generation")
         .witness();
+    assert!(
+        incremental
+            .prior_generation
+            .as_ref()
+            .expect("prior generation")
+            .generation
+            .same_store(rejected.generation.as_ref().expect("current generation")),
+        "prior and current are leases in one external store"
+    );
     assert!(prior.is_live());
     assert!(rejected_generation.is_live());
     assert_eq!(incremental.retained_generation_count(), 1);
     assert_eq!(incremental.current_candidate_generation_count(), 1);
     assert_eq!(incremental.occupied_generation_slot_count(), 2);
+    assert_eq!(incremental.reachability_store.live_generation_count(), 2);
     assert!(matches!(
         incremental.start_cold_candidate(),
         Err(SessionError::CandidateAlreadyLive)
@@ -804,6 +814,7 @@ fn rejection_drops_only_current_and_acceptance_drops_whole_prior() {
     );
     assert_eq!(incremental.current_candidate_generation_count(), 0);
     assert_eq!(incremental.occupied_generation_slot_count(), 1);
+    assert_eq!(incremental.reachability_store.live_generation_count(), 1);
 
     let mut accepted = incremental
         .start_advance_candidate(RevisionId::new(2), edit(&incremental, 0..0, "\\relax "))
@@ -825,6 +836,7 @@ fn rejection_drops_only_current_and_acceptance_drops_whole_prior() {
     assert_eq!(incremental.retained_generation_count(), 1);
     assert_eq!(incremental.current_candidate_generation_count(), 0);
     assert_eq!(incremental.occupied_generation_slot_count(), 1);
+    assert_eq!(incremental.reachability_store.live_generation_count(), 1);
     assert_eq!(incremental.retired_generation_count(), 1);
 }
 

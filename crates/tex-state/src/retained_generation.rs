@@ -30,7 +30,7 @@ pub trait RetainedStateOperation {
 pub struct RetainedStateAdmission<'a, G> {
     incarnation: u64,
     universe: &'a mut Universe<G>,
-    attachments: &'a mut Vec<Option<Box<dyn Any + Send>>>,
+    attachment: &'a mut Option<Box<dyn Any + Send>>,
 }
 
 impl<G: 'static> RetainedStateAdmission<'_, G> {
@@ -40,11 +40,13 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
 
     /// Stores one generation-typed engine sidecar under the same owner.
     pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedAttachmentKey {
-        let slot = self.attachments.len();
-        self.attachments.push(Some(Box::new(attachment)));
+        assert!(
+            self.attachment.is_none(),
+            "one retained state slot accepts one typed engine aggregate"
+        );
+        *self.attachment = Some(Box::new(attachment));
         RetainedAttachmentKey {
             incarnation: self.incarnation,
-            slot,
         }
     }
 
@@ -55,9 +57,8 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
         if key.incarnation != self.incarnation {
             return Err(RetainedStateAccessError::ForeignGeneration);
         }
-        self.attachments
-            .get_mut(key.slot)
-            .and_then(Option::as_deref_mut)
+        self.attachment
+            .as_deref_mut()
             .ok_or(RetainedStateAccessError::StaleAttachment)?
             .downcast_mut::<T>()
             .ok_or(RetainedStateAccessError::AttachmentTypeMismatch)
@@ -71,9 +72,8 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
             return Err(RetainedStateAccessError::ForeignGeneration);
         }
         let attachment = self
-            .attachments
-            .get_mut(key.slot)
-            .and_then(Option::take)
+            .attachment
+            .take()
             .ok_or(RetainedStateAccessError::StaleAttachment)?;
         attachment
             .downcast::<T>()
@@ -91,9 +91,8 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
             return Err(RetainedStateAccessError::ForeignGeneration);
         }
         let attachment = self
-            .attachments
-            .get_mut(key.slot)
-            .and_then(Option::as_deref_mut)
+            .attachment
+            .as_deref_mut()
             .ok_or(RetainedStateAccessError::StaleAttachment)?
             .downcast_mut::<T>()
             .ok_or(RetainedStateAccessError::AttachmentTypeMismatch)?;
@@ -107,7 +106,6 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
 #[derive(Debug, Eq, PartialEq)]
 pub struct RetainedAttachmentKey {
     incarnation: u64,
-    slot: usize,
 }
 
 /// Mutation-free retained-generation admission failure.
@@ -132,13 +130,13 @@ pub struct RetainedStateRetirement {
 
 /// Non-generic physical owner of one complete revision generation.
 ///
-/// The concrete coordinate is private. Engine crates retain their generic
-/// control/checkpoint sidecars in the attachment vector and recover them only
-/// through a universally generic operation.
+/// The concrete coordinate is private. Engine crates retain one generic
+/// control/checkpoint aggregate in the singular attachment seam and recover it
+/// only through a universally generic operation.
 pub(crate) struct PhysicalStateGeneration {
     incarnation: u64,
     universe: Universe<PhysicalGenerationCoordinate>,
-    attachments: Vec<Option<Box<dyn Any + Send>>>,
+    attachment: Option<Box<dyn Any + Send>>,
     #[cfg(feature = "profiling")]
     _profiling_lifetime: crate::measurement::RetainedGenerationLifetime,
 }
@@ -175,7 +173,7 @@ impl RetainedStateGeneration {
         let physical = PhysicalStateGeneration {
             incarnation: next_incarnation(),
             universe,
-            attachments: Vec::new(),
+            attachment: None,
             #[cfg(feature = "profiling")]
             _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
         };
@@ -209,7 +207,7 @@ impl RetainedStateGeneration {
         let physical = PhysicalStateGeneration {
             incarnation: next_incarnation(),
             universe,
-            attachments: Vec::new(),
+            attachment: None,
             #[cfg(feature = "profiling")]
             _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
         };
@@ -241,7 +239,7 @@ impl RetainedStateGeneration {
                     operation.run::<PhysicalGenerationCoordinate>(RetainedStateAdmission {
                         incarnation: physical.incarnation,
                         universe: &mut physical.universe,
-                        attachments: &mut physical.attachments,
+                        attachment: &mut physical.attachment,
                     })
                 }));
                 drop(physical.universe.release_session_epoch());
@@ -260,13 +258,7 @@ impl RetainedStateGeneration {
             .key
             .expect("a live retained generation has a store slot");
         self.store
-            .with_generation_mut(key, |physical| {
-                physical
-                    .attachments
-                    .iter()
-                    .filter(|attachment| attachment.is_some())
-                    .count()
-            })
+            .with_generation_mut(key, |physical| usize::from(physical.attachment.is_some()))
             .expect("a live retained generation keeps its store slot")
     }
 
@@ -284,7 +276,7 @@ impl RetainedStateGeneration {
             .store
             .take_generation(key)
             .expect("a live retained generation keeps its store slot");
-        physical.attachments.clear();
+        physical.attachment = None;
         let interner = self
             .store
             .epoch()
@@ -415,11 +407,13 @@ mod tests {
 
         let mut second = RetainedStateGeneration::new(&store, World::default()).expect("second");
         assert!(first.same_store(&second));
+        drop(store);
         assert_eq!(
             second.with_admitted(Read(&key)),
             Err(RetainedStateAccessError::ForeignGeneration)
         );
         assert_eq!(second.attachment_count(), 0);
+        assert_eq!(first.with_admitted(Read(&key)), Ok("first"));
     }
 
     #[test]
@@ -436,25 +430,5 @@ mod tests {
             meaning,
             crate::ResolvedMeaning::Static(crate::meaning::Meaning::Undefined)
         );
-    }
-
-    #[test]
-    fn external_store_has_exactly_two_reusable_generation_slots() {
-        let store = store();
-        let prior = RetainedStateGeneration::new(&store, World::default()).expect("prior");
-        let current = RetainedStateGeneration::new(&store, World::default()).expect("current");
-        assert!(prior.same_store(&current));
-        assert_eq!(store.live_generation_count(), 2);
-        assert_eq!(
-            RetainedStateGeneration::new(&store, World::default()).unwrap_err(),
-            SessionEpochError::GenerationSlotsExhausted
-        );
-
-        drop(current);
-        assert_eq!(store.live_generation_count(), 1);
-        let replacement =
-            RetainedStateGeneration::new(&store, World::default()).expect("replacement current");
-        assert!(prior.same_store(&replacement));
-        assert_eq!(store.live_generation_count(), 2);
     }
 }
