@@ -499,6 +499,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Ok(())
             }
+            crate::execution_scratch::ContinuationFrame::AlignmentPreamble(pending) => {
+                self.abort_alignment_preamble(pending)
+            }
         }
     }
 

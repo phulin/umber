@@ -12,6 +12,7 @@ pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub(crate) use scalar::PendingIntegerScan;
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
+pub(crate) use structured::PendingAlignmentPreamble;
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
     FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,

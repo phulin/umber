@@ -46,6 +46,7 @@ enum ContinuationKind {
     Expansion,
     ExpandAfter,
     PdfStringCompare,
+    AlignmentPreamble,
 }
 
 impl<G> ScannerFrameKey<G> {
@@ -63,6 +64,10 @@ impl<G> ScannerFrameKey<G> {
 
     pub(crate) fn is_pdf_string_compare(&self) -> bool {
         self.kind == ContinuationKind::PdfStringCompare
+    }
+
+    pub(crate) fn is_alignment_preamble(&self) -> bool {
+        self.kind == ContinuationKind::AlignmentPreamble
     }
 }
 
@@ -96,6 +101,7 @@ pub(crate) enum ContinuationFrame<G> {
     Expansion(crate::state::PendingExpansion<G>),
     ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
     PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
+    AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -484,6 +490,10 @@ impl<G> ExecutionScratch<G> {
                     ContinuationFrame::PdfStringCompare(_),
                     ContinuationKind::PdfStringCompare
                 )
+                | (
+                    ContinuationFrame::AlignmentPreamble(_),
+                    ContinuationKind::AlignmentPreamble
+                )
         );
         if !matches_kind {
             return Err(ScratchError::InvalidCoordinate);
@@ -613,6 +623,31 @@ impl<G> ExecutionScratch<G> {
         }
         match self.scanner_resumes.take(key.id)? {
             ContinuationFrame::PdfStringCompare(pending) => Ok(pending),
+            _ => Err(ScratchError::InvalidCoordinate),
+        }
+    }
+
+    pub(crate) fn store_alignment_preamble_frame(
+        &mut self,
+        pending: crate::scanners::PendingAlignmentPreamble<G>,
+    ) -> Result<ScannerFrameKey<G>, ScratchError> {
+        self.scanner_resumes
+            .insert(ContinuationFrame::AlignmentPreamble(pending))
+            .map(|id| ScannerFrameKey {
+                id,
+                kind: ContinuationKind::AlignmentPreamble,
+            })
+    }
+
+    pub(crate) fn take_alignment_preamble_frame(
+        &mut self,
+        key: ScannerFrameKey<G>,
+    ) -> Result<crate::scanners::PendingAlignmentPreamble<G>, ScratchError> {
+        if !key.is_alignment_preamble() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        match self.scanner_resumes.take(key.id)? {
+            ContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }

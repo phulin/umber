@@ -5928,7 +5928,8 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
         assert_eq!(control.pending_resource_site(), None);
         assert!(
             control.command.named_boundary_is_quiescent(),
-            "terminal command continuation remained live"
+            "terminal command continuation remained live after preloading {preloaded:?}: {}",
+            terminal_text(stores)
         );
         ledger
             .terminal_receipt(&control, terminal)
@@ -6773,6 +6774,79 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
                 0
             );
         });
+    });
+}
+
+#[test]
+fn alignment_preamble_span_expansion_resumes_its_resource_child() {
+    for (source, resources) in [
+        (
+            br"\setbox0=\vbox{\halign{\span\pdffiledump length 2{second}#\cr X\cr}}\end"
+                .as_slice(),
+            &["second"][..],
+        ),
+        (
+            br"\setbox0=\vbox{\halign{\span\expanded{\pdffiledump length 2{second}\pdffiledump length 2{third}}#\cr X\cr}}\end"
+                .as_slice(),
+            &["second", "third"][..],
+        ),
+    ] {
+        let (preloaded_terminal, preloaded_requests) =
+            run_pdftex_file_probe_job(source, resources);
+        assert!(preloaded_requests.is_empty());
+
+        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+        assert_eq!(staged_requests, resources);
+        assert_eq!(staged_terminal, preloaded_terminal);
+    }
+}
+
+#[test]
+fn alignment_preamble_span_expansion_abort_releases_its_resource_child() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\vbox{\halign{\span\pdffiledump length 2{second}#\cr X\cr}}\end",
+        );
+
+        let need = loop {
+            match control
+                .advance_episode(stores)
+                .expect("preamble file enquiry suspends")
+            {
+                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
+                StepResult::Progress(_) => {}
+                other => panic!("unexpected preamble file-enquiry step: {other:?}"),
+            }
+        };
+        let ResourceNeed::InputProbe { request } = &need else {
+            unreachable!();
+        };
+        control.capabilities_mut().register_input_probe(
+            request.name.clone(),
+            tex_command::FileEnquiryResource::new(
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&b"AB"[..]),
+                ),
+                None,
+            ),
+        );
+        control.set_fuel_limit(1).expect("bounded abort fuel");
+
+        let aborted = control.advance_episode(stores);
+        assert!(
+            matches!(
+                &aborted,
+                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+            ),
+            "unexpected preamble abort: {aborted:?}"
+        );
+        assert!(
+            control.pending_direct_operation.is_none(),
+            "aborted preamble scanner must release its retained direct operation"
+        );
     });
 }
 

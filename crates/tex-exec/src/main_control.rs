@@ -841,8 +841,13 @@ fn own_alignment_retry_child<G>(
     alignment: Option<Option<AlignmentIdentity>>,
     cursor: Option<tex_command::CommandDeliveryCursor>,
     retry: Option<PendingPreflightCommand<G>>,
+    alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
 ) -> Option<PendingDirectDestination<G>> {
     let Some((alignment, cursor)) = alignment.zip(cursor) else {
+        assert!(
+            alignment_scanner.is_none(),
+            "a detached scanner continuation requires its typed alignment destination"
+        );
         return retry.map(PendingDirectDestination::Preflight);
     };
     match retry {
@@ -852,23 +857,35 @@ fn own_alignment_retry_child<G>(
         Some(PendingPreflightCommand::Expanding {
             scanner: Some(scanner),
             ..
-        }) => Some(PendingDirectDestination::Alignment(
-            PendingAlignmentDelivery {
-                alignment,
-                cursor,
-                scanner: Some(scanner),
-            },
-        )),
+        }) => {
+            assert!(
+                alignment_scanner.is_none(),
+                "an expansion child and alignment retry cannot share scanner capabilities"
+            );
+            Some(PendingDirectDestination::Alignment(
+                PendingAlignmentDelivery {
+                    alignment,
+                    cursor,
+                    scanner: Some(scanner),
+                },
+            ))
+        }
         // A settled/raw command has already crossed alignment delivery. Its
         // operand scanner, command, and cursor are the exact next caller; an
         // alignment retry would fetch past it and strand that scanner child.
-        Some(retry) => Some(PendingDirectDestination::Preflight(retry)),
+        Some(retry) => {
+            assert!(
+                alignment_scanner.is_none(),
+                "a command retry and alignment retry cannot share one scanner capability"
+            );
+            Some(PendingDirectDestination::Preflight(retry))
+        }
         // Alignment itself suspended without a command-owned continuation.
         None => Some(PendingDirectDestination::Alignment(
             PendingAlignmentDelivery {
                 alignment,
                 cursor,
-                scanner: None,
+                scanner: alignment_scanner,
             },
         )),
     }
@@ -1032,6 +1049,7 @@ struct PrepareOperationError<G> {
     unavailable: Option<Box<ColdOperation<G>>>,
     cursor: Option<tex_command::CommandDeliveryCursor>,
     retry: Option<PendingPreflightCommand<G>>,
+    alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
 }
 
 struct PreflightDeliveryError<G> {
@@ -1050,12 +1068,18 @@ impl<G> PrepareOperationError<G> {
         error: ExecError,
         cursor: tex_command::CommandDeliveryCursor,
         retry: Option<PendingPreflightCommand<G>>,
+        alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
     ) -> Self {
+        assert!(
+            retry.is_none() || alignment_scanner.is_none(),
+            "one failed operation retains exactly one scanner destination"
+        );
         Self {
             error: Box::new(error),
             unavailable: None,
             cursor: Some(cursor),
             retry,
+            alignment_scanner,
         }
     }
 }
@@ -1087,6 +1111,7 @@ impl<G> From<ExecError> for PrepareOperationError<G> {
             unavailable: None,
             cursor: None,
             retry: None,
+            alignment_scanner: None,
         }
     }
 }
@@ -1099,6 +1124,7 @@ impl<G> From<Box<UnavailablePreparedResource<G>>> for PrepareOperationError<G> {
             unavailable: Some(unavailable.scanned),
             cursor: None,
             retry: None,
+            alignment_scanner: None,
         }
     }
 }
@@ -4441,6 +4467,7 @@ impl<G> MainControl<G> {
                                 alignment_delivery,
                                 failure.cursor,
                                 failure.retry,
+                                failure.alignment_scanner,
                             )
                             .expect("resource suspension retains one direct caller destination");
                             self.retain_direct_delivery_for_retry(
@@ -4580,6 +4607,7 @@ impl<G> MainControl<G> {
                                     alignment_delivery,
                                     failure.cursor,
                                     failure.retry,
+                                    failure.alignment_scanner,
                                 )
                                 .expect(
                                     "resource suspension retains one direct caller destination",
@@ -4600,6 +4628,7 @@ impl<G> MainControl<G> {
                                     alignment_delivery,
                                     failure.cursor,
                                     failure.retry,
+                                    failure.alignment_scanner,
                                 )
                                 .expect("retained failure owns one direct caller destination");
                                 self.retain_direct_delivery_for_retry(
@@ -4772,6 +4801,7 @@ impl<G> MainControl<G> {
                                 alignment_delivery,
                                 failure.cursor,
                                 failure.retry,
+                                failure.alignment_scanner,
                             )
                             .expect("resource suspension retains one direct caller destination");
                             self.retain_direct_delivery_for_retry(
@@ -5198,7 +5228,12 @@ impl<G> MainControl<G> {
                         unavailable,
                         cursor: failure_cursor,
                         retry: failure_retry,
+                        alignment_scanner,
                     } = failure;
+                    assert!(
+                        alignment_scanner.is_none(),
+                        "diagnostic retry cannot own an alignment scanner destination"
+                    );
                     let destination = if let Some(scanned) = unavailable {
                         Some(PendingDiagnosticDestination::<G>::Prepared { scanned })
                     } else if let Some((command, cursor)) = retry {
@@ -7861,18 +7896,27 @@ impl<G> MainControl<G> {
             let cursor = processor.delivery_cursor();
             let retry_expansion = processor.pending_expansion_command().cloned();
             let scanner_resume = processor.take_scanner_resume();
-            let retry = if let Some(command) = retry_expansion {
-                Some(PendingPreflightCommand::Expanding {
-                    command,
-                    main_loop: self.main_loop_active,
-                    cursor,
-                    scanner: scanner_resume,
-                })
+            let (retry, alignment_scanner) = if let Some(command) = retry_expansion {
+                (
+                    Some(PendingPreflightCommand::Expanding {
+                        command,
+                        main_loop: self.main_loop_active,
+                        cursor,
+                        scanner: scanner_resume,
+                    }),
+                    None,
+                )
+            } else if let Some(retry) = retry_command {
+                (
+                    Some(retry.with_cursor(cursor).with_scanner(scanner_resume)),
+                    None,
+                )
             } else {
-                retry_command.map(|retry| retry.with_cursor(cursor).with_scanner(scanner_resume))
+                (None, scanner_resume)
             };
-            let scanned = scanned
-                .map_err(|error| PrepareOperationError::<G>::with_retry(error, cursor, retry))?;
+            let scanned = scanned.map_err(|error| {
+                PrepareOperationError::<G>::with_retry(error, cursor, retry, alignment_scanner)
+            })?;
             #[cfg(feature = "profiling")]
             if matches!(scanned, ScannedOperation::<G>::Cold(_)) {
                 tex_state::measurement::record_hot_core_materialization(

@@ -17,7 +17,7 @@ use tex_state::{
     env::banks::{GlueParam, IntParam},
 };
 
-use crate::attempt::{AttemptDefinitionId, AttemptTokenListId};
+use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
 
 use crate::input::{
     BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason,
@@ -25,16 +25,60 @@ use crate::input::{
 };
 use crate::processor::alignment::{PREAMBLE_ALIGN_STATE, is_character_command};
 use crate::processor::status::{
-    AlignmentId, AlignmentScanContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
-    TokenBuilderId,
+    AlignmentId, AlignmentScanContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
+    ScannerWarning, TokenBuilderId,
 };
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
-    AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor,
+    AlignmentCellTemplates, AlignmentIdentity, AlignmentPreamble, CommandError, CommandProcessor,
     CommandReplayDelivery, CurrentCommand, InternalValue,
     processor::{print_cs_text, render_the_value, selector_meaning_text, string_text},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AlignmentPreamblePhase {
+    UTemplate,
+    VTemplate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AlignmentPreambleChildDestination {
+    SpanExpansion,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PendingPreambleSpanExpansion<G> {
+    command: CurrentCommand<G>,
+    child:
+        Option<crate::execution_scratch::ChildContinuation<G, AlignmentPreambleChildDestination>>,
+}
+
+/// Exact in-process owner of an alignment preamble suspended while expanding
+/// the token following `\span`.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct PendingAlignmentPreamble<G> {
+    alignment: AlignmentIdentity,
+    builder: TokenBuilderId,
+    scanner_episode: ScannerEpisode,
+    columns: Vec<AlignmentCellTemplates>,
+    tabskips: Vec<GlueSpec>,
+    current_tabskip: GlueSpec,
+    repeat_start: Option<usize>,
+    u_template: AttemptTokenBufferId,
+    v_template: AttemptTokenBufferId,
+    phase: AlignmentPreamblePhase,
+    span_expansion: Option<PendingPreambleSpanExpansion<G>>,
+}
+
+impl<G> PendingAlignmentPreamble<G> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        self.span_expansion
+            .as_mut()
+            .and_then(|pending| pending.child.take())
+            .map(|child| child.restore().0)
+    }
+}
 
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
 const MISSING_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0001;
@@ -1959,6 +2003,41 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
+    fn push_alignment_live_token(
+        &mut self,
+        builder: TokenBuilderId,
+        spelling: TracedTokenWord,
+    ) -> Result<(), CommandError> {
+        let live_tokens = self
+            .command
+            .transient
+            .builders
+            .iter()
+            .find(|live| live.identity == builder.0)
+            .ok_or(CommandError::input_invariant())?
+            .tokens;
+        self.command
+            .attempt
+            .arena_mut()
+            .push_buffer_token(live_tokens, spelling)
+            .map_err(|_| CommandError::input_invariant())
+    }
+
+    pub(crate) fn abort_alignment_preamble(
+        &mut self,
+        mut pending: PendingAlignmentPreamble<G>,
+    ) -> Result<(), CommandError> {
+        if let Some(child) = pending.take_child() {
+            self.abort_continuation(child)?;
+        }
+        self.finish_scanner_episode(pending.scanner_episode);
+        self.command
+            .transient
+            .builders
+            .retain(|live| live.identity != pending.builder.0);
+        Ok(())
+    }
+
     /// Scans TeX82 §435's `scan_four_bit_int` family index, the prefix common
     /// to the three math-font assignment primitives (§1234's `def_family`).
     /// The later font-meaning scan is intentionally not part of this request.
@@ -3377,295 +3456,295 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         owner: Option<tex_state::interner::Symbol>,
     ) -> Result<(), CommandError> {
-        // TeX82 §776's `@<Scan the preamble...@>` opens with the comment
-        // "at this point, |cur_cmd=left_brace|": `scan_spec` has already
-        // consumed the opener, so this must not fetch another token. A raw
-        // fetch here would discard an immediate `#` in `\\halign{#\\cr}`.
-        let alignment = self
-            .command
-            .alignment
-            .active_alignment
-            .ok_or(CommandError::input_invariant())?;
-        self.command
-            .alignment
-            .set_preamble_phase(alignment)
-            .map_err(|_| CommandError::input_invariant())?;
-        let builder = TokenBuilderId(self.command.transient.next_builder_identity);
-        self.command.transient.next_builder_identity =
-            self.command.transient.next_builder_identity.wrapping_add(1);
-        let live_tokens = self
-            .command
-            .attempt
-            .arena_mut()
-            .allocate_token_buffer()
-            .map_err(|_| CommandError::input_invariant())?;
-        self.command
-            .transient
-            .builders
-            .push(crate::state::LiveTokenBuilder {
-                identity: builder.0,
-                tokens: live_tokens,
-            });
-        let scanner_episode = self.begin_scanner_episode(
-            ScannerStatus::Aligning(AlignmentScanContext {
-                alignment: AlignmentId(alignment.raw()),
+        let pending = match self.scanner_resume.take() {
+            Some(key) if key.is_alignment_preamble() => Some(
+                self.command
+                    .scratch
+                    .take_alignment_preamble_frame(key)
+                    .map_err(crate::scan_toks::scratch_command_error)?,
+            ),
+            Some(key) => {
+                self.scanner_resume = Some(key);
+                return Err(CommandError::input_invariant());
+            }
+            None => None,
+        };
+        let mut pending = if let Some(pending) = pending {
+            pending
+        } else {
+            // TeX82 §776's preamble scan begins with the opener already
+            // consumed. It owns both template sinks before its first token
+            // demand, so a nested expansion can suspend without moving either
+            // result out of the attempt arena.
+            let alignment = self
+                .command
+                .alignment
+                .active_alignment
+                .ok_or(CommandError::input_invariant())?;
+            self.command
+                .alignment
+                .set_preamble_phase(alignment)
+                .map_err(|_| CommandError::input_invariant())?;
+            let builder = TokenBuilderId(self.command.transient.next_builder_identity);
+            self.command.transient.next_builder_identity =
+                self.command.transient.next_builder_identity.wrapping_add(1);
+            let live_tokens = self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_token_buffer()
+                .map_err(|_| CommandError::input_invariant())?;
+            self.command
+                .transient
+                .builders
+                .push(crate::state::LiveTokenBuilder {
+                    identity: builder.0,
+                    tokens: live_tokens,
+                });
+            let scanner_episode = self.begin_scanner_episode(
+                ScannerStatus::Aligning(AlignmentScanContext {
+                    alignment: AlignmentId(alignment.raw()),
+                    builder,
+                    owner,
+                    warning: ScannerWarning(0),
+                }),
+                ScannerStatusVisibility::Observed,
+            );
+            observe!(
+                self,
+                crate::CommandObservation::Alignment(crate::AlignmentRecord {
+                    transition: "preamble_start",
+                    alignment: Some(alignment.raw()),
+                    nesting: self.command.alignment_observation_nesting(),
+                    align_state: self.command.alignment.align_state,
+                    delimiter: None,
+                    previous_align_state: None,
+                },),
+            );
+            let current_tabskip = self
+                .state
+                .glue_param(GlueParam::TAB_SKIP)
+                .map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id));
+            PendingAlignmentPreamble {
+                alignment,
                 builder,
-                owner,
-                warning: ScannerWarning(0),
-            }),
-            ScannerStatusVisibility::Observed,
-        );
-        observe!(
-            self,
-            crate::CommandObservation::Alignment(crate::AlignmentRecord {
-                transition: "preamble_start",
-                alignment: Some(alignment.raw()),
-                nesting: self.command.alignment_observation_nesting(),
-                align_state: self.command.alignment.align_state,
-                delimiter: None,
-                previous_align_state: None,
-            },),
-        );
-        let mut columns = Vec::new();
-        let tabskip = self.state.glue_param(GlueParam::TAB_SKIP);
-        let mut current_tabskip = tabskip.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id));
-        let mut tabskips = vec![current_tabskip];
-        let mut repeat_start = None;
+                scanner_episode,
+                columns: Vec::new(),
+                tabskips: vec![current_tabskip],
+                current_tabskip,
+                repeat_start: None,
+                u_template: self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .allocate_token_buffer()
+                    .map_err(|_| CommandError::input_invariant())?,
+                v_template: self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .allocate_token_buffer()
+                    .map_err(|_| CommandError::input_invariant())?,
+                phase: AlignmentPreamblePhase::UTemplate,
+                span_expansion: None,
+            }
+        };
         loop {
-            // These are deliberately separate loops, matching TeX82 §760's
-            // `done1`/`done2` labels. A missing `#` leaves the delivered
-            // delimiter backed up, then the v-template loop reads it again.
-            // A single combined u/v phase loses that replay boundary.
-            let u_template = self
-                .command
-                .attempt
-                .arena_mut()
-                .allocate_token_buffer()
-                .map_err(|_| CommandError::input_invariant())?;
-            // Both completed template sinks belong to this parent scanner.
-            // Reserve them before the first token demand: a macro whose final
-            // replacement token is the parameter marker remains live until
-            // the v-template's first fetch, and its exact child close must not
-            // reclaim the already-selected v-template sink.
-            let v_template = self
-                .command
-                .attempt
-                .arena_mut()
-                .allocate_token_buffer()
-                .map_err(|_| CommandError::input_invariant())?;
-            loop {
-                let command = self
-                    .get_preamble_token()?
-                    .ok_or(CommandError::input_invariant())?;
-                if matches!(
-                    static_meaning(command.meaning()),
-                    Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
-                ) {
-                    // TeX82 §759 executes only a direct `\tabskip`, then
-                    // restarts instead of copying it into the template.
-                    let _ = self.scan_optional_equals()?;
-                    current_tabskip = self.scan_glue(false)?.value;
-                    let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
-                    self.state.define_preamble_tabskip(current_tabskip, global);
-                    // TeX82 §759 has already appended the glue node for the
-                    // boundary before this u-template. This assignment is
-                    // therefore the value for the next boundary, which the
-                    // completed-column path appends below.
-                    continue;
+            let command = match self.get_preamble_token(&mut pending.span_expansion) {
+                Ok(Some(command)) => command,
+                Ok(None) => {
+                    self.abort_alignment_preamble(pending)?;
+                    return Err(CommandError::input_invariant());
                 }
-                if is_character_command(&command, Catcode::Parameter) {
-                    break;
+                Err(error) if error.is_resource_suspension() => {
+                    let key = self
+                        .command
+                        .scratch
+                        .store_alignment_preamble_frame(pending)
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    if self.scanner_resume.replace(key).is_some() {
+                        return Err(CommandError::input_invariant());
+                    }
+                    return Err(error);
                 }
-                let tab = is_character_command(&command, Catcode::AlignmentTab);
-                let terminator = tab
-                    || matches!(
+                Err(error) => {
+                    self.abort_alignment_preamble(pending)?;
+                    return Err(error);
+                }
+            };
+            if matches!(
+                static_meaning(command.meaning()),
+                Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
+            ) {
+                let _ = self.scan_optional_equals()?;
+                pending.current_tabskip = self.scan_glue(false)?.value;
+                let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
+                self.state
+                    .define_preamble_tabskip(pending.current_tabskip, global);
+                continue;
+            }
+
+            match pending.phase {
+                AlignmentPreamblePhase::UTemplate => {
+                    if is_character_command(&command, Catcode::Parameter) {
+                        pending.phase = AlignmentPreamblePhase::VTemplate;
+                        continue;
+                    }
+                    let tab = is_character_command(&command, Catcode::AlignmentTab);
+                    let terminator = tab
+                        || matches!(
+                            static_meaning(command.meaning()),
+                            Some(Meaning::UnexpandablePrimitive(
+                                UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
+                            ))
+                        );
+                    if terminator && self.command.alignment.align_state == PREAMBLE_ALIGN_STATE {
+                        if tab
+                            && self
+                                .command
+                                .attempt
+                                .arena()
+                                .token_buffer(pending.u_template)
+                                .map_err(|_| CommandError::input_invariant())?
+                                .is_empty()
+                            && pending.repeat_start.is_none()
+                        {
+                            pending.repeat_start = Some(pending.columns.len());
+                            continue;
+                        }
+                        observe!(
+                            self,
+                            crate::CommandObservation::Alignment(crate::AlignmentRecord {
+                                transition: "missing_parameter",
+                                alignment: Some(pending.alignment.raw()),
+                                nesting: self.command.alignment_observation_nesting(),
+                                align_state: self.command.alignment.align_state,
+                                delimiter: None,
+                                previous_align_state: None,
+                            },),
+                        );
+                        self.back_error_reporting(
+                            command,
+                            MISSING_PARAMETER_DIAGNOSTIC,
+                            "Missing # inserted in alignment preamble".to_owned(),
+                            &[
+                                "There should be exactly one # between &'s, when an",
+                                "\\halign or \\valign is being set up. In this case you had",
+                                "none, so I've put one in; maybe that will work.",
+                            ],
+                        )?;
+                        pending.phase = AlignmentPreamblePhase::VTemplate;
+                        continue;
+                    }
+                    if !matches!(
+                        static_meaning(command.meaning()),
+                        Some(Meaning::CharToken {
+                            cat: Catcode::Space,
+                            ..
+                        })
+                    ) || !self
+                        .command
+                        .attempt
+                        .arena()
+                        .token_buffer(pending.u_template)
+                        .map_err(|_| CommandError::input_invariant())?
+                        .is_empty()
+                    {
+                        self.command
+                            .attempt
+                            .arena_mut()
+                            .push_buffer_token(pending.u_template, command.spelling())
+                            .map_err(|_| CommandError::input_invariant())?;
+                        self.push_alignment_live_token(pending.builder, command.spelling())?;
+                    }
+                }
+                AlignmentPreamblePhase::VTemplate => {
+                    let ends_column = is_character_command(&command, Catcode::AlignmentTab);
+                    let ends_preamble = matches!(
                         static_meaning(command.meaning()),
                         Some(Meaning::UnexpandablePrimitive(
                             UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
                         ))
                     );
-                if terminator && self.command.alignment.align_state == -1_000_000 {
-                    // The `&&` case is the one exception: the second tab
-                    // starts the periodic suffix and u-template scanning
-                    // continues. Every other delimiter is TeX's
-                    // `Missing # inserted` / `back_error` path.
-                    if tab
-                        && self
+                    if (ends_column || ends_preamble)
+                        && self.command.alignment.align_state == PREAMBLE_ALIGN_STATE
+                    {
+                        let u_template = self
                             .command
                             .attempt
-                            .arena()
-                            .token_buffer(u_template)
-                            .map_err(|_| CommandError::input_invariant())?
-                            .is_empty()
-                        && repeat_start.is_none()
-                    {
-                        repeat_start = Some(columns.len());
+                            .arena_mut()
+                            .finish_token_buffer(pending.u_template)
+                            .map_err(|_| CommandError::input_invariant())?;
+                        let v_template = self
+                            .command
+                            .attempt
+                            .arena_mut()
+                            .finish_token_buffer(pending.v_template)
+                            .map_err(|_| CommandError::input_invariant())?;
+                        pending.columns.push(AlignmentCellTemplates {
+                            u_template: Some(u_template),
+                            v_template,
+                        });
+                        pending.tabskips.push(pending.current_tabskip);
+                        if ends_preamble {
+                            break;
+                        }
+                        pending.u_template = self
+                            .command
+                            .attempt
+                            .arena_mut()
+                            .allocate_token_buffer()
+                            .map_err(|_| CommandError::input_invariant())?;
+                        pending.v_template = self
+                            .command
+                            .attempt
+                            .arena_mut()
+                            .allocate_token_buffer()
+                            .map_err(|_| CommandError::input_invariant())?;
+                        pending.phase = AlignmentPreamblePhase::UTemplate;
                         continue;
                     }
-                    observe!(
-                        self,
-                        crate::CommandObservation::Alignment(crate::AlignmentRecord {
-                            transition: "missing_parameter",
-                            alignment: Some(alignment.raw()),
-                            nesting: self.command.alignment_observation_nesting(),
-                            align_state: self.command.alignment.align_state,
-                            delimiter: None,
-                            previous_align_state: None,
-                        },),
-                    );
-                    self.back_error_reporting(
-                        command,
-                        MISSING_PARAMETER_DIAGNOSTIC,
-                        "Missing # inserted in alignment preamble".to_owned(),
-                        &[
-                            "There should be exactly one # between &'s, when an",
-                            "\\halign or \\valign is being set up. In this case you had",
-                            "none, so I've put one in; maybe that will work.",
-                        ],
-                    )?;
-                    break;
-                }
-                if !matches!(
-                    static_meaning(command.meaning()),
-                    Some(Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    })
-                ) || !self
-                    .command
-                    .attempt
-                    .arena()
-                    .token_buffer(u_template)
-                    .map_err(|_| CommandError::input_invariant())?
-                    .is_empty()
-                {
-                    // TeX82 §760 eliminates only leading u-template spaces.
+                    if is_character_command(&command, Catcode::Parameter) {
+                        observe!(
+                            self,
+                            crate::CommandObservation::Alignment(crate::AlignmentRecord {
+                                transition: "extra_parameter",
+                                alignment: Some(pending.alignment.raw()),
+                                nesting: self.command.alignment_observation_nesting(),
+                                align_state: self.command.alignment.align_state,
+                                delimiter: None,
+                                previous_align_state: None,
+                            },),
+                        );
+                        self.report_recoverable(
+                            EXTRA_PARAMETER_DIAGNOSTIC,
+                            "Only one # is allowed per tab".to_owned(),
+                            &[
+                                "There should be exactly one # between &'s, when an",
+                                "\\halign or \\valign is being set up. In this case you had",
+                                "more than one, so I'm ignoring all but the first.",
+                            ],
+                        );
+                        continue;
+                    }
                     self.command
                         .attempt
                         .arena_mut()
-                        .push_buffer_token(u_template, command.spelling())
+                        .push_buffer_token(pending.v_template, command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
-                    let live_tokens = self
-                        .command
-                        .transient
-                        .builders
-                        .iter()
-                        .find(|live| live.identity == builder.0)
-                        .ok_or(CommandError::input_invariant())?
-                        .tokens;
-                    self.command
-                        .attempt
-                        .arena_mut()
-                        .push_buffer_token(live_tokens, command.spelling())
-                        .map_err(|_| CommandError::input_invariant())?;
+                    self.push_alignment_live_token(pending.builder, command.spelling())?;
                 }
-            }
-
-            let ends_preamble = loop {
-                let command = self
-                    .get_preamble_token()?
-                    .ok_or(CommandError::input_invariant())?;
-                if matches!(
-                    static_meaning(command.meaning()),
-                    Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
-                ) {
-                    let _ = self.scan_optional_equals()?;
-                    current_tabskip = self.scan_glue(false)?.value;
-                    let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
-                    self.state.define_preamble_tabskip(current_tabskip, global);
-                    // The current boundary was frozen before this template;
-                    // the completed-column path appends this new value for
-                    // the following boundary.
-                    continue;
-                }
-                let ends_column = is_character_command(&command, Catcode::AlignmentTab);
-                let ends_preamble = matches!(
-                    static_meaning(command.meaning()),
-                    Some(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
-                    ))
-                );
-                if (ends_column || ends_preamble)
-                    && self.command.alignment.align_state == -1_000_000
-                {
-                    break ends_preamble;
-                }
-                // §760 reports and discards extra parameter markers in a
-                // v-template; it then resumes this same loop.
-                if is_character_command(&command, Catcode::Parameter) {
-                    observe!(
-                        self,
-                        crate::CommandObservation::Alignment(crate::AlignmentRecord {
-                            transition: "extra_parameter",
-                            alignment: Some(alignment.raw()),
-                            nesting: self.command.alignment_observation_nesting(),
-                            align_state: self.command.alignment.align_state,
-                            delimiter: None,
-                            previous_align_state: None,
-                        },),
-                    );
-                    self.report_recoverable(
-                        EXTRA_PARAMETER_DIAGNOSTIC,
-                        "Only one # is allowed per tab".to_owned(),
-                        &[
-                            "There should be exactly one # between &'s, when an",
-                            "\\halign or \\valign is being set up. In this case you had",
-                            "more than one, so I'm ignoring all but the first.",
-                        ],
-                    );
-                    continue;
-                }
-                self.command
-                    .attempt
-                    .arena_mut()
-                    .push_buffer_token(v_template, command.spelling())
-                    .map_err(|_| CommandError::input_invariant())?;
-                let live_tokens = self
-                    .command
-                    .transient
-                    .builders
-                    .iter()
-                    .find(|live| live.identity == builder.0)
-                    .ok_or(CommandError::input_invariant())?
-                    .tokens;
-                self.command
-                    .attempt
-                    .arena_mut()
-                    .push_buffer_token(live_tokens, command.spelling())
-                    .map_err(|_| CommandError::input_invariant())?;
-            };
-            let u_template = self
-                .command
-                .attempt
-                .arena_mut()
-                .finish_token_buffer(u_template)
-                .map_err(|_| CommandError::input_invariant())?;
-            let v_template = self
-                .command
-                .attempt
-                .arena_mut()
-                .finish_token_buffer(v_template)
-                .map_err(|_| CommandError::input_invariant())?;
-            columns.push(AlignmentCellTemplates {
-                // `init_col` installs a u-template even when its token list
-                // is empty. `None` is reserved for the typed `\\omit` path.
-                u_template: Some(u_template),
-                v_template,
-            });
-            tabskips.push(current_tabskip);
-            if ends_preamble {
-                break;
             }
         }
         self.command
             .alignment
             .complete_preamble(
-                alignment,
+                pending.alignment,
                 AlignmentPreamble {
-                    columns,
-                    tabskips,
-                    default_tabskip: current_tabskip,
-                    repeat_start,
+                    columns: pending.columns,
+                    tabskips: pending.tabskips,
+                    default_tabskip: pending.current_tabskip,
+                    repeat_start: pending.repeat_start,
                 },
             )
             .map_err(|_| CommandError::input_invariant())?;
@@ -3673,7 +3752,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self,
             crate::CommandObservation::Alignment(crate::AlignmentRecord {
                 transition: "preamble_finish",
-                alignment: Some(alignment.raw()),
+                alignment: Some(pending.alignment.raw()),
                 nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
@@ -3684,11 +3763,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         // returns to normal. Retain the live aligning episode while publishing
         // its completion, then restore normal status; otherwise an exit record
         // loses its `aligning` identity and reverses the canonical ordering.
-        self.finish_scanner_episode(scanner_episode);
+        self.finish_scanner_episode(pending.scanner_episode);
         self.command
             .transient
             .builders
-            .retain(|live| live.identity != builder.0);
+            .retain(|live| live.identity != pending.builder.0);
         Ok(())
     }
 
@@ -3698,8 +3777,38 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// expands that token exactly once when expandable, and repeats if the
     /// resulting raw token is another `\span`. Ordinary template tokens stay
     /// raw so their meanings are resolved when each cell is executed.
-    fn get_preamble_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut command = self.get_token()?;
+    fn get_preamble_token(
+        &mut self,
+        pending: &mut Option<PendingPreambleSpanExpansion<G>>,
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut command = if let Some(mut resumed) = pending.take() {
+            self.resume_current_command(&resumed.command);
+            if let Some(child) = resumed.child.take() {
+                let (key, destination) = child.restore();
+                if destination != AlignmentPreambleChildDestination::SpanExpansion {
+                    return Err(CommandError::input_invariant());
+                }
+                self.scanner_resume = Some(key);
+            }
+            if let Err(error) = self.expand(&resumed.command) {
+                if error.is_resource_suspension() {
+                    *pending = Some(PendingPreambleSpanExpansion {
+                        command: resumed.command,
+                        child: crate::execution_scratch::ChildContinuation::capture(
+                            &mut self.scanner_resume,
+                            AlignmentPreambleChildDestination::SpanExpansion,
+                        ),
+                    });
+                }
+                return Err(error);
+            }
+            if self.scanner_resume.is_some() {
+                return Err(CommandError::input_invariant());
+            }
+            self.get_token()?
+        } else {
+            self.get_token()?
+        };
         while command.as_ref().is_some_and(|command| {
             matches!(
                 static_meaning(command.meaning()),
@@ -3710,7 +3819,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(None);
             };
             if crate::processor::expand::is_expandable_command(&next) {
-                self.expand(&next)?;
+                if let Err(error) = self.expand(&next) {
+                    if error.is_resource_suspension() {
+                        *pending = Some(PendingPreambleSpanExpansion {
+                            command: next,
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                AlignmentPreambleChildDestination::SpanExpansion,
+                            ),
+                        });
+                    }
+                    return Err(error);
+                }
+                if self.scanner_resume.is_some() {
+                    return Err(CommandError::input_invariant());
+                }
                 command = self.get_token()?;
             } else {
                 command = Some(next);

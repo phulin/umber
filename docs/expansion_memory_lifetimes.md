@@ -208,6 +208,16 @@ right phase also retains the completed left attempt-list coordinate. A retry
 therefore cannot accidentally deliver the right child to the syntactically
 identical left scan call.
 
+Alignment preamble collection is likewise a typed caller. Its reusable scratch
+frame moves the live scanner episode, builder, attempt-buffer coordinates, and
+partially collected columns across suspension. The expansion immediately after
+`\span` is its `SpanExpansion` child destination. When that root reaches main
+control without a separate command retry, the exact non-`Copy`
+`ScannerFrameKey` moves into `PendingAlignmentDelivery`; an absent command retry
+does not imply an absent alignment-scanner owner. Success consumes the child
+before the preamble finishes, repeated resource suspension reinstalls the same
+edge, and abort closes the child before the parent episode and attempt scope.
+
 Direct-to-final construction means the eventual owner supplies the builder.
 An unknown-length toks value, mark, hook, or other durable list appends into
 its final generation chunks and seals the row only after validation. A failed
