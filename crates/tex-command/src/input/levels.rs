@@ -82,6 +82,9 @@ pub(crate) fn packed_token_frame(
 /// Conditions, caches, scanner policy, and paragraph transitions cannot be
 /// represented here. Both character profiles use this same level structure.
 #[derive(Debug, Eq, Hash, PartialEq)]
+// Token cursors retain their complete inline delivery/frame state. Boxing
+// that variant would add one heap owner for every token-list input level.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
     Tokens(TokenCursor<G>),

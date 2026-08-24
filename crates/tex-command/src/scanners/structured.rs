@@ -2134,7 +2134,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 equals,
                 PendingStructuredScalarPhase::CharacterDefinitionEquals {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                     class,
                 },
             )?;
@@ -2148,7 +2148,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             value,
             PendingStructuredScalarPhase::CharacterDefinitionValue {
                 target,
-                provisional_old: provisional_old.clone(),
+                provisional_old,
                 class,
             },
         )?;
@@ -2226,7 +2226,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 equals,
                 PendingStructuredScalarPhase::RegisterDefinitionEquals {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                 },
             )?;
         }
@@ -2244,7 +2244,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 result,
                 PendingStructuredScalarPhase::RegisterDefinitionIndex {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                 },
             )?
         } else {
@@ -2253,7 +2253,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 result,
                 PendingStructuredScalarPhase::RegisterDefinitionIndex {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                 },
             )?
         };
@@ -2603,7 +2603,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     result,
                     PendingStructuredScalarPhase::PdfOutlineCount {
                         attributes: attributes.clone(),
-                        action: action.clone(),
+                        action,
                         phase: PdfOutlineScalarPhase::CountKeyword,
                     },
                 )?
@@ -2619,7 +2619,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     result,
                     PendingStructuredScalarPhase::PdfOutlineCount {
                         attributes: attributes.clone(),
-                        action: action.clone(),
+                        action,
                         phase: PdfOutlineScalarPhase::CountValue,
                     },
                 )?
@@ -3775,7 +3775,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             PendingPdfActionPhase::PageView {
                                 goto,
                                 file: progress.file,
-                                structure: progress.structure.clone(),
+                                structure: progress.structure,
                                 number,
                             },
                             StructuredScannerChildDestination::PdfActionPageView,
@@ -3795,7 +3795,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 PendingPdfActionPhase::TargetName {
                                     goto,
                                     file: progress.file,
-                                    structure: progress.structure.clone(),
+                                    structure: progress.structure,
                                 },
                                 StructuredScannerChildDestination::PdfActionTargetName,
                             )?
@@ -5029,8 +5029,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         result,
                         PendingStructuredScalarPhase::MathFractionThickness {
                             kind,
-                            left_delimiter: left_delimiter.clone(),
-                            right_delimiter: right_delimiter.clone(),
+                            left_delimiter,
+                            right_delimiter,
                         },
                     )?
                     .value,

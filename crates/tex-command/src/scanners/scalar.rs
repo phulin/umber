@@ -216,6 +216,9 @@ pub(crate) enum InternalScanPhase {
 /// One allocation-free scalar continuation in the current generation's
 /// reusable ABA-tagged scratch lane.
 #[derive(Debug, Eq, PartialEq)]
+// The largest keyword prefix is stored in the reusable scanner-frame lane.
+// Boxing it would reintroduce a per-suspension allocation and owner.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum PendingScalarFrame<G> {
     OptionalEquals {
         provenance: OriginId,
@@ -2904,8 +2907,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         };
                         continue;
                     }
-                    if cursor >= 14
-                        && cursor <= 15
+                    if (14..=15).contains(&cursor)
                         && !self.command.profile().capabilities().supports_pdftex()
                     {
                         cursor = 16;

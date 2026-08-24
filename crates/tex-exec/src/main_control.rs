@@ -1237,6 +1237,9 @@ struct PendingAlignmentDelivery<G> {
     scanner: Option<tex_command::ScannerFrameKey<G>>,
 }
 
+// Both variants are stored in the singular operation owner. Boxing preflight
+// state would allocate at the direct-operation continuation boundary.
+#[allow(clippy::large_enum_variant)]
 enum PendingDirectDestination<G> {
     Alignment(PendingAlignmentDelivery<G>),
     Preflight(PendingPreflightCommand<G>),
