@@ -2181,6 +2181,42 @@ fn tracingrestores_reports_primitive_meaning_through_an_alias() {
 }
 
 #[test]
+fn tracingrestores_reports_chardef_meanings_as_char_commands_in_every_profile() {
+    // TeX82 §§252/298/1223: `show_eqtb` renders a `char_given` eqtb word
+    // through `print_cmd_chr`, whose vocabulary is `\char` plus a hexadecimal
+    // operand. e-TeX 2.6 and pdfTeX retain that profile-independent arm. The
+    // primitive-alias and mathchardef tests on either side are negative
+    // controls for the other region-one meaning classes.
+    for profile in [
+        CommandProfile::TEX82,
+        CommandProfile::ETEX26,
+        CommandProfile::PDFTEX14029,
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = if profile == CommandProfile::TEX82 {
+                MainControl::tex82_initex(stores)
+            } else if profile == CommandProfile::ETEX26 {
+                etex_initex(stores)
+            } else {
+                debug_assert_eq!(profile, CommandProfile::PDFTEX14029);
+                pdftex_initex(stores)
+            };
+            register_source(
+                &mut control,
+                br#"\chardef\x="C8 \tracingrestores=1\tracingonline=1
+                    {\let\x=\relax}\end"#,
+            );
+
+            run_to_end(&mut control, stores);
+
+            let expected = "{restoring \\x=\\char\"C8}\n";
+            assert_eq!(pending_sink_text(stores, true), expected, "{profile:?}");
+            assert_eq!(pending_sink_text(stores, false), expected, "{profile:?}");
+        });
+    }
+}
+
+#[test]
 fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
     // TeX82 §§252/283 restore the saved typed eqtb word before `show_eqtb`
     // renders it. A genuine format boundary proves the saved shorthand

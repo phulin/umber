@@ -940,7 +940,9 @@ fn meaning_value_text_at<G>(
         ResolvedMeaning::Static(Meaning::Undefined) => "undefined".to_owned(),
         ResolvedMeaning::Static(Meaning::Relax) => escaped("relax"),
         ResolvedMeaning::Static(Meaning::EndV) => escaped("endtemplate"),
-        ResolvedMeaning::Static(Meaning::CharGiven(ch)) => format!("the character {ch}"),
+        ResolvedMeaning::Static(Meaning::CharGiven(ch)) => {
+            escaped(&format!("char\"{:X}", ch as u32))
+        }
         ResolvedMeaning::Static(Meaning::CharToken {
             ch,
             cat: tex_state::token::Catcode::Letter,
