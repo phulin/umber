@@ -2001,6 +2001,15 @@ impl<G> Universe<G> {
         self.font_info_capacity = capacity;
     }
 
+    /// Selects the executable-process `hyph_size` bound.
+    ///
+    /// TeX82 §934 uses this value for the exception table, §1308 retains it
+    /// as a format compatibility constant, and §1334 reports the selected
+    /// value. Web2C `tex.ch` [51.1332] makes the bound process-configurable.
+    pub fn set_hyphenation_exception_capacity(&mut self, capacity: usize) {
+        self.hyphenation.set_exception_capacity(capacity);
+    }
+
     /// Retains the complete immutable generation across an in-process
     /// resource suspension. No individual runtime value acquires an owner.
     pub fn generation_owner(&self) -> Result<GenerationOwner<G>, UniverseError> {

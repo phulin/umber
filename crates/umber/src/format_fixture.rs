@@ -865,6 +865,10 @@ pub(crate) fn construct_format_in_worker(
         World::memory_with_clock(recipe.clock),
         |universe| -> Result<ConstructionResult, FormatFixtureError> {
             recipe.engine.prepare_initex(universe);
+            // Web2C `tex.ch` [51.1332] selects `hyph_size` before INITEX;
+            // tex.web §1308 then retains that exact compatibility constant in
+            // the format consumed by the loaded job.
+            universe.set_hyphenation_exception_capacity(recipe.hyphenation_exception_capacity);
             universe.set_interaction_mode(recipe.construction_interaction);
             universe.set_error_context_widths(recipe.construction_error_context_widths);
             let mut session =

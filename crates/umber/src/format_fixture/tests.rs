@@ -120,6 +120,9 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
     recipe.engine = EngineMode::ETex;
     mutations.push(recipe);
     let mut recipe = original.clone();
+    recipe.hyphenation_exception_capacity += 1;
+    mutations.push(recipe);
+    let mut recipe = original.clone();
     recipe.format_name.push_str("-other");
     mutations.push(recipe);
     let mut recipe = original.clone();
@@ -474,6 +477,66 @@ fn representative_command_semantic_case_runs_loaded() {
     assert_eq!(run.projection.counts, [(0, 12)]);
     assert!(!observations.0.is_empty());
     assert!(run.result.format_dump.is_none());
+}
+
+#[test]
+fn recipe_hyphenation_capacity_reaches_the_loaded_usage_report() {
+    // TeX82 §§934/1308/1334 and Web2C `tex.ch` [51.1332]: the recipe's
+    // process-selected `hyph_size` must reach INITEX, survive its real dump,
+    // and remain the bound rendered by the loaded job.
+    let cache_root = TempDir::new().expect("cache");
+    let mut recipe = FormatRecipe::raw_tex82();
+    recipe.hyphenation_exception_capacity = 659;
+    let fixture = ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe)
+        .expect("custom-capacity raw format");
+
+    tex_state::with_materialized_format(
+        crate::engine_interner_budget(),
+        test_world(),
+        fixture.image.detached(),
+        |universe| {
+            assert_eq!(
+                universe
+                    .command_context()
+                    .expect("loaded context")
+                    .detach_engine_usage_statistics()
+                    .hyphenation_exception_capacity,
+                659
+            );
+        },
+    )
+    .expect("custom-capacity format materializes");
+
+    let guards = recipe.guards;
+    let engine_binary = recipe.engine.binary_identity();
+    let mut observations = Recorder::default();
+    let run = fixture
+        .load(test_world())
+        .expect("load")
+        .run_configured(
+            "hyphen-capacity.tex",
+            RegisteredSourceKind::Generated,
+            Arc::from(&b"\\tracingstats=1 \\end\n"[..]),
+            &[],
+            LoadedRunConfiguration {
+                guards,
+                engine_binary,
+                startup_line: "hyphen-capacity.tex".into(),
+                completion: tex_exec::RootCompletionPolicy::RequireTeXEnd,
+                projection: LoadedFormatProjectionDemand {
+                    channels: true,
+                    ..LoadedFormatProjectionDemand::default()
+                },
+            },
+            &mut observations,
+        )
+        .expect("loaded job");
+    let log = run.projection.channels.expect("channels requested").log;
+    let log = String::from_utf8(log).expect("TeX log is UTF-8");
+    assert!(
+        log.contains("0 hyphenation exceptions out of 659"),
+        "unexpected loaded log: {log:?}"
+    );
 }
 
 #[test]

@@ -481,6 +481,28 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
 }
 
 #[test]
+fn configured_hyphenation_exception_capacity_roundtrips_with_format_usage() {
+    // TeX82 §§934/1308/1334 and Web2C `tex.ch` [51.1332]: `hyph_size`
+    // is selected by the executable, retained as a format compatibility
+    // constant, and reported by the loaded job independently of occupancy.
+    let image = with_universe(budget(), |universe| {
+        universe.set_hyphenation_exception_capacity(659);
+        universe.capture_format_image().expect("capture format")
+    })
+    .expect("source universe");
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        let usage = universe
+            .command_context()
+            .expect("loaded context")
+            .detach_engine_usage_statistics();
+        assert_eq!(usage.hyphenation_exceptions, 0);
+        assert_eq!(usage.hyphenation_exception_capacity, 659);
+    })
+    .expect("materialized format");
+}
+
+#[test]
 fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
     let (image, raw_object, form_object) = with_universe(budget(), |universe| {
         let selector = universe.intern("formatfont").expect("font selector");
