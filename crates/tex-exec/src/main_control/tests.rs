@@ -14475,6 +14475,29 @@ fn executable_profile_selects_the_process_font_info_capacity() {
 }
 
 #[test]
+fn executable_profile_selects_the_process_string_pool_capacity() {
+    // TeX82 §44 owns the pool coordinates, while Web2C tex.ch [51.1332]
+    // selects the executable process's max_strings and pool_size bounds.
+    // The TRIP executables retain their compact conformance profile; the
+    // pinned pdfTeX process uses the TeX Live distribution configuration.
+    for (pdftex, expected) in [(false, (13_973, 18_192)), (true, (498_918, 6_142_271))] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = if pdftex {
+                pdftex_initex(stores)
+            } else {
+                MainControl::tex82_initex(stores)
+            };
+            control.begin_job(stores, "capacity.tex");
+            let usage = admitted!(stores, |context| context.detach_engine_usage_statistics());
+            assert_eq!(
+                (usage.string_capacity, usage.string_character_capacity),
+                expected
+            );
+        });
+    }
+}
+
+#[test]
 fn font_definition_size_boundaries_use_exact_replacements() {
     // TeX82 §§1258--1259 accept scaled 1..32768 and at sizes whose scaled
     // value is 1..(2048pt-1sp); each adjacent invalid value becomes 1000 or

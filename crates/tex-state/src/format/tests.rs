@@ -13,6 +13,33 @@ use tex_arith::Scaled;
 use tex_content::ContentHash;
 use tex_fonts::{FontMetrics, LoadedFont};
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct TestStringPoolFormatState {
+    version: u8,
+    strings: usize,
+    characters: usize,
+    max_strings: usize,
+    pool_size: usize,
+    recycled: std::collections::BTreeSet<String>,
+    memory: TestMainMemoryFormatState,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct TestMainMemoryFormatState {
+    variable_live: usize,
+    dynamic_live: usize,
+    low_extent: usize,
+    high_extent: usize,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct TestFormatMetadata {
+    version: u32,
+    interaction_mode: u8,
+    string_pool: TestStringPoolFormatState,
+    pdf: Vec<u8>,
+}
+
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 64, 4 * 1024).expect("test budget")
 }
@@ -82,6 +109,63 @@ fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
         assert_eq!(used.control_sequences, 2);
     })
     .expect("materialize format");
+}
+
+#[test]
+fn pdftex_string_pool_capacity_captures_roundtrips_and_becomes_the_loaded_baseline() {
+    let (image, expected_loaded_capacity, retained) = with_universe(budget(), |universe| {
+        let trip_capacity = universe
+            .command_context()
+            .expect("initial capacity")
+            .detach_engine_usage_statistics()
+            .string_character_capacity;
+        universe.set_string_pool_capacity_profile(crate::StringPoolCapacityProfile::Pdftex14029);
+        let pdftex_capacity = universe
+            .command_context()
+            .expect("pdfTeX capacity")
+            .detach_engine_usage_statistics();
+        let retained = "x".repeat(trip_capacity + 1);
+        universe
+            .command_context()
+            .expect("pool allocation")
+            .make_string_pool_string(&retained);
+        let used = universe
+            .command_context()
+            .expect("used coordinates")
+            .detach_engine_usage_statistics();
+        assert_eq!((used.strings, used.string_characters), (1, retained.len()));
+        (
+            universe
+                .capture_format_image()
+                .expect("capture pdfTeX format"),
+            (
+                pdftex_capacity.string_capacity - used.strings,
+                pdftex_capacity.string_character_capacity - used.string_characters,
+            ),
+            retained,
+        )
+    })
+    .expect("fresh universe");
+    let bytes = image.as_bytes().to_vec();
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(bytes.clone())
+            .expect("detached roundtrip")
+            .into_bytes(),
+        bytes
+    );
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        let mut context = universe.command_context().expect("loaded context");
+        let loaded = context.detach_engine_usage_statistics();
+        assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
+        assert_eq!(
+            (loaded.string_capacity, loaded.string_character_capacity),
+            expected_loaded_capacity
+        );
+        context.slow_make_string_pool_string(&retained);
+        assert_eq!(context.detach_engine_usage_statistics(), loaded);
+    })
+    .expect("materialize pdfTeX capacity format");
 }
 
 #[test]
@@ -199,6 +283,22 @@ fn replace_section(image: &DetachedFormatImage, kind: u32, bytes: Vec<u8>) -> Ve
     crate::format_container::encode(&sections).expect("mutated container")
 }
 
+fn replace_metadata(
+    image: &DetachedFormatImage,
+    mutate: impl FnOnce(&mut TestFormatMetadata),
+) -> Vec<u8> {
+    let container = crate::format_container::decode(image.as_bytes()).expect("source container");
+    let mut metadata: TestFormatMetadata =
+        bincode::deserialize(&container.section(1).expect("metadata section").bytes)
+            .expect("metadata");
+    mutate(&mut metadata);
+    replace_section(
+        image,
+        1,
+        bincode::serialize(&metadata).expect("mutated metadata"),
+    )
+}
+
 #[test]
 fn detached_image_roundtrips_bytes_and_rejects_corruption() {
     let image = image();
@@ -224,6 +324,34 @@ fn detached_image_roundtrips_bytes_and_rejects_corruption() {
         DetachedFormatImage::try_from_bytes(bad_checksum)
             .expect_err("bad checksum must be rejected"),
         FormatError::Checksum
+    );
+}
+
+#[test]
+fn malformed_string_pool_profiles_and_coordinates_are_rejected_exactly() {
+    let image = image();
+    let mixed_profile = replace_metadata(&image, |metadata| {
+        metadata.string_pool.max_strings = 500_000;
+    });
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(mixed_profile)
+            .expect_err("mixed process profile must be rejected"),
+        FormatError::InvalidState(
+            "unsupported string-pool capacity coordinates: max_strings=500000, pool_size=125000"
+                .to_owned()
+        )
+    );
+
+    let character_overflow = replace_metadata(&image, |metadata| {
+        metadata.string_pool.characters = metadata.string_pool.pool_size + 1;
+    });
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(character_overflow)
+            .expect_err("pool coordinate beyond the selected profile must be rejected"),
+        FormatError::InvalidState(
+            "invalid string-pool format coordinates: strings=1027, characters=125001, max_strings=15000, pool_size=125000, recycled_strings=0, recycled_characters=0"
+                .to_owned()
+        )
     );
 }
 

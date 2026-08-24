@@ -157,6 +157,7 @@ pub use session_epoch::{SessionEpochError, SessionInternerEpoch};
 pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
     FontIdentifier, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
+    StringPoolCapacityProfile,
 };
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{

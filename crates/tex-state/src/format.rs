@@ -484,7 +484,7 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
     }
     decode_interaction_mode(metadata.interaction_mode)?;
     crate::command_context::EngineUsageRuntime::restore_format_state(&metadata.string_pool)
-        .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        .map_err(FormatError::InvalidState)?;
     let names: Vec<FormatName> = decode_rows(required_section(&container, 256)?)?;
     let names_lookup =
         crate::frozen_lookup::decode(&required_section(&container, 257)?.bytes, names.len())
@@ -1135,7 +1135,7 @@ impl<G> Universe<G> {
         self.engine_usage = crate::command_context::EngineUsageRuntime::restore_format_state(
             &format.metadata.string_pool,
         )
-        .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        .map_err(FormatError::InvalidState)?;
         for (slot, row) in format.names.iter().enumerate() {
             if let Some(symbol) = self
                 .interner_mut()

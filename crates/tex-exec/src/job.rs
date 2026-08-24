@@ -119,6 +119,19 @@ impl EngineBinaryIdentity {
             Self::Pdftex14029 => tex_state::font::WEB2C_FONT_INFO_CAPACITY,
         }
     }
+
+    /// Returns this executable's process-configured TeX string-pool bounds.
+    ///
+    /// The TeX82/e-TeX conformance binaries use the compact triptrap
+    /// configuration. The pinned pdfTeX binary uses TeX Live 2026's
+    /// `max_strings=500000` and `pool_size=6250000` settings, parallel to its
+    /// `hash_extra` and `font_mem_size` process configuration above.
+    pub(crate) const fn string_pool_capacity_profile(self) -> tex_state::StringPoolCapacityProfile {
+        match self {
+            Self::Tex82 | Self::Etex26 => tex_state::StringPoolCapacityProfile::Tex82Etex,
+            Self::Pdftex14029 => tex_state::StringPoolCapacityProfile::Pdftex14029,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

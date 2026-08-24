@@ -229,7 +229,12 @@ fn prepared_magnification_is_job_scoped_and_checkpointed() {
 #[test]
 fn runtime_checkpoint_restores_string_pool_accounting() {
     with_universe(budget(), |universe| {
+        let initial = universe
+            .command_context()
+            .expect("initial context")
+            .detach_engine_usage_statistics();
         let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
+        universe.set_string_pool_capacity_profile(crate::StringPoolCapacityProfile::Pdftex14029);
         universe
             .command_context()
             .expect("context")
@@ -245,13 +250,13 @@ fn runtime_checkpoint_restores_string_pool_accounting() {
         universe
             .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
             .expect("restore checkpoint");
+        let mut context = universe.command_context().expect("context");
+        assert_eq!(context.detach_engine_usage_statistics(), initial);
+        context.slow_make_string_pool_string("speculative");
         assert_eq!(
-            universe
-                .command_context()
-                .expect("context")
-                .detach_engine_usage_statistics()
-                .strings,
-            0
+            context.detach_engine_usage_statistics().strings,
+            1,
+            "rollback removes speculative membership as well as coordinates"
         );
     })
     .expect("universe allocation");

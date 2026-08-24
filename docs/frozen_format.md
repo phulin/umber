@@ -91,6 +91,17 @@ low/high main-memory allocator extents, and the profile's
 `max_strings`/`pool_size`; typed
 control-sequence, filename, hyphenation, and token-list owners retain their own
 bytes and publish only their TeX-style accounting transitions to this record.
+The only admitted capacity pairs are the pinned TeX82/e-TeX conformance
+process's `15000`/`125000` and the TeX Live 2026 pdfTeX process's
+`500000`/`6250000`. Capture records the executing process's pair; decode
+rejects invented or mixed pairs and requires `str_ptr <= max_strings` and
+`pool_ptr <= pool_size`. The loaded coordinates become the new format-relative
+baseline. Executable framing may then select the same or a larger supported
+process profile without counting that selection as string usage. Runtime
+rollback restores the selected pair, pool coordinates, and recycled-name
+membership together. These are validations of the existing schema-11 fields,
+not an alternate codec or compatibility fallback, so the schema and ABI
+fingerprints do not change.
 The TeX82 profile projects §§47/50/226's engine-owned static and primitive
 vocabulary onto the typed registry, then records runtime ownership at the
 canonical boundaries: §§341/372's direct-character and §1215's fixed internal

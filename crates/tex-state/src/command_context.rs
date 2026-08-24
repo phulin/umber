@@ -145,8 +145,39 @@ const TEX82_STRING_BASELINE: usize = 1_027;
 const TEX82_CHARACTER_BASELINE: usize = 106_808;
 const ETEX26_STRING_BASELINE: usize = 1_082;
 const ETEX26_CHARACTER_BASELINE: usize = 107_729;
-const MAX_STRINGS: usize = 15_000;
-const POOL_SIZE: usize = 125_000;
+const TEX82_MAX_STRINGS: usize = 15_000;
+const TEX82_POOL_SIZE: usize = 125_000;
+const PDFTEX_MAX_STRINGS: usize = 500_000;
+const PDFTEX_POOL_SIZE: usize = 6_250_000;
+
+/// Executable-process capacity profile for TeX's string pool.
+///
+/// TeX82 §44 owns the coordinates, while Web2C tex.ch [51.1332] makes both
+/// bounds process configuration. The compact TeX82/e-TeX executables used by
+/// the canonical conformance tiers retain their triptrap values. The pinned
+/// pdfTeX process uses TeX Live 2026's `max_strings` and `pool_size` values.
+/// A format records the selected pair so detached validation can reject
+/// invented or mixed process configurations without baking in one producer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StringPoolCapacityProfile {
+    Tex82Etex,
+    Pdftex14029,
+}
+
+impl StringPoolCapacityProfile {
+    const fn coordinates(self) -> (usize, usize) {
+        match self {
+            Self::Tex82Etex => (TEX82_MAX_STRINGS, TEX82_POOL_SIZE),
+            Self::Pdftex14029 => (PDFTEX_MAX_STRINGS, PDFTEX_POOL_SIZE),
+        }
+    }
+
+    fn from_coordinates(max_strings: usize, pool_size: usize) -> Option<Self> {
+        [Self::Tex82Etex, Self::Pdftex14029]
+            .into_iter()
+            .find(|profile| profile.coordinates() == (max_strings, pool_size))
+    }
+}
 
 /// Detached TeX string-pool coordinates serialized at the format boundary.
 ///
@@ -327,8 +358,8 @@ impl Default for EngineUsageRuntime {
             characters: TEX82_CHARACTER_BASELINE,
             init_str_ptr: TEX82_STRING_BASELINE,
             init_pool_ptr: TEX82_CHARACTER_BASELINE,
-            max_strings: MAX_STRINGS,
-            pool_size: POOL_SIZE,
+            max_strings: TEX82_MAX_STRINGS,
+            pool_size: TEX82_POOL_SIZE,
             recycled: std::collections::BTreeSet::new(),
             memory: MainMemoryRuntime::default(),
         }
@@ -363,6 +394,19 @@ impl EngineUsageRuntime {
         self.init_pool_ptr = self.init_pool_ptr.max(ETEX26_CHARACTER_BASELINE);
     }
 
+    pub(crate) fn select_capacity_profile(&mut self, profile: StringPoolCapacityProfile) {
+        let (max_strings, pool_size) = profile.coordinates();
+        assert!(
+            self.max_strings <= max_strings
+                && self.pool_size <= pool_size
+                && self.strings <= max_strings
+                && self.characters <= pool_size,
+            "executable string-pool selection cannot shrink the session profile"
+        );
+        self.max_strings = max_strings;
+        self.pool_size = pool_size;
+    }
+
     pub(crate) fn capture_format_state(
         &self,
         variable_live: usize,
@@ -381,20 +425,41 @@ impl EngineUsageRuntime {
         }
     }
 
-    pub(crate) fn restore_format_state(
-        state: &StringPoolFormatState,
-    ) -> Result<Self, &'static str> {
-        if state.version != 2
-            || state.max_strings != MAX_STRINGS
-            || state.pool_size != POOL_SIZE
-            || state.strings < TEX82_STRING_BASELINE
+    pub(crate) fn restore_format_state(state: &StringPoolFormatState) -> Result<Self, String> {
+        if state.version != 2 {
+            return Err(format!(
+                "unsupported string-pool format state version {}",
+                state.version
+            ));
+        }
+        if StringPoolCapacityProfile::from_coordinates(state.max_strings, state.pool_size).is_none()
+        {
+            return Err(format!(
+                "unsupported string-pool capacity coordinates: max_strings={}, pool_size={}",
+                state.max_strings, state.pool_size
+            ));
+        }
+        let recycled_characters = state
+            .recycled
+            .iter()
+            .try_fold(0_usize, |total, value| total.checked_add(value.len()));
+        if state.strings < TEX82_STRING_BASELINE
             || state.characters < TEX82_CHARACTER_BASELINE
             || state.strings > state.max_strings
             || state.characters > state.pool_size
             || state.recycled.len() > state.strings
-            || state.recycled.iter().map(String::len).sum::<usize>() > state.characters
+            || recycled_characters.is_none_or(|characters| characters > state.characters)
         {
-            return Err("invalid string-pool format coordinates");
+            return Err(format!(
+                "invalid string-pool format coordinates: strings={}, characters={}, max_strings={}, pool_size={}, recycled_strings={}, recycled_characters={}",
+                state.strings,
+                state.characters,
+                state.max_strings,
+                state.pool_size,
+                state.recycled.len(),
+                recycled_characters
+                    .map_or("overflow".to_owned(), |characters| characters.to_string())
+            ));
         }
         let memory = MainMemoryRuntime::restore_format_state(state.memory.clone())?;
         Ok(Self {

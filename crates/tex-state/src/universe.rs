@@ -2001,6 +2001,16 @@ impl<G> Universe<G> {
         self.font_info_capacity = capacity;
     }
 
+    /// Selects the executable process's TeX string-pool capacity profile.
+    ///
+    /// The format boundary retains this profile, while runtime checkpoints
+    /// restore it with the other pool coordinates. Executable framing calls
+    /// this before the first command, so changing the process profile neither
+    /// changes the format-relative baseline nor counts as job string usage.
+    pub fn set_string_pool_capacity_profile(&mut self, profile: crate::StringPoolCapacityProfile) {
+        self.engine_usage.select_capacity_profile(profile);
+    }
+
     /// Selects the executable-process `hyph_size` bound.
     ///
     /// TeX82 §934 uses this value for the exception table, §1308 retains it
