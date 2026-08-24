@@ -266,11 +266,44 @@ struct Entry {
     start: u32,
     len: u32,
     kind: EntryKind,
-    hash_entry: bool,
     #[cfg(test)]
     semantic_atom: u64,
     #[cfg(test)]
     semantic_identity: ContentHash,
+}
+
+/// TeX82's observable §259 occupancy, independent of Rust lookup layout.
+///
+/// The dense bits follow interner slots only so format capture can associate
+/// an occupied name with its portable row. The count changes solely when a
+/// real multiletter lookup first observes a slot; reuse and rollback cannot
+/// decrement it (§256).
+#[derive(Debug, Default)]
+struct ControlSequenceLedger {
+    occupied: Vec<bool>,
+    count: usize,
+}
+
+impl ControlSequenceLedger {
+    fn append_slot(&mut self) {
+        self.occupied.push(false);
+    }
+
+    fn observe_hash_lookup(&mut self, slot: u32) {
+        let occupied = &mut self.occupied[slot as usize];
+        if !*occupied {
+            *occupied = true;
+            self.count += 1;
+        }
+    }
+
+    fn contains(&self, slot: u32) -> bool {
+        self.occupied.get(slot as usize).copied().unwrap_or(false)
+    }
+
+    const fn len(&self) -> usize {
+        self.count
+    }
 }
 
 /// Append-only interned UTF-8 storage for one bounded engine session.
@@ -286,13 +319,15 @@ pub struct Interner {
     arena: String,
     entries: Vec<Entry>,
     index: AHashMap<u64, Vec<u32>>,
+    control_sequences: ControlSequenceLedger,
 }
 
 impl Interner {
     pub(crate) fn capture_format_names(&self) -> Vec<crate::format::schema::FormatName> {
         self.entries
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(slot, entry)| {
                 let kind = match entry.kind {
                     EntryKind::ControlSequence(ControlSequenceKind::Null) => 0,
                     EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter) => 1,
@@ -303,7 +338,7 @@ impl Interner {
                 };
                 crate::format::schema::FormatName {
                     kind,
-                    hash_entry: entry.hash_entry,
+                    hash_entry: self.control_sequences.contains(slot as u32),
                     text: self.entry_text(entry).to_owned(),
                 }
             })
@@ -325,11 +360,14 @@ impl Interner {
                     4 => ControlSequenceKind::Internal,
                     _ => unreachable!(),
                 };
+                if row.hash_entry && kind != ControlSequenceKind::Named {
+                    return Err("only a multiletter format name can occupy the hash");
+                }
                 let id = self
-                    .intern_control_sequence(kind, &row.text, row.hash_entry)
+                    .intern_control_sequence(kind, &row.text)
                     .map_err(|_| "format name exceeds destination budget")?;
                 if row.hash_entry {
-                    self.entries[id.raw() as usize].hash_entry = true;
+                    self.control_sequences.observe_hash_lookup(id.raw());
                 }
                 Some(id.symbol())
             }
@@ -364,6 +402,7 @@ impl Interner {
             arena: String::new(),
             entries: Vec::new(),
             index: AHashMap::new(),
+            control_sequences: ControlSequenceLedger::default(),
         }
     }
 
@@ -387,7 +426,7 @@ impl Interner {
 
     /// Interns an ordinary escaped control-sequence spelling.
     pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        self.intern_control_sequence(named_kind(name), name, false)
+        self.intern_control_sequence(named_kind(name), name)
     }
 
     /// Interns a name through TeX82 §259's hash-table path.
@@ -396,7 +435,7 @@ impl Interner {
         if self.kind_id(id).expect("newly interned symbol is admitted")
             == ControlSequenceKind::Named
         {
-            self.entries[id.raw() as usize].hash_entry = true;
+            self.control_sequences.observe_hash_lookup(id.raw());
         }
         Ok(id)
     }
@@ -407,7 +446,6 @@ impl Interner {
         self.intern_control_sequence(
             ControlSequenceKind::ActiveCharacter,
             ch.encode_utf8(&mut encoded),
-            false,
         )
     }
 
@@ -436,7 +474,7 @@ impl Interner {
 
     /// Interns an inaccessible engine-owned fixed control sequence.
     pub(crate) fn intern_internal(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        self.intern_control_sequence(ControlSequenceKind::Internal, name, false)
+        self.intern_control_sequence(ControlSequenceKind::Internal, name)
     }
 
     /// Interns a non-control-sequence token spelling in the same epoch.
@@ -456,7 +494,6 @@ impl Interner {
         &mut self,
         kind: ControlSequenceKind,
         name: &str,
-        hash_entry: bool,
     ) -> Result<SymbolId, InternerError> {
         if self.retired {
             return Err(InternerError::RetiredEpoch);
@@ -464,13 +501,9 @@ impl Interner {
         validate_character_kind(kind, name);
         let entry_kind = EntryKind::ControlSequence(kind);
         if let Some(slot) = self.lookup_slot(entry_kind, name) {
-            if hash_entry {
-                self.entries[slot as usize].hash_entry = true;
-            }
             return Ok(SymbolId::new(self.epoch, slot));
         }
         let slot = self.append(entry_kind, name)?;
-        self.entries[slot as usize].hash_entry = hash_entry;
         Ok(SymbolId::new(self.epoch, slot))
     }
 
@@ -501,12 +534,12 @@ impl Interner {
             start,
             len,
             kind,
-            hash_entry: false,
             #[cfg(test)]
             semantic_atom,
             #[cfg(test)]
             semantic_identity,
         });
+        self.control_sequences.append_slot();
         self.index.entry(hash).or_default().push(slot);
         self.usage = InternerUsage {
             control_sequence_names: names as u32,
@@ -649,7 +682,8 @@ impl Interner {
     /// Returns whether this identity owns a TeX82 §259 hash entry.
     #[cfg(test)]
     pub(crate) fn is_hash_entry(&self, id: SymbolId) -> Result<bool, InternerAccessError> {
-        Ok(self.admit_symbol(id)?.hash_entry)
+        self.admit_symbol(id)?;
+        Ok(self.control_sequences.contains(id.raw()))
     }
 
     /// Returns TeX82's occupied `hash` entries for the §1334 usage summary.
@@ -658,7 +692,7 @@ impl Interner {
         if self.retired {
             return 0;
         }
-        self.entries.iter().filter(|entry| entry.hash_entry).count()
+        self.control_sequences.len()
     }
 
     /// Returns the number of live slots, including retained spellings.
@@ -698,6 +732,7 @@ impl Interner {
         self.arena = String::new();
         self.entries = Vec::new();
         self.index = AHashMap::new();
+        self.control_sequences = ControlSequenceLedger::default();
         self.usage = InternerUsage::default();
         self.retired = true;
         Ok(InternerRetirement { usage })

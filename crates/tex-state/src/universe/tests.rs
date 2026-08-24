@@ -52,6 +52,36 @@ fn command_episode_admits_session_and_generation_once() {
 }
 
 #[test]
+fn primitive_installation_observes_only_canonical_multiletter_lookups() {
+    with_universe(budget(), |universe| {
+        universe.register_primitive_meaning("frozenonly", Meaning::Relax);
+        universe.install_primitive_meaning("x", Meaning::Relax);
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("usage after excluded names")
+                .detach_engine_usage_statistics()
+                .control_sequences,
+            0,
+            "frozen registry rows and single-character primitives use fixed slots"
+        );
+
+        universe.install_primitive_meaning("visible", Meaning::Relax);
+        universe.install_primitive_meaning("visible", Meaning::Relax);
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("usage after repeated primitive installation")
+                .detach_engine_usage_statistics()
+                .control_sequences,
+            1,
+            "§265 creation increments once and reuse preserves the ledger"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn csname_relaxes_previously_interned_undefined_control_sequence_only() {
     with_universe(budget(), |universe| {
         let undefined = universe.intern("latent").expect("intern undefined symbol");
@@ -90,6 +120,48 @@ fn csname_relaxes_previously_interned_undefined_control_sequence_only() {
         assert_eq!(
             context.meaning(undefined.symbol()),
             ResolvedMeaning::Static(Meaning::Undefined)
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn csname_creation_observes_hash_occupancy_once_across_group_restore() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("admit episode");
+        let constructed = context.intern_control_sequence("one \\csname");
+        assert_eq!(
+            context.detach_engine_usage_statistics().control_sequences,
+            0
+        );
+        context.begin_group(GroupKind::Simple, 1).expect("group");
+        assert_eq!(
+            context.intern_relaxed_control_sequence("one \\csname"),
+            constructed
+        );
+        assert_eq!(
+            context.meaning(constructed),
+            ResolvedMeaning::Static(Meaning::Relax)
+        );
+        assert_eq!(
+            context.detach_engine_usage_statistics().control_sequences,
+            1
+        );
+        assert_eq!(
+            context.intern_relaxed_control_sequence("one \\csname"),
+            constructed
+        );
+        context
+            .end_group(GroupKind::Simple)
+            .expect("restore implicit relaxation");
+        assert_eq!(
+            context.meaning(constructed),
+            ResolvedMeaning::Static(Meaning::Undefined)
+        );
+        assert_eq!(
+            context.detach_engine_usage_statistics().control_sequences,
+            1,
+            "§§256/372 retain the created name after meaning rollback"
         );
     })
     .expect("universe allocation");
@@ -313,11 +385,28 @@ fn rollback_never_recycles_an_interned_symbol() {
         let first = universe.intern("first").expect("intern first");
         let cursor = universe.journal_cursor().expect("cursor");
         let second = universe.intern("second").expect("intern second");
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("usage before rollback")
+                .detach_engine_usage_statistics()
+                .control_sequences,
+            2
+        );
         universe.restore_state(cursor).expect("state rollback");
 
         assert_eq!(universe.resolve_symbol(first), Ok("first"));
         assert_eq!(universe.resolve_symbol(second), Ok("second"));
         assert_eq!(universe.intern("second"), Ok(second));
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("usage after rollback")
+                .detach_engine_usage_statistics()
+                .control_sequences,
+            2,
+            "§256 occupancy survives state rollback and repeated lookup"
+        );
     })
     .expect("universe allocation");
 }

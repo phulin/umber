@@ -262,16 +262,29 @@ fn independent_sessions_share_no_mutable_dynamic_name_registry() {
 #[test]
 fn hash_occupancy_is_monotonic_metadata_not_name_reallocation() {
     let mut interner = roomy();
+    let null = interner.intern_hash("").expect("null control sequence");
     let x = interner
         .intern_hash("x")
         .expect("one-letter control symbol");
+    let active = interner.intern_active('~').expect("active character");
+    let internal = interner
+        .intern_internal("frozen")
+        .expect("frozen control sequence");
     let ordinary = interner.intern("multiletter").expect("retained name");
+    assert_eq!(interner.multiletter_len(), 0);
     let hashed = interner
         .intern_hash("multiletter")
         .expect("same name reaches hash");
+    let reused = interner
+        .intern_hash("multiletter")
+        .expect("occupied name is reused");
 
     assert_eq!(ordinary, hashed);
+    assert_eq!(hashed, reused);
+    assert_eq!(interner.is_hash_entry(null), Ok(false));
     assert_eq!(interner.is_hash_entry(x), Ok(false));
+    assert_eq!(interner.is_hash_entry(active), Ok(false));
+    assert_eq!(interner.is_hash_entry(internal), Ok(false));
     assert_eq!(interner.is_hash_entry(hashed), Ok(true));
     assert_eq!(interner.multiletter_len(), 1);
 }

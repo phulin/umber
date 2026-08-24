@@ -593,14 +593,14 @@ impl<G> Universe<G> {
         }
     }
 
-    /// Interns outside every TeX group and rollback cursor, then admits the
-    /// issued compact slot into the generation's dense meaning bank.
+    /// Observes one TeX82 §259 lookup outside every group and rollback cursor,
+    /// then admits the issued compact slot into the dense meaning bank.
     pub fn intern(&mut self, name: &str) -> Result<SymbolId, UniverseError> {
         if self.core.is_none() {
             return Err(UniverseError::Retired);
         }
         let is_new = self.interner().known(name).is_none();
-        let symbol = self.interner_mut().intern(name)?;
+        let symbol = self.interner_mut().intern_hash(name)?;
         if is_new && name.chars().nth(1).is_some() {
             self.engine_usage.make_string(name);
         }

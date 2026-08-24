@@ -43,6 +43,7 @@ fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
             .expect("font identifier");
         let used = context.detach_engine_usage_statistics();
         assert_eq!((used.strings, used.string_characters), (4, 18));
+        assert_eq!(used.control_sequences, 1);
         drop(context);
         (
             universe.capture_format_image().expect("capture format"),
@@ -58,6 +59,7 @@ fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
         let mut context = universe.command_context().expect("loaded context");
         let loaded = context.detach_engine_usage_statistics();
         assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
+        assert_eq!(loaded.control_sequences, 1);
         assert_eq!(
             (loaded.string_capacity, loaded.string_character_capacity),
             before_capacity
@@ -68,8 +70,16 @@ fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
         context.slow_make_string_pool_string("fresh");
         context.slow_make_string_pool_string("fresh");
         context.make_string_pool_string("fresh");
+        context.intern_hash_control_sequence("newcs");
+        assert_eq!(
+            context.detach_engine_usage_statistics().control_sequences,
+            1,
+            "format-loaded lookup reuses permanent occupancy"
+        );
+        context.intern_hash_control_sequence("freshcs");
         let used = context.detach_engine_usage_statistics();
-        assert_eq!((used.strings, used.string_characters), (2, 10));
+        assert_eq!((used.strings, used.string_characters), (3, 17));
+        assert_eq!(used.control_sequences, 2);
     })
     .expect("materialize format");
 }

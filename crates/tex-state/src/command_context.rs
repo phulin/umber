@@ -3740,9 +3740,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
-        let symbol = self
-            .symbol(name)
-            .unwrap_or_else(|| self.intern_control_sequence(name));
+        let symbol = self.intern_hash_control_sequence(name);
         if matches!(
             self.meaning(symbol),
             ResolvedMeaning::Static(Meaning::Undefined)

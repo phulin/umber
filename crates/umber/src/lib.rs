@@ -982,6 +982,46 @@ mod primitive_mode_tests {
     }
 
     #[test]
+    fn initex_control_sequence_ledger_follows_the_selected_profile() {
+        let initialized_count = |mode: EngineMode| {
+            with_stores(|stores| {
+                mode.prepare_initex(stores);
+                stores
+                    .command_context()
+                    .expect("profile usage")
+                    .detach_engine_usage_statistics()
+                    .control_sequences
+            })
+        };
+        let tex82 = initialized_count(EngineMode::Tex82);
+        let etex = initialized_count(EngineMode::ETex);
+        let pdftex = initialized_count(EngineMode::PdfTex);
+
+        assert!(tex82 > 0, "TeX82 installs multiletter primitives");
+        assert!(etex > tex82, "e-TeX adds its profile-owned primitives");
+        assert!(pdftex > etex, "pdfTeX adds its profile-owned primitives");
+
+        with_stores(|stores| {
+            EngineMode::Tex82.prepare_initex(stores);
+            let initialized = stores
+                .command_context()
+                .expect("initialized usage")
+                .detach_engine_usage_statistics()
+                .control_sequences;
+            EngineMode::Tex82.install_after_format(stores);
+            assert_eq!(
+                stores
+                    .command_context()
+                    .expect("registered usage")
+                    .detach_engine_usage_statistics()
+                    .control_sequences,
+                initialized,
+                "loaded-format registry reconstruction observes no new hash lookup"
+            );
+        });
+    }
+
+    #[test]
     fn latex_format_restores_frozen_base_primitives_without_rebinding_live_names() {
         with_stores(|stores| {
             install_plain_catcodes(stores);

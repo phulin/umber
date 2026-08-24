@@ -588,9 +588,9 @@ fn validate_logical_rows(
                 "active format name is not one scalar".to_owned(),
             ));
         }
-        if name.kind == 5 && name.hash_entry {
+        if name.hash_entry && name.kind != 2 {
             return Err(FormatError::InvalidState(
-                "format spelling cannot be a hash entry".to_owned(),
+                "only a multiletter format name can occupy the hash".to_owned(),
             ));
         }
     }
