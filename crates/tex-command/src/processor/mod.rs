@@ -152,6 +152,9 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// fact to decide whether that replay is a decimal point or a unit.
     pub(crate) last_integer_terminator: Option<crate::CurrentCommand<G>>,
     next_delivery_sequence: u64,
+    /// Move-only scanner capability temporarily carried by the exact caller
+    /// continuation while a fresh processor borrow performs its retry.
+    pub(crate) scanner_resume: Option<crate::execution_scratch::ScannerFrameKey<G>>,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
     /// tex.web §360 has just ended a `\\read` pseudo-file's only line.
@@ -228,12 +231,38 @@ impl<G> CommandProcessor<'_, '_, G> {
             .max(stamp.sequence().wrapping_add(1));
     }
 
+    pub(crate) fn pending_scanner_frame(
+        &self,
+    ) -> Result<Option<&crate::scan_toks::PendingScanToks<G>>, crate::execution_scratch::ScratchError>
+    {
+        self.scanner_resume
+            .as_ref()
+            .map(|key| self.command.scratch.scanner_frame(key))
+            .transpose()
+    }
+
+    #[must_use]
+    pub fn take_scanner_resume(&mut self) -> Option<crate::ScannerFrameKey<G>> {
+        self.scanner_resume.take()
+    }
+
+    pub fn install_scanner_resume(&mut self, key: Option<crate::ScannerFrameKey<G>>) {
+        assert!(
+            self.scanner_resume.is_none(),
+            "a processor retry accepts exactly one scanner-frame capability"
+        );
+        self.scanner_resume = key;
+    }
+
     /// Returns the outermost expandable command retained by a nested resource
     /// suspension. The executor uses this exact command, rather than the
     /// command that originally entered settlement, as its typed retry seam.
     #[must_use]
     pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand<G>> {
-        self.command.pending_expansion_command()
+        self.scanner_resume
+            .as_ref()
+            .and_then(|key| self.command.scratch.expansion_frame(key).ok())
+            .map(|pending| &pending.command)
     }
 
     /// Captures TeX82 §82's `show_context` while this processor still owns
@@ -516,6 +545,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             last_delivery: None,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
+            scanner_resume: None,
             read_line_ended: false,
             outer_recovered_while_matching: false,
             outer_recovered_while_absorbing: false,

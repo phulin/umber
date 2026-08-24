@@ -107,21 +107,6 @@ pub struct CommandStateRoots<G> {
     /// TeX82 §§440--445 integer scan state retained when an expandable number
     /// conversion's operand delivery asks the immutable host.
     pub(crate) pending_integer_scans: Vec<crate::scanners::PendingIntegerScan>,
-    /// Expanded token collectors suspended at an immutable host boundary.
-    ///
-    /// Nested collectors append their continuation while unwinding, so the
-    /// outermost collector is resumed first and naturally re-enters the
-    /// nested collector beneath it. Each entry owns only its accumulated
-    /// rooted words, scanner scope, and exact failed current command.
-    pub(crate) pending_scan_toks: Vec<crate::scan_toks::PendingScanToks<G>>,
-    /// Expandable current commands whose host-dependent expansion suspended.
-    /// Nested expansion unwinds inner-to-outer and appends at each layer, so
-    /// popping resumes the outermost exact delivery first without redelivery.
-    pub(crate) pending_expansions: Vec<crate::CurrentCommand<G>>,
-    /// TeX82 §368 `\expandafter` operands held while its second command waits
-    /// on an immutable host resource. Nested frames unwind inner-to-outer and
-    /// are popped outermost-first when the retained expandable command resumes.
-    pub(crate) pending_expandafters: Vec<crate::processor::expand::PendingExpandAfter<G>>,
     /// Accumulated TeX82 §372 `\csname` characters held across immutable host
     /// suspension. Nested names unwind inner-to-outer and resume in that order.
     pub(crate) pending_csnames: Vec<String>,
@@ -170,10 +155,6 @@ pub struct CommandStateRoots<G> {
 
 impl<G> Clone for CommandStateRoots<G> {
     fn clone(&self) -> Self {
-        assert!(
-            self.pending_scan_toks.is_empty(),
-            "a suspended scanner scope capability cannot cross a command-root clone"
-        );
         Self {
             engine_semantics: self.engine_semantics,
             input: self.input.clone(),
@@ -192,9 +173,6 @@ impl<G> Clone for CommandStateRoots<G> {
             pending_input_open: self.pending_input_open.clone(),
             pending_file_enquiry: self.pending_file_enquiry.clone(),
             pending_integer_scans: self.pending_integer_scans.clone(),
-            pending_scan_toks: Vec::new(),
-            pending_expansions: self.pending_expansions.clone(),
-            pending_expandafters: self.pending_expandafters.clone(),
             pending_csnames: self.pending_csnames.clone(),
             named_token_list_pushes: self.named_token_list_pushes.clone(),
             file_framing_events: self.file_framing_events.clone(),
@@ -219,7 +197,8 @@ pub struct CommandState<G> {
     /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
     /// Current-generation reusable packed execution lanes. Macro activations
-    /// retain only private generation-branded frame indices into this owner.
+    /// and typed operation continuations retain only private
+    /// generation-branded frame indices into this owner.
     pub(crate) scratch: crate::execution_scratch::ExecutionScratch<G>,
     /// One direct-operation child scope. It stays installed across an
     /// in-process resource suspension and is consumed only by commit or
@@ -248,6 +227,24 @@ pub(crate) struct PendingFileEnquiry {
     pub(crate) length: i32,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct PendingExpansion<G> {
+    pub(crate) command: crate::CurrentCommand<G>,
+    pub(crate) child:
+        Option<crate::execution_scratch::ChildContinuation<G, PendingExpansionDestination>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PendingExpansionDestination {
+    Dispatch,
+}
+
+impl<G> PendingExpansion<G> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        self.child.take().map(|child| child.restore().0)
+    }
+}
+
 impl<G> Default for CommandStateRoots<G> {
     fn default() -> Self {
         Self {
@@ -268,9 +265,6 @@ impl<G> Default for CommandStateRoots<G> {
             pending_input_open: None,
             pending_file_enquiry: None,
             pending_integer_scans: Vec::new(),
-            pending_scan_toks: Vec::new(),
-            pending_expansions: Vec::new(),
-            pending_expandafters: Vec::new(),
             pending_csnames: Vec::new(),
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
@@ -1066,34 +1060,6 @@ impl<G> CommandState<G> {
     pub(crate) fn retain_pending_file_enquiry(&mut self, pending: PendingFileEnquiry) {
         debug_assert!(self.pending_file_enquiry.is_none());
         self.pending_file_enquiry = Some(pending);
-    }
-
-    pub(crate) fn take_pending_expansion(&mut self) -> Option<crate::CurrentCommand<G>> {
-        self.pending_expansions.pop()
-    }
-
-    pub(crate) fn retain_pending_expansion(&mut self, command: crate::CurrentCommand<G>) {
-        self.pending_expansions.push(command);
-    }
-
-    /// Returns the outermost expandable command retained by resource
-    /// suspension without consuming its command-owned continuation.
-    #[must_use]
-    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand<G>> {
-        self.pending_expansions.last()
-    }
-
-    pub(crate) fn take_pending_expandafter(
-        &mut self,
-    ) -> Option<crate::processor::expand::PendingExpandAfter<G>> {
-        self.pending_expandafters.pop()
-    }
-
-    pub(crate) fn retain_pending_expandafter(
-        &mut self,
-        pending: crate::processor::expand::PendingExpandAfter<G>,
-    ) {
-        self.pending_expandafters.push(pending);
     }
 
     pub(crate) fn take_pending_csname(&mut self) -> Option<String> {

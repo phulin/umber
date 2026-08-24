@@ -192,12 +192,21 @@ returned for reuse.
 Scanner control is mostly ordinary stack state: a `ScannerEpisode`, phase
 enum, counters, and sink coordinates. The current `AttemptArena`, however,
 still allocates `AttemptTokenBuffer { words: Vec<_> }` rows and keeps emptied
-buffers in `recycled_token_buffers`. `PendingScanToks` values are held in a
-LIFO `CommandStateRoots::pending_scan_toks` vector so nested scans can unwind
-at a resource boundary. That representation is **migration in progress**.
-The target has one current-generation scratch owner, fixed typed continuation
-state, and direct-to-final builders; it has no per-scanner arena and no hidden
-`Vec` mailbox.
+buffers in `recycled_token_buffers`. `PendingScanToks` values occupy
+ABA-tagged slots in the current generation's reusable `ExecutionScratch`. A
+move-only `ScannerFrameKey` is the sole root capability. Each scanner,
+expansion, `\expandafter`, preflight, diagnostic, or alignment caller moves its
+exact child key into a typed phase destination; resume consumes that edge
+before continuing the caller. Abort follows the structural child chain
+deepest-first so younger scanner episodes and attempt scopes close before
+their parents. There is no global pending-scan or pending-expansion scheduler,
+configuration search, or coordinate repair.
+
+Multi-child primitives require a caller frame of their own. For example,
+`\pdfstrcmp` stores whether its left or right expanded scan owns the child; the
+right phase also retains the completed left attempt-list coordinate. A retry
+therefore cannot accidentally deliver the right child to the syntactically
+identical left scan call.
 
 Direct-to-final construction means the eventual owner supplies the builder.
 An unknown-length toks value, mark, hook, or other durable list appends into
@@ -217,11 +226,12 @@ resume point, the typed requested operation, and one coarse generation owner.
 alignment, and diagnostic work. Resume consumes the owner; cancellation drops
 it. This keeps exactly the current generation alive, not one owner per token.
 
-Command-side nested expansion currently uses vectors such as
-`pending_expansions`, `pending_expandafters`, `pending_csnames`, and
-`pending_scan_toks`. Their live entries are future-relevant, but their mailbox
-shape is transitional. They must not become a general `Vec<Token>` or
-`Vec<Box<dyn Any>>` channel whose contents and retirement cannot be audited.
+Nested scanner and expansion suspension uses the same fixed typed scratch lane
+described above. Its backing vectors grow only when a generation reaches a new
+simultaneous high-water mark; freed slots are reused with a new serial, so a
+stale or double-consumed key is rejected. Scalar continuations such as an
+in-progress `\csname` remain in their dedicated typed state. None may become a
+general token, boxed-dynamic, or caller-order mailbox.
 
 The handle-free `OwnedCommandContinuation` schema, validation, and atomic
 destination materializer are implemented, but the module still carries a
@@ -296,9 +306,9 @@ not supplied the file.
    semantically under `\outer`, but C belongs to the same scratch owner, not a
    child arena.
 3. The toks scanner owns phase/counter state and, in the current implementation,
-   two attempt token-buffer sinks. Its unfinished state is placed in
-   `pending_scan_toks` while the enclosing expansion frames unwind into their
-   typed pending vectors.
+   two attempt token-buffer sinks. Its unfinished state moves into an
+   ABA-tagged `ExecutionScratch` slot; each enclosing expansion moves that
+   non-`Copy` key into its own typed caller frame.
 4. `PendingCommandAttempt` takes the attempt arena, fixed opening mark, resume
    coordinates, typed resource operation, and one coarse current-generation
    owner. Ordinary Rust locals and borrows end before control returns to the

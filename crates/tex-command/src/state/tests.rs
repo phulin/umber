@@ -625,8 +625,6 @@ fn default_command_state_is_quiescent_at_a_cold_summary_boundary() {
         let state = CommandState::<()>::default();
         assert!(state.scanner.is_quiescent());
         assert!(state.input.levels.is_empty());
-        assert!(state.pending_expansions.is_empty());
-        assert!(state.pending_scan_toks.is_empty());
     });
 }
 

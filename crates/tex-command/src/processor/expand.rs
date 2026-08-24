@@ -39,19 +39,46 @@ use crate::observation::{
 
 /// Operand state held by TeX82 §368 while `\expandafter` expands its second
 /// command across an immutable host suspension.
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingExpandAfter<G> {
     first: CurrentCommand<G>,
     second: CurrentCommand<G>,
+    child: Option<crate::execution_scratch::ChildContinuation<G, PendingExpandAfterDestination>>,
 }
 
-impl<G> Clone for PendingExpandAfter<G> {
-    fn clone(&self) -> Self {
-        *self
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingExpandAfterDestination {
+    ExpandingSecond,
+}
+
+impl<G> PendingExpandAfter<G> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        self.child.take().map(|child| child.restore().0)
     }
 }
 
-impl<G> Copy for PendingExpandAfter<G> {}
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct PendingPdfStringCompare<G> {
+    phase: PdfStringComparePhase,
+    child: Option<crate::execution_scratch::ChildContinuation<G, PdfStringCompareDestination>>,
+}
+
+impl<G> PendingPdfStringCompare<G> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        self.child.take().map(|child| child.restore().0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfStringComparePhase {
+    Left,
+    Right { left: crate::AttemptTokenListId },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfStringCompareDestination {
+    Scan,
+}
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
@@ -732,11 +759,26 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryMode::Raw => self.raw_delivery_driver(pending, policy),
             DeliveryMode::Expanded(expanded) => {
                 let mut resumed_pending = false;
-                if pending.is_none() {
-                    pending = self.command.take_pending_expansion();
-                    resumed_pending = pending.is_some();
-                } else if self.command.pending_expansions.last() == pending.as_ref() {
-                    let _ = self.command.take_pending_expansion();
+                if self
+                    .scanner_resume
+                    .as_ref()
+                    .is_some_and(crate::ScannerFrameKey::is_expansion)
+                {
+                    let retained = self
+                        .command
+                        .scratch
+                        .expansion_frame(
+                            self.scanner_resume
+                                .as_ref()
+                                .expect("matched expansion frame"),
+                        )
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    if pending.is_some_and(|command| command != retained.command) {
+                        let key = self.scanner_resume.take().expect("matched expansion frame");
+                        self.abort_continuation(key)?;
+                        return Err(CommandError::input_invariant());
+                    }
+                    pending = Some(retained.command);
                     resumed_pending = true;
                 }
                 if resumed_pending && let Some(command) = &pending {
@@ -920,9 +962,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | Err(CommandError::ParagraphInMacroArgument)
                 | Err(CommandError::OuterInMacroArgument) => {}
                 Err(error) => {
-                    if error.is_resource_suspension() {
-                        self.command.retain_pending_expansion(command);
-                    }
                     return Err(error);
                 }
             }
@@ -1023,8 +1062,34 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn expand_with_trace(
         &mut self,
         command: &CurrentCommand<G>,
-        report_trace: bool,
+        mut report_trace: bool,
     ) -> Result<(), CommandError> {
+        if self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_expansion)
+        {
+            let key = self.scanner_resume.take().expect("matched expansion frame");
+            let mut retained = self
+                .command
+                .scratch
+                .take_expansion_frame(key)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if retained.command != *command {
+                if let Some(child) = retained.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            if let Some(child) = retained.child.take() {
+                let (key, destination) = child.restore();
+                if destination != crate::state::PendingExpansionDestination::Dispatch {
+                    return Err(CommandError::input_invariant());
+                }
+                self.scanner_resume = Some(key);
+            }
+            report_trace = false;
+        }
         #[cfg(feature = "profiling")]
         {
             if !is_ranked_fused_expansion(command.meaning()) {
@@ -1072,7 +1137,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
-        match command.meaning() {
+        let result = (|| match command.meaning() {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
                 if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
             {
@@ -1400,7 +1465,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 _ => Err(CommandError::input_invariant()),
             },
+        })();
+        if result
+            .as_ref()
+            .is_err_and(CommandError::is_resource_suspension)
+        {
+            let key = self
+                .command
+                .scratch
+                .store_expansion_frame(crate::state::PendingExpansion {
+                    command: *command,
+                    child: crate::execution_scratch::ChildContinuation::capture(
+                        &mut self.scanner_resume,
+                        crate::state::PendingExpansionDestination::Dispatch,
+                    ),
+                })
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            self.scanner_resume = Some(key);
+        } else if let Some(child) = self.scanner_resume.take() {
+            self.abort_continuation(child)?;
+            if result.is_ok() {
+                return Err(CommandError::input_invariant());
+            }
         }
+        result
     }
 
     /// e-TeX 2.6 etex.ch §53a `pseudo_start`.
@@ -1522,9 +1610,83 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// pdfTeX string-pool bytes. Canonical pdfTeX input is byte-valued; UTF-8
     /// preserves that ordering for Umber's extended scalar domain as well.
     fn expand_string_compare(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
-        let left = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let left = self.attempt_token_list_string_text(left.replacement_text)?;
-        let right = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let pending = if self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_pdf_string_compare)
+        {
+            let key = self
+                .scanner_resume
+                .take()
+                .expect("matched pdf string-compare frame");
+            Some(
+                self.command
+                    .scratch
+                    .take_pdf_string_compare_frame(key)
+                    .map_err(crate::scan_toks::scratch_command_error)?,
+            )
+        } else {
+            None
+        };
+        let phase = pending
+            .as_ref()
+            .map_or(PdfStringComparePhase::Left, |pending| pending.phase);
+        if let Some(mut pending) = pending
+            && let Some(child) = pending.child.take()
+        {
+            let (key, destination) = child.restore();
+            if destination != PdfStringCompareDestination::Scan {
+                return Err(CommandError::input_invariant());
+            }
+            self.scanner_resume = Some(key);
+        }
+        let left = match phase {
+            PdfStringComparePhase::Left => {
+                match self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true }) {
+                    Ok(scanned) => scanned.replacement_text,
+                    Err(error) => {
+                        if error.is_resource_suspension() {
+                            let key = self
+                                .command
+                                .scratch
+                                .store_pdf_string_compare_frame(PendingPdfStringCompare {
+                                    phase: PdfStringComparePhase::Left,
+                                    child: crate::execution_scratch::ChildContinuation::capture(
+                                        &mut self.scanner_resume,
+                                        PdfStringCompareDestination::Scan,
+                                    ),
+                                })
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                            self.scanner_resume = Some(key);
+                        }
+                        return Err(error);
+                    }
+                }
+            }
+            PdfStringComparePhase::Right { left } => left,
+        };
+        let right = match self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })
+        {
+            Ok(scanned) => scanned,
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    let key = self
+                        .command
+                        .scratch
+                        .store_pdf_string_compare_frame(PendingPdfStringCompare {
+                            phase: PdfStringComparePhase::Right { left },
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                PdfStringCompareDestination::Scan,
+                            ),
+                        })
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    self.scanner_resume = Some(key);
+                }
+                return Err(error);
+            }
+        };
+        let left = self.attempt_token_list_string_text(left)?;
         let right = self.attempt_token_list_string_text(right.replacement_text)?;
         let value = match left.as_bytes().cmp(right.as_bytes()) {
             std::cmp::Ordering::Less => -1,
@@ -1674,8 +1836,33 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
     fn expand_expandafter(&mut self) -> Result<(), CommandError> {
-        let (first, second) = if let Some(pending) = self.command.take_pending_expandafter() {
+        let pending = if self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_expandafter)
+        {
+            let key = self
+                .scanner_resume
+                .take()
+                .expect("matched expandafter frame");
+            Some(
+                self.command
+                    .scratch
+                    .take_expandafter_frame(key)
+                    .map_err(crate::scan_toks::scratch_command_error)?,
+            )
+        } else {
+            None
+        };
+        let (first, second) = if let Some(mut pending) = pending {
             self.resume_current_command(&pending.second);
+            if let Some(child) = pending.child.take() {
+                let (key, destination) = child.restore();
+                if destination != PendingExpandAfterDestination::ExpandingSecond {
+                    return Err(CommandError::input_invariant());
+                }
+                self.install_scanner_resume(Some(key));
+            }
             (pending.first, pending.second)
         } else {
             (
@@ -1686,10 +1873,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         if is_expandable_command(&second) {
             if let Err(error) = self.expand(&second) {
                 if error.is_resource_suspension() {
-                    self.command
-                        .retain_pending_expandafter(PendingExpandAfter { first, second });
+                    let key = self
+                        .command
+                        .scratch
+                        .store_expandafter_frame(PendingExpandAfter {
+                            first,
+                            second,
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                PendingExpandAfterDestination::ExpandingSecond,
+                            ),
+                        })
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    self.scanner_resume = Some(key);
                 }
                 return Err(error);
+            }
+            if self.scanner_resume.is_some() {
+                return Err(CommandError::input_invariant());
             }
             self.replay_expandafter_first(first)?;
         } else {

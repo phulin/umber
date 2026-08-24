@@ -234,7 +234,17 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
     assert!(expansion.contains("match self.expand_with_trace("));
     assert!(expansion.contains("suppress_first_expansion_trace"));
-    assert!(expansion.contains("self.command.retain_pending_expansion(command);"));
+    assert!(expansion.contains(".store_expansion_frame(crate::state::PendingExpansion"));
+    assert!(expansion.contains("ChildContinuation::capture("));
+    assert!(expansion.contains("PendingExpansionDestination::Dispatch"));
+    assert!(expansion.contains(".store_expandafter_frame(PendingExpandAfter"));
+    assert!(expansion.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
+    assert!(expansion.contains("PdfStringComparePhase::Right { left }"));
+    assert!(
+        !expansion.contains("retain_pending_expansion")
+            && !expansion.contains("retain_pending_expandafter"),
+        "resource retry ownership must stay in the typed scratch continuation chain"
+    );
     assert!(
         !expansion.contains("let retry = command.clone();"),
         "ordinary expansion must move the live command only at a typed retry barrier"

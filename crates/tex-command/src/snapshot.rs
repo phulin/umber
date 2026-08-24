@@ -682,9 +682,6 @@ impl<G> CommandState<G> {
         if self.pending_input_open.is_some()
             || self.pending_file_enquiry.is_some()
             || !self.pending_integer_scans.is_empty()
-            || !self.pending_scan_toks.is_empty()
-            || !self.pending_expansions.is_empty()
-            || !self.pending_expandafters.is_empty()
             || !self.pending_csnames.is_empty()
         {
             return Err(CommandSummaryError::ResourceSuspension);

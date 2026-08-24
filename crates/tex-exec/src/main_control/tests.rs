@@ -5879,6 +5879,7 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
             let bytes: &[u8] = match name {
                 "first" => b"ABCD",
                 "second" => b"AB",
+                "third" => b"CD",
                 other => panic!("unexpected file enquiry {other:?}"),
             };
             tex_command::FileEnquiryResource::new(
@@ -5925,6 +5926,10 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
             }
         };
         assert_eq!(control.pending_resource_site(), None);
+        assert!(
+            control.command.named_boundary_is_quiescent(),
+            "terminal command continuation remained live"
+        );
         ledger
             .terminal_receipt(&control, terminal)
             .expect("fulfilled file enquiries leave terminal completion quiescent");
@@ -5963,6 +5968,43 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
     let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
     assert_eq!(staged_requests, ["second"]);
     assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn expandafter_child_completion_resumes_its_owning_expanded_collector() {
+    // The outer macro-definition collector owns `\expandafter`; that frame
+    // owns its second-command `\expanded` invocation; and the nested scanner
+    // owns each file-enquiry expansion. Two host suspensions force the exact
+    // child edge to be consumed and reinstalled more than once before the
+    // outer scanner may retire its attempt scope.
+    let source = br"\edef\result{\expandafter Q\expanded{\unexpanded{U}\pdffiledump length 2{second}\pdffiledump length 2{third}}}\message{[\result]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(preloaded_terminal.contains("[QU41424344]"));
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second", "third"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn pdfstrcmp_right_operand_resumes_its_exact_child_scanner() {
+    for source in [
+        br"\edef\result{\pdfstrcmp{\pdffiledump length 2{second}}{right}}\message{[\result]}\end"
+            .as_slice(),
+        br"\edef\result{\pdfstrcmp{left}{\pdffiledump length 2{second}}}\message{[\result]}\end"
+            .as_slice(),
+    ] {
+        let (preloaded_terminal, preloaded_requests) =
+            run_pdftex_file_probe_job(source, &["second"]);
+        assert!(preloaded_requests.is_empty());
+
+        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+        assert_eq!(staged_requests, ["second"]);
+        assert_eq!(staged_terminal, preloaded_terminal);
+    }
 }
 
 #[test]
@@ -6599,6 +6641,17 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
                 break;
             }
         }
+        assert!(
+            retried_control
+                .pending_alignment_delivery
+                .as_ref()
+                .is_some_and(|pending| pending.scanner.is_some()),
+            "alignment retry must own its exact expanded child"
+        );
+        assert!(
+            retried_control.pending_alignment_delivery.is_some(),
+            "expanded input retry must retain its alignment destination"
+        );
         retried_control
             .capabilities_mut()
             .register_input("child.tex", child.clone());
@@ -6613,7 +6666,19 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
             let mut direct = ObservationRecorder::default();
             run_to_end_observed(&mut direct_control, direct_stores, &mut direct);
 
-            assert_eq!(retried.0, direct.0);
+            if retried.0 != direct.0 {
+                let mismatch = retried
+                    .0
+                    .iter()
+                    .zip(&direct.0)
+                    .position(|(left, right)| left != right)
+                    .unwrap_or(retried.0.len().min(direct.0.len()));
+                panic!(
+                    "first observation mismatch at {mismatch}: retried={:?} direct={:?}",
+                    retried.0.get(mismatch),
+                    direct.0.get(mismatch)
+                );
+            }
             assert_eq!(
                 retried_control.advance_telemetry().maximum_live_savepoints,
                 0

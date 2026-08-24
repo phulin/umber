@@ -276,6 +276,14 @@ On a typed resource need, the run retains the prepared request and enters
 `AwaitingResources`. No restoration calls host policy. A diagnostic-oriented
 runner returns a captured TeX82 §93 fatal with its source site after closing
 the failed direct operation.
+
+Command-side suspension is a structural ownership chain, not a retry-order
+queue. The pending operation, preflight, diagnostic, or alignment phase owns
+one move-only root continuation key. Each nested scanner or expansion frame
+owns its exact child key and return destination in the current generation's
+ABA-tagged reusable scratch lane. Resume consumes the caller edge directly;
+abort closes children before parents. A scanner configuration mismatch is an
+invariant failure, never permission to search, repair, rehome, or skip a frame.
 The retained complete-job owner instead uses the runner's fatal-completing
 entry: §81's `jump_out` latches semantic completion at §1332's `end_of_TEX`,
 then the owner performs §1333 cleanup. Neither path retries the unavailable

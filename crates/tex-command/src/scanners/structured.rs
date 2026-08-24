@@ -3868,9 +3868,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         expanded: bool,
     ) -> Result<ScannedMacroDefinition, CommandError> {
         let target = if let Some(target) = self
-            .command
-            .pending_scan_toks
-            .last()
+            .pending_scanner_frame()
+            .map_err(|_| CommandError::input_invariant())?
             .and_then(|pending| pending.macro_definition_target(expanded))
         {
             target
