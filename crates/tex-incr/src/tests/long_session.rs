@@ -39,8 +39,14 @@ fn accepted_and_rejected_revisions_remain_cold_equivalent_over_a_long_session() 
 #[ignore = "explicit 2,048-cycle incremental semantic stress tier"]
 fn long_session_thousands_match_clean_at_equal_work_milestones() {
     let mut source = page_source(1);
-    let mut incremental =
-        Session::start((), "stress", RevisionId::new(1), &source, 256).expect("stress session");
+    let mut incremental = Session::start(
+        Box::leak(Box::new(new_reachability_store())),
+        "stress",
+        RevisionId::new(1),
+        &source,
+        256,
+    )
+    .expect("stress session");
     incremental.cold().expect("initial revision");
 
     for revision in 2_u64..=2_049 {

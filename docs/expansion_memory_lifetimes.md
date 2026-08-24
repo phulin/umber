@@ -38,7 +38,8 @@ A chunk is not a revision, a history entry, or an independent lifetime owner.
 
 ```text
 process-immutable tables and compiled semantics
-  `-- session + append-only interning epoch + ReachabilityStore
+  `-- caller-owned ReachabilityStore + append-only interning epoch
+        `-- engine/editor session borrow
         +-- prior accepted slot lease (optional, read-only)
         `-- current candidate slot lease (exclusive)
               +-- dense TeX state + exact save journal
@@ -95,7 +96,8 @@ revision history. Expansion borrows them. Host capabilities are also borrowed
 for an admitted episode; they are not smuggled into tokens or definitions.
 
 `ReachabilityStore::new` creates the session's interning epoch and one coarse
-store allocation together. Its `Interner` holds an append-only string arena,
+allocation containing its inline two-slot store. Its `Interner` holds an
+append-only string arena,
 entry vector, and hash buckets. Symbols remain stable through edits, so group
 exit, operation rollback, and candidate rejection do not remove names.
 Explicit budgets cap names, slots, and bytes. A symbol is an id, not an owner.
@@ -118,23 +120,26 @@ between preparation and atomic acceptance. Candidate or transaction rejection,
 ordinary drop, failed preparation, and acceptance all release the lease
 deterministically. A second factory returns `CandidateAlreadyLive` before it
 can issue another candidate or construct another generation. Claiming the
-existing session state and reachability store performs only coarse `Arc`
-retains and allocates no heap.
+existing session state performs allocation-free coarse store and candidate-
+lease `Arc` retains.
 
-A direct `&mut Session` borrow tied to `RevisionCandidate` would give stronger
-static exclusion, but the public persistent compile coordinator must store a
-session and its resource-suspended candidate side by side across host turns.
-That representation would be self-referential in safe Rust. Moving the whole
-session into the candidate would make ordinary drop discard the accepted prior
-instead of preserving it for rejection. The coarse session-boundary lease and
-fixed store slots are therefore the required interior owners; neither is a
+A direct `&mut Session` borrow tied to `RevisionCandidate` would prevent the
+public persistent compile coordinator from storing a session and its
+resource-suspended candidate side by side across host turns. Both instead
+share one caller-owned `ReachabilityStore`; their lifetime marker statically
+prevents escape beyond that owner without making either value
+self-referential. Exported FFI sessions may instead own the one coarse store
+allocation directly. The
+coarse session-boundary lease and fixed store slots remain interior owners;
+neither is a
 per-value row, runtime registry, or ordinary-read lookup.
 
 Runtime ids are invariantly branded by a generation. Copying an id is cheap
 and allowed inside an admitted generation; it never extends lifetime. The
-move-only retained lease keeps the external store and its physical slot alive.
-No individual token list, definition, chunk, input frame, or group owns an
-`Arc`.
+coarse store keeps the physical slot alive, while the move-only retained lease
+is statically bound to its ordinary Rust API owner and releases the slot. No
+individual
+token list, definition, chunk, input frame, or group owns an `Arc`.
 
 ### Durable rows and chunks
 

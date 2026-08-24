@@ -779,7 +779,9 @@ enum NonFileAdmission {
     PkFont { path: String, sha256: [u8; 32] },
 }
 
-pub struct VirtualCompileSession {
+pub struct VirtualCompileSession<'store> {
+    reachability_store: tex_state::ReachabilityStore,
+    reachability_owner: core::marker::PhantomData<&'store tex_state::ReachabilityStore>,
     main_path: VirtualPath,
     job_name: String,
     authored_root_name: Option<String>,
@@ -802,13 +804,13 @@ pub struct VirtualCompileSession {
     font_mapping_fallback: FontMappingFallbackPolicy,
     outputs: OutputCapabilitySet,
     html_asset_mode: tex_out::html::AssetMode,
-    incremental: Option<Box<tex_incr::Session>>,
+    incremental: Option<Box<tex_incr::Session<'store>>>,
     accepted_engine_output: Option<Box<tex_incr::AcceptedOutput>>,
     accepted_output: Option<MemoryRunOutput>,
     accepted_render_document: Option<RenderDocument>,
     pending_render_update: Option<RenderUpdate>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
-    candidate: Option<Box<RetainedCandidate>>,
+    candidate: Option<Box<RetainedCandidate<'store>>>,
     response_generation: u64,
     virtual_font_resources: PdfVirtualFontResources,
     pdf_font_closure_requests: BTreeSet<ResourceRequestKey>,
@@ -823,6 +825,23 @@ pub struct VirtualCompileSession {
     vfs_stage_time: Duration,
     #[cfg(not(target_arch = "wasm32"))]
     resource_wait_started: Option<Instant>,
+}
+
+#[cfg(test)]
+impl VirtualCompileSession<'static> {
+    pub(crate) fn new(options: SessionOptions) -> Result<Self, CompileError> {
+        let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
+        Self::new_with_store(store, options)
+    }
+}
+
+impl VirtualCompileSession<'static> {
+    /// Creates one self-contained coarse session owner for FFI hosts that
+    /// cannot express a Rust owner/session borrow pair.
+    #[doc(hidden)]
+    pub fn new_standalone(options: SessionOptions) -> Result<Self, CompileError> {
+        Self::new_owned(tex_incr::new_reachability_store(), options)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -849,30 +868,30 @@ impl RenderUpdate {
     }
 }
 
-enum CandidateExecution {
+enum CandidateExecution<'store> {
     Initial {
-        session: Box<tex_incr::Session>,
+        session: Box<tex_incr::Session<'store>>,
         accepted: Result<Box<tex_incr::AcceptedOutput>, tex_incr::SessionError>,
     },
-    Transaction(Result<Box<tex_incr::RevisionTransaction>, tex_incr::SessionError>),
+    Transaction(Result<Box<tex_incr::RevisionTransaction<'store>>, tex_incr::SessionError>),
 }
 
-enum RetainedExecution {
+enum RetainedExecution<'store> {
     Initial {
-        session: Box<tex_incr::Session>,
-        candidate: tex_incr::RevisionCandidate,
+        session: Box<tex_incr::Session<'store>>,
+        candidate: tex_incr::RevisionCandidate<'store>,
     },
-    Pending(tex_incr::RevisionCandidate),
+    Pending(tex_incr::RevisionCandidate<'store>),
 }
 
-struct RetainedCandidate {
+struct RetainedCandidate<'store> {
     workspace: ProjectWorkspace,
-    execution: RetainedExecution,
+    execution: RetainedExecution<'store>,
     response_generation: u64,
     suspension_serial: u64,
 }
 
-impl RetainedCandidate {
+impl RetainedCandidate<'_> {
     fn engine_retention(&self) -> tex_incr::RetentionMetrics {
         match &self.execution {
             RetainedExecution::Initial { candidate, .. }
@@ -881,7 +900,7 @@ impl RetainedCandidate {
     }
 }
 
-impl RetainedExecution {
+impl RetainedExecution<'_> {
     fn resolve_frozen_diagnostic_primary(
         &self,
         frozen: &tex_exec::FrozenDiagnosticOrigin,
@@ -906,7 +925,7 @@ impl RetainedExecution {
 impl CompileDiagnostic {
     fn from_session_error(
         error: &tex_incr::SessionError,
-        candidate: Option<&RetainedExecution>,
+        candidate: Option<&RetainedExecution<'_>>,
     ) -> Self {
         let location = error
             .frozen_diagnostic_origin()
@@ -921,7 +940,7 @@ impl CompileDiagnostic {
 
 fn compile_error_from_session(
     error: &tex_incr::SessionError,
-    candidate: Option<&RetainedExecution>,
+    candidate: Option<&RetainedExecution<'_>>,
 ) -> CompileError {
     match error {
         tex_incr::SessionError::FormatFontPolicy { name } => CompileError::Font(format!(
@@ -931,16 +950,16 @@ fn compile_error_from_session(
     }
 }
 
-enum PreparedExecution {
+enum PreparedExecution<'store> {
     Initial {
-        session: Box<tex_incr::Session>,
+        session: Box<tex_incr::Session<'store>>,
         accepted: Box<tex_incr::AcceptedOutput>,
     },
-    Transaction(Box<tex_incr::RevisionTransaction>),
+    Transaction(Box<tex_incr::RevisionTransaction<'store>>),
 }
 
-impl CandidateExecution {
-    fn into_prepared(self) -> Result<PreparedExecution, tex_incr::SessionError> {
+impl<'store> CandidateExecution<'store> {
+    fn into_prepared(self) -> Result<PreparedExecution<'store>, tex_incr::SessionError> {
         match self {
             Self::Initial { session, accepted } => Ok(PreparedExecution::Initial {
                 session,
@@ -951,7 +970,7 @@ impl CandidateExecution {
     }
 }
 
-impl PreparedExecution {
+impl PreparedExecution<'_> {
     fn revision(&self) -> tex_incr::RevisionId {
         match self {
             Self::Initial { accepted, .. } => accepted.revision,
@@ -985,7 +1004,11 @@ impl PreparedExecution {
     }
 }
 
-impl VirtualCompileSession {
+impl<'store> VirtualCompileSession<'store> {
+    pub(crate) fn reachability_store(&self) -> tex_state::ReachabilityStore {
+        self.reachability_store.clone()
+    }
+
     fn execution_budgets(&self) -> tex_exec::ExecutionBudgets {
         tex_exec::ExecutionBudgets {
             steps: self.limits.engine_steps,
@@ -995,11 +1018,23 @@ impl VirtualCompileSession {
         }
     }
 
-    pub fn new(options: SessionOptions) -> Result<Self, CompileError> {
-        Self::new_at_revision(options, tex_incr::RevisionId::new(1))
+    pub fn new_with_store(
+        reachability_store: &'store tex_state::ReachabilityStore,
+        options: SessionOptions,
+    ) -> Result<Self, CompileError> {
+        Self::new_owned(reachability_store.clone(), options)
     }
 
-    pub(crate) fn new_at_revision(
+    #[doc(hidden)]
+    pub fn new_owned(
+        reachability_store: tex_state::ReachabilityStore,
+        options: SessionOptions,
+    ) -> Result<Self, CompileError> {
+        Self::new_at_revision_owned(reachability_store, options, tex_incr::RevisionId::new(1))
+    }
+
+    pub(crate) fn new_at_revision_owned(
+        reachability_store: tex_state::ReachabilityStore,
         options: SessionOptions,
         initial_revision: tex_incr::RevisionId,
     ) -> Result<Self, CompileError> {
@@ -1041,6 +1076,8 @@ impl VirtualCompileSession {
             limits.resolved_files,
         )?;
         Ok(Self {
+            reachability_store,
+            reachability_owner: core::marker::PhantomData,
             main_path,
             job_name,
             authored_root_name: options.authored_root_name,
@@ -1984,8 +2021,8 @@ impl VirtualCompileSession {
                 None
             };
             let session = Box::new({
-                let mut session = tex_incr::Session::start_with_source_bytes(
-                    (),
+                let mut session = tex_incr::Session::start_with_source_bytes_owned(
+                    self.reachability_store.clone(),
                     &self.job_name,
                     self.main_path.as_str(),
                     self.initial_revision,
@@ -2736,7 +2773,7 @@ impl VirtualCompileSession {
 }
 
 fn register_incremental_inputs(
-    session: &mut tex_incr::Session,
+    session: &mut tex_incr::Session<'_>,
     workspace: &ProjectWorkspace,
     main_path: &VirtualPath,
 ) -> Result<(), CompileError> {

@@ -10,7 +10,7 @@ use tex_state::node::{Node, NodeTokenList};
 use tex_state::page::PageMark;
 use tex_state::token::{Token, TokenWord};
 use tex_state::{
-    AssignmentScope, RetainedStateGeneration, SessionInternerEpoch, World, with_universe,
+    AssignmentScope, ReachabilityStore, RetainedStateGeneration, World, with_universe,
 };
 use tex_state_benchmarks::{DIRECT_READS, PAGE_QUEUE_LEN, WARM_WRITES, engine_budget};
 
@@ -207,10 +207,10 @@ fn check_zero(name: &str, delta: AllocationDelta, failures: &mut Vec<String>) {
 
 fn generation_lifecycle_gate(failures: &mut Vec<String>) {
     let baseline = retained_generation_census();
-    let epoch = SessionInternerEpoch::new(engine_budget());
-    let prior = RetainedStateGeneration::new(&epoch, World::memory()).expect("prior generation");
+    let store = ReachabilityStore::new(engine_budget());
+    let prior = RetainedStateGeneration::new(&store, World::memory()).expect("prior generation");
     let rejected =
-        RetainedStateGeneration::new(&epoch, World::memory()).expect("candidate generation");
+        RetainedStateGeneration::new(&store, World::memory()).expect("candidate generation");
     let two_live = retained_generation_census();
     if two_live.live != baseline.live + 2 {
         failures.push(format!(
@@ -227,7 +227,7 @@ fn generation_lifecycle_gate(failures: &mut Vec<String>) {
     }
 
     let accepted =
-        RetainedStateGeneration::new(&epoch, World::memory()).expect("replacement candidate");
+        RetainedStateGeneration::new(&store, World::memory()).expect("replacement candidate");
     drop(prior);
     let after_acceptance = retained_generation_census();
     if after_acceptance.live != baseline.live + 1 {

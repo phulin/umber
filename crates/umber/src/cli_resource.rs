@@ -133,7 +133,9 @@ impl NativeRunError {
 }
 
 pub fn run(options: &NativeRunOptions) -> Result<MemoryRunOutput, NativeRunError> {
-    NativeCompileSession::new(options, &FetchCancellation::new())?
+    let owner = NativeDistributionOwner::from_environment(options)?;
+    let store = tex_incr::new_reachability_store();
+    NativeCompileSession::new_with_owners(options, &FetchCancellation::new(), &owner, &store)?
         .compile(&FetchCancellation::new())
 }
 
@@ -326,7 +328,10 @@ pub fn run_for_finalization(
     options: &NativeRunOptions,
 ) -> Result<NativeAcceptedRun, NativeRunError> {
     let cancellation = FetchCancellation::new();
-    let mut session = NativeCompileSession::new(options, &cancellation)?;
+    let owner = NativeDistributionOwner::from_environment(options)?;
+    let store = tex_incr::new_reachability_store();
+    let mut session =
+        NativeCompileSession::new_with_owners(options, &cancellation, &owner, &store)?;
     let output = session.compile(&cancellation)?;
     let accepted_handoff_started = Instant::now();
     let input_path_map = session.local.input_path_map();
@@ -352,8 +357,8 @@ pub fn run_for_finalization(
 
 /// Retained native resource and incremental compile state used by `run` and
 /// long-lived watch sessions.
-pub struct NativeCompileSession {
-    session: VirtualCompileSession,
+pub struct NativeCompileSession<'owner> {
+    session: VirtualCompileSession<'owner>,
     distribution: DistributionResolver,
     local: LocalResolver,
     source: String,
@@ -361,23 +366,31 @@ pub struct NativeCompileSession {
     host_telemetry: NativeHostTelemetry,
 }
 
-impl NativeCompileSession {
-    pub fn new(
-        options: &NativeRunOptions,
-        cancellation: &FetchCancellation,
-    ) -> Result<Self, NativeRunError> {
-        let owner = NativeDistributionOwner::from_environment(options)?;
-        Self::new_with_distribution_owner(options, cancellation, &owner)
-    }
-
+impl<'owner> NativeCompileSession<'owner> {
     /// Starts a fresh engine session while reusing the owner's authenticated
     /// immutable distribution root and shards.
-    pub fn new_with_distribution_owner(
+    pub fn new_with_owners(
         options: &NativeRunOptions,
         cancellation: &FetchCancellation,
         owner: &NativeDistributionOwner,
+        reachability_store: &'owner tex_state::ReachabilityStore,
     ) -> Result<Self, NativeRunError> {
-        Self::new_with_resolver(options, cancellation, owner.resolver(options)?)
+        Self::new_with_resolver(
+            options,
+            cancellation,
+            owner.resolver(options)?,
+            reachability_store,
+        )
+    }
+
+    #[cfg(test)]
+    fn new_with_distribution_owner(
+        options: &NativeRunOptions,
+        cancellation: &FetchCancellation,
+        owner: &NativeDistributionOwner,
+    ) -> Result<NativeCompileSession<'static>, NativeRunError> {
+        let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
+        NativeCompileSession::new_with_owners(options, cancellation, owner, store)
     }
 
     #[cfg(test)]
@@ -387,8 +400,10 @@ impl NativeCompileSession {
         cancellation: &FetchCancellation,
         cache: ObjectCache,
     ) -> Result<Self, NativeRunError> {
-        let owner = NativeDistributionOwner::with_cache(options, cache);
-        Self::new_with_distribution_owner(options, cancellation, &owner)
+        let owner = Box::leak(Box::new(NativeDistributionOwner::with_cache(
+            options, cache,
+        )));
+        Self::new_with_distribution_owner(options, cancellation, owner)
     }
 
     #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
@@ -396,6 +411,7 @@ impl NativeCompileSession {
         options: &NativeRunOptions,
         cancellation: &FetchCancellation,
         mut distribution: DistributionResolver,
+        reachability_store: &'owner tex_state::ReachabilityStore,
     ) -> Result<Self, NativeRunError> {
         let setup_started = std::time::Instant::now();
         let source_started = std::time::Instant::now();
@@ -466,43 +482,46 @@ impl NativeCompileSession {
         let journal_bytes = env_limit("UMBER_JOURNAL_BYTES", defaults.journal_bytes)?;
         let effects = env_limit("UMBER_EFFECTS", defaults.effects)?;
         let restore_started = std::time::Instant::now();
-        let mut session = VirtualCompileSession::new(SessionOptions {
-            main_path: format!("/job/{name}"),
-            job_name: Some(job_name),
-            authored_root_name: None,
-            format,
-            initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
-                .then(|| initial_prefetch_hints.into_boxed_slice()),
-            engine: options.engine,
-            clock,
-            limits: SessionLimits {
-                attempts: SessionLimits::HARD_MAX.attempts,
-                engine_fuel,
-                engine_steps,
-                input_frames,
-                journal_bytes,
-                effects,
-                ..SessionLimits::default()
-            },
-            outputs: options.outputs,
-            html_asset_mode: options.html_asset_directory.as_ref().map_or(
-                tex_out::html::AssetMode::Embedded,
-                |relative_directory| tex_out::html::AssetMode::Manifest {
-                    relative_directory: relative_directory.clone(),
+        let mut session = VirtualCompileSession::new_with_store(
+            reachability_store,
+            SessionOptions {
+                main_path: format!("/job/{name}"),
+                job_name: Some(job_name),
+                authored_root_name: None,
+                format,
+                initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
+                    .then(|| initial_prefetch_hints.into_boxed_slice()),
+                engine: options.engine,
+                clock,
+                limits: SessionLimits {
+                    attempts: SessionLimits::HARD_MAX.attempts,
+                    engine_fuel,
+                    engine_steps,
+                    input_frames,
+                    journal_bytes,
+                    effects,
+                    ..SessionLimits::default()
                 },
-            ),
-            accepted_font_containers: if options.outputs.contains(OutputCapability::Html) {
-                AcceptedFontContainers::WASM
-            } else {
-                AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
+                outputs: options.outputs,
+                html_asset_mode: options.html_asset_directory.as_ref().map_or(
+                    tex_out::html::AssetMode::Embedded,
+                    |relative_directory| tex_out::html::AssetMode::Manifest {
+                        relative_directory: relative_directory.clone(),
+                    },
+                ),
+                accepted_font_containers: if options.outputs.contains(OutputCapability::Html) {
+                    AcceptedFontContainers::WASM
+                } else {
+                    AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
+                },
+                font_layout_policy: if options.outputs.contains(OutputCapability::Html) {
+                    tex_fonts::FontLayoutPolicy::OpenTypePreferred
+                } else {
+                    tex_fonts::FontLayoutPolicy::ClassicTfmExact
+                },
+                font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::ClassicTfmExact,
             },
-            font_layout_policy: if options.outputs.contains(OutputCapability::Html) {
-                tex_fonts::FontLayoutPolicy::OpenTypePreferred
-            } else {
-                tex_fonts::FontLayoutPolicy::ClassicTfmExact
-            },
-            font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::ClassicTfmExact,
-        })
+        )
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
         let format_restore_ns = restore_started.elapsed().as_nanos();
         session

@@ -15,10 +15,14 @@ owns two inline slots for the optional accepted prior and exclusive current
 candidate. `RetainedStateGeneration` and `RetainedEngineGeneration` are
 move-only slot leases; the `Universe`, dense state, journals, save stacks,
 checkpoints, continuations, and generation-typed sidecars reside below the
-same external store. A suspended candidate keeps the coarse store allocation
-alive across host turns without a self-reference. Slot creation and reuse
-allocate no reachability-control storage, and no runtime value clones the
-coarse owner.
+same external store. Public incremental, virtual-compile, project, fixed-point,
+editor, and native sessions borrow a caller-owned store explicitly; their Rust
+lifetime prevents a session or generation from outliving it. A suspended
+candidate can remain beside its session across host turns because both are
+statically tied to that external owner rather than either borrowing the other.
+One coarse `Arc<Mutex<_>>` allocation also permits a self-contained exported
+FFI session; its two slots are inline, clones allocate nothing, slot creation
+and reuse allocate no control storage, and no runtime value clones the owner.
 
 The existential admission seam is narrowed to its real shape: one executor
 aggregate per state slot and one suspended runtime per executor generation.
@@ -65,7 +69,8 @@ The runtime has the following ownership hierarchy:
 
 ```text
 process
-  `-- engine session + interning epoch + ReachabilityStore
+  `-- caller-owned ReachabilityStore + interning epoch
+        `-- engine/editor session borrow
         +-- prior accepted slot lease (read-only, optional)
         `-- current candidate slot lease (exclusive execution lease)
               +-- dense current-value banks and TeX save journal
@@ -672,9 +677,10 @@ perform zero heap allocation. An ordinary read requires:
 
 Generation validation occurs once when the exclusive current lease, a
 continuation, checkpoint, or detached value is admitted. Within that admitted
-borrow, ids resolve by typed direct indexing. The coarse session store uses
-one `Arc` allocation so long-lived suspended host sessions need no self-
-reference, but no operation retains that owner per value or per read.
+borrow, ids resolve by typed direct indexing. The coarse store makes one
+session-boundary `Arc<Mutex<_>>` allocation, justified by the self-contained
+long-lived FFI API; its slots are inline, and candidate creation, admission,
+slot reuse, and value operations allocate no reachability-control storage.
 
 ## Non-goals and forbidden designs
 

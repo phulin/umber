@@ -3,8 +3,8 @@ use tex_state::cell::{BankTag, CellId};
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::node::Node;
 use tex_state::{
-    AssignmentScope, DependencyKey, DependencyRuntime, DependencyValue, RetainedStateGeneration,
-    SessionInternerEpoch, World, with_universe,
+    AssignmentScope, DependencyKey, DependencyRuntime, DependencyValue, ReachabilityStore,
+    RetainedStateGeneration, World, with_universe,
 };
 use tex_state_benchmarks::{DIRECT_READS, PAGE_QUEUE_LEN, WARM_WRITES, engine_budget};
 
@@ -133,13 +133,13 @@ fn page_contribution_queue(c: &mut Criterion) {
 }
 
 fn coarse_generation_lifecycle(c: &mut Criterion) {
-    let epoch = SessionInternerEpoch::new(engine_budget());
+    let store = ReachabilityStore::new(engine_budget());
     c.bench_function("coarse_generation/create_and_drop_candidate", |b| {
         b.iter_batched(
             || World::memory(),
             |world| {
                 black_box(
-                    RetainedStateGeneration::new(&epoch, world).expect("candidate generation"),
+                    RetainedStateGeneration::new(&store, world).expect("candidate generation"),
                 );
             },
             BatchSize::SmallInput,

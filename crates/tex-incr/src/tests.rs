@@ -8,8 +8,9 @@ fn page_source(width: usize) -> String {
     format!("\\shipout\\vbox{{\\hrule height1pt width{width}pt}}\\end")
 }
 
-fn session(revision: RevisionId, source: &str) -> Session {
-    Session::start((), "incremental-test", revision, source, 4096).expect("session starts")
+fn session(revision: RevisionId, source: &str) -> Session<'static> {
+    let store = Box::leak(Box::new(new_reachability_store()));
+    Session::start(store, "incremental-test", revision, source, 4096).expect("session starts")
 }
 
 fn edit(session: &Session, range: std::ops::Range<usize>, text: &str) -> Edit {
@@ -147,7 +148,7 @@ fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
 #[test]
 fn root_framing_alias_is_used_for_startup_while_provenance_keeps_the_source_path() {
     let mut session = Session::start_with_source_path(
-        (),
+        Box::leak(Box::new(new_reachability_store())),
         "job",
         "/job/main.tex",
         RevisionId::new(1),
@@ -618,7 +619,9 @@ fn prepared_transaction_blocks_newer_candidate_until_rejected() {
 #[test]
 fn incremental_terminal_values_forbid_live_and_parallel_output_owners() {
     fn declaration_fields<'a>(source: &'a str, declaration: &str) -> &'a str {
-        let start = source.find(declaration).expect("declaration exists");
+        let start = source
+            .find(declaration)
+            .unwrap_or_else(|| panic!("declaration exists: {declaration}"));
         let body = &source[start + declaration.len()..];
         body.split_once("\n}").expect("field block closes").0
     }
@@ -626,10 +629,10 @@ fn incremental_terminal_values_forbid_live_and_parallel_output_owners() {
     let source = include_str!("lib.rs");
     for declaration in [
         "pub struct AcceptedOutput {",
-        "pub struct RevisionTransaction {",
+        "pub struct RevisionTransaction<'store> {",
         "struct CandidateCompletion {",
-        "pub struct RevisionCandidate {",
-        "pub struct Session {",
+        "pub struct RevisionCandidate<'store> {",
+        "pub struct Session<'store> {",
     ] {
         let fields = declaration_fields(source, declaration);
         for forbidden in [
@@ -650,8 +653,8 @@ fn incremental_terminal_values_forbid_live_and_parallel_output_owners() {
     }
 
     for declaration in [
-        "pub struct RevisionTransaction {",
-        "pub struct RevisionCandidate {",
+        "pub struct RevisionTransaction<'store> {",
+        "pub struct RevisionCandidate<'store> {",
     ] {
         let fields = declaration_fields(source, declaration);
         assert!(
@@ -698,7 +701,14 @@ fn history_budget_keeps_job_start_and_newest_observation() {
         ));
     }
     source.push_str("\\end");
-    let mut session = Session::start((), "budget", RevisionId::new(1), source, 0).expect("session");
+    let mut session = Session::start(
+        Box::leak(Box::new(new_reachability_store())),
+        "budget",
+        RevisionId::new(1),
+        source,
+        0,
+    )
+    .expect("session");
     session.cold().expect("cold run");
     assert_eq!(session.history().len(), 2);
     assert_eq!(
@@ -746,8 +756,14 @@ fn repeated_revisions_match_fresh_cold_output() {
 #[test]
 fn zero_history_budget_retires_only_complete_old_generations() {
     let mut source = page_source(1);
-    let mut incremental =
-        Session::start((), "retirement", RevisionId::new(1), &source, 0).expect("session");
+    let mut incremental = Session::start(
+        Box::leak(Box::new(new_reachability_store())),
+        "retirement",
+        RevisionId::new(1),
+        &source,
+        0,
+    )
+    .expect("session");
     incremental.cold().expect("baseline");
     for revision in 2_u64..=4 {
         let next = page_source(revision as usize);
@@ -933,7 +949,7 @@ fn thousand_edit_scripted_fuzz_matches_cold_every_revision() {
 fn byte_projection_round_trips_invalid_utf8_source() {
     let bytes = vec![b'\\', b'e', b'n', b'd', 0xff];
     let session = Session::start_with_source_bytes(
-        (),
+        Box::leak(Box::new(new_reachability_store())),
         "bytes",
         "bytes.tex",
         RevisionId::new(1),

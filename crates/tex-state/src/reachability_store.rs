@@ -22,14 +22,23 @@ struct ReachabilityStorage {
 /// Coarse owner of the one reachability domain shared by a session's prior
 /// and current retained generations.
 ///
-/// The single `Arc` allocation is made at session construction so a suspended
-/// candidate can remain practical across host turns without a self-reference.
-/// Generation creation reuses one of two inline slots and performs no
-/// reachability-control allocation. Runtime values never clone this owner.
-#[derive(Clone)]
+/// The ordinary Rust API keeps a caller-owned handle above every retained
+/// generation and editor session. One coarse allocation supports exported FFI
+/// sessions without self-references. Generation creation reuses one of two
+/// inline slots and performs no reachability-control allocation. Runtime
+/// values never clone this owner.
 pub struct ReachabilityStore {
     epoch: SessionInternerEpoch,
     storage: Arc<Mutex<ReachabilityStorage>>,
+}
+
+impl Clone for ReachabilityStore {
+    fn clone(&self) -> Self {
+        Self {
+            epoch: self.epoch.clone(),
+            storage: Arc::clone(&self.storage),
+        }
+    }
 }
 
 impl core::fmt::Debug for ReachabilityStore {
@@ -43,7 +52,7 @@ impl core::fmt::Debug for ReachabilityStore {
 
 impl ReachabilityStore {
     /// Creates one inseparable session reachability and interning epoch. The
-    /// fixed two-slot array is part of this one coarse allocation; callers
+    /// fixed two-slot array is inline in one coarse store allocation; callers
     /// cannot combine the store with a foreign or separately retained epoch.
     #[must_use]
     pub fn new(interner_budget: InternerBudget) -> Self {

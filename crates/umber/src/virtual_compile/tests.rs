@@ -96,7 +96,7 @@ fn current_render_location(result: Option<RenderedSourceResult>) -> RenderedSour
     }
 }
 
-fn session(main: &str) -> VirtualCompileSession {
+fn session(main: &str) -> VirtualCompileSession<'static> {
     let mut session = VirtualCompileSession::new(SessionOptions {
         font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         ..SessionOptions::default()
@@ -831,7 +831,7 @@ fn accepted_session_state(session: &VirtualCompileSession) -> AcceptedSessionSta
     }
 }
 
-fn generated_input_fallback_session() -> (VirtualCompileSession, String) {
+fn generated_input_fallback_session() -> (VirtualCompileSession<'static>, String) {
     let source = concat!(
         "\\input state.aux ",
         "\\immediate\\openout1=state.aux ",
@@ -1469,7 +1469,7 @@ fn fixture_pfb() -> Vec<u8> {
     bytes
 }
 
-fn pdf_raw_object_file_session() -> VirtualCompileSession {
+fn pdf_raw_object_file_session() -> VirtualCompileSession<'static> {
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,
         outputs: OutputCapabilitySet::PDF,

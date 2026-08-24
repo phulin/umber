@@ -88,10 +88,12 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
     let startup_cancellation = FetchCancellation::new();
     set_active(&active, Some(startup_cancellation.clone()));
     let distribution_owner = NativeDistributionOwner::from_environment(&options)?;
-    let mut session = NativeCompileSession::new_with_distribution_owner(
+    let reachability_store = tex_incr::new_reachability_store();
+    let mut session = NativeCompileSession::new_with_owners(
         &options,
         &startup_cancellation,
         &distribution_owner,
+        &reachability_store,
     )?;
     set_active(&active, None);
     if interrupted.load(Ordering::Acquire) {
@@ -161,10 +163,12 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                 } else {
                     let cancellation = FetchCancellation::new();
                     set_active(&active, Some(cancellation.clone()));
-                    session = NativeCompileSession::new_with_distribution_owner(
+                    drop(session);
+                    session = NativeCompileSession::new_with_owners(
                         &options,
                         &cancellation,
                         &distribution_owner,
+                        &reachability_store,
                     )?;
                     set_active(&active, None);
                 }

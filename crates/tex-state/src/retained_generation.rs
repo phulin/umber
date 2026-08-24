@@ -143,12 +143,13 @@ pub(crate) struct PhysicalStateGeneration {
 
 /// Move-only handle to one physical generation stored in its session's
 /// external reachability domain.
-pub struct RetainedStateGeneration {
+pub struct RetainedStateGeneration<'store> {
     store: ReachabilityStore,
     key: Option<ReachabilityGenerationKey>,
+    owner: core::marker::PhantomData<&'store ReachabilityStore>,
 }
 
-impl core::fmt::Debug for RetainedStateGeneration {
+impl core::fmt::Debug for RetainedStateGeneration<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("RetainedStateGeneration")
@@ -157,9 +158,14 @@ impl core::fmt::Debug for RetainedStateGeneration {
     }
 }
 
-impl RetainedStateGeneration {
+impl<'store> RetainedStateGeneration<'store> {
     /// Allocates a fresh physical revision generation under one session epoch.
-    pub fn new(store: &ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
+    pub fn new(store: &'store ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
+        Self::new_owned(store.clone(), world)
+    }
+
+    #[doc(hidden)]
+    pub fn new_owned(store: ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
         #[cfg(feature = "profiling")]
         let _allocation_scope = crate::measurement::hot_core_allocation_scope(
             crate::measurement::HotCoreAllocationOwner::GenerationBoundary,
@@ -181,15 +187,25 @@ impl RetainedStateGeneration {
             .insert_generation(physical)
             .map_err(map_store_construction_error)?;
         Ok(Self {
-            store: store.clone(),
+            store,
             key: Some(key),
+            owner: core::marker::PhantomData,
         })
     }
 
     /// Materializes one validated format directly into a retained physical
     /// generation under the caller's existing session epoch.
     pub fn from_format(
-        store: &ReachabilityStore,
+        store: &'store ReachabilityStore,
+        world: World,
+        image: &DetachedFormatImage,
+    ) -> Result<Self, FormatError> {
+        Self::from_format_owned(store.clone(), world, image)
+    }
+
+    #[doc(hidden)]
+    pub fn from_format_owned(
+        store: ReachabilityStore,
         world: World,
         image: &DetachedFormatImage,
     ) -> Result<Self, FormatError> {
@@ -215,8 +231,9 @@ impl RetainedStateGeneration {
             FormatError::InvalidState(format!("reachability store rejected generation: {error:?}"))
         })?;
         Ok(Self {
-            store: store.clone(),
+            store,
             key: Some(key),
+            owner: core::marker::PhantomData,
         })
     }
 
@@ -299,7 +316,7 @@ impl RetainedStateGeneration {
     }
 }
 
-impl Drop for RetainedStateGeneration {
+impl Drop for RetainedStateGeneration<'_> {
     fn drop(&mut self) {
         let Some(key) = self.key.take() else {
             return;
@@ -407,7 +424,6 @@ mod tests {
 
         let mut second = RetainedStateGeneration::new(&store, World::default()).expect("second");
         assert!(first.same_store(&second));
-        drop(store);
         assert_eq!(
             second.with_admitted(Read(&key)),
             Err(RetainedStateAccessError::ForeignGeneration)

@@ -72,17 +72,17 @@ extern "C" {
 
 #[wasm_bindgen]
 pub struct CompilerSession {
-    session: Option<VirtualCompileSession>,
+    session: Option<VirtualCompileSession<'static>>,
 }
 
 #[wasm_bindgen]
 pub struct ProjectSession {
-    session: Option<LatexProjectSession>,
+    session: Option<LatexProjectSession<'static>>,
 }
 
 #[wasm_bindgen]
 pub struct EditorSession {
-    session: Option<EditorCompileSession>,
+    session: Option<EditorCompileSession<'static>>,
 }
 
 #[wasm_bindgen(js_name = packageVersion)]
@@ -117,7 +117,7 @@ impl CompilerSession {
     #[wasm_bindgen(constructor)]
     pub fn new(options: &JsSessionOptions) -> Result<CompilerSession, JsValue> {
         let options = parse_options(options.as_ref())?;
-        let session = VirtualCompileSession::new(options).map_err(boundary_error)?;
+        let session = VirtualCompileSession::new_standalone(options).map_err(boundary_error)?;
         Ok(Self {
             session: Some(session),
         })
@@ -295,7 +295,8 @@ impl EditorSession {
     #[wasm_bindgen(constructor)]
     pub fn new(options: &JsEditorSessionOptions) -> Result<EditorSession, JsValue> {
         let options = parse_editor_options(options.as_ref())?;
-        let session = EditorCompileSession::new(options).map_err(compile_boundary_error)?;
+        let session =
+            EditorCompileSession::new_standalone(options).map_err(compile_boundary_error)?;
         Ok(Self {
             session: Some(session),
         })
@@ -479,7 +480,8 @@ impl ProjectSession {
     #[wasm_bindgen(constructor)]
     pub fn new(options: &JsProjectSessionOptions) -> Result<ProjectSession, JsValue> {
         let options = parse_project_options(options.as_ref())?;
-        let session = LatexProjectSession::new(options).map_err(project_boundary_error)?;
+        let session =
+            LatexProjectSession::new_standalone(options).map_err(project_boundary_error)?;
         Ok(Self {
             session: Some(session),
         })
@@ -557,13 +559,13 @@ impl ProjectSession {
 }
 
 impl EditorSession {
-    fn session_ref(&self) -> Result<&EditorCompileSession, JsValue> {
+    fn session_ref(&self) -> Result<&EditorCompileSession<'static>, JsValue> {
         self.session
             .as_ref()
             .ok_or_else(|| js_error("EditorSession has been disposed"))
     }
 
-    fn session_mut(&mut self) -> Result<&mut EditorCompileSession, JsValue> {
+    fn session_mut(&mut self) -> Result<&mut EditorCompileSession<'static>, JsValue> {
         self.session
             .as_mut()
             .ok_or_else(|| js_error("EditorSession has been disposed"))
@@ -571,13 +573,13 @@ impl EditorSession {
 }
 
 impl ProjectSession {
-    fn session_ref(&self) -> Result<&LatexProjectSession, JsValue> {
+    fn session_ref(&self) -> Result<&LatexProjectSession<'static>, JsValue> {
         self.session
             .as_ref()
             .ok_or_else(|| js_error("ProjectSession has been disposed"))
     }
 
-    fn session_mut(&mut self) -> Result<&mut LatexProjectSession, JsValue> {
+    fn session_mut(&mut self) -> Result<&mut LatexProjectSession<'static>, JsValue> {
         self.session
             .as_mut()
             .ok_or_else(|| js_error("ProjectSession has been disposed"))
@@ -585,13 +587,13 @@ impl ProjectSession {
 }
 
 impl CompilerSession {
-    fn session_ref(&self) -> Result<&VirtualCompileSession, JsValue> {
+    fn session_ref(&self) -> Result<&VirtualCompileSession<'static>, JsValue> {
         self.session
             .as_ref()
             .ok_or_else(|| js_error("CompilerSession has been disposed"))
     }
 
-    fn session_mut(&mut self) -> Result<&mut VirtualCompileSession, JsValue> {
+    fn session_mut(&mut self) -> Result<&mut VirtualCompileSession<'static>, JsValue> {
         self.session
             .as_mut()
             .ok_or_else(|| js_error("CompilerSession has been disposed"))

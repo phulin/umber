@@ -207,7 +207,9 @@ enum ProjectNonFileBinding {
 
 /// Transactional TeX--bibliography--TeX project session with explicit or
 /// automatic backend selection.
-pub struct LatexProjectSession {
+pub struct LatexProjectSession<'store> {
+    reachability_store: tex_state::ReachabilityStore,
+    reachability_owner: core::marker::PhantomData<&'store tex_state::ReachabilityStore>,
     options: LatexProjectOptions,
     bibliography_enabled: bool,
     workspace: ProjectWorkspace,
@@ -221,37 +223,57 @@ pub struct LatexProjectSession {
     accepted_revision: Option<tex_incr::RevisionId>,
     accepted_root: Option<Vec<u8>>,
     pending_root: Option<(tex_incr::RevisionId, Vec<u8>)>,
-    candidate: Option<ProjectCandidate>,
-    accepted_tex: Option<Box<VirtualCompileSession>>,
+    candidate: Option<ProjectCandidate<'store>>,
+    accepted_tex: Option<Box<VirtualCompileSession<'store>>>,
     accepted_output: Option<LatexProjectOutput>,
     accepted_observations: Option<crate::AcceptedInputObservationLedger>,
     initial_revision: tex_incr::RevisionId,
 }
 
-struct ProjectCandidate {
+#[cfg(test)]
+impl LatexProjectSession<'static> {
+    fn new(options: LatexProjectOptions) -> Result<Self, LatexProjectError> {
+        let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
+        Self::new_with_store(store, options)
+    }
+}
+
+impl LatexProjectSession<'static> {
+    #[doc(hidden)]
+    pub fn new_standalone(options: LatexProjectOptions) -> Result<Self, LatexProjectError> {
+        Self::new_inner(tex_incr::new_reachability_store(), options, true)
+    }
+}
+
+struct ProjectCandidate<'store> {
     revision: tex_incr::RevisionId,
     root: Vec<u8>,
     generated: BTreeMap<VirtualPath, Vec<u8>>,
     fixed_point: FixedPointCandidate<ProjectConvergenceKey>,
-    tex: Option<Box<VirtualCompileSession>>,
+    tex: Option<Box<VirtualCompileSession<'store>>>,
     tex_awaiting: bool,
     observations: Vec<crate::AcceptedInputObservation>,
     tex_observed: bool,
     detection_observed: bool,
 }
 
-impl LatexProjectSession {
-    pub fn new(options: LatexProjectOptions) -> Result<Self, LatexProjectError> {
-        Self::new_inner(options, true)
+impl<'store> LatexProjectSession<'store> {
+    pub fn new_with_store(
+        reachability_store: &'store tex_state::ReachabilityStore,
+        options: LatexProjectOptions,
+    ) -> Result<Self, LatexProjectError> {
+        Self::new_inner(reachability_store.clone(), options, true)
     }
 
     pub(crate) fn new_tex_only(
+        reachability_store: &'store tex_state::ReachabilityStore,
         tex: SessionOptions,
         limits: crate::FixedPointLimits,
     ) -> Result<Self, LatexProjectError> {
         let disabled_path = VirtualPath::user("/job/__umber_tex_only_disabled")
             .expect("internal TeX-only detector path is valid");
         Self::new_inner(
+            reachability_store.clone(),
             LatexProjectOptions {
                 tex,
                 bibliography: BibliographyProjectOptions::auto(disabled_path),
@@ -262,12 +284,15 @@ impl LatexProjectSession {
     }
 
     fn new_inner(
+        reachability_store: tex_state::ReachabilityStore,
         options: LatexProjectOptions,
         bibliography_enabled: bool,
     ) -> Result<Self, LatexProjectError> {
         let fixed_point =
             FixedPointCoordinator::new(options.limits).map_err(project_fixed_point_error)?;
         Ok(Self {
+            reachability_store,
+            reachability_owner: core::marker::PhantomData,
             workspace: ProjectWorkspace::new(project_vfs_limits(&options.tex))
                 .map_err(|error| LatexProjectError::Transaction(error.to_string()))?,
             detector: BibliographyDetector::new(options.bibliography.detector),
@@ -291,7 +316,7 @@ impl LatexProjectSession {
     }
 
     pub(crate) fn new_tex_only_from_provisional(
-        provisional: &VirtualCompileSession,
+        provisional: &VirtualCompileSession<'store>,
         limits: crate::FixedPointLimits,
     ) -> Result<Self, LatexProjectError> {
         let revision = provisional.revision().ok_or_else(|| {
@@ -299,7 +324,18 @@ impl LatexProjectSession {
                 "cannot stabilize a session without accepted output".into(),
             )
         })?;
-        let mut session = Self::new_tex_only(provisional.session_options(), limits)?;
+        let mut session = Self::new_inner(
+            provisional.reachability_store(),
+            LatexProjectOptions {
+                tex: provisional.session_options(),
+                bibliography: BibliographyProjectOptions::auto(
+                    VirtualPath::user("/job/__umber_tex_only_disabled")
+                        .expect("internal TeX-only detector path is valid"),
+                ),
+                limits,
+            },
+            false,
+        )?;
         session.workspace = provisional.workspace().clone();
         session.initial_revision = revision;
         Ok(session)
@@ -540,7 +576,7 @@ impl LatexProjectSession {
         })
     }
 
-    pub(crate) fn take_accepted_tex(&mut self) -> Option<Box<VirtualCompileSession>> {
+    pub(crate) fn take_accepted_tex(&mut self) -> Option<Box<VirtualCompileSession<'store>>> {
         self.accepted_tex.take()
     }
 
@@ -821,10 +857,14 @@ impl LatexProjectSession {
         revision: tex_incr::RevisionId,
         root: &[u8],
         generated: &BTreeMap<VirtualPath, Vec<u8>>,
-    ) -> Result<Box<VirtualCompileSession>, CandidateStop> {
+    ) -> Result<Box<VirtualCompileSession<'store>>, CandidateStop> {
         let mut session = Box::new(
-            VirtualCompileSession::new_at_revision(self.options.tex.clone(), revision)
-                .map_err(LatexProjectError::Compile)?,
+            VirtualCompileSession::new_at_revision_owned(
+                self.reachability_store.clone(),
+                self.options.tex.clone(),
+                revision,
+            )
+            .map_err(LatexProjectError::Compile)?,
         );
         add_candidate_inputs(
             &mut session,
@@ -847,7 +887,7 @@ impl LatexProjectSession {
 
     fn advance_tex_pass(
         &self,
-        session: &mut VirtualCompileSession,
+        session: &mut VirtualCompileSession<'store>,
     ) -> Result<Result<MemoryRunOutput, NeedResources>, CandidateStop> {
         loop {
             match session.compile_attempt() {
@@ -952,7 +992,7 @@ impl LatexProjectSession {
         tex: MemoryRunOutput,
         bibliography: Option<BibliographyResult>,
         generated: BTreeMap<VirtualPath, Vec<u8>>,
-        tex_session: Box<VirtualCompileSession>,
+        tex_session: Box<VirtualCompileSession<'store>>,
         observations: Vec<crate::AcceptedInputObservation>,
     ) -> Result<LatexProjectOutput, CandidateStop> {
         let mut pending = self.workspace.clone();

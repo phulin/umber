@@ -18,8 +18,10 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 
 ## 2. Store overview
 
-One session `ReachabilityStore` physically owns two inline retained-generation
-slots. Each slot contains one `Universe` plus its dense state, journals, save
+One caller-owned session `ReachabilityStore` physically owns two inline
+retained-generation slots. Incremental and composed host sessions borrow it,
+and their lifetime prevents every session/generation lease from outliving the
+store. Each slot contains one `Universe` plus its dense state, journals, save
 stacks, checkpoints, continuations, and generation-typed executor sidecars.
 `RetainedStateGeneration` and `RetainedEngineGeneration` are move-only slot
 leases, not self-contained arena owners. Inside an admitted slot, `Universe`

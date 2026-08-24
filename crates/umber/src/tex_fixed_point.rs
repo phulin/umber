@@ -81,22 +81,37 @@ impl std::error::Error for TexFixedPointError {}
 
 /// Host-neutral bounded TeX fixed-point session with private generated
 /// generations and atomic acceptance.
-pub struct TexFixedPointSession {
-    inner: LatexProjectSession,
+pub struct TexFixedPointSession<'store> {
+    inner: LatexProjectSession<'store>,
     accepted_output: Option<TexFixedPointOutput>,
 }
 
-impl TexFixedPointSession {
-    pub fn new(options: TexFixedPointOptions) -> Result<Self, TexFixedPointError> {
+#[cfg(test)]
+impl TexFixedPointSession<'static> {
+    fn new(options: TexFixedPointOptions) -> Result<Self, TexFixedPointError> {
+        let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
+        Self::new_with_store(store, options)
+    }
+}
+
+impl<'store> TexFixedPointSession<'store> {
+    pub fn new_with_store(
+        reachability_store: &'store tex_state::ReachabilityStore,
+        options: TexFixedPointOptions,
+    ) -> Result<Self, TexFixedPointError> {
         Ok(Self {
-            inner: LatexProjectSession::new_tex_only(options.tex, options.limits)
-                .map_err(tex_fixed_point_error)?,
+            inner: LatexProjectSession::new_tex_only(
+                reachability_store,
+                options.tex,
+                options.limits,
+            )
+            .map_err(tex_fixed_point_error)?,
             accepted_output: None,
         })
     }
 
     pub(crate) fn from_provisional(
-        provisional: &crate::VirtualCompileSession,
+        provisional: &crate::VirtualCompileSession<'store>,
         limits: FixedPointLimits,
     ) -> Result<Self, TexFixedPointError> {
         Ok(Self {
@@ -176,7 +191,9 @@ impl TexFixedPointSession {
         self.inner.completed_passes()
     }
 
-    pub(crate) fn take_accepted_tex(&mut self) -> Option<Box<crate::VirtualCompileSession>> {
+    pub(crate) fn take_accepted_tex(
+        &mut self,
+    ) -> Option<Box<crate::VirtualCompileSession<'store>>> {
         self.inner.take_accepted_tex()
     }
 }

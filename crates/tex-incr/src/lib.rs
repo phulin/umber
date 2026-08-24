@@ -50,13 +50,16 @@ const SESSION_INTERNER_NAMES: u32 = 65_536;
 const SESSION_INTERNER_SLOTS: u32 = 131_072;
 const SESSION_INTERNER_BYTES: u32 = 16 * 1024 * 1024;
 
-fn session_interner_budget() -> InternerBudget {
-    InternerBudget::new(
+/// Creates the caller-owned reachability domain for one incremental session.
+#[must_use]
+pub fn new_reachability_store() -> tex_state::ReachabilityStore {
+    let budget = InternerBudget::new(
         SESSION_INTERNER_NAMES,
         SESSION_INTERNER_SLOTS,
         SESSION_INTERNER_BYTES,
     )
-    .expect("the incremental session interner budget is valid")
+    .expect("the incremental session interner budget is valid");
+    tex_state::ReachabilityStore::new(budget)
 }
 
 /// Monotonic identity of an immutable editor buffer.
@@ -329,7 +332,7 @@ impl<'a> CompletionResourceDiscovery<'a> {
 }
 
 /// One fully executed revision awaiting an atomic session publication.
-pub struct RevisionTransaction {
+pub struct RevisionTransaction<'store> {
     session_output_id: RenderedOutputId,
     base_revision: RevisionId,
     base_content_hash: ContentHash,
@@ -344,12 +347,12 @@ pub struct RevisionTransaction {
     reuse: ReuseMetrics,
     format_dump: Option<DetachedFormatDump>,
     expansion_stats: ExpansionStats,
-    generation: tex_exec::RetainedEngineGeneration,
+    generation: tex_exec::RetainedEngineGeneration<'store>,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
     _candidate_lease: CandidateLease,
 }
 
-impl RevisionTransaction {
+impl RevisionTransaction<'_> {
     #[must_use]
     pub const fn revision(&self) -> RevisionId {
         self.revision
@@ -426,9 +429,10 @@ pub enum CommandCompatibility {
 /// Outer plan and private retained generation for one revision execution.
 ///
 /// No runtime id or owner is exposed through the candidate API.
-pub struct RevisionCandidate {
+pub struct RevisionCandidate<'store> {
     session_output_id: RenderedOutputId,
     reachability_store: tex_state::ReachabilityStore,
+    reachability_owner: core::marker::PhantomData<&'store tex_state::ReachabilityStore>,
     job_name: String,
     source_path: String,
     plan: CandidatePlan,
@@ -451,7 +455,7 @@ pub struct RevisionCandidate {
     suspension_serial: u64,
     advance_calls: u64,
     cumulative_fuel: u64,
-    generation: Option<tex_exec::RetainedEngineGeneration>,
+    generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     candidate_lease: Option<CandidateLease>,
 }
@@ -463,18 +467,23 @@ pub enum RevisionCandidateResult {
     Complete,
 }
 
-impl RevisionCandidate {
-    fn new_retained_generation(&self) -> Result<tex_exec::RetainedEngineGeneration, SessionError> {
+impl<'store> RevisionCandidate<'store> {
+    fn new_retained_generation(
+        &self,
+    ) -> Result<tex_exec::RetainedEngineGeneration<'store>, SessionError> {
         let world = World::memory_with_clock(self.job_clock);
         match &self.format_image {
-            Some(image) => tex_exec::RetainedEngineGeneration::from_format(
-                &self.reachability_store,
+            Some(image) => tex_exec::RetainedEngineGeneration::from_format_owned(
+                self.reachability_store.clone(),
                 world,
                 image,
             )
             .map_err(SessionError::Format),
-            None => tex_exec::RetainedEngineGeneration::new(&self.reachability_store, world)
-                .map_err(SessionError::Epoch),
+            None => tex_exec::RetainedEngineGeneration::new_owned(
+                self.reachability_store.clone(),
+                world,
+            )
+            .map_err(SessionError::Epoch),
         }
     }
 
@@ -618,15 +627,15 @@ enum PlanExecution {
     Complete(Box<CandidateCompletion>, u64),
 }
 
-struct CandidateRun<'a> {
-    candidate: &'a RevisionCandidate,
+struct CandidateRun<'a, 'store> {
+    candidate: &'a RevisionCandidate<'store>,
     host: &'a mut dyn ResourceHost,
     cancellation: &'a Cancellation,
     failed_attempt_fuel: &'a mut u64,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
 }
 
-impl tex_exec::RetainedEngineOperation for CandidateRun<'_> {
+impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
     type Output = CandidateRunResult;
 
     fn run<G: 'static>(
@@ -748,7 +757,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
 
 fn initialize_candidate_runtime<G: 'static>(
     admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
-    candidate: &RevisionCandidate,
+    candidate: &RevisionCandidate<'_>,
 ) -> Result<CandidateRuntime<G>, SessionError> {
     let (universe, checkpoints) = admitted.parts();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
@@ -819,7 +828,7 @@ fn execute_plan<G>(
     universe: &mut Universe<G>,
     checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
     runtime: &mut CandidateRuntime<G>,
-    candidate: &RevisionCandidate,
+    candidate: &RevisionCandidate<'_>,
     host: &mut dyn ResourceHost,
     cancellation: &Cancellation,
     failed_attempt_fuel: &mut u64,
@@ -1154,9 +1163,9 @@ struct RenderMapCache {
     max_retained_bytes: usize,
 }
 
-struct RetainedRevisionGeneration {
+struct RetainedRevisionGeneration<'store> {
     revision: RevisionId,
-    generation: tex_exec::RetainedEngineGeneration,
+    generation: tex_exec::RetainedEngineGeneration<'store>,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
 }
 
@@ -1217,10 +1226,12 @@ impl RenderMapCache {
     }
 }
 
-/// Long-lived incremental session owning only an opaque coarse generation.
-pub struct Session {
+/// Long-lived incremental session borrowing one caller-owned reachability
+/// store and retaining only an opaque coarse generation lease.
+pub struct Session<'store> {
     job_name: String,
     reachability_store: tex_state::ReachabilityStore,
+    reachability_owner: core::marker::PhantomData<&'store tex_state::ReachabilityStore>,
     revision: RevisionId,
     output_id: RenderedOutputId,
     source: String,
@@ -1248,25 +1259,25 @@ pub struct Session {
     /// The sole accepted runtime generation. A candidate owns the only other
     /// generation while it is being driven; detached history never enters
     /// this slot.
-    prior_generation: Option<RetainedRevisionGeneration>,
+    prior_generation: Option<RetainedRevisionGeneration<'store>>,
     retired_generations: usize,
     candidate_lease: Arc<CandidateLeaseState>,
 }
 
-impl Session {
+impl<'store> Session<'store> {
     /// Starts an editor session with no admitted generation.
     ///
     /// `template` is accepted only as a migration-time configuration marker;
     /// live runtime state is never retained or cloned from it.
-    pub fn start<T>(
-        _template: T,
+    pub fn start(
+        reachability_store: &'store tex_state::ReachabilityStore,
         job_name: impl Into<String>,
         revision: RevisionId,
         source: impl Into<String>,
         checkpoint_budget: usize,
     ) -> Result<Self, SessionError> {
         Self::start_with_source_path(
-            (),
+            reachability_store,
             job_name,
             "<editor>",
             revision,
@@ -1275,8 +1286,8 @@ impl Session {
         )
     }
 
-    pub fn start_with_source_path<T>(
-        _template: T,
+    pub fn start_with_source_path(
+        reachability_store: &'store tex_state::ReachabilityStore,
         job_name: impl Into<String>,
         source_path: impl Into<String>,
         revision: RevisionId,
@@ -1284,6 +1295,7 @@ impl Session {
         checkpoint_budget: usize,
     ) -> Result<Self, SessionError> {
         Self::start_with_prepared_source(
+            reachability_store.clone(),
             job_name,
             source_path,
             revision,
@@ -1293,8 +1305,27 @@ impl Session {
         )
     }
 
-    pub fn start_with_source_bytes<T>(
-        _template: T,
+    pub fn start_with_source_bytes(
+        reachability_store: &'store tex_state::ReachabilityStore,
+        job_name: impl Into<String>,
+        source_path: impl Into<String>,
+        revision: RevisionId,
+        bytes: Vec<u8>,
+        checkpoint_budget: usize,
+    ) -> Result<Self, SessionError> {
+        Self::start_with_source_bytes_owned(
+            reachability_store.clone(),
+            job_name,
+            source_path,
+            revision,
+            bytes,
+            checkpoint_budget,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn start_with_source_bytes_owned(
+        reachability_store: tex_state::ReachabilityStore,
         job_name: impl Into<String>,
         source_path: impl Into<String>,
         revision: RevisionId,
@@ -1309,6 +1340,7 @@ impl Session {
             ),
         };
         Self::start_with_prepared_source(
+            reachability_store,
             job_name,
             source_path,
             revision,
@@ -1319,6 +1351,7 @@ impl Session {
     }
 
     fn start_with_prepared_source(
+        reachability_store: tex_state::ReachabilityStore,
         job_name: impl Into<String>,
         source_path: impl Into<String>,
         revision: RevisionId,
@@ -1341,7 +1374,8 @@ impl Session {
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
         Ok(Self {
             job_name: job_name.into(),
-            reachability_store: tex_state::ReachabilityStore::new(session_interner_budget()),
+            reachability_store,
+            reachability_owner: core::marker::PhantomData,
             revision,
             output_id: RenderedOutputId::from_bytes(output_id),
             content_hash: ContentHash::from_bytes(source.as_bytes()),
@@ -1560,7 +1594,7 @@ impl Session {
         self.cold_with_resolvers(host)
     }
 
-    pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
+    pub fn start_cold_candidate(&self) -> Result<RevisionCandidate<'store>, SessionError> {
         self.candidate(CandidatePlan {
             base_revision: self.revision,
             base_content_hash: self.content_hash,
@@ -1576,7 +1610,7 @@ impl Session {
 
     pub fn accept_cold_candidate(
         &mut self,
-        candidate: RevisionCandidate,
+        candidate: RevisionCandidate<'store>,
     ) -> Result<AcceptedOutput, SessionError> {
         let transaction = self.prepare_revision_candidate(candidate)?;
         self.accept_revision(transaction)
@@ -1586,7 +1620,7 @@ impl Session {
         &self,
         next_revision: RevisionId,
         edit: Edit,
-    ) -> Result<RevisionCandidate, SessionError> {
+    ) -> Result<RevisionCandidate<'store>, SessionError> {
         self.start_advance_candidate_with_path(next_revision, edit, RevisionExecutionPath::SlowEdit)
     }
 
@@ -1594,7 +1628,7 @@ impl Session {
         &self,
         next_revision: RevisionId,
         edit: Edit,
-    ) -> Result<RevisionCandidate, SessionError> {
+    ) -> Result<RevisionCandidate<'store>, SessionError> {
         self.start_advance_candidate_with_path(
             next_revision,
             edit,
@@ -1602,7 +1636,9 @@ impl Session {
         )
     }
 
-    pub fn start_external_input_delta_candidate(&self) -> Result<RevisionCandidate, SessionError> {
+    pub fn start_external_input_delta_candidate(
+        &self,
+    ) -> Result<RevisionCandidate<'store>, SessionError> {
         self.candidate(CandidatePlan {
             base_revision: self.revision,
             base_content_hash: self.content_hash,
@@ -1621,7 +1657,7 @@ impl Session {
         next_revision: RevisionId,
         edit: Edit,
         execution_path: RevisionExecutionPath,
-    ) -> Result<RevisionCandidate, SessionError> {
+    ) -> Result<RevisionCandidate<'store>, SessionError> {
         let started = Timer::start();
         self.validate_edit(next_revision, &edit)?;
         let mut next = self.source.clone();
@@ -1653,7 +1689,7 @@ impl Session {
         })
     }
 
-    fn candidate(&self, plan: CandidatePlan) -> Result<RevisionCandidate, SessionError> {
+    fn candidate(&self, plan: CandidatePlan) -> Result<RevisionCandidate<'store>, SessionError> {
         let format_image = self
             .format_image
             .as_ref()
@@ -1664,6 +1700,7 @@ impl Session {
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
             reachability_store: self.reachability_store.clone(),
+            reachability_owner: core::marker::PhantomData,
             job_name: self.job_name.clone(),
             source_path: plan.layout.path().to_owned(),
             plan,
@@ -1698,8 +1735,8 @@ impl Session {
 
     pub fn prepare_revision_candidate(
         &mut self,
-        mut candidate: RevisionCandidate,
-    ) -> Result<RevisionTransaction, SessionError> {
+        mut candidate: RevisionCandidate<'store>,
+    ) -> Result<RevisionTransaction<'store>, SessionError> {
         let completion = candidate
             .completed
             .take()
@@ -1746,7 +1783,7 @@ impl Session {
 
     pub fn accept_revision(
         &mut self,
-        transaction: RevisionTransaction,
+        transaction: RevisionTransaction<'store>,
     ) -> Result<AcceptedOutput, SessionError> {
         if transaction.session_output_id != self.output_id {
             return Err(SessionError::CandidateKindMismatch);
@@ -1867,7 +1904,7 @@ impl Session {
         next_revision: RevisionId,
         edit: Edit,
         host: &mut dyn ResourceHost,
-    ) -> Result<RevisionTransaction, SessionError> {
+    ) -> Result<RevisionTransaction<'store>, SessionError> {
         let mut candidate = self.start_advance_candidate(next_revision, edit)?;
         drive_synchronous_candidate(&mut candidate, host)?;
         self.prepare_revision_candidate(candidate)
@@ -1878,7 +1915,7 @@ impl Session {
         next_revision: RevisionId,
         edit: Edit,
         host: &mut dyn ResourceHost,
-    ) -> Result<RevisionTransaction, SessionError> {
+    ) -> Result<RevisionTransaction<'store>, SessionError> {
         self.prepare_revision_with_resolvers(next_revision, edit, host)
     }
 
@@ -2051,7 +2088,7 @@ fn source_file_bytes(source: &str, byte_projection: bool) -> Vec<u8> {
 }
 
 fn drive_synchronous_candidate(
-    candidate: &mut RevisionCandidate,
+    candidate: &mut RevisionCandidate<'_>,
     host: &mut dyn ResourceHost,
 ) -> Result<(), SessionError> {
     match candidate.drive_with_resource_resolvers(host, &Cancellation::new())? {
@@ -2485,10 +2522,13 @@ mod retained_generation_tests {
 
     #[test]
     fn rejected_transaction_leaves_detached_session_unchanged() {
+        let session_store = new_reachability_store();
+        let foreign_store = new_reachability_store();
         let mut session =
-            Session::start((), "reject", RevisionId::new(1), "\\end", 1024).expect("session");
+            Session::start(&session_store, "reject", RevisionId::new(1), "\\end", 1024)
+                .expect("session");
         let before = session.content_hash();
-        let foreign = Session::start((), "foreign", RevisionId::new(1), "\\end", 1024)
+        let foreign = Session::start(&foreign_store, "foreign", RevisionId::new(1), "\\end", 1024)
             .expect("foreign session");
         let mut candidate = foreign.start_cold_candidate().expect("candidate");
         drive_synchronous_candidate(&mut candidate, &mut DirectResourceHost).expect("drive");
@@ -2504,8 +2544,9 @@ mod retained_generation_tests {
 
     #[test]
     fn accepted_history_contains_no_runtime_checkpoint() {
+        let store = new_reachability_store();
         let mut session =
-            Session::start((), "history", RevisionId::new(1), "\\end", 1024).expect("session");
+            Session::start(&store, "history", RevisionId::new(1), "\\end", 1024).expect("session");
         session.cold().expect("cold run");
         assert!(!session.history().is_empty());
         assert!(

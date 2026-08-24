@@ -56,6 +56,14 @@ fn downstream_crate_cannot_forge_or_open_reachability_store_slots() {
 }
 
 #[test]
+fn retained_generation_cannot_outlive_its_reachability_store() {
+    assert_live_boundary(
+        "reachability-store-outlive-forbidden",
+        &["cannot return value referencing local variable `store`"],
+    );
+}
+
+#[test]
 fn downstream_crate_cannot_construct_or_mutate_raw_source_map() {
     assert_live_boundary(
         "source-map-boundary-forbidden",

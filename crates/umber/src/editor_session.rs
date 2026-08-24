@@ -45,18 +45,46 @@ pub enum EditorStabilizationAttempt {
 
 /// Persistent editor coordinator that keeps one-pass display latency separate
 /// from explicit fixed-point stabilization.
-pub struct EditorCompileSession {
-    hot: Box<VirtualCompileSession>,
+pub struct EditorCompileSession<'store> {
+    hot: Box<VirtualCompileSession<'store>>,
     limits: FixedPointLimits,
     display: Option<TexFixedPointOutput>,
     stable: Option<TexFixedPointOutput>,
-    stabilizing: Option<TexFixedPointSession>,
+    stabilizing: Option<TexFixedPointSession<'store>>,
 }
 
-impl EditorCompileSession {
-    pub fn new(options: EditorSessionOptions) -> Result<Self, CompileError> {
+#[cfg(test)]
+impl EditorCompileSession<'static> {
+    fn new(options: EditorSessionOptions) -> Result<Self, CompileError> {
+        let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
+        Self::new_with_store(store, options)
+    }
+}
+
+impl EditorCompileSession<'static> {
+    #[doc(hidden)]
+    pub fn new_standalone(options: EditorSessionOptions) -> Result<Self, CompileError> {
+        let store = tex_incr::new_reachability_store();
         Ok(Self {
-            hot: Box::new(VirtualCompileSession::new(options.tex)?),
+            hot: Box::new(VirtualCompileSession::new_owned(store, options.tex)?),
+            limits: options.stabilization,
+            display: None,
+            stable: None,
+            stabilizing: None,
+        })
+    }
+}
+
+impl<'store> EditorCompileSession<'store> {
+    pub fn new_with_store(
+        reachability_store: &'store tex_state::ReachabilityStore,
+        options: EditorSessionOptions,
+    ) -> Result<Self, CompileError> {
+        Ok(Self {
+            hot: Box::new(VirtualCompileSession::new_with_store(
+                reachability_store,
+                options.tex,
+            )?),
             limits: options.stabilization,
             display: None,
             stable: None,

@@ -189,9 +189,9 @@ impl From<RetainedStateAccessError> for RetainedEngineAccessError {
 /// The session reachability store owns physical storage. This move-only lease
 /// names one of its two slots; main-control and checkpoint roots remain
 /// generation-typed sidecars below that same store owner.
-pub struct RetainedEngineGeneration {
+pub struct RetainedEngineGeneration<'store> {
     generation: u64,
-    state: RetainedStateGeneration,
+    state: RetainedStateGeneration<'store>,
     sidecars: RetainedAttachmentKey,
     liveness: Arc<()>,
 }
@@ -208,7 +208,7 @@ impl RetainedEngineGenerationWitness {
     }
 }
 
-impl core::fmt::Debug for RetainedEngineGeneration {
+impl core::fmt::Debug for RetainedEngineGeneration<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("RetainedEngineGeneration")
@@ -217,10 +217,15 @@ impl core::fmt::Debug for RetainedEngineGeneration {
     }
 }
 
-impl RetainedEngineGeneration {
-    pub fn new(store: &ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
+impl<'store> RetainedEngineGeneration<'store> {
+    pub fn new(store: &'store ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
+        Self::new_owned(store.clone(), world)
+    }
+
+    #[doc(hidden)]
+    pub fn new_owned(store: ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
         let generation = next_generation();
-        let mut state = RetainedStateGeneration::new(store, world)?;
+        let mut state = RetainedStateGeneration::new_owned(store, world)?;
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,
@@ -231,12 +236,21 @@ impl RetainedEngineGeneration {
     }
 
     pub fn from_format(
-        store: &ReachabilityStore,
+        store: &'store ReachabilityStore,
+        world: World,
+        image: &DetachedFormatImage,
+    ) -> Result<Self, FormatError> {
+        Self::from_format_owned(store.clone(), world, image)
+    }
+
+    #[doc(hidden)]
+    pub fn from_format_owned(
+        store: ReachabilityStore,
         world: World,
         image: &DetachedFormatImage,
     ) -> Result<Self, FormatError> {
         let generation = next_generation();
-        let mut state = RetainedStateGeneration::from_format(store, world, image)?;
+        let mut state = RetainedStateGeneration::from_format_owned(store, world, image)?;
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,

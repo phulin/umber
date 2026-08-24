@@ -37,6 +37,14 @@ fn admitted_generation_brand_cannot_escape() {
 }
 
 #[test]
+fn incremental_session_cannot_outlive_its_reachability_store() {
+    assert_generation_boundary(
+        "reachability_store_outlive_forbidden",
+        &["cannot return value referencing local variable `store`"],
+    );
+}
+
+#[test]
 fn detached_history_cannot_store_a_generation_owner() {
     assert_generation_boundary(
         "history_generation_owner_forbidden",
