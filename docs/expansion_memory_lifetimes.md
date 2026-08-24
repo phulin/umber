@@ -80,7 +80,7 @@ does not authorize a smaller hidden arena.
 | Glue and provenance rows                                                                              | Append-only `GlueArena` and `ProvenanceArena` vectors inside the current store slot                                                                                                   | Not nested and not reused after publication                                                           | Whole-slot retirement today; direct row release is the next migration                                                           | Yes / only after explicit handle-free detachment                                          | Small value copy and arena growth are allowed; no per-value heap owner                                                                                            |
 | `ExecutionScratch` macro words, argument ranges, and delimiter prefixes                               | One `CommandState::scratch`, with 64-word chunks, macro slots, and free lists                                                                                                         | Macro frames nest logically and own independent indexed chains; returned slots/chunks are reused      | Macro input retirement calls `pop_macro_frame`; failed match/discard releases its chain; retained capacity ends with generation | A live frame may cross in-process suspension / never a revision                           | Heap growth is allowed only when the generation reaches a new concurrent high water; no per-macro `Vec`, arena, or payload copy                                   |
 | Transitional attempt/scanner storage                                                                  | One `CommandAttempt` owns `AttemptArena` vectors, scoped rows, builders, and recycled token-buffer `Vec`s                                                                             | Child scopes and scanners nest; buffers are reused after truncation                                   | Commit/rollback truncates to the opening mark; physical capacities end with `CommandState`/generation                           | Yes, because `PendingCommandAttempt` owns the attempt / no                                | **Migration in progress:** these heaps and scanner buffers exist now. Target hot scanners write directly to final storage or fixed scratch lanes                  |
-| Scanner episodes and temporary builders                                                               | `ScannerState` stores status; call-local `ScannerEpisode` and typed builder/sink coordinates name attempt or destination storage                                                      | Nested scanner calls use child state, not a new arena                                                 | Return, rollback, or typed pending scanner consumption                                                                          | Only fields moved into `PendingScanToks` / no                                             | Ordinary scalar copies are allowed. A persistent per-scanner word `Vec` is transitional, not target architecture                                                  |
+| Scanner episodes and temporary builders                                                               | `ScannerState` stores status; call-local `ScannerEpisode` and typed builder/sink coordinates name attempt or destination storage                                                      | Nested scanner calls use child state, not a new arena                                                 | Return, rollback, or typed pending scanner/scalar consumption                                                                   | Only fields moved into an exact typed continuation / no                                   | Ordinary scalar copies are allowed. A persistent per-scanner word `Vec` is transitional, not target architecture                                                  |
 | Ordinary Rust call-stack values                                                                       | The executing Rust function owns commands, counters, enums, small cursors, and temporary borrows                                                                                      | Naturally nested calls; stack slots may be reused by Rust                                             | Function return or unwind                                                                                                       | No, unless explicitly moved into an owned continuation / no                               | Scalar and small fixed-value copying is allowed; an incidental call-local heap object must drop on return and cannot become a hidden mailbox                      |
 | In-process suspension                                                                                 | `PendingCommandAttempt` owns a boxed attempt, one coarse `GenerationOwner`, fixed marks/resume coordinates, and a typed payload; `MainControl` owns singular pending-operation fields | Typed continuations can refer to nested command-side continuations                                    | Successful resume consumes it and drops the extra generation owner; cancellation/drop releases the package                      | Yes / no                                                                                  | Boxing at the cold host barrier is implemented and allowed; cloning the live graph or storing untyped token mailboxes is not                                      |
 | Detached continuation                                                                                 | `OwnedCommandContinuation` owns validated handle-free recipes and DTO-local indices                                                                                                   | Can encode a nested input stack; never owns a runtime generation                                      | DTO drop                                                                                                                        | N/A / yes, because it contains no runtime ids                                             | Cold copying and heap allocation are allowed under explicit admission budgets; materialization builds fresh destination-local values atomically                   |
@@ -260,30 +260,49 @@ the owning expansion frame, beside that frame's exact scanner child, instead
 of a command-state stack. None may become a general token, boxed-dynamic, or
 caller-order mailbox.
 
-The 2026-08-24 continuation audit found one remaining class that does not yet
-meet that rule. Ordinary command calls to the integer scanner disable its
-existing resource continuation, while dimension, glue, keyword, optional-
-equals, and filename scans still keep progress only in Rust locals. The direct
-retry owner then retains the command and nested scanner key but redispatches
-the command from its opcode after input has advanced. This is inferred replay,
-not a continuation: for example, a preloaded
-`\count0=12\pdffilesize{second}` assigns 122, while staged delivery currently
-re-enters the assignment after consuming `12` and assigns zero.
+The reusable allocation-free scalar-frame family now owns optional-equals,
+keyword and matched-prefix restoration, integer, dimension, glue, filename,
+internal-value, expression, and font-selector progress. Every nested scalar or
+expansion is a non-`Copy` child edge tagged with its exact return destination.
+The raw resource-capable entry points are private; the executor-facing retained
+surface returns a move-only result that carries either the completed value, the
+exact child capability, or a non-resource failure. An external caller therefore
+cannot use a raw scalar API, and an internal structured caller cannot propagate
+a suspension with `?` while silently abandoning its child.
 
-The required replacement is one reusable, allocation-free scalar-frame
-family. Its variants own exact integer, dimension, glue, keyword, optional-
-equals, and filename progress; every nested scalar or expansion is a non-
-`Copy` child edge tagged with its return destination. A direct operation owns
-one outer typed scan phase, while expansion, conditional, alignment, and
-structured-scanner phases own their scalar child directly. Resource-capable
-scanner entry points require that parent capability, so an unretained call is
-not expressible. Success consumes child then parent and moves the result into
-the named destination, resuspension reinstalls the same edge, and abort drops
-the exact chain deepest-first. A root mailbox, per-command retry queue,
-caller-order result tape, search, rollback replay, and destination inference
-remain forbidden. Until that frame family replaces the unowned entry points,
-ordinary scalar and command-specific resource suspension is a known
-implementation gap rather than a safe singular-job exception.
+One singular direct-operation parent owns the settled command, delivery cursor,
+completed fixed-sequence operands, current phase, and scalar child. Its exact
+phases cover register and box-dimension assignments; unary integer, dimension,
+and glue commands; paragraph-shape and penalty arrays; fontdimen, font-integer,
+font-code, font-expansion, and font-only operations; code tables and catcodes;
+openout filename scanning; marks; math families; arithmetic target/keyword/
+operand sequences; and leader payload, command, and glue delivery. Expansion
+frames own number, internal-value, font, mark-class, margin-kern, PDF scalar,
+balanced-text, and file-enquiry children. Conditional frames own already-pushed
+condition identity, inversion, and exact numeric/font/box/stream operands.
+Alignment preamble frames own tabskip optional-equals and glue phases beside
+their scanner episode and partially built templates.
+
+Structured scanner parents retain character/register definitions, token-list
+register and parameter assignments, glue parameters, rules, packing, insert,
+box, input-stream, filename, font-definition, generated-font, math, accent,
+hyphenation, PDF object/form/image/graphics/navigation/action/document
+fragments, immediate extension, write-stream, and expanded-write phases. A
+token-list right-hand side retains its completed selector and owner before a
+nested scalar or collector begins; an expanded write retains the artificial
+write episode, stopper level, already-collected list, and write-word count.
+Consequently a completed selector or earlier operand is never reconstructed
+from the command opcode after input has advanced.
+
+Success consumes the deepest child before its parent and moves the result into
+the named destination. Resource resuspension reinstalls the same edge. Abort
+walks the exact chain deepest-first, including a failure while storing a newly
+allocated parent frame: the live child is closed before the unpublished parent
+is discarded. Reusable frame slots carry a fresh serial, so stale ABA keys and
+double consumption are rejected; warmed nesting reuses the lane's high-water
+capacity without allocation. No known resource-capable scalar site uses an
+inferred owner, destination search, root mailbox, per-command retry queue,
+caller-order result tape, input rollback replay, or fallback redispatch.
 
 The handle-free `OwnedCommandContinuation` schema, validation, and atomic
 destination materializer are implemented, but the module still carries a

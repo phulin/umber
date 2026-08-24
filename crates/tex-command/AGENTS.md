@@ -183,7 +183,16 @@ collector (see `src/conditionals.rs`).
   on the command, so it is the category code and never
   the character: §207 makes `spacer` the command a category-10 character
   carries, and §349 is what normalizes such a character's `cur_chr` to a
-  space inside §341's `get_next`.
+  space inside §341's `get_next`. The same reusable ABA-tagged scalar lane owns
+  optional-equals, fixed-inline keyword prefix, integer, dimension, glue,
+  filename, internal-value, expression, and font-selector continuation state.
+  Raw resource-capable scanners remain private; public retained calls return a
+  move-only completed/suspended/failed result, and each expansion,
+  conditional, alignment, structured scanner, or executor operation moves the
+  suspended child into its exact typed phase. Success, resuspension, abort, and
+  fallible parent-frame storage all close or reinstall that chain
+  deepest-first. Do not add a root mailbox, caller-order result tape,
+  destination inference/search, or command redispatch fallback.
   `filename/tests.rs` owns focused expanded filename scanning, termination,
   replay, and registered-source retry tests.
   `structured.rs`'s `scan_math_field_episode` is TeX82 §1151's `scan_math`,
