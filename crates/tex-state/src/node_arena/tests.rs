@@ -1,4 +1,6 @@
-use super::{NodeArena, NodeArenaError, NodeListId, PageLifetime, ScratchLifetime};
+use super::{
+    NodeArena, NodeArenaError, NodeListId, NodeRelocationScratch, PageLifetime, ScratchLifetime,
+};
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
@@ -50,6 +52,63 @@ fn explicit_roots_promote_exact_closure_once() {
             .nodes(),
         [Node::Penalty(7)]
     );
+}
+
+#[test]
+fn sparse_relocation_maps_bound_capacity_by_live_keys_in_both_directions() {
+    let page_value = NodeListId::<PageLifetime>::from_row(9, 1, 11);
+    let durable_value = NodeListId::<Durable>::from_row(13, 1, 17);
+    let mut durable_to_page = NodeRelocationScratch::<Durable, PageLifetime>::default();
+    durable_to_page.begin();
+    for key in [7, 1_000_000_007, usize::MAX - 1] {
+        durable_to_page.marks.set_state(key, 2);
+        durable_to_page.relocation.insert(key, page_value);
+        assert_eq!(durable_to_page.relocation.get(key), Some(page_value));
+    }
+    assert_eq!(durable_to_page.capacities(), (16, 0, 16));
+
+    let mut page_to_durable = NodeRelocationScratch::<PageLifetime, Durable>::default();
+    page_to_durable.begin();
+    for key in [usize::MAX - 3, 1_000_000_009, 5] {
+        page_to_durable.marks.set_state(key, 2);
+        page_to_durable.relocation.insert(key, durable_value);
+        assert_eq!(page_to_durable.relocation.get(key), Some(durable_value));
+    }
+    assert_eq!(page_to_durable.capacities(), (16, 0, 16));
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_sparse_relocation_traversal_allocates_nothing() {
+    let mut source = NodeArena::<PageLifetime>::new();
+    let child = source
+        .publish(vec![Node::Penalty(7)])
+        .expect("test fixture is valid");
+    let root = source
+        .publish(vec![boxed(child), boxed(child)])
+        .expect("test fixture is valid");
+    let mut scratch = NodeRelocationScratch::<PageLifetime, Durable>::default();
+    let traverse = |scratch: &mut NodeRelocationScratch<PageLifetime, Durable>| {
+        scratch.begin();
+        source
+            .postorder_sparse(root, &mut scratch.marks, &mut scratch.order)
+            .expect("test fixture is valid");
+        assert_eq!(scratch.order, [child, root]);
+        scratch.order.clear();
+    };
+    traverse(&mut scratch);
+
+    let owner = crate::measurement::HotCoreAllocationOwner::SemanticApply;
+    let before = crate::measurement::hot_core_thread_allocation_measurement(owner);
+    {
+        let _scope = crate::measurement::hot_core_allocation_scope(owner);
+        for _ in 0..128 {
+            traverse(&mut scratch);
+        }
+    }
+    let after = crate::measurement::hot_core_thread_allocation_measurement(owner);
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 }
 
 #[test]

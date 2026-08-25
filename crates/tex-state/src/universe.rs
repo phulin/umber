@@ -1395,7 +1395,7 @@ impl<G> Universe<G> {
     ) -> Result<Vec<DurableListId<G>>, NodePromotionError> {
         {
             let (source, core) = (&self.page_nodes, &mut self.core);
-            source.reserve_promotion(
+            source.reserve_promotion_with_scratch(
                 roots,
                 core.as_mut()
                     .ok_or(PromotionError::Retired)?
@@ -1405,9 +1405,12 @@ impl<G> Universe<G> {
                         _ => PromotionError::AllocationFailed,
                     })?
                     .nodes_mut(),
+                self.dynamic_memory_scratch.page_to_durable(),
             )?;
         }
-        let (glue, tokens) = self.page_nodes.escaping_payloads(roots)?;
+        let (glue, tokens) = self
+            .page_nodes
+            .escaping_payloads_with_scratch(roots, self.dynamic_memory_scratch.page_to_durable())?;
         let token_promotions = tokens
             .iter()
             .map(|tokens| TokenListPromotion {
@@ -1418,7 +1421,7 @@ impl<G> Universe<G> {
         let mut glue_ids = receipt.glue.into_iter();
         let mut token_ids = receipt.token_lists.into_iter();
         let (source, core) = (&self.page_nodes, &mut self.core);
-        let promoted = source.promote_into_with(
+        let promoted = source.promote_into_with_scratch(
             roots,
             core.as_mut()
                 .ok_or(PromotionError::Retired)?
@@ -1428,6 +1431,7 @@ impl<G> Universe<G> {
                     _ => PromotionError::AllocationFailed,
                 })?
                 .nodes_mut(),
+            self.dynamic_memory_scratch.page_to_durable(),
             |_| glue_ids.next().expect("one durable id per page glue root"),
             |_| {
                 token_ids
@@ -1437,7 +1441,7 @@ impl<G> Universe<G> {
         )?;
         debug_assert!(glue_ids.next().is_none());
         debug_assert!(token_ids.next().is_none());
-        Ok(promoted)
+        Ok(promoted.into_vec())
     }
 
     /// Copies one durable box closure into page-lifetime storage.
@@ -1456,7 +1460,8 @@ impl<G> Universe<G> {
         let current_dynamic = admitted
             .current_dynamic_memory_words(etex_node_sizes, &mut self.dynamic_memory_scratch)?
             .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
-        let copied = admitted.copy_nodes_into_page(&[root], page_nodes)?[0];
+        let copied =
+            admitted.copy_node_into_page(root, page_nodes, &mut self.dynamic_memory_scratch)?;
         self.engine_usage
             .observe_node_copy(words.0, current_dynamic, words.1);
         Ok(copied)

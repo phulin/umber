@@ -1196,8 +1196,7 @@ impl<'a, G> CommandContext<'a, G> {
         let durable = value
             .map(|root| {
                 self.admitted
-                    .promote_page_nodes(self.page_nodes, &[root])
-                    .map(|roots| roots[0])
+                    .promote_page_node(self.page_nodes, root, self.dynamic_memory_scratch)
             })
             .transpose()?;
         self.admitted
@@ -1219,9 +1218,9 @@ impl<'a, G> CommandContext<'a, G> {
         index: u16,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
-        let durable = self
-            .admitted
-            .promote_page_nodes(self.page_nodes, &[value])?[0];
+        let durable =
+            self.admitted
+                .promote_page_node(self.page_nodes, value, self.dynamic_memory_scratch)?;
         self.admitted
             .state()
             .replace_box_register(index, Some(durable))
@@ -1246,8 +1245,8 @@ impl<'a, G> CommandContext<'a, G> {
             .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
         let copied = self
             .admitted
-            .copy_nodes_into_page(&[root], self.page_nodes)
-            .expect("durable box closure belongs to the admitted generation")[0];
+            .copy_node_into_page(root, self.page_nodes, self.dynamic_memory_scratch)
+            .expect("durable box closure belongs to the admitted generation");
         self.engine_usage
             .observe_node_copy(words.0, current_dynamic, words.1);
         Some(copied)
@@ -2823,8 +2822,8 @@ impl<'a, G> CommandContext<'a, G> {
         );
         let box_list = self
             .admitted
-            .promote_page_nodes(self.page_nodes, &[box_list])
-            .map_err(|_| crate::PdfObjectCapacityError)?[0];
+            .promote_page_node(self.page_nodes, box_list, self.dynamic_memory_scratch)
+            .map_err(|_| crate::PdfObjectCapacityError)?;
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
         self.pdf.initialize_form(

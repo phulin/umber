@@ -11,7 +11,7 @@ use crate::glue::GlueSpec;
 use crate::node::NodeTokenList;
 use crate::node_arena::{
     DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
-    PageListId, PageNodeArena, StampedIndexMap,
+    NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena, StampedIndexMap,
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
@@ -145,6 +145,8 @@ pub(crate) struct DynamicMemoryScratch<G> {
     definition_marks: StampedIndexMap,
     token_marks: StampedIndexMap,
     nodes: NodeMemoryScratch<G>,
+    durable_to_page: NodeRelocationScratch<G, PageLifetime>,
+    page_to_durable: NodeRelocationScratch<PageLifetime, G>,
 }
 
 impl<G> Default for DynamicMemoryScratch<G> {
@@ -153,6 +155,8 @@ impl<G> Default for DynamicMemoryScratch<G> {
             definition_marks: StampedIndexMap::default(),
             token_marks: StampedIndexMap::default(),
             nodes: NodeMemoryScratch::default(),
+            durable_to_page: NodeRelocationScratch::default(),
+            page_to_durable: NodeRelocationScratch::default(),
         }
     }
 }
@@ -169,6 +173,10 @@ impl<G> DynamicMemoryScratch<G> {
 
     fn mark_token_list(&mut self, index: usize) -> bool {
         self.token_marks.mark(index)
+    }
+
+    pub(crate) fn page_to_durable(&mut self) -> &mut NodeRelocationScratch<PageLifetime, G> {
+        &mut self.page_to_durable
     }
 }
 
@@ -359,17 +367,19 @@ impl<'a, G> AdmittedState<'a, G> {
         self.nodes.get(id)
     }
 
-    pub(crate) fn copy_nodes_into_page(
+    pub(crate) fn copy_node_into_page(
         &self,
-        roots: &[DurableListId<G>],
+        root: DurableListId<G>,
         destination: &mut PageNodeArena,
-    ) -> Result<Vec<PageListId>, NodeArenaError> {
-        self.nodes.promote_into_with(
-            roots,
+        scratch: &mut DynamicMemoryScratch<G>,
+    ) -> Result<PageListId, NodeArenaError> {
+        Ok(self.nodes.promote_into_with_scratch(
+            &[root],
             destination,
+            &mut scratch.durable_to_page,
             |id| self.glue(id),
             |id| NodeTokenList::new(self.token_list(id).iter().collect::<Vec<_>>()),
-        )
+        )?[0])
     }
 
     pub(crate) fn copied_node_closure_tex_memory_words(
@@ -555,26 +565,34 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.provenance_mut().allocate(value)
     }
 
-    pub(crate) fn copy_nodes_into_page(
+    pub(crate) fn copy_node_into_page(
         &self,
-        roots: &[DurableListId<G>],
+        root: DurableListId<G>,
         destination: &mut PageNodeArena,
-    ) -> Result<Vec<PageListId>, NodeArenaError> {
-        self.nodes.promote_into_with(
-            roots,
+        scratch: &mut DynamicMemoryScratch<G>,
+    ) -> Result<PageListId, NodeArenaError> {
+        Ok(self.nodes.promote_into_with_scratch(
+            &[root],
             destination,
+            &mut scratch.durable_to_page,
             |id| self.glue(id),
             |id| NodeTokenList::new(self.token_list(id).iter().collect::<Vec<_>>()),
-        )
+        )?[0])
     }
 
-    pub(crate) fn promote_page_nodes(
+    pub(crate) fn promote_page_node(
         &mut self,
         source: &PageNodeArena,
-        roots: &[PageListId],
-    ) -> Result<Vec<DurableListId<G>>, crate::universe::NodePromotionError> {
-        source.reserve_promotion(roots, self.nodes_mut())?;
-        let (glue, tokens) = source.escaping_payloads(roots)?;
+        root: PageListId,
+        scratch: &mut DynamicMemoryScratch<G>,
+    ) -> Result<DurableListId<G>, crate::universe::NodePromotionError> {
+        source.reserve_promotion_with_scratch(
+            &[root],
+            self.nodes_mut(),
+            &mut scratch.page_to_durable,
+        )?;
+        let (glue, tokens) =
+            source.escaping_payloads_with_scratch(&[root], &mut scratch.page_to_durable)?;
         let token_promotions = tokens
             .iter()
             .map(|tokens| crate::universe::TokenListPromotion {
@@ -584,9 +602,10 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         let receipt = self.promote_values(&[], &token_promotions, &glue, &[])?;
         let mut glue_ids = receipt.glue.into_iter();
         let mut token_ids = receipt.token_lists.into_iter();
-        let promoted = source.promote_into_with(
-            roots,
+        let promoted = source.promote_into_with_scratch(
+            &[root],
             self.nodes_mut(),
+            &mut scratch.page_to_durable,
             |_| glue_ids.next().expect("one durable id per page glue root"),
             |_| {
                 token_ids
@@ -596,7 +615,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         )?;
         debug_assert!(glue_ids.next().is_none());
         debug_assert!(token_ids.next().is_none());
-        Ok(promoted)
+        Ok(promoted[0])
     }
 
     /// Promotes one already-validated batch while this unique admitted borrow

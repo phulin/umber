@@ -7,6 +7,7 @@
 
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
+use smallvec::SmallVec;
 
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::glue::GlueSpec;
@@ -258,6 +259,133 @@ impl StampedIndexMap {
     #[cfg(test)]
     pub(crate) const fn capacity(&self) -> usize {
         self.keys.len()
+    }
+}
+
+struct StampedRelocationMap<L> {
+    keys: Vec<usize>,
+    stamps: Vec<u64>,
+    values: Vec<NodeListId<L>>,
+    stamp: u64,
+    len: usize,
+}
+
+impl<L> Default for StampedRelocationMap<L> {
+    fn default() -> Self {
+        Self {
+            keys: Vec::new(),
+            stamps: Vec::new(),
+            values: Vec::new(),
+            stamp: 0,
+            len: 0,
+        }
+    }
+}
+
+impl<L> StampedRelocationMap<L> {
+    fn begin(&mut self) {
+        self.stamp = self
+            .stamp
+            .checked_add(1)
+            .expect("relocation stamp exhausted");
+        self.len = 0;
+    }
+
+    fn get(&self, key: usize) -> Option<NodeListId<L>> {
+        let mut slot = self.initial_slot(key)?;
+        loop {
+            if self.stamps[slot] != self.stamp {
+                return None;
+            }
+            if self.keys[slot] == key {
+                return Some(self.values[slot]);
+            }
+            slot = (slot + 1) & (self.keys.len() - 1);
+        }
+    }
+
+    fn insert(&mut self, key: usize, value: NodeListId<L>) {
+        if self.keys.is_empty() || self.len.saturating_add(1) * 2 > self.keys.len() {
+            self.grow();
+        }
+        let mut slot = self.initial_slot(key).expect("grown relocation table");
+        loop {
+            if self.stamps[slot] != self.stamp {
+                self.keys[slot] = key;
+                self.values[slot] = value;
+                self.stamps[slot] = self.stamp;
+                self.len += 1;
+                return;
+            }
+            if self.keys[slot] == key {
+                self.values[slot] = value;
+                return;
+            }
+            slot = (slot + 1) & (self.keys.len() - 1);
+        }
+    }
+
+    fn grow(&mut self) {
+        let old_keys = core::mem::take(&mut self.keys);
+        let old_stamps = core::mem::take(&mut self.stamps);
+        let old_values = core::mem::take(&mut self.values);
+        let old_stamp = self.stamp;
+        let old_len = self.len;
+        let capacity = old_keys.len().max(8).saturating_mul(2);
+        self.keys = vec![0; capacity];
+        self.stamps = vec![0; capacity];
+        self.values = vec![NodeListId::empty(); capacity];
+        self.len = 0;
+        for slot in 0..old_keys.len() {
+            if old_stamps[slot] == old_stamp {
+                self.insert(old_keys[slot], old_values[slot]);
+            }
+        }
+        debug_assert_eq!(self.len, old_len);
+    }
+
+    fn initial_slot(&self, key: usize) -> Option<usize> {
+        if self.keys.is_empty() {
+            return None;
+        }
+        let mut hash = key;
+        hash ^= hash >> 16;
+        hash = hash.wrapping_mul(0x7feb_352d);
+        hash ^= hash >> 15;
+        Some(hash & (self.keys.len() - 1))
+    }
+}
+
+pub(crate) struct NodeRelocationScratch<Source, Destination> {
+    marks: StampedIndexMap,
+    order: Vec<NodeListId<Source>>,
+    relocation: StampedRelocationMap<Destination>,
+}
+
+impl<Source, Destination> Default for NodeRelocationScratch<Source, Destination> {
+    fn default() -> Self {
+        Self {
+            marks: StampedIndexMap::default(),
+            order: Vec::new(),
+            relocation: StampedRelocationMap::default(),
+        }
+    }
+}
+
+impl<Source, Destination> NodeRelocationScratch<Source, Destination> {
+    fn begin(&mut self) {
+        self.marks.begin();
+        self.order.clear();
+        self.relocation.begin();
+    }
+
+    #[cfg(test)]
+    fn capacities(&self) -> (usize, usize, usize) {
+        (
+            self.marks.keys.len(),
+            self.order.capacity(),
+            self.relocation.keys.len(),
+        )
     }
 }
 
@@ -715,6 +843,38 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok((glue, tokens))
     }
 
+    pub(crate) fn escaping_payloads_with_scratch<D>(
+        &self,
+        roots: &[NodeListId<L>],
+        scratch: &mut NodeRelocationScratch<L, D>,
+    ) -> Result<(Vec<Glue>, Vec<Tokens>), NodeArenaError>
+    where
+        Glue: Clone,
+        Tokens: Clone,
+    {
+        scratch.begin();
+        for root in roots {
+            self.postorder_sparse(*root, &mut scratch.marks, &mut scratch.order)?;
+        }
+        let mut glue = Vec::new();
+        let mut tokens = Vec::new();
+        for list in scratch.order.iter().copied() {
+            let index = list.index().expect("postorder excludes empty lists");
+            for node in self.rows[index]
+                .as_ref()
+                .map(|row| row.nodes.as_ref())
+                .expect("postorder contains only live rows")
+            {
+                node.visit_payloads(
+                    |value| glue.push(value.clone()),
+                    |value| tokens.push(value.clone()),
+                );
+            }
+        }
+        scratch.order.clear();
+        Ok((glue, tokens))
+    }
+
     /// Validates the exact closure and reserves its destination rows before
     /// any accompanying durable payload batch is published.
     pub fn reserve_promotion<D, OtherGlue, OtherTokens>(
@@ -739,6 +899,30 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             .map_err(|_| NodeArenaError::AllocationFailed)
     }
 
+    pub(crate) fn reserve_promotion_with_scratch<D, OtherGlue, OtherTokens>(
+        &self,
+        roots: &[NodeListId<L>],
+        destination: &mut NodeArena<D, OtherGlue, OtherTokens>,
+        scratch: &mut NodeRelocationScratch<L, D>,
+    ) -> Result<(), NodeArenaError> {
+        scratch.begin();
+        for root in roots {
+            self.postorder_sparse(*root, &mut scratch.marks, &mut scratch.order)?;
+        }
+        let final_len = destination
+            .rows
+            .len()
+            .checked_add(scratch.order.len())
+            .ok_or(NodeArenaError::CapacityOverflow)?;
+        u32::try_from(final_len).map_err(|_| NodeArenaError::CapacityOverflow)?;
+        destination
+            .rows
+            .try_reserve(scratch.order.len())
+            .map_err(|_| NodeArenaError::AllocationFailed)?;
+        scratch.order.clear();
+        Ok(())
+    }
+
     /// Relocates an exact closure while changing its semantic payload
     /// coordinates, as page values become generation-durable ids.
     pub fn promote_into_with<D, OtherGlue, OtherTokens>(
@@ -752,31 +936,48 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Glue: Clone,
         Tokens: Clone,
     {
-        let mut state = vec![0_u8; self.rows.len()];
-        let mut order = Vec::new();
-        for root in roots {
-            self.postorder(*root, &mut state, &mut order)?;
-        }
+        let mut scratch = NodeRelocationScratch::default();
+        Ok(self
+            .promote_into_with_scratch(
+                roots,
+                destination,
+                &mut scratch,
+                &mut map_glue,
+                &mut map_tokens,
+            )?
+            .into_vec())
+    }
 
+    pub(crate) fn promote_into_with_scratch<D, OtherGlue, OtherTokens>(
+        &self,
+        roots: &[NodeListId<L>],
+        destination: &mut NodeArena<D, OtherGlue, OtherTokens>,
+        scratch: &mut NodeRelocationScratch<L, D>,
+        mut map_glue: impl FnMut(Glue) -> OtherGlue,
+        mut map_tokens: impl FnMut(Tokens) -> OtherTokens,
+    ) -> Result<SmallVec<[NodeListId<D>; 1]>, NodeArenaError>
+    where
+        Glue: Clone,
+        Tokens: Clone,
+    {
+        scratch.begin();
+        for root in roots {
+            self.postorder_sparse(*root, &mut scratch.marks, &mut scratch.order)?;
+        }
         let destination_base = destination.rows.len();
         let final_len = destination_base
-            .checked_add(order.len())
+            .checked_add(scratch.order.len())
             .ok_or(NodeArenaError::CapacityOverflow)?;
         u32::try_from(final_len).map_err(|_| NodeArenaError::CapacityOverflow)?;
         destination
             .rows
-            .try_reserve(order.len())
+            .try_reserve(scratch.order.len())
             .map_err(|_| NodeArenaError::AllocationFailed)?;
 
-        let mut relocation = vec![None; self.rows.len()];
-        let mut staged = Vec::new();
-        staged
-            .try_reserve(order.len())
-            .map_err(|_| NodeArenaError::AllocationFailed)?;
-        for source in order {
+        for source in scratch.order.iter().copied() {
             let source_index = source.index().expect("postorder excludes empty lists");
             let row = destination_base
-                .checked_add(staged.len())
+                .checked_add(destination.rows.len() - destination_base)
                 .and_then(|index| index.checked_add(1))
                 .and_then(|row| u32::try_from(row).ok())
                 .ok_or(NodeArenaError::CapacityOverflow)?;
@@ -792,27 +993,73 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 .map(|node| {
                     node.map_lists(|child| {
                         child.index().map_or_else(NodeListId::empty, |index| {
-                            relocation[index].expect("postorder relocates children before parents")
+                            scratch
+                                .relocation
+                                .get(index)
+                                .expect("postorder relocates children before parents")
                         })
                     })
                     .map_payloads(&mut map_glue, &mut map_tokens)
                 })
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
-            relocation[source_index] = Some(destination_id);
-            staged.push(Some(NodeArenaRow { generation, nodes }));
+            scratch.relocation.insert(source_index, destination_id);
+            destination
+                .rows
+                .push(Some(NodeArenaRow { generation, nodes }));
         }
 
         let promoted_roots = roots
             .iter()
             .map(|root| {
                 root.index().map_or_else(NodeListId::empty, |index| {
-                    relocation[index].expect("every explicit root was relocated")
+                    scratch
+                        .relocation
+                        .get(index)
+                        .expect("every explicit root was relocated")
                 })
             })
-            .collect();
-        destination.rows.extend(staged);
+            .collect::<SmallVec<_>>();
+        scratch.order.clear();
         Ok(promoted_roots)
+    }
+
+    fn postorder_sparse(
+        &self,
+        id: NodeListId<L>,
+        state: &mut StampedIndexMap,
+        order: &mut Vec<NodeListId<L>>,
+    ) -> Result<(), NodeArenaError> {
+        let Some(index) = id.index() else {
+            return Ok(());
+        };
+        if id.owner != self.owner {
+            return Err(NodeArenaError::InvalidList);
+        }
+        let Some(row) = self.rows.get(index).and_then(Option::as_ref) else {
+            return Err(NodeArenaError::InvalidList);
+        };
+        if row.generation != id.generation {
+            return Err(NodeArenaError::InvalidList);
+        }
+        match state.state(index) {
+            2 => return Ok(()),
+            1 => return Err(NodeArenaError::CyclicList),
+            _ => {}
+        }
+        state.set_state(index, 1);
+        for node in row.nodes.iter() {
+            let mut result = Ok(());
+            node.visit_node_lists(|child| {
+                if result.is_ok() {
+                    result = self.postorder_sparse(*child, state, order);
+                }
+            });
+            result?;
+        }
+        state.set_state(index, 2);
+        order.push(id);
+        Ok(())
     }
 
     fn postorder(
