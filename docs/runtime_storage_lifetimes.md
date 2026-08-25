@@ -553,6 +553,29 @@ sole current slot: immutable definition and stored-token payload owners are
 shared directly, while mutable banks and runtime roots receive one
 destination-local representation.
 
+PDF state uses that rule directly. `PdfStateSnapshot` contains only inline
+scalars, canonical append-log lengths, one absolute general-undo position, one
+absolute color-undo position, and the coarse payload position. Capturing it
+visits no row, clones no container or token owner, retains no new payload
+owner, and allocates nothing. Pages, font operations and resources, images,
+raw-object reservations, document fragments, page reservations, canonical
+space-font names, annotations, links, forms, destinations, outlines, threads,
+PK rows, and catalog-action rows retain insertion order in dense append logs;
+lookup sidecars never define serialization order. Raw-object initialization
+and reference, annotation initialization, match replacement, open-link
+push/pop, form-artifact replacement, destination definition, and thread-bead
+append carry exact inverse entries. Page and form color operations use a
+separate inverse lane, so a form traversal can restore only its color work.
+
+Image and form bytes move once into one generation-local payload arena. A
+fork seals the selected delta boxes into one coarse immutable prefix and gives
+the destination an empty private delta. The prefix retain copies no payload
+bytes, and the first destination write appends to its delta instead of
+copying the prefix. After the old prior retires, the coarse prefix is unique
+again; there is no per-value owner, owner chain, content lookup, or third
+generation. Payload ids are internal direct indices and never affect PDF
+object numbering.
+
 Marks can be created only at a boundary whose live builders are sealed and
 whose execution scratch is quiescent. A mark is not an owning reference to
 each value it can restore. The session's prior/current generation slots and
@@ -571,16 +594,44 @@ Restore is atomic and follows this order:
 3. Restore dense banks by loading the selected coarse packed image when one is
    present and replaying the exact journal suffix to its cursor; otherwise
    undo the live journal directly to the cursor.
-4. Restore input, condition, group, mode, page, source, resource, effect, and
+4. Reverse-replay PDF general and color undo entries, then restore its scalar
+   roots and append-log selections. Remove lookup suffixes before truncating
+   canonical rows; truncate image/form payload deltas last.
+5. Restore input, condition, group, mode, page, source, resource, effect, and
    output cursors, transferring canonical roots before releasing replaced
    owners.
-5. Restore scratch lengths and truncate unpublished provenance, input,
+6. Restore scratch lengths and truncate unpublished provenance, input,
    durable, and mode/page storage suffixes to their validated positions.
-6. Release abandoned generation and page owners only after no restored cell,
+7. Release abandoned generation and page owners only after no restored cell,
    stack entry, or cursor can name their storage.
 
 Any validation failure leaves the runtime unchanged. Reusing a physical arena
 slot requires a new generation key before another id can name it.
+
+PDF undo positions are absolute. After retained checkpoint slots are pruned,
+their existing live-index vector supplies the oldest surviving general and
+color positions. `Universe::prune_pdf_history` drops only entries before those
+positions from the two deque-backed lanes; it does not scan PDF rows or the
+rest of the engine and does not rewrite surviving marks. With no retained
+checkpoint, the low water advances to the live head. Thus the prior and
+current physical slots retain at most their own contiguous rollback interval,
+and moved old match/color/form values are released as soon as no live mark can
+name them.
+
+The focused release gate in
+`benchmarks/tex-state/src/bin/pdf_checkpoint_gate.rs` measures the PDF mark in
+isolation. Across warm 2026-08-25 implementation runs, one million captures
+took 45--115 ns each and one million no-mutation restores took 149--263 ns
+each; the best paired 64 MiB result was 50 ns capture and 149 ns restore. Both
+paths performed zero allocation calls and requested zero bytes with either a
+1-byte or 64 MiB accumulated image payload. Retained payload bytes equaled the
+single authoritative payload exactly (1 byte and 67,108,864 bytes); checkpoint
+capture added none. The replaced representation necessarily allocated and
+copied the complete payload `Vec` at each capture, so the corresponding 64 MiB
+case had a direct lower bound of 67,108,864 requested bytes per mark before
+counting cloned row vectors, maps, tokens, colors, or forms. The exact arXiv
+baseline attribution remains 134.27 MiB of live bytes under PDF/checkpoint
+clone stacks and 33.477 billion profiled cycles for the complete row.
 
 ## Incremental revisions and two-generation ownership
 

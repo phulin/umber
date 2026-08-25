@@ -461,6 +461,38 @@ impl<G> Universe<G> {
         self.pdf.history_head()
     }
 
+    /// Direct PDF mark loop used by the focused profiling gate. Other
+    /// aggregate checkpoint owners are deliberately excluded.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_pdf_checkpoint_capture(&self, iterations: usize) -> u64 {
+        let mut checksum = 0_u64;
+        for _ in 0..iterations {
+            let mark = std::hint::black_box(self.pdf.snapshot());
+            let position = mark.history_position();
+            checksum ^= position.0 ^ position.1.rotate_left(17);
+        }
+        checksum
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_pdf_checkpoint_restore(&mut self, iterations: usize) -> u64 {
+        let mark = self.pdf.snapshot();
+        let mut checksum = 0_u64;
+        for _ in 0..iterations {
+            self.pdf.rollback(mark.clone());
+            checksum ^= self.pdf.history_head().0;
+        }
+        checksum
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_pdf_payload_bytes(&self) -> usize {
+        self.pdf.payload_bytes()
+    }
+
     /// Creates a destination-local runtime from one retained checkpoint.
     /// Validation is complete before the returned fork becomes visible.
     #[doc(hidden)]

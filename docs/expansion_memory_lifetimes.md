@@ -122,6 +122,16 @@ carriers clone only their existing private shared handles, so their payload
 bytes are not recopied; publisher scratch and mutable execution roots are
 destination-local.
 
+PDF is the concrete mutable-runtime exception to prefix copying. A checkpoint
+holds a fixed scalar `PdfStateSnapshot`, not cloned PDF rows. The destination
+copies generation-branded row metadata needed by the selected mark, retains
+one coarse image/form payload prefix, and starts empty inverse and payload
+delta lanes. Image and form byte addresses therefore remain identical across
+capture, fork, restore, rejection, and acceptance; ordinary mutation never
+invokes copy-on-write on the retained prefix. Append lengths plus exact inverse
+entries preserve raw-object, annotation, destination, open-link, color,
+form-artifact, match, and thread rollback, including pop-then-push histories.
+
 `Session` allocates one private `CandidateLeaseState` when the session starts.
 Every `start_*_candidate` factory atomically claims that state and moves the
 non-cloneable lease into `RevisionCandidate`. Preparing a completed candidate

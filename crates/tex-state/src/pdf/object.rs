@@ -193,20 +193,41 @@ impl<G> PdfRawObjects<G> {
         self.0.records.truncate(len);
     }
 
-    pub(crate) fn begin_change(
+    pub(crate) fn begin_initialize(
         &mut self,
         id: PdfRawObjectId,
-        restore_data: bool,
-    ) -> Option<PdfRawObjectUndo<G>> {
+    ) -> Result<PdfRawObjectUndo<G>, PdfRawObjectInitializeError> {
         let state = &mut self.0;
         let row = state
             .records
             .binary_search_by_key(&id, |record| record.id)
-            .ok()?;
+            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
         let record = &mut state.records[row];
-        Some(PdfRawObjectUndo {
+        if record.data.is_some() {
+            return Err(PdfRawObjectInitializeError::AlreadyInitialized(id));
+        }
+        Ok(PdfRawObjectUndo {
             row,
-            data: restore_data.then(|| record.data.take()),
+            data: Some(None),
+            immediate: record.immediate,
+            referenced: record.referenced,
+            last_object: state.last_object,
+        })
+    }
+
+    pub(crate) fn begin_reference(
+        &mut self,
+        id: PdfRawObjectId,
+    ) -> Result<PdfRawObjectUndo<G>, PdfRawObjectInitializeError> {
+        let state = &mut self.0;
+        let row = state
+            .records
+            .binary_search_by_key(&id, |record| record.id)
+            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
+        let record = &state.records[row];
+        Ok(PdfRawObjectUndo {
+            row,
+            data: None,
             immediate: record.immediate,
             referenced: record.referenced,
             last_object: state.last_object,

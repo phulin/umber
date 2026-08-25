@@ -422,6 +422,15 @@ duplicate-open-action errors. Together with normalized and rendered PDF
 fixtures plus retained-snapshot replay, these tests close the issue-13
 object/dictionary parity gate.
 
+The live PDF ledger now checkpoints by an allocation-free scalar mark rather
+than by cloning accumulated containers. Canonical append logs retain PDF
+creation order, while exact inverse journals cover every in-place definition,
+reference, replacement, and stack mutation. Image and form bytes live in one
+coarse prefix-plus-delta payload arena and are not copied by checkpoint
+capture, retained-generation fork, or rollback. Restore reverses mutable
+entries before truncating canonical rows and truncates payloads last, so retry
+preserves the same object numbers and terminal serialization order.
+
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete
 expansion-aware line breaking and final glyph/kern substitution, and signed

@@ -163,9 +163,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   and rollback cursors.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
-  durable form-list coordinates, owned checkpoint collections, owned external
-  resource bytes, suffix transfer, committed-page ledger, and handle-free PDF
-  format wire capture/materialization hooks.
+  durable form-list coordinates, allocation-free scalar checkpoint marks,
+  exact inverse journals, one coarse image/form payload prefix plus private
+  delta, committed-page ledger, and handle-free PDF format wire
+  capture/materialization hooks.
 - `src/pdf/completion.rs`: handle-free terminal projection of the checkpointed
   PDF ledger, including artifacts, resources, raw objects, actions, and final
   document state.

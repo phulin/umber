@@ -375,6 +375,7 @@ struct PdfPayloadId(usize);
 struct PdfPayloadArena {
     prefix: Rc<Vec<Box<[u8]>>>,
     delta: Vec<Box<[u8]>>,
+    bytes: usize,
 }
 
 impl Default for PdfPayloadArena {
@@ -382,6 +383,7 @@ impl Default for PdfPayloadArena {
         Self {
             prefix: Rc::new(Vec::new()),
             delta: Vec::new(),
+            bytes: 0,
         }
     }
 }
@@ -393,6 +395,7 @@ impl PdfPayloadArena {
 
     fn store(&mut self, bytes: Vec<u8>) -> PdfPayloadId {
         let id = PdfPayloadId(self.len());
+        self.bytes = self.bytes.saturating_add(bytes.len());
         self.delta.push(bytes.into_boxed_slice());
         id
     }
@@ -410,6 +413,12 @@ impl PdfPayloadArena {
             len >= self.prefix.len(),
             "PDF payload prefix is still retained"
         );
+        self.bytes = self.bytes.saturating_sub(
+            self.delta[len - self.prefix.len()..]
+                .iter()
+                .map(|row| row.len())
+                .sum(),
+        );
         self.delta.truncate(len - self.prefix.len());
     }
 
@@ -425,6 +434,7 @@ impl PdfPayloadArena {
         Self {
             prefix: Rc::clone(&self.prefix),
             delta: Vec::new(),
+            bytes: self.prefix.iter().map(|row| row.len()).sum(),
         }
     }
 }
@@ -1338,6 +1348,11 @@ pub(crate) struct PdfState<G> {
 }
 
 impl<G> PdfState<G> {
+    #[cfg(feature = "profiling")]
+    pub(crate) fn payload_bytes(&self) -> usize {
+        self.payloads.bytes
+    }
+
     pub(crate) fn history_head(&self) -> (u64, u64) {
         (
             self.undo_base + self.undo.len() as u64,
@@ -2800,10 +2815,7 @@ impl<G> PdfState<G> {
         data: PdfRawObjectData<G>,
         immediate: bool,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        let undo = self
-            .raw_objects
-            .begin_change(id, true)
-            .ok_or(PdfRawObjectInitializeError::NotFound(id))?;
+        let undo = self.raw_objects.begin_initialize(id)?;
         match self.raw_objects.initialize(id, data, immediate) {
             Ok(()) => {
                 self.undo.push_back(PdfUndo::RawObject(undo));
@@ -2825,10 +2837,7 @@ impl<G> PdfState<G> {
         &mut self,
         id: PdfRawObjectId,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        let undo = self
-            .raw_objects
-            .begin_change(id, false)
-            .ok_or(PdfRawObjectInitializeError::NotFound(id))?;
+        let undo = self.raw_objects.begin_reference(id)?;
         match self.raw_objects.reference(id) {
             Ok(()) => {
                 self.undo.push_back(PdfUndo::RawObject(undo));
