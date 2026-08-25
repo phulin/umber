@@ -91,10 +91,13 @@ process
 ```
 
 An owner may keep a coarser generation lease alive, but macro definitions and
-stored token lists additionally follow their exact semantic carriers. Their
-private handles are generation-branded wrappers around `Rc<[TokenWord]>` and
-are deliberately non-`Copy`; cloning records a true alias and moving transfers
-an existing owner. They never own an arena. Other compact runtime values remain
+stored token lists additionally follow their exact semantic carriers. A macro
+definition's private generation-branded handle is one thin non-atomic `Rc`
+owner whose allocation header stores its serial, parameter split, parsed
+parameter program, and final-drop accounting capability immediately before
+the immutable token tail. Stored token lists retain their private
+`Rc<[TokenWord]>`. Both handles are deliberately non-`Copy`; cloning records a
+true alias and moving transfers an existing owner. They never own an arena. Other compact runtime values remain
 copyable ids or inline scalars where that is cheaper. No per-value `Arc`,
 `Weak`, owner registry, or ordinary-read liveness lookup exists.
 
@@ -233,18 +236,17 @@ widths remain operational state outside the format and dense banks.
 ## Immutable definitions
 
 `DefinitionArena` is now a publisher, not the lifetime owner of published
-macro bodies. A `DefinitionId<G>` privately contains one non-atomic shared
-token slice, the parameter/replacement split and parsed parameter program, a
-monotonic cold-format serial, and the invariant generation brand. Construction
-occurs only after the complete immutable value is ready. Equal definitions
-published twice remain distinct allocations and distinct identities.
+macro bodies. A `DefinitionId<G>` privately contains one thin non-atomic owner
+of a single header-plus-token-tail allocation and the invariant generation
+brand. The header contains the parameter/replacement split, parsed parameter
+program, monotonic cold-format serial, and exact final-drop accounting
+capability. Construction occurs only after the complete immutable value is
+ready. Equal definitions published twice remain distinct allocations and
+distinct identities.
 
 ```rust
 pub struct DefinitionId<G> {
-    serial: NonZeroU32,
-    words: Rc<[TokenWord]>,
-    parameter_len: u32,
-    parameters: MacroParameterPattern,
+    allocation: ThinRc<DefinitionHeader, TokenWord>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -285,11 +287,12 @@ existing arena slots and scalar marks remain the sole scratch lifetime
 authority. Glue remains inline/direct-index because shared heap ownership would
 cost more than the value.
 
-The allocation event records a definition or token list's canonical word cost
-beside its private handle. Cloning an alias copies that scalar and clones the
-same generation accounting capability; moving transfers both. `Drop` tests the
-real shared payload's last-owner state and only that transition subtracts the
-cost. No table, scan, hash, tracing pass, or second reference count participates.
+The allocation event records a definition's canonical word cost and generation
+accounting capability once in the same shared header as its immutable metadata;
+the header's one final destruction subtracts the cost. A token-list handle
+continues to carry that information beside its shared slice and tests the real
+payload's last-owner state. No table, scan, hash, tracing pass, or second
+reference count participates.
 
 The serial field is not resolution or lifetime authority. It exists only to
 preserve deterministic coordinates while detaching a format. Cold capture

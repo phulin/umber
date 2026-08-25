@@ -10434,21 +10434,23 @@ fn scan_alignment_delivery_step<G>(
     retry: &mut Option<PendingPreflightCommand<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
+    let mut destination = None;
     let delivery = processor
-        .get_x_alignment_delivery(main_loop_active)
+        .get_x_alignment_delivery_into(main_loop_active, &mut destination)
         .map_err(command_error)?;
     match delivery {
-        None => Ok(ColdOperation::<G>::EndOfInput.into()),
+        tex_command::DeliveryStatus::End => Ok(ColdOperation::<G>::EndOfInput.into()),
         // An executor-owned replay episode (a math field/group/choice branch
         // or discretionary part) retired mid-cell. This must be reported
         // exactly like ordinary `scan_step`'s `ReplayCompleted` case, rather
         // than falling through to interpret whatever the cascade found next
         // as this cell's own content: that next token can belong to the
         // *enclosing* cell/field context, not the just-retired episode.
-        Some(AlignmentDelivery::Completed(episode)) => {
+        tex_command::DeliveryStatus::ReplayCompleted(episode) => {
             Ok(ColdOperation::<G>::ReplayCompleted(episode).into())
         }
-        Some(AlignmentDelivery::Command(command)) => {
+        tex_command::DeliveryStatus::Command => {
+            let command = destination.expect("command status initializes destination");
             // TeX82 §§1034/1038 keeps an adjacent character fetched by
             // `main_loop_lookahead` inside `main_loop`, even when §789's
             // u-template/body handoff lies between the two characters. The
@@ -10546,8 +10548,20 @@ fn scan_alignment_delivery_step<G>(
                 Some(retry),
             )
         }
-        Some(AlignmentDelivery::Event(event)) => {
+        tex_command::DeliveryStatus::AlignmentEndTemplate => {
+            let event = tex_command::AlignmentDeliveryEvent::EndTemplate(
+                destination.expect("alignment status initializes destination"),
+            );
             scan_alignment_delivery_event(processor, alignment, event).map(Into::into)
+        }
+        tex_command::DeliveryStatus::AlignmentClosingBrace => {
+            let event = tex_command::AlignmentDeliveryEvent::ClosingBrace(
+                destination.expect("alignment status initializes destination"),
+            );
+            scan_alignment_delivery_event(processor, alignment, event).map(Into::into)
+        }
+        tex_command::DeliveryStatus::PendingExpanded => {
+            unreachable!("alignment delivery commits terminal observations")
         }
     }
 }
@@ -10601,18 +10615,21 @@ fn settle_preflight_step<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
-    let delivery = processor
-        .settle_preflight_command(command, main_loop)
-        .map_err(command_error)?;
-    let Some(delivery) = delivery else {
-        return Ok(ColdOperation::<G>::EndOfInput.into());
+    let mut destination = None;
+    match processor
+        .settle_preflight_command_into(command, main_loop, &mut destination)
+        .map_err(command_error)?
+    {
+        tex_command::DeliveryStatus::End => {
+            return Ok(ColdOperation::<G>::EndOfInput.into());
+        }
+        tex_command::DeliveryStatus::ReplayCompleted(episode) => {
+            return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
+        }
+        tex_command::DeliveryStatus::Command => {}
+        _ => unreachable!("preflight settlement has no alignment event"),
     };
-    let tex_command::CommandReplayDelivery::Command(command) = delivery else {
-        let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
-            unreachable!();
-        };
-        return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
-    };
+    let command = destination.expect("command status initializes destination");
     // TeX82 §§380 and 473--479 keep operand scanning under the newly settled
     // unexpandable command. Expansion owns the retry only until settlement;
     // after this point a resource failure must re-enter this command before
@@ -10684,20 +10701,23 @@ fn scan_step<G>(
     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
     // run of adjacent characters from being delivered through expansion.
     prepare_command_trace(processor, mode, *shown_mode);
+    let mut destination = None;
     let delivery = if main_loop_active {
-        processor.main_loop_lookahead()
+        processor.main_loop_lookahead_into(&mut destination)
     } else {
-        processor.get_x_token_with_replay_completion()
+        processor.get_x_token_with_replay_completion_into(&mut destination)
     };
-    let Some(delivery) = delivery.map_err(command_error)? else {
-        return Ok(ColdOperation::<G>::EndOfInput.into());
+    match delivery.map_err(command_error)? {
+        tex_command::DeliveryStatus::End => {
+            return Ok(ColdOperation::<G>::EndOfInput.into());
+        }
+        tex_command::DeliveryStatus::ReplayCompleted(episode) => {
+            return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
+        }
+        tex_command::DeliveryStatus::Command => {}
+        _ => unreachable!("main-control delivery has no alignment event"),
     };
-    let tex_command::CommandReplayDelivery::Command(command) = delivery else {
-        let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
-            unreachable!();
-        };
-        return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
-    };
+    let command = destination.expect("command status initializes destination");
     // TeX82 §§1034/1038 keeps a fetched character inside `main_loop`;
     // it reaches neither `reswitch` nor §1030's command trace. A
     // non-character fetched by the same lookahead does go to `reswitch` and

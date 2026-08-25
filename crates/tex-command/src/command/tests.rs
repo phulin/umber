@@ -7,6 +7,13 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use super::{CurrentCommand, DeliveryStamp};
 
+#[test]
+fn command_delivery_layout_stays_compact() {
+    assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 24);
+    assert!(std::mem::size_of::<CurrentCommand<()>>() <= 144);
+    assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
+}
+
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
     CurrentCommand::resolve(
         TracedTokenWord::pack(token, OriginId::UNKNOWN),

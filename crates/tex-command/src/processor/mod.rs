@@ -115,12 +115,19 @@ pub(super) struct DeliveryPolicy {
     alignment_interception: AlignmentInterceptionPolicy,
 }
 
-#[derive(Debug)]
-pub(super) enum DeliveryEvent<G> {
-    Command(crate::CurrentCommand<G>),
-    PendingExpanded(crate::CurrentCommand<G>),
+/// Compact outcome from a destination-directed command delivery request.
+///
+/// Command-bearing variants initialize the caller's command destination;
+/// non-command variants leave it empty. This keeps the large ephemeral
+/// command out of return-value envelopes on the hot path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeliveryStatus {
+    End,
+    Command,
+    PendingExpanded,
     ReplayCompleted(crate::CommandReplayEpisode),
-    Alignment(AlignmentDeliveryEvent<G>),
+    AlignmentEndTemplate,
+    AlignmentClosingBrace,
 }
 pub(crate) use status::{ScannerState, ScannerStatus};
 

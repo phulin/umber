@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tex_command::{
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
-    RegisteredSourceKind, SourceRegistration,
+    DeliveryStatus, RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::Universe;
 use tex_state::env::AssignmentScope;
@@ -19,11 +19,61 @@ use tex_state::token::{Catcode, Token, TokenWord};
 static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
 fn main() {
+    assert!(std::mem::size_of::<tex_state::DefinitionId<()>>() <= 8);
+    assert!(std::mem::size_of::<tex_state::ResolvedMeaning<()>>() <= 24);
+    assert!(std::mem::size_of::<tex_command::CurrentCommand<()>>() <= 144);
+    assert!(std::mem::size_of::<DeliveryStatus>() <= 16);
     ordinary_source_delivery();
     packed_backup_and_replay();
     stored_token_replay();
     macro_argument_matching();
+    destination_directed_warm_delivery();
     println!("packed token/macro cutover gate: PASS");
+}
+
+fn destination_directed_warm_delivery() {
+    with_universe(|universe| {
+        let words = vec![
+            TokenWord::pack(Token::Char {
+                ch: 'd',
+                cat: Catcode::Letter,
+            });
+            8_256
+        ];
+        let stored = universe.allocate_token_list(&words).expect("stored tokens");
+        let mut command = CommandState::default();
+        {
+            let context = universe.command_context().expect("command context");
+            command.push_everyjob(&context, stored);
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        for _ in 0..64 {
+            assert_eq!(
+                processor.get_token_into(&mut destination).unwrap(),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(destination.as_ref().expect("direct command"), 'd');
+            destination = None;
+        }
+        measure_zero("destination_directed_8192_delivery", || {
+            for _ in 0..8_192 {
+                assert_eq!(
+                    processor.get_token_into(&mut destination).unwrap(),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("direct command"), 'd');
+                destination = None;
+            }
+        });
+    });
 }
 
 fn ordinary_source_delivery() {
@@ -200,6 +250,10 @@ fn install_macro<G>(universe: &mut Universe<G>) {
 }
 
 fn assert_char<G>(command: tex_command::CurrentCommand<G>, expected: char) {
+    assert_char_ref(&command, expected);
+}
+
+fn assert_char_ref<G>(command: &tex_command::CurrentCommand<G>, expected: char) {
     assert_eq!(
         command.spelling().semantic_token(),
         Token::Char {

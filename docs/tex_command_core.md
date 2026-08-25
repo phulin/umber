@@ -184,12 +184,23 @@ handling, protected and undefined meanings, and alignment `end_template`
 interception independently. Canonically named methods remain as thin entry
 points; they do not own alternate fetch loops.
 
-The driver returns typed command, replay-completion, pending-observation, and
-alignment events. In particular, alignment lookahead carries either
-`Committed` or `PendingExpanded`; no boolean can silently invert who must
-commit the expanded observation before backup. Every expanded invocation
-enters and leaves the persistent expansion-depth counter through the same
-balanced boundary, including error returns.
+The driver is destination-directed. Its caller provides the one final
+`Option<CurrentCommand<G>>` slot for that active request; raw resolution and
+expanded settlement construct or mutate the command in that slot. The return
+is only a compact `DeliveryStatus` naming end of input, command completion,
+replay completion, pending observation, or an alignment boundary. A command
+moves out of this slot only into its final consumer or the one typed expansion
+suspension slot at a real resource barrier. There is no process-global slot,
+mailbox, destination inference, or nested-request reuse.
+
+The value-returning entry points are conveniences over the same destination
+driver; the executor hot loop and destination-aware callers use
+`get_next_into`, `get_token_into`, `get_x_token_into`, and the replay/alignment
+counterparts. In particular, alignment lookahead carries either `Committed` or
+`PendingExpanded`; no boolean can silently invert who must commit the expanded
+observation before backup. Every expanded invocation enters and leaves the
+persistent expansion-depth counter through the same balanced boundary,
+including error returns.
 
 ## 2. Canonical authorities
 
@@ -1410,6 +1421,18 @@ Production methods include:
 
 ```rust
 impl CommandProcessor<'_> {
+    pub fn get_next_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand>,
+    ) -> Result<DeliveryStatus, CommandError>;
+    pub fn get_token_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand>,
+    ) -> Result<DeliveryStatus, CommandError>;
+    pub fn get_x_token_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand>,
+    ) -> Result<DeliveryStatus, CommandError>;
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError>;
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand>, CommandError>;
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError>;
@@ -1959,7 +1982,8 @@ There is one semantic raw-command operation. In conceptual order it:
 9. detects an alignment delimiter at the current base depth;
 10. pushes or retires the canonical template input required by that delimiter;
 11. records the semantic read and diagnostic provenance; and
-12. returns `CurrentCommand`.
+12. leaves the resolved command in the active request's destination and returns
+    the compact `Command` status.
 
 Steps may restart without returning a command, exactly as TeX restarts after
 ignored characters, exhausted input, parameter insertion, and template
@@ -2034,8 +2058,10 @@ become normal input.
 
 ## 15. `get_token`, backup, and exact delivery
 
-`get_token` invokes `get_next` under canonical control-sequence creation policy
-and returns the same `CurrentCommand` with its packed token spelling.
+`get_token_into` invokes the raw driver under canonical control-sequence
+creation policy and leaves the same `CurrentCommand` with its packed token
+spelling in the caller's destination. The value-returning `get_token` wrapper
+exists for compatibility outside the hot delivery chain.
 
 `back_input` implements TeX82 §325 in that section's order:
 

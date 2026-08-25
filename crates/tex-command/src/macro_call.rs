@@ -390,9 +390,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         pattern: MacroParameterPattern,
         parameter_len: usize,
     ) -> Result<(), CommandError> {
+        let mut delivered = None;
         for index in 0..pattern.leading_end(parameter_len) {
             let expected = self.macro_parameter_token(definition.clone(), index)?;
-            let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
+            if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::MacroPrefixMismatch);
+            }
+            let actual = delivered
+                .take()
+                .expect("command status initializes destination");
             if actual.spelling().semantic_token() != expected {
                 // TeX82 §391 tests every compulsory parameter-text token
                 // after raw delivery has completed §336 recovery. An outer
@@ -685,9 +691,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §395 ends with `ins_error`, so §82 renders the context with
         // the inserted `\par` level already on the stack.
         self.report_extra_right_brace_argument();
-        let par = self
-            .get_token()?
-            .ok_or(CommandError::ParagraphInMacroArgument)?;
+        let mut delivered = None;
+        if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::ParagraphInMacroArgument);
+        }
+        let par = delivered
+            .take()
+            .expect("command status initializes destination");
         self.back_input(par)?;
         // §395's `goto continue` immediately reads the inserted `\par`;
         // `long_state := call` makes §396 abort even a `\long` macro.
@@ -700,10 +710,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         matching: &MacroMatch<G>,
         flags: MeaningFlags,
     ) -> Result<MacroMatchBuffer<G>, CommandError> {
+        let mut delivered = None;
         let first = loop {
-            let command = self
-                .get_token()?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
+            if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
+            let command = delivered
+                .take()
+                .expect("command status initializes destination");
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 return Err(CommandError::OuterInMacroArgument);
             }
@@ -748,9 +762,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut tokens = self.allocate_argument_buffer(matching)?;
         self.push_argument_token(matching, tokens, first.spelling())?;
         loop {
-            let command = self
-                .get_token()?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
+            if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
+            let command = delivered
+                .take()
+                .expect("command status initializes destination");
             // TeX82 §23's recovered `cur_cmd := spacer` is the return
             // value of the interrupted raw delivery, not a token linked into
             // §394's temporary argument list. The inserted `\par`
@@ -806,13 +823,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.scratch.clear_delimiter_prefix();
         let mut depth = 0_u32;
         let mut current = None;
+        let mut delivered = None;
 
         loop {
             let command = match current.take() {
                 Some(command) => command,
-                None => self
-                    .get_token()?
-                    .ok_or(CommandError::ParagraphInMacroArgument)?,
+                None => {
+                    if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
+                        return Err(CommandError::ParagraphInMacroArgument);
+                    }
+                    delivered
+                        .take()
+                        .expect("command status initializes destination")
+                }
             };
             if command.is_outer_recovery_space() {
                 continue;

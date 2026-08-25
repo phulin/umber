@@ -842,17 +842,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // consume. Requiring a literal begin-group spelling
                         // would mistake the following body token for a second
                         // opening delimiter after the alias replay.
-                        let opening = self
-                            .get_token()
-                            .map_err(|error| ScanToksFailure {
-                                error,
+                        let mut opening = None;
+                        let status =
+                            self.get_token_into(&mut opening)
+                                .map_err(|error| ScanToksFailure {
+                                    error,
+                                    continuation: PendingScanToksPhase::Opening { child: None },
+                                })?;
+                        if status != crate::DeliveryStatus::Command {
+                            return Err(ScanToksFailure {
+                                error: CommandError::input_invariant(),
                                 continuation: PendingScanToksPhase::Opening { child: None },
-                            })?
-                            .ok_or_else(CommandError::input_invariant)
-                            .map_err(|error| ScanToksFailure {
-                                error,
-                                continuation: PendingScanToksPhase::Opening { child: None },
-                            })?;
+                            });
+                        }
+                        let opening = opening.expect("command status initializes destination");
                         if !matches!(
                             opening.meaning(),
                             ResolvedMeaning::Static(Meaning::CharToken {
@@ -961,13 +964,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         expanded: bool,
     ) -> Result<ScannedLeftBrace<G>, CommandError> {
+        let mut destination = None;
         loop {
-            let command = if expanded {
-                self.get_x_token()?
+            let status = if expanded {
+                self.get_x_token_into(&mut destination)?
             } else {
-                self.get_token()?
+                self.get_token_into(&mut destination)?
+            };
+            if status != crate::DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
             }
-            .ok_or(CommandError::input_invariant())?;
+            let command = destination
+                .take()
+                .expect("command status initializes destination");
             match command.meaning() {
                 ResolvedMeaning::Static(Meaning::CharToken {
                     cat: Catcode::Space,
@@ -1022,8 +1031,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
         let mut malformed_parameter = false;
+        let mut destination = None;
         loop {
-            let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
+            if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = destination
+                .take()
+                .expect("command status initializes destination");
             if primary == OriginId::UNKNOWN {
                 primary = command.origin();
             }
@@ -1074,7 +1089,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.push_attempt_token(output, command.spelling())?;
                 continue;
             }
-            let follower = self.get_token()?.ok_or(CommandError::input_invariant())?;
+            if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let follower = destination
+                .take()
+                .expect("command status initializes destination");
             let follower_token = follower.spelling().semantic_token();
             if is_begin_group(follower_token) {
                 self.push_attempt_token(output, follower.spelling())?;
@@ -1168,6 +1188,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             mut pending_parameter,
             mut pending_expansion,
         } = progress;
+        let mut destination = None;
         loop {
             let delivered;
             let spelling = {
@@ -1199,8 +1220,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let command = if resumed_command.is_some() {
                     resumed_command
                 } else if expansion.is_expanded() {
-                    match self.get_next() {
-                        Ok(command) => command,
+                    match self.get_next_into(&mut destination) {
+                        Ok(crate::DeliveryStatus::Command) => destination.take(),
+                        Ok(crate::DeliveryStatus::End) => None,
+                        Ok(_) => unreachable!("ordinary raw delivery has no side event"),
                         Err(error) => {
                             return Err(replacement_failure(
                                 error,
@@ -1212,8 +1235,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                 } else {
-                    match self.get_token() {
-                        Ok(command) => command,
+                    match self.get_token_into(&mut destination) {
+                        Ok(crate::DeliveryStatus::Command) => destination.take(),
+                        Ok(crate::DeliveryStatus::End) => None,
+                        Ok(_) => unreachable!("ordinary token delivery has no side event"),
                         Err(error) => {
                             return Err(replacement_failure(
                                 error,
@@ -1561,8 +1586,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         output: AttemptTokenBufferId,
         target: &mut Option<crate::CurrentCommand<G>>,
     ) -> Result<bool, CommandError> {
-        if target.is_none() {
-            *target = Some(self.get_x_token()?.ok_or(CommandError::input_invariant())?);
+        if target.is_none() && self.get_x_token_into(target)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
         }
         let retained_target = target.as_ref().expect("target was installed");
         let scan = self.scan_the_internal_value_retained(retained_target);
@@ -2046,7 +2071,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         // align_state<1000000 then {unmatched `}' aborts the line} begin
         // repeat get_token until cur_tok=0; align_state:=1000000; goto done;
         // end; store_new_token(cur_tok); end`.
-        while let Some(command) = self.get_token()? {
+        let mut destination = None;
+        loop {
+            let status = self.get_token_into(&mut destination)?;
+            if status == crate::DeliveryStatus::End {
+                break;
+            }
+            if status != crate::DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = destination
+                .take()
+                .expect("command status initializes destination");
             if self
                 .command
                 .semantic_diagnostics

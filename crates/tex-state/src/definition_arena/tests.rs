@@ -2,6 +2,14 @@ use crate::generation::with_generation;
 use crate::token::{Catcode, Token, TokenWord};
 
 #[test]
+fn definition_handle_is_one_thin_non_atomic_owner() {
+    assert_eq!(
+        std::mem::size_of::<super::DefinitionId<()>>(),
+        std::mem::size_of::<usize>()
+    );
+}
+
+#[test]
 fn complete_rows_resolve_by_direct_id() {
     with_generation(|mut generation| {
         let parameter = [

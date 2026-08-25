@@ -29,9 +29,8 @@ use super::CommandProcessor;
 use super::expand::{ExpandedFetch, ProtectedMacroHandling, UndefinedHandling};
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 use super::{
-    AlignmentInterceptionPolicy, ControlSequenceCreation, DeliveryEvent, DeliveryMode,
-    DeliveryPolicy, ExpandedDeliveryPolicy, ExpandedObservationPolicy, FirstCommandPolicy,
-    ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, ControlSequenceCreation, DeliveryMode, DeliveryPolicy,
+    ExpandedDeliveryPolicy, ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 /// TeX82 §336's `Incomplete \if...; all text was ignored after line N`.
@@ -258,6 +257,38 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         main_loop_active: bool,
     ) -> Result<Option<AlignmentDelivery<G>>, CommandError> {
+        let mut destination = None;
+        let delivery = self.get_x_alignment_delivery_into(main_loop_active, &mut destination)?;
+        Ok(match delivery {
+            super::DeliveryStatus::End => None,
+            super::DeliveryStatus::Command => Some(AlignmentDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            super::DeliveryStatus::ReplayCompleted(episode) => {
+                Some(AlignmentDelivery::Completed(episode))
+            }
+            super::DeliveryStatus::AlignmentEndTemplate => Some(AlignmentDelivery::Event(
+                AlignmentDeliveryEvent::EndTemplate(
+                    destination.expect("alignment status initializes destination"),
+                ),
+            )),
+            super::DeliveryStatus::AlignmentClosingBrace => Some(AlignmentDelivery::Event(
+                AlignmentDeliveryEvent::ClosingBrace(
+                    destination.expect("alignment status initializes destination"),
+                ),
+            )),
+            super::DeliveryStatus::PendingExpanded => {
+                unreachable!("alignment delivery commits terminal observations")
+            }
+        })
+    }
+
+    /// Delivers active-cell input into caller-provided command storage.
+    pub fn get_x_alignment_delivery_into(
+        &mut self,
+        main_loop_active: bool,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
         let fetch = if main_loop_active {
             ExpandedFetch::XToken
         } else {
@@ -281,15 +312,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Surface,
             },
+            destination,
         )?;
-        Ok(delivery.map(|event| match event {
-            DeliveryEvent::Command(command) => AlignmentDelivery::Command(command),
-            DeliveryEvent::ReplayCompleted(episode) => AlignmentDelivery::Completed(episode),
-            DeliveryEvent::Alignment(event) => AlignmentDelivery::Event(event),
-            DeliveryEvent::PendingExpanded(_) => {
-                unreachable!("alignment delivery commits terminal observations")
-            }
-        }))
+        Ok(delivery)
     }
 
     /// Hands an intercepted delimiter from `end_template` main control back
@@ -558,46 +583,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    /// TeX82 §342's `@<If an alignment entry has just ended, take appropriate
-    /// action@>`, the last statement of §341's `get_next` before its `exit`.
-    ///
-    /// Because it lives inside `get_next`, §789's ⟨v_j⟩ insertion is
-    /// transparent to *every* reader that pulls a raw command: `get_token`,
-    /// `get_x_token`, `macro_call`'s §392 parameter matcher, and §473's
-    /// `scan_toks` all restart on the ⟨v_j⟩ template and never see the tab
-    /// mark, `\span`, or `\cr` that ended the entry as ordinary content. A
-    /// reader that does see it captures the delimiter's spelling as material
-    /// -- and, worse, leaves the cell's own `\endv` undelivered, so the
-    /// alignment never advances. Umber classifies the delimiter in
-    /// [`crate::processor::alignment::AlignmentDelivery`] during delivery;
-    /// this is where §342's structural consequence is applied, so the
-    /// classification is made exactly once and consumed exactly once.
-    ///
-    /// `Ok(None)` means the ⟨v_j⟩ template is now the live input and the
-    /// caller must restart its fetch, which is §789's `goto restart`.
-    ///
-    /// The one reader that deliberately does not run this is main control's
-    /// [`Self::get_x_alignment_delivery`]: TeX82 §789 stores the delimiter in
-    /// `extra_info(cur_align)` for §791's `fin_col`, and that alignment
-    /// identity is executor-owned in Umber, so main control surfaces a typed
-    /// [`AlignmentDeliveryEvent::EndTemplate`] and the executor calls
-    /// [`Self::begin_alignment_v_template`] to perform the same insertion.
-    pub(super) fn insert_alignment_entry_v_template(
-        &mut self,
-        command: CurrentCommand<G>,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        if matches!(
-            command.alignment_adjustment(),
-            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-        ) {
-            self.begin_scalar_alignment_v_template(command)?;
-            return Ok(None);
-        }
-        Ok(Some(command))
-    }
-
     /// Delivers one unexpanded raw command through canonical `get_next`.
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
+        match self.get_next_into(&mut destination)? {
+            super::DeliveryStatus::End => Ok(None),
+            super::DeliveryStatus::Command => Ok(destination),
+            _ => unreachable!("ordinary raw delivery returns only commands"),
+        }
+    }
+
+    /// Delivers one raw command directly into caller-provided final storage.
+    pub fn get_next_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
             None,
@@ -607,11 +607,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            destination,
         )?;
-        Ok(delivery.map(|event| match event {
-            DeliveryEvent::Command(command) => command,
-            _ => unreachable!("ordinary raw delivery returns only commands"),
-        }))
+        debug_assert!(matches!(
+            delivery,
+            super::DeliveryStatus::End | super::DeliveryStatus::Command
+        ));
+        Ok(delivery)
     }
 
     /// Delivers one raw command or an executor-owned stored-episode
@@ -620,6 +622,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn get_next_with_replay_completion(
         &mut self,
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
+        let mut destination = None;
+        let delivery = self.get_next_with_replay_completion_into(&mut destination)?;
+        Ok(match delivery {
+            super::DeliveryStatus::End => None,
+            super::DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            super::DeliveryStatus::ReplayCompleted(episode) => {
+                Some(CommandReplayDelivery::Completed(episode))
+            }
+            _ => unreachable!("raw replay-aware delivery has no expanded event"),
+        })
+    }
+
+    /// Delivers raw replay-aware input into caller-provided command storage.
+    pub fn get_next_with_replay_completion_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
         let delivery = self.delivery_driver(
             None,
             DeliveryPolicy {
@@ -628,12 +649,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::None,
             },
+            destination,
         )?;
-        Ok(delivery.map(|event| match event {
-            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
-            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
-            _ => unreachable!("raw replay-aware delivery has no expanded event"),
-        }))
+        debug_assert!(matches!(
+            delivery,
+            super::DeliveryStatus::End
+                | super::DeliveryStatus::Command
+                | super::DeliveryStatus::ReplayCompleted(_)
+        ));
+        Ok(delivery)
     }
 
     /// Delivers the raw token following TeX's backtick character-code
@@ -682,6 +706,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// without assigning it a meaning, so the policy boundary is explicit
     /// even before diagnostic-only interning is separated further.
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
+        match self.get_token_into(&mut destination)? {
+            super::DeliveryStatus::End => Ok(None),
+            super::DeliveryStatus::Command => Ok(destination),
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+    }
+
+    /// Delivers one raw token directly into caller-provided final storage.
+    pub fn get_token_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
             None,
@@ -691,11 +728,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Allow,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            destination,
         )?;
-        Ok(delivery.map(|event| match event {
-            DeliveryEvent::Command(command) => command,
-            _ => unreachable!("ordinary token delivery returns only commands"),
-        }))
+        debug_assert!(matches!(
+            delivery,
+            super::DeliveryStatus::End | super::DeliveryStatus::Command
+        ));
+        Ok(delivery)
     }
 
     /// Applies tex.web §§84/87's ErrorStop input mutation at the sole raw
@@ -1491,14 +1530,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// typed adjustment and never reclassifies its spelling.
     pub(crate) fn begin_scalar_alignment_v_template(
         &mut self,
-        command: CurrentCommand<G>,
+        command: &CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         let alignment = self
             .command
             .alignment
             .active_alignment
             .ok_or(CommandError::input_invariant())?;
-        let delimiter = Self::saved_alignment_delimiter(&command)?;
+        let delimiter = Self::saved_alignment_delimiter(command)?;
         let delimiter_line = command
             .direct_source_line_number()
             .unwrap_or_else(|| self.command.current_file_line_number());
@@ -1512,14 +1551,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn get_next_with_control_sequence_creation(
         &mut self,
         allow_control_sequence_creation: bool,
-    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
         loop {
             if let Some(episode) = self.take_ready_replay_completion() {
-                return Ok(Some(CommandReplayDelivery::Completed(episode)));
+                return Ok(super::DeliveryStatus::ReplayCompleted(episode));
             }
             let Some(delivery) = self.take_input_token(allow_control_sequence_creation)? else {
                 if let Some(episode) = self.take_ready_replay_completion() {
-                    return Ok(Some(CommandReplayDelivery::Completed(episode)));
+                    return Ok(super::DeliveryStatus::ReplayCompleted(episode));
                 }
                 // §360: a `\read` pseudo-file's line has ended, which is
                 // `cur_cmd:=0; cur_chr:=0; return` -- an ordinary end of
@@ -1527,12 +1568,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `check_outer_validity` must not run and no runaway may be
                 // reported.
                 if std::mem::take(&mut self.read_line_ended) {
-                    return Ok(None);
+                    return Ok(super::DeliveryStatus::End);
                 }
                 if self.recover_runaway_eof()? {
                     continue;
                 }
-                return Ok(None);
+                return Ok(super::DeliveryStatus::End);
             };
             let DeliveredToken {
                 spelling,
@@ -1577,14 +1618,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             ) {
                 self.record_meaning_lookup();
             }
-            let mut command = CurrentCommand::<G>::resolve(
+            *destination = Some(CurrentCommand::<G>::resolve(
                 spelling,
                 delivery_stamp,
                 source_provenance,
                 direct_source,
                 direct_source_line,
                 &self.state,
-            );
+            ));
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal
@@ -1593,15 +1634,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                 behavior,
                 TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
             ) {
-                command.suppress_expandable();
+                destination
+                    .as_mut()
+                    .expect("raw destination was initialized")
+                    .suppress_expandable();
             }
             // Outer-validity recovery canonically backs up this exact raw
             // delivery before substituting its recovery space.
             self.last_delivery = Some(delivery_stamp);
-            self.check_outer_validity_entry(&mut command)?;
+            self.check_outer_validity_entry(
+                destination
+                    .as_mut()
+                    .expect("raw destination was initialized"),
+            )?;
             let previous_align_state = self.command.alignment.align_state;
-            let adjustment = self.command.alignment.classify_delivery(&mut command);
-            command.set_alignment_adjustment(adjustment);
+            let adjustment = self.command.alignment.classify_delivery(
+                destination
+                    .as_mut()
+                    .expect("raw destination was initialized"),
+            );
+            destination
+                .as_mut()
+                .expect("raw destination was initialized")
+                .set_alignment_adjustment(adjustment);
             if self.command.alignment.active_alignment.is_some()
                 && !matches!(
                     adjustment,
@@ -1647,9 +1702,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 adjustment,
                 crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
             ) {
-                self.observe_raw_delivery(&command);
+                self.observe_raw_delivery(
+                    destination
+                        .as_ref()
+                        .expect("raw destination was initialized"),
+                );
             }
-            return Ok(Some(CommandReplayDelivery::Command(command)));
+            return Ok(super::DeliveryStatus::Command);
         }
     }
 

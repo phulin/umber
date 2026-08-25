@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
-use std::rc::Rc;
+use thin_dst::ThinRc;
 
 use crate::generation::ArenaToken;
 use crate::macro_definition::MacroParameterPattern;
@@ -15,44 +15,76 @@ mod tests;
 
 pub(super) enum DefinitionNamespace {}
 
+struct DefinitionWords<Parameters, Replacement> {
+    parameters: Parameters,
+    replacement: Replacement,
+}
+
+impl<Parameters, Replacement> Iterator for DefinitionWords<Parameters, Replacement>
+where
+    Parameters: ExactSizeIterator<Item = TokenWord>,
+    Replacement: ExactSizeIterator<Item = TokenWord>,
+{
+    type Item = TokenWord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.parameters.next().or_else(|| self.replacement.next())
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
+}
+
+impl<Parameters, Replacement> ExactSizeIterator for DefinitionWords<Parameters, Replacement>
+where
+    Parameters: ExactSizeIterator<Item = TokenWord>,
+    Replacement: ExactSizeIterator<Item = TokenWord>,
+{
+    fn len(&self) -> usize {
+        self.parameters
+            .len()
+            .checked_add(self.replacement.len())
+            .expect("validated definition word length")
+    }
+}
+
+struct DefinitionHeader {
+    serial: NonZeroU32,
+    parameter_len: u32,
+    parameters: MacroParameterPattern,
+    accounting: MemoryAccounting,
+    memory_words: usize,
+}
+
+impl Drop for DefinitionHeader {
+    fn drop(&mut self) {
+        self.accounting.release_shared_dynamic(self.memory_words);
+    }
+}
+
 /// Dense coordinate of one immutable macro definition.
 ///
 /// There is deliberately no raw constructor or integer projection. Only a
 /// successful `DefinitionArena::allocate` can publish an id.
 pub struct DefinitionId<G> {
-    serial: NonZeroU32,
-    words: Rc<[TokenWord]>,
-    parameter_len: u32,
-    parameters: MacroParameterPattern,
-    accounting: MemoryAccounting,
+    allocation: ThinRc<DefinitionHeader, TokenWord>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Clone for DefinitionId<G> {
     fn clone(&self) -> Self {
         Self {
-            serial: self.serial,
-            words: Rc::clone(&self.words),
-            parameter_len: self.parameter_len,
-            parameters: self.parameters,
-            accounting: self.accounting.clone(),
+            allocation: self.allocation.clone(),
             _brand: PhantomData,
-        }
-    }
-}
-
-impl<G> Drop for DefinitionId<G> {
-    fn drop(&mut self) {
-        if Rc::strong_count(&self.words) == 1 {
-            self.accounting
-                .release_shared_dynamic(definition_memory_words(self.words.len()));
         }
     }
 }
 
 impl<G> PartialEq for DefinitionId<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.serial == other.serial
+        self.allocation.head.serial == other.allocation.head.serial
     }
 }
 
@@ -60,7 +92,7 @@ impl<G> Eq for DefinitionId<G> {}
 
 impl<G> core::hash::Hash for DefinitionId<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.serial.hash(state);
+        self.allocation.head.serial.hash(state);
     }
 }
 
@@ -71,17 +103,17 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
 }
 
 impl<G> DefinitionId<G> {
-    pub(crate) const fn format_index(&self) -> u32 {
-        self.serial.get() - 1
+    pub(crate) fn format_index(&self) -> u32 {
+        self.allocation.head.serial.get() - 1
     }
 
     pub(crate) fn capture_format(&self) -> crate::format::schema::FormatDefinition {
         crate::format::schema::FormatDefinition {
-            parameter_text: self.words[..self.parameter_len as usize]
+            parameter_text: self.allocation.slice[..self.allocation.head.parameter_len as usize]
                 .iter()
                 .map(|word| word.raw())
                 .collect(),
-            replacement_text: self.words[self.parameter_len as usize..]
+            replacement_text: self.allocation.slice[self.allocation.head.parameter_len as usize..]
                 .iter()
                 .map(|word| word.raw())
                 .collect(),
@@ -90,7 +122,9 @@ impl<G> DefinitionId<G> {
 
     #[cfg(test)]
     pub(crate) fn semantic_owner_count(&self) -> usize {
-        Rc::strong_count(&self.words)
+        let owner: std::rc::Rc<thin_dst::ThinData<DefinitionHeader, TokenWord>> =
+            self.allocation.clone().into();
+        std::rc::Rc::strong_count(&owner) - 1
     }
 }
 
@@ -166,16 +200,24 @@ impl<G> DefinitionArena<G> {
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         u32::try_from(final_word_len).map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
         let parameters = MacroParameterPattern::from_word_iter(parameter_text.clone());
-        let words = parameter_text.chain(replacement_text).collect::<Rc<[_]>>();
         let memory_words = definition_memory_words(final_word_len);
         self.accounting.allocate_shared_dynamic(memory_words);
+        let allocation = ThinRc::new(
+            DefinitionHeader {
+                serial,
+                parameter_len: parameter_len as u32,
+                parameters,
+                accounting: self.accounting.clone(),
+                memory_words,
+            },
+            DefinitionWords {
+                parameters: parameter_text,
+                replacement: replacement_text,
+            },
+        );
         self.next_serial = serial.get();
         Ok(DefinitionId {
-            serial,
-            words,
-            parameter_len: parameter_len as u32,
-            parameters,
-            accounting: self.accounting.clone(),
+            allocation,
             _brand: PhantomData,
         })
     }
@@ -229,17 +271,17 @@ pub struct DefinitionView<G> {
 
 impl<G> DefinitionView<G> {
     #[must_use]
-    pub const fn parameter_pattern(&self) -> MacroParameterPattern {
-        self.id.parameters
+    pub fn parameter_pattern(&self) -> MacroParameterPattern {
+        self.id.allocation.head.parameters
     }
 
     #[must_use]
     pub fn parameter_text(&self) -> &[TokenWord] {
-        &self.id.words[..self.id.parameter_len as usize]
+        &self.id.allocation.slice[..self.id.allocation.head.parameter_len as usize]
     }
 
     #[must_use]
     pub fn replacement_text(&self) -> &[TokenWord] {
-        &self.id.words[self.id.parameter_len as usize..]
+        &self.id.allocation.slice[self.id.allocation.head.parameter_len as usize..]
     }
 }

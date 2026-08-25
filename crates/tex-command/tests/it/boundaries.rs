@@ -166,8 +166,8 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
         "delimited matching must have one canonical scanner"
     );
     assert!(
-        matcher.contains("self.get_token()?"),
-        "the scalar matcher must consume raw tokens through get_token"
+        matcher.contains("self.get_token_into(&mut delivered)?"),
+        "the scalar matcher must consume raw tokens into its request-local destination"
     );
     for forbidden in ["CompiledMacroMatcher", "MacroBytecode", "FastMacroMatcher"] {
         assert!(
@@ -295,7 +295,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .expect("locate direct token-list splice");
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
-    assert!(collector.contains("match self.get_next()"));
+    assert!(collector.contains("match self.get_next_into(&mut destination)"));
     assert!(collector.contains("pending_expansion.take()"));
     assert!(collector.contains("PendingCollectorExpansion"));
     assert!(collector.contains("self.expand(&command)"));
@@ -305,7 +305,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         "the replacement collector must not enter a second ordinary expansion loop"
     );
     assert!(
-        splice.contains("*target = Some(self.get_x_token()?"),
+        splice.contains("self.get_x_token_into(target)?"),
         "\\the must retain its expanded internal-value target before selecting a token list"
     );
     assert!(splice.contains("self.push_attempt_token(output, token)?"));

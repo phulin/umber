@@ -27,8 +27,8 @@ use crate::{
 
 use super::{
     AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, ControlSequenceCreation,
-    DeliveryEvent, DeliveryMode, DeliveryPolicy, ExpandedDeliveryPolicy, ExpandedObservationPolicy,
-    FirstCommandPolicy, ReplayCompletionPolicy,
+    DeliveryMode, DeliveryPolicy, DeliveryStatus, ExpandedDeliveryPolicy,
+    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 use crate::observation::{
@@ -274,7 +274,7 @@ fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
 /// explicit fallback boundary.
 #[inline(always)]
 #[cfg(feature = "profiling")]
-const fn is_ranked_fused_expansion<G>(meaning: ResolvedMeaning<G>) -> bool {
+fn is_ranked_fused_expansion<G>(meaning: ResolvedMeaning<G>) -> bool {
     matches!(
         meaning,
         ResolvedMeaning::Macro { .. }
@@ -309,6 +309,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: CurrentCommand<G>,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
         let result = self.delivery_driver(
             Some(command),
             DeliveryPolicy {
@@ -323,11 +324,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            &mut destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => command,
+        match result {
+            DeliveryStatus::End => Ok(None),
+            DeliveryStatus::Command => Ok(destination),
             _ => unreachable!("preflight settlement returns one command"),
-        }))
+        }
     }
 
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
@@ -337,8 +340,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// command state and restarts in that one driver; it never returns a
     /// push-bearing dispatch result or enters a second interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
+        match self.get_x_token_into(&mut destination)? {
+            DeliveryStatus::End => Ok(None),
+            DeliveryStatus::Command => Ok(destination),
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }
+    }
+
+    /// Delivers one expanded command directly into caller-provided storage.
+    pub fn get_x_token_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
-        self.get_x_token_from(None, ExpandedFetch::GetXToken)
+        self.get_x_token_from_into(None, ExpandedFetch::GetXToken, destination)
     }
 
     /// Delivers one expanded output-replay token, preserving protected macros
@@ -348,6 +364,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let preserve = self.command.profile().capabilities().supports_etex();
+        let mut destination = None;
         let result = self.delivery_driver(
             None,
             DeliveryPolicy {
@@ -370,14 +387,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            &mut destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
-            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
-            DeliveryEvent::PendingExpanded(_) | DeliveryEvent::Alignment(_) => {
-                unreachable!("protected delivery policy cannot produce this event")
+        Ok(match result {
+            DeliveryStatus::End => None,
+            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            DeliveryStatus::ReplayCompleted(episode) => {
+                Some(CommandReplayDelivery::Completed(episode))
             }
-        }))
+            _ => unreachable!("protected delivery policy cannot produce this event"),
+        })
     }
 
     /// Delivers one expanded command to a diagnostic host while preserving
@@ -386,6 +407,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
+        let mut destination = None;
         let result = self.delivery_driver(
             None,
             DeliveryPolicy {
@@ -400,11 +422,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            &mut destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => command,
+        match result {
+            DeliveryStatus::End => Ok(None),
+            DeliveryStatus::Command => Ok(destination),
             _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }))
+        }
     }
 
     /// TeX.web §381's `x_token` entered with `cur_cmd`/`cur_chr` already set.
@@ -419,8 +443,22 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut pending: Option<CurrentCommand<G>>,
         fetch: ExpandedFetch,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
+        match self.get_x_token_from_into(pending.take(), fetch, &mut destination)? {
+            DeliveryStatus::End => Ok(None),
+            DeliveryStatus::Command => Ok(destination),
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }
+    }
+
+    fn get_x_token_from_into(
+        &mut self,
+        pending: Option<CurrentCommand<G>>,
+        fetch: ExpandedFetch,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let result = self.delivery_driver(
-            pending.take(),
+            pending,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch,
@@ -433,11 +471,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => command,
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }))
+        debug_assert!(matches!(
+            result,
+            DeliveryStatus::End | DeliveryStatus::Command
+        ));
+        Ok(result)
     }
 
     /// TeX82 §1152's `@<Treat |cur_chr| as an active character@>`:
@@ -561,6 +601,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<Option<AlignmentLookahead<G>>, CommandError> {
         loop {
             let etex_protected_fetch = self.command.profile().capabilities().supports_etex();
+            let mut destination = None;
             let result = self.delivery_driver(
                 None,
                 DeliveryPolicy {
@@ -583,15 +624,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                     control_sequence_creation: ControlSequenceCreation::Forbid,
                     alignment_interception: AlignmentInterceptionPolicy::Scalar,
                 },
+                &mut destination,
             );
-            let Some(delivery) = result? else {
-                return Ok(None);
-            };
-            let lookahead = match delivery {
-                DeliveryEvent::Command(command) => AlignmentLookahead::Committed(command),
-                DeliveryEvent::PendingExpanded(command) => {
-                    AlignmentLookahead::PendingExpanded(command)
-                }
+            let lookahead = match result? {
+                DeliveryStatus::End => return Ok(None),
+                DeliveryStatus::Command => AlignmentLookahead::Committed(
+                    destination.expect("command status initializes destination"),
+                ),
+                DeliveryStatus::PendingExpanded => AlignmentLookahead::PendingExpanded(
+                    destination.expect("pending status initializes destination"),
+                ),
                 _ => unreachable!("alignment lookahead consumes replay completions"),
             };
             if matches!(
@@ -647,6 +689,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn get_x_token_with_replay_completion(
         &mut self,
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
+        let mut destination = None;
+        let result = self.get_x_token_with_replay_completion_into(&mut destination)?;
+        Ok(match result {
+            DeliveryStatus::End => None,
+            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            DeliveryStatus::ReplayCompleted(episode) => {
+                Some(CommandReplayDelivery::Completed(episode))
+            }
+            _ => unreachable!("ordinary replay-aware delivery has no alignment event"),
+        })
+    }
+
+    /// Delivers replay-aware expanded input into caller-provided storage.
+    pub fn get_x_token_with_replay_completion_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             None,
@@ -662,12 +723,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
-            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
-            _ => unreachable!("ordinary replay-aware delivery has no alignment event"),
-        }))
+        debug_assert!(matches!(
+            result,
+            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
+        ));
+        Ok(result)
     }
 
     /// Settles a raw command retained by the executor's capability preflight.
@@ -680,6 +742,27 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: CurrentCommand<G>,
         main_loop: bool,
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
+        let mut destination = None;
+        let result = self.settle_preflight_command_into(command, main_loop, &mut destination)?;
+        Ok(match result {
+            DeliveryStatus::End => None,
+            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            DeliveryStatus::ReplayCompleted(episode) => {
+                Some(CommandReplayDelivery::Completed(episode))
+            }
+            _ => unreachable!("preflight settlement has no alignment event"),
+        })
+    }
+
+    /// Settles a preflight command into caller-provided final storage.
+    pub fn settle_preflight_command_into(
+        &mut self,
+        command: CurrentCommand<G>,
+        main_loop: bool,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             Some(command),
@@ -699,12 +782,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
-            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
-            _ => unreachable!("preflight settlement has no alignment event"),
-        }))
+        debug_assert!(matches!(
+            result,
+            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
+        ));
+        Ok(result)
     }
 
     /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
@@ -723,6 +807,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn main_loop_lookahead(
         &mut self,
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
+        let mut destination = None;
+        let result = self.main_loop_lookahead_into(&mut destination)?;
+        Ok(match result {
+            DeliveryStatus::End => None,
+            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            DeliveryStatus::ReplayCompleted(episode) => {
+                Some(CommandReplayDelivery::Completed(episode))
+            }
+            _ => unreachable!("main-loop lookahead has no alignment event"),
+        })
+    }
+
+    /// Delivers main-loop lookahead into caller-provided command storage.
+    pub fn main_loop_lookahead_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             None,
@@ -738,12 +841,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
+            destination,
         )?;
-        Ok(result.map(|event| match event {
-            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
-            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
-            _ => unreachable!("main-loop lookahead has no alignment event"),
-        }))
+        debug_assert!(matches!(
+            result,
+            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
+        ));
+        Ok(result)
     }
 
     /// TeX.web §380's expanded-fetch loop, in whichever of its two forms
@@ -751,13 +855,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// lookahead has already fetched.
     pub(super) fn delivery_driver(
         &mut self,
-        mut pending: Option<CurrentCommand<G>>,
+        pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
-    ) -> Result<Option<DeliveryEvent<G>>, CommandError> {
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
         self.last_delivery = None;
         match policy.mode {
-            DeliveryMode::Raw => self.raw_delivery_driver(pending, policy),
+            DeliveryMode::Raw => self.raw_delivery_driver(pending, policy, destination),
             DeliveryMode::Expanded(expanded) => {
+                let mut pending = pending;
                 let mut resumed_pending = false;
                 if self
                     .scanner_resume
@@ -793,6 +900,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     policy,
                     expanded,
                     resumed_pending,
+                    destination,
                 );
                 assert_eq!(
                     self.command.transient.active_expansion_depth,
@@ -807,42 +915,52 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn raw_delivery_driver(
         &mut self,
-        mut pending: Option<CurrentCommand<G>>,
+        pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
-    ) -> Result<Option<DeliveryEvent<G>>, CommandError> {
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        *destination = pending;
         loop {
-            let command = match pending.take() {
-                Some(command) => command,
-                None => {
-                    self.last_delivery = None;
-                    self.charge_command_action()?;
-                    let Some(delivery) = self.get_next_with_control_sequence_creation(matches!(
+            if destination.is_none() {
+                self.last_delivery = None;
+                self.charge_command_action()?;
+                match self.get_next_with_control_sequence_creation(
+                    matches!(
                         policy.control_sequence_creation,
                         ControlSequenceCreation::Allow
-                    ))?
-                    else {
-                        return Ok(None);
-                    };
-                    let CommandReplayDelivery::Command(command) = delivery else {
+                    ),
+                    destination,
+                )? {
+                    DeliveryStatus::End => return Ok(DeliveryStatus::End),
+                    DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
-                            let CommandReplayDelivery::Completed(episode) = delivery else {
-                                unreachable!()
-                            };
-                            return Ok(Some(DeliveryEvent::ReplayCompleted(episode)));
+                            return Ok(DeliveryStatus::ReplayCompleted(episode));
                         }
                         continue;
-                    };
-                    command
-                }
-            };
-
-            if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar {
-                match self.insert_alignment_entry_v_template(command)? {
-                    Some(command) => return Ok(Some(DeliveryEvent::Command(command))),
-                    None => continue,
+                    }
+                    DeliveryStatus::Command => {}
+                    _ => unreachable!("raw fetch returns only raw statuses"),
                 }
             }
-            return Ok(Some(DeliveryEvent::Command(command)));
+
+            if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar
+                && matches!(
+                    destination
+                        .as_ref()
+                        .expect("raw destination contains a command")
+                        .alignment_adjustment(),
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                )
+            {
+                self.begin_scalar_alignment_v_template(
+                    destination
+                        .as_ref()
+                        .expect("raw destination contains a command"),
+                )?;
+                *destination = None;
+                continue;
+            }
+            return Ok(DeliveryStatus::Command);
         }
     }
 
@@ -852,41 +970,43 @@ impl<G> CommandProcessor<'_, '_, G> {
         policy: DeliveryPolicy,
         expanded: ExpandedDeliveryPolicy,
         resumed_pending: bool,
-    ) -> Result<Option<DeliveryEvent<G>>, CommandError> {
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        *destination = pending.take();
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
         let mut suppress_first_expansion_trace = resumed_pending;
         loop {
-            let command = match pending.take() {
-                Some(command) => command,
-                None => {
-                    self.last_delivery = None;
-                    self.charge_command_action()?;
-                    let Some(delivery) = self.get_next_with_control_sequence_creation(matches!(
+            if destination.is_none() {
+                self.last_delivery = None;
+                self.charge_command_action()?;
+                match self.get_next_with_control_sequence_creation(
+                    matches!(
                         policy.control_sequence_creation,
                         ControlSequenceCreation::Allow
-                    ))?
-                    else {
-                        return Ok(None);
-                    };
-                    let CommandReplayDelivery::Command(command) = delivery else {
+                    ),
+                    destination,
+                )? {
+                    DeliveryStatus::End => return Ok(DeliveryStatus::End),
+                    DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
-                            let CommandReplayDelivery::Completed(episode) = delivery else {
-                                unreachable!()
-                            };
-                            return Ok(Some(DeliveryEvent::ReplayCompleted(episode)));
+                            return Ok(DeliveryStatus::ReplayCompleted(episode));
                         }
                         continue;
-                    };
-                    command
+                    }
+                    DeliveryStatus::Command => {}
+                    _ => unreachable!("raw fetch returns only raw statuses"),
                 }
-            };
+            }
+            let command = destination
+                .as_ref()
+                .expect("expanded destination contains a command");
 
             if std::mem::take(&mut first)
                 && expanded.first_command == FirstCommandPolicy::MainLoopCharacter
                 && is_main_loop_character(command.meaning())
             {
-                return Ok(Some(DeliveryEvent::Command(command)));
+                return Ok(DeliveryStatus::Command);
             }
             if matches!(
                 static_meaning(command.meaning()),
@@ -900,9 +1020,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     )
                 {
-                    return Ok(Some(DeliveryEvent::Alignment(
-                        crate::AlignmentDeliveryEvent::EndTemplate(command),
-                    )));
+                    return Ok(DeliveryStatus::AlignmentEndTemplate);
                 }
                 // This loop's raw fetch is `get_next_with_replay_completion`,
                 // which is §341's body without §342's tail, so §342's
@@ -911,27 +1029,38 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `goto restart`: the ⟨v_j⟩ template is live and no reader
                 // ever sees the delimiter. Only frozen end-template input
                 // from v-template exhaustion falls through to §380 below.
-                let Some(mut command) = self.insert_alignment_entry_v_template(command)? else {
+                if matches!(
+                    command.alignment_adjustment(),
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                ) {
+                    self.begin_scalar_alignment_v_template(command)?;
+                    *destination = None;
                     continue;
-                };
+                }
                 if expanded.fetch == ExpandedFetch::XToken {
                     // §366 `expand` has no `end_template` shortcut: it routes
                     // straight to §375, which backs up a `frozen_endv` token
                     // for this loop's own `get_next` to reread.
                     self.insert_frozen_endv()?;
+                    *destination = None;
                     continue;
                 }
-                command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                return Ok(Some(self.finish_expanded_delivery(
-                    command,
+                destination
+                    .as_mut()
+                    .expect("expanded destination contains a command")
+                    .convert_end_template_to_endv(self.state.frozen_endv_token());
+                return Ok(self.finish_expanded_delivery(
+                    destination
+                        .as_ref()
+                        .expect("expanded destination contains a command"),
                     expanded,
                     expansions_before,
                     policy.alignment_interception,
-                )));
+                ));
             }
             if (expanded.undefined == UndefinedHandling::Preserve
                 && matches!(static_meaning(command.meaning()), Some(Meaning::Undefined)))
-                || !is_expandable_command(&command)
+                || !is_expandable_command(command)
                 || (expanded.protected_macros == ProtectedMacroHandling::Preserve
                     && matches!(
                         command.meaning(),
@@ -939,19 +1068,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                             if flags.contains(MeaningFlags::PROTECTED)
                     ))
             {
-                return Ok(Some(self.finish_expanded_delivery(
+                return Ok(self.finish_expanded_delivery(
                     command,
                     expanded,
                     expansions_before,
                     policy.alignment_interception,
-                )));
+                ));
             }
             // TeX82 §394 aborts a non-`\long` macro call after its recovery
             // bookkeeping, then resumes the enclosing expanded-token loop.
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
             match self.expand_with_trace(
-                &command,
+                command,
                 !std::mem::take(&mut suppress_first_expansion_trace),
             ) {
                 // TeX82 §394 resumes expanded delivery after both an ordinary
@@ -965,36 +1094,34 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(error);
                 }
             }
+            *destination = None;
         }
     }
 
     fn finish_expanded_delivery(
         &mut self,
-        command: CurrentCommand<G>,
+        command: &CurrentCommand<G>,
         policy: ExpandedDeliveryPolicy,
         expansions_before: u64,
         alignment: AlignmentInterceptionPolicy,
-    ) -> DeliveryEvent<G> {
+    ) -> DeliveryStatus {
         self.record_expanded_delivery();
         let pending = policy.observation == ExpandedObservationPolicy::DeferIfExpanded
             && self.command.expansion.cumulative_expansions != expansions_before;
         if policy.observation == ExpandedObservationPolicy::Commit
             || (policy.observation == ExpandedObservationPolicy::DeferIfExpanded && !pending)
         {
-            self.observe_expanded_delivery(&command);
+            self.observe_expanded_delivery(command);
         }
         if alignment == AlignmentInterceptionPolicy::Surface
-            && self
-                .command
-                .alignment
-                .needs_closing_brace_recovery(&command)
+            && self.command.alignment.needs_closing_brace_recovery(command)
         {
-            return DeliveryEvent::Alignment(crate::AlignmentDeliveryEvent::ClosingBrace(command));
+            return DeliveryStatus::AlignmentClosingBrace;
         }
         if pending {
-            DeliveryEvent::PendingExpanded(command)
+            DeliveryStatus::PendingExpanded
         } else {
-            DeliveryEvent::Command(command)
+            DeliveryStatus::Command
         }
     }
 
