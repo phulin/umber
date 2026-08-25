@@ -2351,15 +2351,26 @@ pub(in crate::main_control) fn apply<G>(
             // §1241's `if global then n:=256+cur_val` is the *effective*
             // scope. Resolving it at `box_end` instead would read
             // `\globaldefs` as the box body left it.
-            boxes.pending_setbox = Some(target);
+            boxes.pending_setbox = Some(PendingSetBox {
+                target,
+                region: stores.begin_page_node_region(),
+            });
             match path {
                 ScannedSetBoxPath::Forbidden { error_context } => {
-                    let _ = boxes.take_box_context(false);
+                    if let BoxContext::SetBox(pending) = boxes.take_box_context(false) {
+                        stores
+                            .release_page_node_region(pending.region)
+                            .expect("rejected setbox releases its empty page region");
+                    }
                     report_improper_setbox(error_context, stores, command.diagnostic_effects)?;
                 }
                 ScannedSetBoxPath::Payload(payload) => match payload {
                     ScannedBoxShiftPayload::Missing => {
-                        let _ = boxes.take_box_context(false);
+                        if let BoxContext::SetBox(pending) = boxes.take_box_context(false) {
+                            stores
+                                .release_page_node_region(pending.region)
+                                .expect("missing setbox payload releases its page region");
+                        }
                         let context = command.state.output_open_context(&**stores);
                         report_improper_setbox(context, stores, command.diagnostic_effects)?;
                     }
@@ -2401,7 +2412,7 @@ pub(in crate::main_control) fn apply<G>(
                     ScannedBoxShiftPayload::Construction(construction) => begin_replay_box(
                         construction,
                         boxes.pending_setbox.take(),
-                        false,
+                        None,
                         modes,
                         stores,
                         boxes,
@@ -2544,16 +2555,16 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::BeginShipout => {
-            boxes.pending_shipout = true;
+            boxes.pending_shipout = Some(stores.begin_page_node_region());
             Ok(ReplayStep::Continue)
         }
         ColdOperation::BeginBox(construction) => {
             let target = boxes.pending_setbox.take();
-            let ships_out = std::mem::take(&mut boxes.pending_shipout);
+            let shipout_region = boxes.pending_shipout.take();
             begin_replay_box(
                 construction,
                 target,
-                ships_out,
+                shipout_region,
                 modes,
                 stores,
                 boxes,
@@ -2600,7 +2611,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
-                ships_out: false,
+                shipout_region: None,
                 kind: ReplayBoxKind::Insert(class, construction.pre),
                 group_kind: GroupKind::Insert,
                 packing: PackSpec::Natural,
@@ -2730,7 +2741,7 @@ pub(in crate::main_control) fn apply<G>(
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
-                ships_out: false,
+                shipout_region: None,
                 kind,
                 group_kind: kind.group_kind(),
                 packing,
@@ -3208,9 +3219,11 @@ pub(in crate::main_control) fn apply<G>(
                     })?;
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
-                debug_assert!(box_state.ships_out);
+                let region = box_state
+                    .shipout_region
+                    .expect("constructed shipout retains its page region");
                 debug_assert!(command.prepared_shipout.is_none());
-                *command.prepared_shipout = Some(PreparedShipout { node });
+                *command.prepared_shipout = Some(PreparedShipout { node, region });
             } else if let Some(target) = box_state.target {
                 let boxed = stores.publish_page_nodes(vec![node]);
                 commit_set_box_target(target, Some(boxed), stores, command);

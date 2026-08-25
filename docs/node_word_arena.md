@@ -65,6 +65,14 @@ mutation. Reusing released trailing storage assigns a fresh row generation, so
 a stale copied coordinate cannot alias a later page even when its physical row
 number is reused.
 
+`NodeArenaRegion<L>` is the consuming form of that cursor for a structurally
+nested allocation suffix. It is neither `Clone` nor `Copy`. A top-level
+`\setbox` or explicit/default shipout opens the region before its operand is
+materialized, moves the token through any scanner suspension and box-body
+continuation, and consumes it only at a terminal boundary. Nested box scopes
+therefore close in strict suffix order. A resource suspension keeps the same
+token; it never opens a replacement region or publishes a partial suffix.
+
 ## Exact promotion
 
 Promotion starts from explicit typed escape roots. The source arena performs a
@@ -98,16 +106,32 @@ remains live. Neither operation adds per-list or per-node ownership.
 
 ## Shipout boundary
 
-A completed page is one page-arena root plus its page-lifetime owner. Shipout
-walks that root once and builds a handle-free page plan, artifact data, effects,
+A completed shipout operand is a `Node` plus its move-only page-region token.
+Default output opens the region only after page splitting and held-over
+material have been placed back under page-builder ownership, immediately
+before box 255 is moved from durable storage into page storage. Explicit
+shipout opens it before scanning or constructing the operand. Shipout walks
+the operand once and builds a handle-free page plan, artifact data, effects,
 and any requested stable source recipes. `tex-out` receives no node id, arena
 cursor, arena owner, generation owner, runtime handle, or engine borrow.
 
-Only after detachment and artifact validation succeed does execution remove
-the page root, drop its exact exclusively owned closure, and trim its trailing
-row storage. Failed detachment truncates only shipout's speculative root and
-normalization suffix; the original child closure remains live so operation
-rollback can restore its canonical mode/page root atomically.
+Only after detachment and artifact validation succeed does execution consume
+the token and truncate the complete nested suffix. Aggregate shipout failure
+first restores state, page-builder, PDF, World, and engine-usage owners. The
+enclosing direct-operation rollback can still reopen the operand's box mode,
+so failure consumes the token by returning that suffix to the enclosing arena
+owner; the outer rollback or complete arena disposal then retires it. A normal
+huge-page rejection, memo replay hit, successful commit, or void operand uses
+terminal release. No graph scan, compaction, relocation, free list, or per-row
+owner participates.
+
+`\setbox` uses the same rule with a different terminal publication: its exact
+operand closure is first promoted into durable generation storage and assigned
+to the register, including the save-journal mutation, and only then is the
+page region consumed. An overwritten durable coordinate may still be named by
+the journal, a checkpoint, or a PDF form record. Durable rows therefore cannot
+use this page-suffix rule; their eventual correction requires coarse
+reachability ownership across those exact restore carriers.
 
 ## Semantic identity and detached boundaries
 
@@ -125,6 +149,8 @@ generation rows before publication. A runtime `NodeListId` is never serialized.
 
 The focused node-arena tests prove exact escaping-closure relocation, shared
 child relocation once, exclusion of unrelated rows, owner-checked suffix
-rollback, invalid-child atomic rejection, and page-prefix preservation. Mode,
-box, paragraph, alignment, page-builder, shipout, DVI, PDF, and aggregate
-rollback suites remain the semantic acceptance authority.
+rollback, strict nested-region release, failed-region transfer to enclosing
+rollback, warmed capacity reuse, stale-alias rejection, invalid-child atomic
+rejection, and page-prefix preservation. Mode, box, paragraph, alignment,
+page-builder, shipout, DVI, PDF, and aggregate rollback suites remain the
+semantic acceptance authority.

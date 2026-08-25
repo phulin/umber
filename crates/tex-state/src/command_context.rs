@@ -15,7 +15,8 @@ use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node_arena::{
-    DurableListId, NodeArenaError, NodeList, PageLifetime, PageListId, PageNodeArena,
+    DurableListId, NodeArenaError, NodeArenaRegion, NodeList, PageLifetime, PageListId,
+    PageNodeArena,
 };
 use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
@@ -3075,6 +3076,21 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page construction contains only live page-arena children");
         self.engine_usage.observe_transient_memory(words.0, words.1);
         list
+    }
+
+    /// Opens one nested structural suffix in the live page arena.
+    #[must_use]
+    pub fn begin_page_node_region(&self) -> NodeArenaRegion<PageLifetime> {
+        self.page_nodes.begin_region()
+    }
+
+    /// Releases a complete structural suffix after its survivor has been
+    /// promoted or detached.
+    pub fn release_page_node_region(
+        &mut self,
+        region: NodeArenaRegion<PageLifetime>,
+    ) -> Result<(), NodeArenaError> {
+        self.page_nodes.release_region(region)
     }
 
     /// Resolves one page-lifetime list while the admitted context is live.

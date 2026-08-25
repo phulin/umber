@@ -130,6 +130,22 @@ pub struct NodeArenaCursor<L> {
     _lifetime: PhantomData<fn(&L) -> &L>,
 }
 
+/// Consuming owner of one nested allocation suffix.
+///
+/// Unlike a rollback cursor, this value is deliberately neither `Clone` nor
+/// `Copy`: the structural owner which opened the region must either transfer
+/// it to an enclosing publication or consume it when every coordinate in the
+/// suffix has crossed its final lifetime boundary.
+pub struct NodeArenaRegion<L> {
+    cursor: NodeArenaCursor<L>,
+}
+
+impl<L> core::fmt::Debug for NodeArenaRegion<L> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("NodeArenaRegion(..)")
+    }
+}
+
 impl<L> Clone for NodeArenaCursor<L> {
     fn clone(&self) -> Self {
         *self
@@ -694,6 +710,26 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             rows: u32::try_from(self.rows.len()).expect("node arena exceeds u32 rows"),
             _lifetime: PhantomData,
         }
+    }
+
+    /// Opens one nested suffix whose coordinates have one structural owner.
+    #[must_use]
+    pub fn begin_region(&self) -> NodeArenaRegion<L> {
+        NodeArenaRegion {
+            cursor: self.cursor(),
+        }
+    }
+
+    /// Drops a complete structural suffix after its owner has published every
+    /// surviving value into another lifetime.
+    pub fn release_region(&mut self, region: NodeArenaRegion<L>) -> Result<(), NodeArenaError> {
+        self.truncate(region.cursor)
+    }
+
+    /// Consumes a nested token while retaining its suffix under the enclosing
+    /// arena owner because rollback can restore a root into that suffix.
+    pub fn retain_region(&self, region: NodeArenaRegion<L>) -> Result<(), NodeArenaError> {
+        self.validate_cursor(region.cursor)
     }
 
     /// Validates a cursor without mutation.

@@ -115,6 +115,7 @@ impl<'a, G> ShipoutTransaction<'a, G> {
     pub(crate) fn stage_page(
         &mut self,
         node: Node,
+        region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
         origin: ShipoutOrigin,
         pending_effect_end: usize,
         stores: &mut Universe<G>,
@@ -128,6 +129,7 @@ impl<'a, G> ShipoutTransaction<'a, G> {
             .set_active_effect_output_attempt(Some(output_attempt));
         let publication = transaction::stage_page(
             node,
+            region,
             origin,
             pending_effect_end,
             stores,

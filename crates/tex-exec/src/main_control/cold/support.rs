@@ -556,8 +556,10 @@ pub(in crate::main_control) fn glue_scale(
 /// through the `else` branch below like any other mode.
 pub(in crate::main_control) fn begin_replay_box<G>(
     construction: ScannedBoxConstruction,
-    target: Option<SetBoxTarget>,
-    ships_out: bool,
+    target: Option<PendingSetBox>,
+    shipout_region: Option<
+        tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+    >,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
@@ -575,7 +577,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     // `hbox_group`.
     let group_kind = if kind == ReplayBoxKind::HBox
         && target.is_none()
-        && !ships_out
+        && shipout_region.is_none()
         && matches!(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
@@ -603,7 +605,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     }
     boxes.active_boxes.push(ActiveReplayBox {
         target,
-        ships_out,
+        shipout_region,
         kind,
         group_kind,
         packing,
@@ -740,7 +742,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
-                ships_out: false,
+                shipout_region: None,
                 kind,
                 group_kind,
                 packing,
@@ -774,16 +776,16 @@ pub(in crate::main_control) fn apply_box_shift<G>(
 /// §1078 has to scan the *following* glue command before it can build its
 /// node, so the command scanner resolves leader payloads as their own
 /// `ColdOperation`s with the glue already attached.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub(in crate::main_control) enum BoxContext {
     /// `box_context<box_flag`: §1076's "Append box `cur_box` to the current
     /// list, shifted by `box_context`". The plain append is a zero shift.
     Append(Scaled),
     /// `box_flag<=box_context<ship_out_flag`: §1077's "Store `cur_box` in a
     /// box register", `eq_define`/`geq_define` by `\setbox`/`\global\setbox`.
-    SetBox(SetBoxTarget),
+    SetBox(PendingSetBox),
     /// `box_context=ship_out_flag`: §1075's `ship_out(cur_box)`.
-    ShipOut,
+    ShipOut(tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>),
 }
 
 pub(in crate::main_control) fn read_box_register<G>(
@@ -812,8 +814,11 @@ impl<G> ReplayBoxes<G> {
     pub(in crate::main_control) fn take_box_context(&mut self, ships_out: bool) -> BoxContext {
         let target = self.pending_setbox.take();
         if ships_out {
-            self.pending_shipout = false;
-            return BoxContext::ShipOut;
+            let region = self
+                .pending_shipout
+                .take()
+                .expect("scanned shipout operand retains its page region");
+            return BoxContext::ShipOut(region);
         }
         match target {
             Some(target) => BoxContext::SetBox(target),
@@ -838,16 +843,20 @@ pub(in crate::main_control) fn box_end<G>(
         BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command),
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
-        BoxContext::SetBox(target) => {
+        BoxContext::SetBox(pending) => {
             let boxed = node.map(|node| stores.publish_page_nodes(vec![node]));
-            commit_set_box_target(target, boxed, stores, command);
+            commit_set_box_target(pending, boxed, stores, command);
             Ok(())
         }
         // §1075 guards `ship_out` with `cur_box<>null`.
-        BoxContext::ShipOut => {
+        BoxContext::ShipOut(region) => {
             if let Some(node) = node {
                 debug_assert!(command.prepared_shipout.is_none());
-                *command.prepared_shipout = Some(PreparedShipout { node });
+                *command.prepared_shipout = Some(PreparedShipout { node, region });
+            } else {
+                stores
+                    .release_page_node_region(region)
+                    .expect("void shipout releases its complete operand region");
             }
             Ok(())
         }
@@ -862,11 +871,12 @@ pub(in crate::main_control) fn box_end<G>(
 /// and unsaved the box group. Keeping the observation beside the write also
 /// covers immediate `\box`, `\copy`, `\lastbox`, and `\vsplit` operands.
 pub(in crate::main_control) fn commit_set_box_target<G>(
-    target: SetBoxTarget,
+    pending: PendingSetBox,
     boxed: Option<tex_state::node_arena::PageListId>,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) {
+    let PendingSetBox { target, region } = pending;
     let traced_box = boxed;
     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
         target.index,
@@ -880,6 +890,9 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         },
     );
     command.retain_assignment_receipt(receipt);
+    stores
+        .release_page_node_region(region)
+        .expect("published setbox owns the complete page suffix");
 }
 
 /// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already

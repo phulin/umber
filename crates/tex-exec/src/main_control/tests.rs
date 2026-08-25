@@ -239,6 +239,30 @@ fn private_box_construction_retains_only_committed_lists() {
 }
 
 #[test]
+fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut source = br"\setbox0=\hbox{\kern1pt}\setbox1=\copy0".to_vec();
+        for _ in 0..128 {
+            source.extend_from_slice(br"\setbox0=\hbox{\kern2pt}");
+        }
+        source.extend_from_slice(br"\shipout\copy1\shipout\box0\end");
+
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, &source);
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 2);
+        let alias = stores
+            .copy_box_to_page(1)
+            .expect("overwriting box 0 preserves the copied durable alias");
+        let alias = stores
+            .page_node_list(alias)
+            .expect("alias publishes back into the current page arena");
+        assert!(matches!(alias.nodes(), [Node::HList(_)]));
+    });
+}
+
+#[test]
 fn tracked_advance_records_command_and_execution_reads_after_commit() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
@@ -8618,7 +8642,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
             .expect("test mode push");
         boxes.active_boxes.push(ActiveReplayBox {
             target: None,
-            ships_out: false,
+            shipout_region: None,
             kind: ReplayBoxKind::HBox,
             group_kind: GroupKind::AdjustedHBox,
             packing: PackSpec::Exactly(Scaled::from_raw(20 * 65_536)),

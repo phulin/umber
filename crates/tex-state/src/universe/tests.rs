@@ -924,6 +924,23 @@ fn dropped_shipout_restores_aggregate_roots_before_page_suffix_truncation() {
         universe
             .assign_count(0, 7, AssignmentScope::Global)
             .expect("baseline count");
+        let retained_root = universe.publish_page_nodes(&[Node::Penalty(3)]);
+        universe
+            .command_context()
+            .expect("context")
+            .append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children: retained_root,
+            })));
+        let failed_region = universe.begin_page_node_region();
+        let failed_operand = universe.publish_page_nodes(&[Node::Penalty(11)]);
         let speculative_root = {
             let mut transaction = universe.begin_shipout();
             transaction
@@ -950,13 +967,29 @@ fn dropped_shipout_restores_aggregate_roots_before_page_suffix_truncation() {
 
         assert_eq!(universe.count(0).expect("count"), 7);
         assert!(universe.page_node_list(speculative_root).is_err());
+        assert!(universe.page_node_list(failed_operand).is_ok());
         assert!(universe.world().effect_records().is_empty());
-        assert!(
+        assert_eq!(
             universe
                 .command_context()
                 .expect("context")
                 .page_contributions()
-                .is_empty()
+                .len(),
+            1
+        );
+
+        universe
+            .release_page_node_region(failed_region)
+            .expect("failed shipout releases only its operand region");
+        assert!(universe.page_node_list(failed_operand).is_err());
+        assert!(universe.page_node_list(retained_root).is_ok());
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .page_contributions()
+                .len(),
+            1
         );
     })
     .expect("universe allocation");

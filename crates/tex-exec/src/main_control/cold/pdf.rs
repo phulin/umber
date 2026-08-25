@@ -1500,10 +1500,11 @@ impl crate::shipout::ShipoutGeometrySink for DetachedShipoutGeometry {
 }
 
 pub(in crate::main_control) fn shipout_replay_box<G>(
-    node: Node,
+    shipout: PreparedShipout,
     stores: &mut Universe<G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
+    let PreparedShipout { node, region } = shipout;
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
     // is replayed, because replaying it is what changes them.
@@ -1735,6 +1736,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     );
     let mut receipt = transaction.stage_page(
         node,
+        region,
         crate::shipout::ShipoutOrigin {
             output_open_context,
             // Web2C's `[53.1374]` notice belongs to the compiled engine,

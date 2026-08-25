@@ -22,8 +22,8 @@ use crate::journal::JournalCursor;
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_arena::{
-    DurableListId, NodeArenaCursor, NodeArenaError, NodeList, PageLifetime, PageListId,
-    PageNodeArena,
+    DurableListId, NodeArenaCursor, NodeArenaError, NodeArenaRegion, NodeList, PageLifetime,
+    PageListId, PageNodeArena,
 };
 use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
@@ -1522,6 +1522,31 @@ impl<G> Universe<G> {
     #[must_use]
     pub fn page_node_cursor(&self) -> NodeArenaCursor<PageLifetime> {
         self.page_nodes.cursor()
+    }
+
+    /// Opens one nested page-storage suffix owned by a structural box or
+    /// shipout operation.
+    #[must_use]
+    pub fn begin_page_node_region(&self) -> NodeArenaRegion<PageLifetime> {
+        self.page_nodes.begin_region()
+    }
+
+    /// Consumes and releases a complete page-storage suffix after every
+    /// survivor has crossed into durable storage or detached output.
+    pub fn release_page_node_region(
+        &mut self,
+        region: NodeArenaRegion<PageLifetime>,
+    ) -> Result<(), NodeArenaError> {
+        self.page_nodes.release_region(region)
+    }
+
+    /// Transfers a failed nested suffix back to the enclosing page owner when
+    /// an outer rollback can restore roots into it.
+    pub fn retain_page_node_region(
+        &self,
+        region: NodeArenaRegion<PageLifetime>,
+    ) -> Result<(), NodeArenaError> {
+        self.page_nodes.retain_region(region)
     }
 
     /// Truncates a rejected page-arena suffix after canonical roots restore.

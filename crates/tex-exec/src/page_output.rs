@@ -26,7 +26,7 @@ const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 /// routine or command-owned `\\output` replay begins.
 #[derive(Debug)]
 pub(crate) enum SelectedPageOutput {
-    Default(Node),
+    Default(crate::main_control::PreparedShipout),
     UserRoutine,
 }
 
@@ -632,16 +632,28 @@ fn report_deleted_box<G>(
     diagnostic.end(true);
 }
 
-pub(crate) fn take_box255_node<G>(stores: &mut CommandContext<'_, G>) -> Result<Node, ExecError> {
-    let owner = stores
-        .take_box_to_page(255)
-        .ok_or(ExecError::MissingToken { context: "box" })?;
-    stores
+pub(crate) fn take_box255_node<G>(
+    stores: &mut CommandContext<'_, G>,
+) -> Result<crate::main_control::PreparedShipout, ExecError> {
+    let region = stores.begin_page_node_region();
+    let Some(owner) = stores.take_box_to_page(255) else {
+        stores
+            .release_page_node_region(region)
+            .expect("missing output box releases its empty page region");
+        return Err(ExecError::MissingToken { context: "box" });
+    };
+    let node = stores
         .page_node_list(owner)
         .expect("box 255 was copied into the live page arena")
         .get(0)
-        .map(|node| node.to_owned_with(|id| id))
-        .ok_or(ExecError::MissingToken { context: "box" })
+        .map(|node| node.to_owned_with(|id| id));
+    let Some(node) = node else {
+        stores
+            .release_page_node_region(region)
+            .expect("empty output box releases its page region");
+        return Err(ExecError::MissingToken { context: "box" });
+    };
+    Ok(crate::main_control::PreparedShipout { node, region })
 }
 
 /// Appends TeX82 §1054's end-job contribution trio to the contribution

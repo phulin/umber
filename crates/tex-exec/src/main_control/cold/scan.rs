@@ -1258,7 +1258,7 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::BoxRegister {
                 index: register.index,
                 copy: primitive == UnexpandablePrimitive::Copy,
-                ships_out: boxes.pending_shipout,
+                ships_out: boxes.pending_shipout.is_some(),
             })
         }
         // TeX82 §1095's `hmode+un_vbox: head_for_vmode` ends an unrestricted

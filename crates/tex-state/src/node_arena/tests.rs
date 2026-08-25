@@ -167,6 +167,91 @@ fn rollback_cursor_is_owner_checked_and_truncates_only_suffix() {
 }
 
 #[test]
+fn nested_regions_release_only_their_strict_suffix() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let retained = arena
+        .publish(vec![Node::Penalty(1)])
+        .expect("test fixture is valid");
+    let outer = arena.begin_region();
+    let outer_list = arena
+        .publish(vec![Node::Penalty(2)])
+        .expect("test fixture is valid");
+    let inner = arena.begin_region();
+    let inner_child = arena
+        .publish(vec![Node::Penalty(3)])
+        .expect("test fixture is valid");
+    let inner_alias = arena
+        .publish(vec![boxed(inner_child), boxed(inner_child)])
+        .expect("test fixture is valid");
+
+    arena.release_region(inner).expect("nested suffix is valid");
+    assert!(arena.get(retained).is_ok());
+    assert!(arena.get(outer_list).is_ok());
+    assert!(matches!(
+        arena.get(inner_child),
+        Err(NodeArenaError::InvalidList)
+    ));
+    assert!(matches!(
+        arena.get(inner_alias),
+        Err(NodeArenaError::InvalidList)
+    ));
+
+    arena.release_region(outer).expect("outer suffix is valid");
+    assert!(arena.get(retained).is_ok());
+    assert!(matches!(
+        arena.get(outer_list),
+        Err(NodeArenaError::InvalidList)
+    ));
+}
+
+#[test]
+fn warmed_regions_reuse_capacity_and_invalidate_every_alias() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let mut stale = Vec::new();
+    for penalty in 0..64 {
+        let region = arena.begin_region();
+        let child = arena
+            .publish(vec![Node::Penalty(penalty)])
+            .expect("test fixture is valid");
+        let alias = arena
+            .publish(vec![boxed(child), boxed(child)])
+            .expect("test fixture is valid");
+        stale.push((child, alias));
+        arena
+            .release_region(region)
+            .expect("nested suffix is valid");
+        assert_eq!(arena.len(), 0);
+    }
+    assert!(arena.rows.capacity() >= 2);
+    for (child, alias) in stale {
+        assert!(matches!(arena.get(child), Err(NodeArenaError::InvalidList)));
+        assert!(matches!(arena.get(alias), Err(NodeArenaError::InvalidList)));
+    }
+}
+
+#[test]
+fn retained_failed_region_remains_available_to_enclosing_rollback() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let enclosing = arena.cursor();
+    let region = arena.begin_region();
+    let restored = arena
+        .publish(vec![Node::Penalty(9)])
+        .expect("test fixture is valid");
+
+    arena
+        .retain_region(region)
+        .expect("failed suffix returns to the enclosing owner");
+    assert!(arena.get(restored).is_ok());
+    arena
+        .truncate(enclosing)
+        .expect("enclosing rollback owns the returned suffix");
+    assert!(matches!(
+        arena.get(restored),
+        Err(NodeArenaError::InvalidList)
+    ));
+}
+
+#[test]
 fn invalid_child_rejects_publication_without_growing_arena() {
     let mut arena = NodeArena::<PageLifetime>::new();
     let invalid = NodeListId::from_row(arena.owner.wrapping_add(1), 1, 1);

@@ -55,9 +55,10 @@ fn pending_text<G>(stores: &Universe<G>) -> String {
 }
 
 #[test]
-fn completed_page_release_drops_exact_closure_and_scratch() {
+fn completed_page_release_drops_exact_nested_region() {
     tex_state::with_universe(budget(), |stores| {
         let older = stores.publish_page_nodes(&[Node::Penalty(1)]);
+        let region = stores.begin_page_node_region();
         let child = stores.publish_page_nodes(&[Node::Penalty(2)]);
         let page = Node::VList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
@@ -71,10 +72,9 @@ fn completed_page_release_drops_exact_closure_and_scratch() {
             children: child,
         }));
         let root = stores.publish_page_nodes(&[page]);
-        let scratch = stores.page_node_cursor();
         let speculative = stores.publish_page_nodes(&[Node::Penalty(3)]);
 
-        release_published_page(stores, scratch, root);
+        release_published_page(stores, region);
 
         assert!(stores.page_node_list(older).is_ok());
         assert!(stores.page_node_list(child).is_err());

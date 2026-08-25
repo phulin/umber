@@ -107,8 +107,9 @@ struct ImmediatePrint {
 }
 
 #[derive(Debug)]
-struct PreparedShipout {
-    node: Node,
+pub(crate) struct PreparedShipout {
+    pub(crate) node: Node,
+    pub(crate) region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
 }
 
 /// The exact parent-list field that TeX82 §1153 saved before `push_math`.
@@ -367,10 +368,17 @@ struct SetBoxTarget {
     global: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
+struct PendingSetBox {
+    target: SetBoxTarget,
+    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+}
+
+#[derive(Debug)]
 struct ActiveReplayBox {
-    target: Option<SetBoxTarget>,
-    ships_out: bool,
+    target: Option<PendingSetBox>,
+    shipout_region:
+        Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
     kind: ReplayBoxKind,
     group_kind: GroupKind,
     packing: PackSpec,
@@ -500,10 +508,11 @@ struct ActiveReplayAlignment<G> {
     cell_open: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct ReplayBoxes<G> {
-    pending_setbox: Option<SetBoxTarget>,
-    pending_shipout: bool,
+    pending_setbox: Option<PendingSetBox>,
+    pending_shipout:
+        Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment<G>>,
@@ -517,7 +526,7 @@ impl<G> Default for ReplayBoxes<G> {
     fn default() -> Self {
         Self {
             pending_setbox: None,
-            pending_shipout: false,
+            pending_shipout: None,
             pending_leader: None,
             active_boxes: Vec::new(),
             suspended_alignments: Vec::new(),
@@ -532,7 +541,7 @@ impl<G> Default for ReplayBoxes<G> {
 impl<G> ReplayBoxes<G> {
     fn format_dump_is_quiescent(&self) -> bool {
         self.pending_setbox.is_none()
-            && !self.pending_shipout
+            && self.pending_shipout.is_none()
             && self.pending_leader.is_none()
             && self.active_boxes.is_empty()
             && self.suspended_alignments.is_empty()
@@ -9110,7 +9119,7 @@ impl<G> MainControl<G> {
                 stores
                     .world_mut()
                     .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
-                if let Some(receipt) = shipout_replay_box(shipout.node, stores, &mut command)?
+                if let Some(receipt) = shipout_replay_box(shipout, stores, &mut command)?
                     .and_then(|publication| publication.dvi)
                 {
                     push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
@@ -9118,7 +9127,11 @@ impl<G> MainControl<G> {
             }
         } else {
             command.immediate_prints.clear();
-            *command.prepared_shipout = None;
+            if let Some(shipout) = command.prepared_shipout.take() {
+                stores
+                    .release_page_node_region(shipout.region)
+                    .expect("aborted shipout command releases its nested page region");
+            }
         }
         if result.is_ok()
             && !redundant_glue
@@ -12526,7 +12539,7 @@ fn report_main_control_command_trace<G>(
                 ..
             })
         );
-    let shipout_box_constructor = boxes.pending_shipout
+    let shipout_box_constructor = boxes.pending_shipout.is_some()
         && matches!(
             command.meaning(),
             ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -13054,7 +13067,7 @@ fn scan_command<G>(
             return Ok(ColdOperation::<G>::Continue.into());
         }
         return Ok(ColdOperation::<G>::BoxEndGroup {
-            ships_out: box_state.ships_out,
+            ships_out: box_state.shipout_region.is_some(),
             current_line: i32::try_from(processor.current_file_line_number()).unwrap_or(i32::MAX),
         }
         .into());

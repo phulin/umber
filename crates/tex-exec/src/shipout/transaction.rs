@@ -74,6 +74,7 @@ pub fn retry_unavailable_stream_open<G>(
 #[allow(clippy::too_many_arguments)] // Shipout is the explicit join of transaction capabilities and page policy.
 pub(crate) fn shipout_node<G>(
     node: Node,
+    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
@@ -86,10 +87,11 @@ pub(crate) fn shipout_node<G>(
     write_expander: &mut direct::WriteExpander<'_, G>,
     replay_expander: &mut direct::ReplayTextExpander<'_, G>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
-    prepare_pdf_output_policy(stores, &origin.output_open_context)?;
-    let page_before_shipout = stores.page_node_cursor();
+    if let Err(error) = prepare_pdf_output_policy(stores, &origin.output_open_context) {
+        retain_failed_page(stores, region);
+        return Err(error);
+    }
     let page_root = stores.publish_page_nodes(std::slice::from_ref(&node));
-    let shipout_scratch = stores.page_node_cursor();
     let geometry = shipout_geometry(&node, stores);
     if huge_shipout_box(&node, stores) {
         // TeX.web §641 drops the page rather than emitting it, so the report
@@ -111,9 +113,7 @@ pub(crate) fn shipout_node<G>(
             )
         };
         if let Err(error) = reported {
-            stores
-                .truncate_page_nodes(page_before_shipout)
-                .expect("aborted huge-page report restores its speculative root");
+            retain_failed_page(stores, region);
             return Err(error);
         }
         report_huge_page_deleted_box(
@@ -122,7 +122,7 @@ pub(crate) fn shipout_node<G>(
             page_root,
             stores.int_param(IntParam::TRACING_OUTPUT),
         );
-        release_published_page(stores, shipout_scratch, page_root);
+        release_published_page(stores, region);
         return Ok(None);
     }
     let memo_enabled = stores
@@ -171,9 +171,7 @@ pub(crate) fn shipout_node<G>(
             let (hash, artifact, publication) = match replayed {
                 Ok(replayed) => replayed,
                 Err(error) => {
-                    stores
-                        .truncate_page_nodes(page_before_shipout)
-                        .expect("failed memo replay restores its speculative page root");
+                    retain_failed_page(stores, region);
                     return Err(error.into());
                 }
             };
@@ -192,7 +190,7 @@ pub(crate) fn shipout_node<G>(
             if let Some(geometry) = geometry {
                 geometry_sink.committed_shipout_geometry(geometry);
             }
-            release_published_page(stores, shipout_scratch, page_root);
+            release_published_page(stores, region);
             let plan = direct::compile_dvi_plan(
                 stores
                     .world()
@@ -247,9 +245,7 @@ pub(crate) fn shipout_node<G>(
         Ok(staged) => staged,
         Err(error) => {
             drop(transaction);
-            stores
-                .truncate_page_nodes(page_before_shipout)
-                .expect("failed shipout restores its entire speculative suffix");
+            retain_failed_page(stores, region);
             return Err(error);
         }
     };
@@ -277,13 +273,11 @@ pub(crate) fn shipout_node<G>(
     let (hash, publication) = match committed {
         Ok(committed) => committed,
         Err(error) => {
-            stores
-                .truncate_page_nodes(page_before_shipout)
-                .expect("rejected shipout restores its entire speculative suffix");
+            retain_failed_page(stores, region);
             return Err(error.into());
         }
     };
-    release_published_page(stores, shipout_scratch, page_root);
+    release_published_page(stores, region);
     let effect_publication = stores.world_mut().reserve_effect_publication();
     stores
         .world_mut()
@@ -332,22 +326,29 @@ pub(crate) fn shipout_node<G>(
     }))
 }
 
-/// Drops exactly the completed page closure after publication has succeeded.
-///
-/// Normalization scratch is always newer than the published root, so it must
-/// be truncated first. The root then owns the complete remaining closure and
-/// can be released without disturbing older, unrelated page rows.
+/// Drops the complete execution-scoped page suffix at its terminal boundary.
 fn release_published_page<G>(
     stores: &mut Universe<G>,
-    shipout_scratch: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
-    page_root: PageListId,
+    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
 ) {
     stores
-        .truncate_page_nodes(shipout_scratch)
-        .expect("shipout restores only its normalization scratch suffix");
+        .release_page_node_region(region)
+        .expect("terminal shipout owns its complete nested page suffix");
+}
+
+/// Returns a failed operand suffix to the enclosing direct operation.
+///
+/// Aggregate shipout rollback has restored its own owners before this call,
+/// but the enclosing command rollback may still reopen the operand's box mode.
+/// Retaining the rows is therefore required until that command commits or its
+/// complete page arena is disposed.
+fn retain_failed_page<G>(
+    stores: &Universe<G>,
+    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+) {
     stores
-        .release_completed_page(page_root)
-        .expect("completed page root is exclusively owned");
+        .retain_page_node_region(region)
+        .expect("failed shipout returns its valid suffix to the enclosing operation");
 }
 
 /// TeX82 §641's huge-page recovery tail.
@@ -381,6 +382,7 @@ fn report_huge_page_deleted_box<G>(
 #[allow(clippy::too_many_arguments)] // Staging retains the same explicit capabilities at the replay boundary.
 pub(crate) fn stage_page<G>(
     node: Node,
+    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
@@ -395,6 +397,7 @@ pub(crate) fn stage_page<G>(
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
     shipout_node(
         node,
+        region,
         origin,
         pending_effect_end,
         stores,

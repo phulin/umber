@@ -787,14 +787,14 @@ pub(in crate::main_control) fn show_box_context(active: &ActiveReplayBox) -> Str
         };
         context.push_str(&crate::node_dump::format_scaled_for_diagnostics(magnitude));
         context.push_str("pt");
-    } else if let Some(target) = active.target {
-        if target.global {
+    } else if let Some(target) = &active.target {
+        if target.target.global {
             context.push_str("\\global");
         }
         context.push_str("\\setbox");
-        context.push_str(&target.index.to_string());
+        context.push_str(&target.target.index.to_string());
         context.push('=');
-    } else if active.ships_out {
+    } else if active.shipout_region.is_some() {
         context.push_str("\\shipout");
     } else if let Some(kind) = active.leader_kind {
         context.push_str(match kind {
