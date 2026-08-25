@@ -441,7 +441,7 @@ wrapping it. Acceptance tests must prove all of the following:
 
 ## Node lifetimes
 
-Nodes have three storage lifetimes:
+Nodes have four storage roles:
 
 1. Execution scratch contains unfinished shaping words, packing probes, and
    temporary transformation indexes. These values are not nodes and never
@@ -453,19 +453,32 @@ Nodes have three storage lifetimes:
 3. Current-generation durable node storage contains box-register values,
    checkpoint roots, and any list known at construction time to survive its
    originating mode/page lifetime.
+4. One generation-owned `ShipoutScratchArena<G>` contains only nodes genuinely
+   derived by an active output attempt, currently math lowering. Stable rows
+   retain warmed capacity; nested attempts take scalar marks and reset their
+   complete suffix in O(1).
 
-All three storage classes are owned below the external store's current slot,
+All four storage classes are owned below the external store's current slot,
 not by a mode, group, box, or node. Builders select the final class before
 emitting a surviving node and seal it there. A TeX box copy may share an
 immutable durable segment by coordinate under the same slot lease; it never
 adds a per-node or per-list reference count. No live node closure is copied
 between storage classes.
 
-Shipout traverses the completed page once and emits a handle-free page plan,
-artifact data, and any selected detached source recipes for `tex-out`. After
-successful detachment, the page root is removed and its mode/page storage is
-dropped or returned to a bounded scratch pool. Published output retains no
-node id, arena owner, generation owner, or engine borrow.
+Shipout receives a typed `ShipoutRoot<G>` and traverses page or durable rows in
+place. Explicit operands are borrowed from page storage; box 255 and PDF forms
+are borrowed from immutable durable storage. `ShipoutListId<G>` can additionally
+name the scratch lane during traversal, but `ShipoutScratchListId` is a distinct
+private-construction coordinate which no page state, mode, journal, format,
+memo, checkpoint, or artifact field accepts. Deferred writes and PDF navigation
+payloads likewise retain typed source coordinates through suspension and are
+streamed into expansion or their final detached/durable destination. No source
+node closure or token payload is copied into another live arena for shipout.
+
+Successful publication lowers directly to a handle-free page plan and artifact.
+Failure restores scalar roots and journal cursors, then resets the complete
+shipout-scratch suffix. Published output retains no node id, arena owner,
+generation owner, or engine borrow.
 
 Rendered-source demand is the only path that invokes
 `ArtifactSourceResolver::detach_artifact_source(OriginId) ->
@@ -522,9 +535,13 @@ identity serial and owns no root row. The retained executor store is the sole
 checkpoint container. It reuses physical slots with generation-plus-serial
 validation and exact live-index backreferences, so pruning drops unretained
 owners in O(live checkpoints) without scanning full capacity. A checkpoint
-also contains compact marks and any optional coarse packed-bank snapshot. It
-does not clone the live definition, node, provenance, input, or page object
-graph.
+also contains compact marks and any optional coarse packed-bank snapshot. Its
+generation owns one conservative monotonic page-retention bound. A checkpoint
+with an explicit page handle in page-builder or mode state may raise that bound
+to the current page cursor; a checkpoint with no such carrier adds nothing.
+Rootless shipout may truncate only the suffix above the bound. Pruning need not
+lower it, and replacing the generation drops it wholesale. A checkpoint does
+not clone the live definition, node, provenance, input, or page object graph.
 
 Marks can be created only at a boundary whose live builders are sealed and
 whose execution scratch is quiescent. A mark is not an owning reference to

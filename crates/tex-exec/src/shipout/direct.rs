@@ -33,7 +33,7 @@ pub(crate) type WriteExpander<'a, G> = dyn FnMut(
         &mut Universe<G>,
         &mut tex_state::diagnostic::DiagnosticEffects,
         PrintSink,
-        &[TokenWord],
+        tex_state::ShipoutTokenSource<G>,
     ) -> Result<crate::shipout::ExpandedWrite, ExecError>
     + 'a;
 
@@ -43,7 +43,7 @@ pub(crate) type ReplayTextExpander<'a, G> = dyn FnMut(
         &mut Universe<G>,
         &mut tex_state::diagnostic::DiagnosticEffects,
         ReplayTextKind,
-        &[TokenWord],
+        tex_state::ShipoutTokenSource<G>,
     ) -> Result<crate::shipout::ExpandedReplayText, ExecError>
     + 'a;
 
@@ -53,6 +53,12 @@ pub(crate) struct StagedShipout {
     pub(crate) retained_diagnostics: Vec<(PrintSink, String)>,
     #[cfg(test)]
     pub(crate) base_whatsit_visits: Vec<BaseWhatsitVisit>,
+}
+
+/// Borrow-only root selected for one shipout attempt.
+pub(crate) enum ShipoutRoot<G> {
+    Page(Node),
+    Durable(tex_state::node_arena::DurableListId<G>),
 }
 
 #[cfg(test)]
@@ -85,7 +91,6 @@ pub(crate) fn stage_form<G>(
         .command_context()
         .expect("form shipout runs inside an admitted command episode")
         .pdf_form_color_rollback();
-    let page_cursor = stores.page_node_cursor();
     let result = stage_form_inner(
         form,
         stores,
@@ -99,9 +104,6 @@ pub(crate) fn stage_form<G>(
             .expect("form shipout runs inside an admitted command episode")
             .rollback_pdf_form_colors(color_rollback);
     }
-    stores
-        .truncate_page_nodes(page_cursor)
-        .expect("form staging restores its page-arena scratch suffix");
     result
 }
 
@@ -112,23 +114,19 @@ fn stage_form_inner<G>(
     write_expander: &mut WriteExpander<'_, G>,
     replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let form_root = stores
-        .copy_durable_page_nodes(form.box_list())
-        .expect("captured PDF form belongs to the admitted durable generation");
     let root_node = stores
-        .page_node_list(form_root)
-        .expect("copied PDF form belongs to the live page arena")
+        .node_list(form.box_list())
+        .expect("captured PDF form belongs to the admitted durable generation")
         .nodes()
         .first()
-        .cloned()
         .ok_or(ExecError::PdfXFormVoidBox)?;
     let (root, children, vertical, box_lr) = match root_node {
-        Node::HList(node) => (lower_box_header(&node), node.children, false, node.box_lr),
-        Node::VList(node) => (lower_box_header(&node), node.children, true, node.box_lr),
+        Node::HList(node) => (lower_box_header(node), node.children, false, node.box_lr),
+        Node::VList(node) => (lower_box_header(node), node.children, true, node.box_lr),
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
     let overlay = normalize_page(
-        children,
+        ShipoutListId::Durable(children),
         (vertical, box_lr),
         (
             PendingPageEffects {
@@ -180,7 +178,7 @@ fn stage_form_inner<G>(
         emit_node_list(
             &command,
             &overlay,
-            &children,
+            &ShipoutListId::Durable(children),
             output,
             &mut dvi_emitter,
             &mut emission,
@@ -224,7 +222,7 @@ fn stage_form_inner<G>(
 
 #[allow(clippy::too_many_arguments)] // Shipout staging capabilities remain explicit at this seam.
 pub(crate) fn stage_shipout<G>(
-    node: Node,
+    source: ShipoutRoot<G>,
     origin: super::ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
@@ -275,34 +273,68 @@ pub(crate) fn stage_shipout<G>(
     if let Some(diagnostic) = diagnostic {
         diagnostics::report_dimension_diagnostic(stores, DimensionDiagnostic::from(diagnostic));
     }
-    let (root, children, vertical, root_box_lr) = match node {
-        Node::HList(box_node) => (
+    let (root, children, vertical, root_box_lr) = match source {
+        ShipoutRoot::Page(Node::HList(box_node)) => (
             lower_box_header(&box_node),
-            box_node.children,
+            ShipoutListId::Page(box_node.children),
             false,
             box_node.box_lr,
         ),
-        Node::VList(box_node) => (
+        ShipoutRoot::Page(Node::VList(box_node)) => (
             lower_box_header(&box_node),
-            box_node.children,
+            ShipoutListId::Page(box_node.children),
             true,
             box_node.box_lr,
         ),
-        Node::Unset(_) => {
+        ShipoutRoot::Page(Node::Unset(_)) => {
             return Err(ExecError::UnsupportedShipoutNode {
                 node: "unset alignment",
             });
         }
-        _ => {
+        ShipoutRoot::Page(_) => {
             return Err(ExecError::UnsupportedShipoutNode {
                 node: "non-box shipout root",
             });
+        }
+        ShipoutRoot::Durable(list) => {
+            let root = stores
+                .node_list(list)
+                .expect("shipout root belongs to the live durable generation")
+                .nodes()
+                .first()
+                .ok_or(ExecError::UnsupportedShipoutNode {
+                    node: "missing durable shipout root",
+                })?;
+            match root {
+                Node::HList(box_node) => (
+                    lower_box_header(box_node),
+                    ShipoutListId::Durable(box_node.children),
+                    false,
+                    box_node.box_lr,
+                ),
+                Node::VList(box_node) => (
+                    lower_box_header(box_node),
+                    ShipoutListId::Durable(box_node.children),
+                    true,
+                    box_node.box_lr,
+                ),
+                Node::Unset(_) => {
+                    return Err(ExecError::UnsupportedShipoutNode {
+                        node: "unset alignment",
+                    });
+                }
+                _ => {
+                    return Err(ExecError::UnsupportedShipoutNode {
+                        node: "non-box shipout root",
+                    });
+                }
+            }
         }
     };
 
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
-    let overlay = normalize_page(
+    let mut overlay = normalize_page(
         children,
         (vertical, root_box_lr),
         (pending_effects, output_open_context, announce_openout),
@@ -379,7 +411,7 @@ pub(crate) fn stage_shipout<G>(
             .publish_pdf_traversal_positions(last_position, positioned.snap_reference);
     }
 
-    let retained_diagnostics = overlay.diagnostics.clone();
+    let retained_diagnostics = std::mem::take(&mut overlay.diagnostics);
     let artifact = match (emission.render_origin_ends, emission.render_origins) {
         (Some(render_origin_ends), Some(render_origins)) => VerifiedArtifact::new(artifact_bytes)
             .with_built_render_origins(render_origin_ends, render_origins.finish()),
@@ -557,6 +589,7 @@ mod tests;
 
 use lower::*;
 use normalize::{PageOverlay, normalize_page};
+use tex_state::ShipoutListId;
 
 pub(crate) fn terminal_output_name(line: &str) -> String {
     normalize::scan_terminal_output_name(line)
@@ -573,6 +606,101 @@ struct EmissionState<'a> {
     render_origin_ends: Option<Vec<u32>>,
     render_origins: Option<OutputProvenanceBuilder>,
     source_resolver: Option<&'a dyn ArtifactSourceResolver>,
+}
+
+trait ShipoutPayload<G> {
+    type List: Copy;
+    type Glue: Copy;
+    type Tokens;
+
+    fn child(list: Self::List) -> ShipoutListId<G>;
+    fn glue(stores: &CommandContext<'_, G>, glue: Self::Glue) -> tex_state::glue::GlueSpec;
+    fn visit_tokens<E>(
+        stores: &CommandContext<'_, G>,
+        tokens: &Self::Tokens,
+        visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<(), E>;
+}
+
+struct PagePayload;
+struct DurablePayload;
+struct ScratchPayload;
+
+impl<G> ShipoutPayload<G> for PagePayload {
+    type List = PageListId;
+    type Glue = tex_state::glue::GlueSpec;
+    type Tokens = tex_state::node::NodeTokenList;
+
+    fn child(list: Self::List) -> ShipoutListId<G> {
+        ShipoutListId::Page(list)
+    }
+    fn glue(_stores: &CommandContext<'_, G>, glue: Self::Glue) -> tex_state::glue::GlueSpec {
+        glue
+    }
+    fn visit_tokens<E>(
+        _stores: &CommandContext<'_, G>,
+        tokens: &Self::Tokens,
+        mut visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<(), E> {
+        tokens.words().iter().copied().try_for_each(&mut visit)
+    }
+}
+
+impl<G> ShipoutPayload<G> for ScratchPayload {
+    type List = ShipoutListId<G>;
+    type Glue = tex_state::glue::GlueSpec;
+    type Tokens = tex_state::node::NodeTokenList;
+
+    fn child(list: Self::List) -> ShipoutListId<G> {
+        list
+    }
+    fn glue(_stores: &CommandContext<'_, G>, glue: Self::Glue) -> tex_state::glue::GlueSpec {
+        glue
+    }
+    fn visit_tokens<E>(
+        _stores: &CommandContext<'_, G>,
+        tokens: &Self::Tokens,
+        mut visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<(), E> {
+        tokens.words().iter().copied().try_for_each(&mut visit)
+    }
+}
+
+impl<G> ShipoutPayload<G> for DurablePayload {
+    type List = tex_state::node_arena::DurableListId<G>;
+    type Glue = tex_state::GlueId<G>;
+    type Tokens = tex_state::TokenListId<G>;
+
+    fn child(list: Self::List) -> ShipoutListId<G> {
+        ShipoutListId::Durable(list)
+    }
+    fn glue(stores: &CommandContext<'_, G>, glue: Self::Glue) -> tex_state::glue::GlueSpec {
+        stores.glue(glue)
+    }
+    fn visit_tokens<E>(
+        stores: &CommandContext<'_, G>,
+        tokens: &Self::Tokens,
+        mut visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<(), E> {
+        stores.token_list(*tokens).iter().try_for_each(&mut visit)
+    }
+}
+
+fn shipout_list_len<G>(stores: &CommandContext<'_, G>, list: ShipoutListId<G>) -> usize {
+    match list {
+        ShipoutListId::Page(list) => stores
+            .page_node_list(list)
+            .expect("shipout list belongs to the live page arena")
+            .len(),
+        ShipoutListId::Durable(list) => stores
+            .node_list(list)
+            .expect("shipout list belongs to the live durable generation")
+            .len(),
+        ShipoutListId::Scratch(list) => stores
+            .shipout_scratch_nodes(list)
+            .expect("shipout scratch list belongs to the active transaction")
+            .len(),
+    }
 }
 
 impl<'a> EmissionState<'a> {
@@ -651,8 +779,8 @@ impl<'a> EmissionState<'a> {
 #[allow(clippy::too_many_arguments)]
 fn emit_node_list<G>(
     stores: &CommandContext<'_, G>,
-    overlay: &PageOverlay,
-    list: &PageListId,
+    overlay: &PageOverlay<G>,
+    list: &ShipoutListId<G>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
@@ -677,28 +805,23 @@ fn emit_node_list<G>(
         return Ok(());
     }
 
-    let node_count = stores
-        .page_node_list(*list)
-        .expect("shipout list belongs to the live page arena")
-        .len();
+    let node_count = shipout_list_len(stores, *list);
     let unmodified = overlay.math.is_empty()
         && overlay.directions.is_empty()
         && overlay.omitted_whatsits.is_empty();
     let mut index = 0;
     while index < node_count {
-        let run = stores
-            .page_node_list(*list)
-            .expect("shipout list belongs to the live page arena")
-            .char_run(index);
+        let run = match *list {
+            ShipoutListId::Page(list) => stores
+                .page_node_list(list)
+                .expect("shipout list belongs to the live page arena")
+                .char_run(index),
+            ShipoutListId::Durable(_) | ShipoutListId::Scratch(_) => None,
+        };
         if let Some(run) = run {
             emit_char_run(stores, run, output, dvi, emission)?;
             index += run.len();
-        } else if unmodified
-            && let Some(NodeRef::Kern { amount, kind }) = stores
-                .page_node_list(*list)
-                .expect("shipout list belongs to the live page arena")
-                .get(index)
-        {
+        } else if unmodified && let Some((amount, kind)) = shipout_kern(stores, *list, index) {
             emission.node_empty();
             output.kern(amount, lower_kern_kind(kind))?;
             dvi.kern(amount).map_err(invalid_artifact)?;
@@ -719,6 +842,31 @@ fn emit_node_list<G>(
         }
     }
     Ok(())
+}
+
+fn shipout_kern<G>(
+    stores: &CommandContext<'_, G>,
+    list: ShipoutListId<G>,
+    index: usize,
+) -> Option<(tex_state::scaled::Scaled, StateKernKind)> {
+    match list {
+        ShipoutListId::Page(list) => match stores.page_node_list(list).ok()?.get(index)? {
+            NodeRef::Kern { amount, kind } => Some((amount, kind)),
+            _ => None,
+        },
+        ShipoutListId::Durable(list) => {
+            match NodeRef::from(stores.node_list(list).ok()?.nodes().get(index)?) {
+                NodeRef::Kern { amount, kind } => Some((amount, kind)),
+                _ => None,
+            }
+        }
+        ShipoutListId::Scratch(list) => {
+            match NodeRef::from(stores.shipout_scratch_nodes(list)?.get(index)?) {
+                NodeRef::Kern { amount, kind } => Some((amount, kind)),
+                _ => None,
+            }
+        }
+    }
 }
 
 fn emit_char_run<G>(
@@ -794,8 +942,8 @@ fn emit_char_run<G>(
 #[allow(clippy::too_many_arguments)]
 fn emit_index<G>(
     stores: &CommandContext<'_, G>,
-    overlay: &PageOverlay,
-    list: &PageListId,
+    overlay: &PageOverlay<G>,
+    list: &ShipoutListId<G>,
     index: usize,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
@@ -818,11 +966,71 @@ fn emit_index<G>(
             depth + 1,
         );
     }
-    let node = stores
-        .page_node_list(*list)
-        .expect("shipout list belongs to the live page arena")
-        .get(index)
-        .expect("emission index belongs to the frozen list");
+    match *list {
+        ShipoutListId::Page(list) => emit_node_ref::<G, PagePayload>(
+            stores,
+            overlay,
+            NodeRef::from(
+                stores
+                    .page_node_list(list)
+                    .expect("shipout list belongs to the live page arena")
+                    .nodes()
+                    .get(index)
+                    .expect("emission index belongs to the frozen list"),
+            ),
+            output,
+            dvi,
+            emission,
+            suppress_deferred_streams,
+            depth,
+        ),
+        ShipoutListId::Durable(list) => emit_node_ref::<G, DurablePayload>(
+            stores,
+            overlay,
+            NodeRef::from(
+                stores
+                    .node_list(list)
+                    .expect("shipout list belongs to the live durable generation")
+                    .nodes()
+                    .get(index)
+                    .expect("emission index belongs to the frozen list"),
+            ),
+            output,
+            dvi,
+            emission,
+            suppress_deferred_streams,
+            depth,
+        ),
+        ShipoutListId::Scratch(list) => emit_node_ref::<G, ScratchPayload>(
+            stores,
+            overlay,
+            NodeRef::from(
+                stores
+                    .shipout_scratch_nodes(list)
+                    .expect("shipout scratch list belongs to the active transaction")
+                    .get(index)
+                    .expect("emission index belongs to the frozen list"),
+            ),
+            output,
+            dvi,
+            emission,
+            suppress_deferred_streams,
+            depth,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_node_ref<G, P: ShipoutPayload<G>>(
+    stores: &CommandContext<'_, G>,
+    overlay: &PageOverlay<G>,
+    node: NodeRef<'_, P::List, P::Glue, P::Tokens>,
+    output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
+    emission: &mut EmissionState<'_>,
+    suppress_deferred_streams: bool,
+    depth: usize,
+) -> Result<(), ExecError> {
     match node {
         NodeRef::Char { font, ch, origin } => {
             let (code, width) = glyph(stores, font, ch)?;
@@ -866,9 +1074,9 @@ fn emit_index<G>(
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
-            let spec = lower_glue(spec);
+            let spec = lower_glue(P::glue(stores, spec));
             let kind = lower_glue_kind(kind);
-            emit_glue(
+            emit_glue::<G, P>(
                 stores, overlay, output, dvi, emission, spec, kind, leader, depth,
             )?;
         }
@@ -887,7 +1095,7 @@ fn emit_index<G>(
         }
         NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
             let vertical = matches!(node, NodeRef::VList(_));
-            emit_box(
+            emit_box::<G, P>(
                 stores,
                 overlay,
                 output,
@@ -919,7 +1127,7 @@ fn emit_index<G>(
                     emit_node_list(
                         stores,
                         overlay,
-                        &pre,
+                        &P::child(pre),
                         nodes,
                         &mut ignored_dvi,
                         emission,
@@ -931,7 +1139,7 @@ fn emit_index<G>(
                     emit_node_list(
                         stores,
                         overlay,
-                        &post,
+                        &P::child(post),
                         nodes,
                         &mut ignored_dvi,
                         emission,
@@ -943,7 +1151,7 @@ fn emit_index<G>(
                     emit_node_list(
                         stores,
                         overlay,
-                        &replace,
+                        &P::child(replace),
                         nodes,
                         &mut ignored_dvi,
                         emission,
@@ -957,7 +1165,8 @@ fn emit_index<G>(
         NodeRef::Mark { class, tokens } => {
             emission.node([]);
             output.mark_stream(class, |tokens_out| {
-                for token in tokens.words().iter().map(|word| word.semantic_token()) {
+                P::visit_tokens(stores, tokens, |word| {
+                    let token = word.semantic_token();
                     match token {
                         Token::Char { ch, cat } => {
                             tokens_out.char(ch as u32, lower_token_catcode(cat))?;
@@ -970,7 +1179,8 @@ fn emit_index<G>(
                             unreachable!("alignment sentinel escaped into shipout tokens")
                         }
                     }
-                }
+                    Ok::<(), ExecError>(())
+                })?;
                 Ok::<(), ExecError>(())
             })?;
         }
@@ -982,7 +1192,7 @@ fn emit_index<G>(
                 emit_node_list(
                     stores,
                     overlay,
-                    &content,
+                    &P::child(content),
                     nodes,
                     &mut ignored_dvi,
                     emission,
@@ -1021,7 +1231,7 @@ fn emit_index<G>(
                 emit_node_list(
                     stores,
                     overlay,
-                    &content.content,
+                    &P::child(content.content),
                     nodes,
                     &mut ignored_dvi,
                     emission,
@@ -1044,23 +1254,21 @@ fn emit_index<G>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_box<G>(
+fn emit_box<G, P: ShipoutPayload<G>>(
     stores: &CommandContext<'_, G>,
-    overlay: &PageOverlay,
+    overlay: &PageOverlay<G>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
-    box_node: StateBoxNode<PageListId>,
+    box_node: StateBoxNode<P::List>,
     vertical: bool,
     suppress_deferred_streams: bool,
     depth: usize,
 ) -> Result<(), ExecError> {
     let fields = lower_box_header(&box_node);
     let children = box_node.children;
-    let children_empty = stores
-        .page_node_list(children)
-        .expect("box children belong to the live page arena")
-        .is_empty();
+    let children = P::child(children);
+    let children_empty = shipout_list_len(stores, children) == 0;
     dvi.begin_box(&fields, vertical, children_empty)
         .map_err(invalid_artifact)?;
     emission.node_empty();
@@ -1083,15 +1291,15 @@ fn emit_box<G>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_glue<G>(
+fn emit_glue<G, P: ShipoutPayload<G>>(
     stores: &CommandContext<'_, G>,
-    overlay: &PageOverlay,
+    overlay: &PageOverlay<G>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
     spec: PageGlueSpec,
     kind: PageGlueKind,
-    leader: Option<StateLeaderPayload<PageListId>>,
+    leader: Option<StateLeaderPayload<P::List>>,
     depth: usize,
 ) -> Result<(), ExecError> {
     let vertical_leader = matches!(&leader, Some(StateLeaderPayload::VList(_)));
@@ -1119,7 +1327,7 @@ fn emit_glue<G>(
                 emit_node_list(
                     stores,
                     overlay,
-                    &box_node.children,
+                    &P::child(box_node.children),
                     nodes,
                     dvi,
                     emission,
@@ -1132,8 +1340,8 @@ fn emit_glue<G>(
     Ok(())
 }
 
-fn anchor_for_whatsit(
-    whatsit: &Whatsit,
+fn anchor_for_whatsit<Glue, Tokens>(
+    whatsit: &Whatsit<Glue, Tokens>,
     suppress_deferred_streams: bool,
     anchor: &mut u32,
 ) -> Result<Option<u32>, ExecError> {
@@ -1145,7 +1353,10 @@ fn anchor_for_whatsit(
     Ok(Some(index))
 }
 
-fn whatsit_is_anchored(whatsit: &Whatsit, suppress_deferred_streams: bool) -> bool {
+fn whatsit_is_anchored<Glue, Tokens>(
+    whatsit: &Whatsit<Glue, Tokens>,
+    suppress_deferred_streams: bool,
+) -> bool {
     match whatsit {
         Whatsit::Language { .. } | Whatsit::PdfReferenceObject { .. } => false,
         Whatsit::CloseOut { slot: None } => false,
@@ -1176,7 +1387,10 @@ fn whatsit_is_anchored(whatsit: &Whatsit, suppress_deferred_streams: bool) -> bo
     }
 }
 
-fn permutation_for<'a>(overlay: &'a PageOverlay, list: &PageListId) -> Option<&'a [usize]> {
+fn permutation_for<'a, G>(
+    overlay: &'a PageOverlay<G>,
+    list: &ShipoutListId<G>,
+) -> Option<&'a [usize]> {
     overlay
         .directions
         .iter()
@@ -1184,7 +1398,11 @@ fn permutation_for<'a>(overlay: &'a PageOverlay, list: &PageListId) -> Option<&'
         .map(|entry| entry.order.as_slice())
 }
 
-fn math_substitution(overlay: &PageOverlay, list: &PageListId, index: usize) -> Option<PageListId> {
+fn math_substitution<G>(
+    overlay: &PageOverlay<G>,
+    list: &ShipoutListId<G>,
+    index: usize,
+) -> Option<ShipoutListId<G>> {
     overlay
         .math
         .iter()
@@ -1192,7 +1410,7 @@ fn math_substitution(overlay: &PageOverlay, list: &PageListId, index: usize) -> 
         .map(|entry| entry.replacement)
 }
 
-fn omitted_whatsit(overlay: &PageOverlay, list: &PageListId, index: usize) -> bool {
+fn omitted_whatsit<G>(overlay: &PageOverlay<G>, list: &ShipoutListId<G>, index: usize) -> bool {
     overlay
         .omitted_whatsits
         .iter()

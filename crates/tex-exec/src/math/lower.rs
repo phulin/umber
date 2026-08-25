@@ -44,6 +44,49 @@ pub(crate) fn finish_math_list_node<G>(
     .0
 }
 
+/// Lowers a shipout-surviving math list directly into final reusable scratch
+/// rows. Child coordinates point back to immutable page rows when a native
+/// math node already owns such material; no node graph is rehomed.
+pub(crate) fn finish_math_list_node_to_shipout_scratch<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
+    list: MathListNode,
+    insert_penalties: bool,
+) -> tex_state::ShipoutScratchListId {
+    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, None);
+    let params = MathParams::read(&sink);
+    let style = if list.display {
+        Style::DISPLAY
+    } else {
+        Style::TEXT
+    };
+    let layout = mlist_to_hlist(
+        &sink,
+        list.content,
+        style,
+        insert_penalties && !list.display,
+        &params,
+    );
+    sink.commit_math_events(&layout);
+    let root = sink.stores.begin_shipout_scratch_list();
+    if layout.recovered() {
+        return root;
+    }
+    if !list.display {
+        let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
+        sink.stores
+            .push_shipout_scratch_node(root, Node::MathOn(surround));
+    }
+    sink.append_span_to_shipout(layout.root(), &layout, root);
+    if !list.display {
+        let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
+        sink.stores
+            .push_shipout_scratch_node(root, Node::MathOff(surround));
+    }
+    root
+}
+
 pub(crate) fn finish_inline_math_list_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -241,6 +284,138 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
         }
     }
 
+    fn append_span_to_shipout(
+        &mut self,
+        list: FrozenHList,
+        layout: &MathLayout,
+        target: tex_state::ShipoutScratchListId,
+    ) {
+        enum Task {
+            Span {
+                list: FrozenHList,
+                index: usize,
+                target: tex_state::ShipoutScratchListId,
+            },
+            FinishBox {
+                boxed: MathBox,
+                vertical: bool,
+                target: tex_state::ShipoutScratchListId,
+                children: tex_state::ShipoutScratchListId,
+            },
+        }
+
+        let mut tasks = vec![Task::Span {
+            list,
+            index: 0,
+            target,
+        }];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::FinishBox {
+                    boxed,
+                    vertical,
+                    target,
+                    children,
+                } => {
+                    let boxed = lower_math_box(&boxed, tex_state::ShipoutListId::Scratch(children));
+                    self.stores.push_shipout_scratch_node(
+                        target,
+                        if vertical {
+                            Node::VList(boxed)
+                        } else {
+                            Node::HList(boxed)
+                        },
+                    );
+                }
+                Task::Span {
+                    list,
+                    index,
+                    target,
+                } => {
+                    let Some(node) = layout.nodes(list).get(index) else {
+                        continue;
+                    };
+                    tasks.push(Task::Span {
+                        list,
+                        index: index + 1,
+                        target,
+                    });
+                    match node {
+                        MathNode::Sequence(child) => tasks.push(Task::Span {
+                            list: *child,
+                            index: 0,
+                            target,
+                        }),
+                        MathNode::HList(boxed) | MathNode::VList(boxed) => {
+                            let children = self.stores.begin_shipout_scratch_list();
+                            tasks.push(Task::FinishBox {
+                                boxed: boxed.clone(),
+                                vertical: matches!(node, MathNode::VList(_)),
+                                target,
+                                children,
+                            });
+                            tasks.push(Task::Span {
+                                list: boxed.list,
+                                index: 0,
+                                target: children,
+                            });
+                        }
+                        MathNode::Char {
+                            font, ch, origin, ..
+                        } => self.stores.push_shipout_scratch_node(
+                            target,
+                            Node::Char {
+                                font: *font,
+                                ch: *ch,
+                                origin: *origin,
+                            },
+                        ),
+                        MathNode::Kern { amount, kind } => self.stores.push_shipout_scratch_node(
+                            target,
+                            Node::Kern {
+                                amount: *amount,
+                                kind: *kind,
+                            },
+                        ),
+                        MathNode::Glue { spec, kind, leader } => {
+                            self.stores.push_shipout_scratch_node(
+                                target,
+                                Node::Glue {
+                                    spec: *spec,
+                                    kind: lower_math_glue_kind(*kind),
+                                    leader: leader.map(|leader| {
+                                        leader.map_lists(tex_state::ShipoutListId::Page)
+                                    }),
+                                },
+                            )
+                        }
+                        MathNode::Penalty(penalty) => self
+                            .stores
+                            .push_shipout_scratch_node(target, Node::Penalty(*penalty)),
+                        MathNode::Rule {
+                            width,
+                            height,
+                            depth,
+                        } => self.stores.push_shipout_scratch_node(
+                            target,
+                            Node::Rule {
+                                width: *width,
+                                height: *height,
+                                depth: *depth,
+                            },
+                        ),
+                        MathNode::Native(node) => self.stores.push_shipout_scratch_node(
+                            target,
+                            node.as_ref()
+                                .clone()
+                                .map_lists(tex_state::ShipoutListId::Page),
+                        ),
+                    }
+                }
+            }
+        }
+    }
+
     fn take_root_nodes(&mut self) -> Vec<Node> {
         std::mem::take(&mut self.root_nodes)
     }
@@ -326,6 +501,76 @@ impl<G> MathParamState for LoweredMathSink<'_, '_, G> {
 }
 
 impl<G> LoweredMathSink<'_, '_, G> {
+    fn commit_math_events(&mut self, layout: &MathLayout) {
+        for event in layout.conversion_events() {
+            match *event {
+                MathConversionEvent::MissingCharacter { font, character } => {
+                    if self.stores.int_param(IntParam::TRACING_LOST_CHARS) > 0 {
+                        let font_name = self.stores.font_name(font);
+                        let mut diagnostic = self.stores.begin_diagnostic(self.diagnostic_effects);
+                        diagnostic
+                            .print_nl("Missing character: There is no ")
+                            .print(&character.to_string())
+                            .print(" in font ")
+                            .print(&font_name)
+                            .print_char('!');
+                        diagnostic.end(false);
+                    }
+                }
+                MathConversionEvent::UndefinedFamily {
+                    size,
+                    family,
+                    character,
+                } => self.report_undefined_family(size, family, character),
+            }
+        }
+        for packed in layout.pack_observations() {
+            match packed.axis {
+                tex_typeset::math::BoxAxis::Horizontal => {
+                    self.geometry
+                        .committed_hpack(packed.width, packed.height, packed.depth);
+                }
+                tex_typeset::math::BoxAxis::Vertical => {
+                    self.geometry
+                        .committed_vpack(packed.width, packed.height, packed.depth);
+                }
+            }
+        }
+    }
+
+    fn report_undefined_family(
+        &mut self,
+        size: tex_state::math::MathFontSize,
+        family: u8,
+        character: char,
+    ) {
+        self.stores
+            .publish_diagnostic_effects_before_synchronous_print(self.diagnostic_effects);
+        let size = match size {
+            tex_state::math::MathFontSize::Text => "\\textfont",
+            tex_state::math::MathFontSize::Script => "\\scriptfont",
+            tex_state::math::MathFontSize::ScriptScript => "\\scriptscriptfont",
+        };
+        let mut report = self.stores.print_err("");
+        report
+            .print(size)
+            .print_char(' ')
+            .print_int(i32::from(family))
+            .print(" is undefined (character ")
+            .print_ascii(character)
+            .print_char(')');
+        report.help(&[
+            "Somewhere in the math formula just ended, you used the",
+            "stated character from an undefined font family. For example,",
+            "plain TeX doesn't allow \\it or \\sl in subscripts. Proceed,",
+            "and I'll try to forget that I needed that character.",
+        ]);
+        if let Some(context) = self.error_context {
+            report.context(context.0.clone());
+        }
+        let _ = report.error();
+    }
+
     fn commit_math_transaction(&mut self, layout: &MathLayout) {
         let list = layout.root();
         for event in layout.conversion_events() {
@@ -441,7 +686,7 @@ pub(crate) fn finish_math_lists_owned<G>(
     out
 }
 
-fn lower_math_box(boxed: &MathBox, children: PageListId) -> BoxNode {
+fn lower_math_box<List>(boxed: &MathBox, children: List) -> BoxNode<List> {
     BoxNode::new(BoxNodeFields {
         width: boxed.width,
         height: boxed.height,

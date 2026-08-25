@@ -1349,9 +1349,9 @@ pub type PageNodeArena = NodeArena<PageLifetime>;
 /// Revision-generation durable node storage.
 pub type DurableNodeArena<G> = NodeArena<G, GlueId<G>, TokenListId<G>>;
 
-/// Zero-allocation logical projection of one page-lifetime node.
+/// Zero-allocation logical projection of one immutable node.
 #[derive(Clone, Debug)]
-pub enum NodeRef<'a> {
+pub enum NodeRef<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     Char {
         font: crate::ids::FontId,
         ch: char,
@@ -1376,9 +1376,9 @@ pub enum NodeRef<'a> {
         ch: u8,
     },
     Glue {
-        spec: GlueSpec,
+        spec: Glue,
         kind: crate::node::GlueKind,
-        leader: Option<crate::node::LeaderPayload<PageListId>>,
+        leader: Option<crate::node::LeaderPayload<List>>,
     },
     Penalty(i32),
     Rule {
@@ -1386,43 +1386,45 @@ pub enum NodeRef<'a> {
         height: Option<crate::scaled::Scaled>,
         depth: Option<crate::scaled::Scaled>,
     },
-    HList(crate::node::BoxNode<PageListId>),
-    VList(crate::node::BoxNode<PageListId>),
-    Unset(crate::node::UnsetNode<PageListId>),
+    HList(crate::node::BoxNode<List>),
+    VList(crate::node::BoxNode<List>),
+    Unset(crate::node::UnsetNode<List>),
     Disc {
         kind: crate::node::DiscKind,
-        pre: PageListId,
-        post: PageListId,
-        replace: PageListId,
+        pre: List,
+        post: List,
+        replace: List,
         physical_replace_count: u8,
     },
     Mark {
         class: u16,
-        tokens: &'a NodeTokenList,
+        tokens: &'a Tokens,
     },
     Ins {
         class: u16,
         size: crate::scaled::Scaled,
-        split_top_skip: GlueSpec,
+        split_top_skip: Glue,
         split_max_depth: crate::scaled::Scaled,
         floating_penalty: i32,
-        content: PageListId,
+        content: List,
     },
-    Whatsit(&'a crate::node::Whatsit),
+    Whatsit(&'a crate::node::Whatsit<Glue, Tokens>),
     MathOn(crate::scaled::Scaled),
     MathOff(crate::scaled::Scaled),
     Direction(crate::node::Direction),
-    MathNoad(crate::math::MathNoad<PageListId>),
-    FractionNoad(crate::math::MathFraction<PageListId>),
+    MathNoad(crate::math::MathNoad<List>),
+    FractionNoad(crate::math::MathFraction<List>),
     MathStyle(crate::math::MathStyle),
-    MathChoice(crate::math::MathChoice<PageListId>),
-    MathList(crate::math::MathListNode<PageListId>),
+    MathChoice(crate::math::MathChoice<List>),
+    MathList(crate::math::MathListNode<List>),
     Nonscript,
-    Adjust(crate::node::AdjustNode<PageListId>),
+    Adjust(crate::node::AdjustNode<List>),
 }
 
-impl<'a> From<&'a Node> for NodeRef<'a> {
-    fn from(node: &'a Node) -> Self {
+impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
+    for NodeRef<'a, List, Glue, Tokens>
+{
+    fn from(node: &'a Node<List, Glue, Tokens>) -> Self {
         match node {
             Node::Char { font, ch, origin } => Self::Char {
                 font: *font,

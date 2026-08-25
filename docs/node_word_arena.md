@@ -26,6 +26,12 @@ without storage. The public lifetime families are:
 - `DurableListId<G>` for lists retained by box registers or revision
   checkpoints.
 
+Shipout-derived nodes use a separate `ShipoutScratchListId`, not another
+`NodeListId<L>` alias. During output only, `ShipoutListId<G>` is the tagged
+borrow projection over `PageListId`, `DurableListId<G>`, and
+`ShipoutScratchListId`. No semantic/checkpoint carrier accepts either shipout
+type, so scratch escape is a Rust type error rather than a runtime convention.
+
 A coordinate is not an owner. It contains no `Arc`, `Weak`, root slot,
 registry key, reference count, or drop-driven reachability action. Resolution
 borrows the one matching `NodeArena`, validates its compact owner identity, and
@@ -106,24 +112,38 @@ remains live. Neither operation adds per-list or per-node ownership.
 
 ## Shipout boundary
 
-A completed shipout operand is a `Node` plus its move-only page-region token.
-Default output opens the region only after page splitting and held-over
-material have been placed back under page-builder ownership, immediately
-before box 255 is moved from durable storage into page storage. Explicit
-shipout opens it before scanning or constructing the operand. Shipout walks
-the operand once and builds a handle-free page plan, artifact data, effects,
-and any requested stable source recipes. `tex-out` receives no node id, arena
-cursor, arena owner, generation owner, runtime handle, or engine borrow.
+A completed explicit shipout operand is a page `Node` plus its move-only page
+region; default output is the immutable durable box-255 root after the register
+is cleared. PDF forms are durable roots as well. All three are wrapped in a
+typed `ShipoutRoot<G>` and traversed in place. Child coordinates remain in the
+same source arena. Shipout never promotes or rehomes their graphs.
 
-Only after detachment and artifact validation succeed does execution consume
-the token and truncate the complete nested suffix. Aggregate shipout failure
-first restores state, page-builder, PDF, World, and engine-usage owners. The
-enclosing direct-operation rollback can still reopen the operand's box mode,
-so failure consumes the token by returning that suffix to the enclosing arena
-owner; the outer rollback or complete arena disposal then retires it. A normal
-huge-page rejection, memo replay hit, successful commit, or void operand uses
-terminal release. No graph scan, compaction, relocation, free list, or per-row
-owner participates.
+Output-only math nodes are appended directly to final stable rows in the one
+reusable `ShipoutScratchArena<G>`. No temporary node vector is drained into
+those rows. Each aggregate output transaction records a scalar scratch mark;
+success and rollback reset the nested suffix wholesale while preserving row
+and node-vector capacity at warmed high water. Typed token/node source handles
+keep deferred writes, PDF identifiers, thread attributes, and color-stack
+actions borrowed through replay. Only genuinely surviving semantic escapes
+stream directly into durable builders; artifact/effect bytes are materialized
+once into their detached final owner.
+
+Shipout walks the source once and builds a handle-free page plan, artifact
+data, effects, and requested stable source recipes. `tex-out` receives no node
+id, arena cursor, arena owner, generation owner, runtime handle, or engine
+borrow. Aggregate failure first restores state, page-builder, PDF, World, and
+engine-usage roots, then resets scratch and releases any explicit page suffix.
+A normal huge-page rejection, memo replay hit, successful commit, or void
+operand uses the same terminal whole-region/reset rules. No graph scan,
+compaction, relocation, free list, or per-row owner participates.
+
+Named checkpoints own scalar state, explicit roots, and marks into their one
+coarse generation. The generation maintains a monotonic conservative page
+bound: rootless captures do not advance it; any capture with a page handle may
+advance it to the current page cursor. Rootless shipout truncates only above
+that bound, preserving partial-page checkpoints in either restore order.
+Pruning may leave the bound conservative; generation replacement releases the
+complete page arena.
 
 `\setbox` uses the same rule with a different terminal publication: its exact
 operand closure is first promoted into durable generation storage and assigned

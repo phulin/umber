@@ -717,10 +717,11 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
 }
 
 impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
-    pub(crate) fn map_lists<Other>(
-        self,
-        mut map: impl FnMut(List) -> Other,
-    ) -> Node<Other, Glue, Tokens> {
+    /// Rewrites only typed child coordinates while preserving node payloads.
+    ///
+    /// This is a shallow ownership move: it does not visit or copy any child
+    /// graph.
+    pub fn map_lists<Other>(self, mut map: impl FnMut(List) -> Other) -> Node<Other, Glue, Tokens> {
         match self {
             Self::Char { font, ch, origin } => Node::Char { font, ch, origin },
             Self::Lig {
@@ -811,7 +812,9 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
         }
     }
 
-    pub(crate) fn map_payloads<OtherGlue, OtherTokens>(
+    /// Rewrites typed glue and token payload coordinates without visiting any
+    /// child node graph.
+    pub fn map_payloads<OtherGlue, OtherTokens>(
         self,
         mut map_glue: impl FnMut(Glue) -> OtherGlue,
         mut map_tokens: impl FnMut(Tokens) -> OtherTokens,
@@ -1083,7 +1086,8 @@ pub enum LeaderPayload<List = PageListId> {
 }
 
 impl<List> LeaderPayload<List> {
-    pub(crate) fn map_lists<Other>(self, map: impl FnMut(List) -> Other) -> LeaderPayload<Other> {
+    /// Rewrites only child coordinates of a leader payload.
+    pub fn map_lists<Other>(self, map: impl FnMut(List) -> Other) -> LeaderPayload<Other> {
         match self {
             Self::HList(value) => LeaderPayload::HList(value.map_lists(map)),
             Self::VList(value) => LeaderPayload::VList(value.map_lists(map)),

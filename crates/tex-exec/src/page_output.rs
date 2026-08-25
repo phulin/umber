@@ -25,8 +25,8 @@ const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 /// The typed result of TeX82 §1016 packing, before either the default
 /// routine or command-owned `\\output` replay begins.
 #[derive(Debug)]
-pub(crate) enum SelectedPageOutput {
-    Default(crate::main_control::PreparedShipout),
+pub(crate) enum SelectedPageOutput<G> {
+    Default(crate::main_control::PreparedShipout<G>),
     UserRoutine,
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn select_pending_page_output<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fire_up: PageFireUp,
     diagnostic_context: ExecutionDiagnosticContext,
-) -> Result<SelectedPageOutput, ExecError> {
+) -> Result<SelectedPageOutput<G>, ExecError> {
     prepare_box255(
         stores,
         diagnostic_effects,
@@ -634,26 +634,27 @@ fn report_deleted_box<G>(
 
 pub(crate) fn take_box255_node<G>(
     stores: &mut CommandContext<'_, G>,
-) -> Result<crate::main_control::PreparedShipout, ExecError> {
-    let region = stores.begin_page_node_region();
-    let Some(owner) = stores.take_box_to_page(255) else {
-        stores
-            .release_page_node_region(region)
-            .expect("missing output box releases its empty page region");
+) -> Result<crate::main_control::PreparedShipout<G>, ExecError> {
+    let Some(owner) = stores
+        .box_register(255)
+        .expect("box 255 register is admitted")
+    else {
         return Err(ExecError::MissingToken { context: "box" });
     };
-    let node = stores
-        .page_node_list(owner)
-        .expect("box 255 was copied into the live page arena")
-        .get(0)
-        .map(|node| node.to_owned_with(|id| id));
-    let Some(node) = node else {
-        stores
-            .release_page_node_region(region)
-            .expect("empty output box releases its page region");
+    let valid = stores
+        .node_list(owner)
+        .expect("box 255 belongs to the live durable generation")
+        .nodes()
+        .first()
+        .is_some_and(|node| matches!(node, Node::HList(_) | Node::VList(_)));
+    if !valid {
         return Err(ExecError::MissingToken { context: "box" });
-    };
-    Ok(crate::main_control::PreparedShipout { node, region })
+    }
+    stores.clear_box_preserving_level(255);
+    Ok(crate::main_control::PreparedShipout {
+        source: crate::main_control::PreparedShipoutSource::Durable(owner),
+        region: None,
+    })
 }
 
 /// Appends TeX82 §1054's end-job contribution trio to the contribution

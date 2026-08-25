@@ -563,11 +563,115 @@ fn retained_state_checkpoint_restores_dense_roots_before_arena_suffixes() {
 }
 
 #[test]
+fn rootless_runtime_checkpoint_truncates_to_monotonic_page_bound_and_partial_restores_repeat() {
+    with_universe(budget(), |universe| {
+        let retained = universe.publish_page_nodes(&[Node::Penalty(3)]);
+        universe
+            .command_context()
+            .expect("context")
+            .append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children: retained,
+            })));
+        let partial = universe.runtime_checkpoint().expect("partial checkpoint");
+        assert_eq!(universe.page_node_rows(), 1);
+
+        universe
+            .command_context()
+            .expect("context")
+            .pop_page_contribution_front();
+        let discarded_a = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let discarded_b = universe.publish_page_nodes(&[Node::Penalty(9)]);
+        assert_eq!(universe.page_node_rows(), 3);
+        let rootless = universe.runtime_checkpoint().expect("rootless checkpoint");
+        assert_eq!(
+            universe.page_node_rows(),
+            1,
+            "a rootless capture releases only the suffix above the retained generation bound"
+        );
+        assert!(universe.page_node_list(discarded_a).is_err());
+        assert!(universe.page_node_list(discarded_b).is_err());
+
+        for checkpoint in [&partial, &rootless, &partial, &rootless, &partial] {
+            universe
+                .restore_runtime_checkpoint_with_roots(checkpoint, || {})
+                .expect("both sibling restore orders remain valid");
+        }
+        assert!(universe.page_node_list(retained).is_ok());
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .page_contributions()
+                .len(),
+            1,
+            "the partial-page checkpoint remains restorable after rootless siblings"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn nested_shipout_scratch_resets_suffixes_and_reuses_high_water() {
+    with_universe(budget(), |universe| {
+        let outer_id;
+        let inner_id;
+        {
+            let mut outer = universe.begin_shipout();
+            outer_id = outer.begin_shipout_scratch_list();
+            for _ in 0..32 {
+                outer.push_shipout_scratch_node(outer_id, Node::Penalty(1));
+            }
+            assert!(outer.shipout_scratch_nodes(outer_id).is_some());
+            {
+                let mut inner = outer.begin_shipout();
+                inner_id = inner.begin_shipout_scratch_list();
+                for _ in 0..64 {
+                    inner.push_shipout_scratch_node(inner_id, Node::Penalty(2));
+                }
+                assert!(inner.shipout_scratch_nodes(inner_id).is_some());
+            }
+            assert!(outer.shipout_scratch_nodes(inner_id).is_none());
+            assert!(outer.shipout_scratch_nodes(outer_id).is_some());
+        }
+        assert!(universe.shipout_scratch_nodes(outer_id).is_none());
+        let warmed = universe.shipout_scratch_high_water();
+        assert_eq!(warmed.0, 2);
+
+        for _ in 0..256 {
+            let mut transaction = universe.begin_shipout();
+            let id = transaction.begin_shipout_scratch_list();
+            for _ in 0..32 {
+                transaction.push_shipout_scratch_node(id, Node::Penalty(3));
+            }
+            assert_eq!(
+                transaction
+                    .shipout_scratch_nodes(id)
+                    .expect("scratch row is live")
+                    .len(),
+                32
+            );
+        }
+        assert_eq!(universe.shipout_scratch_high_water(), warmed);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn malformed_aggregate_restore_does_not_touch_dense_state() {
     with_universe(budget(), |universe| {
         let before_page = universe.page_node_cursor();
         let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
-        let malformed = universe.state_checkpoint().expect("future page cursor");
+        let malformed = universe
+            .operation_state_checkpoint()
+            .expect("future page cursor");
         universe
             .assign_count(0, 41, AssignmentScope::Global)
             .expect("candidate count");
@@ -596,7 +700,21 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
 fn runtime_checkpoint_validates_before_mutation() {
     with_universe(budget(), |universe| {
         let page_prefix = universe.page_node_cursor();
-        let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let retained = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        universe
+            .command_context()
+            .expect("context")
+            .append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children: retained,
+            })));
         let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
         universe
             .assign_count(0, 41, AssignmentScope::Global)

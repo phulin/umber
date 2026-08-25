@@ -58,7 +58,28 @@ pub(crate) fn dump_page_list<G>(
     let list = stores
         .page_node_list(owner)
         .expect("diagnostic root belongs to the live page arena");
-    dump_nodes(
+    dump_nodes::<_, _, _, _, PageDumpStorage>(
+        stores,
+        list.nodes(),
+        &config,
+        -1,
+        ListContext::Neutral,
+        false,
+        &mut out,
+    );
+    out
+}
+
+pub(crate) fn dump_durable_list<G>(
+    stores: &CommandContext<'_, G>,
+    owner: tex_state::node_arena::DurableListId<G>,
+    config: DumpConfig,
+) -> String {
+    let mut out = String::new();
+    let list = stores
+        .node_list(owner)
+        .expect("diagnostic root belongs to the live durable generation");
+    dump_nodes::<_, _, _, _, DurableDumpStorage>(
         stores,
         list.nodes(),
         &config,
@@ -76,7 +97,7 @@ pub(crate) fn dump_node_slice<G>(
     config: DumpConfig,
 ) -> String {
     let mut out = String::new();
-    dump_nodes(
+    dump_nodes::<_, _, _, _, PageDumpStorage>(
         stores,
         nodes,
         &config,
@@ -112,9 +133,12 @@ enum ListContext {
     VList,
 }
 
-trait DumpListProjection {
-    fn is_empty<G>(&self, stores: &CommandContext<'_, G>) -> bool;
-    fn dump<G>(
+struct PageDumpStorage;
+struct DurableDumpStorage;
+
+trait DumpListProjection<G, Storage> {
+    fn is_empty(&self, stores: &CommandContext<'_, G>) -> bool;
+    fn dump(
         &self,
         stores: &CommandContext<'_, G>,
         config: &DumpConfig,
@@ -125,12 +149,12 @@ trait DumpListProjection {
     );
 }
 
-impl DumpListProjection for PageListId {
-    fn is_empty<G>(&self, _stores: &CommandContext<'_, G>) -> bool {
+impl<G> DumpListProjection<G, PageDumpStorage> for PageListId {
+    fn is_empty(&self, _stores: &CommandContext<'_, G>) -> bool {
         PageListId::is_empty(*self)
     }
 
-    fn dump<G>(
+    fn dump(
         &self,
         stores: &CommandContext<'_, G>,
         config: &DumpConfig,
@@ -142,7 +166,7 @@ impl DumpListProjection for PageListId {
         let list = stores
             .page_node_list(*self)
             .expect("diagnostic child belongs to the live page arena");
-        dump_nodes(
+        dump_nodes::<_, _, _, _, PageDumpStorage>(
             stores,
             list.nodes(),
             config,
@@ -154,7 +178,76 @@ impl DumpListProjection for PageListId {
     }
 }
 
-fn dump_projected_list<G, List: DumpListProjection>(
+impl<G> DumpListProjection<G, DurableDumpStorage> for tex_state::node_arena::DurableListId<G> {
+    fn is_empty(&self, _stores: &CommandContext<'_, G>) -> bool {
+        tex_state::node_arena::DurableListId::is_empty(*self)
+    }
+
+    fn dump(
+        &self,
+        stores: &CommandContext<'_, G>,
+        config: &DumpConfig,
+        depth: i32,
+        context: ListContext,
+        physical_replacement_spans: bool,
+        out: &mut String,
+    ) {
+        let list = stores
+            .node_list(*self)
+            .expect("diagnostic child belongs to the live durable generation");
+        dump_nodes::<_, _, _, _, DurableDumpStorage>(
+            stores,
+            list.nodes(),
+            config,
+            depth,
+            context,
+            physical_replacement_spans,
+            out,
+        );
+    }
+}
+
+trait DumpGlueProjection<G>: Copy {
+    fn resolve(self, stores: &CommandContext<'_, G>) -> GlueSpec;
+}
+
+impl<G> DumpGlueProjection<G> for GlueSpec {
+    fn resolve(self, _stores: &CommandContext<'_, G>) -> GlueSpec {
+        self
+    }
+}
+
+impl<G> DumpGlueProjection<G> for tex_state::GlueId<G> {
+    fn resolve(self, stores: &CommandContext<'_, G>) -> GlueSpec {
+        stores.glue(self)
+    }
+}
+
+trait DumpTokensProjection<G> {
+    fn visit(&self, stores: &CommandContext<'_, G>, visit: impl FnMut(tex_state::token::TokenWord));
+}
+
+impl<G> DumpTokensProjection<G> for tex_state::node::NodeTokenList {
+    fn visit(
+        &self,
+        _stores: &CommandContext<'_, G>,
+        visit: impl FnMut(tex_state::token::TokenWord),
+    ) {
+        self.words().iter().copied().for_each(visit);
+    }
+}
+
+impl<G> DumpTokensProjection<G> for tex_state::TokenListId<G> {
+    fn visit(
+        &self,
+        stores: &CommandContext<'_, G>,
+        visit: impl FnMut(tex_state::token::TokenWord),
+    ) {
+        stores.token_list(*self).iter().for_each(visit);
+    }
+}
+
+fn dump_projected_list<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     list: &List,
     config: &DumpConfig,
@@ -165,15 +258,19 @@ fn dump_projected_list<G, List: DumpListProjection>(
     list.dump(stores, config, depth, context, false, out);
 }
 
-fn dump_nodes<G>(
+fn dump_nodes<G, List, Glue, Tokens, Storage>(
     stores: &CommandContext<'_, G>,
-    nodes: &[Node],
+    nodes: &[Node<List, Glue, Tokens>],
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
     physical_replacement_spans: bool,
     out: &mut String,
-) {
+) where
+    List: DumpListProjection<G, Storage> + Clone,
+    Glue: DumpGlueProjection<G>,
+    Tokens: DumpTokensProjection<G>,
+{
     if config.depth < 0 || depth > config.depth {
         return;
     }
@@ -226,14 +323,18 @@ fn dump_nodes<G>(
     }
 }
 
-fn dump_node<G>(
+fn dump_node<G, List, Glue, Tokens, Storage>(
     stores: &CommandContext<'_, G>,
-    node: &Node,
+    node: &Node<List, Glue, Tokens>,
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
     out: &mut String,
-) {
+) where
+    List: DumpListProjection<G, Storage> + Clone,
+    Glue: DumpGlueProjection<G>,
+    Tokens: DumpTokensProjection<G>,
+{
     write_prefix(depth, out);
     match node {
         // TeX82 §184 names both ordinary and mu kerns through `print_esc`,
@@ -292,12 +393,16 @@ fn dump_node<G>(
         Node::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {
                 kind.append_leader_dump_prefix(stores, out);
-                let _ = writeln!(out, "{}", format_glue(*spec, kind.glue_unit()));
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    format_glue(spec.resolve(stores), kind.glue_unit())
+                );
                 dump_leader_payload(stores, leader, config, depth + 1, context, out);
             } else {
                 kind.append_glue_dump_prefix(stores, out);
                 if kind.prints_glue_spec() {
-                    out.push_str(&format_glue(*spec, kind.glue_unit()));
+                    out.push_str(&format_glue(spec.resolve(stores), kind.glue_unit()));
                 }
                 out.push('\n');
             }
@@ -359,7 +464,7 @@ fn dump_node<G>(
             depth,
             out,
         ),
-        Node::Mark { class, tokens } => dump_mark(stores, *class, tokens.words(), out),
+        Node::Mark { class, tokens } => dump_mark_projected(stores, *class, tokens, out),
         Node::Adjust(adjust) => {
             out.push_str(if adjust.pre {
                 "\\vadjust pre\n"
@@ -413,7 +518,7 @@ fn dump_node<G>(
                 out,
                 "\\insert{class}, natural size {}; split({},{}); float cost {floating_penalty}",
                 format_scaled_without_unit(*size),
-                format_glue(*split_top_skip, ""),
+                format_glue(split_top_skip.resolve(stores), ""),
                 format_scaled_without_unit(*split_max_depth),
             );
             dump_projected_list(stores, content, config, depth + 1, ListContext::VList, out);
@@ -424,7 +529,11 @@ fn dump_node<G>(
 /// TeX82 §1356's `Display the whatsit node` cases. The PDF variants are
 /// extension-owned and retain the generic marker until their own diagnostic
 /// vocabulary is specified.
-fn dump_whatsit<G>(stores: &CommandContext<'_, G>, whatsit: &Whatsit, out: &mut String) {
+fn dump_whatsit<G, Glue: DumpGlueProjection<G>, Tokens: DumpTokensProjection<G>>(
+    stores: &CommandContext<'_, G>,
+    whatsit: &Whatsit<Glue, Tokens>,
+    out: &mut String,
+) {
     match whatsit {
         Whatsit::OpenOut { slot, path } => {
             append_escaped_name(stores, "openout", out);
@@ -451,7 +560,7 @@ fn dump_whatsit<G>(stores: &CommandContext<'_, G>, whatsit: &Whatsit, out: &mut 
                 }
                 tex_state::PrintSink::Log => out.push('-'),
             }
-            dump_token_words(stores, tokens.words(), out);
+            dump_token_projection(stores, tokens, out);
         }
         Whatsit::Special { payload, .. } => {
             append_escaped_name(stores, "special", out);
@@ -484,21 +593,19 @@ fn append_escaped_name<G>(stores: &CommandContext<'_, G>, name: &str, out: &mut 
     out.push_str(name);
 }
 
-fn dump_token_words<G>(
+fn dump_token_projection<G, Tokens: DumpTokensProjection<G>>(
     stores: &CommandContext<'_, G>,
-    tokens: &[tex_state::token::TokenWord],
+    tokens: &Tokens,
     out: &mut String,
 ) {
     out.push('{');
-    for &token in tokens {
-        // §1356 delegates write-node contents to §262 `show_token_list`,
-        // including `print_cs`'s control-word separator.
+    tokens.visit(stores, |token| {
         append_token_show_text(stores, token.semantic_token(), out);
-    }
+    });
     out.push_str("}\n");
 }
 
-fn dump_math_noad<G, List: DumpListProjection>(
+fn dump_math_noad<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     noad: &MathNoad<List>,
     config: &DumpConfig,
@@ -569,7 +676,7 @@ fn dump_math_marker<G>(
     }
 }
 
-fn dump_leader_payload<G, List: DumpListProjection + Clone>(
+fn dump_leader_payload<G, List: DumpListProjection<G, Storage> + Clone, Storage>(
     stores: &CommandContext<'_, G>,
     payload: &LeaderPayload<List>,
     config: &DumpConfig,
@@ -633,7 +740,7 @@ fn noad_name(kind: &NoadKind) -> &'static str {
     }
 }
 
-fn dump_math_field<G, List: DumpListProjection>(
+fn dump_math_field<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     field: &MathField<List>,
     config: &DumpConfig,
@@ -701,7 +808,7 @@ fn dump_math_char_inline<G>(stores: &CommandContext<'_, G>, ch: MathChar, out: &
     let _ = write!(out, "{} {}", ch.family, dump_char(ch.character));
 }
 
-fn dump_fraction<G, List: DumpListProjection>(
+fn dump_fraction<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     fraction: &MathFraction<List>,
     config: &DumpConfig,
@@ -777,7 +884,7 @@ fn dump_packed_delimiter(prefix: &str, delimiter: u32, out: &mut String) {
     let _ = write!(out, "{prefix}\"{delimiter:X}");
 }
 
-fn dump_fraction_part<G, List: DumpListProjection>(
+fn dump_fraction_part<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     list: &List,
     config: &DumpConfig,
@@ -808,7 +915,7 @@ fn dump_fraction_part<G, List: DumpListProjection>(
     }
 }
 
-fn dump_math_choice<G, List: DumpListProjection>(
+fn dump_math_choice<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     choice: &MathChoice<List>,
     config: &DumpConfig,
@@ -824,7 +931,7 @@ fn dump_math_choice<G, List: DumpListProjection>(
     dump_choice_arm(stores, &choice.script_script, config, depth + 1, 's', out);
 }
 
-fn dump_choice_arm<G, List: DumpListProjection>(
+fn dump_choice_arm<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     list: &List,
     config: &DumpConfig,
@@ -842,7 +949,7 @@ fn dump_choice_arm<G, List: DumpListProjection>(
     }
 }
 
-fn dump_math_list<G, List: DumpListProjection>(
+fn dump_math_list<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     list: &MathListNode<List>,
     config: &DumpConfig,
@@ -875,7 +982,7 @@ fn math_style_name(style: MathStyle) -> &'static str {
     }
 }
 
-fn dump_disc<G, List: DumpListProjection>(
+fn dump_disc<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     pre: &List,
     post: &List,
@@ -909,24 +1016,22 @@ fn dump_disc<G, List: DumpListProjection>(
     }
 }
 
-fn dump_mark<G>(
+fn dump_mark_projected<G, Tokens: DumpTokensProjection<G>>(
     stores: &CommandContext<'_, G>,
     class: u16,
-    tokens: &[tex_state::token::TokenWord],
+    tokens: &Tokens,
     out: &mut String,
 ) {
     if class == 0 {
-        // TeX82 §200 routes the mark-node name through §63's `print_esc`,
-        // so the header observes the live `\escapechar`.
         append_escaped_name(stores, "mark", out);
         out.push('{');
     } else {
         append_escaped_name(stores, "marks", out);
         let _ = write!(out, "{class}{{");
     }
-    for &token in tokens {
+    tokens.visit(stores, |token| {
         out.push_str(&token_text(stores, token.semantic_token()));
-    }
+    });
     out.push_str("}\n");
 }
 
@@ -1045,7 +1150,7 @@ fn dump_ligature<G>(
     rendered
 }
 
-fn dump_box<G, List: DumpListProjection + Clone>(
+fn dump_box<G, List: DumpListProjection<G, Storage> + Clone, Storage>(
     name: &str,
     stores: &CommandContext<'_, G>,
     box_node: &BoxNode<List>,
@@ -1110,7 +1215,7 @@ fn dump_box<G, List: DumpListProjection + Clone>(
     );
 }
 
-fn dump_unset<G, List: DumpListProjection>(
+fn dump_unset<G, List: DumpListProjection<G, Storage>, Storage>(
     stores: &CommandContext<'_, G>,
     unset: &UnsetNode<List>,
     config: &DumpConfig,

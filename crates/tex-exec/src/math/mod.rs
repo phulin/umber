@@ -8,7 +8,8 @@ use tex_state::math::MathFontSize;
 
 pub(crate) use lower::finish_math_lists_owned;
 pub(crate) use lower::{
-    MathConversionErrorContext, finish_inline_math_list_node, finish_math_list_node,
+    MathConversionErrorContext, finish_inline_math_list_node,
+    finish_math_list_node_to_shipout_scratch,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1028,6 +1028,27 @@ impl ModeNestSummary {
         })
     }
 
+    /// Whether this summary has any explicit checkpointable page coordinate.
+    pub(crate) fn retains_page_node_handles(&self) -> bool {
+        self.levels.iter().any(|level| {
+            let list = &level.list;
+            list.sequence.retains_page_node_handles()
+                || list
+                    .incomplete_fraction
+                    .as_ref()
+                    .is_some_and(|fraction| !fraction.numerator.is_empty())
+                || list
+                    .display_interrupt
+                    .as_ref()
+                    .and_then(|interrupt| interrupt.prototype.as_ref())
+                    .is_some_and(|prototype| !prototype.children.is_empty())
+                || list
+                    .display_eq_no
+                    .as_ref()
+                    .is_some_and(|eqno| !eqno.display.is_empty())
+        })
+    }
+
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
         #[cfg(test)]
         SEMANTIC_FINGERPRINT_CALLS.with(|calls| calls.set(calls.get() + 1));

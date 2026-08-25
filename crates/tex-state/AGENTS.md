@@ -112,6 +112,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/session_epoch.rs`: Cloneable coarse owner and exclusive physical lease
   for one append-only interning epoch shared by successive revision
   generations.
+- `src/shipout_scratch.rs` and `src/shipout_scratch/tests.rs`: One
+  generation-owned reusable output-attempt lane, typed Page/Durable/Scratch
+  traversal coordinates and token/node source handles, scalar suffix marks,
+  warmed direct-row construction, and compile/runtime escape controls.
 - `src/journal.rs`: Generation-branded ordered mutation/group history carrying
   exact prior packed values, TeX save levels, and owner-checked cursors.
 - `src/journal/tests.rs`: Exact position/truncation and foreign-owner cursor

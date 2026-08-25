@@ -1,7 +1,7 @@
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
-use tex_state::node_arena::{NodeRef, PageListId};
+use tex_state::node_arena::NodeRef;
 use tex_state::{
     ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
     PureMemoLayer, PureShipoutEntry, Universe,
@@ -73,8 +73,8 @@ pub fn retry_unavailable_stream_open<G>(
 /// transaction argument rather than entering that detached value.
 #[allow(clippy::too_many_arguments)] // Shipout is the explicit join of transaction capabilities and page policy.
 pub(crate) fn shipout_node<G>(
-    node: Node,
-    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+    source: direct::ShipoutRoot<G>,
+    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
@@ -91,9 +91,8 @@ pub(crate) fn shipout_node<G>(
         retain_failed_page(stores, region);
         return Err(error);
     }
-    let page_root = stores.publish_page_nodes(std::slice::from_ref(&node));
-    let geometry = shipout_geometry(&node, stores);
-    if huge_shipout_box(&node, stores) {
+    let geometry = shipout_geometry(&source, stores);
+    if huge_shipout_box(&source, stores) {
         // TeX.web §641 drops the page rather than emitting it, so the report
         // is the whole of the engine's response. Shipout also runs from
         // command replay, which owns no live source stack. Its caller
@@ -119,7 +118,7 @@ pub(crate) fn shipout_node<G>(
         report_huge_page_deleted_box(
             stores,
             diagnostic_effects,
-            page_root,
+            &source,
             stores.int_param(IntParam::TRACING_OUTPUT),
         );
         release_published_page(stores, region);
@@ -136,11 +135,14 @@ pub(crate) fn shipout_node<G>(
     }
     let cacheable = shipout_memo_enabled
         && !provenance_demand.rendered_source()
-        && effect_free_shipout_graph(stores, &node)
+        && matches!(&source, direct::ShipoutRoot::Page(node) if effect_free_shipout_graph(stores, node))
         && stores.world().effect_records()[..pending_effect_end].is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
     let validation_started = crate::timing::TelemetryTimer::start();
-    let key = cacheable.then(|| shipout_key(stores, page_root));
+    let key = cacheable.then(|| match &source {
+        direct::ShipoutRoot::Page(node) => shipout_key(stores, node),
+        direct::ShipoutRoot::Durable(_) => unreachable!("durable shipout memo is not admitted"),
+    });
     if cacheable {
         stores.with_pure_memo(|memo| {
             memo.record_timing(
@@ -229,7 +231,7 @@ pub(crate) fn shipout_node<G>(
     let effect_pos_start = stores.world().effect_pos();
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(
-        node,
+        source,
         origin,
         pending_effect_end,
         &mut transaction,
@@ -241,7 +243,7 @@ pub(crate) fn shipout_node<G>(
         write_expander,
         replay_expander,
     );
-    let staged = match staged {
+    let mut staged = match staged {
         Ok(staged) => staged,
         Err(error) => {
             drop(transaction);
@@ -262,7 +264,7 @@ pub(crate) fn shipout_node<G>(
     let committed_effects = transaction.world().effect_records()[effect_start..]
         .to_vec()
         .into_boxed_slice();
-    let retained_diagnostics = staged.retained_diagnostics.clone();
+    let retained_diagnostics = std::mem::take(&mut staged.retained_diagnostics);
     let memo_payload = key.is_some().then(|| staged.artifact.bytes().to_vec());
     let reservation = transaction
         .world_mut()
@@ -329,11 +331,13 @@ pub(crate) fn shipout_node<G>(
 /// Drops the complete execution-scoped page suffix at its terminal boundary.
 fn release_published_page<G>(
     stores: &mut Universe<G>,
-    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
 ) {
-    stores
-        .release_page_node_region(region)
-        .expect("terminal shipout owns its complete nested page suffix");
+    if let Some(region) = region {
+        stores
+            .release_page_node_region(region)
+            .expect("terminal shipout owns its complete nested page suffix");
+    }
 }
 
 /// Returns a failed operand suffix to the enclosing direct operation.
@@ -344,11 +348,13 @@ fn release_published_page<G>(
 /// complete page arena is disposed.
 fn retain_failed_page<G>(
     stores: &Universe<G>,
-    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
 ) {
-    stores
-        .retain_page_node_region(region)
-        .expect("failed shipout returns its valid suffix to the enclosing operation");
+    if let Some(region) = region {
+        stores
+            .retain_page_node_region(region)
+            .expect("failed shipout returns its valid suffix to the enclosing operation");
+    }
 }
 
 /// TeX82 §641's huge-page recovery tail.
@@ -359,18 +365,22 @@ fn retain_failed_page<G>(
 fn report_huge_page_deleted_box<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    page_root: PageListId,
+    source: &direct::ShipoutRoot<G>,
     tracing_output: i32,
 ) {
     if tracing_output > 0 {
         return;
     }
     let command = stores.command_context().expect("live generation");
-    let dump = crate::node_dump::dump_page_list(
-        &command,
-        page_root,
-        crate::node_dump::DumpConfig::read(&command),
-    );
+    let config = crate::node_dump::DumpConfig::read(&command);
+    let dump = match source {
+        direct::ShipoutRoot::Page(node) => {
+            crate::node_dump::dump_node_slice(&command, std::slice::from_ref(node), config)
+        }
+        direct::ShipoutRoot::Durable(list) => {
+            crate::node_dump::dump_durable_list(&command, *list, config)
+        }
+    };
     let mut diagnostic = command.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_nl("The following box has been deleted:")
@@ -381,8 +391,8 @@ fn report_huge_page_deleted_box<G>(
 
 #[allow(clippy::too_many_arguments)] // Staging retains the same explicit capabilities at the replay boundary.
 pub(crate) fn stage_page<G>(
-    node: Node,
-    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+    source: direct::ShipoutRoot<G>,
+    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
@@ -396,7 +406,7 @@ pub(crate) fn stage_page<G>(
     replay_expander: &mut TextReplayHost<'_, G>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
     shipout_node(
-        node,
+        source,
         region,
         origin,
         pending_effect_end,
@@ -428,16 +438,17 @@ pub(crate) fn stage_form<G>(
     )
 }
 
-fn shipout_geometry<G>(node: &Node, stores: &mut Universe<G>) -> Option<ShipoutGeometry> {
-    let (Node::HList(node) | Node::VList(node)) = node else {
-        return None;
-    };
+fn shipout_geometry<G>(
+    source: &direct::ShipoutRoot<G>,
+    stores: &mut Universe<G>,
+) -> Option<ShipoutGeometry> {
+    let (width, height, depth) = shipout_box_dimensions(source, stores)?;
     let command = stores
         .command_context()
         .expect("shipout geometry runs inside an admitted command episode");
     Some(ShipoutGeometry {
-        page_width_sp: i64::from(node.width.raw()),
-        page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
+        page_width_sp: i64::from(width.raw()),
+        page_height_sp: i64::from(height.raw()) + i64::from(depth.raw()),
         counts: direct::page_counts(&command),
     })
 }
@@ -549,9 +560,9 @@ fn report_invalid_pdf_version<G>(
     Ok(())
 }
 
-fn shipout_key<G>(stores: &mut Universe<G>, root: PageListId) -> PureMemoKey {
+fn shipout_key<G>(stores: &mut Universe<G>, root: &Node) -> PureMemoKey {
     let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
-        hash.page_node_list(stores, root);
+        hash.nodes(std::slice::from_ref(root));
         hash.i32(stores.int_param(IntParam::MAG));
         hash.i32(
             stores
@@ -584,9 +595,8 @@ fn shipout_key<G>(stores: &mut Universe<G>, root: PageListId) -> PureMemoKey {
 }
 
 fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
-    let mut nodes = vec![root.clone()];
-    while let Some(node) = nodes.pop() {
-        let view = NodeRef::from(&node);
+    fn visit<G>(stores: &Universe<G>, node: &Node) -> bool {
+        let view = NodeRef::from(node);
         if matches!(
             view.kind(),
             NodeKind::Whatsit
@@ -603,25 +613,52 @@ fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
         ) {
             return false;
         }
+        let effect_free = std::cell::Cell::new(true);
         node.visit_node_lists(|children| {
-            nodes.extend(
-                stores
-                    .page_node_list(*children)
-                    .expect("shipout child belongs to the live page arena")
-                    .nodes()
-                    .iter()
-                    .cloned(),
-            );
+            if effect_free.get() {
+                effect_free.set(
+                    stores
+                        .page_node_list(*children)
+                        .expect("shipout child belongs to the live page arena")
+                        .nodes()
+                        .iter()
+                        .all(|node| visit(stores, node)),
+                );
+            }
         });
+        effect_free.get()
     }
-    true
+    visit(stores, root)
 }
 
-fn huge_shipout_box<G>(node: &Node, stores: &Universe<G>) -> bool {
-    let Some(box_node) = NodeRef::from(node).box_node() else {
+fn shipout_box_dimensions<G>(
+    source: &direct::ShipoutRoot<G>,
+    stores: &Universe<G>,
+) -> Option<(
+    tex_state::scaled::Scaled,
+    tex_state::scaled::Scaled,
+    tex_state::scaled::Scaled,
+)> {
+    match source {
+        direct::ShipoutRoot::Page(Node::HList(node) | Node::VList(node)) => {
+            Some((node.width, node.height, node.depth))
+        }
+        direct::ShipoutRoot::Page(_) => None,
+        direct::ShipoutRoot::Durable(list) => {
+            match stores.node_list(*list).ok()?.nodes().first()? {
+                Node::HList(node) | Node::VList(node) => {
+                    Some((node.width, node.height, node.depth))
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
+fn huge_shipout_box<G>(source: &direct::ShipoutRoot<G>, stores: &Universe<G>) -> bool {
+    let Some((width, height, depth)) = shipout_box_dimensions(source, stores) else {
         return false;
     };
-    let (width, height, depth) = (box_node.width, box_node.height, box_node.depth);
     height > tex_state::scaled::Scaled::MAX_DIMEN
         || depth > tex_state::scaled::Scaled::MAX_DIMEN
         || height

@@ -103,7 +103,7 @@ mod tests {
                 .expect("assign pdfTeX test meaning");
         }
 
-        fn snapshot(&self) -> tex_state::RuntimeCheckpoint<G> {
+        fn snapshot(&mut self) -> tex_state::RuntimeCheckpoint<G> {
             self.0.runtime_checkpoint().expect("pdfTeX test checkpoint")
         }
 

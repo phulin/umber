@@ -31,6 +31,9 @@ use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
 use crate::session_epoch::{InternerLease, SessionEpochError, SessionInternerEpoch};
+use crate::shipout_scratch::{
+    ShipoutScratchArena, ShipoutScratchListId, ShipoutScratchMark, ShipoutScratchNode,
+};
 use crate::source_map::{SourceMap, SourceMapMark};
 use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
@@ -222,6 +225,7 @@ impl<G> std::fmt::Debug for RuntimeCheckpoint<G> {
 pub struct ShipoutTransaction<'a, G> {
     universe: &'a mut Universe<G>,
     rollback: Option<ShipoutRollback<G>>,
+    scratch: Option<ShipoutScratchMark>,
     empty_tokens: TokenListId<G>,
 }
 
@@ -241,17 +245,21 @@ impl<G> std::ops::DerefMut for ShipoutTransaction<'_, G> {
 
 impl<G> Drop for ShipoutTransaction<'_, G> {
     fn drop(&mut self) {
-        let Some(rollback) = self.rollback.take() else {
-            return;
-        };
-        self.universe.page = rollback.page;
-        self.universe.pdf.rollback(rollback.pdf);
-        self.universe.world.rollback(&rollback.world);
-        self.universe.prepared_mag = rollback.prepared_mag;
-        self.universe.engine_usage = rollback.engine_usage;
-        self.universe
-            .restore_state_checkpoint(&rollback.state)
-            .expect("validated shipout rollback remains restorable");
+        if let Some(rollback) = self.rollback.take() {
+            self.universe.page = rollback.page;
+            self.universe.pdf.rollback(rollback.pdf);
+            self.universe.world.rollback(&rollback.world);
+            self.universe.prepared_mag = rollback.prepared_mag;
+            self.universe.engine_usage = rollback.engine_usage;
+            self.universe
+                .restore_state_checkpoint(&rollback.state)
+                .expect("validated shipout rollback remains restorable");
+        }
+        self.universe.shipout_scratch.reset(
+            self.scratch
+                .take()
+                .expect("shipout transaction owns one scratch suffix"),
+        );
     }
 }
 
@@ -409,6 +417,8 @@ pub struct Universe<G> {
     pub(crate) interner: Option<InternerLease>,
     pub(crate) core: Option<StateCore<G>>,
     page_nodes: PageNodeArena,
+    retained_page_bound: NodeArenaCursor<PageLifetime>,
+    shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
     pub(crate) page: PageBuilderState,
     pub(crate) pdf: PdfState<G>,
@@ -576,10 +586,14 @@ impl<G> Universe<G> {
             .state()
             .install_font_runtime(crate::font::NULL_FONT, prepared)
             .expect("null-font runtime row is first");
+        let page_nodes = PageNodeArena::new();
+        let retained_page_bound = page_nodes.cursor();
         Self {
             interner: Some(interner),
             core: Some(core),
-            page_nodes: PageNodeArena::new(),
+            page_nodes,
+            retained_page_bound,
+            shipout_scratch: ShipoutScratchArena::default(),
             fonts,
             page: PageBuilderState::default(),
             pdf: PdfState::default(),
@@ -1514,6 +1528,38 @@ impl<G> Universe<G> {
         self.page_nodes.get(id)
     }
 
+    /// Opens one final shipout-scratch row for direct construction.
+    pub fn begin_shipout_scratch_list(&mut self) -> ShipoutScratchListId {
+        self.shipout_scratch.begin_list()
+    }
+
+    /// Appends directly into a final shipout-scratch row.
+    pub fn push_shipout_scratch_node(
+        &mut self,
+        list: ShipoutScratchListId,
+        node: ShipoutScratchNode<G>,
+    ) {
+        self.shipout_scratch.push(list, node);
+    }
+
+    /// Resolves one live shipout-only scratch row.
+    pub fn shipout_scratch_nodes(
+        &self,
+        id: ShipoutScratchListId,
+    ) -> Option<&[ShipoutScratchNode<G>]> {
+        self.shipout_scratch.get(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shipout_scratch_high_water(&self) -> (usize, Vec<usize>) {
+        self.shipout_scratch.high_water()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn page_node_rows(&self) -> usize {
+        self.page_nodes.len()
+    }
+
     /// Captures the page-arena suffix for operation rollback.
     ///
     /// Aggregate operation marks store this cursor by value. Rollback must
@@ -1756,6 +1802,17 @@ impl<G> Universe<G> {
             .node_list(id)?)
     }
 
+    /// Resolves a generation-owned token payload for borrow-only shipout
+    /// lowering.
+    pub fn with_durable_token_list<R>(
+        &self,
+        id: TokenListId<G>,
+        read: impl FnOnce(crate::TokenListView<'_, G>) -> R,
+    ) -> Result<R, UniverseError> {
+        let admitted = self.core.as_ref().ok_or(UniverseError::Retired)?.admit();
+        Ok(read(admitted.token_list(id)))
+    }
+
     pub fn assign_code(
         &mut self,
         kind: CodeTableKind,
@@ -1801,25 +1858,57 @@ impl<G> Universe<G> {
     /// Retains one coarse generation beside bounded state and arena cursors.
     ///
     /// Command, mode, source, effect, and output owners compose their own
-    /// bounded cursor fields around this state-layer foundation.
+    /// bounded cursor fields around this state-layer foundation. A checkpoint
+    /// with no page-handle carrier records only the generation's conservative
+    /// retained page bound; incidental rootless allocation is not history.
     pub fn state_checkpoint(&self) -> Result<StateCheckpoint<G>, UniverseError> {
+        self.state_checkpoint_at(self.retained_page_bound)
+    }
+
+    fn state_checkpoint_at(
+        &self,
+        page: NodeArenaCursor<PageLifetime>,
+    ) -> Result<StateCheckpoint<G>, UniverseError> {
         let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
         Ok(GenerationCheckpoint::new(
             core.generation_owner(),
             BoundedStateMark::new(
                 core.state().journal_cursor(),
                 core.durable_node_cursor(),
-                self.page_nodes.cursor(),
+                page,
                 (),
             ),
         ))
     }
 
+    /// Exact page cursor for an operation-local rollback owner.
+    ///
+    /// This mark is intentionally separate from named checkpoints: a
+    /// speculative shipout must be able to restore its opening suffix, while
+    /// retained history must not pin rootless shipout construction.
+    fn operation_state_checkpoint(&self) -> Result<StateCheckpoint<G>, UniverseError> {
+        self.state_checkpoint_at(self.page_nodes.cursor())
+    }
+
     /// Captures the complete state-facing portion of an executor checkpoint.
     /// Runtime ids remain reachable only through the single retained state
     /// generation and opaque subsystem roots.
-    pub fn runtime_checkpoint(&self) -> Result<RuntimeCheckpoint<G>, UniverseError> {
-        Ok(RuntimeCheckpoint {
+    pub fn runtime_checkpoint(&mut self) -> Result<RuntimeCheckpoint<G>, UniverseError> {
+        self.runtime_checkpoint_with_page_roots(false)
+    }
+
+    /// Captures runtime roots while incorporating executor-owned page
+    /// carriers into the generation's monotonic retained prefix.
+    #[doc(hidden)]
+    pub fn runtime_checkpoint_with_page_roots(
+        &mut self,
+        external_page_roots: bool,
+    ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
+        let carries_page_roots = external_page_roots || self.page.retains_page_node_handles();
+        if carries_page_roots {
+            self.retained_page_bound = self.page_nodes.cursor();
+        }
+        let checkpoint = RuntimeCheckpoint {
             state: self.state_checkpoint()?,
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
@@ -1831,7 +1920,32 @@ impl<G> Universe<G> {
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
             engine_usage: self.engine_usage.clone(),
-        })
+        };
+        if !carries_page_roots {
+            self.release_unretained_page_suffix()?;
+        }
+        Ok(checkpoint)
+    }
+
+    /// Releases only rootless page rows above the generation's monotonic
+    /// retained checkpoint prefix.
+    pub fn release_unretained_page_suffix(&mut self) -> Result<(), UniverseError> {
+        self.page_nodes.truncate(self.retained_page_bound)?;
+        Ok(())
+    }
+
+    /// Applies the retained-prefix release only when every checkpointable
+    /// state carrier is rootless at the current outer boundary.
+    #[doc(hidden)]
+    pub fn release_page_suffix_if_rootless(
+        &mut self,
+        external_page_roots: bool,
+    ) -> Result<bool, UniverseError> {
+        if external_page_roots || self.page.retains_page_node_handles() {
+            return Ok(false);
+        }
+        self.release_unretained_page_suffix()?;
+        Ok(true)
     }
 
     /// Returns whether `font` is an exact immutable-row coordinate retained
@@ -1927,7 +2041,7 @@ impl<G> Universe<G> {
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_, G> {
         let rollback = ShipoutRollback {
             state: self
-                .state_checkpoint()
+                .operation_state_checkpoint()
                 .expect("live shipout generation can be retained"),
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
@@ -1939,6 +2053,7 @@ impl<G> Universe<G> {
             .allocate_token_list(&[])
             .expect("shipout can allocate its canonical empty token root");
         ShipoutTransaction {
+            scratch: Some(self.shipout_scratch.mark()),
             universe: self,
             rollback: Some(rollback),
             empty_tokens,
@@ -2041,6 +2156,7 @@ impl<G> Universe<G> {
             dependencies: &mut self.dependencies,
             fonts: &mut self.fonts,
             page_nodes: &mut self.page_nodes,
+            shipout_scratch: &mut self.shipout_scratch,
             page: &mut self.page,
             pdf: &mut self.pdf,
             sources: &mut self.sources,

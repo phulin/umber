@@ -22,6 +22,7 @@ use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
+use crate::shipout_scratch::{ShipoutScratchArena, ShipoutScratchListId};
 use crate::source_map::SourceMap;
 use crate::stores::AdmittedStateMut;
 use crate::token::TokenWord;
@@ -534,6 +535,7 @@ pub struct CommandContext<'a, G> {
     dependencies: &'a mut DependencyRuntime,
     fonts: &'a mut FontStore,
     page_nodes: &'a mut PageNodeArena,
+    shipout_scratch: &'a mut ShipoutScratchArena<G>,
     page: &'a mut PageBuilderState,
     pdf: &'a mut PdfState<G>,
     sources: &'a mut SourceMap,
@@ -554,6 +556,7 @@ pub(super) struct CommandContextParts<'a, G> {
     pub dependencies: &'a mut DependencyRuntime,
     pub fonts: &'a mut FontStore,
     pub page_nodes: &'a mut PageNodeArena,
+    pub shipout_scratch: &'a mut ShipoutScratchArena<G>,
     pub page: &'a mut PageBuilderState,
     pub pdf: &'a mut PdfState<G>,
     pub sources: &'a mut SourceMap,
@@ -576,6 +579,7 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
+            shipout_scratch,
             page,
             pdf,
             sources,
@@ -595,6 +599,7 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
+            shipout_scratch,
             page,
             pdf,
             sources,
@@ -2996,6 +3001,66 @@ impl<'a, G> CommandContext<'a, G> {
         self.pdf.apply_color_stack(id, target, action)
     }
 
+    /// Applies a color-stack whatsit through its typed shipout coordinate.
+    /// The source bytes remain in their semantic arena; `PdfState` allocates
+    /// only the runtime value and detached emission that genuinely escape.
+    pub fn apply_shipout_pdf_color_stack(
+        &mut self,
+        source: crate::ShipoutNodeSource<G>,
+        id: u32,
+        target: crate::PdfColorStackTarget,
+    ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
+        fn action<List, Glue, Tokens>(
+            node: &crate::node::Node<List, Glue, Tokens>,
+            expected_id: u32,
+        ) -> &crate::PdfColorStackAction {
+            let crate::node::Node::Whatsit(crate::node::Whatsit::PdfColorStack { id, action }) =
+                node
+            else {
+                panic!("shipout color source is not a color-stack whatsit")
+            };
+            assert_eq!(*id, expected_id, "shipout color source id changed");
+            action
+        }
+
+        match source.list {
+            crate::ShipoutListId::Page(list) => {
+                let action = action(
+                    self.page_nodes
+                        .get(list)
+                        .expect("page shipout color row is live")
+                        .nodes()
+                        .get(source.index)
+                        .expect("page shipout color index is live"),
+                    id,
+                );
+                self.pdf.apply_color_stack(id, target, action)
+            }
+            crate::ShipoutListId::Durable(list) => {
+                let action = action(
+                    self.admitted
+                        .node_list(list)
+                        .expect("durable shipout color row is live")
+                        .nodes()
+                        .get(source.index)
+                        .expect("durable shipout color index is live"),
+                    id,
+                );
+                self.pdf.apply_color_stack(id, target, action)
+            }
+            crate::ShipoutListId::Scratch(list) => {
+                let action = action(
+                    self.shipout_scratch
+                        .get(list)
+                        .and_then(|nodes| nodes.get(source.index))
+                        .expect("scratch shipout color source is live"),
+                    id,
+                );
+                self.pdf.apply_color_stack(id, target, action)
+            }
+        }
+    }
+
     pub fn pdf_page_color_stack_restorations(&mut self) -> Vec<crate::PdfColorStackEmission> {
         self.pdf.page_color_stack_restorations()
     }
@@ -3099,6 +3164,274 @@ impl<'a, G> CommandContext<'a, G> {
         list: PageListId,
     ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
         self.page_nodes.get(list)
+    }
+
+    /// Resolves shipout-only derived nodes while the aggregate transaction is
+    /// live. No semantic state API accepts this coordinate type.
+    pub fn shipout_scratch_nodes(
+        &self,
+        list: ShipoutScratchListId,
+    ) -> Option<&[crate::ShipoutScratchNode<G>]> {
+        self.shipout_scratch.get(list)
+    }
+
+    /// Opens one final shipout-scratch row for direct construction.
+    pub fn begin_shipout_scratch_list(&mut self) -> ShipoutScratchListId {
+        self.shipout_scratch.begin_list()
+    }
+
+    /// Appends directly to a final shipout-scratch row.
+    pub fn push_shipout_scratch_node(
+        &mut self,
+        list: ShipoutScratchListId,
+        node: crate::ShipoutScratchNode<G>,
+    ) {
+        self.shipout_scratch.push(list, node);
+    }
+
+    /// Visits a deferred shipout token payload without materializing it.
+    pub fn visit_shipout_tokens<E>(
+        &self,
+        source: crate::ShipoutTokenSource<G>,
+        mut visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<(), E> {
+        fn payload<Glue, Tokens>(
+            node: &crate::node::Node<impl Copy, Glue, Tokens>,
+            field: crate::ShipoutTokenField,
+        ) -> Option<&Tokens> {
+            match (node, field) {
+                (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                        tokens, ..
+                    }),
+                    crate::ShipoutTokenField::DeferredWrite,
+                )
+                | (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                        tokens,
+                        ..
+                    }),
+                    crate::ShipoutTokenField::DeferredSpecial,
+                )
+                | (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                        tokens,
+                        ..
+                    }),
+                    crate::ShipoutTokenField::DeferredPdfLiteral,
+                ) => Some(tokens),
+                (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::PdfThread(thread)),
+                    crate::ShipoutTokenField::PdfThreadAttributes,
+                ) => Some(&thread.attributes),
+                _ => None,
+            }
+        }
+
+        fn identifier<List, Glue, Tokens>(
+            node: &crate::node::Node<List, Glue, Tokens>,
+            field: crate::ShipoutTokenField,
+        ) -> Option<&crate::node::NodeTokenList> {
+            let identifier = match (node, field) {
+                (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::PdfThread(thread)),
+                    crate::ShipoutTokenField::PdfThreadIdentifier,
+                ) => &thread.identifier,
+                (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::PdfDestination(destination)),
+                    crate::ShipoutTokenField::PdfDestinationIdentifier,
+                ) => &destination.identifier,
+                _ => return None,
+            };
+            match identifier {
+                crate::node::NodePdfActionIdentifier::Name(tokens)
+                | crate::node::NodePdfActionIdentifier::Raw(tokens) => Some(tokens),
+                crate::node::NodePdfActionIdentifier::Number(_) => None,
+            }
+        }
+
+        match source.list {
+            crate::ShipoutListId::Page(list) => {
+                let tokens = self
+                    .page_nodes
+                    .get(list)
+                    .ok()
+                    .and_then(|list| list.nodes().get(source.index))
+                    .expect("shipout token source belongs to the live page row");
+                if let Some(identifier) = identifier(tokens, source.field) {
+                    identifier.words().iter().copied().try_for_each(&mut visit)
+                } else {
+                    payload(tokens, source.field)
+                        .expect("shipout token field belongs to its page source")
+                        .words()
+                        .iter()
+                        .copied()
+                        .try_for_each(&mut visit)
+                }
+            }
+            crate::ShipoutListId::Durable(list) => {
+                let node = self
+                    .admitted
+                    .node_list(list)
+                    .ok()
+                    .and_then(|list| list.nodes().get(source.index))
+                    .expect("shipout token source belongs to the live durable row");
+                if let Some(identifier) = identifier(node, source.field) {
+                    identifier.words().iter().copied().try_for_each(&mut visit)
+                } else {
+                    let tokens = payload(node, source.field)
+                        .expect("shipout token field belongs to its durable source");
+                    self.admitted
+                        .token_list(*tokens)
+                        .iter()
+                        .try_for_each(&mut visit)
+                }
+            }
+            crate::ShipoutListId::Scratch(list) => {
+                let node = self
+                    .shipout_scratch
+                    .get(list)
+                    .and_then(|nodes| nodes.get(source.index))
+                    .expect("shipout token source belongs to the active scratch row");
+                if let Some(identifier) = identifier(node, source.field) {
+                    identifier.words().iter().copied().try_for_each(&mut visit)
+                } else {
+                    payload(node, source.field)
+                        .expect("shipout token field belongs to its scratch source")
+                        .words()
+                        .iter()
+                        .copied()
+                        .try_for_each(&mut visit)
+                }
+            }
+        }
+    }
+
+    /// Admits a deferred shipout token source to command expansion. Durable
+    /// sources share their existing generation row; page/scratch sources are
+    /// streamed once into their final durable semantic escape.
+    pub fn admit_shipout_tokens(
+        &mut self,
+        source: crate::ShipoutTokenSource<G>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        if let crate::ShipoutListId::Durable(list) = source.list {
+            let mut result = None;
+            self.visit_shipout_tokens::<core::convert::Infallible>(source, |_| Ok(()))
+                .expect("infallible durable token validation");
+            let node = self
+                .admitted
+                .node_list(list)
+                .expect("durable shipout token row is live")
+                .nodes()
+                .get(source.index)
+                .expect("durable shipout token index is live");
+            match (node, source.field) {
+                (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                        tokens, ..
+                    }),
+                    crate::ShipoutTokenField::DeferredWrite,
+                )
+                | (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                        tokens,
+                        ..
+                    }),
+                    crate::ShipoutTokenField::DeferredSpecial,
+                )
+                | (
+                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                        tokens,
+                        ..
+                    }),
+                    crate::ShipoutTokenField::DeferredPdfLiteral,
+                ) => result = Some(*tokens),
+                _ => {}
+            }
+            if let Some(result) = result {
+                return Ok(result);
+            }
+        }
+
+        let builder = self.begin_token_list_builder()?;
+        let append = |admitted: &mut AdmittedStateMut<'_, G>, words: &[TokenWord]| {
+            for &word in words {
+                admitted.append_token_list_word(&builder, word)?;
+            }
+            Ok::<(), DurableAllocationError>(())
+        };
+        match source.list {
+            crate::ShipoutListId::Page(list) => {
+                let node = self
+                    .page_nodes
+                    .get(list)
+                    .expect("page shipout token row is live")
+                    .nodes()
+                    .get(source.index)
+                    .expect("page shipout token index is live");
+                let tokens = match (node, source.field) {
+                    (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredWrite,
+                    )
+                    | (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredSpecial,
+                    )
+                    | (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredPdfLiteral,
+                    ) => tokens.words(),
+                    _ => panic!("page shipout token field matches its source node"),
+                };
+                append(&mut self.admitted, tokens)?;
+            }
+            crate::ShipoutListId::Scratch(list) => {
+                let node = self
+                    .shipout_scratch
+                    .get(list)
+                    .and_then(|nodes| nodes.get(source.index))
+                    .expect("scratch shipout token source is live");
+                let tokens = match (node, source.field) {
+                    (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredWrite,
+                    )
+                    | (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredSpecial,
+                    )
+                    | (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredPdfLiteral,
+                    ) => tokens.words(),
+                    _ => panic!("scratch shipout token field matches its source node"),
+                };
+                append(&mut self.admitted, tokens)?;
+            }
+            crate::ShipoutListId::Durable(_) => {
+                unreachable!("durable token source returned its shared row")
+            }
+        }
+        self.seal_token_list_builder(builder)
     }
 
     /// Resolves the node slice consumed by pure typesetting kernels.

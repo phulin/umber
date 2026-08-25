@@ -2,13 +2,13 @@ use super::*;
 use smallvec::SmallVec;
 use tex_state::world::ArtifactEffectOrdinal;
 
-pub(super) struct PageOverlay {
+pub(super) struct PageOverlay<G> {
     pub(super) pending_effect_count: usize,
     pub(super) effects: Vec<PageEffect>,
     pub(super) open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
-    pub(super) math: Vec<MathSubstitution>,
-    pub(super) directions: Vec<DirectionPermutation>,
-    pub(super) omitted_whatsits: Vec<(tex_state::node_arena::PageListId, usize)>,
+    pub(super) math: Vec<MathSubstitution<G>>,
+    pub(super) directions: Vec<DirectionPermutation<G>>,
+    pub(super) omitted_whatsits: Vec<(tex_state::ShipoutListId<G>, usize)>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     #[cfg(test)]
     pub(super) base_whatsit_visits: Vec<BaseWhatsitVisit>,
@@ -18,14 +18,14 @@ pub(super) struct PageOverlay {
     announce_openout: bool,
 }
 
-pub(super) struct MathSubstitution {
-    pub(super) list: tex_state::node_arena::PageListId,
+pub(super) struct MathSubstitution<G> {
+    pub(super) list: tex_state::ShipoutListId<G>,
     pub(super) index: usize,
-    pub(super) replacement: tex_state::node_arena::PageListId,
+    pub(super) replacement: tex_state::ShipoutListId<G>,
 }
 
-pub(super) struct DirectionPermutation {
-    pub(super) list: tex_state::node_arena::PageListId,
+pub(super) struct DirectionPermutation<G> {
+    pub(super) list: tex_state::ShipoutListId<G>,
     pub(super) order: Vec<usize>,
 }
 
@@ -36,7 +36,7 @@ struct NormalizeExpansion<'a, G> {
 
 #[allow(clippy::too_many_arguments)] // Output traversal keeps independent immutable/replay inputs.
 pub(super) fn normalize_page<G>(
-    root: tex_state::node_arena::PageListId,
+    root: tex_state::ShipoutListId<G>,
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe<G>,
@@ -44,7 +44,7 @@ pub(super) fn normalize_page<G>(
     write_expander: &mut super::WriteExpander<'_, G>,
     replay_expander: &mut super::ReplayTextExpander<'_, G>,
     color_target: tex_state::PdfColorStackTarget,
-) -> Result<PageOverlay, ExecError> {
+) -> Result<PageOverlay<G>, ExecError> {
     let (root_vertical, root_box_lr) = root_box;
     let (pending, output_open_context, announce_openout) = effects_and_context;
     let PendingPageEffects {
@@ -123,18 +123,54 @@ pub(super) fn normalize_page<G>(
     Ok(overlay)
 }
 
-enum NormalizeNode {
+enum NormalizeNode<G> {
     Leaf,
     List(
-        tex_state::node_arena::PageListId,
+        tex_state::ShipoutListId<G>,
         bool,
         bool,
         tex_state::node::BoxLr,
     ),
-    Lists([tex_state::node_arena::PageListId; 3]),
-    Whatsit(Whatsit),
+    Lists([tex_state::ShipoutListId<G>; 3]),
+    Whatsit(PreparedWhatsit<G>),
     Math(tex_state::math::MathListNode),
     Unsupported(&'static str),
+}
+
+enum PreparedWhatsit<G> {
+    DeferredWrite {
+        sink: PrintSink,
+        tokens: tex_state::ShipoutTokenSource<G>,
+    },
+    DeferredSpecial {
+        class: String,
+        tokens: tex_state::ShipoutTokenSource<G>,
+    },
+    DeferredPdfLiteral {
+        mode: tex_state::node::PdfLiteralMode,
+        tokens: tex_state::ShipoutTokenSource<G>,
+    },
+    PdfThread {
+        identifier: PreparedPdfIdentifier<G>,
+        dimensions: tex_state::PdfAnnotationDimensions,
+        attributes: tex_state::ShipoutTokenSource<G>,
+        running: bool,
+    },
+    PdfDestination {
+        identifier: PreparedPdfIdentifier<G>,
+        structure: Option<u32>,
+        kind: tex_state::node::PdfDestinationKind,
+    },
+    PdfColorStack {
+        id: u32,
+        source: tex_state::ShipoutNodeSource<G>,
+    },
+    Other(Whatsit),
+}
+
+enum PreparedPdfIdentifier<G> {
+    Tokens(tex_state::ShipoutTokenSource<G>),
+    Number(u32),
 }
 
 #[derive(Clone, Copy)]
@@ -155,9 +191,9 @@ fn normalize_list<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::ShipoutListId<G>,
     context: NormalizeListContext,
-    overlay: &mut PageOverlay,
+    overlay: &mut PageOverlay<G>,
 ) -> Result<(), ExecError> {
     let NormalizeListContext {
         suppress_deferred_streams,
@@ -166,28 +202,28 @@ fn normalize_list<G>(
         depth,
     } = context;
     check_depth(depth)?;
-    let (active_indices, permutation) =
-        {
-            let nodes = stores
-                .page_node_list(list)
+    let (active_indices, permutation) = match list {
+        tex_state::ShipoutListId::Page(id) => normalization_work(
+            stores
+                .page_node_list(id)
                 .expect("shipout root belongs to the live page arena")
-                .nodes();
-            let permutation = direction_permutation_for_box(nodes, box_lr);
-            let mut active_indices = SmallVec::<[usize; 32]>::new();
-            if let Some(order) = permutation.as_deref() {
-                active_indices.extend(
-                    order
-                        .iter()
-                        .copied()
-                        .filter(|&index| node_requires_normalization(&nodes[index])),
-                );
-            } else {
-                active_indices.extend(nodes.iter().enumerate().filter_map(|(index, node)| {
-                    node_requires_normalization(node).then_some(index)
-                }));
-            }
-            (active_indices, permutation)
-        };
+                .nodes(),
+            box_lr,
+        ),
+        tex_state::ShipoutListId::Scratch(id) => normalization_work(
+            stores
+                .shipout_scratch_nodes(id)
+                .expect("shipout scratch root belongs to the active transaction"),
+            box_lr,
+        ),
+        tex_state::ShipoutListId::Durable(id) => normalization_work(
+            stores
+                .node_list(id)
+                .expect("shipout root belongs to the live durable generation")
+                .nodes(),
+            box_lr,
+        ),
+    };
     if let Some(order) = permutation {
         overlay
             .directions
@@ -208,7 +244,31 @@ fn normalize_list<G>(
     Ok(())
 }
 
-fn node_requires_normalization(node: &Node) -> bool {
+fn normalization_work<List: Copy, Glue: Copy, Tokens>(
+    nodes: &[Node<List, Glue, Tokens>],
+    box_lr: tex_state::node::BoxLr,
+) -> (SmallVec<[usize; 32]>, Option<Vec<usize>>) {
+    let permutation = direction_permutation_for_box(nodes, box_lr);
+    let mut active_indices = SmallVec::<[usize; 32]>::new();
+    if let Some(order) = permutation.as_deref() {
+        active_indices.extend(
+            order
+                .iter()
+                .copied()
+                .filter(|&index| node_requires_normalization(&nodes[index])),
+        );
+    } else {
+        active_indices.extend(
+            nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| node_requires_normalization(node).then_some(index)),
+        );
+    }
+    (active_indices, permutation)
+}
+
+fn node_requires_normalization<List, Glue, Tokens>(node: &Node<List, Glue, Tokens>) -> bool {
     matches!(
         node,
         Node::HList(_)
@@ -237,76 +297,46 @@ fn normalize_index<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::ShipoutListId<G>,
     index: usize,
     suppress_deferred_streams: bool,
     location: NormalizeLocation,
-    overlay: &mut PageOverlay,
+    overlay: &mut PageOverlay<G>,
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
-    let action = {
-        let node = stores
-            .page_node_list(list)
-            .expect("shipout root belongs to the live page arena")
-            .nodes()
-            .get(index)
-            .cloned()
-            .expect("normalization index belongs to the frozen list");
-        match node {
-            Node::HList(box_node) => NormalizeNode::List(
-                box_node.children,
-                suppress_deferred_streams,
-                true,
-                box_node.box_lr,
-            ),
-            Node::VList(box_node) => NormalizeNode::List(
-                box_node.children,
-                suppress_deferred_streams,
-                false,
-                box_node.box_lr,
-            ),
-            Node::Glue {
-                leader: Some(StateLeaderPayload::HList(box_node)),
-                ..
-            } => NormalizeNode::List(box_node.children, true, true, box_node.box_lr),
-            Node::Glue {
-                leader: Some(StateLeaderPayload::VList(box_node)),
-                ..
-            } => NormalizeNode::List(box_node.children, true, false, box_node.box_lr),
-            Node::Disc {
-                pre, post, replace, ..
-            } => NormalizeNode::Lists([pre, post, replace]),
-            Node::Ins { content, .. } => NormalizeNode::List(
-                content,
+    let action = match list {
+        tex_state::ShipoutListId::Page(id) => {
+            let node = stores
+                .page_node_list(id)
+                .expect("shipout root belongs to the live page arena")
+                .nodes()
+                .get(index)
+                .expect("normalization index belongs to the frozen list");
+            classify_page_node(node, list, index, suppress_deferred_streams, in_hlist)
+        }
+        tex_state::ShipoutListId::Scratch(id) => {
+            let node = stores
+                .shipout_scratch_nodes(id)
+                .expect("shipout scratch root belongs to the active transaction")
+                .get(index)
+                .expect("normalization index belongs to the frozen list");
+            classify_scratch_node(node, list, index, suppress_deferred_streams, in_hlist)
+        }
+        tex_state::ShipoutListId::Durable(id) => {
+            let node = stores
+                .node_list(id)
+                .expect("shipout root belongs to the live durable generation")
+                .nodes()
+                .get(index)
+                .expect("normalization index belongs to the frozen list");
+            classify_durable_node(
+                node,
+                stores,
+                list,
+                index,
                 suppress_deferred_streams,
                 in_hlist,
-                tex_state::node::BoxLr::Normal,
-            ),
-            Node::Adjust(adjust) => NormalizeNode::List(
-                adjust.content,
-                suppress_deferred_streams,
-                in_hlist,
-                tex_state::node::BoxLr::Normal,
-            ),
-            Node::Whatsit(whatsit) => NormalizeNode::Whatsit(whatsit),
-            Node::MathList(math) => NormalizeNode::Math(math),
-            Node::Unset(_) => NormalizeNode::Unsupported("unset alignment"),
-            Node::MathNoad(_)
-            | Node::FractionNoad(_)
-            | Node::MathStyle(_)
-            | Node::MathChoice(_)
-            | Node::Nonscript => NormalizeNode::Unsupported("math"),
-            Node::Char { .. }
-            | Node::Lig { .. }
-            | Node::Kern { .. }
-            | Node::MarginKern { .. }
-            | Node::Glue { .. }
-            | Node::Penalty(_)
-            | Node::Rule { .. }
-            | Node::Mark { .. }
-            | Node::MathOn(_)
-            | Node::MathOff(_)
-            | Node::Direction(_) => NormalizeNode::Leaf,
+            )
         }
     };
     match action {
@@ -345,14 +375,14 @@ fn normalize_index<G>(
         }
         NormalizeNode::Whatsit(whatsit) => {
             #[cfg(test)]
-            if let Some(kind) = base_whatsit_visit_kind(&whatsit) {
+            if let Some(kind) = prepared_whatsit_visit_kind(&whatsit) {
                 overlay.base_whatsit_visits.push(BaseWhatsitVisit {
                     in_hlist,
                     position: index,
                     kind,
                 });
             }
-            let anchored = whatsit_is_anchored(&whatsit, suppress_deferred_streams);
+            let anchored = prepared_whatsit_is_anchored(&whatsit, suppress_deferred_streams);
             let effect_count = overlay.effects.len();
             append_whatsit_effect(
                 stores,
@@ -368,13 +398,13 @@ fn normalize_index<G>(
             }
         }
         NormalizeNode::Math(math) => {
-            let mut nodes = {
+            let replacement = {
                 let mut command = stores.command_context().expect("live generation");
                 // A math list surviving to direct shipout is normalization
                 // scratch outside command delivery. Its box dimensions are
                 // not a canonical command-operation geometry transition.
                 let mut geometry = crate::geometry::IgnorePackGeometry;
-                crate::math::finish_math_list_node(
+                crate::math::finish_math_list_node_to_shipout_scratch(
                     &mut command,
                     diagnostic_effects,
                     &mut geometry,
@@ -382,7 +412,7 @@ fn normalize_index<G>(
                     false,
                 )
             };
-            let replacement = stores.publish_page_nodes_owned(&mut nodes);
+            let replacement = tex_state::ShipoutListId::Scratch(replacement);
             overlay.math.push(MathSubstitution {
                 list,
                 index,
@@ -409,11 +439,231 @@ fn normalize_index<G>(
     Ok(())
 }
 
+fn classify_page_node<G>(
+    node: &Node,
+    source: tex_state::ShipoutListId<G>,
+    index: usize,
+    suppress_deferred_streams: bool,
+    in_hlist: bool,
+) -> NormalizeNode<G> {
+    if let Node::MathList(math) = node {
+        return NormalizeNode::Math(*math);
+    }
+    if let Node::Whatsit(whatsit) = node {
+        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
+    }
+    classify_transient_node(
+        node,
+        tex_state::ShipoutListId::Page,
+        suppress_deferred_streams,
+        in_hlist,
+    )
+}
+
+fn classify_scratch_node<G>(
+    node: &tex_state::ShipoutScratchNode<G>,
+    source: tex_state::ShipoutListId<G>,
+    index: usize,
+    suppress_deferred_streams: bool,
+    in_hlist: bool,
+) -> NormalizeNode<G> {
+    if let Node::Whatsit(whatsit) = node {
+        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
+    }
+    classify_transient_node(node, |list| list, suppress_deferred_streams, in_hlist)
+}
+
+fn prepare_whatsit<G, Glue: Copy, Tokens: Clone>(
+    whatsit: &Whatsit<Glue, Tokens>,
+    source: tex_state::ShipoutListId<G>,
+    index: usize,
+    resolve_glue: impl Fn(Glue) -> tex_state::glue::GlueSpec,
+) -> PreparedWhatsit<G> {
+    let identifier = |identifier: &tex_state::node::NodePdfActionIdentifier,
+                      field: tex_state::ShipoutTokenField| {
+        match identifier {
+            tex_state::node::NodePdfActionIdentifier::Name(_)
+            | tex_state::node::NodePdfActionIdentifier::Raw(_) => PreparedPdfIdentifier::Tokens(
+                tex_state::ShipoutTokenSource::new(source, index, field),
+            ),
+            tex_state::node::NodePdfActionIdentifier::Number(number) => {
+                PreparedPdfIdentifier::Number(*number)
+            }
+        }
+    };
+    match whatsit {
+        Whatsit::DeferredWrite { sink, .. } => PreparedWhatsit::DeferredWrite {
+            sink: *sink,
+            tokens: tex_state::ShipoutTokenSource::new(
+                source,
+                index,
+                tex_state::ShipoutTokenField::DeferredWrite,
+            ),
+        },
+        Whatsit::DeferredSpecial { class, .. } => PreparedWhatsit::DeferredSpecial {
+            class: class.clone(),
+            tokens: tex_state::ShipoutTokenSource::new(
+                source,
+                index,
+                tex_state::ShipoutTokenField::DeferredSpecial,
+            ),
+        },
+        Whatsit::DeferredPdfLiteral { mode, .. } => PreparedWhatsit::DeferredPdfLiteral {
+            mode: *mode,
+            tokens: tex_state::ShipoutTokenSource::new(
+                source,
+                index,
+                tex_state::ShipoutTokenField::DeferredPdfLiteral,
+            ),
+        },
+        Whatsit::PdfThread(thread) => PreparedWhatsit::PdfThread {
+            identifier: identifier(
+                &thread.identifier,
+                tex_state::ShipoutTokenField::PdfThreadIdentifier,
+            ),
+            dimensions: thread.dimensions,
+            attributes: tex_state::ShipoutTokenSource::new(
+                source,
+                index,
+                tex_state::ShipoutTokenField::PdfThreadAttributes,
+            ),
+            running: thread.running,
+        },
+        Whatsit::PdfDestination(destination) => PreparedWhatsit::PdfDestination {
+            identifier: identifier(
+                &destination.identifier,
+                tex_state::ShipoutTokenField::PdfDestinationIdentifier,
+            ),
+            structure: destination.structure,
+            kind: destination.kind,
+        },
+        Whatsit::PdfColorStack { id, .. } => PreparedWhatsit::PdfColorStack {
+            id: *id,
+            source: tex_state::ShipoutNodeSource::new(source, index),
+        },
+        _ => {
+            // Every remaining owned field (open path, immediate special/PDF
+            // bytes, and navigation-free scalar metadata) is moved from this
+            // one clone into its final detached effect. Token-bearing and
+            // mutable-state payloads above retain typed source handles.
+            let node: Node<PageListId, Glue, Tokens> = Node::Whatsit(whatsit.clone());
+            let node = node.map_payloads(resolve_glue, |_| {
+                unreachable!("token-owning whatsits use a typed source handle")
+            });
+            let Node::Whatsit(whatsit) = node else {
+                unreachable!()
+            };
+            PreparedWhatsit::Other(whatsit)
+        }
+    }
+}
+
+fn classify_transient_node<G, List: Copy, Glue, Tokens>(
+    node: &Node<List, Glue, Tokens>,
+    map: impl Fn(List) -> tex_state::ShipoutListId<G>,
+    suppress_deferred_streams: bool,
+    in_hlist: bool,
+) -> NormalizeNode<G> {
+    match node {
+        Node::HList(box_node) => NormalizeNode::List(
+            map(box_node.children),
+            suppress_deferred_streams,
+            true,
+            box_node.box_lr,
+        ),
+        Node::VList(box_node) => NormalizeNode::List(
+            map(box_node.children),
+            suppress_deferred_streams,
+            false,
+            box_node.box_lr,
+        ),
+        Node::Glue {
+            leader: Some(StateLeaderPayload::HList(box_node)),
+            ..
+        } => NormalizeNode::List(map(box_node.children), true, true, box_node.box_lr),
+        Node::Glue {
+            leader: Some(StateLeaderPayload::VList(box_node)),
+            ..
+        } => NormalizeNode::List(map(box_node.children), true, false, box_node.box_lr),
+        Node::Disc {
+            pre, post, replace, ..
+        } => NormalizeNode::Lists([map(*pre), map(*post), map(*replace)]),
+        Node::Ins { content, .. } => NormalizeNode::List(
+            map(*content),
+            suppress_deferred_streams,
+            in_hlist,
+            tex_state::node::BoxLr::Normal,
+        ),
+        Node::Adjust(adjust) => NormalizeNode::List(
+            map(adjust.content),
+            suppress_deferred_streams,
+            in_hlist,
+            tex_state::node::BoxLr::Normal,
+        ),
+        Node::Whatsit(_) => unreachable!("whatsits retain their typed source handle"),
+        Node::MathList(_) => NormalizeNode::Unsupported("math"),
+        Node::Unset(_) => NormalizeNode::Unsupported("unset alignment"),
+        Node::MathNoad(_)
+        | Node::FractionNoad(_)
+        | Node::MathStyle(_)
+        | Node::MathChoice(_)
+        | Node::Nonscript => NormalizeNode::Unsupported("math"),
+        Node::Char { .. }
+        | Node::Lig { .. }
+        | Node::Kern { .. }
+        | Node::MarginKern { .. }
+        | Node::Glue { .. }
+        | Node::Penalty(_)
+        | Node::Rule { .. }
+        | Node::Mark { .. }
+        | Node::MathOn(_)
+        | Node::MathOff(_)
+        | Node::Direction(_) => NormalizeNode::Leaf,
+    }
+}
+
+fn classify_durable_node<G>(
+    node: &Node<
+        tex_state::node_arena::DurableListId<G>,
+        tex_state::GlueId<G>,
+        tex_state::TokenListId<G>,
+    >,
+    stores: &Universe<G>,
+    source: tex_state::ShipoutListId<G>,
+    index: usize,
+    suppress_deferred_streams: bool,
+    in_hlist: bool,
+) -> NormalizeNode<G> {
+    if let Node::Whatsit(whatsit) = node {
+        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| {
+            stores.glue(glue).expect("durable shipout glue is live")
+        }));
+    }
+    classify_transient_node(
+        node,
+        |list| tex_state::ShipoutListId::Durable(list),
+        suppress_deferred_streams,
+        in_hlist,
+    )
+}
+
+#[cfg(test)]
+fn prepared_whatsit_visit_kind<G>(whatsit: &PreparedWhatsit<G>) -> Option<BaseWhatsitVisitKind> {
+    match whatsit {
+        PreparedWhatsit::DeferredWrite { .. } => Some(BaseWhatsitVisitKind::DeferredWrite),
+        PreparedWhatsit::Other(whatsit) => base_whatsit_visit_kind(whatsit),
+        PreparedWhatsit::DeferredSpecial { .. }
+        | PreparedWhatsit::DeferredPdfLiteral { .. }
+        | PreparedWhatsit::PdfThread { .. }
+        | PreparedWhatsit::PdfDestination { .. }
+        | PreparedWhatsit::PdfColorStack { .. } => None,
+    }
+}
+
 #[cfg(test)]
 fn base_whatsit_visit_kind(whatsit: &Whatsit) -> Option<BaseWhatsitVisitKind> {
     match whatsit {
         Whatsit::OpenOut { .. } => Some(BaseWhatsitVisitKind::OpenOut),
-        Whatsit::DeferredWrite { .. } => Some(BaseWhatsitVisitKind::DeferredWrite),
         Whatsit::CloseOut { slot: Some(_) } => Some(BaseWhatsitVisitKind::NumberedCloseOut),
         Whatsit::CloseOut { slot: None } => Some(BaseWhatsitVisitKind::FallbackCloseOut),
         Whatsit::Special { .. } => Some(BaseWhatsitVisitKind::Special),
@@ -422,22 +672,304 @@ fn base_whatsit_visit_kind(whatsit: &Whatsit) -> Option<BaseWhatsitVisitKind> {
     }
 }
 
+fn prepared_whatsit_is_anchored<G>(
+    whatsit: &PreparedWhatsit<G>,
+    suppress_deferred_streams: bool,
+) -> bool {
+    match whatsit {
+        PreparedWhatsit::DeferredWrite { .. } => !suppress_deferred_streams,
+        PreparedWhatsit::DeferredSpecial { .. }
+        | PreparedWhatsit::DeferredPdfLiteral { .. }
+        | PreparedWhatsit::PdfThread { .. }
+        | PreparedWhatsit::PdfDestination { .. }
+        | PreparedWhatsit::PdfColorStack { .. } => true,
+        PreparedWhatsit::Other(whatsit) => whatsit_is_anchored(whatsit, suppress_deferred_streams),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_prepared_pdf_thread<G>(
+    stores: &mut Universe<G>,
+    overlay: &mut PageOverlay<G>,
+    identifier: PreparedPdfIdentifier<G>,
+    dimensions: tex_state::PdfAnnotationDimensions,
+    attributes: tex_state::ShipoutTokenSource<G>,
+    running: bool,
+    suppress_deferred_streams: bool,
+    location: NormalizeLocation,
+) -> Result<(), ExecError> {
+    if suppress_deferred_streams {
+        return Ok(());
+    }
+    if running && location.in_hlist {
+        return Err(ExecError::PdfNavigation(
+            "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
+        ));
+    }
+    if overlay.color_target == tex_state::PdfColorStackTarget::Form {
+        return Err(ExecError::PdfThreadInForm);
+    }
+    let identity = render_prepared_pdf_identity(stores, identifier);
+    let (thread, bead) = stores
+        .command_context()
+        .expect("PDF thread execution runs inside an admitted command episode")
+        .append_pdf_thread_bead(identity.clone())
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    let identifier = match identity {
+        tex_state::PdfDestinationIdentity::Name(name) => {
+            tex_out::PdfDestinationIdentifier::Name(name)
+        }
+        tex_state::PdfDestinationIdentity::Number(number) => {
+            tex_out::PdfDestinationIdentifier::Number(number)
+        }
+    };
+    let mut attribute_bytes = String::new();
+    let context = stores
+        .command_context()
+        .expect("PDF thread token traversal runs inside an admitted command episode");
+    context
+        .visit_shipout_tokens(attributes, |token| {
+            tex_state::token_show::append_token_string_text(
+                &context,
+                token.semantic_token(),
+                &mut attribute_bytes,
+            );
+            Ok::<(), core::convert::Infallible>(())
+        })
+        .expect("infallible PDF thread token rendering");
+    let margin = context.dimen_param(DimenParam::PDF_THREAD_MARGIN);
+    drop(context);
+    let marker = tex_out::PdfThreadEffect {
+        thread_object: thread.object(),
+        bead_object: bead.bead_object(),
+        rectangle_object: bead.rectangle_object(),
+        identifier,
+        width: dimensions.width,
+        height: dimensions.height,
+        depth: dimensions.depth,
+        attributes: attribute_bytes.into_bytes(),
+        margin,
+    };
+    if running {
+        overlay.running_thread_depth = Some(location.depth);
+    }
+    overlay.effects.push(if running {
+        PageEffect::PdfStartThread(marker)
+    } else {
+        PageEffect::PdfThread(marker)
+    });
+    Ok(())
+}
+
+fn render_prepared_pdf_identity<G>(
+    stores: &mut Universe<G>,
+    identifier: PreparedPdfIdentifier<G>,
+) -> tex_state::PdfDestinationIdentity {
+    match identifier {
+        PreparedPdfIdentifier::Number(number) => tex_state::PdfDestinationIdentity::Number(number),
+        PreparedPdfIdentifier::Tokens(tokens) => {
+            let mut text = String::new();
+            let context = stores
+                .command_context()
+                .expect("PDF identifier traversal runs inside an admitted command episode");
+            context
+                .visit_shipout_tokens(tokens, |token| {
+                    tex_state::token_show::append_token_string_text(
+                        &context,
+                        token.semantic_token(),
+                        &mut text,
+                    );
+                    Ok::<(), core::convert::Infallible>(())
+                })
+                .expect("infallible PDF identifier rendering");
+            tex_state::PdfDestinationIdentity::Name(text.into_bytes())
+        }
+    }
+}
+
+fn append_prepared_pdf_destination<G>(
+    stores: &mut Universe<G>,
+    overlay: &mut PageOverlay<G>,
+    identifier: PreparedPdfIdentifier<G>,
+    structure: Option<u32>,
+    kind: tex_state::node::PdfDestinationKind,
+    suppress_deferred_streams: bool,
+) -> Result<(), ExecError> {
+    if suppress_deferred_streams {
+        return Ok(());
+    }
+    if overlay.color_target == tex_state::PdfColorStackTarget::Form {
+        return Err(ExecError::PdfDestinationInForm);
+    }
+    let identity = render_prepared_pdf_identity(stores, identifier);
+    let definition = stores
+        .command_context()
+        .expect("PDF destination execution runs inside an admitted command episode")
+        .define_pdf_destination(identity.clone(), structure)
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    if definition.duplicate {
+        if stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) <= 0 {
+            overlay.diagnostics.push((
+                PrintSink::TerminalAndLog,
+                pdf_destination_duplicate_warning(&identity),
+            ));
+        }
+        return Ok(());
+    }
+    let identifier = match identity {
+        tex_state::PdfDestinationIdentity::Name(name) => {
+            tex_out::PdfDestinationIdentifier::Name(name)
+        }
+        tex_state::PdfDestinationIdentity::Number(number) => {
+            tex_out::PdfDestinationIdentifier::Number(number)
+        }
+    };
+    let kind = match kind {
+        tex_state::node::PdfDestinationKind::Xyz { zoom } => {
+            tex_out::PdfDestinationKind::Xyz { zoom }
+        }
+        tex_state::node::PdfDestinationKind::FitBoundingBoxHorizontal => {
+            tex_out::PdfDestinationKind::FitBoundingBoxHorizontal
+        }
+        tex_state::node::PdfDestinationKind::FitBoundingBoxVertical => {
+            tex_out::PdfDestinationKind::FitBoundingBoxVertical
+        }
+        tex_state::node::PdfDestinationKind::FitBoundingBox => {
+            tex_out::PdfDestinationKind::FitBoundingBox
+        }
+        tex_state::node::PdfDestinationKind::FitHorizontal => {
+            tex_out::PdfDestinationKind::FitHorizontal
+        }
+        tex_state::node::PdfDestinationKind::FitVertical => {
+            tex_out::PdfDestinationKind::FitVertical
+        }
+        tex_state::node::PdfDestinationKind::FitRectangle(dimensions) => {
+            tex_out::PdfDestinationKind::FitRectangle {
+                width: dimensions.width,
+                height: dimensions.height,
+                depth: dimensions.depth,
+            }
+        }
+        tex_state::node::PdfDestinationKind::Fit => tex_out::PdfDestinationKind::Fit,
+    };
+    overlay
+        .effects
+        .push(PageEffect::PdfDestination(tex_out::PdfDestinationEffect {
+            object: definition.record.object(),
+            identifier,
+            structure,
+            kind,
+            margin: stores
+                .dimen_param(DimenParam::PDF_DEST_MARGIN)
+                .expect("shipout reads admitted pdfdestmargin"),
+        }));
+    Ok(())
+}
+
 fn append_whatsit_effect<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
-    overlay: &mut PageOverlay,
-    whatsit: Whatsit,
+    overlay: &mut PageOverlay<G>,
+    whatsit: PreparedWhatsit<G>,
     suppress_deferred_streams: bool,
     location: NormalizeLocation,
 ) -> Result<(), ExecError> {
+    let whatsit = match whatsit {
+        PreparedWhatsit::PdfThread {
+            identifier,
+            dimensions,
+            attributes,
+            running,
+        } => {
+            return append_prepared_pdf_thread(
+                stores,
+                overlay,
+                identifier,
+                dimensions,
+                attributes,
+                running,
+                suppress_deferred_streams,
+                location,
+            );
+        }
+        PreparedWhatsit::PdfDestination {
+            identifier,
+            structure,
+            kind,
+        } => {
+            return append_prepared_pdf_destination(
+                stores,
+                overlay,
+                identifier,
+                structure,
+                kind,
+                suppress_deferred_streams,
+            );
+        }
+        PreparedWhatsit::PdfColorStack { id, source } => {
+            let emission = stores
+                .command_context()
+                .expect("PDF color execution runs inside an admitted command episode")
+                .apply_shipout_pdf_color_stack(source, id, overlay.color_target);
+            match emission {
+                Ok(emission) => overlay.effects.push(PageEffect::PdfColorStack {
+                    mode: lower_color_stack_mode(emission.mode),
+                    payload: emission.payload,
+                    page_start: false,
+                }),
+                Err(tex_state::PdfColorStackApplyError::Underflow) => {
+                    let target = match overlay.color_target {
+                        tex_state::PdfColorStackTarget::Page => "page",
+                        tex_state::PdfColorStackTarget::Form => "form",
+                    };
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("pop empty color {target} stack {id}\n"),
+                    );
+                }
+                Err(tex_state::PdfColorStackApplyError::Unknown) => {
+                    unreachable!("validated color stack id")
+                }
+            }
+            return Ok(());
+        }
+        other => other,
+    };
+    let (whatsit, token_source) = match whatsit {
+        PreparedWhatsit::DeferredWrite { sink, tokens } => (
+            Whatsit::DeferredWrite {
+                sink,
+                tokens: tex_state::node::NodeTokenList::default(),
+            },
+            Some(tokens),
+        ),
+        PreparedWhatsit::DeferredSpecial { class, tokens } => (
+            Whatsit::DeferredSpecial {
+                class,
+                tokens: tex_state::node::NodeTokenList::default(),
+            },
+            Some(tokens),
+        ),
+        PreparedWhatsit::DeferredPdfLiteral { mode, tokens } => (
+            Whatsit::DeferredPdfLiteral {
+                mode,
+                tokens: tex_state::node::NodeTokenList::default(),
+            },
+            Some(tokens),
+        ),
+        PreparedWhatsit::PdfThread { .. }
+        | PreparedWhatsit::PdfDestination { .. }
+        | PreparedWhatsit::PdfColorStack { .. } => {
+            unreachable!("typed shipout source handled before owned lowering")
+        }
+        PreparedWhatsit::Other(whatsit) => (whatsit, None),
+    };
     let NormalizeLocation { in_hlist, depth } = location;
-    let color_target = overlay.color_target;
     let announce_openout = overlay.announce_openout;
     let output_open_context = overlay.output_open_context.clone();
     let effects = &mut overlay.effects;
     let open_out_occurrences = &mut overlay.open_out_occurrences;
-    let diagnostics = &mut overlay.diagnostics;
     let running_thread_depth = &mut overlay.running_thread_depth;
     match whatsit {
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
@@ -501,8 +1033,12 @@ fn append_whatsit_effect<G>(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let expanded =
-                (expansion.write_expander)(stores, diagnostic_effects, sink, tokens.words())?;
+            let expanded = (expansion.write_expander)(
+                stores,
+                diagnostic_effects,
+                sink,
+                token_source.expect("deferred write retains its typed token source"),
+            )?;
             let text = expanded.text;
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
@@ -524,12 +1060,12 @@ fn append_whatsit_effect<G>(
         Whatsit::Special { class, payload } => {
             effects.push(PageEffect::Special { class, payload });
         }
-        Whatsit::DeferredSpecial { class, tokens } => {
+        Whatsit::DeferredSpecial { class, tokens: _ } => {
             let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
                 stores,
                 diagnostic_effects,
                 super::ReplayTextKind::Special,
-                tokens.words(),
+                token_source.expect("deferred special retains its typed token source"),
             )?;
             effects.push(PageEffect::Special { class, payload });
         }
@@ -577,12 +1113,12 @@ fn append_whatsit_effect<G>(
             mode: lower_pdf_literal_mode(mode),
             payload,
         }),
-        Whatsit::DeferredPdfLiteral { mode, tokens } => {
+        Whatsit::DeferredPdfLiteral { mode, tokens: _ } => {
             let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
                 stores,
                 diagnostic_effects,
                 super::ReplayTextKind::PdfLiteral,
-                tokens.words(),
+                token_source.expect("deferred literal retains its typed token source"),
             )?;
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),
@@ -595,31 +1131,8 @@ fn append_whatsit_effect<G>(
         }
         Whatsit::PdfSave => effects.push(PageEffect::PdfSave),
         Whatsit::PdfRestore => effects.push(PageEffect::PdfRestore),
-        Whatsit::PdfColorStack { id, action } => {
-            let emission = stores
-                .command_context()
-                .expect("PDF color execution runs inside an admitted command episode")
-                .apply_pdf_color_stack(id, color_target, &action);
-            match emission {
-                Ok(emission) => effects.push(PageEffect::PdfColorStack {
-                    mode: lower_color_stack_mode(emission.mode),
-                    payload: emission.payload,
-                    page_start: false,
-                }),
-                Err(tex_state::PdfColorStackApplyError::Underflow) => {
-                    let target = match color_target {
-                        tex_state::PdfColorStackTarget::Page => "page",
-                        tex_state::PdfColorStackTarget::Form => "form",
-                    };
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("pop empty color {target} stack {id}\n"),
-                    );
-                }
-                Err(tex_state::PdfColorStackApplyError::Unknown) => {
-                    unreachable!("validated color stack id")
-                }
-            }
+        Whatsit::PdfColorStack { .. } => {
+            unreachable!("color-stack whatsits retain their typed source handle")
         }
         Whatsit::PdfSavePos => effects.push(PageEffect::PdfSavePosition),
         Whatsit::PdfSnapRefPoint => effects.push(PageEffect::PdfSnapRefPoint),
@@ -677,176 +1190,8 @@ fn append_whatsit_effect<G>(
             height,
             depth,
         }),
-        Whatsit::PdfDestination(destination) => {
-            let tex_state::node::PdfDestinationNode {
-                identifier,
-                structure,
-                kind,
-            } = *destination;
-            if suppress_deferred_streams {
-                return Ok(());
-            }
-            if color_target == tex_state::PdfColorStackTarget::Form {
-                return Err(ExecError::PdfDestinationInForm);
-            }
-            let identity = match identifier {
-                tex_state::node::NodePdfActionIdentifier::Name(tokens) => {
-                    let mut text = String::new();
-                    for &token in tokens.words() {
-                        tex_state::token_show::append_token_string_text(
-                            stores,
-                            token.semantic_token(),
-                            &mut text,
-                        );
-                    }
-                    tex_state::PdfDestinationIdentity::Name(text.into_bytes())
-                }
-                tex_state::node::NodePdfActionIdentifier::Number(number) => {
-                    tex_state::PdfDestinationIdentity::Number(number)
-                }
-                tex_state::node::NodePdfActionIdentifier::Raw(_) => {
-                    unreachable!("destination scanner uses typed identifiers")
-                }
-            };
-            let definition = stores
-                .command_context()
-                .expect("PDF destination execution runs inside an admitted command episode")
-                .define_pdf_destination(identity.clone(), structure)
-                .map_err(|_| ExecError::PdfObjectCapacity)?;
-            if definition.duplicate {
-                if stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) <= 0 {
-                    diagnostics.push((
-                        PrintSink::TerminalAndLog,
-                        pdf_destination_duplicate_warning(&identity),
-                    ));
-                }
-                return Ok(());
-            }
-            let identifier = match identity {
-                tex_state::PdfDestinationIdentity::Name(name) => {
-                    tex_out::PdfDestinationIdentifier::Name(name)
-                }
-                tex_state::PdfDestinationIdentity::Number(number) => {
-                    tex_out::PdfDestinationIdentifier::Number(number)
-                }
-            };
-            let kind = match kind {
-                tex_state::node::PdfDestinationKind::Xyz { zoom } => {
-                    tex_out::PdfDestinationKind::Xyz { zoom }
-                }
-                tex_state::node::PdfDestinationKind::FitBoundingBoxHorizontal => {
-                    tex_out::PdfDestinationKind::FitBoundingBoxHorizontal
-                }
-                tex_state::node::PdfDestinationKind::FitBoundingBoxVertical => {
-                    tex_out::PdfDestinationKind::FitBoundingBoxVertical
-                }
-                tex_state::node::PdfDestinationKind::FitBoundingBox => {
-                    tex_out::PdfDestinationKind::FitBoundingBox
-                }
-                tex_state::node::PdfDestinationKind::FitHorizontal => {
-                    tex_out::PdfDestinationKind::FitHorizontal
-                }
-                tex_state::node::PdfDestinationKind::FitVertical => {
-                    tex_out::PdfDestinationKind::FitVertical
-                }
-                tex_state::node::PdfDestinationKind::FitRectangle(dimensions) => {
-                    tex_out::PdfDestinationKind::FitRectangle {
-                        width: dimensions.width,
-                        height: dimensions.height,
-                        depth: dimensions.depth,
-                    }
-                }
-                tex_state::node::PdfDestinationKind::Fit => tex_out::PdfDestinationKind::Fit,
-            };
-            effects.push(PageEffect::PdfDestination(tex_out::PdfDestinationEffect {
-                object: definition.record.object(),
-                identifier,
-                structure,
-                kind,
-                margin: stores
-                    .dimen_param(DimenParam::PDF_DEST_MARGIN)
-                    .expect("shipout reads admitted pdfdestmargin"),
-            }));
-        }
-        Whatsit::PdfThread(thread) => {
-            let tex_state::node::PdfThreadNode {
-                identifier,
-                dimensions,
-                attributes,
-                running,
-            } = *thread;
-            if suppress_deferred_streams {
-                return Ok(());
-            }
-            if running && in_hlist {
-                return Err(ExecError::PdfNavigation(
-                    "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
-                ));
-            }
-            if color_target == tex_state::PdfColorStackTarget::Form {
-                return Err(ExecError::PdfThreadInForm);
-            }
-            let identity = match identifier {
-                tex_state::node::NodePdfActionIdentifier::Name(tokens) => {
-                    let mut text = String::new();
-                    for &token in tokens.words() {
-                        tex_state::token_show::append_token_string_text(
-                            stores,
-                            token.semantic_token(),
-                            &mut text,
-                        );
-                    }
-                    tex_state::PdfDestinationIdentity::Name(text.into_bytes())
-                }
-                tex_state::node::NodePdfActionIdentifier::Number(number) => {
-                    tex_state::PdfDestinationIdentity::Number(number)
-                }
-                tex_state::node::NodePdfActionIdentifier::Raw(_) => {
-                    unreachable!("thread scanner uses typed identifiers")
-                }
-            };
-            let (thread, bead) = stores
-                .command_context()
-                .expect("PDF thread execution runs inside an admitted command episode")
-                .append_pdf_thread_bead(identity.clone())
-                .map_err(|_| ExecError::PdfObjectCapacity)?;
-            let identifier = match identity {
-                tex_state::PdfDestinationIdentity::Name(name) => {
-                    tex_out::PdfDestinationIdentifier::Name(name)
-                }
-                tex_state::PdfDestinationIdentity::Number(number) => {
-                    tex_out::PdfDestinationIdentifier::Number(number)
-                }
-            };
-            let mut attribute_bytes = String::new();
-            for &token in attributes.words() {
-                tex_state::token_show::append_token_string_text(
-                    stores,
-                    token.semantic_token(),
-                    &mut attribute_bytes,
-                );
-            }
-            let marker = tex_out::PdfThreadEffect {
-                thread_object: thread.object(),
-                bead_object: bead.bead_object(),
-                rectangle_object: bead.rectangle_object(),
-                identifier,
-                width: dimensions.width,
-                height: dimensions.height,
-                depth: dimensions.depth,
-                attributes: attribute_bytes.into_bytes(),
-                margin: stores
-                    .dimen_param(DimenParam::PDF_THREAD_MARGIN)
-                    .expect("shipout reads admitted pdfthreadmargin"),
-            };
-            if running {
-                *running_thread_depth = Some(depth);
-            }
-            effects.push(if running {
-                PageEffect::PdfStartThread(marker)
-            } else {
-                PageEffect::PdfThread(marker)
-            });
+        Whatsit::PdfDestination(_) | Whatsit::PdfThread(_) => {
+            unreachable!("navigation whatsits retain typed source handles")
         }
         Whatsit::PdfEndThread if in_hlist => {
             return Err(ExecError::PdfNavigation(
@@ -1011,8 +1356,8 @@ fn lower_color_stack_mode(mode: tex_state::PdfColorStackMode) -> tex_out::PdfLit
     }
 }
 
-pub(super) fn direction_permutation_for_box(
-    nodes: &[Node],
+pub(super) fn direction_permutation_for_box<List: Copy, Glue: Copy, Tokens>(
+    nodes: &[Node<List, Glue, Tokens>],
     box_lr: tex_state::node::BoxLr,
 ) -> Option<Vec<usize>> {
     if box_lr == tex_state::node::BoxLr::Reversed {
@@ -1021,7 +1366,9 @@ pub(super) fn direction_permutation_for_box(
     direction_permutation(nodes)
 }
 
-fn direction_permutation(nodes: &[Node]) -> Option<Vec<usize>> {
+fn direction_permutation<List: Copy, Glue: Copy, Tokens>(
+    nodes: &[Node<List, Glue, Tokens>],
+) -> Option<Vec<usize>> {
     struct Segment {
         begin: Direction,
         chunks: Vec<Vec<usize>>,

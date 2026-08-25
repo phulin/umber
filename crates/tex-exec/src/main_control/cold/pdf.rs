@@ -6,7 +6,6 @@
 use super::super::*;
 use super::operation::*;
 use super::support::*;
-use tex_state::token::TokenWord;
 
 pub(in crate::main_control) fn write_text<G>(
     tokens: tex_state::TokenListId<G>,
@@ -673,13 +672,13 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
     let mut write = |stores: &mut Universe<G>,
                      _: &mut DiagnosticEffects,
                      _: PrintSink,
-                     tokens: &[TokenWord]| {
+                     tokens: tex_state::ShipoutTokenSource<G>| {
         replay_write_transaction(&mut command.borrow_mut(), stores, tokens, &mut Vec::new())
     };
     let mut replay = |stores: &mut Universe<G>,
                       _: &mut DiagnosticEffects,
                       kind: crate::shipout::ReplayTextKind,
-                      tokens: &[TokenWord]| {
+                      tokens: tex_state::ShipoutTokenSource<G>| {
         replay_text_transaction(
             &mut command.borrow_mut(),
             stores,
@@ -697,7 +696,8 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
         provenance_budget_bytes,
         geometry_sink,
     );
-    let artifact = transaction.stage_form(form.clone(), stores)?;
+    let object = form.object();
+    let artifact = transaction.stage_form(form, stores)?;
     let mut shipout_diagnostics = transaction.take_diagnostic_effects();
     drop(transaction);
     {
@@ -712,7 +712,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
             context: "immediate form publication admission",
         })?;
     context.publish_pdf_traversal_positions(artifact.last_position(), artifact.snap_reference());
-    context.set_pdf_form_artifact(form.object(), artifact);
+    context.set_pdf_form_artifact(object, artifact);
     Ok(())
 }
 
@@ -720,7 +720,7 @@ pub(in crate::main_control) fn replay_text<G>(
     command: &mut CommandMachine<'_, G>,
     stores: &mut LinearCommandContext<'_, G>,
     kind: crate::shipout::ReplayTextKind,
-    tokens: &[TokenWord],
+    tokens: tex_state::TokenListId<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<Vec<u8>, ExecError> {
     // Output replay is an isolated nested input transaction. Its synthetic
@@ -728,13 +728,10 @@ pub(in crate::main_control) fn replay_text<G>(
     // events, but they must never advance or replace the surrounding source
     // cursor. This also gives a failing nested form replay an exact command
     // rollback boundary independent of the artifact/resource transaction.
-    let durable = stores
-        .allocate_token_list(tokens)
-        .expect("output replay fits admitted durable storage");
     let expanded = {
         let mut processor = command.processor(stores.take());
         let result = processor
-            .expand_output_replay(durable)
+            .expand_output_replay(tokens)
             .map_err(command_error);
         diagnostics.extend(
             processor
@@ -783,16 +780,13 @@ pub(in crate::main_control) fn replay_text<G>(
 pub(in crate::main_control) fn replay_write<G>(
     command: &mut CommandMachine<'_, G>,
     stores: &mut LinearCommandContext<'_, G>,
-    tokens: &[TokenWord],
+    tokens: tex_state::TokenListId<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
-    let durable = stores
-        .allocate_token_list(tokens)
-        .expect("write replay fits admitted durable storage");
     let expanded = {
         let mut processor = command.processor(stores.take());
         let result = processor
-            .expand_durable_write_text(durable)
+            .expand_durable_write_text(tokens)
             .map_err(command_error);
         diagnostics.extend(
             processor
@@ -841,7 +835,7 @@ fn replay_text_transaction<G>(
     command: &mut CommandMachine<'_, G>,
     stores: &mut Universe<G>,
     kind: crate::shipout::ReplayTextKind,
-    tokens: &[TokenWord],
+    tokens: tex_state::ShipoutTokenSource<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<Vec<u8>, ExecError> {
     let snapshot =
@@ -858,6 +852,9 @@ fn replay_text_transaction<G>(
                 context: "output replay admission",
             })?;
         let mut context = LinearCommandContext::new(context);
+        let tokens = context
+            .admit_shipout_tokens(tokens)
+            .expect("output replay fits admitted durable storage");
         replay_text(command, &mut context, kind, tokens, diagnostics)
     };
     command
@@ -872,7 +869,7 @@ fn replay_text_transaction<G>(
 fn replay_write_transaction<G>(
     command: &mut CommandMachine<'_, G>,
     stores: &mut Universe<G>,
-    tokens: &[TokenWord],
+    tokens: tex_state::ShipoutTokenSource<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
     let snapshot =
@@ -889,6 +886,9 @@ fn replay_write_transaction<G>(
                 context: "write replay admission",
             })?;
         let mut context = LinearCommandContext::new(context);
+        let tokens = context
+            .admit_shipout_tokens(tokens)
+            .expect("write replay fits admitted durable storage");
         replay_write(command, &mut context, tokens, diagnostics)
     };
     command
@@ -1275,7 +1275,7 @@ pub(in crate::main_control) fn print_ship_out_marker_open<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     tracing_output: i32,
     counts: &[i32; 10],
-    traced_node: Option<&Node>,
+    traced_dump: Option<&str>,
 ) -> usize {
     let last = (1..=9usize).rev().find(|&j| counts[j] != 0).unwrap_or(0);
     if tracing_output > 0 {
@@ -1312,20 +1312,14 @@ pub(in crate::main_control) fn print_ship_out_marker_open<G>(
             }
         }
     }
-    if let Some(node) = traced_node {
+    if let Some(text) = traced_dump {
         stores.printer().print_char(']');
-        let text = {
-            let mut context = stores.command_context().expect("shipout trace admission");
-            let frozen = context.publish_page_nodes(vec![node.clone()]);
-            let config = crate::node_dump::DumpConfig::read(&context);
-            crate::node_dump::dump_page_list(&context, frozen, config)
-        };
         let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
         // TeX82 §§174/198: `show_box` enters `show_node_list`, whose loop
         // executes `print_ln` before it renders the root node. This is an
         // unconditional structural break, not a `max_print_line` wrap and
         // not indentation carried by the detached node text.
-        diagnostic.print_ln().print_rendered(&text);
+        diagnostic.print_ln().print_rendered(text);
         diagnostic.end(true);
     }
     marker_start
@@ -1423,15 +1417,13 @@ impl DetachedArtifactSourceResolver {
                     recipes.insert(origin, recipe);
                 }
             }
-            let mut children = Vec::new();
-            node.visit_semantic_node_lists(|list| children.push(*list));
-            for child in children {
-                if let Ok(list) = stores.page_node_list(child) {
+            node.visit_semantic_node_lists(|child| {
+                if let Ok(list) = stores.page_node_list(*child) {
                     for node in list.nodes() {
                         visit(node, stores, recipes);
                     }
                 }
-            }
+            });
         }
 
         let mut recipes = std::collections::HashMap::new();
@@ -1467,15 +1459,13 @@ impl DetachedArtifactSourceResolver {
                     recipes.insert(origin, recipe);
                 }
             }
-            let mut children = Vec::new();
-            node.visit_semantic_node_lists(|list| children.push(*list));
-            for child in children {
-                if let Ok(list) = stores.node_list(child) {
+            node.visit_semantic_node_lists(|child| {
+                if let Ok(list) = stores.node_list(*child) {
                     for node in list.nodes() {
                         visit(node, stores, recipes);
                     }
                 }
-            }
+            });
         }
 
         let mut recipes = std::collections::HashMap::new();
@@ -1500,17 +1490,17 @@ impl crate::shipout::ShipoutGeometrySink for DetachedShipoutGeometry {
 }
 
 pub(in crate::main_control) fn shipout_replay_box<G>(
-    shipout: PreparedShipout,
+    shipout: PreparedShipout<G>,
     stores: &mut Universe<G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
-    let PreparedShipout { node, region } = shipout;
+    let PreparedShipout { source, region } = shipout;
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
     // is replayed, because replaying it is what changes them.
     let provenance_demand = stores.provenance_demand();
     let provenance_budget_bytes = stores.provenance_budgets().detached_artifact_recipe_bytes;
-    let (tracing_output, counts, memory_before, source_resolver, output_open_context) = {
+    let (tracing_output, counts, memory_before, source_resolver, output_open_context, traced_dump) = {
         let context = stores
             .command_context()
             .map_err(|_| ExecError::MissingToken {
@@ -1526,7 +1516,25 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         let usage = context.detach_engine_usage_statistics();
         let memory_before =
             (tracing_stats > 1).then_some((usage.memory_words, usage.font_info_words));
-        let source_resolver = DetachedArtifactSourceResolver::capture(&node, &context);
+        let source_resolver = match &source {
+            PreparedShipoutSource::Page(node) => {
+                DetachedArtifactSourceResolver::capture(node, &context)
+            }
+            PreparedShipoutSource::Durable(list) => {
+                DetachedArtifactSourceResolver::capture_durable(*list, &context)
+            }
+        };
+        let traced_dump = (tracing_output > 0).then(|| {
+            let config = crate::node_dump::DumpConfig::read(&context);
+            match &source {
+                PreparedShipoutSource::Page(node) => {
+                    crate::node_dump::dump_node_slice(&context, std::slice::from_ref(node), config)
+                }
+                PreparedShipoutSource::Durable(list) => {
+                    crate::node_dump::dump_durable_list(&context, *list, config)
+                }
+            }
+        });
         let output_open_context = command.state.output_open_context(&context);
         (
             tracing_output,
@@ -1534,9 +1542,9 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             memory_before,
             source_resolver,
             output_open_context,
+            traced_dump,
         )
     };
-    let traced_node = (tracing_output > 0).then(|| node.clone());
     // Effects live at this point are genuine whatsit output carried forward
     // from before the page; everything after it -- §638's own marker
     // included -- belongs to this shipout and must not be swept into the
@@ -1547,7 +1555,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         command.diagnostic_effects,
         tracing_output,
         &counts,
-        traced_node.as_ref(),
+        traced_dump.as_deref(),
     );
     // TeX82 §638 completes the optional `show_box` diagnostic before
     // `hlist_out`/`vlist_out` visits the first whatsit. The dump was rendered
@@ -1569,7 +1577,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     let mut expand_write = |stores: &mut Universe<G>,
                             diagnostic_effects: &mut DiagnosticEffects,
                             sink: PrintSink,
-                            tokens: &[TokenWord]| {
+                            tokens: tex_state::ShipoutTokenSource<G>| {
         let mut command = command_cell.borrow_mut();
         let child_scope = command
             .state
@@ -1605,7 +1613,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                             context: "deferred write admission",
                         })?;
                 let durable = context
-                    .allocate_token_list(tokens)
+                    .admit_shipout_tokens(tokens)
                     .expect("deferred write fits admitted durable storage");
                 let mut processor =
                     command.processor_with_diagnostic_effects(context, diagnostic_effects);
@@ -1717,7 +1725,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     let mut expand_replay = |stores: &mut Universe<G>,
                              _: &mut DiagnosticEffects,
                              kind: crate::shipout::ReplayTextKind,
-                             tokens: &[TokenWord]| {
+                             tokens: tex_state::ShipoutTokenSource<G>| {
         let mut command = command_cell.borrow_mut();
         let mut diagnostics = Vec::new();
         let result = replay_text_transaction(&mut command, stores, kind, tokens, &mut diagnostics)
@@ -1734,8 +1742,12 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         provenance_budget_bytes,
         &mut geometry,
     );
+    let source = match source {
+        PreparedShipoutSource::Page(node) => crate::shipout::direct::ShipoutRoot::Page(node),
+        PreparedShipoutSource::Durable(list) => crate::shipout::direct::ShipoutRoot::Durable(list),
+    };
     let mut receipt = transaction.stage_page(
-        node,
+        source,
         region,
         crate::shipout::ShipoutOrigin {
             output_open_context,

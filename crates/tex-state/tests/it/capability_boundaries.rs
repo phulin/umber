@@ -37,4 +37,13 @@ fn restricted_capabilities_reject_privileged_apis() {
         &dependencies,
         &["fields `slot`, `serial` and `_brand` of struct `TokenListBuilder` are private"],
     );
+    assert_compile_fail(
+        "shipout-scratch-checkpoint-forbidden",
+        &manifest_dir.join("tests/ui/shipout_scratch_checkpoint_forbidden.rs"),
+        &dependencies,
+        &[
+            "expected `NodeListId<PageLifetime>`",
+            "found `ShipoutScratchListId`",
+        ],
+    );
 }

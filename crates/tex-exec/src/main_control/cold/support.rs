@@ -852,7 +852,10 @@ pub(in crate::main_control) fn box_end<G>(
         BoxContext::ShipOut(region) => {
             if let Some(node) = node {
                 debug_assert!(command.prepared_shipout.is_none());
-                *command.prepared_shipout = Some(PreparedShipout { node, region });
+                *command.prepared_shipout = Some(PreparedShipout {
+                    source: PreparedShipoutSource::Page(node),
+                    region: Some(region),
+                });
             } else {
                 stores
                     .release_page_node_region(region)

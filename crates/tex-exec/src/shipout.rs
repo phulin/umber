@@ -1,7 +1,5 @@
 //! Source-free page and PDF-form staging transaction.
 
-use tex_state::node::Node;
-use tex_state::token::TokenWord;
 use tex_state::{PdfFormArtifact, PdfFormRecord, PrintSink, Universe};
 
 use crate::ExecError;
@@ -66,14 +64,14 @@ pub(crate) type WriteReplayHost<'a, G> = dyn FnMut(
         &mut Universe<G>,
         &mut tex_state::diagnostic::DiagnosticEffects,
         PrintSink,
-        &[TokenWord],
+        tex_state::ShipoutTokenSource<G>,
     ) -> Result<ExpandedWrite, ExecError>
     + 'a;
 pub(crate) type TextReplayHost<'a, G> = dyn FnMut(
         &mut Universe<G>,
         &mut tex_state::diagnostic::DiagnosticEffects,
         ReplayTextKind,
-        &[TokenWord],
+        tex_state::ShipoutTokenSource<G>,
     ) -> Result<ExpandedReplayText, ExecError>
     + 'a;
 
@@ -114,8 +112,8 @@ impl<'a, G> ShipoutTransaction<'a, G> {
 
     pub(crate) fn stage_page(
         &mut self,
-        node: Node,
-        region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+        source: direct::ShipoutRoot<G>,
+        region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
         origin: ShipoutOrigin,
         pending_effect_end: usize,
         stores: &mut Universe<G>,
@@ -128,7 +126,7 @@ impl<'a, G> ShipoutTransaction<'a, G> {
             .world_mut()
             .set_active_effect_output_attempt(Some(output_attempt));
         let publication = transaction::stage_page(
-            node,
+            source,
             region,
             origin,
             pending_effect_end,

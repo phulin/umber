@@ -74,7 +74,7 @@ fn completed_page_release_drops_exact_nested_region() {
         let root = stores.publish_page_nodes(&[page]);
         let speculative = stores.publish_page_nodes(&[Node::Penalty(3)]);
 
-        release_published_page(stores, region);
+        release_published_page(stores, Some(region));
 
         assert!(stores.page_node_list(older).is_ok());
         assert!(stores.page_node_list(child).is_err());
@@ -95,14 +95,14 @@ fn assert_aborted_shipout_diagnostic_is_unpublished<G>(stores: &mut Universe<G>)
     let mut write = |_: &mut Universe<G>,
                      _: &mut DiagnosticEffects,
                      _: tex_state::PrintSink,
-                     _: &[tex_state::token::TokenWord]|
+                     _: tex_state::ShipoutTokenSource<G>|
      -> Result<crate::shipout::ExpandedWrite, ExecError> {
         unreachable!("the negative control never begins traversal")
     };
     let mut replay = |_: &mut Universe<G>,
                       _: &mut DiagnosticEffects,
                       _: crate::shipout::ReplayTextKind,
-                      _: &[tex_state::token::TokenWord]|
+                      _: tex_state::ShipoutTokenSource<G>|
      -> Result<crate::shipout::ExpandedReplayText, ExecError> {
         unreachable!("the negative control never begins traversal")
     };
@@ -144,8 +144,8 @@ fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
 fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
     crate::test_harness::with_nonstop_tex82_universe(|untraced| {
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let root = untraced.publish_page_nodes(&[empty_vbox()]);
-        report_huge_page_deleted_box(untraced, &mut diagnostic_effects, root, 0);
+        let root = direct::ShipoutRoot::Page(empty_vbox());
+        report_huge_page_deleted_box(untraced, &mut diagnostic_effects, &root, 0);
         untraced
             .world_mut()
             .publish_diagnostic_effects(diagnostic_effects);
@@ -161,9 +161,9 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
         traced
             .assign_int_param(IntParam::TRACING_OUTPUT, 1, AssignmentScope::Global)
             .expect("assign tracingoutput");
-        let root = traced.publish_page_nodes(&[empty_vbox()]);
+        let root = direct::ShipoutRoot::Page(empty_vbox());
         let tracing_output = traced.int_param(IntParam::TRACING_OUTPUT);
-        report_huge_page_deleted_box(traced, &mut diagnostic_effects, root, tracing_output);
+        report_huge_page_deleted_box(traced, &mut diagnostic_effects, &root, tracing_output);
         traced
             .world_mut()
             .publish_diagnostic_effects(diagnostic_effects);
@@ -182,9 +182,9 @@ fn huge_page_deleted_box_display_uses_live_escape_character() {
                 AssignmentScope::Global,
             )
             .expect("assign escapechar");
-        let root = stores.publish_page_nodes(&[empty_vbox()]);
+        let root = direct::ShipoutRoot::Page(empty_vbox());
 
-        report_huge_page_deleted_box(stores, &mut diagnostic_effects, root, 0);
+        report_huge_page_deleted_box(stores, &mut diagnostic_effects, &root, 0);
         stores
             .world_mut()
             .publish_diagnostic_effects(diagnostic_effects);

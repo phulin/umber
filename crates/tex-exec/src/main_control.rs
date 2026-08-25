@@ -107,9 +107,16 @@ struct ImmediatePrint {
 }
 
 #[derive(Debug)]
-pub(crate) struct PreparedShipout {
-    pub(crate) node: Node,
-    pub(crate) region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+pub(crate) enum PreparedShipoutSource<G> {
+    Page(Node),
+    Durable(tex_state::node_arena::DurableListId<G>),
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedShipout<G> {
+    pub(crate) source: PreparedShipoutSource<G>,
+    pub(crate) region:
+        Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
 }
 
 /// The exact parent-list field that TeX82 §1153 saved before `push_math`.
@@ -294,7 +301,7 @@ pub struct MainControl<G> {
     /// corresponding World artifact/effect roots commit.
     prepared_dvi_pages: PreparedDviPages,
     immediate_prints: Vec<ImmediatePrint>,
-    prepared_shipout: Option<PreparedShipout>,
+    prepared_shipout: Option<PreparedShipout<G>>,
     /// Named safe boundaries committed by the last direct operation. The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
@@ -1840,7 +1847,7 @@ struct CommandMachine<'a, G> {
     initex: bool,
     emit_dvi_override: Option<bool>,
     immediate_prints: &'a mut Vec<ImmediatePrint>,
-    prepared_shipout: &'a mut Option<PreparedShipout>,
+    prepared_shipout: &'a mut Option<PreparedShipout<G>>,
     pending_show_completion: Option<PendingShowCompletion>,
     pending_outer_page_build_context: Option<String>,
     output_routine_active: bool,
@@ -3880,6 +3887,15 @@ impl<G> MainControl<G> {
             debug_assert_eq!(published, pending);
             if !published.root_main_file_origin {
                 continue;
+            }
+            if published.boundary == crate::EngineBoundary::ShipoutComplete {
+                stores
+                    .release_page_suffix_if_rootless(
+                        self.modes.summary().retains_page_node_handles(),
+                    )
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "rootless shipout page release",
+                    })?;
             }
             self.completed_boundaries.push(published.boundary);
             return Ok(Some(published.boundary));
@@ -9127,9 +9143,11 @@ impl<G> MainControl<G> {
             }
         } else {
             command.immediate_prints.clear();
-            if let Some(shipout) = command.prepared_shipout.take() {
+            if let Some(shipout) = command.prepared_shipout.take()
+                && let Some(region) = shipout.region
+            {
                 stores
-                    .release_page_node_region(shipout.region)
+                    .release_page_node_region(region)
                     .expect("aborted shipout command releases its nested page region");
             }
         }

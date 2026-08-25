@@ -57,3 +57,52 @@ fn rendered_source_consumer_resolves_each_requested_origin() {
     assert!(editor.render_origins.is_some());
     assert_eq!(resolver.0.get(), 1);
 }
+
+#[test]
+fn shipout_sources_never_use_graph_copy_or_token_materialization_helpers() {
+    let sources = [
+        include_str!("../direct.rs"),
+        include_str!("normalize.rs"),
+        include_str!("../transaction.rs"),
+    ];
+    for source in sources {
+        for forbidden in [
+            "copy_durable_page_nodes",
+            "copy_box_to_page",
+            "take_box_to_page",
+            "publish_page_nodes",
+            "node.clone()",
+            ".nodes().to_vec()",
+            "collect::<Vec<TokenWord",
+            "tokens.iter().collect::<Vec",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "shipout source contains forbidden lifetime crossing: {forbidden}"
+            );
+        }
+    }
+    let normalization = include_str!("normalize.rs");
+    assert!(!normalization.contains("finish_math_list_node("));
+    assert!(normalization.contains("finish_math_list_node_to_shipout_scratch("));
+
+    let math = include_str!("../../math/lower.rs");
+    let shipout_math = math
+        .split_once("fn append_span_to_shipout")
+        .expect("shipout math lowering exists")
+        .1
+        .split_once("fn take_root_nodes")
+        .expect("shipout math lowering has a structural end")
+        .0;
+    for forbidden in [
+        "publish_page_nodes",
+        ".to_vec()",
+        "scratch.push",
+        "root_nodes",
+    ] {
+        assert!(
+            !shipout_math.contains(forbidden),
+            "shipout math lowering materializes outside its final scratch rows: {forbidden}"
+        );
+    }
+}

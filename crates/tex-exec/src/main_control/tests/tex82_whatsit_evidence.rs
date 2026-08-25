@@ -575,18 +575,18 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
             let mut write = |_: &mut Universe<_>,
                              _: &mut tex_state::diagnostic::DiagnosticEffects,
                              _: PrintSink,
-                             _: &[tex_state::token::TokenWord]| {
+                             _: tex_state::ShipoutTokenSource<_>| {
                 Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()))
             };
             let mut unexpected_replay =
                 |_: &mut Universe<_>,
                  _: &mut tex_state::diagnostic::DiagnosticEffects,
                  _: crate::shipout::ReplayTextKind,
-                 _: &[tex_state::token::TokenWord]| {
+                 _: tex_state::ShipoutTokenSource<_>| {
                     panic!("the typed visit trace does not replay text")
                 };
             let staged = crate::shipout::direct::stage_shipout(
-                trace_root,
+                crate::shipout::direct::ShipoutRoot::Page(trace_root),
                 crate::shipout::ShipoutOrigin {
                     output_open_context: String::new(),
                     announce_openout: false,

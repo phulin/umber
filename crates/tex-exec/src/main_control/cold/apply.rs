@@ -3223,7 +3223,10 @@ pub(in crate::main_control) fn apply<G>(
                     .shipout_region
                     .expect("constructed shipout retains its page region");
                 debug_assert!(command.prepared_shipout.is_none());
-                *command.prepared_shipout = Some(PreparedShipout { node, region });
+                *command.prepared_shipout = Some(PreparedShipout {
+                    source: PreparedShipoutSource::Page(node),
+                    region: Some(region),
+                });
             } else if let Some(target) = box_state.target {
                 let boxed = stores.publish_page_nodes(vec![node]);
                 commit_set_box_target(target, Some(boxed), stores, command);

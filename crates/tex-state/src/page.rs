@@ -399,6 +399,18 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    /// Whether this checkpointable page state explicitly carries any live
+    /// page-arena coordinate. A rootless state contributes no retained-prefix
+    /// demand merely because the arena cursor has advanced.
+    pub(crate) fn retains_page_node_handles(&self) -> bool {
+        self.contribution
+            .iter()
+            .chain(self.current_page.iter())
+            .chain(self.page_discards.iter())
+            .chain(self.split_discards.iter())
+            .any(node_retains_page_handle)
+    }
+
     pub(crate) fn dynamic_memory_words(&self, etex_node_sizes: bool) -> usize {
         self.contribution
             .iter()
@@ -1094,6 +1106,12 @@ impl PageBuilderState {
     pub(crate) const fn has_last_glue(&self) -> bool {
         self.last_glue.is_some()
     }
+}
+
+fn node_retains_page_handle(node: &Node) -> bool {
+    let mut retains = false;
+    node.visit_node_lists(|list| retains |= !list.is_empty());
+    retains
 }
 
 #[cfg(test)]

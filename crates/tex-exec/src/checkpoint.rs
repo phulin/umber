@@ -84,7 +84,7 @@ impl<G> EngineCheckpoint<G> {
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();
         let runtime = universe
-            .runtime_checkpoint()
+            .runtime_checkpoint_with_page_roots(modes.retains_page_node_handles())
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
         Ok(Self {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,

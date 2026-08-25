@@ -322,10 +322,31 @@ impl NodeSequence {
         Some((self.frozen_semantic?, self.frozen_physical?))
     }
 
+    /// Whether this checkpointable sequence explicitly carries a page-arena
+    /// coordinate in either its mutable channels or frozen sidecars.
+    #[must_use]
+    pub fn retains_page_node_handles(&self) -> bool {
+        self.frozen_semantic.is_some_and(|list| !list.is_empty())
+            || self.frozen_physical.is_some_and(|list| !list.is_empty())
+            || self.semantic.iter().any(node_retains_page_handle)
+            || match &self.projection {
+                PhysicalProjection::Mirrored => false,
+                PhysicalProjection::Distinct { nodes, .. } => {
+                    nodes.iter().any(node_retains_page_handle)
+                }
+            }
+    }
+
     fn invalidate_frozen_sidecars(&mut self) {
         self.frozen_semantic = None;
         self.frozen_physical = None;
     }
+}
+
+fn node_retains_page_handle(node: &Node) -> bool {
+    let mut retains = false;
+    node.visit_node_lists(|list| retains |= !list.is_empty());
+    retains
 }
 
 fn projected_high_cell_lineages(

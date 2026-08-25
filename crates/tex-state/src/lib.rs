@@ -97,6 +97,7 @@ mod reachability_store;
 mod read_observation;
 mod resource;
 pub mod scaled;
+mod shipout_scratch;
 pub mod source_fragments;
 pub mod source_map;
 pub(crate) mod state_hash;
@@ -205,6 +206,10 @@ pub use pure_memo::{
     PureBreakDecision, PureBreakMemoryEvent, PureBreakMemoryOwner, PureBreakMemoryPlan,
     PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer, PureMemoRecordingPolicy,
     PureMemoRuntime, PureMemoStats, PurePageEntry, PureShipoutEntry,
+};
+pub use shipout_scratch::{
+    ShipoutListId, ShipoutNodeSource, ShipoutScratchListId, ShipoutScratchNode, ShipoutTokenField,
+    ShipoutTokenSource,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
