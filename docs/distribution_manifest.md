@@ -164,23 +164,35 @@ Thus the root digest transitively pins every shard and every fetchable object.
 
 ### Native authenticated-state ownership
 
-Native multi-session hosts may retain parsed root and shard values in one
-explicit `NativeDistributionOwner`. The owner is bound at construction to one
-exact distribution source, optional root digest, and offline policy; a session
-whose three fields differ is rejected before resolution. Its lifetime is the
-reuse bound: dropping it drops all authenticated catalogue state. Watch-mode
-replacement sessions share this owner, while ordinary one-shot CLI runs create
-an owner scoped to that run.
+Native multi-session hosts retain one parsed root plus compact shard-selection
+evidence in an explicit `NativeDistributionOwner`. The owner is bound at
+construction to one exact distribution source, optional root digest, and
+offline policy; a session whose three fields differ is rejected before
+resolution. Its lifetime is the reuse bound: dropping it drops all
+authenticated catalogue state. Watch-mode replacement sessions share this
+owner, while ordinary one-shot CLI runs create an owner scoped to that run.
 
-The retained values are immutable authenticated snapshots. Root and shard byte
-bounds, strict parsing, root-digest verification, shard-digest verification,
-identity validation, and partition validation all run before publication into
-the owner. Mutation of a local root cannot alter a published snapshot, and a
-fresh owner re-reads and re-authenticates the pinned root, so a mutation is
-detected rather than silently adopted. Object payloads are deliberately not
-retained by this owner: every fresh engine session still loads them through the
-content-addressed blob store, which rechecks cache bytes and preserves the
-existing local/cache/remote and offline ladders.
+For an unseen key, the owner reads and digest-authenticates the complete
+canonical shard, strictly parses every record, validates root/shard identity,
+and checks every file key's partition before selection. It then retains only
+the selected key, virtual path, object name, object digest and length, or an
+authoritative negative key. The serialized bytes, complete `ManifestShard`
+maps, unselected records, font records, legacy-mapping records, and inline
+dependency arrays are dropped together after selection. A later unseen key in
+the same shard repeats complete authentication and validation from the verified
+persistent manifest cache or immutable source before extending the compact
+snapshot. An already selected positive or negative key performs no read,
+authentication, or parse.
+
+These retained values are immutable authenticated snapshots. Mutation of a
+local root cannot alter a published snapshot, and a fresh owner re-reads and
+re-authenticates the pinned root, so a mutation is detected rather than
+silently adopted. The root continues to retain format/source identity and every
+shard digest; selected records retain deterministic lookup, object
+verification, offline reuse, and error evidence. Object payloads are
+deliberately not retained by this owner: every fresh engine session still loads
+them through the content-addressed blob store, which rechecks cache bytes and
+preserves the existing local/cache/remote and offline ladders.
 
 The live native resolver reads and authenticates only the pinned root, the
 canonical shards for unresolved required or explicitly prefetched keys, and
@@ -191,10 +203,18 @@ apart from the single root and deduplicated shard lookups.
 
 Native resolver telemetry separately counts root/shard reads, strict parses,
 digest authentications, shard loads, authenticated-owner hits, persistent
-manifest cache hits, object payload hashes, and object cache hits. The
-hermetic `distribution-startup-benchmark` compares real cold child processes
-with fresh sessions under one owner and fails unless manifest work decreases,
-all DVI bytes remain identical, and the complete cache byte inventory remains
+manifest cache hits, object payload hashes, and object cache hits. It also
+reports the largest authenticated serialized payload passed to one strict parse
+separately from the current compact record count, miss count, and exact retained
+requested heap bytes. The last number includes the sorted evidence vector's
+spare capacity and every owned string capacity; fixed scalar fields reside in
+the vector allocation, and allocator bookkeeping remains outside requested
+bytes. A failed bounded run emits these fields in
+`DISTRIBUTION_MANIFEST_TELEMETRY`, so a command-fuel endpoint does not lose its
+final owner measurement. The hermetic
+`distribution-startup-benchmark` compares real cold child processes with fresh
+sessions under one owner and fails unless manifest work decreases, all DVI
+bytes remain identical, and the complete cache byte inventory remains
 unchanged. Its valid unrequested dependency control must remain outside the
 cache, and each measured compile must report exactly one requested object hash.
 

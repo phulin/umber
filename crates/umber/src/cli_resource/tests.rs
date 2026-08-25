@@ -228,6 +228,127 @@ fn bounded_distribution_owner_reuses_authenticated_state_and_preserves_detection
 }
 
 #[test]
+fn authenticated_owner_retains_only_selected_records_and_replays_unseen_keys_offline() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let objects = directory.path().join("objects");
+    std::fs::create_dir_all(&objects).expect("objects directory");
+    let first = b"first selected object";
+    let later = b"later selected object";
+    let first_digest = hex_digest(first);
+    let later_digest = hex_digest(later);
+    std::fs::write(objects.join(format!("sha256-{first_digest}")), first).expect("first object");
+    std::fs::write(objects.join(format!("sha256-{later_digest}")), later).expect("later object");
+    let shard = format!(
+        "{{\"schema\":1,\"distribution\":\"compact-owner\",\"index\":0,\"files\":{{\"tex:first.sty\":{{\"virtualPath\":\"/texlive/tex/first.sty\",\"object\":\"sha256-{first_digest}\",\"sha256\":\"{first_digest}\",\"bytes\":{}}},\"tex:later.sty\":{{\"virtualPath\":\"/texlive/tex/later.sty\",\"object\":\"sha256-{later_digest}\",\"sha256\":\"{later_digest}\",\"bytes\":{}}}}}}}\n",
+        first.len(),
+        later.len(),
+    );
+    let (_, digests) = write_sharded_root(
+        directory.path(),
+        "compact-owner",
+        0,
+        &[(shard.as_str(), true)],
+    );
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+    let project = TempDir::new().expect("isolated project");
+    let local = local_resolver(project.path());
+    let cancellation = FetchCancellation::new();
+    let mut cold = ResolverTelemetry::default();
+    let responses = resolver
+        .resolve_batch_with_prefetch(
+            &local,
+            &needs(vec![file_request("first.sty"), image_request("absent.pdf")]),
+            &cancellation,
+            &mut cold,
+        )
+        .expect("cold authenticated selection")
+        .responses;
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::File(file) if file.request.name() == "first.sty"
+    )));
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::FileUnavailable(key) if key.name() == "absent.pdf"
+    )));
+    assert_eq!(cold.manifest_parses, 2);
+    assert_eq!(cold.manifest_parse_peak_bytes, shard.len() as u64);
+    assert_eq!(cold.retained_manifest_records, 1);
+    assert_eq!(cold.retained_manifest_misses, 1);
+    assert!(cold.retained_manifest_requested_bytes > 0);
+    assert!(cold.retained_manifest_requested_bytes < 2_048);
+
+    {
+        let authenticated = resolver
+            .authenticated
+            .lock()
+            .expect("authenticated distribution state");
+        let loaded = authenticated.loaded.as_ref().expect("loaded distribution");
+        assert!(matches!(
+            loaded.selected_record("tex:first.sty"),
+            Some(Some(_))
+        ));
+        assert!(matches!(
+            loaded.selected_record("tex:absent.pdf"),
+            Some(None)
+        ));
+        assert_eq!(loaded.selected_record("tex:later.sty"), None);
+    }
+
+    std::fs::remove_file(objects.join(format!("sha256-{}", digests[0])))
+        .expect("remove local shard after persistent verified-cache publication");
+    let mut extended = ResolverTelemetry::default();
+    let responses = resolver
+        .resolve_batch_with_prefetch(
+            &local,
+            &needs(vec![file_request("later.sty")]),
+            &cancellation,
+            &mut extended,
+        )
+        .expect("unseen key reparses the verified cached shard offline")
+        .responses;
+    assert!(matches!(
+        responses.as_slice(),
+        [ResourceResponse::File(file)] if file.request.name() == "later.sty" && file.bytes == later
+    ));
+    assert_eq!(extended.manifest_reads, 1);
+    assert_eq!(extended.manifest_parses, 1);
+    assert_eq!(extended.manifest_authentications, 1);
+    assert_eq!(extended.manifest_cache_hits, 1);
+    assert_eq!(extended.shard_loads, 1);
+    assert_eq!(extended.manifest_parse_peak_bytes, shard.len() as u64);
+    assert_eq!(extended.retained_manifest_records, 2);
+    assert_eq!(extended.retained_manifest_misses, 1);
+
+    let mut warm = ResolverTelemetry::default();
+    resolver
+        .resolve_batch_with_prefetch(
+            &local,
+            &needs(vec![
+                file_request("first.sty"),
+                file_request("later.sty"),
+                image_request("absent.pdf"),
+            ]),
+            &cancellation,
+            &mut warm,
+        )
+        .expect("all compact records replay without a shard parse");
+    assert_eq!(warm.manifest_reads, 0);
+    assert_eq!(warm.manifest_parses, 0);
+    assert_eq!(warm.manifest_authentications, 0);
+    assert_eq!(warm.shard_loads, 0);
+    assert!(warm.authenticated_manifest_hits >= 2);
+    assert_eq!(warm.manifest_parse_peak_bytes, 0);
+    assert_eq!(warm.retained_manifest_records, 2);
+    assert_eq!(warm.retained_manifest_misses, 1);
+}
+
+#[test]
 fn cancelled_pending_revision_can_be_superseded() {
     let directory = TempDir::new().expect("temporary project");
     let input = directory.path().join("watch.tex");
@@ -810,11 +931,11 @@ fn exact_snapshot_delivers_corpus_tex_tfm_type1_and_vf_requests_offline() {
             .loaded
             .as_ref()
             .expect("loaded snapshot")
-            .shards
-            .values()
-            .find_map(|shard| shard.files.get(manifest_key))
-            .expect("entry from canonical loaded shard");
-        assert_eq!(hex_digest(&file.bytes), entry.sha256);
+            .selected_record(manifest_key)
+            .expect("selected-key evidence")
+            .as_ref()
+            .expect("compact record from canonical authenticated shard");
+        assert_eq!(hex_digest(&file.bytes), entry.object.sha256);
         assert_eq!(
             file.expected_digest,
             Some(FileContentId::for_bytes(&file.bytes))

@@ -199,6 +199,15 @@ sent straight to the object fetch batch without consulting the dependency's
 own shard. A batch is still published to the VFS only after every required
 object succeeds; failed speculative objects are omitted.
 
+The native authenticated owner does not keep those complete parsed shards.
+After a full shard has passed digest, strict-schema, identity, and complete file
+partition validation, it keeps only selected file verification records and
+authoritative selected-key misses. Unselected maps and inline hints drop with
+the parse allocation. A later unseen key replays the complete validation from
+the digest-keyed manifest cache or immutable source; already selected evidence
+is reused without parsing. This changes only host memory ownership, not
+selection, prefetch, cache, offline, or resource-admission semantics.
+
 Schema-3 roots add format input closures without changing schema-2 behavior.
 After the selected pinned format reaches its first actual input miss, the
 session forwards its validated closure as a one-shot hint batch. Native and
