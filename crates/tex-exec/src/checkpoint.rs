@@ -62,9 +62,13 @@ impl<G> Clone for EngineCheckpoint<G> {
 }
 
 impl<G> EngineCheckpoint<G> {
+    pub(crate) fn pdf_history_position(&self) -> (u64, u64) {
+        self.runtime.pdf_history_position()
+    }
+
     pub(crate) fn fork_state(
         &self,
-        source: &Universe<G>,
+        source: &mut Universe<G>,
     ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
         let destination = source
             .fork_runtime_checkpoint(&self.runtime)

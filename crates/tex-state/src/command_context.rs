@@ -3093,7 +3093,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn pdf_form_artifact(&self, object: u32) -> Option<crate::PdfFormArtifact> {
-        self.pdf.form_artifact(object).cloned()
+        self.pdf.form_artifact(object)
     }
 
     #[must_use]

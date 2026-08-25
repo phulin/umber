@@ -100,6 +100,19 @@ impl<G> Default for PdfDocumentFragments<G> {
 }
 
 impl<G> PdfDocumentFragments<G> {
+    pub(crate) fn fork_prefix(&self, len: usize) -> Self {
+        let mut fork = self.clone();
+        fork.truncate(len);
+        fork
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.fragments.len()
+    }
+
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.fragments.truncate(len);
+        self.fingerprint = fingerprint(&self.fragments);
+    }
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.fragments.is_empty()

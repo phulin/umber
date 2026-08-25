@@ -315,6 +315,277 @@ fn external_image_payload_is_owned_not_shared() {
 }
 
 #[test]
+fn checkpoint_fork_and_restore_do_not_copy_image_or_form_payload_bytes() {
+    let mut state = PdfState::<()>::default();
+    state
+        .allocate_external_image(
+            PdfExternalImageSource {
+                identity: ContentHash::new([3; 32]),
+                metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
+                    format: PdfRasterFormat::Png,
+                    width: 1,
+                    height: 1,
+                    bits_per_component: 8,
+                    color_space: PdfRasterColorSpace::Gray,
+                    alpha: false,
+                    png_color_type: Some(0),
+                }),
+                natural_width: Scaled::from_raw(1),
+                natural_height: Scaled::from_raw(1),
+                bytes: vec![3; 1024 * 1024],
+            },
+            PdfExternalImageDimensions {
+                width: Scaled::from_raw(1),
+                height: Scaled::from_raw(1),
+                depth: Scaled::from_raw(0),
+            },
+            0,
+        )
+        .expect("image fixture fits");
+    state.set_form_artifact(
+        41,
+        PdfFormArtifact::new(
+            vec![5; 1024 * 1024],
+            Some((Scaled::from_raw(2), Scaled::from_raw(3))),
+            (Scaled::from_raw(4), Scaled::from_raw(5)),
+        ),
+    );
+    let checkpoint = state.snapshot();
+    let image_id = state.external_images[0].payload;
+    let form_id = state.form_artifacts[&41].payload;
+    let image_address = state.payloads.get(image_id).as_ptr();
+    let form_address = state.payloads.get(form_id).as_ptr();
+
+    let mut fork = state.fork_snapshot(&checkpoint);
+    assert_eq!(fork.payloads.get(image_id).as_ptr(), image_address);
+    assert_eq!(fork.payloads.get(form_id).as_ptr(), form_address);
+    fork.rollback(checkpoint);
+    assert_eq!(fork.payloads.get(image_id).as_ptr(), image_address);
+    assert_eq!(fork.payloads.get(form_id).as_ptr(), form_address);
+}
+
+#[test]
+fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
+    with_universe(budget(), |universe| {
+        let tokens = universe
+            .allocate_token_list(&[TokenWord::pack(Token::param(2))])
+            .expect("token fixture");
+        let parameter = PdfTokenParameter {
+            tokens: tokens.clone(),
+            semantic_id: semantic_id(20),
+        };
+        let mut state = PdfState::default();
+
+        state.set_match(vec![1, 2, 3], vec![Some((0, 2))], 1, true);
+        let raw = state.reserve_raw_object().expect("raw reservation");
+        state
+            .initialize_raw_object(
+                raw,
+                PdfRawObjectData::new(false, None, false, parameter),
+                false,
+            )
+            .expect("raw initialization");
+        let annotation = state.reserve_annotation().expect("annotation reservation");
+        let destination = PdfDestinationIdentity::Name(b"before".to_vec());
+        state
+            .reserve_destination(destination.clone(), false)
+            .expect("destination reservation");
+        state
+            .append_thread_bead(PdfDestinationIdentity::Number(7))
+            .expect("first thread bead");
+        state
+            .create_link(
+                PdfAnnotationDimensions::RUNNING,
+                tokens.clone(),
+                PdfActionSpec::User(tokens.clone()),
+                semantic_id(21),
+                semantic_id(22),
+                3,
+            )
+            .expect("first open link");
+        let color = state
+            .allocate_color_stack(PdfColorStackMode::Direct, true, b"initial".to_vec())
+            .expect("color stack");
+        state
+            .apply_color_stack(
+                color,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Push(b"saved".to_vec()),
+            )
+            .expect("color push");
+        state.set_form_artifact(
+            51,
+            PdfFormArtifact::new(
+                vec![8; 4096],
+                None,
+                (Scaled::from_raw(1), Scaled::from_raw(2)),
+            ),
+        );
+        let old_form_payload = state.form_artifacts[&51].payload;
+        let old_form_address = state.payloads.get(old_form_payload).as_ptr();
+        let checkpoint = state.snapshot();
+
+        state.set_match(vec![9, 8, 7], vec![Some((1, 3))], 1, true);
+        state.reference_raw_object(raw).expect("raw reference");
+        state
+            .initialize_annotation(
+                annotation.object(),
+                PdfAnnotationData {
+                    dimensions: PdfAnnotationDimensions::RUNNING,
+                    entries: tokens.clone(),
+                },
+                semantic_id(23),
+            )
+            .expect("annotation initialization");
+        state
+            .define_destination(destination.clone(), None)
+            .expect("destination definition");
+        let original_open = state.end_link().expect("original link is open");
+        state
+            .create_link(
+                PdfAnnotationDimensions::RUNNING,
+                tokens.clone(),
+                PdfActionSpec::User(tokens),
+                semantic_id(24),
+                semantic_id(25),
+                4,
+            )
+            .expect("replacement open link");
+        state
+            .apply_color_stack(color, PdfColorStackTarget::Page, &PdfColorStackAction::Pop)
+            .expect("color pop");
+        state
+            .apply_color_stack(
+                color,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Push(b"replacement".to_vec()),
+            )
+            .expect("color replacement push");
+        state.set_form_artifact(
+            51,
+            PdfFormArtifact::new(
+                vec![9; 8192],
+                Some((Scaled::from_raw(3), Scaled::from_raw(4))),
+                (Scaled::from_raw(5), Scaled::from_raw(6)),
+            ),
+        );
+        state
+            .append_thread_bead(PdfDestinationIdentity::Number(7))
+            .expect("second thread bead");
+
+        state.rollback(checkpoint);
+        assert_eq!(state.match_capture(0), Some((0, &[1, 2][..])));
+        assert!(!state.raw_object(raw).expect("raw row").is_referenced());
+        assert!(state.annotations()[0].data().is_none());
+        assert!(
+            !state
+                .destination(&destination, false)
+                .expect("destination row")
+                .defined()
+        );
+        assert_eq!(
+            state.open_links()[0].record.object(),
+            original_open.record.object()
+        );
+        assert_eq!(state.threads[0].beads().len(), 1);
+        assert_eq!(
+            state.payloads.get(old_form_payload).as_ptr(),
+            old_form_address
+        );
+        assert_eq!(
+            state.form_artifact(51).expect("restored form").bytes(),
+            &[8; 4096]
+        );
+        let current = state
+            .apply_color_stack(
+                color,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Current,
+            )
+            .expect("restored current color");
+        assert_eq!(current.payload, b"saved");
+    })
+    .expect("test universe");
+}
+
+#[test]
+fn pdf_history_pruning_keeps_exactly_the_two_live_rollback_positions() {
+    let mut state = PdfState::<()>::default();
+    let retired = state.snapshot();
+    for value in 0..8 {
+        state.set_match(vec![value], vec![Some((0, 1))], 1, true);
+    }
+    let prior = state.snapshot();
+    for value in 8..16 {
+        state.set_match(vec![value], vec![Some((0, 1))], 1, true);
+    }
+    let current = state.snapshot();
+
+    state.prune_history(prior.history_position());
+    assert!(!state.snapshot_is_retained(&retired));
+    assert!(state.snapshot_is_retained(&prior));
+    assert!(state.snapshot_is_retained(&current));
+    assert_eq!(state.undo_base, prior.undo_pos);
+    state.rollback(current);
+    assert_eq!(state.match_capture(0), Some((0, &[15][..])));
+    state.rollback(prior);
+    assert_eq!(state.match_capture(0), Some((0, &[7][..])));
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn pdf_checkpoint_capture_allocates_nothing_independent_of_payload_size() {
+    use crate::measurement::{
+        HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,
+    };
+
+    fn measured_capture(payload_len: usize) -> (u64, u64) {
+        let mut state = PdfState::<()>::default();
+        state
+            .allocate_external_image(
+                PdfExternalImageSource {
+                    identity: ContentHash::new([9; 32]),
+                    metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
+                        format: PdfRasterFormat::Png,
+                        width: 1,
+                        height: 1,
+                        bits_per_component: 8,
+                        color_space: PdfRasterColorSpace::Gray,
+                        alpha: false,
+                        png_color_type: Some(0),
+                    }),
+                    natural_width: Scaled::from_raw(1),
+                    natural_height: Scaled::from_raw(1),
+                    bytes: vec![7; payload_len],
+                },
+                PdfExternalImageDimensions {
+                    width: Scaled::from_raw(1),
+                    height: Scaled::from_raw(1),
+                    depth: Scaled::from_raw(0),
+                },
+                0,
+            )
+            .expect("image fixture fits the object ledger");
+        let owner = HotCoreAllocationOwner::GenerationBoundary;
+        let before = hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = hot_core_allocation_scope(owner);
+            for _ in 0..100_000 {
+                std::hint::black_box(state.snapshot());
+            }
+        }
+        let after = hot_core_thread_allocation_measurement(owner);
+        (
+            after.calls.saturating_sub(before.calls),
+            after.requested_bytes.saturating_sub(before.requested_bytes),
+        )
+    }
+
+    assert_eq!(measured_capture(1), (0, 0));
+    assert_eq!(measured_capture(16 * 1024 * 1024), (0, 0));
+}
+
+#[test]
 fn format_pdf_ledger_detaches_and_materializes_before_publication() {
     with_universe(budget(), |universe| {
         let tokens = universe

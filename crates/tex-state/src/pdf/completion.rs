@@ -442,7 +442,7 @@ pub(crate) fn detach<G>(
                 Ok(DetachedPdfForm {
                     object: form.object,
                     resource: form.resource,
-                    artifact_bytes: artifact.bytes.clone(),
+                    artifact_bytes: pdf.payloads.get(artifact.payload).to_vec(),
                     width: form.width,
                     height: form.height,
                     depth: form.depth,
@@ -574,7 +574,7 @@ pub(crate) fn detach<G>(
         trailer_id: fragment_bytes(pdf, PdfDocumentFragmentKind::TrailerId, &mut tokens)?,
     };
     let open_action = pdf
-        .catalog_open_action
+        .catalog_open_action()
         .clone()
         .map(|record| detach_action_record(record, &mut tokens))
         .transpose()?;
@@ -626,7 +626,11 @@ pub(crate) fn detach<G>(
         forms,
         fonts,
         font_operations,
-        images: pdf.external_images.clone(),
+        images: pdf
+            .external_images
+            .iter()
+            .map(|entry| pdf.materialize_external_image(entry))
+            .collect(),
         raw_objects,
         raw_object_file_needs,
         document: DetachedPdfDocumentState {

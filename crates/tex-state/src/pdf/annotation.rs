@@ -68,6 +68,14 @@ impl<G> PdfAnnotationRecord<G> {
         self.data = Some(data);
         Ok(())
     }
+
+    pub(super) fn take_data(&mut self) -> Option<PdfAnnotationData<G>> {
+        self.data.take()
+    }
+
+    pub(super) fn restore_data(&mut self, data: Option<PdfAnnotationData<G>>) {
+        self.data = data;
+    }
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]

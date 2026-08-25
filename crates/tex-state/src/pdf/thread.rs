@@ -33,6 +33,10 @@ impl PdfThreadRecord {
     pub(super) fn push_bead(&mut self, bead: PdfThreadBeadRecord) {
         self.beads.push(bead);
     }
+
+    pub(super) fn truncate_beads(&mut self, len: usize) {
+        self.beads.truncate(len);
+    }
 }
 
 /// Indirect identities allocated for one article bead and its rectangle.

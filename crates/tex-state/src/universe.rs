@@ -215,6 +215,13 @@ impl<G> Clone for RuntimeCheckpoint<G> {
     }
 }
 
+impl<G> RuntimeCheckpoint<G> {
+    #[doc(hidden)]
+    pub fn pdf_history_position(&self) -> (u64, u64) {
+        self.pdf.history_position()
+    }
+}
+
 impl<G> std::fmt::Debug for RuntimeCheckpoint<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("RuntimeCheckpoint(..)")
@@ -444,11 +451,21 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    #[doc(hidden)]
+    pub fn prune_pdf_history(&mut self, low_water: (u64, u64)) {
+        self.pdf.prune_history(low_water);
+    }
+
+    #[doc(hidden)]
+    pub fn pdf_history_head(&self) -> (u64, u64) {
+        self.pdf.history_head()
+    }
+
     /// Creates a destination-local runtime from one retained checkpoint.
     /// Validation is complete before the returned fork becomes visible.
     #[doc(hidden)]
     pub fn fork_runtime_checkpoint(
-        &self,
+        &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
     ) -> Result<Self, UniverseError> {
         let owner = checkpoint.state.owner();

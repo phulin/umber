@@ -142,6 +142,27 @@ impl<G> Clone for PdfRawObjectState<G> {
 #[derive(Debug)]
 pub(crate) struct PdfRawObjects<G>(PdfRawObjectState<G>);
 
+#[derive(Debug)]
+pub(crate) struct PdfRawObjectUndo<G> {
+    row: usize,
+    data: Option<Option<PdfRawObjectData<G>>>,
+    immediate: bool,
+    referenced: bool,
+    last_object: u32,
+}
+
+impl<G> Clone for PdfRawObjectUndo<G> {
+    fn clone(&self) -> Self {
+        Self {
+            row: self.row,
+            data: self.data.clone(),
+            immediate: self.immediate,
+            referenced: self.referenced,
+            last_object: self.last_object,
+        }
+    }
+}
+
 impl<G> Clone for PdfRawObjects<G> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
@@ -159,6 +180,53 @@ impl<G> Default for PdfRawObjects<G> {
 }
 
 impl<G> PdfRawObjects<G> {
+    pub(crate) fn fork_prefix(&self, len: usize) -> Self {
+        let mut fork = self.clone();
+        fork.truncate(len);
+        fork
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.0.records.len()
+    }
+
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.0.records.truncate(len);
+    }
+
+    pub(crate) fn begin_change(
+        &mut self,
+        id: PdfRawObjectId,
+        restore_data: bool,
+    ) -> Option<PdfRawObjectUndo<G>> {
+        let state = &mut self.0;
+        let row = state
+            .records
+            .binary_search_by_key(&id, |record| record.id)
+            .ok()?;
+        let record = &mut state.records[row];
+        Some(PdfRawObjectUndo {
+            row,
+            data: restore_data.then(|| record.data.take()),
+            immediate: record.immediate,
+            referenced: record.referenced,
+            last_object: state.last_object,
+        })
+    }
+
+    pub(crate) fn cancel_change(&mut self, undo: PdfRawObjectUndo<G>) {
+        let record = &mut self.0.records[undo.row];
+        if let Some(data) = undo.data {
+            record.data = data;
+        }
+        record.immediate = undo.immediate;
+        record.referenced = undo.referenced;
+        self.0.last_object = undo.last_object;
+        self.0.fingerprint = fingerprint(&self.0);
+    }
+
+    pub(crate) fn restore_change(&mut self, undo: PdfRawObjectUndo<G>) {
+        self.cancel_change(undo);
+    }
     #[must_use]
     pub(crate) fn fingerprint(&self) -> StateHashFragment {
         self.0.fingerprint

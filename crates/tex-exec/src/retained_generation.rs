@@ -452,10 +452,17 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
     type Output = Result<CheckpointPruningReceipt, RetainedEngineAccessError>;
 
     fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        admitted
+        let receipt = admitted
             .sidecars
             .checkpoints
-            .prune(admitted.generation, self.retained)
+            .prune(admitted.generation, self.retained)?;
+        let low_water = admitted
+            .sidecars
+            .checkpoints
+            .pdf_history_low_water()
+            .unwrap_or_else(|| admitted.universe.pdf_history_head());
+        admitted.universe.prune_pdf_history(low_water);
+        Ok(receipt)
     }
 }
 
@@ -485,6 +492,14 @@ struct RetainedCheckpointSlot<G> {
 }
 
 impl<G> RetainedCheckpointSlots<G> {
+    fn pdf_history_low_water(&self) -> Option<(u64, u64)> {
+        self.live
+            .iter()
+            .filter_map(|&slot| self.slots[slot].checkpoint.as_ref())
+            .map(EngineCheckpoint::pdf_history_position)
+            .reduce(|left, right| (left.0.min(right.0), left.1.min(right.1)))
+    }
+
     fn retain(
         &mut self,
         generation: u64,
