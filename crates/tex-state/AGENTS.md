@@ -299,4 +299,8 @@ cross-crate retained-owner and deletion ledger is
 ## Validation
 
 Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive changes, include the live-boundary, replay, shadow, and compile-fail coverage that exercises the affected facade.
-State performance benchmarks live in the standalone `benchmarks/tex-state` crate and are run explicitly with `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.
+State performance benchmarks live in the standalone `benchmarks/tex-state`
+crate. The `pdf_checkpoint_gate` and `pdf_fork_metadata` binaries measure
+allocation-free scalar marks and exclusive transactional candidate setup by
+PDF field family; the broader state budgets run explicitly with
+`cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.

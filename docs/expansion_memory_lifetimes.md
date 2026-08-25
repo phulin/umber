@@ -122,17 +122,18 @@ carriers clone only their existing private shared handles, so their payload
 bytes are not recopied; publisher scratch and mutable execution roots are
 destination-local.
 
-PDF is the concrete mutable-runtime exception to prefix copying. A checkpoint
-holds a fixed scalar `PdfStateSnapshot`, not cloned PDF rows. The destination
-shares coarse immutable prefixes for image/form payloads and the dense
-font-resource, external-image-metadata, and page-reservation logs, then starts
-private delta lanes. Image and form byte addresses therefore remain identical
-across capture, fork, restore, rejection, and acceptance; ordinary mutation
-never invokes copy-on-write on a retained prefix. Other generation-branded or
-mutable keyed row metadata is reconstructed into one destination-local view.
-Append lengths plus exact inverse entries preserve raw-object, annotation,
-destination, open-link, color, form-artifact, match, and thread rollback,
-including pop-then-push histories.
+PDF is the concrete mutable-runtime exception to generation copying. A
+checkpoint holds a fixed scalar `PdfStateSnapshot`, not cloned PDF rows. The
+reachability store exclusively moves the one `PdfState` authority from the
+accepted slot into the candidate; accepted admission is unavailable until
+that transaction commits or rejects, and suspension retains the same
+candidate owner. Dense row families keep accepted storage in place behind
+logical base lengths and append candidate rows to private deltas. Exact undo
+entries above the base swap in place into redo entries, so rejection restores
+the accepted state and history while acceptance discards prior-only suffixes.
+Image/form byte addresses remain identical throughout. No shared mutable
+container, per-value owner, COW write, hash overlay, current-table clone, or
+third generation participates.
 
 `Session` allocates one private `CandidateLeaseState` when the session starts.
 Every `start_*_candidate` factory atomically claims that state and moves the

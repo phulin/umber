@@ -425,11 +425,15 @@ object/dictionary parity gate.
 The live PDF ledger now checkpoints by an allocation-free scalar mark rather
 than by cloning accumulated containers. Canonical append logs retain PDF
 creation order, while exact inverse journals cover every in-place definition,
-reference, replacement, and stack mutation. Image and form bytes live in one
-coarse prefix-plus-delta payload arena and are not copied by checkpoint
-capture, retained-generation fork, or rollback. Restore reverses mutable
-entries before truncating canonical rows and truncates payloads last, so retry
-preserves the same object numbers and terminal serialization order.
+reference, replacement, and stack mutation. Candidate creation exclusively
+moves the one PDF authority out of the accepted generation, selects canonical
+rows by logical base lengths, and swaps divergent undo entries into exact redo
+entries. Rejection reconstructs the accepted state; acceptance releases its
+prior-only suffixes. Image and form bytes remain in the same dense payload
+allocation and are not copied by checkpoint capture, candidate creation,
+rollback, rejection, or acceptance. Restore reverses mutable entries before
+resetting canonical row deltas and payloads last, so retry preserves the same
+object numbers and terminal serialization order.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete

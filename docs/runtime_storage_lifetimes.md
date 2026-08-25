@@ -567,25 +567,37 @@ push/pop, form-artifact replacement, destination definition, and thread-bead
 append carry exact inverse entries. Page and form color operations use a
 separate inverse lane, so a form traversal can restore only its color work.
 
-The dense font-resource, external-image-metadata, and page-reservation logs
-use `PdfAppendLog`: one coarse immutable `Rc<Vec<T>>` prefix plus one
-generation-private `Vec<T>` delta. Reads branch directly between the two dense
-ranges; image lookup keeps binary search over the virtual concatenation.
-Forking an accumulated head moves the existing delta allocation behind one
-coarse owner, shares that owner, and creates an empty destination delta. It
-does not clone rows and the next append never invokes COW. Other
-generation-branded or mutable keyed metadata is still materialized as one
-destination-local view during fork; its exact inverse journal reconstructs
-the selected checkpoint before publication.
+PDF candidate creation is an exclusive transaction, not a state fork. The
+reachability store moves the unique `PdfState` authority from the accepted
+slot into the candidate and leaves the accepted `PdfStateSlot::Loaned`.
+Accepted admission returns `CandidateTransactionActive` until the candidate
+ends; a suspended candidate continues to own the same transaction. No shared
+mutable PDF container, `RefCell`, COW root, or destination clone exists on the
+ordinary PDF path.
 
-Image and form bytes move once into one generation-local payload arena. A
-fork seals the selected delta boxes into one coarse immutable prefix and gives
-the destination an empty private delta. The prefix retain copies no payload
-bytes, and the first destination write appends to its delta instead of
-copying the prefix. After the old prior retires, the coarse prefix is unique
-again; there is no per-value owner, owner chain, content lookup, or third
-generation. Payload ids are internal direct indices and never affect PDF
-object numbering.
+Every canonical row family uses `PdfRows<T>`. Outside a transaction its
+accepted rows are one ordinary contiguous `Vec<T>`. Candidate creation records
+one logical base length per family without visiting rows. Accepted-only suffix
+rows remain physically in that vector, while candidate rows append to a
+private delta. Reads and mutations use one direct base/delta branch. Rejection
+drops the deltas and reveals the accepted suffixes; acceptance truncates those
+prior-only suffixes and moves candidate deltas into the retained vectors.
+Space-font lookup uses the same object-id cutoff plus a candidate-local lookup
+table. Form artifacts use direct object-id dense tombstones, so deletion and
+restoration never allocate and lookup iteration cannot define serialization
+order.
+
+General and color undo entries above the selected mark are swapped in place
+into exact redo entries while candidate creation walks only the divergent
+history, not accumulated current tables. Rejection first rolls candidate
+history back to its base, reveals accepted rows, then swaps redo entries
+forward to reconstruct the accepted current values and original undo history.
+Acceptance drops prior-only redo entries, advances absolute low-water marks,
+and retains only candidate history needed by live checkpoints. Image and form
+payload boxes remain in the same dense row allocation throughout; neither
+capture, candidate creation, rejection, nor acceptance copies payload bytes.
+Payload ids remain internal direct indices and never affect PDF object
+numbering.
 
 Marks can be created only at a boundary whose live builders are sealed and
 whose execution scratch is quiescent. A mark is not an owning reference to
@@ -606,8 +618,8 @@ Restore is atomic and follows this order:
    present and replaying the exact journal suffix to its cursor; otherwise
    undo the live journal directly to the cursor.
 4. Reverse-replay PDF general and color undo entries, then restore its scalar
-   roots and append-log selections. Remove lookup suffixes before truncating
-   canonical rows; truncate image/form payload deltas last.
+   roots and transactional row selections. Remove candidate lookup suffixes
+   before resetting canonical row deltas; reset image/form payload deltas last.
 5. Restore input, condition, group, mode, page, source, resource, effect, and
    output cursors, transferring canonical roots before releasing replaced
    owners.
@@ -623,11 +635,14 @@ PDF undo positions are absolute. After retained checkpoint slots are pruned,
 their existing live-index vector supplies the oldest surviving general and
 color positions. `Universe::prune_pdf_history` drops only entries before those
 positions from the two deque-backed lanes; it does not scan PDF rows or the
-rest of the engine and does not rewrite surviving marks. With no retained
-checkpoint, the low water advances to the live head. Thus the prior and
-current physical slots retain at most their own contiguous rollback interval,
-and moved old match/color/form values are released as soon as no live mark can
-name them.
+rest of the engine and does not rewrite surviving marks. While a candidate is
+exclusive, pruning advances scalar low-water positions but retains the pruned
+candidate inverses until acceptance because rejection can still require them;
+acceptance releases that prefix in one bounded journal operation, while
+rejection restores the accepted journal unchanged. With no retained
+checkpoint, the low water advances to the live head. Thus the prior/current
+transaction retains only its rejection interval plus the candidate interval,
+never another PDF generation or copied current table.
 
 The focused release gate in
 `benchmarks/tex-state/src/bin/pdf_checkpoint_gate.rs` measures the PDF mark in
@@ -647,27 +662,25 @@ clone stacks and 33.477 billion profiled cycles for the complete row.
 The authenticated arXiv 20M row used the pinned 2026-03-01 distribution,
 schema-11 `pdflatex.fmt`, 123-key offline closure, fixed clock, 45-second and
 1,536 MiB guards, and the same input digests as the 854,600 KiB baseline.
-Three post-change runs produced wall/user/system seconds of
-18.09/19.46/1.98, 18.91/20.50/2.13, and 14.96/16.37/1.79, with peak RSS of
-653,472, 652,692, and 654,208 KiB. The median wall and user times were 18.09
-and 19.46 seconds, respectively, versus 19.78 and 20.46 seconds at baseline;
-median RSS was 653,472 KiB, 201,128 KiB lower. Every run stopped at the exact
-terminal vector `(20000000,19913119,2218327,6020965,16785710,4011)`.
+Three final transactional runs produced wall/user/system seconds of
+13.90/15.02/1.66, 13.43/14.81/1.52, and 14.10/15.50/1.63, each with peak RSS
+of 654,224 KiB. The median wall and user times were 13.90 and 15.02 seconds,
+respectively, versus 19.78 and 20.46 seconds at baseline; median RSS was
+654,224 KiB, 200,376 KiB lower. Every run stopped at the exact terminal vector
+`(20000000,19913119,2218327,6020965,16785710,4011)`.
 
-`benchmarks/tex-state/src/bin/pdf_fork_metadata.rs` measures destination
-materialization by field family. At 10,000 rows, converting font resources,
-external-image metadata, and page reservations made their fork cost independent
-of accumulated size: 0.95--1.07 microseconds, five allocation calls, and
-400--402 requested bytes per fork. Before conversion those same rows cost
-173.71, 111.66, and 6.67 microseconds and requested 1,280,398, 960,401, and
-80,398 bytes, respectively. The remaining destination-local costs at 10,000
-rows are measured explicitly: raw objects 423.46 microseconds/1,760,398 bytes,
-annotations 133.33/640,398, destinations 51.79/400,398, threads
-141.40/560,398, form-artifact index 281.11/702,976, space-font names
-2,298.88/1,558,912, color stacks 2,313.84/1,680,398, and match bytes
-1.22/10,398. Those families require a broader destination transaction/view
-model before their current state can stop being copied; their undo lanes alone
-cannot safely make two mutable generations share one current-value table.
+`benchmarks/tex-state/src/bin/pdf_fork_metadata.rs` measures candidate
+begin-plus-reject by field family. At 10,000 rows every measured family is
+independent of accumulated size and performs zero allocation calls requesting
+zero bytes: page reservations 0.58 microseconds, font resources 0.61, external
+image metadata 1.06, raw objects 0.74, annotations 0.52, destinations 0.49,
+threads 0.49, form-artifact index 0.50, space-font names 0.46, color stacks
+0.51, and match bytes 0.48. Before the exclusive transaction, the remaining
+10,000-row mutable families cost up to 2.31 milliseconds and 1,680,398 bytes
+per fork. The focused exact-redo allocation test additionally starts from an
+older mark with 10,000 accumulated rows and intervening match, raw-object,
+destination, thread, form-artifact, and color changes; begin plus rejection
+still performs zero allocations and restores exact current state.
 
 ## Incremental revisions and two-generation ownership
 
