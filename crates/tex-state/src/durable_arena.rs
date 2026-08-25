@@ -356,9 +356,23 @@ impl<G> TokenListArena<G> {
         &mut self,
         words: &[TokenWord],
     ) -> Result<TokenListId<G>, DurableAllocationError> {
+        self.allocate_from_iter(words.iter().copied())
+    }
+
+    /// Publishes one cold token list from an exact-size word stream.
+    ///
+    /// Format admission uses this path to translate packed wire words directly
+    /// into their final generation chunks without an intermediate word vector.
+    pub(crate) fn allocate_from_iter<Words>(
+        &mut self,
+        words: Words,
+    ) -> Result<TokenListId<G>, DurableAllocationError>
+    where
+        Words: ExactSizeIterator<Item = TokenWord>,
+    {
         self.reserve_batch(1, words.len())?;
         let builder = self.begin_builder()?;
-        for &word in words {
+        for word in words {
             if let Err(error) = self.push_builder_word(&builder, word) {
                 let _ = self.discard_builder(builder);
                 return Err(error);

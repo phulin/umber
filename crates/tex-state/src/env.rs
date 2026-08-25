@@ -593,7 +593,7 @@ impl<G> DenseState<G> {
     pub(crate) fn install_format_cells(
         &mut self,
         cells: &[crate::format::schema::FormatCell],
-        definitions: &[crate::DefinitionId<G>],
+        definitions: &[Option<crate::DefinitionId<G>>],
         token_lists: &[crate::TokenListId<G>],
         glue_values: &[crate::GlueId<G>],
         node_lists: &[crate::node_arena::DurableListId<G>],
@@ -612,9 +612,11 @@ impl<G> DenseState<G> {
                         ),
                         FormatMeaning::Macro { flags, definition } => MeaningWord::Macro {
                             flags: crate::meaning::MeaningFlags::from_bits(flags),
-                            definition: *definitions
+                            definition: definitions
                                 .get(definition as usize)
-                                .ok_or("format macro reference is out of range")?,
+                                .copied()
+                                .flatten()
+                                .ok_or("format macro reference is not live")?,
                         },
                     };
                     self.meanings

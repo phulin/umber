@@ -300,6 +300,28 @@ impl DetachedFormatImage {
                     if *index == crate::env::banks::IntParam::TEX_XET_STATE.raw()
             )
         });
+        let mut owned_definitions = vec![false; definitions.len()];
+        for cell in &cells {
+            if let FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) = *cell {
+                owned_definitions[definition as usize] = true;
+            }
+        }
+        let mut retained_definitions = Vec::new();
+        let mut definition_relocation = vec![None; definitions.len()];
+        for (row, definition) in definitions.into_iter().enumerate() {
+            if owned_definitions[row] {
+                definition_relocation[row] = Some(retained_definitions.len() as u32);
+                retained_definitions.push(definition);
+            }
+        }
+        let definitions = retained_definitions;
+        for cell in &mut cells {
+            let FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) = cell else {
+                continue;
+            };
+            *definition = definition_relocation[*definition as usize]
+                .expect("captured macro definition is retained");
+        }
         let (cells, codes): (Vec<_>, Vec<_>) = cells
             .into_iter()
             .partition(|cell| !matches!(cell, FormatCell::Code { .. }));
@@ -1222,50 +1244,12 @@ impl<G> Universe<G> {
             .state_mut()
             .install_format_font_runtimes(&format.fonts)
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        let token_rows = format
-            .token_lists
-            .iter()
-            .map(|words| {
-                words
-                    .iter()
-                    .copied()
-                    .map(crate::token::TokenWord::from_raw)
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let definition_rows = format
-            .definitions
-            .iter()
-            .map(|definition| {
-                (
-                    definition
-                        .parameter_text
-                        .iter()
-                        .copied()
-                        .map(crate::token::TokenWord::from_raw)
-                        .collect::<Vec<_>>(),
-                    definition
-                        .replacement_text
-                        .iter()
-                        .copied()
-                        .map(crate::token::TokenWord::from_raw)
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let definition_promotions = definition_rows
-            .iter()
-            .map(
-                |(parameter_text, replacement_text)| crate::DefinitionPromotion {
-                    parameter_text,
-                    replacement_text,
-                },
-            )
-            .collect::<Vec<_>>();
-        let token_promotions = token_rows
-            .iter()
-            .map(|words| crate::TokenListPromotion { words })
-            .collect::<Vec<_>>();
+        let mut live_definitions = vec![false; format.definitions.len()];
+        for cell in &format.cells {
+            if let FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) = *cell {
+                live_definitions[definition as usize] = true;
+            }
+        }
         let glue = format
             .glue
             .iter()
@@ -1280,7 +1264,12 @@ impl<G> Universe<G> {
             })
             .collect::<Result<Vec<_>, FormatError>>()?;
         let promoted = self
-            .promote_values(&definition_promotions, &token_promotions, &glue, &[])
+            .promote_format_values(
+                &format.definitions,
+                &live_definitions,
+                &format.token_lists,
+                &glue,
+            )
             .map_err(|_| FormatError::AllocationFailed)?;
         let node_lists = self.install_format_node_lists(
             &format.node_lists,

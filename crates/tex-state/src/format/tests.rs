@@ -1,4 +1,4 @@
-use super::schema::{FormatCell, FormatNodeList, VersionedRows};
+use super::schema::{FormatCell, FormatDefinition, FormatNodeList, VersionedRows};
 use super::{
     DetachedFormatImage, FormatError, FormatPublicationError, with_format_destination,
     with_materialized_format,
@@ -796,6 +796,64 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
         );
     })
     .expect("materialized logical format");
+}
+
+#[test]
+fn loaded_format_materializes_only_environment_owned_definitions() {
+    let mut image = with_universe(budget(), |universe| {
+        let command = universe.intern("owned").expect("command name");
+        let stale = [TokenWord::pack(Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        })];
+        universe
+            .allocate_definition(&[], &stale)
+            .expect("unreferenced definition");
+        let retained = [TokenWord::pack(Token::Char {
+            ch: 'y',
+            cat: Catcode::Other,
+        })];
+        let definition = universe
+            .allocate_definition(&[], &retained)
+            .expect("retained definition");
+        universe
+            .assign_meaning(
+                command,
+                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition),
+                AssignmentScope::Global,
+            )
+            .expect("retained meaning");
+        universe.capture_format_image().expect("capture format")
+    })
+    .expect("source universe");
+    assert_eq!(image.decoded.definitions.len(), 1);
+    image.decoded.definitions.push(FormatDefinition {
+        parameter_text: Vec::new(),
+        replacement_text: vec![
+            TokenWord::pack(Token::Char {
+                ch: 'x',
+                cat: Catcode::Other,
+            })
+            .raw(),
+        ],
+    });
+    assert_eq!(image.decoded.definitions.len(), 2);
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        let redumped = universe
+            .capture_format_image()
+            .expect("redump loaded format");
+        assert_eq!(redumped.decoded.definitions.len(), 1);
+        assert_eq!(
+            redumped.decoded.definitions[0].replacement_text,
+            [TokenWord::pack(Token::Char {
+                ch: 'y',
+                cat: Catcode::Other,
+            })
+            .raw(),]
+        );
+    })
+    .expect("materialized format");
 }
 
 #[test]

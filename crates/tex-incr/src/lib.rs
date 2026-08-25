@@ -444,7 +444,9 @@ pub struct RevisionCandidate<'store> {
     root_framing: SourceFramingPolicy,
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
-    format_image: Option<DetachedFormatImage>,
+    // One immutable session-level load input, shared only across candidates.
+    // Live durable values are still admitted into each candidate generation.
+    format_image: Option<Arc<DetachedFormatImage>>,
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
     completed: Option<CandidateCompletion>,
@@ -1243,7 +1245,9 @@ pub struct Session<'store> {
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
-    format_image: Option<DetachedFormatImage>,
+    // This coarse wire-image owner is not per-value runtime ownership: the
+    // generation arenas remain the sole owners of admitted durable values.
+    format_image: Option<Arc<DetachedFormatImage>>,
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
     utf8_input_as_bytes: bool,
@@ -1462,7 +1466,7 @@ impl<'store> Session<'store> {
     /// generation before retaining any candidate or accepted state.
     pub fn set_format_image(&mut self, image: DetachedFormatImage) {
         assert!(self.history.is_empty(), "format is fixed after execution");
-        self.format_image = Some(image);
+        self.format_image = Some(Arc::new(image));
         self.initex = false;
     }
 
@@ -1690,12 +1694,7 @@ impl<'store> Session<'store> {
     }
 
     fn candidate(&self, plan: CandidatePlan) -> Result<RevisionCandidate<'store>, SessionError> {
-        let format_image = self
-            .format_image
-            .as_ref()
-            .map(|image| DetachedFormatImage::try_from_bytes(image.as_bytes().to_vec()))
-            .transpose()
-            .map_err(SessionError::Format)?;
+        let format_image = self.format_image.clone();
         let candidate_lease = self.candidate_lease.claim()?;
         Ok(RevisionCandidate {
             session_output_id: self.output_id,

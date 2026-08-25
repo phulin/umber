@@ -294,6 +294,16 @@ pub struct TokenListPromotion<'a> {
     pub words: &'a [TokenWord],
 }
 
+/// Destination-local coordinates produced by cold format admission.
+///
+/// Definition positions retain the wire row numbering so sparse environment
+/// roots can relocate directly without materializing unreachable history.
+pub(crate) struct FormatPromotionReceipt<G> {
+    pub definitions: Vec<Option<DefinitionId<G>>>,
+    pub token_lists: Vec<TokenListId<G>>,
+    pub glue: Vec<GlueId<G>>,
+}
+
 /// Failure to reserve or validate an atomic promotion batch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromotionError {
@@ -1298,6 +1308,24 @@ impl<G> Universe<G> {
                 _ => PromotionError::AllocationFailed,
             })?
             .promote_values(definitions, token_lists, glue_values, provenance)
+    }
+
+    pub(crate) fn promote_format_values(
+        &mut self,
+        definitions: &[crate::format::schema::FormatDefinition],
+        live_definitions: &[bool],
+        token_lists: &[Vec<u32>],
+        glue_values: &[GlueSpec],
+    ) -> Result<FormatPromotionReceipt<G>, PromotionError> {
+        self.core
+            .as_mut()
+            .ok_or(PromotionError::Retired)?
+            .admit_mut()
+            .map_err(|error| match error {
+                StateError::GenerationInUse => PromotionError::GenerationInUse,
+                _ => PromotionError::AllocationFailed,
+            })?
+            .promote_format_values(definitions, live_definitions, token_lists, glue_values)
     }
 
     /// Promotes only the page-list closures reachable from `roots` into this
