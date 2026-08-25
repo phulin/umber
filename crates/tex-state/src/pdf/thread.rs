@@ -37,6 +37,10 @@ impl PdfThreadRecord {
     pub(super) fn truncate_beads(&mut self, len: usize) {
         self.beads.truncate(len);
     }
+
+    pub(super) fn pop_bead(&mut self) -> Option<PdfThreadBeadRecord> {
+        self.beads.pop()
+    }
 }
 
 /// Indirect identities allocated for one article bead and its rectangle.

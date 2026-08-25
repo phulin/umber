@@ -356,12 +356,13 @@ fn checkpoint_fork_and_restore_do_not_copy_image_or_form_payload_bytes() {
     let image_address = state.payloads.get(image_id).as_ptr();
     let form_address = state.payloads.get(form_id).as_ptr();
 
-    let mut fork = state.fork_snapshot(&checkpoint);
-    assert_eq!(fork.payloads.get(image_id).as_ptr(), image_address);
-    assert_eq!(fork.payloads.get(form_id).as_ptr(), form_address);
-    fork.rollback(checkpoint);
-    assert_eq!(fork.payloads.get(image_id).as_ptr(), image_address);
-    assert_eq!(fork.payloads.get(form_id).as_ptr(), form_address);
+    state.begin_candidate_transaction(&checkpoint);
+    assert_eq!(state.payloads.get(image_id).as_ptr(), image_address);
+    assert_eq!(state.payloads.get(form_id).as_ptr(), form_address);
+    state.rollback(checkpoint);
+    assert_eq!(state.payloads.get(image_id).as_ptr(), image_address);
+    assert_eq!(state.payloads.get(form_id).as_ptr(), form_address);
+    state.reject_candidate_transaction();
 }
 
 #[test]
@@ -405,35 +406,24 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
         object: 13,
     });
     let checkpoint = state.snapshot();
+    let addresses = [
+        row_address(state.font_resources.get(0)),
+        row_address(state.external_images.get(0)),
+        row_address(state.page_reservations.get(0)),
+    ];
 
-    let mut fork = state.fork_snapshot(&checkpoint);
-    for (source, destination) in [
-        (
-            row_address(state.font_resources.get(0)),
-            row_address(fork.font_resources.get(0)),
-        ),
-        (
-            row_address(state.external_images.get(0)),
-            row_address(fork.external_images.get(0)),
-        ),
-        (
-            row_address(state.page_reservations.get(0)),
-            row_address(fork.page_reservations.get(0)),
-        ),
-    ] {
-        assert_eq!(source, destination);
-    }
+    state.begin_candidate_transaction(&checkpoint);
+    assert_eq!(addresses[0], row_address(state.font_resources.get(0)));
+    assert_eq!(addresses[1], row_address(state.external_images.get(0)));
+    assert_eq!(addresses[2], row_address(state.page_reservations.get(0)));
 
-    fork.page_reservations.push(PdfPageReservation {
+    state.page_reservations.push(PdfPageReservation {
         number: 4,
         object: 14,
     });
+    assert_eq!(state.page_reservations.len(), 2);
+    state.reject_candidate_transaction();
     assert_eq!(state.page_reservations.len(), 1);
-    assert_eq!(fork.page_reservations.len(), 2);
-    assert_eq!(
-        row_address(state.page_reservations.get(0)),
-        row_address(fork.page_reservations.get(0))
-    );
 }
 
 #[test]
@@ -513,7 +503,7 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
             .define_destination(destination.clone(), None)
             .expect("destination definition");
         let original_open = state.end_link().expect("original link is open");
-        state
+        let replacement_open = state
             .create_link(
                 PdfAnnotationDimensions::RUNNING,
                 tokens.clone(),
@@ -544,8 +534,10 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
         state
             .append_thread_bead(PdfDestinationIdentity::Number(7))
             .expect("second thread bead");
+        let accepted_form_payload = state.form_artifacts[&51].payload;
+        let accepted_form_address = state.payloads.get(accepted_form_payload).as_ptr();
 
-        state.rollback(checkpoint);
+        state.begin_candidate_transaction(&checkpoint);
         assert_eq!(state.match_capture(0), Some((0, &[1, 2][..])));
         assert!(!state.raw_object(raw).expect("raw row").is_referenced());
         assert!(state.annotations()[0].data().is_none());
@@ -576,6 +568,43 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
             )
             .expect("restored current color");
         assert_eq!(current.payload, b"saved");
+
+        state.reject_candidate_transaction();
+        assert_eq!(state.match_capture(0), Some((1, &[8, 7][..])));
+        assert!(
+            state
+                .raw_object(raw)
+                .expect("accepted raw row")
+                .is_referenced()
+        );
+        assert!(state.annotations()[0].data().is_some());
+        assert!(
+            state
+                .destination(&destination, false)
+                .expect("accepted destination row")
+                .defined()
+        );
+        assert_eq!(
+            state.open_links()[0].record.object(),
+            replacement_open.object()
+        );
+        assert_eq!(state.threads[0].beads().len(), 2);
+        assert_eq!(
+            state.payloads.get(accepted_form_payload).as_ptr(),
+            accepted_form_address
+        );
+        assert_eq!(
+            state.form_artifact(51).expect("accepted form").bytes(),
+            &[9; 8192]
+        );
+        let current = state
+            .apply_color_stack(
+                color,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Current,
+            )
+            .expect("accepted current color");
+        assert_eq!(current.payload, b"replacement");
     })
     .expect("test universe");
 }
@@ -655,6 +684,69 @@ fn pdf_checkpoint_capture_allocates_nothing_independent_of_payload_size() {
 
     assert_eq!(measured_capture(1), (0, 0));
     assert_eq!(measured_capture(16 * 1024 * 1024), (0, 0));
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn pdf_candidate_begin_and_reject_allocate_nothing_with_exact_redo() {
+    use crate::measurement::{
+        HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,
+    };
+
+    let mut state = PdfState::<()>::default();
+    state
+        .page_reservations
+        .extend((0..10_000).map(|row| PdfPageReservation {
+            number: row,
+            object: row + 1,
+        }));
+    let raw = state.reserve_raw_object().expect("raw reservation");
+    let destination = PdfDestinationIdentity::Number(7);
+    state
+        .reserve_destination(destination.clone(), false)
+        .expect("destination reservation");
+    state
+        .append_thread_bead(PdfDestinationIdentity::Number(9))
+        .expect("base thread bead");
+    let color = state
+        .allocate_color_stack(PdfColorStackMode::Direct, true, b"base".to_vec())
+        .expect("color stack");
+    let base = state.snapshot();
+
+    state.set_match(vec![3; 1024], vec![Some((0, 1))], 1, true);
+    state.reference_raw_object(raw).expect("raw reference");
+    state
+        .define_destination(destination, None)
+        .expect("destination definition");
+    state
+        .append_thread_bead(PdfDestinationIdentity::Number(9))
+        .expect("accepted thread bead");
+    state.set_form_artifact(
+        500,
+        PdfFormArtifact::new(
+            vec![5; 4096],
+            None,
+            (Scaled::from_raw(0), Scaled::from_raw(0)),
+        ),
+    );
+    state
+        .apply_color_stack(
+            color,
+            PdfColorStackTarget::Page,
+            &PdfColorStackAction::Push(b"accepted".to_vec()),
+        )
+        .expect("accepted color push");
+
+    let owner = HotCoreAllocationOwner::GenerationBoundary;
+    let before = hot_core_thread_allocation_measurement(owner);
+    {
+        let _scope = hot_core_allocation_scope(owner);
+        state.begin_candidate_transaction(&base);
+        state.reject_candidate_transaction();
+    }
+    let after = hot_core_thread_allocation_measurement(owner);
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 }
 
 #[test]

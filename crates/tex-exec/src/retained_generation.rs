@@ -131,6 +131,7 @@ pub struct RetainedEngineAttachmentKey {
 /// Mutation-free retained executor admission failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RetainedEngineAccessError {
+    CandidateTransactionActive,
     ForeignGeneration,
     StaleCheckpoint,
     StaleAttachment,
@@ -288,6 +289,9 @@ impl<'store> RetainedEngineGeneration<'store> {
         &mut self,
         operation: O,
     ) -> Result<O::Output, RetainedEngineAccessError> {
+        if self.state.has_exclusive_pdf_candidate() {
+            return Err(RetainedEngineAccessError::CandidateTransactionActive);
+        }
         self.state.with_admitted(EngineOperationAdapter {
             generation: self.generation,
             sidecars: &self.sidecars,
@@ -309,6 +313,11 @@ impl<'store> RetainedEngineGeneration<'store> {
         ),
         RetainedEngineForkError,
     > {
+        if self.state.has_exclusive_pdf_candidate() {
+            return Err(RetainedEngineForkError::Access(
+                RetainedEngineAccessError::CandidateTransactionActive,
+            ));
+        }
         let generation = next_generation();
         let result = self.state.try_fork_owned(ForkCheckpoint {
             generation,
@@ -1097,6 +1106,10 @@ mod tests {
         let (mut rejected, runtime, counters) = accepted
             .fork_checkpoint(&checkpoint)
             .expect("first candidate fork");
+        assert_eq!(
+            accepted.with_admitted(ReadCount),
+            Err(RetainedEngineAccessError::CandidateTransactionActive)
+        );
         assert_eq!(counters.committed_steps, 7);
         assert_eq!(counters.cumulative_fuel, 11);
         let (before, _rejected_checkpoint) = rejected

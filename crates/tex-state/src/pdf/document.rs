@@ -2,7 +2,7 @@
 
 use crate::state_hash::{StateHashFragment, StateHasher};
 
-use super::PdfTokenParameter;
+use super::{PdfRows, PdfTokenParameter};
 
 const PDF_DOCUMENT_FRAGMENTS_DOMAIN: u64 = 0x7064_665f_646f_6366;
 
@@ -77,34 +77,32 @@ impl<G> Clone for PdfDocumentFragment<G> {
 /// Owned document fragments copied into explicit PDF checkpoints.
 #[derive(Debug)]
 pub(crate) struct PdfDocumentFragments<G> {
-    fragments: Vec<PdfDocumentFragment<G>>,
+    fragments: PdfRows<PdfDocumentFragment<G>>,
     fingerprint: StateHashFragment,
-}
-
-impl<G> Clone for PdfDocumentFragments<G> {
-    fn clone(&self) -> Self {
-        Self {
-            fragments: self.fragments.clone(),
-            fingerprint: self.fingerprint,
-        }
-    }
 }
 
 impl<G> Default for PdfDocumentFragments<G> {
     fn default() -> Self {
         Self {
-            fragments: Vec::new(),
+            fragments: PdfRows::default(),
             fingerprint: StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN).finish_fragment(),
         }
     }
 }
 
 impl<G> PdfDocumentFragments<G> {
-    pub(crate) fn fork_prefix(&self, len: usize) -> Self {
-        let mut fork = self.clone();
-        fork.truncate(len);
-        fork
+    pub(crate) fn begin_transaction(&mut self, len: usize) {
+        self.fragments.begin_transaction(len);
     }
+
+    pub(crate) fn reject_transaction(&mut self) {
+        self.fragments.reject_transaction();
+    }
+
+    pub(crate) fn accept_transaction(&mut self) {
+        self.fragments.accept_transaction();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.fragments.len()
     }
@@ -123,6 +121,10 @@ impl<G> PdfDocumentFragments<G> {
         self.fingerprint
     }
 
+    pub(crate) fn set_fingerprint(&mut self, fingerprint: StateHashFragment) {
+        self.fingerprint = fingerprint;
+    }
+
     pub(crate) fn append(&mut self, kind: PdfDocumentFragmentKind, value: PdfTokenParameter<G>) {
         self.fragments.push(PdfDocumentFragment { kind, value });
         self.fingerprint = fingerprint(&self.fragments);
@@ -139,10 +141,10 @@ impl<G> PdfDocumentFragments<G> {
     }
 }
 
-fn fingerprint<G>(fragments: &[PdfDocumentFragment<G>]) -> StateHashFragment {
+fn fingerprint<G>(fragments: &PdfRows<PdfDocumentFragment<G>>) -> StateHashFragment {
     let mut hasher = StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN);
     hasher.usize(fragments.len());
-    for fragment in fragments {
+    for fragment in fragments.iter() {
         hasher.u8(fragment.kind.tag());
         hasher.bytes(&fragment.value.semantic_id.bytes());
     }

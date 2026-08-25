@@ -523,7 +523,6 @@ pub(crate) fn detach<G>(
     let mut raw_object_file_needs = Vec::new();
     let raw_objects = pdf
         .raw_objects()
-        .iter()
         .map(|record| {
             let payload = record
                 .data()
@@ -648,10 +647,10 @@ pub(crate) fn detach<G>(
         },
         annotations,
         links,
-        destinations: pdf.destinations.clone(),
-        structure_destinations: pdf.structure_destinations.clone(),
+        destinations: pdf.destinations.iter().cloned().collect(),
+        structure_destinations: pdf.structure_destinations.iter().cloned().collect(),
         outlines,
-        threads: pdf.threads.clone(),
+        threads: pdf.threads.iter().cloned().collect(),
         next_object: pdf.next_object,
     })
 }

@@ -1183,55 +1183,57 @@ impl<G> Universe<G> {
         token_lists: &[crate::TokenListId<G>],
         node_lists: &[crate::node_arena::DurableListId<G>],
     ) -> Result<(), FormatError> {
-        self.pdf = PdfState::restore_format_bytes(
-            bytes,
-            self.engine_usage.capacities().pdf,
-            |recipe| {
-                let row: u32 = bincode::deserialize(recipe)
-                    .map_err(|error| format!("invalid PDF token root: {error}"))?;
-                let tokens = token_lists
-                    .get(row as usize)
-                    .ok_or_else(|| "PDF token root is out of range".to_owned())?
-                    .clone();
-                let admitted = self
-                    .core
-                    .as_ref()
-                    .expect("format candidate retains core")
-                    .admit();
-                let words = admitted.token_list(tokens.clone());
-                Ok(crate::pdf::PdfTokenParameter {
-                    tokens,
-                    semantic_id: crate::state_hash::StateHashFragment::from_exact_builder(
-                        0x7064_665f_746f_6b70,
-                        |hasher| {
-                            hasher.usize(words.len());
-                            for word in words {
-                                hasher.u32(word.raw());
-                            }
-                        },
-                    ),
-                })
-            },
-            |recipe| {
-                let row: u32 = bincode::deserialize(recipe)
-                    .map_err(|error| format!("invalid PDF node root: {error}"))?;
-                let nodes = if row == 0 {
-                    crate::node_arena::DurableListId::empty()
-                } else {
-                    *node_lists
-                        .get(row as usize - 1)
-                        .ok_or_else(|| "PDF node root is out of range".to_owned())?
-                };
-                Ok((
-                    nodes,
-                    crate::state_hash::StateHashFragment::from_exact_builder(
-                        0x666d_745f_6e6f_6465,
-                        |hasher| hasher.u32(row),
-                    ),
-                ))
-            },
-        )
-        .map_err(FormatError::InvalidState)?;
+        self.pdf = crate::pdf::PdfStateSlot::Owned(
+            PdfState::restore_format_bytes(
+                bytes,
+                self.engine_usage.capacities().pdf,
+                |recipe| {
+                    let row: u32 = bincode::deserialize(recipe)
+                        .map_err(|error| format!("invalid PDF token root: {error}"))?;
+                    let tokens = token_lists
+                        .get(row as usize)
+                        .ok_or_else(|| "PDF token root is out of range".to_owned())?
+                        .clone();
+                    let admitted = self
+                        .core
+                        .as_ref()
+                        .expect("format candidate retains core")
+                        .admit();
+                    let words = admitted.token_list(tokens.clone());
+                    Ok(crate::pdf::PdfTokenParameter {
+                        tokens,
+                        semantic_id: crate::state_hash::StateHashFragment::from_exact_builder(
+                            0x7064_665f_746f_6b70,
+                            |hasher| {
+                                hasher.usize(words.len());
+                                for word in words {
+                                    hasher.u32(word.raw());
+                                }
+                            },
+                        ),
+                    })
+                },
+                |recipe| {
+                    let row: u32 = bincode::deserialize(recipe)
+                        .map_err(|error| format!("invalid PDF node root: {error}"))?;
+                    let nodes = if row == 0 {
+                        crate::node_arena::DurableListId::empty()
+                    } else {
+                        *node_lists
+                            .get(row as usize - 1)
+                            .ok_or_else(|| "PDF node root is out of range".to_owned())?
+                    };
+                    Ok((
+                        nodes,
+                        crate::state_hash::StateHashFragment::from_exact_builder(
+                            0x666d_745f_6e6f_6465,
+                            |hasher| hasher.u32(row),
+                        ),
+                    ))
+                },
+            )
+            .map_err(FormatError::InvalidState)?,
+        );
         Ok(())
     }
 

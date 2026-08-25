@@ -13,7 +13,7 @@ use crate::{DetachedFormatImage, FormatError, Universe, UniverseError, World};
 
 static NEXT_RETAINED_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-enum PhysicalGenerationCoordinate {}
+pub(crate) enum PhysicalGenerationCoordinate {}
 
 /// An operation admitted against an opaque retained generation.
 ///
@@ -178,7 +178,7 @@ pub struct RetainedStateRetirement {
 /// only through a universally generic operation.
 pub(crate) struct PhysicalStateGeneration {
     incarnation: u64,
-    universe: Universe<PhysicalGenerationCoordinate>,
+    pub(crate) universe: Universe<PhysicalGenerationCoordinate>,
     attachment: Option<Box<dyn Any>>,
     #[cfg(feature = "profiling")]
     _profiling_lifetime: crate::measurement::RetainedGenerationLifetime,
@@ -318,6 +318,20 @@ impl<'store> RetainedStateGeneration<'store> {
         &mut self,
         operation: O,
     ) -> Result<(Self, RetainedAttachmentKey, O::Output), RetainedStateForkError<O::Error>> {
+        self.store
+            .preflight_generation_insert()
+            .map_err(|error| match error {
+                ReachabilityStoreError::GenerationSlotsExhausted => {
+                    RetainedStateForkError::SlotsExhausted
+                }
+                ReachabilityStoreError::GenerationIdentityExhausted => {
+                    RetainedStateForkError::IdentityExhausted
+                }
+                ReachabilityStoreError::StaleGeneration
+                | ReachabilityStoreError::CandidateTransactionActive => {
+                    unreachable!("generation insertion preflight reports only capacity")
+                }
+            })?;
         let key = self
             .key
             .expect("a live retained generation has a store slot");
@@ -341,20 +355,23 @@ impl<'store> RetainedStateGeneration<'store> {
             #[cfg(feature = "profiling")]
             _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
         };
-        let key = self
-            .store
-            .insert_generation(physical)
-            .map_err(|error| match error {
-                ReachabilityStoreError::GenerationSlotsExhausted => {
-                    RetainedStateForkError::SlotsExhausted
-                }
-                ReachabilityStoreError::GenerationIdentityExhausted => {
-                    RetainedStateForkError::IdentityExhausted
-                }
-                ReachabilityStoreError::StaleGeneration => {
-                    unreachable!("insertion cannot report a stale generation")
-                }
-            })?;
+        let key =
+            self.store
+                .insert_fork_generation(key, physical)
+                .map_err(|error| match error {
+                    ReachabilityStoreError::GenerationSlotsExhausted => {
+                        RetainedStateForkError::SlotsExhausted
+                    }
+                    ReachabilityStoreError::GenerationIdentityExhausted => {
+                        RetainedStateForkError::IdentityExhausted
+                    }
+                    ReachabilityStoreError::StaleGeneration => {
+                        unreachable!("insertion cannot report a stale generation")
+                    }
+                    ReachabilityStoreError::CandidateTransactionActive => {
+                        unreachable!("one source cannot start two PDF candidates")
+                    }
+                })?;
         Ok((
             Self {
                 store: self.store.clone(),
@@ -380,6 +397,14 @@ impl<'store> RetainedStateGeneration<'store> {
     #[must_use]
     pub fn same_store(&self, other: &Self) -> bool {
         self.store.same_store(&other.store)
+    }
+
+    #[must_use]
+    pub fn has_exclusive_pdf_candidate(&self) -> bool {
+        let key = self
+            .key
+            .expect("a live retained generation has a store slot");
+        self.store.generation_has_pdf_candidate(key)
     }
 
     /// Releases every engine sidecar before retiring the complete immutable,
@@ -428,7 +453,8 @@ fn map_store_construction_error(error: ReachabilityStoreError) -> SessionEpochEr
             SessionEpochError::GenerationSlotsExhausted
         }
         ReachabilityStoreError::GenerationIdentityExhausted
-        | ReachabilityStoreError::StaleGeneration => SessionEpochError::Retired,
+        | ReachabilityStoreError::StaleGeneration
+        | ReachabilityStoreError::CandidateTransactionActive => SessionEpochError::Retired,
     }
 }
 

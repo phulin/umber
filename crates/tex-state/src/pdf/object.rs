@@ -2,7 +2,7 @@
 
 use crate::state_hash::{StateHashFragment, StateHasher};
 
-use super::PdfTokenParameter;
+use super::{PdfRows, PdfTokenParameter};
 
 const PDF_RAW_OBJECT_DOMAIN: u64 = 0x7064_665f_7261_776f;
 
@@ -123,19 +123,9 @@ impl<G> PdfRawObjectRecord<G> {
 
 #[derive(Debug)]
 struct PdfRawObjectState<G> {
-    records: Vec<PdfRawObjectRecord<G>>,
+    records: PdfRows<PdfRawObjectRecord<G>>,
     last_object: u32,
     fingerprint: StateHashFragment,
-}
-
-impl<G> Clone for PdfRawObjectState<G> {
-    fn clone(&self) -> Self {
-        Self {
-            records: self.records.clone(),
-            last_object: self.last_object,
-            fingerprint: self.fingerprint,
-        }
-    }
 }
 
 /// Owned raw-object table copied into explicit PDF checkpoints.
@@ -163,16 +153,10 @@ impl<G> Clone for PdfRawObjectUndo<G> {
     }
 }
 
-impl<G> Clone for PdfRawObjects<G> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
 impl<G> Default for PdfRawObjects<G> {
     fn default() -> Self {
         Self(PdfRawObjectState {
-            records: Vec::new(),
+            records: PdfRows::default(),
             last_object: 0,
             fingerprint: StateHasher::new(PDF_RAW_OBJECT_DOMAIN).finish_fragment(),
         })
@@ -180,11 +164,18 @@ impl<G> Default for PdfRawObjects<G> {
 }
 
 impl<G> PdfRawObjects<G> {
-    pub(crate) fn fork_prefix(&self, len: usize) -> Self {
-        let mut fork = self.clone();
-        fork.truncate(len);
-        fork
+    pub(crate) fn begin_transaction(&mut self, len: usize) {
+        self.0.records.begin_transaction(len);
     }
+
+    pub(crate) fn reject_transaction(&mut self) {
+        self.0.records.reject_transaction();
+    }
+
+    pub(crate) fn accept_transaction(&mut self) {
+        self.0.records.accept_transaction();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.0.records.len()
     }
@@ -248,6 +239,30 @@ impl<G> PdfRawObjects<G> {
     pub(crate) fn restore_change(&mut self, undo: PdfRawObjectUndo<G>) {
         self.cancel_change(undo);
     }
+
+    pub(crate) fn swap_change(&mut self, undo: PdfRawObjectUndo<G>) -> PdfRawObjectUndo<G> {
+        let state = &mut self.0;
+        let record = &mut state.records[undo.row];
+        let current_data = undo.data.as_ref().map(|_| record.data.take());
+        let inverse = PdfRawObjectUndo {
+            row: undo.row,
+            data: current_data,
+            immediate: record.immediate,
+            referenced: record.referenced,
+            last_object: state.last_object,
+        };
+        if let Some(data) = undo.data {
+            record.data = data;
+        }
+        record.immediate = undo.immediate;
+        record.referenced = undo.referenced;
+        state.last_object = undo.last_object;
+        inverse
+    }
+
+    pub(crate) fn set_fingerprint(&mut self, fingerprint: StateHashFragment) {
+        self.0.fingerprint = fingerprint;
+    }
     #[must_use]
     pub(crate) fn fingerprint(&self) -> StateHashFragment {
         self.0.fingerprint
@@ -259,8 +274,8 @@ impl<G> PdfRawObjects<G> {
     }
 
     #[must_use]
-    pub(crate) fn records(&self) -> &[PdfRawObjectRecord<G>] {
-        &self.0.records
+    pub(crate) fn records(&self) -> impl Iterator<Item = &PdfRawObjectRecord<G>> {
+        self.0.records.iter()
     }
 
     #[must_use]
@@ -331,7 +346,7 @@ fn fingerprint<G>(state: &PdfRawObjectState<G>) -> StateHashFragment {
     let mut hasher = StateHasher::new(PDF_RAW_OBJECT_DOMAIN);
     hasher.u32(state.last_object);
     hasher.usize(state.records.len());
-    for record in &state.records {
+    for record in state.records.iter() {
         hasher.u32(record.id.raw());
         hasher.bool(record.data.is_some());
         if let Some(data) = &record.data {

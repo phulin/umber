@@ -18,6 +18,13 @@ struct ReachabilitySlot {
 struct ReachabilityStorage {
     next_serial: u64,
     slots: [ReachabilitySlot; RETAINED_GENERATION_SLOTS],
+    pdf_transaction: Option<PdfTransactionSlots>,
+}
+
+#[derive(Clone, Copy)]
+struct PdfTransactionSlots {
+    source: ReachabilityGenerationKey,
+    candidate: ReachabilityGenerationKey,
 }
 
 /// Coarse owner of the one reachability domain shared by a session's prior
@@ -62,6 +69,7 @@ impl ReachabilityStore {
             storage: Rc::new(RefCell::new(ReachabilityStorage {
                 next_serial: 1,
                 slots: std::array::from_fn(|_| ReachabilitySlot::default()),
+                pdf_transaction: None,
             })),
         }
     }
@@ -89,6 +97,13 @@ impl ReachabilityStore {
             .count()
     }
 
+    pub(crate) fn generation_has_pdf_candidate(&self, key: ReachabilityGenerationKey) -> bool {
+        self.storage
+            .borrow()
+            .pdf_transaction
+            .is_some_and(|transaction| transaction.source == key)
+    }
+
     pub(crate) fn insert_generation(
         &self,
         generation: PhysicalStateGeneration,
@@ -110,12 +125,41 @@ impl ReachabilityStore {
         Ok(ReachabilityGenerationKey { slot, serial })
     }
 
+    pub(crate) fn preflight_generation_insert(&self) -> Result<(), ReachabilityStoreError> {
+        let storage = self.storage.borrow();
+        if storage.slots.iter().all(|slot| slot.generation.is_some()) {
+            return Err(ReachabilityStoreError::GenerationSlotsExhausted);
+        }
+        if storage.next_serial == u64::MAX {
+            return Err(ReachabilityStoreError::GenerationIdentityExhausted);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn insert_fork_generation(
+        &self,
+        source: ReachabilityGenerationKey,
+        generation: PhysicalStateGeneration,
+    ) -> Result<ReachabilityGenerationKey, ReachabilityStoreError> {
+        let candidate = self.insert_generation(generation)?;
+        let mut storage = self.storage.borrow_mut();
+        assert!(storage.pdf_transaction.is_none());
+        storage.pdf_transaction = Some(PdfTransactionSlots { source, candidate });
+        Ok(candidate)
+    }
+
     pub(crate) fn with_generation_mut<R>(
         &self,
         key: ReachabilityGenerationKey,
         operation: impl FnOnce(&mut PhysicalStateGeneration) -> R,
     ) -> Result<R, ReachabilityStoreError> {
         let mut storage = self.storage.borrow_mut();
+        if storage
+            .pdf_transaction
+            .is_some_and(|transaction| transaction.source == key)
+        {
+            return Err(ReachabilityStoreError::CandidateTransactionActive);
+        }
         let slot = storage
             .slots
             .get_mut(key.slot)
@@ -133,6 +177,35 @@ impl ReachabilityStore {
         key: ReachabilityGenerationKey,
     ) -> Result<PhysicalStateGeneration, ReachabilityStoreError> {
         let mut storage = self.storage.borrow_mut();
+        if let Some(transaction) = storage.pdf_transaction {
+            if transaction.candidate == key {
+                let [source, candidate] = two_slots_mut(
+                    &mut storage.slots,
+                    transaction.source.slot,
+                    transaction.candidate.slot,
+                );
+                let source = source
+                    .generation
+                    .as_mut()
+                    .ok_or(ReachabilityStoreError::StaleGeneration)?;
+                let candidate = candidate
+                    .generation
+                    .as_mut()
+                    .ok_or(ReachabilityStoreError::StaleGeneration)?;
+                source
+                    .universe
+                    .return_rejected_pdf_from(&mut candidate.universe);
+                storage.pdf_transaction = None;
+            } else if transaction.source == key {
+                let candidate = storage
+                    .slots
+                    .get_mut(transaction.candidate.slot)
+                    .and_then(|slot| slot.generation.as_mut())
+                    .ok_or(ReachabilityStoreError::StaleGeneration)?;
+                candidate.universe.commit_pdf_candidate();
+                storage.pdf_transaction = None;
+            }
+        }
         let slot = storage
             .slots
             .get_mut(key.slot)
@@ -144,7 +217,7 @@ impl ReachabilityStore {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct ReachabilityGenerationKey {
     slot: usize,
     serial: u64,
@@ -155,4 +228,16 @@ pub(crate) enum ReachabilityStoreError {
     GenerationSlotsExhausted,
     GenerationIdentityExhausted,
     StaleGeneration,
+    CandidateTransactionActive,
+}
+
+fn two_slots_mut<T>(slots: &mut [T; 2], first: usize, second: usize) -> [&mut T; 2] {
+    assert_ne!(first, second);
+    if first < second {
+        let (left, right) = slots.split_at_mut(second);
+        [&mut left[first], &mut right[0]]
+    } else {
+        let (left, right) = slots.split_at_mut(first);
+        [&mut right[0], &mut left[second]]
+    }
 }

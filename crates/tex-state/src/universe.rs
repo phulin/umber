@@ -26,7 +26,7 @@ use crate::node_arena::{
     PageListId, PageNodeArena,
 };
 use crate::page::PageBuilderState;
-use crate::pdf::PdfState;
+use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
@@ -428,7 +428,7 @@ pub struct Universe<G> {
     shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
     pub(crate) page: PageBuilderState,
-    pub(crate) pdf: PdfState<G>,
+    pub(crate) pdf: PdfStateSlot<G>,
     sources: SourceMap,
     pub(crate) hyphenation: HyphenationTable,
     pub(crate) world: World,
@@ -515,6 +515,7 @@ impl<G> Universe<G> {
 
         let core = self.core.as_ref().ok_or(UniverseError::Retired)?.fork();
         let destination_owner = core.generation_owner();
+        let pdf = self.pdf.take_candidate(&checkpoint.pdf);
         let mut fork = Self {
             interner: None,
             core: Some(core),
@@ -523,7 +524,7 @@ impl<G> Universe<G> {
             shipout_scratch: ShipoutScratchArena::default(),
             fonts: self.fonts.clone(),
             page: self.page.clone(),
-            pdf: self.pdf.fork_snapshot(&checkpoint.pdf),
+            pdf,
             sources: self.sources.clone(),
             hyphenation: self.hyphenation.clone(),
             world: self.world.clone(),
@@ -554,8 +555,22 @@ impl<G> Universe<G> {
             prepared_mag: checkpoint.prepared_mag,
             engine_usage: checkpoint.engine_usage.clone(),
         };
-        fork.restore_runtime_checkpoint_with_roots_mode(&retargeted, || {}, true)?;
+        if let Err(error) =
+            fork.restore_runtime_checkpoint_with_roots_mode(&retargeted, || {}, true)
+        {
+            self.return_rejected_pdf_from(&mut fork);
+            return Err(error);
+        }
         Ok(fork)
+    }
+
+    #[doc(hidden)]
+    pub fn return_rejected_pdf_from(&mut self, candidate: &mut Self) {
+        self.pdf.return_rejected(&mut candidate.pdf);
+    }
+
+    pub(crate) fn commit_pdf_candidate(&mut self) {
+        self.pdf.commit_candidate();
     }
 
     pub(crate) fn interner(&self) -> &Interner {
@@ -710,7 +725,7 @@ impl<G> Universe<G> {
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
             page: PageBuilderState::default(),
-            pdf: PdfState::default(),
+            pdf: PdfStateSlot::default(),
             sources: SourceMap::default(),
             hyphenation: HyphenationTable::new(),
             world: World::default(),
@@ -1021,7 +1036,7 @@ impl<G> Universe<G> {
 
     /// Returns the PDF controls frozen by the first committed page.
     #[must_use]
-    pub const fn fixed_pdf_output_parameters(&self) -> Option<crate::PdfOutputParameters> {
+    pub fn fixed_pdf_output_parameters(&self) -> Option<crate::PdfOutputParameters> {
         self.pdf.output_parameters()
     }
 

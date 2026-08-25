@@ -70,20 +70,32 @@ impl<G> EngineCheckpoint<G> {
         &self,
         source: &mut Universe<G>,
     ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
-        let destination = source
+        let mut destination = source
             .fork_runtime_checkpoint(&self.runtime)
             .map_err(CheckpointRestoreError::Runtime)?;
         if !self.modes.font_roots_are_live(|font| {
             destination.runtime_checkpoint_retains_font(&self.runtime, font)
         }) {
+            source.return_rejected_pdf_from(&mut destination);
             return Err(CheckpointRestoreError::Runtime(UniverseError::State(
                 tex_state::StateError::InvalidCursor,
             )));
         }
-        let command = CommandState::fork_summary(self.command.as_ref(), source, &destination)
-            .map_err(CheckpointRestoreError::Command)?;
-        let modes =
-            ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
+        let command = match CommandState::fork_summary(self.command.as_ref(), source, &destination)
+        {
+            Ok(command) => command,
+            Err(error) => {
+                source.return_rejected_pdf_from(&mut destination);
+                return Err(CheckpointRestoreError::Command(error));
+            }
+        };
+        let modes = match ModeNest::from_summary(self.modes.clone()) {
+            Ok(modes) => modes,
+            Err(error) => {
+                source.return_rejected_pdf_from(&mut destination);
+                return Err(CheckpointRestoreError::Mode(error));
+            }
+        };
         Ok((
             destination,
             MainControl::from_checkpoint_fork(command, modes),
