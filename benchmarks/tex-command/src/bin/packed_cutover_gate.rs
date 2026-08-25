@@ -1,9 +1,10 @@
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tex_command::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
-    DeliveryStatus, RegisteredSourceKind, SourceRegistration,
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState, DeliveryStatus,
+    RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::Universe;
 use tex_state::env::AssignmentScope;
@@ -25,10 +26,87 @@ fn main() {
     assert!(std::mem::size_of::<DeliveryStatus>() <= 16);
     ordinary_source_delivery();
     packed_backup_and_replay();
+    warmed_backup_push_pop_throughput();
     stored_token_replay();
     macro_argument_matching();
+    warmed_keyword_mismatch_throughput();
     destination_directed_warm_delivery();
     println!("packed token/macro cutover gate: PASS");
+}
+
+fn warmed_backup_push_pop_throughput() {
+    const OPERATIONS: usize = 1_000_000;
+    with_universe(|universe| {
+        let mut command = CommandState::default();
+        open_source(&mut command, "b");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let mut delivered = processor.get_next().unwrap().unwrap();
+        for _ in 0..4_096 {
+            processor.back_input(delivered).unwrap();
+            delivered = processor.get_next().unwrap().unwrap();
+        }
+        let mut elapsed = Duration::ZERO;
+        measure_zero("warmed_backup_push_pop_1m", || {
+            let start = Instant::now();
+            for _ in 0..OPERATIONS {
+                processor.back_input(delivered).unwrap();
+                delivered = processor.get_next().unwrap().unwrap();
+            }
+            elapsed = start.elapsed();
+            black_box(&delivered);
+        });
+        println!(
+            "warmed_backup_push_pop throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
+}
+
+fn warmed_keyword_mismatch_throughput() {
+    const OPERATIONS: usize = 16_384;
+    with_universe(|universe| {
+        let mut command = CommandState::default();
+        open_source(&mut command, &"dimensiox".repeat(OPERATIONS + 1));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let run = |processor: &mut CommandProcessor<'_, '_, _>| {
+            let tex_command::RetainedScalarScan::Complete(scanned) =
+                processor.scan_keyword_retained("dimension")
+            else {
+                panic!("preloaded keyword scan must complete synchronously")
+            };
+            assert!(!scanned.value);
+            for _ in 0..9 {
+                black_box(processor.get_x_token().unwrap().unwrap());
+            }
+        };
+        run(&mut processor);
+        let mut elapsed = Duration::ZERO;
+        measure_zero("warmed_keyword_mismatch_16384", || {
+            let start = Instant::now();
+            for _ in 0..OPERATIONS {
+                run(&mut processor);
+            }
+            elapsed = start.elapsed();
+        });
+        println!(
+            "warmed_keyword_mismatch throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
 }
 
 fn destination_directed_warm_delivery() {

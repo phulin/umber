@@ -48,3 +48,10 @@ long-name row on the required unbounded spill path. Inline raw delivery also
 encodes character codes into a fixed stack UTF-8 buffer before lookup or
 interning; only an already-spilled pathological name constructs a temporary
 `String`.
+
+`packed_cutover_gate` additionally times one million warmed single-token
+backup/replay cycles and 16,384 warmed failed-keyword scans. Both loops assert
+zero allocation calls and requested bytes after their replay/input storage has
+reached high water, then report nanoseconds per complete operation for local
+before/after comparisons. The time is diagnostic rather than a correctness
+ceiling; the allocation assertions and structural size gates are deterministic.
