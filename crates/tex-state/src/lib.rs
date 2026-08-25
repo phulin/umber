@@ -90,6 +90,8 @@ pub mod node_sequence;
 pub mod packed_input;
 pub mod page;
 mod pdf;
+#[cfg(all(feature = "profiling", feature = "testing"))]
+pub use pdf::{PdfForkProfileFamily, PdfForkProfileMeasurement, profile_pdf_fork_family};
 pub mod print;
 pub mod provenance;
 mod provenance_resolver;

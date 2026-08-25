@@ -365,6 +365,78 @@ fn checkpoint_fork_and_restore_do_not_copy_image_or_form_payload_bytes() {
 }
 
 #[test]
+fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
+    fn row_address<T>(row: Option<&T>) -> usize {
+        row.expect("append-only fixture row exists") as *const T as usize
+    }
+
+    let mut state = PdfState::<()>::default();
+    state.font_resources.push(PdfFontResourceRecord {
+        font: FontId::testing_new(7),
+        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
+        resource_number: 7,
+        object_number: 11,
+        identity: tex_fonts::PdfFontResourceIdentity::new([8; 32], None),
+    });
+    let payload = state.payloads.store(vec![1]);
+    state.external_images.push(PdfExternalImageEntry {
+        id: PdfExternalImageId(12),
+        identity: ContentHash::new([9; 32]),
+        metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
+            format: PdfRasterFormat::Png,
+            width: 1,
+            height: 1,
+            bits_per_component: 8,
+            color_space: PdfRasterColorSpace::Gray,
+            alpha: false,
+            png_color_type: Some(0),
+        }),
+        dimensions: PdfExternalImageDimensions {
+            width: Scaled::from_raw(1),
+            height: Scaled::from_raw(1),
+            depth: Scaled::from_raw(0),
+        },
+        color_space_object: 0,
+        payload,
+        mask_object: None,
+    });
+    state.page_reservations.push(PdfPageReservation {
+        number: 3,
+        object: 13,
+    });
+    let checkpoint = state.snapshot();
+
+    let mut fork = state.fork_snapshot(&checkpoint);
+    for (source, destination) in [
+        (
+            row_address(state.font_resources.get(0)),
+            row_address(fork.font_resources.get(0)),
+        ),
+        (
+            row_address(state.external_images.get(0)),
+            row_address(fork.external_images.get(0)),
+        ),
+        (
+            row_address(state.page_reservations.get(0)),
+            row_address(fork.page_reservations.get(0)),
+        ),
+    ] {
+        assert_eq!(source, destination);
+    }
+
+    fork.page_reservations.push(PdfPageReservation {
+        number: 4,
+        object: 14,
+    });
+    assert_eq!(state.page_reservations.len(), 1);
+    assert_eq!(fork.page_reservations.len(), 2);
+    assert_eq!(
+        row_address(state.page_reservations.get(0)),
+        row_address(fork.page_reservations.get(0))
+    );
+}
+
+#[test]
 fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
     with_universe(budget(), |universe| {
         let tokens = universe

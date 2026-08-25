@@ -371,6 +371,122 @@ pub struct PdfExternalImageRecord {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct PdfPayloadId(usize);
 
+/// An append-only dense log whose accepted prefix can be moved once and shared
+/// by the two live generations. New rows always land in the private delta, so
+/// retaining a fork never turns the next append into a COW prefix clone.
+#[derive(Debug)]
+struct PdfAppendLog<T> {
+    prefix: Rc<Vec<T>>,
+    delta: Vec<T>,
+}
+
+impl<T> Default for PdfAppendLog<T> {
+    fn default() -> Self {
+        Self {
+            prefix: Rc::new(Vec::new()),
+            delta: Vec::new(),
+        }
+    }
+}
+
+impl<T> PdfAppendLog<T> {
+    fn len(&self) -> usize {
+        self.prefix.len() + self.delta.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.prefix.iter().chain(&self.delta)
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        if index < self.prefix.len() {
+            self.prefix.get(index)
+        } else {
+            self.delta.get(index - self.prefix.len())
+        }
+    }
+
+    fn last(&self) -> Option<&T> {
+        self.delta.last().or_else(|| self.prefix.last())
+    }
+
+    fn push(&mut self, value: T) {
+        self.delta.push(value);
+    }
+
+    fn truncate(&mut self, len: usize) {
+        assert!(
+            len >= self.prefix.len(),
+            "PDF dense prefix is still retained"
+        );
+        self.delta.truncate(len - self.prefix.len());
+    }
+
+    fn fork_at(&mut self, len: usize) -> Self {
+        assert!(len >= self.prefix.len() && len <= self.len());
+        if len == 0 {
+            return Self {
+                prefix: Rc::clone(&self.prefix),
+                delta: Vec::new(),
+            };
+        }
+        if self.prefix.is_empty() && len == self.delta.len() {
+            self.prefix = Rc::new(std::mem::take(&mut self.delta));
+            return Self {
+                prefix: Rc::clone(&self.prefix),
+                delta: Vec::new(),
+            };
+        }
+        let prefix_additions = len - self.prefix.len();
+        let mut delta = std::mem::take(&mut self.delta);
+        let suffix = delta.split_off(prefix_additions);
+        Rc::get_mut(&mut self.prefix)
+            .expect("accepted PDF dense prefix has one coarse owner")
+            .append(&mut delta);
+        self.delta = suffix;
+        Self {
+            prefix: Rc::clone(&self.prefix),
+            delta: Vec::new(),
+        }
+    }
+
+    fn binary_search_by_key<K: Ord>(
+        &self,
+        key: &K,
+        mut f: impl FnMut(&T) -> K,
+    ) -> Result<usize, usize> {
+        let mut left = 0;
+        let mut right = self.len();
+        while left < right {
+            let middle = left + (right - left) / 2;
+            match f(self.get(middle).expect("binary-search row exists")).cmp(key) {
+                std::cmp::Ordering::Less => left = middle + 1,
+                std::cmp::Ordering::Equal => return Ok(middle),
+                std::cmp::Ordering::Greater => right = middle,
+            }
+        }
+        Err(left)
+    }
+}
+
+impl<T> Extend<T> for PdfAppendLog<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.delta.extend(iter);
+    }
+}
+
+impl<T> std::ops::Index<usize> for PdfAppendLog<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).expect("PDF dense-log index is in bounds")
+    }
+}
+
 #[derive(Debug)]
 struct PdfPayloadArena {
     prefix: Rc<Vec<Box<[u8]>>>,
@@ -424,6 +540,21 @@ impl PdfPayloadArena {
 
     fn fork_at(&mut self, len: usize) -> Self {
         assert!(len >= self.prefix.len() && len <= self.len());
+        if len == 0 {
+            return Self {
+                prefix: Rc::clone(&self.prefix),
+                delta: Vec::new(),
+                bytes: 0,
+            };
+        }
+        if self.prefix.is_empty() && len == self.delta.len() {
+            self.prefix = Rc::new(std::mem::take(&mut self.delta));
+            return Self {
+                prefix: Rc::clone(&self.prefix),
+                delta: Vec::new(),
+                bytes: self.bytes,
+            };
+        }
         let prefix_additions = len - self.prefix.len();
         let mut delta = std::mem::take(&mut self.delta);
         let suffix = delta.split_off(prefix_additions);
@@ -1299,10 +1430,10 @@ pub(crate) struct PdfState<G> {
     pk_modes: Vec<PdfTokenParameter<G>>,
     pk_mode_row: Option<usize>,
     font_operations: Vec<PdfFontOperation>,
-    font_resources: Vec<PdfFontResourceRecord>,
+    font_resources: PdfAppendLog<PdfFontResourceRecord>,
     fingerprint: StateHashFragment,
     match_state: PdfMatchState,
-    external_images: Vec<PdfExternalImageEntry>,
+    external_images: PdfAppendLog<PdfExternalImageEntry>,
     payloads: PdfPayloadArena,
     external_image_fingerprint: StateHashFragment,
     raw_objects: PdfRawObjects<G>,
@@ -1311,7 +1442,7 @@ pub(crate) struct PdfState<G> {
     catalog_open_actions: Vec<PdfActionRecord<G>>,
     catalog_open_action_row: Option<usize>,
     action_fingerprint: StateHashFragment,
-    page_reservations: Vec<PdfPageReservation>,
+    page_reservations: PdfAppendLog<PdfPageReservation>,
     page_reservation_fingerprint: StateHashFragment,
     space_font_names: Vec<Vec<u8>>,
     space_font_name_lookup: BTreeMap<Vec<u8>, u32>,
@@ -1613,10 +1744,10 @@ impl<G> PdfState<G> {
             pk_modes: self.pk_modes[..cursor.pk_mode_row.map_or(0, |row| row + 1)].to_vec(),
             pk_mode_row: cursor.pk_mode_row,
             font_operations: self.font_operations[..cursor.font_operation_count].to_vec(),
-            font_resources: self.font_resources[..cursor.font_resource_count].to_vec(),
+            font_resources: self.font_resources.fork_at(cursor.font_resource_count),
             fingerprint: cursor.fingerprint,
             match_state: self.match_state_at(snapshot),
-            external_images: self.external_images[..cursor.external_image_count].to_vec(),
+            external_images: self.external_images.fork_at(cursor.external_image_count),
             payloads,
             external_image_fingerprint: cursor.external_image_fingerprint,
             raw_objects: self.raw_objects_at(snapshot),
@@ -1629,7 +1760,9 @@ impl<G> PdfState<G> {
                 .to_vec(),
             catalog_open_action_row: cursor.catalog_open_action_row,
             action_fingerprint: cursor.action_fingerprint,
-            page_reservations: self.page_reservations[..cursor.page_reservation_count].to_vec(),
+            page_reservations: self
+                .page_reservations
+                .fork_at(cursor.page_reservation_count),
             page_reservation_fingerprint: cursor.page_reservation_fingerprint,
             space_font_names,
             space_font_name_lookup,
@@ -1695,10 +1828,10 @@ impl<G> Default for PdfState<G> {
             pk_modes: Vec::new(),
             pk_mode_row: None,
             font_operations: Vec::new(),
-            font_resources: Vec::new(),
+            font_resources: PdfAppendLog::default(),
             fingerprint: base_fingerprint(false),
             match_state: PdfMatchState::default(),
-            external_images: Vec::new(),
+            external_images: PdfAppendLog::default(),
             payloads: PdfPayloadArena::default(),
             external_image_fingerprint: external_image_base_fingerprint(),
             raw_objects: PdfRawObjects::<G>::default(),
@@ -1707,7 +1840,7 @@ impl<G> Default for PdfState<G> {
             catalog_open_actions: Vec::new(),
             catalog_open_action_row: None,
             action_fingerprint: StateHasher::new_exact(0x7064_665f_6163_746e).finish_fragment(),
-            page_reservations: Vec::new(),
+            page_reservations: PdfAppendLog::default(),
             page_reservation_fingerprint: StateHasher::new_exact(0x7064_665f_7067_7273)
                 .finish_fragment(),
             space_font_names: vec![default_space_font.clone()],
@@ -2170,12 +2303,12 @@ impl<G> PdfState<G> {
         {
             return Ok(record);
         }
-        if let Some(record) = self
+        let shared = self
             .font_resources
             .iter()
             .copied()
-            .find(|record| record.identity == identity)
-        {
+            .find(|record| record.identity == identity);
+        if let Some(record) = shared {
             let alias = PdfFontResourceRecord {
                 font,
                 source_identity,
@@ -2215,8 +2348,10 @@ impl<G> PdfState<G> {
             .copied()
             .enumerate()
             .filter_map(|(index, record)| {
-                (!self.font_resources[..index]
+                (!self
+                    .font_resources
                     .iter()
+                    .take(index)
                     .any(|prior| prior.object_number == record.object_number))
                 .then_some(record)
             })
@@ -2640,7 +2775,8 @@ impl<G> PdfState<G> {
         self.external_images
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .map(|index| self.external_images[index].metadata)
+            .and_then(|index| self.external_images.get(index))
+            .map(|record| record.metadata)
     }
 
     #[must_use]
@@ -2651,7 +2787,8 @@ impl<G> PdfState<G> {
         self.external_images
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .map(|index| self.materialize_external_image(&self.external_images[index]))
+            .and_then(|index| self.external_images.get(index))
+            .map(|entry| self.materialize_external_image(entry))
     }
 
     fn materialize_external_image(&self, entry: &PdfExternalImageEntry) -> PdfExternalImageRecord {
@@ -3045,8 +3182,10 @@ impl<G> PdfState<G> {
                 | PdfFontOperation::NoBuiltinToUnicode { font } => is_live(*font),
                 PdfFontOperation::Map(_) | PdfFontOperation::GlyphToUnicode(_) => true,
             })
-            && self.font_resources[..cursor.font_resource_count]
+            && self
+                .font_resources
                 .iter()
+                .take(cursor.font_resource_count)
                 .all(|record| is_live(record.font))
     }
 
@@ -3371,10 +3510,12 @@ fn external_image_base_fingerprint() -> StateHashFragment {
     StateHasher::new_exact(PDF_EXTERNAL_IMAGE_DOMAIN).finish_fragment()
 }
 
-fn page_reservation_fingerprint(reservations: &[PdfPageReservation]) -> StateHashFragment {
+fn page_reservation_fingerprint(
+    reservations: &PdfAppendLog<PdfPageReservation>,
+) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(0x7064_665f_7067_7273);
     hasher.usize(reservations.len());
-    for reservation in reservations {
+    for reservation in reservations.iter() {
         hasher.u32(reservation.number);
         hasher.u32(reservation.object);
     }
@@ -3519,12 +3660,12 @@ fn hash_annotation_dimensions(hasher: &mut StateHasher, dimensions: PdfAnnotatio
 }
 
 fn external_image_fingerprint(
-    images: &[PdfExternalImageEntry],
+    images: &PdfAppendLog<PdfExternalImageEntry>,
     payloads: &PdfPayloadArena,
 ) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_EXTERNAL_IMAGE_DOMAIN);
     hasher.usize(images.len());
-    for record in images {
+    for record in images.iter() {
         hasher.u32(record.id.raw());
         hasher.bytes(&record.identity.bytes());
         match record.metadata {
@@ -3592,6 +3733,214 @@ fn append_font_resource_fingerprint(
         hasher.bytes(&identity.bytes());
     }
     hasher.finish_fragment()
+}
+
+/// One family isolated by the focused retained-generation fork profiler.
+#[cfg(all(feature = "profiling", feature = "testing"))]
+#[derive(Clone, Copy, Debug)]
+pub enum PdfForkProfileFamily {
+    PageReservations,
+    FontResources,
+    ExternalImageMetadata,
+    RawObjectReservations,
+    AnnotationReservations,
+    Destinations,
+    Threads,
+    FormArtifactIndex,
+    SpaceFontNames,
+    ColorStacks,
+    MatchBytes,
+}
+
+#[cfg(all(feature = "profiling", feature = "testing"))]
+impl PdfForkProfileFamily {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::PageReservations => "page_reservations",
+            Self::FontResources => "font_resources",
+            Self::ExternalImageMetadata => "external_image_metadata",
+            Self::RawObjectReservations => "raw_object_reservations",
+            Self::AnnotationReservations => "annotation_reservations",
+            Self::Destinations => "destinations",
+            Self::Threads => "threads",
+            Self::FormArtifactIndex => "form_artifact_index",
+            Self::SpaceFontNames => "space_font_names",
+            Self::ColorStacks => "color_stacks",
+            Self::MatchBytes => "match_bytes",
+        }
+    }
+
+    pub const ALL: [Self; 11] = [
+        Self::PageReservations,
+        Self::FontResources,
+        Self::ExternalImageMetadata,
+        Self::RawObjectReservations,
+        Self::AnnotationReservations,
+        Self::Destinations,
+        Self::Threads,
+        Self::FormArtifactIndex,
+        Self::SpaceFontNames,
+        Self::ColorStacks,
+        Self::MatchBytes,
+    ];
+}
+
+/// Actual allocation and CPU cost of forking one isolated PDF metadata family.
+#[cfg(all(feature = "profiling", feature = "testing"))]
+#[derive(Clone, Copy, Debug)]
+pub struct PdfForkProfileMeasurement {
+    pub rows: usize,
+    pub iterations: usize,
+    pub elapsed_ns: u128,
+    pub allocations: u64,
+    pub requested_bytes: u64,
+}
+
+#[cfg(all(feature = "profiling", feature = "testing"))]
+pub fn profile_pdf_fork_family(
+    family: PdfForkProfileFamily,
+    rows: usize,
+    iterations: usize,
+) -> PdfForkProfileMeasurement {
+    use crate::measurement::{
+        HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,
+    };
+
+    let mut state = PdfState::<()>::default();
+    match family {
+        PdfForkProfileFamily::PageReservations => {
+            state
+                .page_reservations
+                .extend((0..rows).map(|row| PdfPageReservation {
+                    number: row as u32,
+                    object: row as u32 + 1,
+                }));
+        }
+        PdfForkProfileFamily::FontResources => {
+            state
+                .font_resources
+                .extend((0..rows).map(|row| PdfFontResourceRecord {
+                    font: FontId::testing_new(row as u32),
+                    source_identity: tex_fonts::FontSourceIdentity::from_bytes([row as u8; 32]),
+                    resource_number: row as u32,
+                    object_number: row as u32 + 1,
+                    identity: tex_fonts::PdfFontResourceIdentity::new([row as u8; 32], None),
+                }));
+        }
+        PdfForkProfileFamily::ExternalImageMetadata => {
+            let payload = state.payloads.store(vec![7]);
+            state
+                .external_images
+                .extend((0..rows).map(|row| PdfExternalImageEntry {
+                    id: PdfExternalImageId(row as u32 + 1),
+                    identity: ContentHash::new([row as u8; 32]),
+                    metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
+                        format: PdfRasterFormat::Png,
+                        width: 1,
+                        height: 1,
+                        bits_per_component: 8,
+                        color_space: PdfRasterColorSpace::Gray,
+                        alpha: false,
+                        png_color_type: Some(0),
+                    }),
+                    dimensions: PdfExternalImageDimensions {
+                        width: Scaled::from_raw(1),
+                        height: Scaled::from_raw(1),
+                        depth: Scaled::from_raw(0),
+                    },
+                    color_space_object: 0,
+                    payload,
+                    mask_object: None,
+                }));
+        }
+        PdfForkProfileFamily::RawObjectReservations => {
+            for row in 0..rows {
+                state
+                    .raw_objects
+                    .reserve(PdfRawObjectId::from_allocated(row as u32 + 1));
+            }
+        }
+        PdfForkProfileFamily::AnnotationReservations => {
+            state
+                .annotations
+                .extend((0..rows).map(|row| PdfAnnotationRecord::reserved(row as u32 + 1)));
+        }
+        PdfForkProfileFamily::Destinations => {
+            state.destinations.extend((0..rows).map(|row| {
+                PdfDestinationRecord::reserved(
+                    PdfDestinationIdentity::Number(row as u32),
+                    row as u32 + 1,
+                )
+            }));
+        }
+        PdfForkProfileFamily::Threads => {
+            state.threads.extend((0..rows).map(|row| {
+                PdfThreadRecord::new(PdfDestinationIdentity::Number(row as u32), row as u32 + 1)
+            }));
+        }
+        PdfForkProfileFamily::FormArtifactIndex => {
+            let payload = state.payloads.store(vec![7]);
+            state.form_artifacts.extend((0..rows).map(|row| {
+                (
+                    row as u32 + 1,
+                    PdfFormArtifactEntry {
+                        payload,
+                        last_position: None,
+                        snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
+                    },
+                )
+            }));
+        }
+        PdfForkProfileFamily::SpaceFontNames => {
+            state.space_font_names.clear();
+            state.space_font_name_lookup.clear();
+            for row in 0..rows {
+                let name = format!("space-font-{row:08}").into_bytes();
+                state
+                    .space_font_name_lookup
+                    .insert(name.clone(), row as u32);
+                state.space_font_names.push(name);
+            }
+            state.current_space_font_name = rows.saturating_sub(1) as u32;
+        }
+        PdfForkProfileFamily::ColorStacks => {
+            state.color_stacks.extend((0..rows).map(|_| PdfColorStack {
+                mode: PdfColorStackMode::Direct,
+                restore_at_page_start: true,
+                page: PdfColorStackRuntime {
+                    current: vec![7; 32],
+                    pushed: Vec::new(),
+                },
+                form: PdfColorStackRuntime {
+                    current: vec![7; 32],
+                    pushed: Vec::new(),
+                },
+            }));
+        }
+        PdfForkProfileFamily::MatchBytes => {
+            state.match_state.haystack = vec![7; rows];
+        }
+    }
+    let mark = state.snapshot();
+    let owner = HotCoreAllocationOwner::GenerationBoundary;
+    let before = hot_core_thread_allocation_measurement(owner);
+    let start = std::time::Instant::now();
+    {
+        let _scope = hot_core_allocation_scope(owner);
+        for _ in 0..iterations {
+            std::hint::black_box(state.fork_snapshot(&mark));
+        }
+    }
+    let elapsed_ns = start.elapsed().as_nanos();
+    let after = hot_core_thread_allocation_measurement(owner);
+    PdfForkProfileMeasurement {
+        rows,
+        iterations,
+        elapsed_ns,
+        allocations: after.calls - before.calls,
+        requested_bytes: after.requested_bytes - before.requested_bytes,
+    }
 }
 
 fn append_font_fingerprint(

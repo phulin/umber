@@ -567,6 +567,17 @@ push/pop, form-artifact replacement, destination definition, and thread-bead
 append carry exact inverse entries. Page and form color operations use a
 separate inverse lane, so a form traversal can restore only its color work.
 
+The dense font-resource, external-image-metadata, and page-reservation logs
+use `PdfAppendLog`: one coarse immutable `Rc<Vec<T>>` prefix plus one
+generation-private `Vec<T>` delta. Reads branch directly between the two dense
+ranges; image lookup keeps binary search over the virtual concatenation.
+Forking an accumulated head moves the existing delta allocation behind one
+coarse owner, shares that owner, and creates an empty destination delta. It
+does not clone rows and the next append never invokes COW. Other
+generation-branded or mutable keyed metadata is still materialized as one
+destination-local view during fork; its exact inverse journal reconstructs
+the selected checkpoint before publication.
+
 Image and form bytes move once into one generation-local payload arena. A
 fork seals the selected delta boxes into one coarse immutable prefix and gives
 the destination an empty private delta. The prefix retain copies no payload
@@ -642,6 +653,21 @@ Three post-change runs produced wall/user/system seconds of
 and 19.46 seconds, respectively, versus 19.78 and 20.46 seconds at baseline;
 median RSS was 653,472 KiB, 201,128 KiB lower. Every run stopped at the exact
 terminal vector `(20000000,19913119,2218327,6020965,16785710,4011)`.
+
+`benchmarks/tex-state/src/bin/pdf_fork_metadata.rs` measures destination
+materialization by field family. At 10,000 rows, converting font resources,
+external-image metadata, and page reservations made their fork cost independent
+of accumulated size: 0.95--1.07 microseconds, five allocation calls, and
+400--402 requested bytes per fork. Before conversion those same rows cost
+173.71, 111.66, and 6.67 microseconds and requested 1,280,398, 960,401, and
+80,398 bytes, respectively. The remaining destination-local costs at 10,000
+rows are measured explicitly: raw objects 423.46 microseconds/1,760,398 bytes,
+annotations 133.33/640,398, destinations 51.79/400,398, threads
+141.40/560,398, form-artifact index 281.11/702,976, space-font names
+2,298.88/1,558,912, color stacks 2,313.84/1,680,398, and match bytes
+1.22/10,398. Those families require a broader destination transaction/view
+model before their current state can stop being copied; their undo lanes alone
+cannot safely make two mutable generations share one current-value table.
 
 ## Incremental revisions and two-generation ownership
 
