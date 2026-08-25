@@ -2,6 +2,7 @@ use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, cr
 use tex_state::cell::{BankTag, CellId};
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::node::Node;
+use tex_state::node_arena::PageNodeArena;
 use tex_state::{
     AssignmentScope, DependencyKey, DependencyRuntime, DependencyValue, ReachabilityStore,
     RetainedStateGeneration, World, with_universe,
@@ -147,11 +148,61 @@ fn coarse_generation_lifecycle(c: &mut Criterion) {
     });
 }
 
+fn node_graph_transfer(c: &mut Criterion) {
+    with_universe(engine_budget(), |universe| {
+        let root = universe.publish_page_nodes(&[Node::Penalty(17)]);
+        universe.assign_page_box_global(0, root);
+        let mark = universe.journal_cursor().expect("node journal cursor");
+        let mut group = c.benchmark_group("node_graph");
+        group.throughput(Throughput::Elements(WARM_WRITES as u64));
+        group.bench_function("warmed_transfer_and_alias", |b| {
+            b.iter(|| {
+                for _ in 0..WARM_WRITES {
+                    let alias = universe.copy_box_to_page(0).expect("live box alias");
+                    universe.replace_page_box(0, alias);
+                    universe.restore_state(mark).expect("restore node write");
+                    black_box(alias);
+                }
+            });
+        });
+        group.finish();
+    })
+    .expect("node graph benchmark universe");
+}
+
+fn node_graph_copy_control(c: &mut Criterion) {
+    let mut source = PageNodeArena::new();
+    let root = source.publish(vec![Node::Penalty(17)]).expect("source row");
+    let mut destination = PageNodeArena::new();
+    let mark = destination.cursor();
+    let _ = source
+        .promote_into(&[root], &mut destination)
+        .expect("warm physical copy");
+    destination.truncate(mark).expect("reset warm copy");
+    let mut group = c.benchmark_group("node_graph");
+    group.throughput(Throughput::Elements(WARM_WRITES as u64));
+    group.bench_function("physical_copy_control", |b| {
+        b.iter(|| {
+            for _ in 0..WARM_WRITES {
+                black_box(
+                    source
+                        .promote_into(&[root], &mut destination)
+                        .expect("physical graph copy"),
+                );
+                destination.truncate(mark).expect("reset physical copy");
+            }
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     dependency_recording,
     direct_state_access,
     page_contribution_queue,
+    node_graph_transfer,
+    node_graph_copy_control,
     coarse_generation_lifecycle,
 );
 criterion_main!(benches);
