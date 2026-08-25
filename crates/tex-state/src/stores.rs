@@ -5,13 +5,13 @@ use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListCursor, TokenListId,
     TokenListView,
 };
-use crate::env::{DenseState, StateError};
+use crate::env::{DenseState, DynamicMemoryRoot, StateError};
 use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
 use crate::node::NodeTokenList;
 use crate::node_arena::{
-    DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, PageListId,
-    PageNodeArena,
+    DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
+    PageListId, PageNodeArena, StampedIndexMap,
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
@@ -141,7 +141,102 @@ impl<G> StateCore<G> {
     }
 }
 
+pub(crate) struct DynamicMemoryScratch<G> {
+    definition_marks: StampedIndexMap,
+    token_marks: StampedIndexMap,
+    nodes: NodeMemoryScratch<G>,
+}
+
+impl<G> Default for DynamicMemoryScratch<G> {
+    fn default() -> Self {
+        Self {
+            definition_marks: StampedIndexMap::default(),
+            token_marks: StampedIndexMap::default(),
+            nodes: NodeMemoryScratch::default(),
+        }
+    }
+}
+
+impl<G> DynamicMemoryScratch<G> {
+    fn begin(&mut self) {
+        self.definition_marks.begin();
+        self.token_marks.begin();
+    }
+
+    fn mark_definition(&mut self, index: usize) -> bool {
+        self.definition_marks.mark(index)
+    }
+
+    fn mark_token_list(&mut self, index: usize) -> bool {
+        self.token_marks.mark(index)
+    }
+}
+
 fn current_dynamic_memory_words<G>(
+    generation: &Generation<G>,
+    nodes: &DurableNodeArena<G>,
+    state: &DenseState<G>,
+    etex_node_sizes: bool,
+    scratch: &mut DynamicMemoryScratch<G>,
+) -> Result<usize, NodeArenaError> {
+    scratch.begin();
+    let mut definition_words = 0_usize;
+    let mut token_words = 0_usize;
+    let mut node_words = 0_usize;
+    let mut detached_extent = 0_usize;
+    let mut error = None;
+    state.visit_dynamic_memory_roots(|root| {
+        if error.is_some() {
+            return;
+        }
+        match root {
+            DynamicMemoryRoot::Definition(definition) => {
+                if scratch.mark_definition(definition.format_index() as usize) {
+                    definition_words = definition_words
+                        .saturating_add(generation.definitions().tex_memory_words(definition));
+                }
+            }
+            DynamicMemoryRoot::TokenList(tokens) => {
+                if scratch.mark_token_list(tokens.format_index() as usize) {
+                    token_words =
+                        token_words.saturating_add(generation.token_lists().get(tokens).len() + 1);
+                }
+            }
+            DynamicMemoryRoot::Nodes(root) => {
+                let token_marks = &mut scratch.token_marks;
+                let result = nodes.semantic_memory_usage(
+                    root,
+                    etex_node_sizes,
+                    &mut scratch.nodes,
+                    |tokens| {
+                        if token_marks.mark(tokens.format_index() as usize) {
+                            token_words = token_words
+                                .saturating_add(generation.token_lists().get(*tokens).len() + 1);
+                        }
+                    },
+                );
+                match result {
+                    Ok((_, root_words, root_extent)) => {
+                        node_words = node_words.saturating_add(root_words);
+                        detached_extent = detached_extent.max(root_extent);
+                    }
+                    Err(node_error) => error = Some(node_error),
+                }
+            }
+        }
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(14_usize
+        .saturating_add(definition_words)
+        .saturating_add(token_words)
+        .saturating_add(node_words)
+        .saturating_add(detached_extent))
+}
+
+#[cfg(test)]
+fn materialized_dynamic_memory_words<G>(
     generation: &Generation<G>,
     nodes: &DurableNodeArena<G>,
     state: &DenseState<G>,
@@ -226,8 +321,15 @@ impl<'a, G> AdmittedState<'a, G> {
     pub(crate) fn current_dynamic_memory_words(
         &self,
         etex_node_sizes: bool,
+        scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<usize, NodeArenaError> {
-        current_dynamic_memory_words(&self.generation, self.nodes, self.state, etex_node_sizes)
+        current_dynamic_memory_words(
+            &self.generation,
+            self.nodes,
+            self.state,
+            etex_node_sizes,
+            scratch,
+        )
     }
     #[must_use]
     pub(crate) const fn state(&self) -> &'a DenseState<G> {
@@ -274,10 +376,11 @@ impl<'a, G> AdmittedState<'a, G> {
         &self,
         root: DurableListId<G>,
         etex_node_sizes: bool,
+        scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<(usize, usize), NodeArenaError> {
-        let (variable, dynamic) = self
-            .nodes
-            .semantic_closure_tex_memory_words(root, etex_node_sizes)?;
+        let (variable, dynamic, _) =
+            self.nodes
+                .semantic_memory_usage(root, etex_node_sizes, &mut scratch.nodes, |_| {})?;
         Ok((variable.saturating_mul(2), dynamic))
     }
 
@@ -298,8 +401,15 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn current_dynamic_memory_words(
         &self,
         etex_node_sizes: bool,
+        scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<usize, NodeArenaError> {
-        current_dynamic_memory_words(&self.generation, self.nodes, self.state, etex_node_sizes)
+        current_dynamic_memory_words(
+            &self.generation,
+            self.nodes,
+            self.state,
+            etex_node_sizes,
+            scratch,
+        )
     }
     pub(crate) const fn state_ref(&self) -> &DenseState<G> {
         self.state
@@ -430,10 +540,11 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         &self,
         root: DurableListId<G>,
         etex_node_sizes: bool,
+        scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<(usize, usize), NodeArenaError> {
-        let (variable, dynamic) = self
-            .nodes
-            .semantic_closure_tex_memory_words(root, etex_node_sizes)?;
+        let (variable, dynamic, _) =
+            self.nodes
+                .semantic_memory_usage(root, etex_node_sizes, &mut scratch.nodes, |_| {})?;
         Ok((variable.saturating_mul(2), dynamic))
     }
 

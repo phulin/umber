@@ -448,6 +448,32 @@ pub(crate) struct DenseState<G> {
 }
 
 impl<G> DenseState<G> {
+    pub(crate) fn visit_dynamic_memory_roots(&self, mut visit: impl FnMut(DynamicMemoryRoot<G>)) {
+        for meaning in self.meanings.values() {
+            if let MeaningWord::Macro { definition, .. } = meaning {
+                visit(DynamicMemoryRoot::Definition(definition));
+            }
+        }
+        for index in u16::MIN..=u16::MAX {
+            if let Some(tokens) = self.token_registers.get(index).expect("u16 register").value {
+                visit(DynamicMemoryRoot::TokenList(tokens));
+            }
+            if let Some(nodes) = self.box_registers.get(index).expect("u16 register").value {
+                visit(DynamicMemoryRoot::Nodes(nodes));
+            }
+        }
+        for index in 0..PARAMETER_COUNT as u16 {
+            if let Some(tokens) = self
+                .token_parameters
+                .get(u32::from(index))
+                .expect("parameter")
+                .value
+            {
+                visit(DynamicMemoryRoot::TokenList(tokens));
+            }
+        }
+    }
+
     pub(crate) fn capture_format_font_runtime(
         &self,
         font: FontId,
@@ -1888,6 +1914,13 @@ impl<G> DenseState<G> {
             CodeTableKind::Delcode => &mut self.delcodes,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum DynamicMemoryRoot<G> {
+    Definition(crate::DefinitionId<G>),
+    TokenList(crate::TokenListId<G>),
+    Nodes(crate::node_arena::DurableListId<G>),
 }
 
 impl<T: Copy> BankCell<T> {

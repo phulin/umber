@@ -541,6 +541,7 @@ pub struct CommandContext<'a, G> {
     prepared_mag: &'a mut Option<i32>,
     error_context_widths: crate::print::ErrorContextWidths,
     engine_usage: &'a mut EngineUsageRuntime,
+    dynamic_memory_scratch: &'a mut crate::stores::DynamicMemoryScratch<G>,
 }
 
 pub(super) struct CommandContextParts<'a, G> {
@@ -560,6 +561,7 @@ pub(super) struct CommandContextParts<'a, G> {
     pub prepared_mag: &'a mut Option<i32>,
     pub error_context_widths: crate::print::ErrorContextWidths,
     pub engine_usage: &'a mut EngineUsageRuntime,
+    pub dynamic_memory_scratch: &'a mut crate::stores::DynamicMemoryScratch<G>,
 }
 
 impl<'a, G> CommandContext<'a, G> {
@@ -581,6 +583,7 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
+            dynamic_memory_scratch,
         } = parts;
         Self {
             interner,
@@ -599,6 +602,7 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
+            dynamic_memory_scratch,
         }
     }
 
@@ -1228,16 +1232,18 @@ impl<'a, G> CommandContext<'a, G> {
         let root = self.box_register(index).ok().flatten()?;
         let words = self
             .admitted
-            .copied_node_closure_tex_memory_words(root, self.engine_usage.uses_etex_node_sizes())
+            .copied_node_closure_tex_memory_words(
+                root,
+                self.engine_usage.uses_etex_node_sizes(),
+                self.dynamic_memory_scratch,
+            )
             .expect("durable box closure belongs to the admitted generation");
+        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
         let current_dynamic = self
             .admitted
-            .current_dynamic_memory_words(self.engine_usage.uses_etex_node_sizes())
+            .current_dynamic_memory_words(etex_node_sizes, self.dynamic_memory_scratch)
             .expect("admitted state owns valid durable node roots")
-            .saturating_add(
-                self.page
-                    .dynamic_memory_words(self.engine_usage.uses_etex_node_sizes()),
-            );
+            .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
         let copied = self
             .admitted
             .copy_nodes_into_page(&[root], self.page_nodes)

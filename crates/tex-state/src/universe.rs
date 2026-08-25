@@ -421,6 +421,7 @@ pub struct Universe<G> {
     prepared_mag: Option<i32>,
     error_context_widths: ErrorContextWidths,
     pub(crate) engine_usage: crate::command_context::EngineUsageRuntime,
+    dynamic_memory_scratch: crate::stores::DynamicMemoryScratch<G>,
     pub(crate) provenance_demand: crate::ProvenanceDemand,
     pub(crate) provenance_budgets: crate::ProvenanceBudgets,
     pub(crate) primitive_names: Vec<String>,
@@ -590,6 +591,7 @@ impl<G> Universe<G> {
             prepared_mag: None,
             error_context_widths: ErrorContextWidths::default(),
             engine_usage: crate::command_context::EngineUsageRuntime::default(),
+            dynamic_memory_scratch: crate::stores::DynamicMemoryScratch::default(),
             provenance_demand: crate::ProvenanceDemand::default(),
             provenance_budgets: crate::ProvenanceBudgets::default(),
             primitive_names: Vec::new(),
@@ -1446,9 +1448,13 @@ impl<G> Universe<G> {
         let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
         let (core, page_nodes) = (&self.core, &mut self.page_nodes);
         let admitted = core.as_ref().ok_or(NodeArenaError::InvalidList)?.admit();
-        let words = admitted.copied_node_closure_tex_memory_words(root, etex_node_sizes)?;
+        let words = admitted.copied_node_closure_tex_memory_words(
+            root,
+            etex_node_sizes,
+            &mut self.dynamic_memory_scratch,
+        )?;
         let current_dynamic = admitted
-            .current_dynamic_memory_words(etex_node_sizes)?
+            .current_dynamic_memory_words(etex_node_sizes, &mut self.dynamic_memory_scratch)?
             .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
         let copied = admitted.copy_nodes_into_page(&[root], page_nodes)?[0];
         self.engine_usage
@@ -2013,6 +2019,7 @@ impl<G> Universe<G> {
             prepared_mag: &mut self.prepared_mag,
             error_context_widths: self.error_context_widths,
             engine_usage: &mut self.engine_usage,
+            dynamic_memory_scratch: &mut self.dynamic_memory_scratch,
         }))
     }
 

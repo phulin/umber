@@ -1,10 +1,16 @@
-use super::StateCore;
+use super::{DynamicMemoryScratch, StateCore, materialized_dynamic_memory_words};
 use crate::env::AssignmentScope;
 use crate::generation::with_generation;
 use crate::glue::GlueSpec;
 use crate::interner::{Interner, InternerBudget};
 use crate::meaning::{MeaningFlags, MeaningWord, ResolvedMeaning};
-use crate::token::{Token, TokenWord};
+use crate::node::Node;
+use crate::token::{Catcode, Token, TokenWord};
+
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static PROFILING_ALLOCATOR: crate::measurement::HotCoreAllocator =
+    crate::measurement::HotCoreAllocator;
 
 #[test]
 fn admitted_view_resolves_every_generation_typed_value_directly() {
@@ -94,4 +100,133 @@ fn retirement_releases_one_complete_generation_bundle() {
         assert_eq!(retired.generation.provenance_records, 0);
         assert_eq!(retired.journal_entries, 1);
     });
+}
+
+#[test]
+fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_copies() {
+    with_generation(|generation| {
+        let mut names = Interner::new(InternerBudget::new(8, 8, 128).expect("budget"));
+        let first = names.intern("first").expect("first symbol").symbol();
+        let second = names.intern("second").expect("second symbol").symbol();
+        let words = [
+            TokenWord::pack(Token::frozen_relax()),
+            TokenWord::pack(Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            }),
+        ];
+        let mut core = StateCore::new(generation).expect("state core");
+        let nodes = {
+            let mut admitted = core.admit_mut().expect("unique generation");
+            admitted.state().admit_symbol(first).expect("first symbol");
+            admitted
+                .state()
+                .admit_symbol(second)
+                .expect("second symbol");
+            let definition = admitted
+                .allocate_definition(&words[..1], &words[1..])
+                .expect("definition");
+            let tokens = admitted.allocate_token_list(&words).expect("token list");
+            let nodes = admitted
+                .nodes_mut()
+                .publish(vec![Node::Penalty(7)])
+                .expect("node list");
+            for symbol in [first, second] {
+                admitted
+                    .state()
+                    .assign_meaning(
+                        symbol,
+                        MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                        AssignmentScope::Global,
+                    )
+                    .expect("meaning assignment");
+            }
+            for register in [1, 2] {
+                admitted
+                    .state()
+                    .assign_token_register(register, Some(tokens), AssignmentScope::Global)
+                    .expect("token assignment");
+            }
+            for register in [3, 4] {
+                admitted
+                    .state()
+                    .assign_box_register(register, Some(nodes), AssignmentScope::Global)
+                    .expect("box assignment");
+            }
+            nodes
+        };
+
+        let admitted = core.admit();
+        let expected = materialized_dynamic_memory_words(
+            &admitted.generation,
+            admitted.nodes,
+            admitted.state,
+            true,
+        )
+        .expect("materialized count");
+        let expected_copy = admitted
+            .nodes
+            .semantic_closure_tex_memory_words(nodes, true)
+            .map(|(variable, dynamic)| (variable.saturating_mul(2), dynamic))
+            .expect("materialized copied closure count");
+        let mut scratch = DynamicMemoryScratch::default();
+        for _ in 0..3 {
+            assert_eq!(
+                admitted
+                    .copied_node_closure_tex_memory_words(nodes, true, &mut scratch)
+                    .expect("borrowed copied closure count"),
+                expected_copy,
+            );
+            assert_eq!(
+                admitted
+                    .current_dynamic_memory_words(true, &mut scratch)
+                    .expect("borrowed count"),
+                expected,
+            );
+        }
+        assert_eq!(scratch.definition_marks.len(), 1);
+        assert_eq!(scratch.token_marks.len(), 1);
+
+        #[cfg(feature = "profiling")]
+        {
+            let owner = crate::measurement::HotCoreAllocationOwner::SemanticApply;
+            let before = crate::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let _scope = crate::measurement::hot_core_allocation_scope(owner);
+                for _ in 0..128 {
+                    assert_eq!(
+                        admitted
+                            .copied_node_closure_tex_memory_words(nodes, true, &mut scratch)
+                            .expect("warmed borrowed copied closure count"),
+                        expected_copy,
+                    );
+                    assert_eq!(
+                        admitted
+                            .current_dynamic_memory_words(true, &mut scratch)
+                            .expect("warmed borrowed count"),
+                        expected,
+                    );
+                }
+            }
+            let after = crate::measurement::hot_core_thread_allocation_measurement(owner);
+            assert_eq!(after.calls - before.calls, 0);
+            assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        }
+    });
+}
+
+#[test]
+fn reusable_marks_scale_with_reachable_high_water_not_sparse_raw_ids() {
+    let mut marks = crate::node_arena::StampedIndexMap::default();
+    marks.begin();
+    assert!(marks.mark(7));
+    assert!(marks.mark(1_000_000_007));
+    assert!(!marks.mark(7));
+    assert_eq!(marks.len(), 2);
+    assert_eq!(marks.capacity(), 16);
+
+    marks.begin();
+    assert!(marks.mark(usize::MAX - 1));
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks.capacity(), 16);
 }

@@ -229,6 +229,20 @@ impl<G> DefinitionArena<G> {
         self.rows.len()
     }
 
+    #[must_use]
+    pub(crate) fn tex_memory_words(&self, id: DefinitionId<G>) -> usize {
+        let definition = self.get(id);
+        definition
+            .parameter_text()
+            .len()
+            .saturating_add(definition.replacement_text().len())
+            .saturating_add(2)
+            .saturating_add(usize::from(
+                !definition.parameter_text().is_empty()
+                    || !definition.replacement_text().is_empty(),
+            ))
+    }
+
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {

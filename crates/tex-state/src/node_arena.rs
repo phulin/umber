@@ -157,6 +157,140 @@ pub enum NodeArenaError {
     CyclicList,
 }
 
+#[derive(Default)]
+pub(crate) struct StampedIndexMap {
+    keys: Vec<usize>,
+    stamps: Vec<u64>,
+    states: Vec<u8>,
+    stamp: u64,
+    len: usize,
+}
+
+impl StampedIndexMap {
+    pub(crate) fn begin(&mut self) {
+        self.stamp = self
+            .stamp
+            .checked_add(1)
+            .expect("memory traversal stamp exhausted");
+        self.len = 0;
+    }
+
+    pub(crate) fn mark(&mut self, key: usize) -> bool {
+        if self.state(key) != 0 {
+            return false;
+        }
+        self.set_state(key, 1);
+        true
+    }
+
+    fn state(&self, key: usize) -> u8 {
+        let Some(mut slot) = self.initial_slot(key) else {
+            return 0;
+        };
+        loop {
+            if self.stamps[slot] != self.stamp {
+                return 0;
+            }
+            if self.keys[slot] == key {
+                return self.states[slot];
+            }
+            slot = (slot + 1) & (self.keys.len() - 1);
+        }
+    }
+
+    fn set_state(&mut self, key: usize, state: u8) {
+        debug_assert_ne!(state, 0);
+        if self.keys.is_empty() || self.len.saturating_add(1) * 2 > self.keys.len() {
+            self.grow();
+        }
+        let mut slot = self.initial_slot(key).expect("grown mark table");
+        loop {
+            if self.stamps[slot] != self.stamp {
+                self.keys[slot] = key;
+                self.states[slot] = state;
+                self.stamps[slot] = self.stamp;
+                self.len += 1;
+                return;
+            }
+            if self.keys[slot] == key {
+                self.states[slot] = state;
+                return;
+            }
+            slot = (slot + 1) & (self.keys.len() - 1);
+        }
+    }
+
+    fn grow(&mut self) {
+        let old_keys = core::mem::take(&mut self.keys);
+        let old_stamps = core::mem::take(&mut self.stamps);
+        let old_states = core::mem::take(&mut self.states);
+        let old_stamp = self.stamp;
+        let old_len = self.len;
+        let capacity = old_keys.len().max(8).saturating_mul(2);
+        self.keys = vec![0; capacity];
+        self.stamps = vec![0; capacity];
+        self.states = vec![0; capacity];
+        self.len = 0;
+        for slot in 0..old_keys.len() {
+            if old_stamps[slot] == old_stamp {
+                self.set_state(old_keys[slot], old_states[slot]);
+            }
+        }
+        debug_assert_eq!(self.len, old_len);
+    }
+
+    fn initial_slot(&self, key: usize) -> Option<usize> {
+        if self.keys.is_empty() {
+            return None;
+        }
+        let mut hash = key;
+        hash ^= hash >> 16;
+        hash = hash.wrapping_mul(0x7feb_352d);
+        hash ^= hash >> 15;
+        Some(hash & (self.keys.len() - 1))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn len(&self) -> usize {
+        self.len
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn capacity(&self) -> usize {
+        self.keys.len()
+    }
+}
+
+pub(crate) struct NodeMemoryScratch<L> {
+    marks: StampedIndexMap,
+    semantic_order: Vec<NodeListId<L>>,
+    traversal_order: Vec<NodeListId<L>>,
+    diagnostics: Vec<(NodeListId<L>, u32)>,
+}
+
+impl<L> Default for NodeMemoryScratch<L> {
+    fn default() -> Self {
+        Self {
+            marks: StampedIndexMap::default(),
+            semantic_order: Vec::new(),
+            traversal_order: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
+impl<L> NodeMemoryScratch<L> {
+    fn next_marks(&mut self) {
+        self.marks.begin();
+    }
+
+    fn finish(&mut self) {
+        self.semantic_order.clear();
+        self.traversal_order.clear();
+        self.diagnostics.clear();
+    }
+}
+
 /// One semantic-lifetime owner for immutable node lists.
 ///
 /// Each row owns its node payload directly. Nested lists are copy-only typed
@@ -188,7 +322,115 @@ impl<L, Glue, Tokens> Default for NodeArena<L, Glue, Tokens> {
 }
 
 impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
+    pub(crate) fn semantic_memory_usage(
+        &self,
+        root: NodeListId<L>,
+        etex_node_sizes: bool,
+        scratch: &mut NodeMemoryScratch<L>,
+        mut visit_tokens: impl FnMut(&Tokens),
+    ) -> Result<(usize, usize, usize), NodeArenaError> {
+        scratch.semantic_order.clear();
+        scratch.diagnostics.clear();
+        scratch.next_marks();
+        let result = (|| {
+            self.postorder_marked(root, &mut scratch.marks, &mut scratch.semantic_order, true)?;
+            let mut variable = 0_usize;
+            let mut dynamic = 0_usize;
+            for offset in 0..scratch.semantic_order.len() {
+                let list = scratch.semantic_order[offset];
+                let row = self.rows[list.index().expect("postorder excludes empty lists")]
+                    .as_ref()
+                    .expect("postorder contains only live rows");
+                for node in row.nodes.iter() {
+                    let (node_variable, node_dynamic) = node.tex_memory_words(etex_node_sizes);
+                    variable = variable.saturating_add(node_variable);
+                    dynamic = dynamic.saturating_add(node_dynamic);
+                    node.visit_payloads(|_| {}, |tokens| visit_tokens(tokens));
+                    node.visit_diagnostic_node_lists(|child, overlap| {
+                        scratch.diagnostics.push((*child, overlap));
+                    });
+                }
+            }
+            let mut diagnostic_extent = 0_usize;
+            for offset in 0..scratch.diagnostics.len() {
+                let (child, overlap) = scratch.diagnostics[offset];
+                scratch.traversal_order.clear();
+                scratch.next_marks();
+                self.postorder_marked(
+                    child,
+                    &mut scratch.marks,
+                    &mut scratch.traversal_order,
+                    false,
+                )?;
+                let child_dynamic = scratch
+                    .traversal_order
+                    .iter()
+                    .copied()
+                    .flat_map(|list| {
+                        self.rows[list.index().expect("postorder excludes empty lists")]
+                            .as_ref()
+                            .expect("postorder contains only live rows")
+                            .nodes
+                            .iter()
+                    })
+                    .fold(0_usize, |words, node| {
+                        words.saturating_add(node.tex_memory_words(etex_node_sizes).1)
+                    });
+                diagnostic_extent =
+                    diagnostic_extent.max(child_dynamic.saturating_sub(overlap as usize));
+            }
+            Ok((variable, dynamic, diagnostic_extent))
+        })();
+        scratch.finish();
+        result
+    }
+
+    fn postorder_marked(
+        &self,
+        id: NodeListId<L>,
+        marks: &mut StampedIndexMap,
+        order: &mut Vec<NodeListId<L>>,
+        semantic: bool,
+    ) -> Result<(), NodeArenaError> {
+        let Some(index) = id.index() else {
+            return Ok(());
+        };
+        if id.owner != self.owner {
+            return Err(NodeArenaError::InvalidList);
+        }
+        let Some(row) = self.rows.get(index).and_then(Option::as_ref) else {
+            return Err(NodeArenaError::InvalidList);
+        };
+        if row.generation != id.generation {
+            return Err(NodeArenaError::InvalidList);
+        }
+        match marks.state(index) {
+            2 => return Ok(()),
+            1 => return Err(NodeArenaError::CyclicList),
+            _ => {}
+        }
+        marks.set_state(index, 1);
+        for node in row.nodes.iter() {
+            let mut result = Ok(());
+            let mut visit = |child: &NodeListId<L>| {
+                if result.is_ok() {
+                    result = self.postorder_marked(*child, marks, order, semantic);
+                }
+            };
+            if semantic {
+                node.visit_semantic_node_lists(&mut visit);
+            } else {
+                node.visit_node_lists(&mut visit);
+            }
+            result?;
+        }
+        marks.set_state(index, 2);
+        order.push(id);
+        Ok(())
+    }
+
     /// Returns TeX main-memory words in the exact closure of `root`.
+    #[cfg(test)]
     pub(crate) fn closure_tex_memory_words(
         &self,
         root: NodeListId<L>,
@@ -215,6 +457,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok((variable, dynamic))
     }
 
+    #[cfg(test)]
     pub(crate) fn semantic_closure_tex_memory_words(
         &self,
         root: NodeListId<L>,
@@ -241,6 +484,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             }))
     }
 
+    #[cfg(test)]
     pub(crate) fn semantic_closure_payloads(
         &self,
         root: NodeListId<L>,
@@ -270,6 +514,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok((glue, tokens))
     }
 
+    #[cfg(test)]
     pub(crate) fn diagnostic_dynamic_extent(
         &self,
         root: NodeListId<L>,
@@ -608,6 +853,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok(())
     }
 
+    #[cfg(test)]
     fn semantic_postorder(
         &self,
         id: NodeListId<L>,
