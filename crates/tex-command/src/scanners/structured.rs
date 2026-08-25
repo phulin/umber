@@ -1289,6 +1289,9 @@ pub struct ScannedRuleSpec {
 /// loop body is `prefixed_command` -- executor state, not scanner state. The
 /// lookahead is therefore delivered one command at a time.
 #[derive(Debug, Eq, PartialEq)]
+// Assignment delivery is an allocation-free handoff consumed immediately;
+// boxing it would put a heap allocation in ordinary accent lookahead.
+#[allow(clippy::large_enum_variant)]
 pub enum ScannedAccentBase<G> {
     /// §1124's `letter`, `other_char`, `char_given`, or `char_num` base.
     Character {

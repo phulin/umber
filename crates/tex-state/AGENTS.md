@@ -131,6 +131,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   allocation attribution, structural dispatch census, and coarse retained
   generation lifetime counters. Ordinary builds compile neither the module nor
   any associated fields, branches, or atomics.
+- `src/memory_accounting.rs`: Generation-local constant-time TeX main-memory
+  totals updated by immutable payload publication/final release and node-arena
+  publication/release; it contains no root registry or liveness index.
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free
   transition/effect/result DTOs, explicit validation staging, and
   generation-local token/glue/macro publication.

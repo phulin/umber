@@ -41,6 +41,15 @@ registry, liveness search, tracing pass, compaction, relocation, rehome, or
 another historical generation. Glue and provenance retain their cheaper
 direct-index representation; scratch remains arena-backed and unshared.
 
+TeX main-memory usage is maintained by one generation-local scalar aggregate.
+Publishing a definition or stored token list charges its canonical words once;
+the last existing semantic owner's ordinary `Rc` drop releases that charge.
+Node arenas charge each logical row at publication and release it on suffix,
+region, completed-page, or whole-generation retirement. The aggregate retains
+both TeX82 and e-TeX node-size projections, so profile selection and ordinary
+usage reads are constant-time and allocation-free. It stores no value identity,
+root, liveness bit, or reference count and cannot resolve or retain a payload.
+
 The current implementation's per-operation and per-scanner scope tokens,
 loans, owner rows, watermarks, and handoff machinery are transitional. They
 must be deleted during migration to the end state below. They are not an
@@ -258,7 +267,9 @@ typed ids from different admitted generations from mixing. Module privacy
 prevents callers from forging ids, accessing the `Rc`, constructing views, or
 changing serials. The owning view and iterator may cross an arena borrow
 because they carry the same exact owner; dropping them decrements only the
-non-atomic count and never calls back into a store.
+non-atomic count and never walks or calls back into a store. The final owner
+also subtracts its precomputed canonical word charge from the generation's
+scalar memory total.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final
@@ -273,6 +284,12 @@ Scratch token lists and macro arguments do not use shared ownership: their
 existing arena slots and scalar marks remain the sole scratch lifetime
 authority. Glue remains inline/direct-index because shared heap ownership would
 cost more than the value.
+
+The allocation event records a definition or token list's canonical word cost
+beside its private handle. Cloning an alias copies that scalar and clones the
+same generation accounting capability; moving transfers both. `Drop` tests the
+real shared payload's last-owner state and only that transition subtracts the
+cost. No table, scan, hash, tracing pass, or second reference count participates.
 
 The serial field is not resolution or lifetime authority. It exists only to
 preserve deterministic coordinates while detaching a format. Cold capture
@@ -678,6 +695,10 @@ perform zero heap allocation. An ordinary read requires:
 - no content hash or content comparison; and
 - no per-value heap-owner construction (an allocation-free `Rc::clone` for a
   true semantic alias is allowed).
+
+TeX main-memory usage reads and capacity observations additionally perform one
+scalar projection. They never visit eqtb banks, register banks, definitions,
+token payloads, page roots, node closures, or a deduplication structure.
 
 Generation validation occurs once when the exclusive current lease, a
 continuation, checkpoint, or detached value is admitted. Within that admitted

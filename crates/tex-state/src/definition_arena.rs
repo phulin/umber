@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use crate::generation::ArenaToken;
 use crate::macro_definition::MacroParameterPattern;
+use crate::memory_accounting::MemoryAccounting;
 use crate::token::TokenWord;
 
 #[cfg(test)]
@@ -23,6 +24,7 @@ pub struct DefinitionId<G> {
     words: Rc<[TokenWord]>,
     parameter_len: u32,
     parameters: MacroParameterPattern,
+    accounting: MemoryAccounting,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -33,7 +35,17 @@ impl<G> Clone for DefinitionId<G> {
             words: Rc::clone(&self.words),
             parameter_len: self.parameter_len,
             parameters: self.parameters,
+            accounting: self.accounting.clone(),
             _brand: PhantomData,
+        }
+    }
+}
+
+impl<G> Drop for DefinitionId<G> {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.words) == 1 {
+            self.accounting
+                .release_shared_dynamic(definition_memory_words(self.words.len()));
         }
     }
 }
@@ -95,13 +107,18 @@ pub enum DefinitionAllocationError {
 /// this value retains only the monotonic serial used by cold format capture.
 pub(crate) struct DefinitionArena<G> {
     next_serial: u32,
+    accounting: MemoryAccounting,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> DefinitionArena<G> {
-    pub(super) fn new(_token: ArenaToken<G, DefinitionNamespace>) -> Self {
+    pub(super) fn new(
+        _token: ArenaToken<G, DefinitionNamespace>,
+        accounting: MemoryAccounting,
+    ) -> Self {
         Self {
             next_serial: 0,
+            accounting,
             _brand: PhantomData,
         }
     }
@@ -150,12 +167,15 @@ impl<G> DefinitionArena<G> {
         u32::try_from(final_word_len).map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
         let parameters = MacroParameterPattern::from_word_iter(parameter_text.clone());
         let words = parameter_text.chain(replacement_text).collect::<Rc<[_]>>();
+        let memory_words = definition_memory_words(final_word_len);
+        self.accounting.allocate_shared_dynamic(memory_words);
         self.next_serial = serial.get();
         Ok(DefinitionId {
             serial,
             words,
             parameter_len: parameter_len as u32,
             parameters,
+            accounting: self.accounting.clone(),
             _brand: PhantomData,
         })
     }
@@ -188,25 +208,18 @@ impl<G> DefinitionArena<G> {
         self.next_serial as usize
     }
 
-    #[must_use]
-    pub(crate) fn tex_memory_words(&self, id: DefinitionId<G>) -> usize {
-        let definition = self.get(id);
-        definition
-            .parameter_text()
-            .len()
-            .saturating_add(definition.replacement_text().len())
-            .saturating_add(2)
-            .saturating_add(usize::from(
-                !definition.parameter_text().is_empty()
-                    || !definition.replacement_text().is_empty(),
-            ))
-    }
-
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.next_serial == 0
     }
+}
+
+fn definition_memory_words(word_len: usize) -> usize {
+    word_len
+        .checked_add(2)
+        .and_then(|words| words.checked_add(usize::from(word_len != 0)))
+        .expect("validated definition length has a canonical word count")
 }
 
 /// Owning view of one complete immutable definition.

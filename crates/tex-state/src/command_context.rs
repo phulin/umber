@@ -1246,7 +1246,7 @@ impl<'a, G> CommandContext<'a, G> {
         let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
         let current_dynamic = self
             .admitted
-            .current_dynamic_memory_words(etex_node_sizes, self.dynamic_memory_scratch)
+            .current_dynamic_memory_words(etex_node_sizes)
             .expect("admitted state owns valid durable node roots")
             .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
         let copied = self

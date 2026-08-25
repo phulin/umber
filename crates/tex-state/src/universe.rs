@@ -586,7 +586,7 @@ impl<G> Universe<G> {
             .state()
             .install_font_runtime(crate::font::NULL_FONT, prepared)
             .expect("null-font runtime row is first");
-        let page_nodes = PageNodeArena::new();
+        let page_nodes = PageNodeArena::with_memory_accounting(core.memory_accounting());
         let retained_page_bound = page_nodes.cursor();
         Self {
             interner: Some(interner),
@@ -1472,7 +1472,7 @@ impl<G> Universe<G> {
             &mut self.dynamic_memory_scratch,
         )?;
         let current_dynamic = admitted
-            .current_dynamic_memory_words(etex_node_sizes, &mut self.dynamic_memory_scratch)?
+            .current_dynamic_memory_words(etex_node_sizes)?
             .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
         let copied =
             admitted.copy_node_into_page(root, page_nodes, &mut self.dynamic_memory_scratch)?;

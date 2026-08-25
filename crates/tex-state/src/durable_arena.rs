@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use crate::generation::ArenaToken;
 use crate::glue::GlueSpec;
+use crate::memory_accounting::MemoryAccounting;
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
 
@@ -84,6 +85,7 @@ dense_id!(ProvenanceId);
 pub struct TokenListId<G> {
     serial: NonZeroU32,
     words: Rc<[TokenWord]>,
+    accounting: MemoryAccounting,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -92,7 +94,17 @@ impl<G> Clone for TokenListId<G> {
         Self {
             serial: self.serial,
             words: Rc::clone(&self.words),
+            accounting: self.accounting.clone(),
             _brand: PhantomData,
+        }
+    }
+}
+
+impl<G> Drop for TokenListId<G> {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.words) == 1 {
+            self.accounting
+                .release_shared_dynamic(token_list_memory_words(self.words.len()));
         }
     }
 }
@@ -118,10 +130,17 @@ impl<G> core::fmt::Debug for TokenListId<G> {
 }
 
 impl<G> TokenListId<G> {
-    fn from_words(serial: NonZeroU32, words: Rc<[TokenWord]>) -> Self {
+    fn from_words(
+        serial: NonZeroU32,
+        words: Rc<[TokenWord]>,
+        accounting: MemoryAccounting,
+    ) -> Self {
+        let memory_words = token_list_memory_words(words.len());
+        accounting.allocate_shared_dynamic(memory_words);
         Self {
             serial,
             words,
+            accounting,
             _brand: PhantomData,
         }
     }
@@ -144,9 +163,19 @@ impl<G> TokenListId<G> {
             .checked_add(1)
             .and_then(NonZeroU32::new)
             .map(|serial| {
-                Self::from_words(serial, Rc::from(Vec::<TokenWord>::new().into_boxed_slice()))
+                Self::from_words(
+                    serial,
+                    Rc::from(Vec::<TokenWord>::new().into_boxed_slice()),
+                    MemoryAccounting::default(),
+                )
             })
     }
+}
+
+fn token_list_memory_words(word_len: usize) -> usize {
+    word_len
+        .checked_add(1)
+        .expect("validated token-list length has a canonical word count")
 }
 
 impl<G> ProvenanceId<G> {
@@ -388,11 +417,15 @@ pub(crate) struct TokenListArena<G> {
     free_builder_slots: Vec<u32>,
     free_chunk_head: u32,
     next_builder_serial: u64,
+    accounting: MemoryAccounting,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> TokenListArena<G> {
-    pub(super) fn new(_token: ArenaToken<G, TokenListNamespace>) -> Self {
+    pub(super) fn new(
+        _token: ArenaToken<G, TokenListNamespace>,
+        accounting: MemoryAccounting,
+    ) -> Self {
         Self {
             next_serial: 0,
             chunks: Vec::new(),
@@ -400,6 +433,7 @@ impl<G> TokenListArena<G> {
             free_builder_slots: Vec::new(),
             free_chunk_head: NO_CHUNK,
             next_builder_serial: 1,
+            accounting,
             _brand: PhantomData,
         }
     }
@@ -567,7 +601,11 @@ impl<G> TokenListArena<G> {
         .collect::<Rc<[_]>>();
         self.release_builder_slot(builder, true)?;
         self.next_serial = serial.get();
-        Ok(TokenListId::from_words(serial, words))
+        Ok(TokenListId::from_words(
+            serial,
+            words,
+            self.accounting.clone(),
+        ))
     }
 
     pub(crate) fn discard_builder(

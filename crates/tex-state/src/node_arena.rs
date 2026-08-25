@@ -11,6 +11,7 @@ use smallvec::SmallVec;
 
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::glue::GlueSpec;
+use crate::memory_accounting::MemoryAccounting;
 use crate::node::{Node, NodeTokenList};
 
 #[cfg(test)]
@@ -192,6 +193,7 @@ impl StampedIndexMap {
         self.len = 0;
     }
 
+    #[cfg(test)]
     pub(crate) fn mark(&mut self, key: usize) -> bool {
         if self.state(key) != 0 {
             return false;
@@ -443,11 +445,23 @@ impl<L> NodeMemoryScratch<L> {
 pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     owner: u64,
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
+    accounting: MemoryAccounting,
+}
+
+impl<L, Glue, Tokens> Drop for NodeArena<L, Glue, Tokens> {
+    fn drop(&mut self) {
+        for row in self.rows.iter().flatten() {
+            self.accounting
+                .release_nodes(row.tex82_words, row.etex_words);
+        }
+    }
 }
 
 struct NodeArenaRow<L, Glue, Tokens> {
     generation: u64,
     nodes: Box<[Node<NodeListId<L>, Glue, Tokens>]>,
+    tex82_words: (usize, usize),
+    etex_words: (usize, usize),
 }
 
 impl<L, Glue, Tokens> core::fmt::Debug for NodeArena<L, Glue, Tokens> {
@@ -573,34 +587,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok(())
     }
 
-    /// Returns TeX main-memory words in the exact closure of `root`.
-    #[cfg(test)]
-    pub(crate) fn closure_tex_memory_words(
-        &self,
-        root: NodeListId<L>,
-        etex_node_sizes: bool,
-    ) -> Result<(usize, usize), NodeArenaError> {
-        let mut state = vec![0_u8; self.rows.len()];
-        let mut closure = Vec::new();
-        self.postorder(root, &mut state, &mut closure)?;
-        let mut variable = 0_usize;
-        let mut dynamic = 0_usize;
-        for list in closure {
-            let index = list.index().expect("postorder excludes empty lists");
-            for node in self.rows[index]
-                .as_ref()
-                .expect("postorder contains only live rows")
-                .nodes
-                .iter()
-            {
-                let (node_variable, node_dynamic) = node.tex_memory_words(etex_node_sizes);
-                variable = variable.saturating_add(node_variable);
-                dynamic = dynamic.saturating_add(node_dynamic);
-            }
-        }
-        Ok((variable, dynamic))
-    }
-
     #[cfg(test)]
     pub(crate) fn semantic_closure_tex_memory_words(
         &self,
@@ -628,77 +614,19 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             }))
     }
 
-    #[cfg(test)]
-    pub(crate) fn semantic_closure_payloads(
-        &self,
-        root: NodeListId<L>,
-    ) -> Result<(Vec<Glue>, Vec<Tokens>), NodeArenaError>
-    where
-        Glue: Clone,
-        Tokens: Clone,
-    {
-        let mut state = vec![0_u8; self.rows.len()];
-        let mut closure = Vec::new();
-        self.semantic_postorder(root, &mut state, &mut closure)?;
-        let mut glue = Vec::new();
-        let mut tokens = Vec::new();
-        for list in closure {
-            for node in self.rows[list.index().expect("postorder excludes empty lists")]
-                .as_ref()
-                .expect("postorder contains only live rows")
-                .nodes
-                .iter()
-            {
-                node.visit_payloads(
-                    |value| glue.push(value.clone()),
-                    |value| tokens.push(value.clone()),
-                );
-            }
-        }
-        Ok((glue, tokens))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn diagnostic_dynamic_extent(
-        &self,
-        root: NodeListId<L>,
-        etex_node_sizes: bool,
-    ) -> Result<usize, NodeArenaError> {
-        let mut state = vec![0_u8; self.rows.len()];
-        let mut semantic = Vec::new();
-        self.semantic_postorder(root, &mut state, &mut semantic)?;
-        let mut diagnostic = Vec::new();
-        for list in semantic {
-            for node in self.rows[list.index().expect("postorder excludes empty lists")]
-                .as_ref()
-                .expect("postorder contains only live rows")
-                .nodes
-                .iter()
-            {
-                node.visit_diagnostic_node_lists(|child, overlap| {
-                    diagnostic.push((*child, overlap));
-                });
-            }
-        }
-        let mut extent = 0_usize;
-        for (child, overlap) in diagnostic {
-            extent = extent.max(
-                self.closure_tex_memory_words(child, etex_node_sizes)?
-                    .1
-                    .saturating_sub(overlap as usize),
-            );
-        }
-        Ok(extent)
-    }
-
     /// Creates an empty lifetime owner.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_memory_accounting(MemoryAccounting::default())
+    }
+
+    pub(crate) fn with_memory_accounting(accounting: MemoryAccounting) -> Self {
         let owner = NEXT_ARENA_OWNER.fetch_add(1, Ordering::Relaxed);
         assert_ne!(owner, 0, "node-arena owner identity exhausted");
         Self {
             owner,
             rows: Vec::new(),
+            accounting,
         }
     }
 
@@ -766,6 +694,10 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     /// Truncates a rejected suffix after callers restore every canonical root.
     pub fn truncate(&mut self, cursor: NodeArenaCursor<L>) -> Result<(), NodeArenaError> {
         self.validate_cursor(cursor)?;
+        for row in self.rows[cursor.rows as usize..].iter().flatten() {
+            self.accounting
+                .release_nodes(row.tex82_words, row.etex_words);
+        }
         self.rows.truncate(cursor.rows as usize);
         Ok(())
     }
@@ -796,9 +728,14 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             .map_err(|_| NodeArenaError::AllocationFailed)?;
         let generation = NEXT_LIST_GENERATION.fetch_add(1, Ordering::Relaxed);
         assert_ne!(generation, 0, "node-list generation exhausted");
+        let tex82_words = node_words(&nodes, false);
+        let etex_words = node_words(&nodes, true);
+        self.accounting.allocate_nodes(tex82_words, etex_words);
         self.rows.push(Some(NodeArenaRow {
             generation,
             nodes: nodes.into_boxed_slice(),
+            tex82_words,
+            etex_words,
         }));
         Ok(NodeListId::from_row(self.owner, next, generation))
     }
@@ -1040,9 +977,17 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
             scratch.relocation.insert(source_index, destination_id);
+            let tex82_words = node_words(&nodes, false);
+            let etex_words = node_words(&nodes, true);
             destination
-                .rows
-                .push(Some(NodeArenaRow { generation, nodes }));
+                .accounting
+                .allocate_nodes(tex82_words, etex_words);
+            destination.rows.push(Some(NodeArenaRow {
+                generation,
+                nodes,
+                tex82_words,
+                etex_words,
+            }));
         }
 
         let promoted_roots = roots
@@ -1186,7 +1131,10 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         self.postorder(root, &mut state, &mut closure)?;
         for id in closure.into_iter().rev() {
             let index = id.index().expect("closure excludes the empty list");
-            self.rows[index] = None;
+            if let Some(row) = self.rows[index].take() {
+                self.accounting
+                    .release_nodes(row.tex82_words, row.etex_words);
+            }
         }
         while self.rows.last().is_some_and(Option::is_none) {
             self.rows.pop();
@@ -1198,6 +1146,19 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     pub(crate) const fn len(&self) -> usize {
         self.rows.len()
     }
+}
+
+fn node_words<L, Glue, Tokens>(
+    nodes: &[Node<NodeListId<L>, Glue, Tokens>],
+    etex_node_sizes: bool,
+) -> (usize, usize) {
+    nodes.iter().fold((0, 0), |total, node| {
+        let words = node.tex_memory_words(etex_node_sizes);
+        (
+            total.0.saturating_add(words.0),
+            total.1.saturating_add(words.1),
+        )
+    })
 }
 
 /// Borrowed node-list view; dropping it has no ownership effect.

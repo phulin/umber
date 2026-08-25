@@ -421,6 +421,9 @@ pub(crate) struct ScannedToksBuffers {
 
 /// TeX82 §403's result after a mandatory left-brace scan.
 #[derive(Debug)]
+// Boxing the delivered command would add a heap allocation to the scanner's
+// ordinary left-brace path; the large arm is consumed immediately.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ScannedLeftBrace<G> {
     /// A real source or replay token supplied the brace.
     Consumed(crate::CurrentCommand<G>),

@@ -432,6 +432,14 @@ roots without retaining dead payload bytes. No compactor, forwarding scheme,
 tracing collector, ownership registry, relocation, rehome, or third generation
 is part of the correction.
 
+Exact TeX main-memory totals follow those same lifecycle facts. Definition and
+stored-token publication adds one precomputed canonical charge, their real last
+shared owner subtracts it, and node arenas add or subtract row charges at
+publication and release. The single generation-local aggregate stores no ids
+or roots. Ordinary box and page work reads it directly; it no longer scans
+meanings, the 65,536 token and box registers, payload identities, or node
+closures merely to discover the current total.
+
 ## Non-negotiable prohibitions
 
 - No compactor, in-place relocation, forwarding pointer, live-id rewrite, or

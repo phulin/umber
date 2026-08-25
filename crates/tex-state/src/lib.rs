@@ -83,6 +83,7 @@ pub mod meaning;
 #[cfg(feature = "profiling")]
 pub mod measurement;
 pub mod memo;
+mod memory_accounting;
 pub mod node;
 pub mod node_arena;
 pub mod node_sequence;

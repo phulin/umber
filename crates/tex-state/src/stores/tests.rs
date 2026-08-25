@@ -1,4 +1,4 @@
-use super::{DynamicMemoryScratch, StateCore, materialized_dynamic_memory_words};
+use super::{DynamicMemoryScratch, StateCore};
 use crate::env::AssignmentScope;
 use crate::generation::with_generation;
 use crate::glue::GlueSpec;
@@ -103,7 +103,65 @@ fn retirement_releases_one_complete_generation_bundle() {
 }
 
 #[test]
-fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_copies() {
+fn immutable_last_owner_and_node_suffix_release_update_exact_count() {
+    with_generation(|generation| {
+        let mut core = StateCore::new(generation).expect("state core");
+        let cursor = core.durable_node_cursor();
+        let (definition, tokens) = {
+            let mut admitted = core.admit_mut().expect("unique generation");
+            let definition = admitted
+                .allocate_definition(&[], &[TokenWord::pack(Token::frozen_relax())])
+                .expect("definition");
+            let tokens = admitted
+                .allocate_token_list(&[TokenWord::pack(Token::frozen_relax())])
+                .expect("token list");
+            admitted
+                .nodes_mut()
+                .publish(vec![Node::Char {
+                    font: crate::font::NULL_FONT,
+                    ch: 'x',
+                    origin: crate::token::OriginId::UNKNOWN,
+                }])
+                .expect("node list");
+            (definition, tokens)
+        };
+
+        assert_eq!(
+            core.admit()
+                .current_dynamic_memory_words(false)
+                .expect("constant-time count"),
+            14 + 4 + 2 + 1
+        );
+        let definition_alias = definition.clone();
+        let token_alias = tokens.clone();
+        drop(definition);
+        drop(tokens);
+        assert_eq!(
+            core.admit()
+                .current_dynamic_memory_words(false)
+                .expect("aliases retain payloads"),
+            14 + 4 + 2 + 1
+        );
+        drop(definition_alias);
+        drop(token_alias);
+        assert_eq!(
+            core.admit()
+                .current_dynamic_memory_words(false)
+                .expect("final drops release payloads"),
+            15
+        );
+        core.truncate_durable_nodes(cursor).expect("release suffix");
+        assert_eq!(
+            core.admit()
+                .current_dynamic_memory_words(false)
+                .expect("node release updates count"),
+            14
+        );
+    });
+}
+
+#[test]
+fn constant_time_memory_count_tracks_aliases_and_final_release() {
     with_generation(|generation| {
         let mut names = Interner::new(InternerBudget::new(8, 8, 128).expect("budget"));
         let first = names.intern("first").expect("first symbol").symbol();
@@ -157,13 +215,7 @@ fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_co
         };
 
         let admitted = core.admit();
-        let expected = materialized_dynamic_memory_words(
-            &admitted.generation,
-            admitted.nodes,
-            admitted.state,
-            true,
-        )
-        .expect("materialized count");
+        let expected = 14 + 5 + 3;
         let expected_copy = admitted
             .nodes
             .semantic_closure_tex_memory_words(nodes, true)
@@ -179,13 +231,11 @@ fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_co
             );
             assert_eq!(
                 admitted
-                    .current_dynamic_memory_words(true, &mut scratch)
-                    .expect("borrowed count"),
+                    .current_dynamic_memory_words(true)
+                    .expect("constant-time count"),
                 expected,
             );
         }
-        assert_eq!(scratch.definition_marks.len(), 1);
-        assert_eq!(scratch.token_marks.len(), 1);
 
         #[cfg(feature = "profiling")]
         {
@@ -193,7 +243,7 @@ fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_co
             let before = crate::measurement::hot_core_thread_allocation_measurement(owner);
             {
                 let _scope = crate::measurement::hot_core_allocation_scope(owner);
-                for _ in 0..128 {
+                for _ in 0..8_192 {
                     assert_eq!(
                         admitted
                             .copied_node_closure_tex_memory_words(nodes, true, &mut scratch)
@@ -202,8 +252,8 @@ fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_co
                     );
                     assert_eq!(
                         admitted
-                            .current_dynamic_memory_words(true, &mut scratch)
-                            .expect("warmed borrowed count"),
+                            .current_dynamic_memory_words(true)
+                            .expect("warmed constant-time count"),
                         expected,
                     );
                 }

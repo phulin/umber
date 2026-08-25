@@ -330,6 +330,8 @@ pub(crate) struct PageBuilderState {
     split_bot_mark: Option<NodeTokenList>,
     mark_classes: Vec<(u16, MarkClassState)>,
     mark_class_positions: Vec<Option<u16>>,
+    tex82_dynamic_words: usize,
+    etex_dynamic_words: usize,
 }
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,
@@ -394,6 +396,8 @@ impl Default for PageBuilderState {
             split_bot_mark: None,
             mark_classes: Vec::new(),
             mark_class_positions: Vec::new(),
+            tex82_dynamic_words: 0,
+            etex_dynamic_words: 0,
         }
     }
 }
@@ -412,13 +416,11 @@ impl PageBuilderState {
     }
 
     pub(crate) fn dynamic_memory_words(&self, etex_node_sizes: bool) -> usize {
-        self.contribution
-            .iter()
-            .chain(self.current_page.iter())
-            .chain(self.page_discards.iter())
-            .chain(self.split_discards.iter())
-            .map(|node| node.tex_memory_words(etex_node_sizes).1)
-            .sum()
+        if etex_node_sizes {
+            self.etex_dynamic_words
+        } else {
+            self.tex82_dynamic_words
+        }
     }
 
     pub(crate) fn font_roots_are_live(
@@ -556,6 +558,7 @@ impl PageBuilderState {
         self.current_page = current_page;
         self.page_discards = page_discards;
         self.split_discards = split_discards;
+        self.refresh_dynamic_memory_words();
         self.page_goal = state.dimensions[0];
         self.page_total = state.dimensions[1];
         self.page_stretch = state.dimensions[2];
@@ -874,6 +877,8 @@ impl PageBuilderState {
     /// controls are empty, while `page_so_far` remains observable until §991
     /// freezes the next page's specifications.
     pub(crate) fn start_page_after_output(&mut self) {
+        let released = dynamic_words(self.current_page.iter());
+        self.release_dynamic_word_totals(released);
         self.current_page.clear();
         self.contents = PageContents::Empty;
         self.last_glue = None;
@@ -936,6 +941,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_contribution(&mut self, node: Node) {
+        self.allocate_dynamic_node(&node);
         self.contribution.push_back(node);
     }
 
@@ -943,10 +949,13 @@ impl PageBuilderState {
         &mut self,
         range: std::ops::RangeInclusive<usize>,
     ) -> Vec<Node> {
-        self.contribution.drain(range).collect()
+        let removed = self.contribution.drain(range).collect::<Vec<_>>();
+        self.release_dynamic_nodes(&removed);
+        removed
     }
 
     pub(crate) fn prepend_contribution(&mut self, node: Node) {
+        self.allocate_dynamic_node(&node);
         self.contribution.push_front(node);
     }
 
@@ -963,13 +972,16 @@ impl PageBuilderState {
     }
 
     pub(crate) fn pop_contribution_front(&mut self) -> Option<Node> {
-        self.contribution.pop_front()
+        let node = self.contribution.pop_front()?;
+        self.release_dynamic_node(&node);
+        Some(node)
     }
 
     pub(crate) fn prepend_contributions(&mut self, nodes: Vec<Node>) {
         if nodes.is_empty() {
             return;
         }
+        self.allocate_dynamic_nodes(&nodes);
         let mut queue = VecDeque::with_capacity(nodes.len() + self.contribution.len());
         queue.extend(nodes);
         queue.extend(self.contribution.iter().cloned());
@@ -981,27 +993,37 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_page_discard(&mut self, node: Node) {
+        self.allocate_dynamic_node(&node);
         self.page_discards.push(node);
     }
 
     pub(crate) fn take_page_discards(&mut self) -> Vec<Node> {
-        std::mem::take(&mut self.page_discards)
+        let nodes = std::mem::take(&mut self.page_discards);
+        self.release_dynamic_nodes(&nodes);
+        nodes
     }
 
     pub(crate) fn clear_page_discards(&mut self) {
-        self.page_discards.clear();
+        let nodes = std::mem::take(&mut self.page_discards);
+        self.release_dynamic_nodes(&nodes);
     }
 
     pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
-        self.split_discards = nodes;
+        let added = dynamic_words(nodes.iter());
+        let old = std::mem::replace(&mut self.split_discards, nodes);
+        self.release_dynamic_nodes(&old);
+        self.allocate_dynamic_word_totals(added);
     }
 
     pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
-        std::mem::take(&mut self.split_discards)
+        let nodes = std::mem::take(&mut self.split_discards);
+        self.release_dynamic_nodes(&nodes);
+        nodes
     }
 
     pub(crate) fn clear_split_discards(&mut self) {
-        self.split_discards.clear();
+        let nodes = std::mem::take(&mut self.split_discards);
+        self.release_dynamic_nodes(&nodes);
     }
 
     pub(crate) fn current_page_tail(&self) -> Option<&Node> {
@@ -1013,6 +1035,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
+        self.allocate_dynamic_node(&node);
         self.current_page.push(node);
     }
 
@@ -1064,7 +1087,80 @@ impl PageBuilderState {
         &mut self,
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
-        self.current_page.take_prefix(split_index)
+        let nodes = self.current_page.take_prefix(split_index);
+        self.release_dynamic_nodes(&nodes.0);
+        self.release_dynamic_nodes(&nodes.1);
+        nodes
+    }
+
+    fn allocate_dynamic_node(&mut self, node: &Node) {
+        self.tex82_dynamic_words = self
+            .tex82_dynamic_words
+            .checked_add(node.tex_memory_words(false).1)
+            .expect("page dynamic-memory accounting overflow");
+        self.etex_dynamic_words = self
+            .etex_dynamic_words
+            .checked_add(node.tex_memory_words(true).1)
+            .expect("page dynamic-memory accounting overflow");
+    }
+
+    fn release_dynamic_node(&mut self, node: &Node) {
+        self.tex82_dynamic_words = self
+            .tex82_dynamic_words
+            .checked_sub(node.tex_memory_words(false).1)
+            .expect("released more page dynamic memory than was live");
+        self.etex_dynamic_words = self
+            .etex_dynamic_words
+            .checked_sub(node.tex_memory_words(true).1)
+            .expect("released more page dynamic memory than was live");
+    }
+
+    fn allocate_dynamic_nodes(&mut self, nodes: &[Node]) {
+        self.allocate_dynamic_word_totals(dynamic_words(nodes.iter()));
+    }
+
+    fn release_dynamic_nodes(&mut self, nodes: &[Node]) {
+        self.release_dynamic_word_totals(dynamic_words(nodes.iter()));
+    }
+
+    fn allocate_dynamic_word_totals(&mut self, words: (usize, usize)) {
+        self.tex82_dynamic_words = self
+            .tex82_dynamic_words
+            .checked_add(words.0)
+            .expect("page dynamic-memory accounting overflow");
+        self.etex_dynamic_words = self
+            .etex_dynamic_words
+            .checked_add(words.1)
+            .expect("page dynamic-memory accounting overflow");
+    }
+
+    fn release_dynamic_word_totals(&mut self, words: (usize, usize)) {
+        self.tex82_dynamic_words = self
+            .tex82_dynamic_words
+            .checked_sub(words.0)
+            .expect("released more page dynamic memory than was live");
+        self.etex_dynamic_words = self
+            .etex_dynamic_words
+            .checked_sub(words.1)
+            .expect("released more page dynamic memory than was live");
+    }
+
+    #[cfg(test)]
+    fn refresh_dynamic_memory_words(&mut self) {
+        let nodes = self
+            .contribution
+            .iter()
+            .chain(self.current_page.iter())
+            .chain(self.page_discards.iter())
+            .chain(self.split_discards.iter());
+        let (tex82, etex) = nodes.fold((0_usize, 0_usize), |words, node| {
+            (
+                words.0.saturating_add(node.tex_memory_words(false).1),
+                words.1.saturating_add(node.tex_memory_words(true).1),
+            )
+        });
+        self.tex82_dynamic_words = tex82;
+        self.etex_dynamic_words = etex;
     }
 
     pub(crate) fn update_last_from_node(&mut self, node: &Node) {
@@ -1106,6 +1202,15 @@ impl PageBuilderState {
     pub(crate) const fn has_last_glue(&self) -> bool {
         self.last_glue.is_some()
     }
+}
+
+fn dynamic_words<'a>(nodes: impl Iterator<Item = &'a Node>) -> (usize, usize) {
+    nodes.fold((0_usize, 0_usize), |words, node| {
+        (
+            words.0.saturating_add(node.tex_memory_words(false).1),
+            words.1.saturating_add(node.tex_memory_words(true).1),
+        )
+    })
 }
 
 fn node_retains_page_handle(node: &Node) -> bool {

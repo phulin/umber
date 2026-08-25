@@ -11,7 +11,7 @@ use crate::glue::GlueSpec;
 use crate::node::NodeTokenList;
 use crate::node_arena::{
     DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
-    NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena, StampedIndexMap,
+    NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena,
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
@@ -79,11 +79,17 @@ impl<G> StateCore<G> {
     }
 
     pub(crate) fn new(generation: Generation<G>) -> Result<Self, StateError> {
+        let accounting = generation.memory_accounting();
         Ok(Self {
             generation: GenerationOwner::new(generation),
-            nodes: DurableNodeArena::new(),
+            nodes: DurableNodeArena::with_memory_accounting(accounting),
             state: DenseState::new()?,
         })
+    }
+
+    #[must_use]
+    pub(crate) fn memory_accounting(&self) -> crate::memory_accounting::MemoryAccounting {
+        self.generation.generation().memory_accounting()
     }
 
     /// Validates and borrows the one matching generation bundle once per
@@ -176,8 +182,6 @@ impl<G> StateCore<G> {
 }
 
 pub(crate) struct DynamicMemoryScratch<G> {
-    definition_marks: StampedIndexMap,
-    token_marks: StampedIndexMap,
     nodes: NodeMemoryScratch<G>,
     durable_to_page: NodeRelocationScratch<G, PageLifetime>,
     page_to_durable: NodeRelocationScratch<PageLifetime, G>,
@@ -186,8 +190,6 @@ pub(crate) struct DynamicMemoryScratch<G> {
 impl<G> Default for DynamicMemoryScratch<G> {
     fn default() -> Self {
         Self {
-            definition_marks: StampedIndexMap::default(),
-            token_marks: StampedIndexMap::default(),
             nodes: NodeMemoryScratch::default(),
             durable_to_page: NodeRelocationScratch::default(),
             page_to_durable: NodeRelocationScratch::default(),
@@ -196,188 +198,9 @@ impl<G> Default for DynamicMemoryScratch<G> {
 }
 
 impl<G> DynamicMemoryScratch<G> {
-    fn begin(&mut self) {
-        self.definition_marks.begin();
-        self.token_marks.begin();
-    }
-
-    fn mark_definition(&mut self, index: usize) -> bool {
-        self.definition_marks.mark(index)
-    }
-
-    fn mark_token_list(&mut self, index: usize) -> bool {
-        self.token_marks.mark(index)
-    }
-
     pub(crate) fn page_to_durable(&mut self) -> &mut NodeRelocationScratch<PageLifetime, G> {
         &mut self.page_to_durable
     }
-}
-
-fn current_dynamic_memory_words<G>(
-    generation: &Generation<G>,
-    nodes: &DurableNodeArena<G>,
-    state: &DenseState<G>,
-    etex_node_sizes: bool,
-    scratch: &mut DynamicMemoryScratch<G>,
-) -> Result<usize, NodeArenaError> {
-    scratch.begin();
-    let mut definition_words = 0_usize;
-    let mut token_words = 0_usize;
-    let mut node_words = 0_usize;
-    let mut detached_extent = 0_usize;
-    let mut error = None;
-    state.visit_dynamic_memory_roots(|root| {
-        if error.is_some() {
-            return;
-        }
-        match root {
-            DynamicMemoryRoot::Definition(definition) => {
-                if scratch.mark_definition(definition.format_index() as usize) {
-                    definition_words = definition_words
-                        .saturating_add(generation.definitions().tex_memory_words(definition));
-                }
-            }
-            DynamicMemoryRoot::TokenList(tokens) => {
-                if scratch.mark_token_list(tokens.format_index() as usize) {
-                    token_words =
-                        token_words.saturating_add(generation.token_lists().get(tokens).len() + 1);
-                }
-            }
-            DynamicMemoryRoot::Nodes(root) => {
-                let token_marks = &mut scratch.token_marks;
-                let result = nodes.semantic_memory_usage(
-                    root,
-                    etex_node_sizes,
-                    &mut scratch.nodes,
-                    |tokens| {
-                        if token_marks.mark(tokens.format_index() as usize) {
-                            token_words = token_words.saturating_add(
-                                generation.token_lists().get(tokens.clone()).len() + 1,
-                            );
-                        }
-                    },
-                );
-                match result {
-                    Ok((_, root_words, root_extent)) => {
-                        node_words = node_words.saturating_add(root_words);
-                        detached_extent = detached_extent.max(root_extent);
-                    }
-                    Err(node_error) => error = Some(node_error),
-                }
-            }
-        }
-    });
-    if let Some(error) = error {
-        return Err(error);
-    }
-    Ok(14_usize
-        .saturating_add(definition_words)
-        .saturating_add(token_words)
-        .saturating_add(node_words)
-        .saturating_add(detached_extent))
-}
-
-#[cfg(test)]
-fn materialized_dynamic_memory_words<G>(
-    generation: &Generation<G>,
-    nodes: &DurableNodeArena<G>,
-    state: &DenseState<G>,
-    etex_node_sizes: bool,
-) -> Result<usize, NodeArenaError> {
-    use crate::format::schema::{FormatCell, FormatMeaning};
-
-    let mut roots = Vec::new();
-    let cells = state
-        .capture_format_cells(|root| {
-            roots.push(root);
-            Ok(roots.len() as u32)
-        })
-        .map_err(|_| NodeArenaError::InvalidList)?;
-    let (definitions, token_lists, _) = {
-        let mut definitions = vec![None; generation.definitions().len()];
-        let mut token_lists = vec![None; generation.token_lists().len()];
-        state.visit_dynamic_memory_roots(|root| match root {
-            DynamicMemoryRoot::Definition(definition) => {
-                definitions[definition.format_index() as usize] = Some(definition.capture_format());
-            }
-            DynamicMemoryRoot::TokenList(tokens) => {
-                token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
-            }
-            DynamicMemoryRoot::Nodes(_) => {}
-        });
-        (
-            definitions
-                .into_iter()
-                .map(|row| {
-                    row.unwrap_or(crate::format::schema::FormatDefinition {
-                        parameter_text: Vec::new(),
-                        replacement_text: Vec::new(),
-                    })
-                })
-                .collect::<Vec<_>>(),
-            token_lists
-                .into_iter()
-                .map(|row| row.unwrap_or_default())
-                .collect::<Vec<_>>(),
-            (),
-        )
-    };
-    let mut owned_definitions = std::collections::BTreeSet::new();
-    let mut owned_tokens = std::collections::BTreeSet::new();
-    for cell in cells {
-        match cell {
-            FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) => {
-                owned_definitions.insert(definition as usize);
-            }
-            FormatCell::TokenRegister(_, row) | FormatCell::TokenParameter(_, row) => {
-                owned_tokens.insert(row as usize);
-            }
-            _ => {}
-        }
-    }
-    let mut node_words = 0_usize;
-    let mut detached_extent = 0_usize;
-    for root in roots {
-        node_words = node_words.saturating_add(
-            nodes
-                .semantic_closure_tex_memory_words(root, etex_node_sizes)?
-                .1,
-        );
-        let (_, tokens) = nodes.semantic_closure_payloads(root)?;
-        owned_tokens.extend(
-            tokens
-                .into_iter()
-                .map(|tokens| tokens.format_index())
-                .map(|row| row as usize),
-        );
-        detached_extent =
-            detached_extent.max(nodes.diagnostic_dynamic_extent(root, etex_node_sizes)?);
-    }
-    let definition_words = owned_definitions
-        .into_iter()
-        .map(|index| {
-            let definition = &definitions[index];
-            definition
-                .parameter_text
-                .len()
-                .saturating_add(definition.replacement_text.len())
-                .saturating_add(2)
-                .saturating_add(usize::from(
-                    !definition.parameter_text.is_empty()
-                        || !definition.replacement_text.is_empty(),
-                ))
-        })
-        .sum::<usize>();
-    let token_words = owned_tokens
-        .into_iter()
-        .map(|index| token_lists[index].len().saturating_add(1))
-        .sum::<usize>();
-    Ok(14_usize
-        .saturating_add(definition_words)
-        .saturating_add(token_words)
-        .saturating_add(node_words)
-        .saturating_add(detached_extent))
 }
 
 /// Immutable, already-admitted hot view.
@@ -391,15 +214,8 @@ impl<'a, G> AdmittedState<'a, G> {
     pub(crate) fn current_dynamic_memory_words(
         &self,
         etex_node_sizes: bool,
-        scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<usize, NodeArenaError> {
-        current_dynamic_memory_words(
-            &self.generation,
-            self.nodes,
-            self.state,
-            etex_node_sizes,
-            scratch,
-        )
+        Ok(14_usize.saturating_add(self.generation.memory_accounting().words(etex_node_sizes).1))
     }
     #[must_use]
     pub(crate) const fn state(&self) -> &'a DenseState<G> {
@@ -473,15 +289,8 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn current_dynamic_memory_words(
         &self,
         etex_node_sizes: bool,
-        scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<usize, NodeArenaError> {
-        current_dynamic_memory_words(
-            &self.generation,
-            self.nodes,
-            self.state,
-            etex_node_sizes,
-            scratch,
-        )
+        Ok(14_usize.saturating_add(self.generation.memory_accounting().words(etex_node_sizes).1))
     }
     pub(crate) const fn state_ref(&self) -> &DenseState<G> {
         self.state

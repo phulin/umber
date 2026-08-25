@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::definition_arena::DefinitionArena;
 use crate::durable_arena::{GlueArena, ProvenanceArena, TokenListArena};
+use crate::memory_accounting::MemoryAccounting;
 
 #[cfg(test)]
 #[path = "generation/tests.rs"]
@@ -44,6 +45,7 @@ impl<G, Namespace> ArenaToken<G, Namespace> {
 /// generation-branded shared owners. Glue and provenance remain compact
 /// direct-index values owned by this bundle.
 pub(crate) struct Generation<G> {
+    accounting: MemoryAccounting,
     definitions: DefinitionArena<G>,
     token_lists: TokenListArena<G>,
     glue: GlueArena<G>,
@@ -127,12 +129,19 @@ pub(crate) struct GenerationRetirement {
 
 impl<G> Generation<G> {
     pub(crate) fn new() -> Self {
+        let accounting = MemoryAccounting::default();
         Self {
-            definitions: DefinitionArena::new(ArenaToken::new()),
-            token_lists: TokenListArena::new(ArenaToken::new()),
+            definitions: DefinitionArena::new(ArenaToken::new(), accounting.clone()),
+            token_lists: TokenListArena::new(ArenaToken::new(), accounting.clone()),
             glue: GlueArena::new(ArenaToken::new()),
             provenance: ProvenanceArena::new(ArenaToken::new()),
+            accounting,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn memory_accounting(&self) -> MemoryAccounting {
+        self.accounting.clone()
     }
 
     #[must_use]
