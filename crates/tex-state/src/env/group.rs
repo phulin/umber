@@ -73,6 +73,10 @@ impl GroupFrame {
     pub const fn lineage(self) -> u64 {
         self.lineage
     }
+
+    pub(crate) const fn level(self) -> u32 {
+        self.level
+    }
 }
 
 impl GroupKind {

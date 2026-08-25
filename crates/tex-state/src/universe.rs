@@ -18,7 +18,7 @@ use crate::interner::{
     ControlSequenceKind, Interner, InternerAccessError, InternerBudget, InternerError,
     InternerRetirement, InternerUsage, Symbol, SymbolId,
 };
-use crate::journal::JournalCursor;
+use crate::journal::{JournalCursor, StateOperation};
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_arena::{
@@ -170,7 +170,9 @@ impl<G> EngineBoundaryHasher<'_, G> {
 
 /// Aggregate rollback roots retained while one shipout is speculative.
 struct ShipoutRollback<G> {
-    state: StateCheckpoint<G>,
+    state: StateOperation<G>,
+    durable: NodeArenaCursor<G>,
+    page_nodes: NodeArenaCursor<PageLifetime>,
     page: PageBuilderState,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
@@ -259,8 +261,18 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
             self.universe.prepared_mag = rollback.prepared_mag;
             self.universe.engine_usage = rollback.engine_usage;
             self.universe
-                .restore_state_checkpoint(&rollback.state)
+                .restore_state(rollback.state)
                 .expect("validated shipout rollback remains restorable");
+            self.universe
+                .core
+                .as_mut()
+                .expect("shipout rollback has a live generation")
+                .truncate_durable_nodes(rollback.durable)
+                .expect("shipout durable cursor remains valid");
+            self.universe
+                .page_nodes
+                .truncate(rollback.page_nodes)
+                .expect("shipout page cursor remains valid");
         }
         self.universe.shipout_scratch.reset(
             self.scratch
@@ -1954,17 +1966,23 @@ impl<G> Universe<G> {
         Ok(())
     }
 
-    pub fn journal_cursor(&self) -> Result<JournalCursor<G>, UniverseError> {
-        Ok(self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .admit()
-            .state()
-            .journal_cursor())
+    pub fn journal_cursor(&mut self) -> Result<JournalCursor<G>, UniverseError> {
+        Ok(self.live_state_mut()?.journal_cursor())
     }
 
-    /// Current bytes retained by the ordered state journal.
+    pub fn begin_state_operation(&mut self) -> Result<StateOperation<G>, UniverseError> {
+        Ok(self.live_state_mut()?.begin_state_operation())
+    }
+
+    pub fn commit_state_operation(
+        &mut self,
+        operation: StateOperation<G>,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?.commit_state_operation(operation);
+        Ok(())
+    }
+
+    /// Current bytes retained by split group, checkpoint, and operation undo.
     ///
     /// This detached scalar exposes no journal entries or restoration cursor;
     /// outer execution hosts use it solely to enforce configured admission
@@ -1979,8 +1997,8 @@ impl<G> Universe<G> {
             .journal_retained_bytes())
     }
 
-    pub fn restore_state(&mut self, cursor: JournalCursor<G>) -> Result<(), UniverseError> {
-        self.live_state_mut()?.restore(cursor)?;
+    pub fn restore_state(&mut self, operation: StateOperation<G>) -> Result<(), UniverseError> {
+        self.live_state_mut()?.rollback_state_operation(operation)?;
         Ok(())
     }
 
@@ -1990,33 +2008,21 @@ impl<G> Universe<G> {
     /// bounded cursor fields around this state-layer foundation. A checkpoint
     /// with no page-handle carrier records only the generation's conservative
     /// retained page bound; incidental rootless allocation is not history.
-    pub fn state_checkpoint(&self) -> Result<StateCheckpoint<G>, UniverseError> {
+    pub fn state_checkpoint(&mut self) -> Result<StateCheckpoint<G>, UniverseError> {
         self.state_checkpoint_at(self.retained_page_bound)
     }
 
     fn state_checkpoint_at(
-        &self,
+        &mut self,
         page: NodeArenaCursor<PageLifetime>,
     ) -> Result<StateCheckpoint<G>, UniverseError> {
-        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        let owner = core.generation_owner();
+        let journal = core.state_mut().journal_cursor();
         Ok(GenerationCheckpoint::new(
-            core.generation_owner(),
-            BoundedStateMark::new(
-                core.state().journal_cursor(),
-                core.durable_node_cursor(),
-                page,
-                (),
-            ),
+            owner,
+            BoundedStateMark::new(journal, core.durable_node_cursor(), page, ()),
         ))
-    }
-
-    /// Exact page cursor for an operation-local rollback owner.
-    ///
-    /// This mark is intentionally separate from named checkpoints: a
-    /// speculative shipout must be able to restore its opening suffix, while
-    /// retained history must not pin rootless shipout construction.
-    fn operation_state_checkpoint(&self) -> Result<StateCheckpoint<G>, UniverseError> {
-        self.state_checkpoint_at(self.page_nodes.cursor())
     }
 
     /// Captures the complete state-facing portion of an executor checkpoint.
@@ -2033,6 +2039,8 @@ impl<G> Universe<G> {
         &mut self,
         external_page_roots: bool,
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
+        #[cfg(feature = "profiling")]
+        self.live_state_mut()?.record_journal_checkpoint();
         let carries_page_roots = external_page_roots || self.page.retains_page_node_handles();
         if carries_page_roots {
             self.retained_page_bound = self.page_nodes.cursor();
@@ -2188,8 +2196,14 @@ impl<G> Universe<G> {
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_, G> {
         let rollback = ShipoutRollback {
             state: self
-                .operation_state_checkpoint()
-                .expect("live shipout generation can be retained"),
+                .begin_state_operation()
+                .expect("live shipout generation has an operation journal"),
+            durable: self
+                .core
+                .as_ref()
+                .expect("live shipout generation")
+                .durable_node_cursor(),
+            page_nodes: self.page_nodes.cursor(),
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
@@ -2415,6 +2429,16 @@ impl<G> Universe<G> {
 }
 
 impl<G> ShipoutTransaction<'_, G> {
+    fn commit_state_operation(&mut self) {
+        let rollback = self
+            .rollback
+            .take()
+            .expect("shipout owns its rollback mark");
+        self.universe
+            .commit_state_operation(rollback.state)
+            .expect("shipout owns the active state operation");
+    }
+
     /// Atomically commits the staged artifact, effect prefix, and fixed PDF
     /// page record. Dropping before this point restores aggregate roots before
     /// it truncates the state/page suffixes they address.
@@ -2441,7 +2465,7 @@ impl<G> ShipoutTransaction<'_, G> {
             // A partially materialized effect prefix is irreversible. Preserve
             // that canonical state and prevent Drop from pretending rollback
             // remained possible.
-            self.rollback = None;
+            self.commit_state_operation();
             return Err(error);
         }
         self.page
@@ -2458,7 +2482,7 @@ impl<G> ShipoutTransaction<'_, G> {
             reservation,
         );
         self.world.finish_page_effect_interval();
-        self.rollback = None;
+        self.commit_state_operation();
         Ok((hash, record))
     }
 }

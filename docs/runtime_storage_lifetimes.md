@@ -106,7 +106,7 @@ The following matrix is normative:
 | Value or storage                                              | Immediate owner                                                                     | Valid until                                                     | Rollback behavior                                                             | Escape path                                      |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
 | Interned control-sequence name and token spelling             | Session interning epoch                                                             | Session epoch retirement                                        | Never rolled back                                                             | Detached spelling or semantic atom               |
-| Current meaning, parameter, register, or code value           | Dense current-value bank                                                            | Overwritten or bank retirement                                  | Exact undo through the TeX save journal                                       | Packed value in a checkpoint or DTO              |
+| Current meaning, parameter, register, or code value           | Dense current-value bank                                                            | Overwritten or bank retirement                                  | TeX group saves, checkpoint deltas, or operation-local undo restore in place  | Packed value in a checkpoint or DTO              |
 | Immutable macro definition and its definition token lists     | Every live semantic carrier through one branded non-atomic shared handle            | Last exact carrier drop                                         | Rollback moves saved owners back and drops rejected/replaced owners           | Handle-free recipe at a cold boundary            |
 | Stored token list                                             | Every live eqtb, journal, input/expansion, checkpoint, PDF, or continuation carrier | Last exact carrier drop                                         | Moves transfer; true aliases explicitly clone; truncation/pruning drops       | Handle-free recipe at a cold boundary            |
 | Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch                                                          | Operation completion, rollback, or continuation disposal        | Reset the applicable lane lengths to saved cursors                            | None; surviving output is built in final storage |
@@ -158,12 +158,23 @@ Each cell stores a packed scalar or a generation-scoped id. A read indexes the
 known bank directly. It does not retain an owner, upgrade a weak reference,
 search a generation table, hash content, perform a binary search, or allocate.
 
-The exact TeX save/undo journal is a separate ordered structure. A mutation
-records the old packed value and the group information required by TeX before
-installing the new value. Local definitions restore at group exit; global
-definitions suppress the applicable restoration exactly as TeX specifies.
-Operation rollback and incremental restoration reuse this journal but do not
-change its TeX grouping semantics.
+Rollback storage is separate from the dense banks and split by semantic
+lifetime. A local definition appends its old packed value to the active TeX
+group's contiguous save segment before installing the new value. Group exit
+walks that segment backward and retires it whole; warmed segment buffers may
+be reused by later groups. Global definitions suppress the applicable
+restoration exactly as TeX specifies.
+
+A named checkpoint seals an interval of first-before deltas. An epoch stamp
+beside the journal, not an overlay in front of eqtb reads, ensures that the
+first write to a cell in an interval appends exactly one delta. The checkpoint
+also stores a stable group-segment id and entry offset. A checkpoint captured
+inside a group pins that group and its ancestors until restoration or
+generation retirement; the ordinary level-zero policy pins no group segment.
+Operation-local rollback has its own reusable ordered lane. Nested operations
+store suffix positions in that lane; committing the outer operation clears it,
+while rejection walks only the rejected suffix backward. Operation marks do
+not start checkpoint intervals.
 
 A TeX group is a semantic save-journal boundary, not a memory owner. Durable
 and global values allocate directly in current-generation storage. A local
@@ -191,19 +202,26 @@ struct DenseState<G> {
 }
 
 struct SaveJournal<G> {
-    entries: Vec<UndoEntry<G>>,
+    active_groups: Vec<GroupSegment<G>>,
+    checkpoint_deltas: Vec<CheckpointDelta<G>>,
+    checkpoint_epochs: HashMap<StateCell, u64>,
+    operation_undo: Vec<UndoEntry<G>>,
 }
 
-#[derive(Clone, Copy)]
-struct JournalCursor(u32);
+struct JournalCursor {
+    group_segment: u64,
+    group_entry: u32,
+    checkpoint_delta: u32,
+}
 ```
 
-Periodic dense snapshots are a coarse, tunable latency optimization. A
-checkpoint may refer to an immutable packed bank image and a journal cursor so
-that restoration does not replay an arbitrarily long prefix. Snapshot
-frequency is not semantic: every exact rollback point is a journal cursor.
-The packed image contains current cell words, not a clone of the immutable
-objects those words name.
+Dense state remains directly mutated and directly read. There is no state
+overlay, threshold densification, compaction pass, forwarding coordinate,
+per-entry owner, or checkpoint bank clone. Restoration walks retained deltas
+backward and writes their packed prior words into the dense banks. Whole group
+segments are moved between active, checkpoint-retained, operation-pending, and
+reusable-buffer owners without scanning, copying, relocating, or repacking
+their live entries.
 
 ### Fresh parameter profiles
 

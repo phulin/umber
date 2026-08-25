@@ -1537,7 +1537,7 @@ struct DirectFailureContext {
 /// suffixes be truncated.
 #[derive(Debug)]
 struct DirectOperationMark<G> {
-    state: tex_state::JournalCursor<G>,
+    state: tex_state::StateOperation<G>,
     mode: crate::mode::ModeJournalCursor,
     attempt: tex_command::CommandAttemptOperation,
     page: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
@@ -4454,21 +4454,29 @@ impl<G> MainControl<G> {
 
     fn begin_direct_operation(
         &mut self,
-        stores: &Universe<G>,
+        stores: &mut Universe<G>,
         attempt: Option<tex_command::CommandAttemptOperation>,
     ) -> DirectOperationMark<G> {
         DirectOperationMark {
             state: stores
-                .journal_cursor()
-                .expect("live generation has a state journal"),
+                .begin_state_operation()
+                .expect("live generation has a state operation journal"),
             mode: self.modes.begin_journal(),
             attempt: attempt.unwrap_or_else(|| self.command.begin_attempt_operation()),
             page: stores.page_node_cursor(),
         }
     }
 
-    fn commit_direct_operation(&mut self, _stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
-        let DirectOperationMark { mode, attempt, .. } = mark;
+    fn commit_direct_operation(&mut self, stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
+        let DirectOperationMark {
+            state,
+            mode,
+            attempt,
+            ..
+        } = mark;
+        stores
+            .commit_state_operation(state)
+            .expect("direct operation owns the active state operation");
         self.modes
             .commit_journal(mode)
             .expect("direct operation owns the top mode journal frame");
@@ -4479,10 +4487,18 @@ impl<G> MainControl<G> {
 
     fn retain_direct_operation_for_retry(
         &mut self,
-        _stores: &mut Universe<G>,
+        stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
     ) -> tex_command::CommandAttemptOperation {
-        let DirectOperationMark { mode, attempt, .. } = mark;
+        let DirectOperationMark {
+            state,
+            mode,
+            attempt,
+            ..
+        } = mark;
+        stores
+            .commit_state_operation(state)
+            .expect("retained operation owns the active state operation");
         self.modes
             .commit_journal(mode)
             .expect("direct operation owns the top mode journal frame");

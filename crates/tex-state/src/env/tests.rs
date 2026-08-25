@@ -8,7 +8,7 @@ use crate::env::group::GroupKind;
 use crate::font::PdfFontCode;
 use crate::ids::FontId;
 use crate::interner::{Interner, InternerBudget};
-use crate::journal::{JournalEntry, MutationKind};
+use crate::journal::JournalEntry;
 use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::scaled::Scaled;
 use crate::token::{Token, TokenWord};
@@ -89,13 +89,57 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token list");
-        assert_eq!(definition.semantic_owner_count(), 3);
-        assert_eq!(tokens.semantic_owner_count(), 3);
+        assert_eq!(definition.semantic_owner_count(), 2);
+        assert_eq!(tokens.semantic_owner_count(), 2);
 
         state.restore(before).expect("rollback");
         assert_eq!(definition.semantic_owner_count(), 1);
         assert_eq!(tokens.semantic_owner_count(), 1);
     });
+}
+
+#[test]
+fn operation_rollback_is_exact_after_the_cell_was_already_written_in_the_interval() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base assignment");
+    let checkpoint = state.journal_cursor();
+    state
+        .assign_count(0, 2, AssignmentScope::Global)
+        .expect("interval assignment");
+    let operation = state.begin_state_operation();
+    state
+        .assign_count(0, 3, AssignmentScope::Global)
+        .expect("operation assignment");
+    state
+        .rollback_state_operation(operation)
+        .expect("operation rollback");
+    assert_eq!(state.count(0).expect("count"), 2);
+
+    state.restore(checkpoint).expect("checkpoint rollback");
+    assert_eq!(state.count(0).expect("count"), 1);
+}
+
+#[test]
+fn checkpoint_inside_a_group_restores_the_group_save_cursor_without_copying_it() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base assignment");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("local assignment");
+    let checkpoint = state.journal_cursor();
+    state.end_group(GroupKind::Simple).expect("first close");
+    assert_eq!(state.count(0).expect("count"), 1);
+
+    state.restore(checkpoint).expect("restore inside group");
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.count(0).expect("count"), 2);
+    state.end_group(GroupKind::Simple).expect("restored close");
+    assert_eq!(state.count(0).expect("count"), 1);
 }
 
 #[test]
@@ -194,19 +238,12 @@ fn ordered_journal_carries_each_exact_prior_word_and_only_the_tex_save() {
         .assign_count(0, 5, AssignmentScope::Local)
         .expect("second local");
 
-    let JournalEntry::Mutation(first) = state.journal.entry(2) else {
+    let JournalEntry::Mutation(first) = state.journal.entry(1) else {
         panic!("expected first local mutation");
     };
-    let JournalEntry::Mutation(second) = state.journal.entry(3) else {
-        panic!("expected second local mutation");
-    };
-    assert_eq!(first.kind, MutationKind::Assignment);
     assert_eq!(first.before, super::StateWord::Integer(3));
-    assert_eq!(first.after, super::StateWord::Integer(4));
-    assert_eq!(first.saved_at, Some(2));
-    assert_eq!(second.before, super::StateWord::Integer(4));
-    assert_eq!(second.after, super::StateWord::Integer(5));
-    assert_eq!(second.saved_at, None);
+    assert_eq!(first.saved_at(), Some(2));
+    assert_eq!(state.journal.len(), 2, "only the real TeX save is retained");
 }
 
 #[test]
@@ -392,10 +429,61 @@ fn journal_cursor_restores_group_exit_and_assignment_exactly() {
     let inside = state.journal_cursor();
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(5));
+    assert_ne!(
+        state.journal.retained_len(),
+        0,
+        "the live checkpoint pins this group"
+    );
 
     state.restore(inside).expect("restore inside group");
     assert_eq!(state.group_depth(), 1);
     assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(7));
+}
+
+#[test]
+fn closed_group_saves_pop_when_no_checkpoint_or_operation_pins_them() {
+    let mut state = state();
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 9, AssignmentScope::Local)
+        .expect("local");
+    assert_ne!(state.journal.retained_len(), 0);
+    state.end_group(GroupKind::Simple).expect("end");
+    assert_eq!(state.journal.group_save_len(), 0);
+    assert_eq!(state.count(0).expect("read"), 0);
+}
+
+#[test]
+fn operation_started_inside_group_temporarily_pins_then_releases_group_saves() {
+    let mut state = state();
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 9, AssignmentScope::Local)
+        .expect("local");
+    let operation = state.begin_state_operation();
+    state.end_group(GroupKind::Simple).expect("end");
+    assert_eq!(state.group_depth(), 0);
+    assert_ne!(state.journal.group_save_len(), 0);
+    state.commit_state_operation(operation);
+    assert_eq!(state.journal.group_save_len(), 0);
+}
+
+#[test]
+fn operation_rollback_reactivates_a_group_segment_closed_during_the_attempt() {
+    let mut state = state();
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 9, AssignmentScope::Local)
+        .expect("local");
+    let operation = state.begin_state_operation();
+    state.end_group(GroupKind::Simple).expect("end");
+    state.rollback_state_operation(operation).expect("rollback");
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.count(0).expect("read"), 9);
+    state
+        .end_group(GroupKind::Simple)
+        .expect("end restored group");
+    assert_eq!(state.count(0).expect("read"), 0);
 }
 
 #[test]

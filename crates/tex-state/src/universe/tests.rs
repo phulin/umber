@@ -493,7 +493,7 @@ fn null_font_and_scalar_meanings_keep_their_existing_round_trips() {
 fn rollback_never_recycles_an_interned_symbol() {
     with_universe(budget(), |universe| {
         let first = universe.intern("first").expect("intern first");
-        let cursor = universe.journal_cursor().expect("cursor");
+        let cursor = universe.begin_state_operation().expect("operation");
         let second = universe.intern("second").expect("intern second");
         assert_eq!(
             universe
@@ -706,7 +706,7 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
         let before_page = universe.page_node_cursor();
         let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
         let malformed = universe
-            .operation_state_checkpoint()
+            .state_checkpoint_at(universe.page_node_cursor())
             .expect("future page cursor");
         universe
             .assign_count(0, 41, AssignmentScope::Global)

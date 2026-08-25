@@ -189,7 +189,7 @@ pub use env::{
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;
 pub use input::{AlignmentScannerPhase, LiteralSpanPolicy, SourceId, TokenListReplayKind};
-pub use journal::JournalCursor;
+pub use journal::{JournalCursor, StateOperation};
 pub use meaning::{MeaningWord, ResolvedMeaning};
 pub use memo::{
     DetachedArtifact, DetachedDiagnostic, DetachedInputTransition, DetachedMemoValue,

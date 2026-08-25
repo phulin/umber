@@ -116,11 +116,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
   generation-owned reusable output-attempt lane, typed Page/Durable/Scratch
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
-- `src/journal.rs`: Generation-branded ordered mutation/group history carrying
-  exact prior values (including shared immutable owners), TeX save levels, and
-  owner-checked cursors.
-- `src/journal/tests.rs`: Exact position/truncation and foreign-owner cursor
-  rejection tests.
+- `src/journal.rs`: Separate compact TeX group saves, first-before named-
+  checkpoint deltas, and reusable operation-local undo with owner-checked
+  stable cursors.
+- `src/journal/cell.rs`: Private packed encoding for the typed dense-state
+  coordinates stored by narrow journal records.
+- `src/journal/tests.rs`: Split-lifetime rollback, packed-width, cursor, and
+  foreign-owner rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.

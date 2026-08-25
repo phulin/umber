@@ -8,7 +8,7 @@ use crate::state_hash::StateHasher;
 const PDF_CODE_TABLES: usize = 9;
 const PDF_CODE_COUNT: usize = 256;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum FontRuntimeCell {
     ParameterCount(u32),
     Dimen { font: u32, number: u32 },

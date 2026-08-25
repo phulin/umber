@@ -211,6 +211,44 @@ pub struct RetainedGenerationCensus {
     pub retired_explicitly: u64,
 }
 
+/// Final/high-water storage evidence from profiling-only save journals.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SaveJournalCensus {
+    pub entries: u64,
+    pub capacity: u64,
+    pub peak_entries: u64,
+    pub entry_size: u64,
+    pub mutation_size: u64,
+    pub group_frame_size: u64,
+    pub group_entries: u64,
+    pub group_capacity: u64,
+    pub group_entry_size: u64,
+    pub checkpoint_entries: u64,
+    pub checkpoint_capacity: u64,
+    pub checkpoint_entry_size: u64,
+    pub operation_entries: u64,
+    pub operation_capacity: u64,
+    pub operation_entry_size: u64,
+    pub stamp_entries: u64,
+    pub stamp_capacity: u64,
+    pub mutations: u64,
+    pub mutation_words: [u64; 8],
+    pub group_enters: u64,
+    pub group_exits: u64,
+    pub append_calls: u64,
+    pub growths: u64,
+    pub bytes_moved_by_growth: u64,
+    pub maximum_group_depth: u64,
+    pub entries_at_maximum_group_depth: u64,
+    pub checkpoints: u64,
+    pub checkpoint_mutations: u64,
+    pub checkpoint_unique_cells: u64,
+    pub maximum_checkpoint_mutations: u64,
+    pub maximum_checkpoint_unique_cells: u64,
+    pub checkpoints_with_open_groups: u64,
+    pub maximum_checkpoint_group_depth: u64,
+}
+
 impl RetainedGenerationCensus {
     #[must_use]
     pub fn saturating_sub(self, baseline: Self) -> Self {
@@ -335,6 +373,39 @@ static RETAINED_GENERATIONS_DROPPED: AtomicU64 = AtomicU64::new(0);
 static RETAINED_GENERATIONS_LIVE: AtomicU64 = AtomicU64::new(0);
 static RETAINED_GENERATIONS_PEAK: AtomicU64 = AtomicU64::new(0);
 static RETAINED_GENERATIONS_RETIRED: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_PEAK_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MUTATION_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_GROUP_FRAME_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_GROUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_GROUP_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_GROUP_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINT_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINT_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINT_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_OPERATION_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_OPERATION_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_OPERATION_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_STAMP_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_STAMP_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MUTATIONS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MUTATION_WORDS: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+static SAVE_JOURNAL_GROUP_ENTERS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_GROUP_EXITS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_APPEND_CALLS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_GROWTHS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_BYTES_MOVED_BY_GROWTH: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MAXIMUM_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_ENTRIES_AT_MAXIMUM_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINTS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINT_MUTATIONS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINT_UNIQUE_CELLS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
 
 #[must_use]
 pub fn hot_core_allocation_scope(
@@ -421,6 +492,99 @@ pub fn record_hot_core_interpreter_operation_entry() {
 
 pub fn record_retained_generation_retirement() {
     RETAINED_GENERATIONS_RETIRED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_save_journal_census(census: SaveJournalCensus) {
+    SAVE_JOURNAL_ENTRIES.fetch_max(census.entries, Ordering::Relaxed);
+    SAVE_JOURNAL_CAPACITY.fetch_max(census.capacity, Ordering::Relaxed);
+    SAVE_JOURNAL_PEAK_ENTRIES.fetch_max(census.peak_entries, Ordering::Relaxed);
+    SAVE_JOURNAL_ENTRY_SIZE.fetch_max(census.entry_size, Ordering::Relaxed);
+    SAVE_JOURNAL_MUTATION_SIZE.fetch_max(census.mutation_size, Ordering::Relaxed);
+    SAVE_JOURNAL_GROUP_FRAME_SIZE.fetch_max(census.group_frame_size, Ordering::Relaxed);
+    SAVE_JOURNAL_GROUP_ENTRIES.fetch_max(census.group_entries, Ordering::Relaxed);
+    SAVE_JOURNAL_GROUP_CAPACITY.fetch_max(census.group_capacity, Ordering::Relaxed);
+    SAVE_JOURNAL_GROUP_ENTRY_SIZE.fetch_max(census.group_entry_size, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINT_ENTRIES.fetch_max(census.checkpoint_entries, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINT_CAPACITY.fetch_max(census.checkpoint_capacity, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINT_ENTRY_SIZE.fetch_max(census.checkpoint_entry_size, Ordering::Relaxed);
+    SAVE_JOURNAL_OPERATION_ENTRIES.fetch_max(census.operation_entries, Ordering::Relaxed);
+    SAVE_JOURNAL_OPERATION_CAPACITY.fetch_max(census.operation_capacity, Ordering::Relaxed);
+    SAVE_JOURNAL_OPERATION_ENTRY_SIZE.fetch_max(census.operation_entry_size, Ordering::Relaxed);
+    SAVE_JOURNAL_STAMP_ENTRIES.fetch_max(census.stamp_entries, Ordering::Relaxed);
+    SAVE_JOURNAL_STAMP_CAPACITY.fetch_max(census.stamp_capacity, Ordering::Relaxed);
+    SAVE_JOURNAL_MUTATIONS.fetch_max(census.mutations, Ordering::Relaxed);
+    for (counter, value) in SAVE_JOURNAL_MUTATION_WORDS
+        .iter()
+        .zip(census.mutation_words)
+    {
+        counter.fetch_max(value, Ordering::Relaxed);
+    }
+    SAVE_JOURNAL_GROUP_ENTERS.fetch_max(census.group_enters, Ordering::Relaxed);
+    SAVE_JOURNAL_GROUP_EXITS.fetch_max(census.group_exits, Ordering::Relaxed);
+    SAVE_JOURNAL_APPEND_CALLS.fetch_max(census.append_calls, Ordering::Relaxed);
+    SAVE_JOURNAL_GROWTHS.fetch_max(census.growths, Ordering::Relaxed);
+    SAVE_JOURNAL_BYTES_MOVED_BY_GROWTH.fetch_max(census.bytes_moved_by_growth, Ordering::Relaxed);
+    SAVE_JOURNAL_MAXIMUM_GROUP_DEPTH.fetch_max(census.maximum_group_depth, Ordering::Relaxed);
+    SAVE_JOURNAL_ENTRIES_AT_MAXIMUM_GROUP_DEPTH
+        .fetch_max(census.entries_at_maximum_group_depth, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINTS.fetch_max(census.checkpoints, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINT_MUTATIONS.fetch_max(census.checkpoint_mutations, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINT_UNIQUE_CELLS
+        .fetch_max(census.checkpoint_unique_cells, Ordering::Relaxed);
+    SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS
+        .fetch_max(census.maximum_checkpoint_mutations, Ordering::Relaxed);
+    SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS
+        .fetch_max(census.maximum_checkpoint_unique_cells, Ordering::Relaxed);
+    SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS
+        .fetch_max(census.checkpoints_with_open_groups, Ordering::Relaxed);
+    SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH
+        .fetch_max(census.maximum_checkpoint_group_depth, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn save_journal_census() -> SaveJournalCensus {
+    SaveJournalCensus {
+        entries: SAVE_JOURNAL_ENTRIES.load(Ordering::Relaxed),
+        capacity: SAVE_JOURNAL_CAPACITY.load(Ordering::Relaxed),
+        peak_entries: SAVE_JOURNAL_PEAK_ENTRIES.load(Ordering::Relaxed),
+        entry_size: SAVE_JOURNAL_ENTRY_SIZE.load(Ordering::Relaxed),
+        mutation_size: SAVE_JOURNAL_MUTATION_SIZE.load(Ordering::Relaxed),
+        group_frame_size: SAVE_JOURNAL_GROUP_FRAME_SIZE.load(Ordering::Relaxed),
+        group_entries: SAVE_JOURNAL_GROUP_ENTRIES.load(Ordering::Relaxed),
+        group_capacity: SAVE_JOURNAL_GROUP_CAPACITY.load(Ordering::Relaxed),
+        group_entry_size: SAVE_JOURNAL_GROUP_ENTRY_SIZE.load(Ordering::Relaxed),
+        checkpoint_entries: SAVE_JOURNAL_CHECKPOINT_ENTRIES.load(Ordering::Relaxed),
+        checkpoint_capacity: SAVE_JOURNAL_CHECKPOINT_CAPACITY.load(Ordering::Relaxed),
+        checkpoint_entry_size: SAVE_JOURNAL_CHECKPOINT_ENTRY_SIZE.load(Ordering::Relaxed),
+        operation_entries: SAVE_JOURNAL_OPERATION_ENTRIES.load(Ordering::Relaxed),
+        operation_capacity: SAVE_JOURNAL_OPERATION_CAPACITY.load(Ordering::Relaxed),
+        operation_entry_size: SAVE_JOURNAL_OPERATION_ENTRY_SIZE.load(Ordering::Relaxed),
+        stamp_entries: SAVE_JOURNAL_STAMP_ENTRIES.load(Ordering::Relaxed),
+        stamp_capacity: SAVE_JOURNAL_STAMP_CAPACITY.load(Ordering::Relaxed),
+        mutations: SAVE_JOURNAL_MUTATIONS.load(Ordering::Relaxed),
+        mutation_words: core::array::from_fn(|index| {
+            SAVE_JOURNAL_MUTATION_WORDS[index].load(Ordering::Relaxed)
+        }),
+        group_enters: SAVE_JOURNAL_GROUP_ENTERS.load(Ordering::Relaxed),
+        group_exits: SAVE_JOURNAL_GROUP_EXITS.load(Ordering::Relaxed),
+        append_calls: SAVE_JOURNAL_APPEND_CALLS.load(Ordering::Relaxed),
+        growths: SAVE_JOURNAL_GROWTHS.load(Ordering::Relaxed),
+        bytes_moved_by_growth: SAVE_JOURNAL_BYTES_MOVED_BY_GROWTH.load(Ordering::Relaxed),
+        maximum_group_depth: SAVE_JOURNAL_MAXIMUM_GROUP_DEPTH.load(Ordering::Relaxed),
+        entries_at_maximum_group_depth: SAVE_JOURNAL_ENTRIES_AT_MAXIMUM_GROUP_DEPTH
+            .load(Ordering::Relaxed),
+        checkpoints: SAVE_JOURNAL_CHECKPOINTS.load(Ordering::Relaxed),
+        checkpoint_mutations: SAVE_JOURNAL_CHECKPOINT_MUTATIONS.load(Ordering::Relaxed),
+        checkpoint_unique_cells: SAVE_JOURNAL_CHECKPOINT_UNIQUE_CELLS.load(Ordering::Relaxed),
+        maximum_checkpoint_mutations: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS
+            .load(Ordering::Relaxed),
+        maximum_checkpoint_unique_cells: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS
+            .load(Ordering::Relaxed),
+        checkpoints_with_open_groups: SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS
+            .load(Ordering::Relaxed),
+        maximum_checkpoint_group_depth: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH
+            .load(Ordering::Relaxed),
+    }
 }
 
 #[must_use]

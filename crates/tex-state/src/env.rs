@@ -11,13 +11,14 @@ use banks::{
     RegisterBank,
 };
 pub(crate) use font_runtime::DerivedFontRuntimeRequest;
-use font_runtime::{BankCellValue, FontRuntimeBank, FontRuntimeCell, PreparedFontRuntime};
+pub(crate) use font_runtime::FontRuntimeCell;
+use font_runtime::{BankCellValue, FontRuntimeBank, PreparedFontRuntime};
 use group::{GroupFrame, GroupKind, GroupMismatch};
 
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::ids::FontId;
 use crate::interner::Symbol;
-use crate::journal::{JournalCursor, JournalEntry, Mutation, MutationKind, SaveJournal};
+use crate::journal::{JournalCursor, JournalEntry, Mutation, SaveJournal, StateOperation};
 use crate::meaning::{MeaningWord, ResolvedMeaning};
 use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
@@ -117,7 +118,7 @@ pub enum FreshParameterInstallError {
 }
 
 /// The six eqtb code-table families.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CodeTableKind {
     Catcode,
     Lccode,
@@ -128,7 +129,7 @@ pub enum CodeTableKind {
 }
 
 /// Typed identity of one mutable current-value cell.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum StateCell {
     Meaning(u32),
     Count(u16),
@@ -1382,15 +1383,12 @@ impl<G> DenseState<G> {
                 level: before.level,
             },
         )?;
-        self.journal.push(JournalEntry::Mutation(Mutation {
+        self.journal.record_mutation(Mutation::new(
             cell,
-            before: StateWord::NodeList(old),
-            before_level: before.level,
-            after,
-            after_level: before.level,
-            saved_at: None,
-            kind: MutationKind::Assignment,
-        }));
+            StateWord::NodeList(old),
+            before.level,
+            None,
+        ));
         Ok(())
     }
 
@@ -1414,8 +1412,16 @@ impl<G> DenseState<G> {
     }
 
     #[must_use]
-    pub(crate) fn journal_cursor(&self) -> JournalCursor<G> {
-        self.journal.cursor()
+    pub(crate) fn journal_cursor(&mut self) -> JournalCursor<G> {
+        self.journal.checkpoint_cursor(self.groups.len())
+    }
+
+    pub(crate) fn begin_state_operation(&mut self) -> StateOperation<G> {
+        self.journal.begin_operation()
+    }
+
+    pub(crate) fn commit_state_operation(&mut self, operation: StateOperation<G>) {
+        self.journal.commit_operation(operation);
     }
 
     #[must_use]
@@ -1494,7 +1500,7 @@ impl<G> DenseState<G> {
             save_stack_words_before,
             latest_save_push_before,
         );
-        self.journal.push(JournalEntry::GroupEnter(frame));
+        self.journal.record_group_enter(frame);
         self.groups.push(frame);
         Ok(frame)
     }
@@ -1521,9 +1527,7 @@ impl<G> DenseState<G> {
             .filter(|&index| {
                 matches!(
                     self.journal.entry(index),
-                    JournalEntry::Mutation(saved)
-                        if saved.kind == MutationKind::Assignment
-                            && saved.saved_at == Some(frame.level)
+                    JournalEntry::Mutation(saved) if saved.saved_at() == Some(frame.level)
                 )
             })
             .count();
@@ -1536,9 +1540,8 @@ impl<G> DenseState<G> {
             matches!(
                 self.journal.entry(index),
                 JournalEntry::Mutation(saved)
-                    if saved.kind == MutationKind::Assignment
-                        && saved.saved_at == Some(frame.level)
-                        && is_extended_register_cell(saved.cell)
+                    if saved.saved_at() == Some(frame.level)
+                        && is_extended_register_cell(saved.cell())
             )
         });
         if let Some(marker) = first_extended {
@@ -1550,9 +1553,7 @@ impl<G> DenseState<G> {
                 let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
                     continue;
                 };
-                if saved.kind == MutationKind::Assignment
-                    && saved.saved_at == Some(frame.level)
-                    && !is_extended_register_cell(saved.cell)
+                if saved.saved_at() == Some(frame.level) && !is_extended_register_cell(saved.cell())
                 {
                     self.restore_group_mutation(saved, &mut entries)?;
                 }
@@ -1561,9 +1562,7 @@ impl<G> DenseState<G> {
                 let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
                     continue;
                 };
-                if saved.kind == MutationKind::Assignment
-                    && saved.saved_at == Some(frame.level)
-                    && is_extended_register_cell(saved.cell)
+                if saved.saved_at() == Some(frame.level) && is_extended_register_cell(saved.cell())
                 {
                     self.restore_group_mutation(saved, &mut entries)?;
                 }
@@ -1572,7 +1571,7 @@ impl<G> DenseState<G> {
                 let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
                     continue;
                 };
-                if saved.kind == MutationKind::Assignment && saved.saved_at == Some(frame.level) {
+                if saved.saved_at() == Some(frame.level) {
                     self.restore_group_mutation(saved, &mut entries)?;
                 }
             }
@@ -1581,13 +1580,13 @@ impl<G> DenseState<G> {
                 let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
                     continue;
                 };
-                if saved.kind == MutationKind::Assignment && saved.saved_at == Some(frame.level) {
+                if saved.saved_at() == Some(frame.level) {
                     self.restore_group_mutation(saved, &mut entries)?;
                 }
             }
         }
         self.groups.pop();
-        self.journal.push(JournalEntry::GroupExit(frame));
+        self.journal.record_group_exit(frame);
         Ok(GroupRestorationReceipt { frame, entries })
     }
 
@@ -1596,32 +1595,26 @@ impl<G> DenseState<G> {
         saved: Mutation<G>,
         entries: &mut Vec<GroupRestorationEntry<G>>,
     ) -> Result<(), StateError> {
-        let current = self.read_cell(saved.cell)?;
+        let cell = saved.cell();
+        let current = self.read_cell(cell)?;
         // A global definition made after this save suppresses it exactly
         // as TeX's `level_one` check in `unsave` does.
         let (live, outcome) = if current.level == LEVEL_ONE {
             (current.value, GroupRestorationOutcome::Retained)
         } else {
             self.write_cell(
-                saved.cell,
+                cell,
                 BankCell {
                     value: saved.before.clone(),
                     level: saved.before_level,
                 },
             )?;
-            self.journal.push(JournalEntry::Mutation(Mutation {
-                cell: saved.cell,
-                before: current.value,
-                before_level: current.level,
-                after: saved.before.clone(),
-                after_level: saved.before_level,
-                saved_at: None,
-                kind: MutationKind::GroupRestore,
-            }));
+            self.journal
+                .record_mutation(Mutation::new(cell, current.value, current.level, None));
             (saved.before.clone(), GroupRestorationOutcome::Restored)
         };
         entries.push(GroupRestorationEntry {
-            cell: restoration_cell(saved.cell),
+            cell: restoration_cell(cell),
             saved: restoration_value(saved.before),
             live: restoration_value(live),
             outcome,
@@ -1642,11 +1635,41 @@ impl<G> DenseState<G> {
     /// Atomically restores all banks and open-group state to `cursor`.
     pub(crate) fn restore(&mut self, cursor: JournalCursor<G>) -> Result<(), StateError> {
         self.validate_restore(cursor)?;
-        let start = cursor.position() as usize;
-        for index in (start..self.journal.len()).rev() {
-            match self.journal.entry(index) {
+        for delta in self
+            .journal
+            .checkpoint_suffix(cursor)
+            .to_vec()
+            .into_iter()
+            .rev()
+        {
+            self.write_cell(
+                delta.cell,
+                BankCell {
+                    value: delta.before,
+                    level: delta.before_level,
+                },
+            )?;
+        }
+        self.groups = self.journal.restore_group_cursor(cursor);
+        self.journal.truncate_checkpoint(cursor);
+        Ok(())
+    }
+
+    pub(crate) fn rollback_state_operation(
+        &mut self,
+        operation: StateOperation<G>,
+    ) -> Result<(), StateError> {
+        self.validate_operation_restore(&operation)?;
+        for entry in self
+            .journal
+            .operation_suffix(&operation)
+            .to_vec()
+            .into_iter()
+            .rev()
+        {
+            match entry {
                 JournalEntry::Mutation(mutation) => self.write_cell(
-                    mutation.cell,
+                    mutation.cell(),
                     BankCell {
                         value: mutation.before,
                         level: mutation.before_level,
@@ -1654,23 +1677,31 @@ impl<G> DenseState<G> {
                 )?,
                 JournalEntry::GroupExit(frame) => self.groups.push(frame),
                 JournalEntry::GroupEnter(frame) => {
-                    let popped = self.groups.pop().expect("restore validation proved group");
+                    let popped = self
+                        .groups
+                        .pop()
+                        .expect("operation validation proved group");
                     debug_assert_eq!(popped, frame);
                 }
             }
         }
-        self.journal.truncate(cursor);
+        self.journal.finish_operation_rollback(operation);
         Ok(())
     }
 
     #[must_use]
     pub(crate) fn journal_len(&self) -> usize {
-        self.journal.len()
+        self.journal.retained_len()
     }
 
     #[must_use]
     pub(crate) fn journal_retained_bytes(&self) -> usize {
         self.journal.retained_bytes()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn record_journal_checkpoint(&mut self) {
+        self.journal.record_checkpoint(self.groups.len());
     }
 
     #[must_use]
@@ -1710,15 +1741,8 @@ impl<G> DenseState<G> {
                 level: after_level,
             },
         )?;
-        self.journal.push(JournalEntry::Mutation(Mutation {
-            cell,
-            before: before.value,
-            before_level: before.level,
-            after: value,
-            after_level,
-            saved_at,
-            kind: MutationKind::Assignment,
-        }));
+        self.journal
+            .record_mutation(Mutation::new(cell, before.value, before.level, saved_at));
         Ok(())
     }
 
@@ -1838,18 +1862,24 @@ impl<G> DenseState<G> {
         if !self.journal.validate_cursor(cursor) {
             return Err(StateError::InvalidCursor);
         }
-        let mut groups = self.groups.clone();
-        for entry in self
+        if self
             .journal
-            .suffix(cursor.position() as usize, self.journal.len())
+            .checkpoint_suffix(cursor)
             .iter()
-            .rev()
+            .any(|delta| !word_matches(delta.cell, &delta.before))
         {
+            return Err(StateError::CellKindMismatch);
+        }
+        Ok(())
+    }
+
+    fn validate_operation_restore(&self, operation: &StateOperation<G>) -> Result<(), StateError> {
+        self.journal.validate_operation(operation);
+        let mut groups = self.groups.clone();
+        for entry in self.journal.operation_suffix(operation).iter().rev() {
             match entry {
                 JournalEntry::Mutation(mutation) => {
-                    if !word_matches(mutation.cell, &mutation.before)
-                        || !word_matches(mutation.cell, &mutation.after)
-                    {
+                    if !word_matches(mutation.cell(), &mutation.before) {
                         return Err(StateError::CellKindMismatch);
                     }
                 }
@@ -1876,15 +1906,17 @@ impl<G> DenseState<G> {
         // The retained journal prefix remains capable of restoring saved
         // values after this checkpoint. Its font coordinates are roots too,
         // even when they are not the current value of their bank cell.
-        for entry in self.journal.suffix(0, cursor.position() as usize) {
-            let JournalEntry::Mutation(mutation) = entry else {
-                continue;
-            };
-            if font_root(&mutation.before)
-                .into_iter()
-                .chain(font_root(&mutation.after))
-                .any(|font| !is_live(font))
-            {
+        let mut group_fonts_are_live = true;
+        self.journal.visit_group_mutations(|mutation| {
+            if font_root(&mutation.before).is_some_and(|font| !is_live(font)) {
+                group_fonts_are_live = false;
+            }
+        });
+        if !group_fonts_are_live {
+            return Ok(false);
+        }
+        for delta in self.journal.checkpoint_prefix(cursor) {
+            if font_root(&delta.before).is_some_and(|font| !is_live(font)) {
                 return Ok(false);
             }
         }
@@ -1893,21 +1925,15 @@ impl<G> DenseState<G> {
         // the restore boundary. Record `None` as well, so a scalar meaning at
         // the boundary shadows a current font meaning in the same cell.
         let mut restored = Vec::<(StateCell, Option<FontId>)>::new();
-        for entry in self
-            .journal
-            .suffix(cursor.position() as usize, self.journal.len())
-        {
-            let JournalEntry::Mutation(mutation) = entry else {
-                continue;
-            };
+        for entry in self.journal.checkpoint_suffix(cursor) {
             if !matches!(
-                mutation.cell,
+                entry.cell,
                 StateCell::Meaning(_) | StateCell::CurrentFont | StateCell::MathFamilyFont(_)
-            ) || restored.iter().any(|(cell, _)| *cell == mutation.cell)
+            ) || restored.iter().any(|(cell, _)| *cell == entry.cell)
             {
                 continue;
             }
-            restored.push((mutation.cell, font_root(&mutation.before)));
+            restored.push((entry.cell, font_root(&entry.before)));
         }
 
         if restored
