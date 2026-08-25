@@ -769,7 +769,7 @@ impl<G> CommandState<G> {
             universe,
             crate::AttemptPromotionRoots::new(core::slice::from_ref(&id), &[], &[], &[]),
         )?;
-        Ok(promotion.token_lists[0])
+        Ok(promotion.token_lists[0].clone())
     }
 
     /// Atomically promotes every declared attempt-local root into this
@@ -1252,9 +1252,9 @@ impl<G> CommandState<G> {
         tokens: tex_state::TokenListId<G>,
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
-        let words = stores.token_list(tokens);
+        let words = stores.token_list(tokens.clone());
         let identity = self.push_token_level(
-            TokenPayload::durable(tokens, words),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1412,9 +1412,9 @@ impl<G> CommandState<G> {
         tokens: tex_state::TokenListId<G>,
         reason: StoredReplayReason,
     ) {
-        let words = stores.token_list(tokens);
+        let words = stores.token_list(tokens.clone());
         let level = self.push_token_level(
-            TokenPayload::durable(tokens, words),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -2316,9 +2316,9 @@ impl<G> CommandState<G> {
         if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
             level.cursor.install_scantokens_eof_context_line();
         }
-        let words = stores.token_list(every_eof);
+        let words = stores.token_list(every_eof.clone());
         Some(self.push_token_level(
-            TokenPayload::durable(every_eof, words),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -2450,7 +2450,7 @@ impl<G> CommandState<G> {
         trace: ReplayTrace,
     ) -> InputLevelId {
         self.push_token_level(
-            TokenPayload::durable(template, stores.token_list(template)),
+            TokenPayload::durable(stores.token_list(template)),
             behavior,
             retirement,
             trace,

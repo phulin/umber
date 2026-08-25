@@ -682,7 +682,10 @@ impl<G> ShipoutPayload<G> for DurablePayload {
         tokens: &Self::Tokens,
         mut visit: impl FnMut(TokenWord) -> Result<(), E>,
     ) -> Result<(), E> {
-        stores.token_list(*tokens).iter().try_for_each(&mut visit)
+        stores
+            .token_list(tokens.clone())
+            .iter()
+            .try_for_each(&mut visit)
     }
 }
 

@@ -82,11 +82,12 @@ pub struct PreparedAlignmentCellTemplates<G> {
     pub v_template: TokenListId<G>,
 }
 
-impl<G> Copy for PreparedAlignmentCellTemplates<G> {}
-
 impl<G> Clone for PreparedAlignmentCellTemplates<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            u_template: self.u_template.clone(),
+            v_template: self.v_template.clone(),
+        }
     }
 }
 
@@ -381,7 +382,7 @@ impl<G> Clone for ActiveCellDelivery<G> {
     fn clone(&self) -> Self {
         Self {
             alignment: self.alignment,
-            templates: self.templates,
+            templates: self.templates.clone(),
             u_template_installed: self.u_template_installed,
             u_level: self.u_level,
             v_level: self.v_level,
@@ -612,7 +613,7 @@ impl<G> AlignmentDeliveryState<G> {
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
         }
-        Ok(cell.templates.u_template)
+        Ok(cell.templates.u_template.clone())
     }
 
     pub(crate) fn mark_u_template_installed(
@@ -672,7 +673,7 @@ impl<G> AlignmentDeliveryState<G> {
         // selected column's v-part. Its only effective delivery is the
         // retained end-template boundary, represented by an empty replay
         // level in the command machine.
-        Ok((!cell.omit).then_some(cell.templates.v_template))
+        Ok((!cell.omit).then(|| cell.templates.v_template.clone()))
     }
 
     pub(crate) fn active_v_template_level(

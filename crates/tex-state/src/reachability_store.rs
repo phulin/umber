@@ -1,6 +1,7 @@
 //! Session-epoch owner for retained revision generations.
 
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::interner::InternerBudget;
 use crate::retained_generation::PhysicalStateGeneration;
@@ -29,14 +30,14 @@ struct ReachabilityStorage {
 /// values never clone this owner.
 pub struct ReachabilityStore {
     epoch: SessionInternerEpoch,
-    storage: Arc<Mutex<ReachabilityStorage>>,
+    storage: Rc<RefCell<ReachabilityStorage>>,
 }
 
 impl Clone for ReachabilityStore {
     fn clone(&self) -> Self {
         Self {
             epoch: self.epoch.clone(),
-            storage: Arc::clone(&self.storage),
+            storage: Rc::clone(&self.storage),
         }
     }
 }
@@ -58,7 +59,7 @@ impl ReachabilityStore {
     pub fn new(interner_budget: InternerBudget) -> Self {
         Self {
             epoch: SessionInternerEpoch::new(interner_budget),
-            storage: Arc::new(Mutex::new(ReachabilityStorage {
+            storage: Rc::new(RefCell::new(ReachabilityStorage {
                 next_serial: 1,
                 slots: std::array::from_fn(|_| ReachabilitySlot::default()),
             })),
@@ -73,7 +74,7 @@ impl ReachabilityStore {
     /// Whether two coarse owners name the same physical reachability domain.
     #[must_use]
     pub fn same_store(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.storage, &other.storage)
+        Rc::ptr_eq(&self.storage, &other.storage)
     }
 
     /// Number of occupied prior/current slots. This is a cold lifecycle
@@ -81,8 +82,7 @@ impl ReachabilityStore {
     #[must_use]
     pub fn live_generation_count(&self) -> usize {
         self.storage
-            .lock()
-            .expect("reachability store lock poisoned")
+            .borrow()
             .slots
             .iter()
             .filter(|slot| slot.generation.is_some())
@@ -93,10 +93,7 @@ impl ReachabilityStore {
         &self,
         generation: PhysicalStateGeneration,
     ) -> Result<ReachabilityGenerationKey, ReachabilityStoreError> {
-        let mut storage = self
-            .storage
-            .lock()
-            .expect("reachability store lock poisoned");
+        let mut storage = self.storage.borrow_mut();
         let slot = storage
             .slots
             .iter()
@@ -118,10 +115,7 @@ impl ReachabilityStore {
         key: ReachabilityGenerationKey,
         operation: impl FnOnce(&mut PhysicalStateGeneration) -> R,
     ) -> Result<R, ReachabilityStoreError> {
-        let mut storage = self
-            .storage
-            .lock()
-            .expect("reachability store lock poisoned");
+        let mut storage = self.storage.borrow_mut();
         let slot = storage
             .slots
             .get_mut(key.slot)
@@ -138,10 +132,7 @@ impl ReachabilityStore {
         &self,
         key: ReachabilityGenerationKey,
     ) -> Result<PhysicalStateGeneration, ReachabilityStoreError> {
-        let mut storage = self
-            .storage
-            .lock()
-            .expect("reachability store lock poisoned");
+        let mut storage = self.storage.borrow_mut();
         let slot = storage
             .slots
             .get_mut(key.slot)

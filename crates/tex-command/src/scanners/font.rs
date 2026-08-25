@@ -120,7 +120,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 }
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,

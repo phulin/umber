@@ -38,10 +38,11 @@ impl<G, Namespace> ArenaToken<G, Namespace> {
     }
 }
 
-/// Coarse owner of every immutable value arena in one revision generation.
+/// Coarse owner of the publishers and inline arenas in one revision generation.
 ///
-/// Values carry only copyable typed ids. Keeping this bundle alive is the sole
-/// runtime lifetime authority for those ids.
+/// Macro definitions and durable token lists leave their publisher through
+/// generation-branded shared owners. Glue and provenance remain compact
+/// direct-index values owned by this bundle.
 pub(crate) struct Generation<G> {
     definitions: DefinitionArena<G>,
     token_lists: TokenListArena<G>,
@@ -52,8 +53,8 @@ pub(crate) struct Generation<G> {
 /// Cloneable lifetime authority for one complete immutable generation.
 ///
 /// Cloning is deliberately available only at this coarse boundary. The
-/// backing arenas remain private, ids carry no owner, and ordinary admitted
-/// reads borrow the already-owned generation without retaining this `Arc`.
+/// backing publishers remain private. Ordinary admitted reads borrow this
+/// bundle; macro and token-list carriers retain their own non-atomic owner.
 pub struct GenerationOwner<G> {
     generation: Arc<RwLock<Generation<G>>>,
 }
@@ -115,7 +116,7 @@ impl<G> GenerationOwner<G> {
     }
 }
 
-/// Logical rows released when one coarse generation owner retires.
+/// Published coordinates and inline rows observed at coarse retirement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GenerationRetirement {
     pub(crate) definitions: usize,

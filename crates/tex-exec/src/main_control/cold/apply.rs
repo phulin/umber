@@ -879,14 +879,15 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             let new = tokens;
             let observed = ObservationValue::Tokens(
-                new.map(|new| {
-                    stores
-                        .token_list(new)
-                        .iter()
-                        .map(|word| observed_macro_token(word.semantic_token(), stores))
-                        .collect()
-                })
-                .unwrap_or_default(),
+                new.clone()
+                    .map(|new| {
+                        stores
+                            .token_list(new)
+                            .iter()
+                            .map(|word| observed_macro_token(word.semantic_token(), stores))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             );
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                 .toks(index, new, observed, global);
@@ -931,14 +932,15 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             let new = tokens;
             let observed = ObservationValue::Tokens(
-                new.map(|tokens| {
-                    stores
-                        .token_list(tokens)
-                        .iter()
-                        .map(|word| observed_macro_token(word.semantic_token(), stores))
-                        .collect()
-                })
-                .unwrap_or_default(),
+                new.clone()
+                    .map(|tokens| {
+                        stores
+                            .token_list(tokens)
+                            .iter()
+                            .map(|word| observed_macro_token(word.semantic_token(), stores))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             );
             let key = parameter_mutation_key_for_dialect(
                 command.state.profile().dialect(),

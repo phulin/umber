@@ -37,12 +37,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
-- `src/definition_arena.rs`: Append-only generation-branded immutable macro
-  definitions whose parameter and replacement words live in the same arena.
-- `src/durable_arena.rs`: Separate generation-branded append-only token-list,
-  glue, and provenance arenas. Token lists use fixed-size packed chunks,
-  scalar sealed rows, opaque destination builders, and allocation-free
-  sequential views/cursors; glue and provenance retain direct row resolution.
+- `src/definition_arena.rs`: Private generation-branded non-atomic shared
+  macro-definition owners, single-allocation immutable token payloads, and the
+  publisher which retains no released body.
+- `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
+  token-list owners, reusable publication builders, and allocation-free owning
+  views/cursors; glue and provenance retain cheaper direct row resolution.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, and journal-cursor restore.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
@@ -96,9 +96,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
-- `src/generation.rs`: Fresh invariant generation brands, sealed arena
+- `src/generation.rs`: Fresh invariant generation brands, private publisher
   construction, episode-level guarded admission, cloneable coarse generation
-  ownership, and whole-generation retirement.
+  ownership, and whole-generation retirement of inline arenas/capacity.
 - `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
 - `src/input.rs`: Storage-independent input policy, replay-kind, alignment
   phase, and source-id vocabulary shared with the command-owned input stack.
@@ -117,14 +117,15 @@ All production mutation of live TeX state should pass through `Universe` or simi
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
 - `src/journal.rs`: Generation-branded ordered mutation/group history carrying
-  exact prior packed values, TeX save levels, and owner-checked cursors.
+  exact prior values (including shared immutable owners), TeX save levels, and
+  owner-checked cursors.
 - `src/journal/tests.rs`: Exact position/truncation and foreign-owner cursor
   rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
-- `src/meaning.rs`: Static packed TeX meanings plus generation-typed macro
-  meaning words; raw integers never materialize runtime definition ids.
+- `src/meaning.rs`: Static packed TeX meanings plus generation-typed shared
+  macro owners; raw integers never materialize runtime definition handles.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
   allocation attribution, structural dispatch census, and coarse retained
@@ -197,7 +198,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/read_observation.rs`: State-owned read-recorder contract, detached
   transactional batches, and deterministic dependency-set recorder.
 - `src/reachability_store.rs`: One caller-owned session-epoch reachability
-  store, fixed inline prior/current physical-generation slots, and
+  store with same-thread non-atomic ownership, fixed inline prior/current
+  physical-generation slots, and
   allocation-free slot reuse across accepted, rejected, and suspended
   candidates.
 - `src/retained_generation.rs`: Opaque move-only physical-revision slot lease,
@@ -217,7 +219,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   replay convergence checks, and the Universe-owned executor-boundary builder
   which resolves child/font/value coordinates and erases diagnostic identity.
 - `src/stores.rs`: Coarse generation state owner, immutable/mutable admitted
-  episode views, typed arena publication, and whole-generation retirement.
+  episode views, typed shared-value publication, cold live-format payload
+  capture, and whole-generation retirement.
 - `src/stores/tests.rs`: Direct arena resolution, generation-id bank
   installation, and coarse retirement tests.
 - `src/tests.rs`: Crate-level semantic unit tests and module test wiring.

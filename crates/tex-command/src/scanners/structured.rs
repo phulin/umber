@@ -2134,7 +2134,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 equals,
                 PendingStructuredScalarPhase::CharacterDefinitionEquals {
                     target,
-                    provisional_old,
+                    provisional_old: provisional_old.clone(),
                     class,
                 },
             )?;
@@ -2148,7 +2148,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             value,
             PendingStructuredScalarPhase::CharacterDefinitionValue {
                 target,
-                provisional_old,
+                provisional_old: provisional_old.clone(),
                 class,
             },
         )?;
@@ -2226,7 +2226,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 equals,
                 PendingStructuredScalarPhase::RegisterDefinitionEquals {
                     target,
-                    provisional_old,
+                    provisional_old: provisional_old.clone(),
                 },
             )?;
         }
@@ -2244,7 +2244,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 result,
                 PendingStructuredScalarPhase::RegisterDefinitionIndex {
                     target,
-                    provisional_old,
+                    provisional_old: provisional_old.clone(),
                 },
             )?
         } else {
@@ -2253,7 +2253,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 result,
                 PendingStructuredScalarPhase::RegisterDefinitionIndex {
                     target,
-                    provisional_old,
+                    provisional_old: provisional_old.clone(),
                 },
             )?
         };

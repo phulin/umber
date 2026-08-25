@@ -103,7 +103,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         }
     }
 
-    fn redundant_word<T: Eq>(&self, current: T, replacement: T) -> bool {
+    fn redundant_word<T: Eq>(&self, current: &T, replacement: &T) -> bool {
         redundant_local_assignment(
             self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0,
             &current,
@@ -212,7 +212,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             .stores
             .count(index)
             .expect("count-register index is admitted");
-        let redundant = !global && self.redundant_word(old, value);
+        let redundant = !global && self.redundant_word(&old, &value);
         if global {
             self.stores
                 .assign_count(index, value, AssignmentScope::Global)
@@ -247,7 +247,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             .stores
             .dimension(index)
             .expect("dimension-register index is admitted");
-        let redundant = !global && self.redundant_word(old, value);
+        let redundant = !global && self.redundant_word(&old, &value);
         if global {
             self.stores
                 .assign_dimension(index, value, AssignmentScope::Global)
@@ -374,8 +374,8 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             .stores
             .token_register(index)
             .expect("token-register index is admitted");
-        let new = value;
-        let redundant = !global && self.redundant_word(old, new);
+        let new = value.clone();
+        let redundant = !global && self.redundant_word(&old, &new);
         if global {
             self.stores
                 .assign_token_register(index, value, AssignmentScope::Global)
@@ -415,7 +415,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         let parameter = IntParam::new(index);
         let old = self.stores.int_param(parameter);
         let tracing_before = self.stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-        let redundant = !global && self.redundant_word(old, value);
+        let redundant = !global && self.redundant_word(&old, &value);
         if global {
             self.stores
                 .assign_int_param(parameter, value, AssignmentScope::Global)
@@ -455,7 +455,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     ) -> MutationReceipt {
         let parameter = DimenParam::new(index);
         let old = self.stores.dimen_param(parameter);
-        let redundant = !global && self.redundant_word(old, value);
+        let redundant = !global && self.redundant_word(&old, &value);
         if global {
             self.stores
                 .assign_dimen_param(parameter, value, AssignmentScope::Global)
@@ -498,14 +498,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             .stores
             .token_parameter(parameter)
             .expect("token-parameter index is admitted");
-        let redundant = !global && self.redundant_word(old, value);
+        let redundant = !global && self.redundant_word(&old, &value);
         if global {
             self.stores
-                .assign_token_parameter(parameter, value, AssignmentScope::Global)
+                .assign_token_parameter(parameter, value.clone(), AssignmentScope::Global)
                 .expect("global token-parameter assignment targets admitted state");
         } else if !redundant {
             self.stores
-                .assign_token_parameter(parameter, value, AssignmentScope::Local)
+                .assign_token_parameter(parameter, value.clone(), AssignmentScope::Local)
                 .expect("local token-parameter assignment targets admitted state");
         }
         tracing::trace_tok_param(
@@ -616,8 +616,8 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     {
         let redundant = !global
             && self.redundant_word(
-                self.stores.meaning(target),
-                ResolvedMeaning::Static(meaning),
+                &self.stores.meaning(target),
+                &ResolvedMeaning::Static(meaning),
             );
         tracing::trace_meaning_write(
             self.stores,

@@ -279,7 +279,7 @@ impl FontRuntimeBank {
     pub(crate) fn read(&self, cell: FontRuntimeCell) -> Result<BankCellValue, BankError> {
         let value = match cell {
             FontRuntimeCell::ParameterCount(font) => {
-                BankCellValue::Integer(self.row(font)?.parameter_count)
+                BankCellValue::Integer(self.row(font)?.parameter_count.clone())
             }
             FontRuntimeCell::Dimen { font, number } => {
                 let index = number
@@ -287,26 +287,28 @@ impl FontRuntimeBank {
                     .and_then(|value| usize::try_from(value).ok())
                     .ok_or(BankError::IndexOutOfBounds)?;
                 BankCellValue::Dimension(
-                    *self
-                        .row(font)?
+                    self.row(font)?
                         .parameters
                         .get(index)
-                        .ok_or(BankError::IndexOutOfBounds)?,
+                        .ok_or(BankError::IndexOutOfBounds)?
+                        .clone(),
                 )
             }
             FontRuntimeCell::HyphenChar(font) => {
-                BankCellValue::Integer(self.row(font)?.hyphen_char)
+                BankCellValue::Integer(self.row(font)?.hyphen_char.clone())
             }
-            FontRuntimeCell::SkewChar(font) => BankCellValue::Integer(self.row(font)?.skew_char),
+            FontRuntimeCell::SkewChar(font) => {
+                BankCellValue::Integer(self.row(font)?.skew_char.clone())
+            }
             FontRuntimeCell::PdfCode { table, font, code } => {
                 let row = self.row(font)?;
                 let values = row.pdf_codes[usize::from(table)]
                     .as_ref()
                     .ok_or(BankError::IndexOutOfBounds)?;
-                BankCellValue::Integer(values[usize::from(code)])
+                BankCellValue::Integer(values[usize::from(code)].clone())
             }
             FontRuntimeCell::LigaturesDisabled(font) => {
-                BankCellValue::Integer(self.row(font)?.ligatures_disabled)
+                BankCellValue::Integer(self.row(font)?.ligatures_disabled.clone())
             }
         };
         Ok(value)
@@ -412,7 +414,7 @@ impl FontRuntimeBank {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum BankCellValue {
     Integer(BankCell<i32>),
     Dimension(BankCell<Scaled>),

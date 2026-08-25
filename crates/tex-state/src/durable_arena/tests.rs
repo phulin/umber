@@ -3,7 +3,7 @@ use crate::glue::GlueSpec;
 use crate::provenance::{OriginRecord, SyntheticOrigin, SyntheticOriginKind};
 use crate::token::{Token, TokenWord};
 
-fn collect_words<G>(view: super::TokenListView<'_, G>) -> Vec<TokenWord> {
+fn collect_words<G>(view: super::TokenListView<G>) -> Vec<TokenWord> {
     view.iter().collect()
 }
 
@@ -114,13 +114,13 @@ fn cross_chunk_replay_restarts_and_streaming_identity_are_exact() {
             .allocate(&expected)
             .expect("multi-chunk list");
         let arena = generation.token_lists();
-        let view = arena.get(id);
+        let view = arena.get(id.clone());
         assert_eq!(view.iter().collect::<Vec<_>>(), expected);
         assert_eq!(view.iter().collect::<Vec<_>>(), expected);
 
         let mut cursor = view.cursor();
         for expected in &expected {
-            assert_eq!(arena.cursor_word(cursor), Ok(*expected));
+            assert_eq!(arena.cursor_word(cursor.clone()), Ok(*expected));
             arena.advance_cursor(&mut cursor).expect("advance cursor");
         }
         assert!(arena.cursor_word(cursor).is_err());
@@ -134,7 +134,7 @@ fn cross_chunk_replay_restarts_and_streaming_identity_are_exact() {
         }
         assert_eq!(view_hash.finish(), expected_hash.finish());
         assert_eq!(
-            arena.capture_format_rows(),
+            vec![id.capture_format()],
             vec![expected.iter().map(|word| word.raw()).collect::<Vec<_>>()]
         );
         assert_eq!(arena.retained_chunk_len(), 3);
@@ -142,7 +142,7 @@ fn cross_chunk_replay_restarts_and_streaming_identity_are_exact() {
 }
 
 #[test]
-fn discarded_builder_reuses_its_chunk_chain_without_touching_sealed_rows() {
+fn discarded_builder_reuses_the_chunk_released_after_publication() {
     with_generation(|mut generation| {
         let arena = generation.token_lists_mut();
         let sealed = arena
@@ -164,35 +164,54 @@ fn discarded_builder_reuses_its_chunk_chain_without_touching_sealed_rows() {
             collect_words(arena.get(replacement)),
             [TokenWord::from_raw(9)]
         );
-        assert_eq!(arena.retained_chunk_len(), 2);
+        assert_eq!(arena.retained_chunk_len(), 1);
         assert_eq!(arena.retained_builder_slot_len(), 1);
     });
 }
 
 #[cfg(feature = "profiling")]
 #[test]
-fn warmed_8192_build_seal_read_cycles_allocate_zero_heap() {
+fn warmed_alias_and_read_cycles_allocate_zero_heap() {
     with_generation(|mut generation| {
         let arena = generation.token_lists_mut();
-        arena.reserve_batch(8_192, 8_192).expect("warm capacity");
+        let id = arena
+            .allocate(&[TokenWord::from_raw(7)])
+            .expect("published list");
         let owner = crate::measurement::HotCoreAllocationOwner::ArenaGrowth;
         let before = crate::measurement::hot_core_thread_allocation_measurement(owner);
         {
             let _scope = crate::measurement::hot_core_allocation_scope(owner);
-            for raw in 0..8_192_u32 {
-                let builder = arena.begin_builder().expect("builder");
-                arena
-                    .push_builder_word(&builder, TokenWord::from_raw(raw))
-                    .expect("append");
-                let id = arena.seal_builder(builder).expect("seal");
-                assert_eq!(arena.get(id).iter().next(), Some(TokenWord::from_raw(raw)));
+            for _ in 0..8_192 {
+                let alias = id.clone();
+                assert_eq!(arena.get(alias).iter().next(), Some(TokenWord::from_raw(7)));
             }
         }
         let after = crate::measurement::hot_core_thread_allocation_measurement(owner);
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-        assert_eq!(arena.len(), 8_192);
-        assert_eq!(arena.retained_chunk_len(), 8_192);
+        assert_eq!(arena.len(), 1);
+        assert_eq!(arena.retained_chunk_len(), 1);
         assert_eq!(arena.retained_builder_slot_len(), 1);
+    });
+}
+
+#[test]
+fn token_list_aliases_release_exactly_on_owner_drop() {
+    with_generation(|mut generation| {
+        let id = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(7)])
+            .expect("published list");
+        assert_eq!(id.semantic_owner_count(), 1);
+
+        let alias = id.clone();
+        assert_eq!(id.semantic_owner_count(), 2);
+        let view = generation.token_lists().get(alias);
+        assert_eq!(id.semantic_owner_count(), 2);
+        let cursor = view.cursor();
+        assert_eq!(id.semantic_owner_count(), 3);
+        drop(cursor);
+        drop(view);
+        assert_eq!(id.semantic_owner_count(), 1);
     });
 }

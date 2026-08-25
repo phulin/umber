@@ -126,11 +126,13 @@ struct MacroDelimiter<G> {
 
 impl<G> Clone for MacroDelimiter<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            definition: self.definition.clone(),
+            start: self.start,
+            len: self.len,
+        }
     }
 }
-
-impl<G> Copy for MacroDelimiter<G> {}
 
 impl MacroParameterEscape {
     pub(crate) const fn classify(token: Token) -> Option<Self> {
@@ -264,10 +266,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             .scratch
             .begin_macro_match()
             .map_err(|_| CommandError::input_invariant())?;
-        let definition_view = self.state.definition(definition);
+        let definition_view = self.state.definition(definition.clone());
         let pattern = definition_view.parameter_pattern();
         let parameter_len = definition_view.parameter_text().len();
-        self.trace_macro_invocation(macro_name, definition);
+        self.trace_macro_invocation(macro_name, definition.clone());
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
         // macro therefore feeds its replacement directly, without a transient
@@ -294,7 +296,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
         let scanned_arguments =
-            self.macro_call_scalar(&matching, definition, flags, pattern, parameter_len);
+            self.macro_call_scalar(&matching, definition.clone(), flags, pattern, parameter_len);
         match scanned_arguments {
             Ok(()) => {}
             Err(CommandError::MacroPrefixMismatch) => {
@@ -350,7 +352,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             .commit_macro_match(matching)
             .map_err(|_| CommandError::input_invariant())?;
         let arguments = MacroArguments::new(frame);
-        let _level = self.push_macro_activation(macro_name, definition, call.origin(), arguments);
+        let _level =
+            self.push_macro_activation(macro_name, definition.clone(), call.origin(), arguments);
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -388,7 +391,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         parameter_len: usize,
     ) -> Result<(), CommandError> {
         for index in 0..pattern.leading_end(parameter_len) {
-            let expected = self.macro_parameter_token(definition, index)?;
+            let expected = self.macro_parameter_token(definition.clone(), index)?;
             let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
             if actual.spelling().semantic_token() != expected {
                 // TeX82 §391 tests every compulsory parameter-text token
@@ -408,9 +411,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // compulsory leading pattern rather than an argument delimiter.
         if pattern.parameter_count() == 0
             && pattern.leading_end(parameter_len) != 0
-            && is_begin_group(
-                self.macro_parameter_token(definition, pattern.leading_end(parameter_len) - 1)?,
-            )
+            && is_begin_group(self.macro_parameter_token(
+                definition.clone(),
+                pattern.leading_end(parameter_len) - 1,
+            )?)
         {
             self.undo_delimiter_begin_group_delivery();
         }
@@ -418,17 +422,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         for parameter in 0..pattern.parameter_count() {
             let (start, end) = pattern.delimiter_bounds(parameter, parameter_len);
             let delimiter = MacroDelimiter {
-                definition,
+                definition: definition.clone(),
                 start,
                 len: end - start,
             };
             let argument = if delimiter.len == 0 {
                 self.scan_undelimited_argument(matching, flags)?
             } else {
-                self.scan_delimited_argument(matching, flags, delimiter)?
+                self.scan_delimited_argument(matching, flags, &delimiter)?
             };
             let marker = pattern.marker_index(parameter).map_or(Ok('#'), |index| {
-                match self.macro_parameter_token(definition, index)? {
+                match self.macro_parameter_token(definition.clone(), index)? {
                     Token::Char { ch, .. } => Ok(ch),
                     _ => Err(CommandError::input_invariant()),
                 }
@@ -446,7 +450,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     transition: "splice",
                     purpose: "macro_delimiter_match",
                     tokens: (0..delimiter.len)
-                        .filter_map(|index| self.macro_delimiter_token(delimiter, index).ok())
+                        .filter_map(|index| self.macro_delimiter_token(&delimiter, index).ok())
                         .map(|token| {
                             self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
                         })
@@ -457,7 +461,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self,
                 CommandObservation::Macro(MacroRecord {
                     activation: false,
-                    definition: self.definition_observation_operand(definition),
+                    definition: self.definition_observation_operand(definition.clone()),
                     control_sequence: None,
                     argument: Some((parameter + 1) as u8),
                     token_count: argument_token_count as u64,
@@ -493,13 +497,13 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn macro_delimiter_token(
         &self,
-        delimiter: MacroDelimiter<G>,
+        delimiter: &MacroDelimiter<G>,
         index: usize,
     ) -> Result<Token, CommandError> {
         if index >= delimiter.len {
             return Err(CommandError::input_invariant());
         }
-        self.macro_parameter_token(delimiter.definition, delimiter.start + index)
+        self.macro_parameter_token(delimiter.definition.clone(), delimiter.start + index)
     }
 
     /// TeX82 §389's invocation trace, including `print_ln` before the macro
@@ -795,7 +799,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         matching: &MacroMatch<G>,
         flags: MeaningFlags,
-        delimiter: MacroDelimiter<G>,
+        delimiter: &MacroDelimiter<G>,
     ) -> Result<MacroMatchBuffer<G>, CommandError> {
         debug_assert_ne!(delimiter.len, 0);
         let mut tokens = self.allocate_argument_buffer(matching)?;
@@ -911,7 +915,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn overlapping_delimiter_prefix(
         &self,
         current: TracedTokenWord,
-        delimiter: MacroDelimiter<G>,
+        delimiter: &MacroDelimiter<G>,
     ) -> Result<usize, CommandError> {
         let pending_len = self.command.scratch.delimiter_prefix_len() + 1;
         for candidate_len in (1..pending_len.min(delimiter.len)).rev() {

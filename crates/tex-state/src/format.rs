@@ -190,10 +190,7 @@ impl<'a, G> FormatNodeCollector<'a, G> {
                             self.indices[&child]
                         }
                     })
-                    .map_payloads(
-                        crate::GlueId::format_index,
-                        crate::TokenListId::format_index,
-                    );
+                    .map_payloads(crate::GlueId::format_index, |tokens| tokens.format_index());
                 bincode::serialize(&node)
                     .map_err(|error| format!("cannot encode format node: {error}"))
             })
@@ -260,7 +257,34 @@ impl DetachedFormatImage {
             .as_ref()
             .ok_or_else(|| FormatError::InvalidState("retired Universe".to_owned()))?;
         universe.validate_format_capture_state()?;
-        let (definitions, token_lists, glue) = core.capture_format_values();
+        let mut pdf_token_roots = Vec::new();
+        let mut pdf_node_roots = Vec::new();
+        let pdf_is_capturable = universe
+            .pdf
+            .capture_format(
+                |tokens| {
+                    pdf_token_roots.push(tokens);
+                    Ok(Vec::new())
+                },
+                |nodes| {
+                    pdf_node_roots.push(nodes);
+                    Ok(Vec::new())
+                },
+            )
+            .map_err(FormatError::InvalidState)?
+            .is_some();
+        if !pdf_is_capturable {
+            return Err(FormatError::NonEmptyPdfDocument);
+        }
+        let pdf_roots = pdf_token_roots
+            .into_iter()
+            .map(crate::env::DynamicMemoryRoot::TokenList)
+            .chain(
+                pdf_node_roots
+                    .into_iter()
+                    .map(crate::env::DynamicMemoryRoot::Nodes),
+            );
+        let (definitions, token_lists, glue) = core.capture_format_values(pdf_roots);
         let fonts = universe
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
@@ -1165,15 +1189,16 @@ impl<G> Universe<G> {
             |recipe| {
                 let row: u32 = bincode::deserialize(recipe)
                     .map_err(|error| format!("invalid PDF token root: {error}"))?;
-                let tokens = *token_lists
+                let tokens = token_lists
                     .get(row as usize)
-                    .ok_or_else(|| "PDF token root is out of range".to_owned())?;
+                    .ok_or_else(|| "PDF token root is out of range".to_owned())?
+                    .clone();
                 let admitted = self
                     .core
                     .as_ref()
                     .expect("format candidate retains core")
                     .admit();
-                let words = admitted.token_list(tokens);
+                let words = admitted.token_list(tokens.clone());
                 Ok(crate::pdf::PdfTokenParameter {
                     tokens,
                     semantic_id: crate::state_hash::StateHashFragment::from_exact_builder(
@@ -1320,7 +1345,7 @@ impl<G> Universe<G> {
                         })
                         .map_payloads(
                             |value| glue[value as usize],
-                            |value| token_lists[value as usize],
+                            |value| token_lists[value as usize].clone(),
                         )
                         .map_fonts(|font| fonts[font.raw() as usize]);
                     Ok(node)

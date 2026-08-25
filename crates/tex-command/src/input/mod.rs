@@ -376,8 +376,8 @@ fn project_token_cursor<G>(
                 project_token(hash, chunk.word(index)?.token()?, state)?;
             }
         }
-        TokenPayload::DurableList { list, .. } => {
-            for word in state.token_list(*list) {
+        TokenPayload::DurableList { cursor, .. } => {
+            for word in state.token_list(cursor.list()) {
                 project_token(hash, word.semantic_token(), state)?;
             }
         }
@@ -876,7 +876,7 @@ impl<G> InputState<G> {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
                 TokenPayload::MacroReplacement { definition, .. } => stores
-                    .definition(*definition)
+                    .definition(definition.clone())
                     .replacement_text()
                     .get(index)
                     .map(|word| word.semantic_token()),
@@ -888,8 +888,8 @@ impl<G> InputState<G> {
                     .argument_word(replay.range(), index)
                     .ok()
                     .map(|word| word.semantic_token()),
-                TokenPayload::DurableList { list, .. } => stores
-                    .token_list(*list)
+                TokenPayload::DurableList { cursor, .. } => stores
+                    .token_list(cursor.list())
                     .get(index)
                     .map(|word| word.semantic_token()),
             }
@@ -927,7 +927,7 @@ impl<G> InputState<G> {
                 .activations
                 .iter()
                 .find(|candidate| candidate.identity == activation)?;
-            if activation.definition != *definition {
+            if &activation.definition != definition {
                 return None;
             }
             Some((
@@ -935,7 +935,7 @@ impl<G> InputState<G> {
                     stores,
                     tex_state::token::Token::Cs(activation.name),
                 ),
-                *definition,
+                definition.clone(),
             ))
         } else {
             None
@@ -982,7 +982,7 @@ impl<G> InputState<G> {
             if !before.is_complete() {
                 before.prepend_str("->");
             }
-            let owner = stores.definition(*definition);
+            let owner = stores.definition(definition.clone());
             for index in (0..owner.parameter_text().len()).rev() {
                 if before.is_complete() {
                     break;

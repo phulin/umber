@@ -59,7 +59,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
         self.sidecars.checkpoints.get(self.generation, key)
     }
 
-    pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
+    pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
         assert!(
             self.sidecars.attachment.is_none(),
             "one retained engine generation accepts one suspended runtime"
@@ -70,7 +70,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
         }
     }
 
-    pub fn attachment_mut<T: Send + 'static>(
+    pub fn attachment_mut<T: 'static>(
         &mut self,
         key: &RetainedEngineAttachmentKey,
     ) -> Result<&mut T, RetainedEngineAccessError> {
@@ -83,7 +83,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
             .ok_or(RetainedEngineAccessError::AttachmentTypeMismatch)
     }
 
-    pub fn take_attachment<T: Send + 'static>(
+    pub fn take_attachment<T: 'static>(
         &mut self,
         key: RetainedEngineAttachmentKey,
     ) -> Result<T, RetainedEngineAccessError> {
@@ -293,7 +293,7 @@ impl<'store> RetainedEngineGeneration<'store> {
     }
 
     /// Drops optional checkpoint roots only after validating the complete
-    /// retained key set. Immutable generation rows remain append-only.
+    /// retained key set. Their immutable semantic owners retire with them.
     pub fn prune_checkpoints(
         &mut self,
         retained: &[RetainedCheckpointKey],
@@ -476,7 +476,7 @@ impl<G> RetainedCheckpointSlots<G> {
 struct EngineGenerationSidecars<G> {
     generation: u64,
     checkpoints: RetainedCheckpointSlots<G>,
-    attachment: Option<Box<dyn Any + Send>>,
+    attachment: Option<Box<dyn Any>>,
 }
 
 struct InitializeSidecars {

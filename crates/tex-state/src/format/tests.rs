@@ -692,7 +692,7 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
             .expect("definition");
         let meaning = MeaningWord::macro_definition(MeaningFlags::LONG, definition);
         universe
-            .assign_meaning(alpha, meaning, AssignmentScope::Global)
+            .assign_meaning(alpha, meaning.clone(), AssignmentScope::Global)
             .expect("alpha meaning");
         universe
             .assign_meaning(alias, meaning, AssignmentScope::Global)
@@ -857,6 +857,41 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
 }
 
 #[test]
+fn format_holes_do_not_retain_unreachable_token_payloads() {
+    let stale = TokenWord::pack(Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    });
+    let retained = TokenWord::pack(Token::Char {
+        ch: 'y',
+        cat: Catcode::Other,
+    });
+    let image = with_universe(budget(), |universe| {
+        universe
+            .allocate_token_list(&[stale])
+            .expect("unreferenced token list");
+        let tokens = universe
+            .allocate_token_list(&[retained])
+            .expect("retained token list");
+        universe
+            .assign_token_register(7, Some(tokens), AssignmentScope::Global)
+            .expect("retained token register");
+        universe.capture_format_image().expect("capture format")
+    })
+    .expect("source universe");
+
+    assert_eq!(image.decoded.token_lists, [vec![], vec![retained.raw()]]);
+    assert!(
+        image
+            .decoded
+            .token_lists
+            .iter()
+            .flatten()
+            .all(|word| *word != stale.raw())
+    );
+}
+
+#[test]
 fn configured_hyphenation_exception_capacity_roundtrips_with_format_usage() {
     // TeX82 §§934/1308/1334 and Web2C `tex.ch` [51.1332]: `hyph_size`
     // is selected by the executable, retained as a format compatibility
@@ -915,7 +950,7 @@ fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
             let mut context = universe.command_context().expect("PDF admission");
             let raw = context.reserve_pdf_raw_object().expect("raw object");
             context
-                .initialize_pdf_raw_object(raw, false, None, false, tokens, false)
+                .initialize_pdf_raw_object(raw, false, None, false, tokens.clone(), false)
                 .expect("raw object data");
             let form = context.reserve_pdf_form().expect("form reservation");
             context

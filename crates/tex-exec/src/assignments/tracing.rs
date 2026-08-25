@@ -220,7 +220,7 @@ fn restoration_text<G>(
         ) => (escaped(&dimen_param_name(index)), dimen_text(value), false),
         (GroupRestorationCell::TokenParameter(index), GroupRestorationValue::TokenList(value)) => {
             let parameter = tex_state::env::banks::TokParam::new(index);
-            if let Some(length) = stores.restored_paragraph_shape_len(parameter, value) {
+            if let Some(length) = stores.restored_paragraph_shape_len(parameter, value.clone()) {
                 (escaped("parshape"), length.to_string(), false)
             } else if let Some(kind) = PenaltyArrayKind::from_storage_parameter(parameter) {
                 let raw_name = match kind {
@@ -573,8 +573,8 @@ pub(crate) fn trace_tok_param<G>(
         return;
     }
     let name = escaped(stores, &tok_param_name(index));
-    let old_text = tokens_text(stores, old);
-    let new_text = tokens_text(stores, new);
+    let old_text = tokens_text(stores, old.clone());
+    let new_text = tokens_text(stores, new.clone());
     trace_scalar(
         stores,
         diagnostic_effects,
@@ -600,8 +600,8 @@ pub(crate) fn trace_toks_register<G>(
         return;
     }
     let name = escaped(stores, &format!("toks{index}"));
-    let old_text = tokens_text(stores, old);
-    let new_text = tokens_text(stores, new);
+    let old_text = tokens_text(stores, old.clone());
+    let new_text = tokens_text(stores, new.clone());
     trace_scalar(
         stores,
         diagnostic_effects,
@@ -911,7 +911,7 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
     let mut name = String::new();
     stores.append_token_show_text(token, &mut name);
     let escape_char = stores.untracked_int_param(IntParam::ESCAPE_CHAR);
-    let old_text = meaning_value_text_at(stores, old, escape_char);
+    let old_text = meaning_value_text_at(stores, old.clone(), escape_char);
     let new_text = meaning_value_text_at(stores, ResolvedMeaning::Static(new), escape_char);
     trace_scalar(
         stores,

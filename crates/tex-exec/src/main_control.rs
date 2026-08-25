@@ -91,7 +91,7 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
     Arc::try_unwrap(std::mem::take(pages)).unwrap_or_else(|shared| shared.as_ref().clone())
 }
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,
@@ -1055,17 +1055,17 @@ impl<G> PendingPreflightCommand<G> {
     fn for_delivery(delivery: &OperationDelivery<G>) -> Option<Self> {
         match delivery {
             OperationDelivery::<G>::Replay(Some(command)) => Some(Self::Settled {
-                command: *command,
+                command: command.clone(),
                 cursor: None,
                 scanner: None,
             }),
             OperationDelivery::<G>::Settled { command, cursor } => Some(Self::Settled {
-                command: *command,
+                command: command.clone(),
                 cursor: *cursor,
                 scanner: None,
             }),
             OperationDelivery::<G>::Raw { command, cursor } => Some(Self::Raw {
-                command: *command,
+                command: command.clone(),
                 cursor: *cursor,
                 scanner: None,
             }),
@@ -1075,7 +1075,7 @@ impl<G> PendingPreflightCommand<G> {
                 cursor,
                 ..
             } => Some(Self::Expanding {
-                command: *command,
+                command: command.clone(),
                 main_loop: *main_loop,
                 cursor: *cursor,
                 scanner: None,
@@ -5515,7 +5515,7 @@ impl<G> MainControl<G> {
                         expanding,
                     },
             }) => {
-                let retry = (command, cursor);
+                let retry = (command.clone(), cursor);
                 let delivery = if expanding {
                     OperationDelivery::<G>::Expanding {
                         command,
@@ -5614,7 +5614,7 @@ impl<G> MainControl<G> {
                     self.commit_direct_operation(stores, operation_mark);
                     return Ok(DiagnosticStepResult::Progress(step));
                 }
-                let retry = (command, cursor);
+                let retry = (command.clone(), cursor);
                 Some((
                     OperationDelivery::<G>::Settled {
                         command,
@@ -8180,7 +8180,7 @@ impl<G> MainControl<G> {
                             Some(command) => match command.meaning() {
                                 meaning
                                     if tex_command::exceeds_max_non_prefixed_command(
-                                        static_meaning(meaning),
+                                        static_meaning(meaning.clone()),
                                     ) || matches!(
                                         meaning,
                                         ResolvedMeaning::Static(Meaning::CharToken {
@@ -8234,7 +8234,7 @@ impl<G> MainControl<G> {
                         prepare_command_trace(&mut processor, mode, self.shown_mode);
                         settle_preflight_step(
                             &mut processor,
-                            command,
+                            command.clone(),
                             main_loop,
                             &mut retry_command,
                             mode,
@@ -8323,7 +8323,7 @@ impl<G> MainControl<G> {
                         let mut suspended_operation_scan = None;
                         let result = scan_command(
                             &mut processor,
-                            command,
+                            command.clone(),
                             global,
                             flags,
                             mode,
@@ -10618,7 +10618,7 @@ fn settle_preflight_step<G>(
     // after this point a resource failure must re-enter this command before
     // any nested scanner continuation can resume.
     *retry = Some(PendingPreflightCommand::Settled {
-        command,
+        command: command.clone(),
         cursor: None,
         scanner: None,
     });
@@ -12215,7 +12215,8 @@ fn dispatch_main_control_command_inner<G>(
             payload: *payload,
         };
         let mut suspended = None;
-        let scanned = scan_leader_glue_command(processor, command, mode, result, &mut suspended);
+        let scanned =
+            scan_leader_glue_command(processor, command.clone(), mode, result, &mut suspended);
         if let Err(error) = &scanned
             && execution_error_needs_command_retry(error)
             && let Some(phase) = suspended
@@ -12224,7 +12225,7 @@ fn dispatch_main_control_command_inner<G>(
                 .take_scanner_resume()
                 .expect("a suspended leader glue scan retains its exact child capability");
             let pending = PendingOperationScan {
-                command,
+                command: command.clone(),
                 cursor: processor.delivery_cursor(),
                 phase,
                 child,
@@ -12436,7 +12437,7 @@ fn dispatch_main_control_command_inner<G>(
         );
         if let Some(retry) = retry.as_deref_mut() {
             *retry = Some(PendingPreflightCommand::Settled {
-                command,
+                command: command.clone(),
                 cursor: None,
                 scanner: None,
             });
@@ -12444,7 +12445,7 @@ fn dispatch_main_control_command_inner<G>(
         let mut suspended_operation_scan = None;
         let scanned_result = scan_command(
             processor,
-            command,
+            command.clone(),
             global,
             flags,
             mode,

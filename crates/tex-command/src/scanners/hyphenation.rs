@@ -27,7 +27,7 @@ use crate::scanners::structured::{
 };
 use crate::{CommandError, CommandProcessor};
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,

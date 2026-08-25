@@ -30,7 +30,7 @@ pub trait RetainedStateOperation {
 pub struct RetainedStateAdmission<'a, G> {
     incarnation: u64,
     universe: &'a mut Universe<G>,
-    attachment: &'a mut Option<Box<dyn Any + Send>>,
+    attachment: &'a mut Option<Box<dyn Any>>,
 }
 
 impl<G: 'static> RetainedStateAdmission<'_, G> {
@@ -39,7 +39,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
     }
 
     /// Stores one generation-typed engine sidecar under the same owner.
-    pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedAttachmentKey {
+    pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedAttachmentKey {
         assert!(
             self.attachment.is_none(),
             "one retained state slot accepts one typed engine aggregate"
@@ -50,7 +50,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
         }
     }
 
-    pub fn attachment_mut<T: Send + 'static>(
+    pub fn attachment_mut<T: 'static>(
         &mut self,
         key: &RetainedAttachmentKey,
     ) -> Result<&mut T, RetainedStateAccessError> {
@@ -64,7 +64,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
             .ok_or(RetainedStateAccessError::AttachmentTypeMismatch)
     }
 
-    pub fn take_attachment<T: Send + 'static>(
+    pub fn take_attachment<T: 'static>(
         &mut self,
         key: RetainedAttachmentKey,
     ) -> Result<T, RetainedStateAccessError> {
@@ -83,7 +83,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
 
     /// Splits the aggregate runtime and one validated sidecar for an engine
     /// episode. Validation completes before either mutable borrow is exposed.
-    pub fn universe_and_attachment_mut<T: Send + 'static>(
+    pub fn universe_and_attachment_mut<T: 'static>(
         &mut self,
         key: &RetainedAttachmentKey,
     ) -> Result<(&mut Universe<G>, &mut T), RetainedStateAccessError> {
@@ -136,7 +136,7 @@ pub struct RetainedStateRetirement {
 pub(crate) struct PhysicalStateGeneration {
     incarnation: u64,
     universe: Universe<PhysicalGenerationCoordinate>,
-    attachment: Option<Box<dyn Any + Send>>,
+    attachment: Option<Box<dyn Any>>,
     #[cfg(feature = "profiling")]
     _profiling_lifetime: crate::measurement::RetainedGenerationLifetime,
 }

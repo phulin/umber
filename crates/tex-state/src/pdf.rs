@@ -700,11 +700,12 @@ pub(crate) struct PdfTokenParameter<G> {
     pub(crate) semantic_id: StateHashFragment,
 }
 
-impl<G> Copy for PdfTokenParameter<G> {}
-
 impl<G> Clone for PdfTokenParameter<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            tokens: self.tokens.clone(),
+            semantic_id: self.semantic_id,
+        }
     }
 }
 
@@ -735,8 +736,8 @@ impl<G> Hash for PdfTokenParameter<G> {
 
 impl<G> PdfTokenParameter<G> {
     #[must_use]
-    pub(crate) const fn id(&self) -> TokenListId<G> {
-        self.tokens
+    pub(crate) fn id(&self) -> TokenListId<G> {
+        self.tokens.clone()
     }
 }
 
@@ -754,11 +755,19 @@ pub(crate) struct PdfPageParameters<G> {
     pub(crate) space_font_name: u32,
 }
 
-impl<G> Copy for PdfPageParameters<G> {}
-
 impl<G> Clone for PdfPageParameters<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            h_origin: self.h_origin,
+            v_origin: self.v_origin,
+            width: self.width,
+            height: self.height,
+            link_margin: self.link_margin,
+            page_attr: self.page_attr.clone(),
+            resources: self.resources.clone(),
+            omit_procset: self.omit_procset,
+            space_font_name: self.space_font_name,
+        }
     }
 }
 
@@ -772,11 +781,15 @@ pub struct PdfPageRecord<G> {
     parameters: PdfPageParameters<G>,
 }
 
-impl<G> Copy for PdfPageRecord<G> {}
-
 impl<G> Clone for PdfPageRecord<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            artifact: self.artifact,
+            resources_object: self.resources_object,
+            contents_object: self.contents_object,
+            page_object: self.page_object,
+            parameters: self.parameters.clone(),
+        }
     }
 }
 
@@ -804,8 +817,8 @@ impl<G> Clone for PdfFormRecord<G> {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            attr: self.attr,
-            resources: self.resources,
+            attr: self.attr.clone(),
+            resources: self.resources.clone(),
             immediate: self.immediate,
         }
     }
@@ -1026,11 +1039,43 @@ pub(crate) struct PdfStateCursor<G> {
     thread_fingerprint: StateHashFragment,
 }
 
-impl<G> Copy for PdfStateCursor<G> {}
-
 impl<G> Clone for PdfStateCursor<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            enabled: self.enabled,
+            next_object: self.next_object,
+            page_count: self.page_count,
+            output_parameters: self.output_parameters,
+            pk_mode: self.pk_mode.clone(),
+            font_operation_count: self.font_operation_count,
+            font_resource_count: self.font_resource_count,
+            fingerprint: self.fingerprint,
+            match_fingerprint: self.match_fingerprint,
+            external_image_fingerprint: self.external_image_fingerprint,
+            raw_object_fingerprint: self.raw_object_fingerprint,
+            document_fragment_fingerprint: self.document_fragment_fingerprint,
+            document_objects: self.document_objects,
+            catalog_open_action: self.catalog_open_action.clone(),
+            action_fingerprint: self.action_fingerprint,
+            page_reservation_fingerprint: self.page_reservation_fingerprint,
+            space_font_name_count: self.space_font_name_count,
+            current_space_font_name: self.current_space_font_name,
+            space_font_name_fingerprint: self.space_font_name_fingerprint,
+            annotation_fingerprint: self.annotation_fingerprint,
+            link_fingerprint: self.link_fingerprint,
+            open_link_fingerprint: self.open_link_fingerprint,
+            color_stack_fingerprint: self.color_stack_fingerprint,
+            last_position: self.last_position,
+            snap_reference: self.snap_reference,
+            form_fingerprint: self.form_fingerprint,
+            next_form_resource: self.next_form_resource,
+            form_artifact_fingerprint: self.form_artifact_fingerprint,
+            return_value: self.return_value,
+            destination_fingerprint: self.destination_fingerprint,
+            structure_destination_fingerprint: self.structure_destination_fingerprint,
+            outline_fingerprint: self.outline_fingerprint,
+            thread_fingerprint: self.thread_fingerprint,
+        }
     }
 }
 
@@ -1057,7 +1102,7 @@ pub(crate) struct PdfStateSnapshot<G> {
 impl<G> Clone for PdfStateSnapshot<G> {
     fn clone(&self) -> Self {
         Self {
-            cursor: self.cursor,
+            cursor: self.cursor.clone(),
             match_state: self.match_state.clone(),
             external_images: self.external_images.clone(),
             raw_objects: self.raw_objects.clone(),
@@ -1694,7 +1739,7 @@ impl<G> PdfState<G> {
     ) -> Result<PdfAnnotationRecord<G>, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
         let record = PdfAnnotationRecord::<G>::reserved(object);
-        self.annotations.push(record);
+        self.annotations.push(record.clone());
         self.annotation_fingerprint =
             append_annotation_reservation_fingerprint(self.annotation_fingerprint, object);
         Ok(record)
@@ -1721,7 +1766,7 @@ impl<G> PdfState<G> {
             dimensions,
             entries_semantic_id,
         );
-        Ok(*record)
+        Ok(record.clone())
     }
 
     #[cfg(test)]
@@ -1892,7 +1937,7 @@ impl<G> PdfState<G> {
             semantic_ids[1],
             semantic_ids[2],
         );
-        self.outlines.push(record);
+        self.outlines.push(record.clone());
         Ok(record)
     }
 
@@ -1924,10 +1969,10 @@ impl<G> PdfState<G> {
             action_semantic_id,
         );
         self.open_links.push(PdfOpenLink {
-            record,
+            record: record.clone(),
             nesting_depth,
         });
-        self.links.push(record);
+        self.links.push(record.clone());
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         Ok(record)
     }
@@ -2294,14 +2339,14 @@ impl<G> PdfState<G> {
                 page_reservation_fingerprint(&self.page_reservations);
         }
         let record = PdfActionRecord::<G>::new(id, spec, target_object, structure_object);
-        self.catalog_open_action = Some(record);
+        self.catalog_open_action = Some(record.clone());
         self.action_fingerprint = fingerprint;
         Ok(record)
     }
 
     #[must_use]
     pub(crate) fn catalog_open_action(&self) -> Option<PdfActionRecord<G>> {
-        self.catalog_open_action
+        self.catalog_open_action.clone()
     }
 
     fn reserved_page_object(&self, number: u32) -> Option<u32> {
@@ -2326,7 +2371,7 @@ impl<G> PdfState<G> {
             next_object: self.next_object,
             page_count: self.pages.len(),
             output_parameters: self.output_parameters,
-            pk_mode: self.pk_mode,
+            pk_mode: self.pk_mode.clone(),
             font_operation_count: self.font_operations.len(),
             font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
@@ -2335,7 +2380,7 @@ impl<G> PdfState<G> {
             raw_object_fingerprint: self.raw_objects.fingerprint(),
             document_fragment_fingerprint: self.document_fragments.fingerprint(),
             document_objects: self.document_objects,
-            catalog_open_action: self.catalog_open_action,
+            catalog_open_action: self.catalog_open_action.clone(),
             action_fingerprint: self.action_fingerprint,
             page_reservation_fingerprint: self.page_reservation_fingerprint,
             space_font_name_count: self.space_font_names.len(),
@@ -2380,7 +2425,7 @@ impl<G> PdfState<G> {
     }
 
     pub(crate) fn snapshot_is_retained(&self, snapshot: &PdfStateSnapshot<G>) -> bool {
-        let cursor = snapshot.cursor;
+        let cursor = snapshot.cursor.clone();
         cursor.page_count <= self.pages.len()
             && cursor.font_operation_count <= self.font_operations.len()
             && cursor.font_resource_count <= self.font_resources.len()
@@ -2392,7 +2437,7 @@ impl<G> PdfState<G> {
         snapshot: &PdfStateSnapshot<G>,
         mut is_live: impl FnMut(FontId) -> bool,
     ) -> bool {
-        let cursor = snapshot.cursor;
+        let cursor = snapshot.cursor.clone();
         self.font_operations[..cursor.font_operation_count]
             .iter()
             .all(|operation| match operation {

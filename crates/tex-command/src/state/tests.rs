@@ -101,14 +101,14 @@ fn attempt_promotion_preserves_multiple_root_order_and_duplicates() {
         let admitted = universe.command_context().expect("admission");
         assert_eq!(
             admitted
-                .token_list(receipt.token_lists[0])
+                .token_list(receipt.token_lists[0].clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('b').token_word()]
         );
         assert_eq!(
             admitted
-                .token_list(receipt.token_lists[1])
+                .token_list(receipt.token_lists[1].clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('a').token_word()]
@@ -161,7 +161,7 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
         let admitted = universe.command_context().expect("admission");
         assert_eq!(
             admitted
-                .token_list(receipt.token_lists[0])
+                .token_list(receipt.token_lists[0].clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('x').token_word()]
@@ -169,7 +169,7 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
         assert_eq!(admitted.glue(receipt.glue[0]), glue(42));
         assert_eq!(
             admitted
-                .definition(receipt.definitions[0])
+                .definition(receipt.definitions[0].clone())
                 .replacement_text(),
             &[word('x').token_word()]
         );

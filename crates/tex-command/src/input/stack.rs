@@ -167,9 +167,9 @@ impl<G> CommandState<G> {
             .sum::<usize>()
             .saturating_add(parameter_count);
         self.usage.record_parameter_push(parameter_ptr);
-        let activation = self
-            .parameters
-            .push_activation(name, definition, arguments, invocation);
+        let activation =
+            self.parameters
+                .push_activation(name, definition.clone(), arguments, invocation);
         self.push_token_level(
             TokenPayload::MacroReplacement {
                 definition,

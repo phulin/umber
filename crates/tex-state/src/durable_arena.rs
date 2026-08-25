@@ -1,7 +1,8 @@
-//! Typed append-only arenas for generation-durable immutable values.
+//! Typed publishers for generation-durable immutable values.
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use std::rc::Rc;
 
 use crate::generation::ArenaToken;
 use crate::glue::GlueSpec;
@@ -73,16 +74,78 @@ macro_rules! dense_id {
     };
 }
 
-dense_id!(TokenListId);
 dense_id!(GlueId);
 dense_id!(ProvenanceId);
 
+/// Shared owner of one immutable stored token list.
+///
+/// The wrapper is generation branded and deliberately non-`Copy`. Cloning it
+/// records a genuine semantic alias through non-atomic shared ownership.
+pub struct TokenListId<G> {
+    serial: NonZeroU32,
+    words: Rc<[TokenWord]>,
+    _brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> Clone for TokenListId<G> {
+    fn clone(&self) -> Self {
+        Self {
+            serial: self.serial,
+            words: Rc::clone(&self.words),
+            _brand: PhantomData,
+        }
+    }
+}
+
+impl<G> PartialEq for TokenListId<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.serial == other.serial
+    }
+}
+
+impl<G> Eq for TokenListId<G> {}
+
+impl<G> core::hash::Hash for TokenListId<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.serial.hash(state);
+    }
+}
+
+impl<G> core::fmt::Debug for TokenListId<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("TokenListId(..)")
+    }
+}
+
 impl<G> TokenListId<G> {
+    fn from_words(serial: NonZeroU32, words: Rc<[TokenWord]>) -> Self {
+        Self {
+            serial,
+            words,
+            _brand: PhantomData,
+        }
+    }
+
+    pub(crate) const fn format_index(&self) -> u32 {
+        self.serial.get() - 1
+    }
+
+    pub(crate) fn capture_format(&self) -> Vec<u32> {
+        self.words.iter().map(|word| word.raw()).collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn semantic_owner_count(&self) -> usize {
+        Rc::strong_count(&self.words)
+    }
+
     pub(crate) fn format_validation_coordinate(index: u32) -> Option<Self> {
         index
             .checked_add(1)
             .and_then(NonZeroU32::new)
-            .map(Self::from_row)
+            .map(|serial| {
+                Self::from_words(serial, Rc::from(Vec::<TokenWord>::new().into_boxed_slice()))
+            })
     }
 }
 
@@ -107,12 +170,6 @@ fn next_row(len: usize) -> Result<NonZeroU32, DurableAllocationError> {
         .and_then(|row| u32::try_from(row).ok())
         .and_then(NonZeroU32::new)
         .ok_or(DurableAllocationError::CapacityOverflow)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TokenListRow {
-    head: u32,
-    len: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -171,74 +228,71 @@ pub struct TokenListBuilder<G> {
 #[derive(Debug)]
 pub struct TokenListCursor<G> {
     list: TokenListId<G>,
-    chunk: u32,
-    offset: u8,
-    remaining: u32,
+    offset: u32,
 }
 
-impl<G> Copy for TokenListCursor<G> {}
 impl<G> Clone for TokenListCursor<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            list: self.list.clone(),
+            offset: self.offset,
+        }
+    }
+}
+impl<G> TokenListCursor<G> {
+    #[must_use]
+    pub fn list(&self) -> TokenListId<G> {
+        self.list.clone()
     }
 }
 impl<G> PartialEq for TokenListCursor<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.list == other.list
-            && self.chunk == other.chunk
-            && self.offset == other.offset
-            && self.remaining == other.remaining
+        self.list == other.list && self.offset == other.offset
     }
 }
 impl<G> Eq for TokenListCursor<G> {}
 impl<G> core::hash::Hash for TokenListCursor<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.list.hash(state);
-        self.chunk.hash(state);
         self.offset.hash(state);
-        self.remaining.hash(state);
     }
 }
 
-/// Cheap immutable sequential view of one sealed durable token list.
-pub struct TokenListView<'a, G> {
-    chunks: &'a [TokenChunk],
+/// Cheap owning sequential view of one sealed durable token list.
+pub struct TokenListView<G> {
     list: TokenListId<G>,
-    row: TokenListRow,
 }
 
-impl<G> Copy for TokenListView<'_, G> {}
-impl<G> Clone for TokenListView<'_, G> {
+impl<G> Clone for TokenListView<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            list: self.list.clone(),
+        }
     }
 }
 
-impl<'a, G> TokenListView<'a, G> {
+impl<G> TokenListView<G> {
     #[must_use]
-    pub const fn len(&self) -> usize {
-        self.row.len as usize
+    pub fn len(&self) -> usize {
+        self.list.words.len()
     }
 
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.row.len == 0
+    pub fn is_empty(&self) -> bool {
+        self.list.words.is_empty()
     }
 
     #[must_use]
     pub fn cursor(&self) -> TokenListCursor<G> {
         TokenListCursor {
-            list: self.list,
-            chunk: self.row.head,
+            list: self.list.clone(),
             offset: 0,
-            remaining: self.row.len,
         }
     }
 
     #[must_use]
-    pub fn iter(&self) -> TokenListWords<'a, G> {
+    pub fn iter(&self) -> TokenListWords<G> {
         TokenListWords {
-            chunks: self.chunks,
             cursor: self.cursor(),
         }
     }
@@ -252,20 +306,20 @@ impl<'a, G> TokenListView<'a, G> {
     }
 }
 
-impl<G> core::fmt::Debug for TokenListView<'_, G> {
+impl<G> core::fmt::Debug for TokenListView<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.debug_list().entries((*self).iter()).finish()
+        formatter.debug_list().entries(self.iter()).finish()
     }
 }
 
-impl<G> PartialEq for TokenListView<'_, G> {
+impl<G> PartialEq for TokenListView<G> {
     fn eq(&self, other: &Self) -> bool {
         self.len() == other.len() && self.iter().eq(other.iter())
     }
 }
-impl<G> Eq for TokenListView<'_, G> {}
+impl<G> Eq for TokenListView<G> {}
 
-impl<G> core::hash::Hash for TokenListView<'_, G> {
+impl<G> core::hash::Hash for TokenListView<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.len().hash(state);
         for word in self.iter() {
@@ -274,61 +328,61 @@ impl<G> core::hash::Hash for TokenListView<'_, G> {
     }
 }
 
-/// Allocation-free iterator over a sealed durable token list.
-pub struct TokenListWords<'a, G> {
-    chunks: &'a [TokenChunk],
+/// Allocation-free owning iterator over a sealed durable token list.
+pub struct TokenListWords<G> {
     cursor: TokenListCursor<G>,
 }
 
-impl<G> Clone for TokenListWords<'_, G> {
+impl<G> Clone for TokenListWords<G> {
     fn clone(&self) -> Self {
         Self {
-            chunks: self.chunks,
-            cursor: self.cursor,
+            cursor: self.cursor.clone(),
         }
     }
 }
 
-impl<G> Iterator for TokenListWords<'_, G> {
+impl<G> Iterator for TokenListWords<G> {
     type Item = TokenWord;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor.remaining == 0 {
-            return None;
-        }
-        let chunk = self.chunks.get(self.cursor.chunk as usize)?;
-        let word = *chunk.words.get(self.cursor.offset as usize)?;
-        self.cursor.remaining -= 1;
+        let word = self
+            .cursor
+            .list
+            .words
+            .get(self.cursor.offset as usize)
+            .copied()?;
         self.cursor.offset += 1;
-        if self.cursor.offset == chunk.len {
-            self.cursor.chunk = chunk.next;
-            self.cursor.offset = 0;
-        }
         Some(word)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.cursor.remaining as usize;
+        let len = self.cursor.list.words.len() - self.cursor.offset as usize;
         (len, Some(len))
     }
 }
-impl<G> ExactSizeIterator for TokenListWords<'_, G> {}
+impl<G> ExactSizeIterator for TokenListWords<G> {}
 
-impl<'a, G> IntoIterator for TokenListView<'a, G> {
+impl<G> IntoIterator for TokenListView<G> {
     type Item = TokenWord;
-    type IntoIter = TokenListWords<'a, G>;
+    type IntoIter = TokenListWords<G>;
 
     fn into_iter(self) -> Self::IntoIter {
         TokenListWords {
-            chunks: self.chunks,
-            cursor: self.cursor(),
+            cursor: TokenListCursor {
+                list: self.list,
+                offset: 0,
+            },
         }
     }
 }
 
-/// Durable token-register lists, physically separate from definition text.
+/// Durable token-list publisher, physically separate from definition text.
+///
+/// Builder chunks are reusable scratch for publication. Sealing copies the
+/// words into their final shared allocation and immediately recycles the
+/// builder chain; the publisher does not retain the published payload.
 pub(crate) struct TokenListArena<G> {
-    rows: Vec<TokenListRow>,
+    next_serial: u32,
     chunks: Vec<TokenChunk>,
     builder_slots: Vec<BuilderSlot>,
     free_builder_slots: Vec<u32>,
@@ -340,7 +394,7 @@ pub(crate) struct TokenListArena<G> {
 impl<G> TokenListArena<G> {
     pub(super) fn new(_token: ArenaToken<G, TokenListNamespace>) -> Self {
         Self {
-            rows: Vec::new(),
+            next_serial: 0,
             chunks: Vec::new(),
             builder_slots: Vec::new(),
             free_builder_slots: Vec::new(),
@@ -387,8 +441,7 @@ impl<G> TokenListArena<G> {
         rows: usize,
         words: usize,
     ) -> Result<(), DurableAllocationError> {
-        self.rows
-            .len()
+        (self.next_serial as usize)
             .checked_add(rows)
             .and_then(|len| u32::try_from(len).ok())
             .ok_or(DurableAllocationError::CapacityOverflow)?;
@@ -401,9 +454,6 @@ impl<G> TokenListArena<G> {
             .checked_add(chunks)
             .and_then(|len| u32::try_from(len).ok())
             .ok_or(DurableAllocationError::CapacityOverflow)?;
-        self.rows
-            .try_reserve(rows)
-            .map_err(|_| DurableAllocationError::AllocationFailed)?;
         self.chunks
             .try_reserve(chunks)
             .map_err(|_| DurableAllocationError::AllocationFailed)?;
@@ -420,12 +470,8 @@ impl<G> TokenListArena<G> {
 
     #[must_use]
     #[inline(always)]
-    pub(crate) fn get(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
-        TokenListView {
-            chunks: &self.chunks,
-            list: id,
-            row: self.rows[id.index()],
-        }
+    pub(crate) fn get(&self, id: TokenListId<G>) -> TokenListView<G> {
+        TokenListView { list: id }
     }
 
     pub(crate) fn begin_builder(&mut self) -> Result<TokenListBuilder<G>, DurableAllocationError> {
@@ -500,17 +546,28 @@ impl<G> TokenListArena<G> {
         &mut self,
         builder: TokenListBuilder<G>,
     ) -> Result<TokenListId<G>, DurableAllocationError> {
-        let row = next_row(self.rows.len())?;
-        self.rows
-            .try_reserve(1)
-            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        let serial = next_row(self.next_serial as usize)?;
         let slot = *self.builder_slot(&builder)?;
-        self.rows.push(TokenListRow {
-            head: slot.head,
-            len: slot.len,
-        });
-        self.release_builder_slot(builder, false)?;
-        Ok(TokenListId::from_row(row))
+        let mut chunk = slot.head;
+        let mut remaining = slot.len as usize;
+        let words = std::iter::from_fn(|| {
+            if remaining == 0 {
+                return None;
+            }
+            let current = &self.chunks[chunk as usize];
+            let consumed = slot.len as usize - remaining;
+            let offset = consumed % TOKEN_CHUNK_WORDS;
+            let word = current.words[offset];
+            remaining -= 1;
+            if offset + 1 == current.len as usize {
+                chunk = current.next;
+            }
+            Some(word)
+        })
+        .collect::<Rc<[_]>>();
+        self.release_builder_slot(builder, true)?;
+        self.next_serial = serial.get();
+        Ok(TokenListId::from_words(serial, words))
     }
 
     pub(crate) fn discard_builder(
@@ -524,13 +581,10 @@ impl<G> TokenListArena<G> {
         &self,
         cursor: TokenListCursor<G>,
     ) -> Result<TokenWord, DurableAllocationError> {
-        let row = self.rows[cursor.list.index()];
-        if cursor.remaining == 0 || cursor.remaining > row.len {
-            return Err(DurableAllocationError::CapacityOverflow);
-        }
-        self.chunks
-            .get(cursor.chunk as usize)
-            .and_then(|chunk| chunk.words.get(cursor.offset as usize))
+        cursor
+            .list
+            .words
+            .get(cursor.offset as usize)
             .copied()
             .ok_or(DurableAllocationError::CapacityOverflow)
     }
@@ -539,39 +593,20 @@ impl<G> TokenListArena<G> {
         &self,
         cursor: &mut TokenListCursor<G>,
     ) -> Result<(), DurableAllocationError> {
-        self.cursor_word(*cursor)?;
-        let chunk = &self.chunks[cursor.chunk as usize];
-        cursor.remaining -= 1;
+        self.cursor_word(cursor.clone())?;
         cursor.offset += 1;
-        if cursor.offset == chunk.len {
-            cursor.chunk = chunk.next;
-            cursor.offset = 0;
-        }
         Ok(())
     }
 
     #[must_use]
     pub(crate) const fn len(&self) -> usize {
-        self.rows.len()
+        self.next_serial as usize
     }
 
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
-        self.rows.is_empty()
-    }
-
-    pub(crate) fn capture_format_rows(&self) -> Vec<Vec<u32>> {
-        self.rows
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let id = TokenListId::from_row(
-                    NonZeroU32::new(index as u32 + 1).expect("format row is nonzero"),
-                );
-                self.get(id).iter().map(TokenWord::raw).collect()
-            })
-            .collect()
+        self.next_serial == 0
     }
 
     fn builder_slot(

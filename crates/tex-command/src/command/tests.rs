@@ -82,7 +82,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");

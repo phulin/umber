@@ -1211,7 +1211,7 @@ impl<G> AttemptArena<G> {
                         .iter()
                         .position(|(source, _)| source == id)
                         .expect("declared token root was promoted");
-                    receipt.token_lists[index]
+                    receipt.token_lists[index].clone()
                 })
                 .collect(),
             glue: roots
@@ -1233,7 +1233,7 @@ impl<G> AttemptArena<G> {
                         .iter()
                         .position(|(source, _, _)| source == id)
                         .expect("declared definition root was promoted");
-                    receipt.definitions[index]
+                    receipt.definitions[index].clone()
                 })
                 .collect(),
             provenance: roots

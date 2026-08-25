@@ -31,11 +31,14 @@ pub struct PdfRawObjectData<G> {
     data: PdfTokenParameter<G>,
 }
 
-impl<G> Copy for PdfRawObjectData<G> {}
-
 impl<G> Clone for PdfRawObjectData<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            stream: self.stream,
+            stream_attr: self.stream_attr.clone(),
+            file: self.file,
+            data: self.data.clone(),
+        }
     }
 }
 
@@ -85,11 +88,14 @@ pub struct PdfRawObjectRecord<G> {
     referenced: bool,
 }
 
-impl<G> Copy for PdfRawObjectRecord<G> {}
-
 impl<G> Clone for PdfRawObjectRecord<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            id: self.id,
+            data: self.data.clone(),
+            immediate: self.immediate,
+            referenced: self.referenced,
+        }
     }
 }
 
@@ -101,7 +107,7 @@ impl<G> PdfRawObjectRecord<G> {
 
     #[must_use]
     pub fn data(&self) -> Option<PdfRawObjectData<G>> {
-        self.data
+        self.data.clone()
     }
 
     #[must_use]
@@ -174,7 +180,7 @@ impl<G> PdfRawObjects<G> {
             .records
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .map(|index| self.0.records[index])
+            .map(|index| self.0.records[index].clone())
     }
 
     pub(crate) fn reserve(&mut self, id: PdfRawObjectId) {

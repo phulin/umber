@@ -140,7 +140,7 @@ fn restored_profile_registration_preserves_format_parameters_except_clock() {
                 context
                     .assign_token_parameter(
                         tex_state::env::banks::TokParam::PDF_PAGES_ATTR,
-                        Some(pages_attr),
+                        Some(pages_attr.clone()),
                         tex_state::AssignmentScope::Global,
                     )
                     .expect("restored PDF token parameter");
@@ -12002,7 +12002,7 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
             .expect("nonempty assignment stores a pointer");
             assert_eq!(
                 admitted!(stores, |context| context
-                    .token_list(outer)
+                    .token_list(outer.clone())
                     .iter()
                     .collect::<Vec<_>>()),
                 [tex_state::token::TokenWord::pack(Token::Char {

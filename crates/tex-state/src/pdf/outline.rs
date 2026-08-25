@@ -12,11 +12,17 @@ pub struct PdfOutlineRecord<G> {
     title: TokenListId<G>,
 }
 
-impl<G> Copy for PdfOutlineRecord<G> {}
-
 impl<G> Clone for PdfOutlineRecord<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            action_object: self.action_object,
+            item_object: self.item_object,
+            title_object: self.title_object,
+            attributes: self.attributes.clone(),
+            action: self.action.clone(),
+            count: self.count,
+            title: self.title.clone(),
+        }
     }
 }
 
@@ -53,19 +59,19 @@ impl<G> PdfOutlineRecord<G> {
         self.title_object
     }
     #[must_use]
-    pub const fn attributes(&self) -> TokenListId<G> {
-        self.attributes
+    pub fn attributes(&self) -> TokenListId<G> {
+        self.attributes.clone()
     }
     #[must_use]
-    pub const fn action(&self) -> PdfActionSpec<G> {
-        self.action
+    pub fn action(&self) -> PdfActionSpec<G> {
+        self.action.clone()
     }
     #[must_use]
     pub const fn count(&self) -> i32 {
         self.count
     }
     #[must_use]
-    pub const fn title(&self) -> TokenListId<G> {
-        self.title
+    pub fn title(&self) -> TokenListId<G> {
+        self.title.clone()
     }
 }

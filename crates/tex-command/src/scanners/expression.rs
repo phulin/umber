@@ -583,7 +583,7 @@ fn is_other_character<G>(command: &CurrentCommand<G>, expected: char) -> bool {
     )
 }
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,

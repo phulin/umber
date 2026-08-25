@@ -782,8 +782,8 @@ impl<G> Universe<G> {
         };
         self.primitive_meanings
             .get(usize::from(frozen.primitive_index()?))
-            .copied()
-            .map(MeaningWord::resolve)
+            .cloned()
+            .map(|meaning| meaning.resolve())
     }
 
     #[must_use]
@@ -965,7 +965,7 @@ impl<G> Universe<G> {
 
     fn pdf_token_parameter(&self, tokens: TokenListId<G>) -> crate::pdf::PdfTokenParameter<G> {
         let admitted = self.admitted().expect("live shipout generation");
-        let words = admitted.token_list(tokens);
+        let words = admitted.token_list(tokens.clone());
         let semantic_id = crate::state_hash::StateHashFragment::from_exact_builder(
             0x7064_665f_746f_6b70,
             |hasher| {
@@ -990,7 +990,7 @@ impl<G> Universe<G> {
             self.pdf_token_parameter(
                 self.token_parameter(parameter)
                     .expect("PDF token parameter is admitted")
-                    .unwrap_or(empty_tokens),
+                    .unwrap_or_else(|| empty_tokens.clone()),
             )
         };
         crate::pdf::PdfPageParameters {
@@ -1807,7 +1807,7 @@ impl<G> Universe<G> {
     pub fn with_durable_token_list<R>(
         &self,
         id: TokenListId<G>,
-        read: impl FnOnce(crate::TokenListView<'_, G>) -> R,
+        read: impl FnOnce(crate::TokenListView<G>) -> R,
     ) -> Result<R, UniverseError> {
         let admitted = self.core.as_ref().ok_or(UniverseError::Retired)?.admit();
         Ok(read(admitted.token_list(id)))
@@ -2278,11 +2278,11 @@ impl<G> ShipoutTransaction<'_, G> {
         reservation: crate::ArtifactPublicationReservation,
     ) -> Result<(crate::ContentHash, crate::ArtifactPublicationRecord), crate::WorldError> {
         let output_parameters = self.current_pdf_output_parameters();
-        let page_parameters = self.current_pdf_page_parameters(self.empty_tokens);
+        let page_parameters = self.current_pdf_page_parameters(self.empty_tokens.clone());
         let pk_mode = self.pdf_token_parameter(
             self.token_parameter(crate::env::banks::TokParam::PDF_PK_MODE)
                 .expect("PDF token parameter is admitted")
-                .unwrap_or(self.empty_tokens),
+                .unwrap_or_else(|| self.empty_tokens.clone()),
         );
         self.pdf
             .ensure_page_capacity(output_parameters)

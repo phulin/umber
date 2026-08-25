@@ -92,10 +92,29 @@ pub(crate) enum DimensionUnitProgress<G> {
     },
 }
 
-impl<G> Copy for DimensionUnitProgress<G> {}
 impl<G> Clone for DimensionUnitProgress<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Fraction { special_fil } => Self::Fraction {
+                special_fil: *special_fil,
+            },
+            Self::SpecialFilF => Self::SpecialFilF,
+            Self::SpecialFilI => Self::SpecialFilI,
+            Self::SpecialFilL => Self::SpecialFilL,
+            Self::InfiniteSuffix { order } => Self::InfiniteSuffix { order: *order },
+            Self::ProbeLeading => Self::ProbeLeading,
+            Self::ProbeInternal { command } => Self::ProbeInternal {
+                command: command.clone(),
+            },
+            Self::Keyword {
+                cursor,
+                magnification,
+            } => Self::Keyword {
+                cursor: *cursor,
+                magnification: *magnification,
+            },
+            Self::InternalOptionalSpace { unit } => Self::InternalOptionalSpace { unit: *unit },
+        }
     }
 }
 
@@ -107,10 +126,14 @@ pub(crate) struct PendingDimensionUnits<G> {
     progress: DimensionUnitProgress<G>,
 }
 
-impl<G> Copy for PendingDimensionUnits<G> {}
 impl<G> Clone for PendingDimensionUnits<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            integer: self.integer,
+            fraction: self.fraction,
+            fraction_len: self.fraction_len,
+            progress: self.progress.clone(),
+        }
     }
 }
 
@@ -563,7 +586,7 @@ impl InternalValue {
 ///
 /// Macros are outside the scalar-internal command ranges, so a scalar scan
 /// treats a generation-branded macro exactly like any other non-operand.
-const fn scalar_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+fn scalar_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,
@@ -1714,7 +1737,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             InternalLevel::Dimension
         };
         *suspended = Some(PendingScalarFrame::DimensionInternal {
-            first,
+            first: first.clone(),
             negative,
             provenance,
             allow_infinite,
@@ -1882,7 +1905,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         *suspended = Some(PendingScalarFrame::DimensionUnits {
-            progress,
+            progress: progress.clone(),
             negative,
             provenance,
             allow_infinite,
@@ -2221,7 +2244,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // integer prefix; collapsing the probe loses that input lifecycle and
         // also prevents a direct `\skip` RHS from being accepted as glue.
         *suspended = Some(PendingScalarFrame::GlueInternal {
-            first,
+            first: first.clone(),
             mu,
             negative,
             provenance,
@@ -2676,7 +2699,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ScannedUnits, CommandError> {
         loop {
             *suspended = Some(PendingScalarFrame::DimensionUnits {
-                progress: pending,
+                progress: pending.clone(),
                 negative,
                 provenance,
                 allow_infinite,
@@ -3670,11 +3693,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 return Err(CommandError::input_invariant());
             }
-            None => (*command, InternalScanPhase::Start, None),
+            None => (command.clone(), InternalScanPhase::Start, None),
         };
         self.restore_scalar_child(&mut child, ScalarChildDestination::InternalValue)?;
         let mut suspended = Some(PendingScalarFrame::InternalValue {
-            command,
+            command: command.clone(),
             level,
             negative,
             phase,
@@ -3774,7 +3797,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<Option<InternalValue>, CommandError> {
         let retain_phase = |phase| {
             Some(PendingScalarFrame::InternalValue {
-                command: *command,
+                command: command.clone(),
                 level,
                 negative,
                 phase,

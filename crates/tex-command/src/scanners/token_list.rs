@@ -404,7 +404,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .expect("meaning contains an admitted token-register index");
                 return Ok(ScannedTokenListRightHandSide {
                     tokens: None,
-                    source: tokens,
+                    source: tokens.clone(),
                     pointer_present: tokens
                         .is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
                 });
@@ -519,13 +519,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("scanner produced an admitted token-register index");
         ScannedTokenListRightHandSide {
             tokens: None,
-            source: tokens,
+            source: tokens.clone(),
             pointer_present: tokens.is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
         }
     }
 }
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,

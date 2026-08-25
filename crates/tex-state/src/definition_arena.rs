@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use std::rc::Rc;
 
 use crate::generation::ArenaToken;
 use crate::macro_definition::MacroParameterPattern;
@@ -18,21 +19,28 @@ pub(super) enum DefinitionNamespace {}
 /// There is deliberately no raw constructor or integer projection. Only a
 /// successful `DefinitionArena::allocate` can publish an id.
 pub struct DefinitionId<G> {
-    row: NonZeroU32,
+    serial: NonZeroU32,
+    words: Rc<[TokenWord]>,
+    parameter_len: u32,
+    parameters: MacroParameterPattern,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Clone for DefinitionId<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            serial: self.serial,
+            words: Rc::clone(&self.words),
+            parameter_len: self.parameter_len,
+            parameters: self.parameters,
+            _brand: PhantomData,
+        }
     }
 }
 
-impl<G> Copy for DefinitionId<G> {}
-
 impl<G> PartialEq for DefinitionId<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.row == other.row
+        self.serial == other.serial
     }
 }
 
@@ -40,7 +48,7 @@ impl<G> Eq for DefinitionId<G> {}
 
 impl<G> core::hash::Hash for DefinitionId<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.row.hash(state);
+        self.serial.hash(state);
     }
 }
 
@@ -51,36 +59,27 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
 }
 
 impl<G> DefinitionId<G> {
-    pub(crate) const fn format_index(self) -> u32 {
-        self.row.get() - 1
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TokenSpan {
-    start: u32,
-    len: u32,
-}
-
-impl TokenSpan {
-    fn checked(start: usize, len: usize) -> Option<Self> {
-        let start = u32::try_from(start).ok()?;
-        let len = u32::try_from(len).ok()?;
-        start.checked_add(len)?;
-        Some(Self { start, len })
+    pub(crate) const fn format_index(&self) -> u32 {
+        self.serial.get() - 1
     }
 
-    fn resolve(self, words: &[TokenWord]) -> &[TokenWord] {
-        let start = self.start as usize;
-        &words[start..start + self.len as usize]
+    pub(crate) fn capture_format(&self) -> crate::format::schema::FormatDefinition {
+        crate::format::schema::FormatDefinition {
+            parameter_text: self.words[..self.parameter_len as usize]
+                .iter()
+                .map(|word| word.raw())
+                .collect(),
+            replacement_text: self.words[self.parameter_len as usize..]
+                .iter()
+                .map(|word| word.raw())
+                .collect(),
+        }
     }
-}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DefinitionRecord {
-    parameter_text: TokenSpan,
-    replacement_text: TokenSpan,
-    parameters: MacroParameterPattern,
+    #[cfg(test)]
+    pub(crate) fn semantic_owner_count(&self) -> usize {
+        Rc::strong_count(&self.words)
+    }
 }
 
 /// Failure to stage a complete definition row.
@@ -90,18 +89,19 @@ pub enum DefinitionAllocationError {
     AllocationFailed,
 }
 
-/// Append-only immutable definitions and the words which constitute them.
+/// Publisher for immutable shared definitions.
+///
+/// Published payloads leave the publisher in their generation-branded owner;
+/// this value retains only the monotonic serial used by cold format capture.
 pub(crate) struct DefinitionArena<G> {
-    rows: Vec<DefinitionRecord>,
-    words: Vec<TokenWord>,
+    next_serial: u32,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> DefinitionArena<G> {
     pub(super) fn new(_token: ArenaToken<G, DefinitionNamespace>) -> Self {
         Self {
-            rows: Vec::new(),
-            words: Vec::new(),
+            next_serial: 0,
             _brand: PhantomData,
         }
     }
@@ -139,49 +139,23 @@ impl<G> DefinitionArena<G> {
     {
         let parameter_len = parameter_text.len();
         let replacement_len = replacement_text.len();
-        let row_number = self
-            .rows
-            .len()
+        let serial = self
+            .next_serial
             .checked_add(1)
-            .and_then(|row| u32::try_from(row).ok())
             .and_then(NonZeroU32::new)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        let replacement_start = self
-            .words
-            .len()
-            .checked_add(parameter_len)
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        let final_word_len = replacement_start
+        let final_word_len = parameter_len
             .checked_add(replacement_len)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         u32::try_from(final_word_len).map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
-
-        let parameter_span = TokenSpan::checked(self.words.len(), parameter_len)
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        let replacement_span = TokenSpan::checked(replacement_start, replacement_len)
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         let parameters = MacroParameterPattern::from_word_iter(parameter_text.clone());
-        let record = DefinitionRecord {
-            parameter_text: parameter_span,
-            replacement_text: replacement_span,
-            parameters,
-        };
-
-        let appended_word_len = parameter_len
-            .checked_add(replacement_len)
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        self.words
-            .try_reserve(appended_word_len)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.rows
-            .try_reserve(1)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-
-        self.words.extend(parameter_text);
-        self.words.extend(replacement_text);
-        self.rows.push(record);
+        let words = parameter_text.chain(replacement_text).collect::<Rc<[_]>>();
+        self.next_serial = serial.get();
         Ok(DefinitionId {
-            row: row_number,
+            serial,
+            words,
+            parameter_len: parameter_len as u32,
+            parameters,
             _brand: PhantomData,
         })
     }
@@ -194,39 +168,24 @@ impl<G> DefinitionArena<G> {
         rows: usize,
         words: usize,
     ) -> Result<(), DefinitionAllocationError> {
-        self.rows
-            .len()
+        (self.next_serial as usize)
             .checked_add(rows)
             .and_then(|len| u32::try_from(len).ok())
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        self.words
-            .len()
-            .checked_add(words)
-            .and_then(|len| u32::try_from(len).ok())
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        self.rows
-            .try_reserve(rows)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.words
-            .try_reserve(words)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)
+        let _ = words;
+        Ok(())
     }
 
-    /// Resolves an arena-issued id with one direct row access.
+    /// Moves an owner into a direct immutable view.
     #[must_use]
     #[inline(always)]
-    pub(crate) fn get(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
-        let record = &self.rows[id.row.get() as usize - 1];
-        DefinitionView {
-            record,
-            words: &self.words,
-            _brand: PhantomData,
-        }
+    pub(crate) fn get(&self, id: DefinitionId<G>) -> DefinitionView<G> {
+        DefinitionView { id }
     }
 
     #[must_use]
     pub(crate) const fn len(&self) -> usize {
-        self.rows.len()
+        self.next_serial as usize
     }
 
     #[must_use]
@@ -246,50 +205,28 @@ impl<G> DefinitionArena<G> {
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
-        self.rows.is_empty()
-    }
-
-    pub(crate) fn capture_format_rows(&self) -> Vec<crate::format::schema::FormatDefinition> {
-        self.rows
-            .iter()
-            .map(|record| crate::format::schema::FormatDefinition {
-                parameter_text: record
-                    .parameter_text
-                    .resolve(&self.words)
-                    .iter()
-                    .map(|word| word.raw())
-                    .collect(),
-                replacement_text: record
-                    .replacement_text
-                    .resolve(&self.words)
-                    .iter()
-                    .map(|word| word.raw())
-                    .collect(),
-            })
-            .collect()
+        self.next_serial == 0
     }
 }
 
-/// Borrowed view of one complete definition row.
-pub struct DefinitionView<'arena, G> {
-    record: &'arena DefinitionRecord,
-    words: &'arena [TokenWord],
-    _brand: PhantomData<fn(&G) -> &G>,
+/// Owning view of one complete immutable definition.
+pub struct DefinitionView<G> {
+    id: DefinitionId<G>,
 }
 
-impl<G> DefinitionView<'_, G> {
+impl<G> DefinitionView<G> {
     #[must_use]
     pub const fn parameter_pattern(&self) -> MacroParameterPattern {
-        self.record.parameters
+        self.id.parameters
     }
 
     #[must_use]
     pub fn parameter_text(&self) -> &[TokenWord] {
-        self.record.parameter_text.resolve(self.words)
+        &self.id.words[..self.id.parameter_len as usize]
     }
 
     #[must_use]
     pub fn replacement_text(&self) -> &[TokenWord] {
-        self.record.replacement_text.resolve(self.words)
+        &self.id.words[self.id.parameter_len as usize..]
     }
 }

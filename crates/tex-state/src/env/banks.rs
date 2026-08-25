@@ -493,13 +493,13 @@ const PAGE_MASK: u32 = PAGE_LEN as u32 - 1;
 mod tests;
 
 /// One current value and its TeX assignment level.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct BankCell<T: Copy> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BankCell<T> {
     pub(crate) value: T,
     pub(crate) level: u32,
 }
 
-impl<T: Copy> BankCell<T> {
+impl<T> BankCell<T> {
     pub(crate) const fn level_zero(value: T) -> Self {
         Self {
             value,
@@ -523,12 +523,12 @@ pub enum BankError {
 }
 
 /// Contiguous current-value storage. Reads are one bounds-checked index.
-pub(crate) struct DenseBank<T: Copy> {
+pub(crate) struct DenseBank<T: Clone> {
     cells: Vec<BankCell<T>>,
     default: T,
 }
 
-impl<T: Copy> DenseBank<T> {
+impl<T: Clone> DenseBank<T> {
     pub(crate) fn fixed(len: usize, default: T, level: u32) -> Result<Self, BankError> {
         let mut cells = Vec::new();
         cells
@@ -537,7 +537,7 @@ impl<T: Copy> DenseBank<T> {
         cells.resize(
             len,
             BankCell {
-                value: default,
+                value: default.clone(),
                 level,
             },
         );
@@ -560,7 +560,7 @@ impl<T: Copy> DenseBank<T> {
             .try_reserve_exact(required - self.cells.len())
             .map_err(|_| BankError::AllocationFailed)?;
         self.cells
-            .resize(required, BankCell::level_zero(self.default));
+            .resize(required, BankCell::level_zero(self.default.clone()));
         Ok(())
     }
 
@@ -568,7 +568,7 @@ impl<T: Copy> DenseBank<T> {
     pub(crate) fn get(&self, index: u32) -> Result<BankCell<T>, BankError> {
         self.cells
             .get(index as usize)
-            .copied()
+            .cloned()
             .ok_or(BankError::IndexOutOfBounds)
     }
 
@@ -582,7 +582,7 @@ impl<T: Copy> DenseBank<T> {
     }
 
     pub(crate) fn values(&self) -> impl Iterator<Item = T> + '_ {
-        self.cells.iter().map(|cell| cell.value)
+        self.cells.iter().map(|cell| cell.value.clone())
     }
 }
 
@@ -592,14 +592,14 @@ type Page<T> = Box<[BankCell<T>; PAGE_LEN]>;
 ///
 /// The complete page directory is allocated once. A read performs no search
 /// and absent pages evaluate their algorithmic default without allocation.
-pub(crate) struct PagedDenseBank<T: Copy> {
+pub(crate) struct PagedDenseBank<T: Clone> {
     pages: Vec<Option<Page<T>>>,
     len: u32,
     default: fn(u32) -> T,
     default_level: u32,
 }
 
-impl<T: Copy> PagedDenseBank<T> {
+impl<T: Clone> PagedDenseBank<T> {
     pub(crate) fn new(
         len: u32,
         default: fn(u32) -> T,
@@ -627,7 +627,7 @@ impl<T: Copy> PagedDenseBank<T> {
                 value: (self.default)(index),
                 level: self.default_level,
             },
-            |values| values[offset],
+            |values| values[offset].clone(),
         ))
     }
 
@@ -660,7 +660,7 @@ impl<T: Copy> PagedDenseBank<T> {
     }
 }
 
-impl<T: Copy + PartialEq> PagedDenseBank<T> {
+impl<T: Clone + PartialEq> PagedDenseBank<T> {
     pub(crate) fn nondefault_values(&self) -> impl Iterator<Item = (u32, T)> + '_ {
         self.pages
             .iter()
@@ -670,22 +670,22 @@ impl<T: Copy + PartialEq> PagedDenseBank<T> {
                 values.iter().enumerate().filter_map(move |(offset, cell)| {
                     let index = page as u32 * PAGE_LEN as u32 + offset as u32;
                     (index < self.len && cell.value != (self.default)(index))
-                        .then_some((index, cell.value))
+                        .then(|| (index, cell.value.clone()))
                 })
             })
     }
 }
 
 /// TeX's dense 0--255 register prefix plus page/index dense e-TeX overflow.
-pub(crate) struct RegisterBank<T: Copy> {
+pub(crate) struct RegisterBank<T: Clone> {
     dense: [BankCell<T>; DENSE_REGISTER_COUNT],
     overflow: PagedDenseBank<T>,
 }
 
-impl<T: Copy> RegisterBank<T> {
+impl<T: Clone> RegisterBank<T> {
     pub(crate) fn new(default: fn(u32) -> T) -> Result<Self, BankError> {
         Ok(Self {
-            dense: [BankCell::level_one(default(0)); DENSE_REGISTER_COUNT],
+            dense: array::from_fn(|_| BankCell::level_one(default(0))),
             overflow: PagedDenseBank::new(u16::MAX as u32 + 1, default, LEVEL_ONE)?,
         })
     }
@@ -693,7 +693,7 @@ impl<T: Copy> RegisterBank<T> {
     #[inline(always)]
     pub(crate) fn get(&self, index: u16) -> Result<BankCell<T>, BankError> {
         if usize::from(index) < DENSE_REGISTER_COUNT {
-            Ok(self.dense[index as usize])
+            Ok(self.dense[index as usize].clone())
         } else {
             self.overflow.get(u32::from(index))
         }

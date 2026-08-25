@@ -539,6 +539,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
                     .token_list(
                         templates
                             .u_template
+                            .clone()
                             .expect("alignment columns retain u templates"),
                     )
                     .iter()
@@ -546,7 +547,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
             ),
             v_template: tex_state::node::NodeTokenList::new(
                 stores
-                    .token_list(templates.v_template)
+                    .token_list(templates.v_template.clone())
                     .iter()
                     .collect::<Vec<_>>(),
             ),

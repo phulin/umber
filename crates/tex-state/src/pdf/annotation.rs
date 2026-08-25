@@ -25,11 +25,12 @@ pub struct PdfAnnotationData<G> {
     pub entries: TokenListId<G>,
 }
 
-impl<G> Copy for PdfAnnotationData<G> {}
-
 impl<G> Clone for PdfAnnotationData<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            dimensions: self.dimensions,
+            entries: self.entries.clone(),
+        }
     }
 }
 
@@ -39,11 +40,12 @@ pub struct PdfAnnotationRecord<G> {
     data: Option<PdfAnnotationData<G>>,
 }
 
-impl<G> Copy for PdfAnnotationRecord<G> {}
-
 impl<G> Clone for PdfAnnotationRecord<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            object: self.object,
+            data: self.data.clone(),
+        }
     }
 }
 
@@ -56,8 +58,8 @@ impl<G> PdfAnnotationRecord<G> {
         self.object
     }
     #[must_use]
-    pub const fn data(&self) -> Option<PdfAnnotationData<G>> {
-        self.data
+    pub fn data(&self) -> Option<PdfAnnotationData<G>> {
+        self.data.clone()
     }
     pub(super) fn initialize(&mut self, data: PdfAnnotationData<G>) -> Result<(), ()> {
         if self.data.is_some() {
@@ -76,11 +78,14 @@ pub struct PdfLinkRecord<G> {
     action: PdfActionSpec<G>,
 }
 
-impl<G> Copy for PdfLinkRecord<G> {}
-
 impl<G> Clone for PdfLinkRecord<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            object: self.object,
+            dimensions: self.dimensions,
+            attributes: self.attributes.clone(),
+            action: self.action.clone(),
+        }
     }
 }
 
@@ -90,11 +95,12 @@ pub struct PdfOpenLink<G> {
     pub nesting_depth: u32,
 }
 
-impl<G> Copy for PdfOpenLink<G> {}
-
 impl<G> Clone for PdfOpenLink<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            record: self.record.clone(),
+            nesting_depth: self.nesting_depth,
+        }
     }
 }
 
@@ -121,12 +127,12 @@ impl<G> PdfLinkRecord<G> {
         self.dimensions
     }
     #[must_use]
-    pub const fn attributes(&self) -> TokenListId<G> {
-        self.attributes
+    pub fn attributes(&self) -> TokenListId<G> {
+        self.attributes.clone()
     }
     #[must_use]
-    pub const fn action(&self) -> PdfActionSpec<G> {
-        self.action
+    pub fn action(&self) -> PdfActionSpec<G> {
+        self.action.clone()
     }
 }
 

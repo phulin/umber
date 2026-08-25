@@ -109,7 +109,7 @@ fn macro_meanings_carry_only_generation_typed_definition_ids() {
             | MeaningFlags::OUTER
             | MeaningFlags::PROTECTED
             | MeaningFlags::FROZEN;
-        let word = MeaningWord::macro_definition(flags, definition);
+        let word = MeaningWord::macro_definition(flags, definition.clone());
         assert_eq!(word.resolve(), ResolvedMeaning::Macro { flags, definition });
     });
 }

@@ -1084,10 +1084,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             .token_parameter(TokParam::OUTPUT)
             .expect("output is an admitted token parameter")
             .expect("output routine entry requires a configured token list");
-        self.report_named_token_list("output", output);
-        let words = self.state.token_list(output);
+        self.report_named_token_list("output", output.clone());
+        let words = self.state.token_list(output.clone());
         let level = self.command.push_token_level(
-            TokenPayload::durable(output, words),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
@@ -2155,7 +2155,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenPayload::Packed(chunk) => (chunk.get(index), None, None),
             TokenPayload::MacroReplacement { definition, .. } => (
                 stores
-                    .definition(*definition)
+                    .definition(definition.clone())
                     .replacement_text()
                     .get(index)
                     .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
@@ -2180,10 +2180,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             ),
             TokenPayload::DurableList { cursor, .. } => {
                 let spelling = stores
-                    .token_list_cursor_word(*cursor)
+                    .token_list_cursor_word(cursor.clone())
                     .ok()
                     .map(|word| (TracedTokenWord::from_parts(word, OriginId::UNKNOWN), None));
-                let mut advanced = *cursor;
+                let mut advanced = cursor.clone();
                 let advanced = stores
                     .advance_token_list_cursor(&mut advanced)
                     .ok()

@@ -124,11 +124,16 @@ pub enum MeaningWord<G> {
 
 impl<G> Clone for MeaningWord<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Static(word) => Self::Static(*word),
+            Self::Font(font) => Self::Font(*font),
+            Self::Macro { flags, definition } => Self::Macro {
+                flags: *flags,
+                definition: definition.clone(),
+            },
+        }
     }
 }
-
-impl<G> Copy for MeaningWord<G> {}
 
 impl<G> core::fmt::Debug for MeaningWord<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -146,7 +151,7 @@ impl<G> core::fmt::Debug for MeaningWord<G> {
 
 impl<G> PartialEq for MeaningWord<G> {
     fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
+        match (self, other) {
             (Self::Static(left), Self::Static(right)) => left == right,
             (Self::Font(left), Self::Font(right)) => left == right,
             (
@@ -185,19 +190,22 @@ impl<G> MeaningWord<G> {
     }
 
     #[must_use]
-    pub const fn resolve(self) -> ResolvedMeaning<G> {
+    pub fn resolve(&self) -> ResolvedMeaning<G> {
         match self {
-            Self::Static(word) => ResolvedMeaning::Static(Meaning::decode_stored(word)),
-            Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(font)),
-            Self::Macro { flags, definition } => ResolvedMeaning::Macro { flags, definition },
+            Self::Static(word) => ResolvedMeaning::Static(Meaning::decode_stored(*word)),
+            Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(*font)),
+            Self::Macro { flags, definition } => ResolvedMeaning::Macro {
+                flags: *flags,
+                definition: definition.clone(),
+            },
         }
     }
 
     /// Returns the exact live font coordinate retained by this meaning.
     #[must_use]
-    pub(crate) const fn font(self) -> Option<FontId> {
+    pub(crate) const fn font(&self) -> Option<FontId> {
         match self {
-            Self::Font(font) => Some(font),
+            Self::Font(font) => Some(*font),
             Self::Static(_) | Self::Macro { .. } => None,
         }
     }
@@ -214,11 +222,15 @@ pub enum ResolvedMeaning<G> {
 
 impl<G> Clone for ResolvedMeaning<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Static(meaning) => Self::Static(*meaning),
+            Self::Macro { flags, definition } => Self::Macro {
+                flags: *flags,
+                definition: definition.clone(),
+            },
+        }
     }
 }
-
-impl<G> Copy for ResolvedMeaning<G> {}
 
 impl<G> core::fmt::Debug for ResolvedMeaning<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -235,7 +247,7 @@ impl<G> core::fmt::Debug for ResolvedMeaning<G> {
 
 impl<G> PartialEq for ResolvedMeaning<G> {
     fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
+        match (self, other) {
             (Self::Static(left), Self::Static(right)) => left == right,
             (
                 Self::Macro {
@@ -268,7 +280,7 @@ impl<G> PartialEq<ResolvedMeaning<G>> for Meaning {
 
 impl<G> core::hash::Hash for ResolvedMeaning<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        match *self {
+        match self {
             Self::Static(meaning) => {
                 0u8.hash(state);
                 meaning.hash(state);

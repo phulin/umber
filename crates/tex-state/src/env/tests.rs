@@ -9,8 +9,9 @@ use crate::font::PdfFontCode;
 use crate::ids::FontId;
 use crate::interner::{Interner, InternerBudget};
 use crate::journal::{JournalEntry, MutationKind};
-use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
+use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::scaled::Scaled;
+use crate::token::{Token, TokenWord};
 
 enum TestGeneration {}
 
@@ -57,6 +58,44 @@ fn admitted_meanings_are_direct_dense_slots() {
         state.meaning(beta.symbol()).expect("read"),
         ResolvedMeaning::Static(Meaning::Relax)
     );
+}
+
+#[test]
+fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
+    crate::generation::with_generation(|mut generation| {
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
+            .expect("definition");
+        let tokens = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::pack(Token::frozen_relax())])
+            .expect("token list");
+        let mut names = interner();
+        let selector = names.intern("owned").expect("selector");
+        let mut state = DenseState::new().expect("state allocation");
+        state
+            .admit_symbol(selector.symbol())
+            .expect("admit selector");
+        let before = state.journal_cursor();
+
+        state
+            .assign_meaning(
+                selector.symbol(),
+                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition.clone()),
+                AssignmentScope::Global,
+            )
+            .expect("assign macro");
+        state
+            .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
+            .expect("assign token list");
+        assert_eq!(definition.semantic_owner_count(), 3);
+        assert_eq!(tokens.semantic_owner_count(), 3);
+
+        state.restore(before).expect("rollback");
+        assert_eq!(definition.semantic_owner_count(), 1);
+        assert_eq!(tokens.semantic_owner_count(), 1);
+    });
 }
 
 #[test]

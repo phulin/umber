@@ -190,7 +190,6 @@ pub(crate) enum TokenPayload<G> {
     /// One generation-durable token list, replayed through its stable chunk
     /// cursor without materializing an input-owned word buffer.
     DurableList {
-        list: tex_state::TokenListId<G>,
         cursor: tex_state::TokenListCursor<G>,
         len: u32,
     },
@@ -203,16 +202,15 @@ impl<G> Clone for TokenPayload<G> {
         match self {
             Self::Packed(chunk) => Self::Packed(chunk.clone()),
             Self::MacroReplacement { definition, len } => Self::MacroReplacement {
-                definition: *definition,
+                definition: definition.clone(),
                 len: *len,
             },
             Self::MacroArgument { replay, len } => Self::MacroArgument {
                 replay: *replay,
                 len: *len,
             },
-            Self::DurableList { list, cursor, len } => Self::DurableList {
-                list: *list,
-                cursor: *cursor,
+            Self::DurableList { cursor, len } => Self::DurableList {
+                cursor: cursor.clone(),
                 len: *len,
             },
             Self::AttemptList { list, len } => Self::AttemptList {
@@ -242,7 +240,7 @@ impl<G> Clone for SourceLevel<G> {
             cursor: self.cursor.clone(),
             name_class: self.name_class,
             retirement: self.retirement,
-            every_eof: self.every_eof,
+            every_eof: self.every_eof.clone(),
             open_depths: self.open_depths.clone(),
         }
     }
@@ -344,12 +342,8 @@ impl<G> TokenPayload<G> {
         Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
     }
 
-    pub(crate) fn durable(
-        list: tex_state::TokenListId<G>,
-        words: tex_state::TokenListView<'_, G>,
-    ) -> Self {
+    pub(crate) fn durable(words: tex_state::TokenListView<G>) -> Self {
         Self::DurableList {
-            list,
             cursor: words.cursor(),
             len: u32::try_from(words.len()).expect("durable token-list length exceeds u32"),
         }

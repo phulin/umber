@@ -65,11 +65,12 @@ struct PdfDocumentFragment<G> {
     value: PdfTokenParameter<G>,
 }
 
-impl<G> Copy for PdfDocumentFragment<G> {}
-
 impl<G> Clone for PdfDocumentFragment<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            kind: self.kind,
+            value: self.value.clone(),
+        }
     }
 }
 

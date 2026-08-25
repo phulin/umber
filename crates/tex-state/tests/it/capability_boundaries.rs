@@ -29,7 +29,7 @@ fn restricted_capabilities_reject_privileged_apis() {
         "durable-token-boundary-forbidden",
         &manifest_dir.join("tests/ui/durable_token_boundary_forbidden.rs"),
         &dependencies,
-        &["mismatched types", "lifetime may not live long enough"],
+        &["mismatched types"],
     );
     assert_compile_fail(
         "durable-token-constructor-forbidden",

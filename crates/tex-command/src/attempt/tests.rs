@@ -83,7 +83,7 @@ fn mark_truncates_every_suffix_without_inspecting_values() {
             universe
                 .command_context()
                 .expect("test fixture is valid")
-                .token_list(promoted.token_lists[0])
+                .token_list(promoted.token_lists[0].clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('a').token_word()]
@@ -152,7 +152,7 @@ fn promotion_follows_only_declared_roots_and_definition_children() {
             universe
                 .command_context()
                 .expect("test fixture is valid")
-                .definition(promoted.definitions[0])
+                .definition(promoted.definitions[0].clone())
                 .replacement_text(),
             &[word('x').token_word()]
         );

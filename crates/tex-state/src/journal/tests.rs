@@ -37,7 +37,7 @@ fn null_token_parameter_uses_tex_restore_zero_word() {
     // level-zero null pointer at level one, but its save form remains the
     // one-word `restore_zero` record.
     assert_eq!(
-        canonical_restore_words(Mutation::<TestGeneration> {
+        canonical_restore_words(&Mutation::<TestGeneration> {
             cell: StateCell::TokenParameter(0),
             before: StateWord::TokenList(None),
             before_level: 1,

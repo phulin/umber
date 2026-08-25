@@ -259,7 +259,7 @@ pub(super) enum UndefinedHandling {
     Preserve,
 }
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
     match meaning {
         ResolvedMeaning::Static(meaning) => Some(meaning),
         ResolvedMeaning::Macro { .. } => None,
@@ -778,7 +778,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.abort_continuation(key)?;
                         return Err(CommandError::input_invariant());
                     }
-                    pending = Some(retained.command);
+                    pending = Some(retained.command.clone());
                     resumed_pending = true;
                 }
                 if resumed_pending && let Some(command) = &pending {
@@ -1471,7 +1471,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .command
                     .scratch
                     .store_expansion_frame(crate::state::PendingExpansion {
-                        command: *command,
+                        command: command.clone(),
                         resume: suspended_resume
                             .take()
                             .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
@@ -3352,7 +3352,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         call_site: OriginId,
         arguments: MacroArguments<G>,
     ) -> InputLevelId {
-        let definition_view = self.state.definition(definition);
+        let definition_view = self.state.definition(definition.clone());
         let parent = self.command.parameters.parent_invocation();
         let replacement_len = definition_view.replacement_text().len();
         let invocation = call_site;
@@ -3705,7 +3705,7 @@ pub(crate) fn append_meaning_token_words<G>(
 /// This is captured from `CurrentCommand<G>`, not reconstructed from `Meaning`,
 /// so the delivered control-sequence identity remains available across the
 /// executor's transactional scan/apply seam.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PrintCommand<G> {
     meaning: ResolvedMeaning<G>,
     control_sequence: Option<tex_state::interner::Symbol>,
@@ -3713,7 +3713,7 @@ pub struct PrintCommand<G> {
 
 impl<G> PrintCommand<G> {
     #[must_use]
-    pub const fn from_current(command: &CurrentCommand<G>) -> Self {
+    pub fn from_current(command: &CurrentCommand<G>) -> Self {
         Self {
             meaning: command.meaning(),
             control_sequence: command.control_sequence(),
@@ -3721,8 +3721,17 @@ impl<G> PrintCommand<G> {
     }
 
     #[must_use]
-    pub(crate) const fn meaning(&self) -> ResolvedMeaning<G> {
-        self.meaning
+    pub(crate) fn meaning(&self) -> ResolvedMeaning<G> {
+        self.meaning.clone()
+    }
+}
+
+impl<G> Clone for PrintCommand<G> {
+    fn clone(&self) -> Self {
+        Self {
+            meaning: self.meaning.clone(),
+            control_sequence: self.control_sequence,
+        }
     }
 }
 

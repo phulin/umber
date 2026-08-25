@@ -243,7 +243,7 @@ impl<G> DumpTokensProjection<G> for tex_state::TokenListId<G> {
         stores: &CommandContext<'_, G>,
         visit: impl FnMut(tex_state::token::TokenWord),
     ) {
-        stores.token_list(*self).iter().for_each(visit);
+        stores.token_list(self.clone()).iter().for_each(visit);
     }
 }
 

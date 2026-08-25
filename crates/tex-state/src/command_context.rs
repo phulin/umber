@@ -765,8 +765,8 @@ impl<'a, G> CommandContext<'a, G> {
         };
         self.primitive_meanings
             .get(usize::from(frozen.primitive_index()?))
-            .copied()
-            .map(MeaningWord::resolve)
+            .cloned()
+            .map(|meaning| meaning.resolve())
     }
 
     #[must_use]
@@ -788,12 +788,12 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
         self.admitted.definition(id)
     }
 
     #[inline(always)]
-    pub fn token_list(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
+    pub fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.admitted.token_list(id)
     }
 
@@ -853,7 +853,7 @@ impl<'a, G> CommandContext<'a, G> {
         builder: TokenListBuilder<G>,
     ) -> Result<TokenListId<G>, DurableAllocationError> {
         let id = self.admitted.seal_token_list_builder(builder)?;
-        let words = self.admitted.token_list(id).len();
+        let words = self.admitted.token_list(id.clone()).len();
         self.engine_usage
             .observe_transient_memory(0, words.saturating_add(1));
         Ok(id)
@@ -2625,7 +2625,7 @@ impl<'a, G> CommandContext<'a, G> {
         object: u32,
         data: crate::PdfAnnotationData<G>,
     ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfAnnotationInitializeError> {
-        let semantic_id = self.token_semantic_id(data.entries);
+        let semantic_id = self.token_semantic_id(data.entries.clone());
         self.pdf.initialize_annotation(object, data, semantic_id)
     }
 
@@ -2645,7 +2645,7 @@ impl<'a, G> CommandContext<'a, G> {
         action: crate::PdfActionSpec<G>,
         nesting_depth: usize,
     ) -> Result<crate::PdfLinkRecord<G>, crate::PdfObjectCapacityError> {
-        let attributes_semantic_id = self.token_semantic_id(attributes);
+        let attributes_semantic_id = self.token_semantic_id(attributes.clone());
         let action_semantic_id = action.fingerprint(|tokens| self.token_semantic_id(tokens));
         self.pdf.create_link(
             dimensions,
@@ -2669,9 +2669,9 @@ impl<'a, G> CommandContext<'a, G> {
         title: TokenListId<G>,
     ) -> Result<crate::PdfOutlineRecord<G>, crate::PdfObjectCapacityError> {
         let semantic_ids = [
-            self.token_semantic_id(attributes),
+            self.token_semantic_id(attributes.clone()),
             action.fingerprint(|tokens| self.token_semantic_id(tokens)),
-            self.token_semantic_id(title),
+            self.token_semantic_id(title.clone()),
         ];
         self.pdf
             .create_outline(attributes, action, count, title, semantic_ids)
@@ -2880,8 +2880,8 @@ impl<'a, G> CommandContext<'a, G> {
 
     fn pdf_token_parameter(&self, tokens: TokenListId<G>) -> crate::pdf::PdfTokenParameter<G> {
         crate::pdf::PdfTokenParameter {
+            semantic_id: self.token_semantic_id(tokens.clone()),
             tokens,
-            semantic_id: self.token_semantic_id(tokens),
         }
     }
 
@@ -3282,7 +3282,7 @@ impl<'a, G> CommandContext<'a, G> {
                     let tokens = payload(node, source.field)
                         .expect("shipout token field belongs to its durable source");
                     self.admitted
-                        .token_list(*tokens)
+                        .token_list(tokens.clone())
                         .iter()
                         .try_for_each(&mut visit)
                 }
@@ -3345,7 +3345,7 @@ impl<'a, G> CommandContext<'a, G> {
                         ..
                     }),
                     crate::ShipoutTokenField::DeferredPdfLiteral,
-                ) => result = Some(*tokens),
+                ) => result = Some(tokens.clone()),
                 _ => {}
             }
             if let Some(result) = result {

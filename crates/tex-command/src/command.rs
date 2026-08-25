@@ -32,11 +32,21 @@ pub struct CurrentCommand<G> {
 
 impl<G> Clone for CurrentCommand<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            spelling: self.spelling,
+            meaning: self.meaning.clone(),
+            macro_observation_operand: self.macro_observation_operand,
+            identity: self.identity,
+            control_sequence: self.control_sequence,
+            delivery: self.delivery,
+            source_provenance: self.source_provenance,
+            direct_source: self.direct_source,
+            direct_source_line: self.direct_source_line,
+            alignment_adjustment: self.alignment_adjustment,
+            outer_recovery_space: self.outer_recovery_space,
+        }
     }
 }
-
-impl<G> Copy for CurrentCommand<G> {}
 
 impl<G> PartialEq for CurrentCommand<G> {
     fn eq(&self, other: &Self) -> bool {
@@ -176,7 +186,7 @@ impl XRaySelector {
 }
 
 impl CommandIdentity {
-    const fn from_meaning<G>(meaning: ResolvedMeaning<G>) -> Self {
+    fn from_meaning<G>(meaning: ResolvedMeaning<G>) -> Self {
         match meaning {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                 tex_state::meaning::ExpandablePrimitive::ExpandAfter,
@@ -279,7 +289,7 @@ impl<G> CurrentCommand<G> {
         let macro_observation_operand = None;
         Self {
             spelling,
-            meaning,
+            meaning: meaning.clone(),
             macro_observation_operand,
             identity: CommandIdentity::from_meaning(meaning),
             control_sequence,
@@ -436,8 +446,8 @@ impl<G> CurrentCommand<G> {
 
     /// Returns the effective meaning resolved at this delivery.
     #[must_use]
-    pub const fn meaning(&self) -> ResolvedMeaning<G> {
-        self.meaning
+    pub fn meaning(&self) -> ResolvedMeaning<G> {
+        self.meaning.clone()
     }
 
     pub(crate) const fn macro_observation_operand(&self) -> Option<i64> {
@@ -518,7 +528,7 @@ impl<G> CurrentCommand<G> {
     pub(crate) fn copy_for_backup(&self) -> Self {
         Self {
             spelling: self.spelling,
-            meaning: self.meaning,
+            meaning: self.meaning.clone(),
             macro_observation_operand: self.macro_observation_operand,
             identity: self.identity,
             control_sequence: self.control_sequence,

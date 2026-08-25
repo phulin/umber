@@ -261,12 +261,19 @@ pub(super) fn apply<G>(
             definition,
             flags,
             global,
-        } => apply_macro_definition(*target, *definition, *flags, *global, stores, command),
+        } => apply_macro_definition(
+            *target,
+            definition.clone(),
+            *flags,
+            *global,
+            stores,
+            command,
+        ),
         PreparedHotOperation::Let {
             target,
             meaning,
             global,
-        } => apply_let(*target, *meaning, *global, stores, command),
+        } => apply_let(*target, meaning.clone(), *global, stores, command),
         PreparedHotOperation::CatCode {
             character,
             value,
@@ -302,7 +309,10 @@ fn apply_macro_definition<G>(
             stores
                 .assign_resolved_meaning(
                     target,
-                    tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
+                    tex_state::meaning::ResolvedMeaning::Macro {
+                        flags,
+                        definition: definition.clone(),
+                    },
                     assignment_scope(global),
                 )
                 .expect("macro target belongs to the admitted generation");
@@ -373,7 +383,7 @@ fn apply_let<G>(
         |stores| {
             if committed {
                 stores
-                    .assign_resolved_meaning(target, meaning, assignment_scope(global))
+                    .assign_resolved_meaning(target, meaning.clone(), assignment_scope(global))
                     .expect("let target belongs to the admitted generation");
             }
         },

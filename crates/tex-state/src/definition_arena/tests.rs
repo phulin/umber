@@ -53,6 +53,24 @@ fn equal_definitions_receive_distinct_ids() {
 }
 
 #[test]
+fn definition_aliases_release_exactly_on_owner_drop() {
+    with_generation(|mut generation| {
+        let id = generation
+            .definitions_mut()
+            .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
+            .expect("published definition");
+        assert_eq!(id.semantic_owner_count(), 1);
+
+        let alias = id.clone();
+        assert_eq!(id.semantic_owner_count(), 2);
+        let view = generation.definitions().get(alias);
+        assert_eq!(id.semantic_owner_count(), 2);
+        drop(view);
+        assert_eq!(id.semantic_owner_count(), 1);
+    });
+}
+
+#[test]
 fn invalid_parameter_program_does_not_publish_a_partial_row() {
     with_generation(|mut generation| {
         let too_many = [TokenWord::pack(Token::param(1)); 10];

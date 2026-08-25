@@ -82,11 +82,17 @@ pub(crate) struct Mutation<G> {
 
 impl<G> Clone for Mutation<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            cell: self.cell,
+            before: self.before.clone(),
+            before_level: self.before_level,
+            after: self.after.clone(),
+            after_level: self.after_level,
+            saved_at: self.saved_at,
+            kind: self.kind,
+        }
     }
 }
-
-impl<G> Copy for Mutation<G> {}
 
 impl<G> core::fmt::Debug for Mutation<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -121,7 +127,7 @@ struct SaveStackProjection {
 }
 
 impl SaveStackProjection {
-    fn push<G>(&mut self, entry: JournalEntry<G>, position: u32) {
+    fn push<G>(&mut self, entry: &JournalEntry<G>, position: u32) {
         match entry {
             JournalEntry::Mutation(mutation) => {
                 let Some(words) = canonical_restore_words(mutation) else {
@@ -146,11 +152,13 @@ impl SaveStackProjection {
 
 impl<G> Clone for JournalEntry<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Mutation(mutation) => Self::Mutation(mutation.clone()),
+            Self::GroupEnter(frame) => Self::GroupEnter(*frame),
+            Self::GroupExit(frame) => Self::GroupExit(*frame),
+        }
     }
 }
-
-impl<G> Copy for JournalEntry<G> {}
 
 impl<G> core::fmt::Debug for JournalEntry<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -195,7 +203,7 @@ impl<G> SaveJournal<G> {
     pub(crate) fn push(&mut self, entry: JournalEntry<G>) {
         let position = u32::try_from(self.entries.len().saturating_add(1))
             .expect("state journal exceeds u32 entries");
-        self.save_stack.push(entry, position);
+        self.save_stack.push(&entry, position);
         self.entries.push(entry);
     }
 
@@ -219,7 +227,7 @@ impl<G> SaveJournal<G> {
 
     #[must_use]
     pub(crate) fn entry(&self, index: usize) -> JournalEntry<G> {
-        self.entries[index]
+        self.entries[index].clone()
     }
 
     #[must_use]
@@ -248,7 +256,7 @@ impl<G> SaveJournal<G> {
 
     fn rebuild_save_stack_projection(&mut self) {
         let mut projection = SaveStackProjection::default();
-        for (index, &entry) in self.entries.iter().enumerate() {
+        for (index, entry) in self.entries.iter().enumerate() {
             let position =
                 u32::try_from(index.saturating_add(1)).expect("state journal exceeds u32 entries");
             projection.push(entry, position);
@@ -257,7 +265,7 @@ impl<G> SaveJournal<G> {
     }
 }
 
-fn canonical_restore_words<G>(mutation: Mutation<G>) -> Option<usize> {
+fn canonical_restore_words<G>(mutation: &Mutation<G>) -> Option<usize> {
     mutation.saved_at?;
     // TeX82 §§275--276 uses one word for `restore_zero` and two for
     // `restore_old_value`. Undefined meanings are physically level zero.
@@ -267,7 +275,7 @@ fn canonical_restore_words<G>(mutation: Mutation<G>) -> Option<usize> {
     Some(
         if mutation.before_level == crate::env::banks::LEVEL_ZERO
             || matches!(
-                (mutation.cell, mutation.before),
+                (mutation.cell, &mutation.before),
                 (
                     crate::env::StateCell::TokenParameter(_),
                     crate::env::StateWord::TokenList(None)

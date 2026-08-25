@@ -21,7 +21,7 @@ use crate::observation::{
     InputTransition, ObservedToken, RecoveryKind, RecoveryRecord,
 };
 
-const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
     match meaning {
         ResolvedMeaning::Static(meaning) => Some(meaning),
         ResolvedMeaning::Macro { .. } => None,
@@ -1239,7 +1239,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 flags: second_flags,
                 definition: second_definition,
             },
-        ) = (first, second)
+        ) = (&first, &second)
         else {
             return first == second;
         };
@@ -1247,8 +1247,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         if first_flags != second_flags {
             return false;
         }
-        let first = self.state.definition(first_definition);
-        let second = self.state.definition(second_definition);
+        let first = self.state.definition(first_definition.clone());
+        let second = self.state.definition(second_definition.clone());
         first.parameter_text() == second.parameter_text()
             && first.replacement_text() == second.replacement_text()
     }

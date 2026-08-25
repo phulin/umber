@@ -442,7 +442,7 @@ impl<G> Universe<G> {
             .map(|token| import_token(self, token))
             .collect::<Result<Vec<_>, _>>()?;
         let promotions = [TokenListPromotion { words: &words }];
-        Ok(self.promote_values(&[], &promotions, &[], &[])?.token_lists[0])
+        Ok(self.promote_values(&[], &promotions, &[], &[])?.token_lists[0].clone())
     }
 
     pub fn import_memo_token_list(
@@ -526,7 +526,8 @@ impl<G> Universe<G> {
         }];
         let id = self
             .promote_values(&definitions, &[], &[], &[])?
-            .definitions[0];
+            .definitions[0]
+            .clone();
         Ok(MeaningWord::macro_definition(flags, id))
     }
 

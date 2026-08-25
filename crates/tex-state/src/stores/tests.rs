@@ -59,7 +59,7 @@ fn generation_ids_install_in_dense_state_without_per_value_owners() {
                 .state()
                 .assign_meaning(
                     symbol.symbol(),
-                    MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                    MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
                     AssignmentScope::Global,
                 )
                 .expect("meaning assignment");
@@ -136,7 +136,7 @@ fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_co
                     .state()
                     .assign_meaning(
                         symbol,
-                        MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                        MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
                         AssignmentScope::Global,
                     )
                     .expect("meaning assignment");
@@ -144,7 +144,7 @@ fn borrowed_dynamic_memory_count_matches_materialized_aliases_across_repeated_co
             for register in [1, 2] {
                 admitted
                     .state()
-                    .assign_token_register(register, Some(tokens), AssignmentScope::Global)
+                    .assign_token_register(register, Some(tokens.clone()), AssignmentScope::Global)
                     .expect("token assignment");
             }
             for register in [3, 4] {

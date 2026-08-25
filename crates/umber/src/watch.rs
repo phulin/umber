@@ -196,35 +196,40 @@ fn compile_monitored(
 ) -> Result<CompileRound, WatchError> {
     let cancellation = FetchCancellation::new();
     set_active(active, Some(cancellation.clone()));
-    let mut superseded = None;
-    let mut read_error = None;
-    let result = std::thread::scope(|scope| {
-        let worker_cancellation = cancellation.clone();
-        let worker = scope.spawn(move || session.compile(&worker_cancellation));
-        while !worker.is_finished() {
-            std::thread::sleep(poll);
-            if interrupted.load(Ordering::Acquire) {
-                cancellation.cancel();
-                continue;
-            }
-            match std::fs::read_to_string(input) {
-                Ok(next) if next != candidate_source => {
-                    superseded = Some(next);
-                    cancellation.cancel();
+    let finished = AtomicBool::new(false);
+    let (result, monitored) = std::thread::scope(|scope| {
+        let monitor_cancellation = cancellation.clone();
+        let monitor_finished = &finished;
+        let monitor = scope.spawn(move || {
+            loop {
+                std::thread::sleep(poll);
+                if monitor_finished.load(Ordering::Acquire) {
+                    return Ok(None);
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    read_error = Some(error);
-                    cancellation.cancel();
+                if interrupted.load(Ordering::Acquire) {
+                    monitor_cancellation.cancel();
+                    continue;
+                }
+                match std::fs::read_to_string(input) {
+                    Ok(next) if next != candidate_source => {
+                        monitor_cancellation.cancel();
+                        return Ok(Some(next));
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        monitor_cancellation.cancel();
+                        return Err(error);
+                    }
                 }
             }
-        }
-        worker.join().map_err(|_| WatchError::WorkerPanic)
+        });
+        let result = session.compile(&cancellation);
+        finished.store(true, Ordering::Release);
+        let monitored = monitor.join().map_err(|_| WatchError::WorkerPanic)?;
+        Ok::<_, WatchError>((result, monitored))
     })?;
     set_active(active, None);
-    if let Some(error) = read_error {
-        return Err(error.into());
-    }
+    let superseded = monitored?;
     if interrupted.load(Ordering::Acquire) {
         return Ok(CompileRound::Interrupted);
     }

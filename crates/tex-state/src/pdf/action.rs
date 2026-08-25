@@ -12,11 +12,13 @@ pub enum PdfActionIdentifier<G> {
     Raw(TokenListId<G>),
 }
 
-impl<G> Copy for PdfActionIdentifier<G> {}
-
 impl<G> Clone for PdfActionIdentifier<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Name(tokens) => Self::Name(tokens.clone()),
+            Self::Number(number) => Self::Number(*number),
+            Self::Raw(tokens) => Self::Raw(tokens.clone()),
+        }
     }
 }
 
@@ -26,11 +28,15 @@ pub enum PdfActionTarget<G> {
     Destination(PdfActionIdentifier<G>),
 }
 
-impl<G> Copy for PdfActionTarget<G> {}
-
 impl<G> Clone for PdfActionTarget<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Page { number, view } => Self::Page {
+                number: *number,
+                view: view.clone(),
+            },
+            Self::Destination(identifier) => Self::Destination(identifier.clone()),
+        }
     }
 }
 
@@ -49,11 +55,14 @@ pub struct PdfActionDestination<G> {
     pub window: PdfActionWindow,
 }
 
-impl<G> Copy for PdfActionDestination<G> {}
-
 impl<G> Clone for PdfActionDestination<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            file: self.file.clone(),
+            structure: self.structure.clone(),
+            target: self.target.clone(),
+            window: self.window,
+        }
     }
 }
 
@@ -64,11 +73,13 @@ pub enum PdfActionSpec<G> {
     Thread(PdfActionDestination<G>),
 }
 
-impl<G> Copy for PdfActionSpec<G> {}
-
 impl<G> Clone for PdfActionSpec<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::User(tokens) => Self::User(tokens.clone()),
+            Self::GoTo(destination) => Self::GoTo(destination.clone()),
+            Self::Thread(destination) => Self::Thread(destination.clone()),
+        }
     }
 }
 
@@ -102,7 +113,7 @@ impl<G> PdfActionSpec<G> {
         match self {
             Self::User(tokens) => {
                 hasher.u8(0);
-                hash_tokens(*tokens, &mut hasher, &mut semantic_id);
+                hash_tokens(tokens.clone(), &mut hasher, &mut semantic_id);
             }
             Self::GoTo(action) => {
                 hasher.u8(1);
@@ -123,22 +134,22 @@ fn hash_destination<G>(
     semantic_id: &mut impl FnMut(TokenListId<G>) -> StateHashFragment,
 ) {
     hasher.bool(action.file.is_some());
-    if let Some(tokens) = action.file {
-        hash_tokens(tokens, hasher, semantic_id);
+    if let Some(tokens) = &action.file {
+        hash_tokens(tokens.clone(), hasher, semantic_id);
     }
     hasher.bool(action.structure.is_some());
-    if let Some(identifier) = action.structure {
-        hash_identifier(identifier, hasher, semantic_id);
+    if let Some(identifier) = &action.structure {
+        hash_identifier(identifier.clone(), hasher, semantic_id);
     }
-    match action.target {
+    match &action.target {
         PdfActionTarget::Page { number, view } => {
             hasher.u8(0);
-            hasher.u32(number);
-            hash_tokens(view, hasher, semantic_id);
+            hasher.u32(*number);
+            hash_tokens(view.clone(), hasher, semantic_id);
         }
         PdfActionTarget::Destination(identifier) => {
             hasher.u8(1);
-            hash_identifier(identifier, hasher, semantic_id);
+            hash_identifier(identifier.clone(), hasher, semantic_id);
         }
     }
     hasher.u8(match action.window {
@@ -185,11 +196,14 @@ pub struct PdfActionRecord<G> {
     structure_object: Option<u32>,
 }
 
-impl<G> Copy for PdfActionRecord<G> {}
-
 impl<G> Clone for PdfActionRecord<G> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            id: self.id,
+            spec: self.spec.clone(),
+            target_object: self.target_object,
+            structure_object: self.structure_object,
+        }
     }
 }
 
@@ -212,8 +226,8 @@ impl<G> PdfActionRecord<G> {
         self.id
     }
     #[must_use]
-    pub const fn spec(&self) -> PdfActionSpec<G> {
-        self.spec
+    pub fn spec(&self) -> PdfActionSpec<G> {
+        self.spec.clone()
     }
     #[must_use]
     pub const fn target_object(&self) -> Option<u32> {

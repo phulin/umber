@@ -31,15 +31,49 @@ pub(crate) struct StateCore<G> {
 impl<G> StateCore<G> {
     pub(crate) fn capture_format_values(
         &self,
+        extra_roots: impl IntoIterator<Item = DynamicMemoryRoot<G>>,
     ) -> (
         Vec<crate::format::schema::FormatDefinition>,
         Vec<Vec<u32>>,
         Vec<crate::format::schema::FormatGlue>,
     ) {
         let generation = self.generation.generation();
+        let mut definitions = vec![None; generation.definitions().len()];
+        let mut token_lists = vec![None; generation.token_lists().len()];
+        let mut capture_root = |root| match root {
+            DynamicMemoryRoot::Definition(definition) => {
+                definitions[definition.format_index() as usize] = Some(definition.capture_format());
+            }
+            DynamicMemoryRoot::TokenList(tokens) => {
+                token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
+            }
+            DynamicMemoryRoot::Nodes(root) => {
+                let mut scratch = NodeMemoryScratch::default();
+                let _ = self
+                    .nodes
+                    .semantic_memory_usage(root, false, &mut scratch, |tokens| {
+                        token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
+                    });
+            }
+        };
+        self.state.visit_dynamic_memory_roots(&mut capture_root);
+        for root in extra_roots {
+            capture_root(root);
+        }
         (
-            generation.definitions().capture_format_rows(),
-            generation.token_lists().capture_format_rows(),
+            definitions
+                .into_iter()
+                .map(|row| {
+                    row.unwrap_or(crate::format::schema::FormatDefinition {
+                        parameter_text: Vec::new(),
+                        replacement_text: Vec::new(),
+                    })
+                })
+                .collect(),
+            token_lists
+                .into_iter()
+                .map(|row| row.unwrap_or_default())
+                .collect(),
             generation.glue().capture_format_rows(),
         )
     }
@@ -218,8 +252,9 @@ fn current_dynamic_memory_words<G>(
                     &mut scratch.nodes,
                     |tokens| {
                         if token_marks.mark(tokens.format_index() as usize) {
-                            token_words = token_words
-                                .saturating_add(generation.token_lists().get(*tokens).len() + 1);
+                            token_words = token_words.saturating_add(
+                                generation.token_lists().get(tokens.clone()).len() + 1,
+                            );
                         }
                     },
                 );
@@ -259,8 +294,35 @@ fn materialized_dynamic_memory_words<G>(
             Ok(roots.len() as u32)
         })
         .map_err(|_| NodeArenaError::InvalidList)?;
-    let definitions = generation.definitions().capture_format_rows();
-    let token_lists = generation.token_lists().capture_format_rows();
+    let (definitions, token_lists, _) = {
+        let mut definitions = vec![None; generation.definitions().len()];
+        let mut token_lists = vec![None; generation.token_lists().len()];
+        state.visit_dynamic_memory_roots(|root| match root {
+            DynamicMemoryRoot::Definition(definition) => {
+                definitions[definition.format_index() as usize] = Some(definition.capture_format());
+            }
+            DynamicMemoryRoot::TokenList(tokens) => {
+                token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
+            }
+            DynamicMemoryRoot::Nodes(_) => {}
+        });
+        (
+            definitions
+                .into_iter()
+                .map(|row| {
+                    row.unwrap_or(crate::format::schema::FormatDefinition {
+                        parameter_text: Vec::new(),
+                        replacement_text: Vec::new(),
+                    })
+                })
+                .collect::<Vec<_>>(),
+            token_lists
+                .into_iter()
+                .map(|row| row.unwrap_or_default())
+                .collect::<Vec<_>>(),
+            (),
+        )
+    };
     let mut owned_definitions = std::collections::BTreeSet::new();
     let mut owned_tokens = std::collections::BTreeSet::new();
     for cell in cells {
@@ -286,7 +348,7 @@ fn materialized_dynamic_memory_words<G>(
         owned_tokens.extend(
             tokens
                 .into_iter()
-                .map(TokenListId::format_index)
+                .map(|tokens| tokens.format_index())
                 .map(|row| row as usize),
         );
         detached_extent =
@@ -345,12 +407,12 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
         self.generation.definitions().get(id)
     }
 
     #[inline(always)]
-    pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
+    pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.generation.token_lists().get(id)
     }
 
@@ -434,12 +496,12 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
         self.generation.definitions().get(id)
     }
 
     #[inline(always)]
-    pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
+    pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.generation.token_lists().get(id)
     }
 
@@ -718,10 +780,9 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
     /// Admits validated format rows directly into their final arenas.
     ///
-    /// The detached image may contain append-only definition history which no
-    /// environment cell owns. Those rows remain validated wire data but do not
-    /// become live generation storage. All final capacities and relocation
-    /// tables are reserved before the first row is published.
+    /// Dead compatibility rows in a detached image remain validated wire data
+    /// but do not become live shared owners. All final capacities and
+    /// relocation tables are reserved before the first value is published.
     pub(crate) fn promote_format_values(
         &mut self,
         definitions: &[crate::format::schema::FormatDefinition],

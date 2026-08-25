@@ -200,11 +200,18 @@ pub enum GroupRestorationValue<G> {
 
 impl<G> Clone for GroupRestorationValue<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Meaning(value) => Self::Meaning(value.clone()),
+            Self::Integer(value) => Self::Integer(*value),
+            Self::Dimension(value) => Self::Dimension(*value),
+            Self::TokenList(value) => Self::TokenList(value.clone()),
+            Self::Glue(value) => Self::Glue(*value),
+            Self::NodeList(value) => Self::NodeList(*value),
+            Self::Font(value) => Self::Font(*value),
+            Self::Code(value) => Self::Code(*value),
+        }
     }
 }
-
-impl<G> Copy for GroupRestorationValue<G> {}
 
 impl<G> core::fmt::Debug for GroupRestorationValue<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -226,7 +233,7 @@ impl<G> core::fmt::Debug for GroupRestorationValue<G> {
 
 impl<G> PartialEq for GroupRestorationValue<G> {
     fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
+        match (self, other) {
             (Self::Meaning(left), Self::Meaning(right)) => left == right,
             (Self::Integer(left), Self::Integer(right)) => left == right,
             (Self::Dimension(left), Self::Dimension(right)) => left == right,
@@ -284,7 +291,7 @@ impl GroupRestorationTraceState {
 }
 
 /// One entry in TeX82 §283's top-down `unsave` restoration order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroupRestorationEntry<G> {
     cell: GroupRestorationCell,
     saved: GroupRestorationValue<G>,
@@ -300,13 +307,13 @@ impl<G> GroupRestorationEntry<G> {
     }
 
     #[must_use]
-    pub const fn saved_value(&self) -> GroupRestorationValue<G> {
-        self.saved
+    pub fn saved_value(&self) -> GroupRestorationValue<G> {
+        self.saved.clone()
     }
 
     #[must_use]
-    pub const fn live_value(&self) -> GroupRestorationValue<G> {
-        self.live
+    pub fn live_value(&self) -> GroupRestorationValue<G> {
+        self.live.clone()
     }
 
     #[must_use]
@@ -357,11 +364,18 @@ pub(crate) enum StateWord<G> {
 
 impl<G> Clone for StateWord<G> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            Self::Meaning(value) => Self::Meaning(value.clone()),
+            Self::Integer(value) => Self::Integer(*value),
+            Self::Dimension(value) => Self::Dimension(*value),
+            Self::TokenList(value) => Self::TokenList(value.clone()),
+            Self::Glue(value) => Self::Glue(*value),
+            Self::NodeList(value) => Self::NodeList(*value),
+            Self::Font(value) => Self::Font(*value),
+            Self::Code(value) => Self::Code(*value),
+        }
     }
 }
-
-impl<G> Copy for StateWord<G> {}
 
 impl<G> core::fmt::Debug for StateWord<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -383,7 +397,7 @@ impl<G> core::fmt::Debug for StateWord<G> {
 
 impl<G> PartialEq for StateWord<G> {
     fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
+        match (self, other) {
             (Self::Meaning(left), Self::Meaning(right)) => left == right,
             (Self::Integer(left), Self::Integer(right)) => left == right,
             (Self::Dimension(left), Self::Dimension(right)) => left == right,
@@ -640,7 +654,7 @@ impl<G> DenseState<G> {
                             flags: crate::meaning::MeaningFlags::from_bits(flags),
                             definition: definitions
                                 .get(definition as usize)
-                                .copied()
+                                .cloned()
                                 .flatten()
                                 .ok_or("format macro reference is not live")?,
                         },
@@ -662,9 +676,10 @@ impl<G> DenseState<G> {
                     .write(
                         index,
                         BankCell::level_one(Some(
-                            *token_lists
+                            token_lists
                                 .get(value as usize)
-                                .ok_or("format token reference is out of range")?,
+                                .ok_or("format token reference is out of range")?
+                                .clone(),
                         )),
                     )
                     .map_err(|_| "format token register index")?,
@@ -726,9 +741,10 @@ impl<G> DenseState<G> {
                     .write(
                         u32::from(index),
                         BankCell::level_one(Some(
-                            *token_lists
+                            token_lists
                                 .get(value as usize)
-                                .ok_or("format token reference is out of range")?,
+                                .ok_or("format token reference is out of range")?
+                                .clone(),
                         )),
                     )
                     .map_err(|_| "format token parameter index")?,
@@ -1331,7 +1347,7 @@ impl<G> DenseState<G> {
         self.write_cell(
             cell,
             BankCell {
-                value: after,
+                value: after.clone(),
                 level: before.level,
             },
         )?;
@@ -1558,7 +1574,7 @@ impl<G> DenseState<G> {
             self.write_cell(
                 saved.cell,
                 BankCell {
-                    value: saved.before,
+                    value: saved.before.clone(),
                     level: saved.before_level,
                 },
             )?;
@@ -1566,12 +1582,12 @@ impl<G> DenseState<G> {
                 cell: saved.cell,
                 before: current.value,
                 before_level: current.level,
-                after: saved.before,
+                after: saved.before.clone(),
                 after_level: saved.before_level,
                 saved_at: None,
                 kind: MutationKind::GroupRestore,
             }));
-            (saved.before, GroupRestorationOutcome::Restored)
+            (saved.before.clone(), GroupRestorationOutcome::Restored)
         };
         entries.push(GroupRestorationEntry {
             cell: restoration_cell(saved.cell),
@@ -1644,7 +1660,7 @@ impl<G> DenseState<G> {
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
         let before = self.read_cell(cell)?;
-        if !word_matches(cell, value) {
+        if !word_matches(cell, &value) {
             return Err(StateError::CellKindMismatch);
         }
         let current_level = self.current_level();
@@ -1659,7 +1675,7 @@ impl<G> DenseState<G> {
         self.write_cell(
             cell,
             BankCell {
-                value,
+                value: value.clone(),
                 level: after_level,
             },
         )?;
@@ -1710,7 +1726,7 @@ impl<G> DenseState<G> {
                 .glue_parameters
                 .get(u32::from(index))?
                 .map(StateWord::Glue),
-            StateCell::CurrentFont => self.current_font.map(StateWord::Font),
+            StateCell::CurrentFont => self.current_font.clone().map(StateWord::Font),
             StateCell::MathFamilyFont(index) => self
                 .math_family_fonts
                 .get(u32::from(index))?
@@ -1729,55 +1745,59 @@ impl<G> DenseState<G> {
         cell: StateCell,
         value: BankCell<StateWord<G>>,
     ) -> Result<(), StateError> {
-        match (cell, value.value) {
-            (StateCell::Meaning(index), StateWord::Meaning(word)) => {
-                self.meanings.write(index, value.map_value(word))?
-            }
+        let BankCell { value, level } = value;
+        match (cell, value) {
+            (StateCell::Meaning(index), StateWord::Meaning(word)) => self
+                .meanings
+                .write(index, BankCell { value: word, level })?,
             (StateCell::Count(index), StateWord::Integer(word)) => {
-                self.counts.write(index, value.map_value(word))?
+                self.counts.write(index, BankCell { value: word, level })?
             }
-            (StateCell::Dimension(index), StateWord::Dimension(word)) => {
-                self.dimensions.write(index, value.map_value(word))?
-            }
+            (StateCell::Dimension(index), StateWord::Dimension(word)) => self
+                .dimensions
+                .write(index, BankCell { value: word, level })?,
             (StateCell::TokenRegister(index), StateWord::TokenList(word)) => {
-                self.token_registers.write(index, value.map_value(word))?
+                self.token_registers
+                    .write(index, BankCell { value: word, level })?
             }
-            (StateCell::GlueRegister(index), StateWord::Glue(word)) => {
-                self.glue_registers.write(index, value.map_value(word))?
-            }
-            (StateCell::BoxRegister(index), StateWord::NodeList(word)) => {
-                self.box_registers.write(index, value.map_value(word))?
-            }
-            (StateCell::MuGlueRegister(index), StateWord::Glue(word)) => {
-                self.mu_glue_registers.write(index, value.map_value(word))?
-            }
+            (StateCell::GlueRegister(index), StateWord::Glue(word)) => self
+                .glue_registers
+                .write(index, BankCell { value: word, level })?,
+            (StateCell::BoxRegister(index), StateWord::NodeList(word)) => self
+                .box_registers
+                .write(index, BankCell { value: word, level })?,
+            (StateCell::MuGlueRegister(index), StateWord::Glue(word)) => self
+                .mu_glue_registers
+                .write(index, BankCell { value: word, level })?,
             (StateCell::IntegerParameter(index), StateWord::Integer(word)) => self
                 .integer_parameters
-                .write(u32::from(index), value.map_value(word))?,
+                .write(u32::from(index), BankCell { value: word, level })?,
             (StateCell::DimensionParameter(index), StateWord::Dimension(word)) => self
                 .dimension_parameters
-                .write(u32::from(index), value.map_value(word))?,
+                .write(u32::from(index), BankCell { value: word, level })?,
             (StateCell::TokenParameter(index), StateWord::TokenList(word)) => self
                 .token_parameters
-                .write(u32::from(index), value.map_value(word))?,
+                .write(u32::from(index), BankCell { value: word, level })?,
             (StateCell::GlueParameter(index), StateWord::Glue(word)) => self
                 .glue_parameters
-                .write(u32::from(index), value.map_value(word))?,
+                .write(u32::from(index), BankCell { value: word, level })?,
             (StateCell::CurrentFont, StateWord::Font(word)) => {
-                self.current_font = value.map_value(word)
+                self.current_font = BankCell { value: word, level }
             }
             (StateCell::MathFamilyFont(index), StateWord::Font(word)) => self
                 .math_family_fonts
-                .write(u32::from(index), value.map_value(word))?,
+                .write(u32::from(index), BankCell { value: word, level })?,
             (StateCell::Code(kind, index), StateWord::Code(word)) => self
                 .code_bank_mut(kind)
-                .write(index, value.map_value(word))?,
-            (StateCell::FontRuntime(cell), StateWord::Integer(word)) => self
-                .font_runtime
-                .write(cell, BankCellValue::Integer(value.map_value(word)))?,
-            (StateCell::FontRuntime(cell), StateWord::Dimension(word)) => self
-                .font_runtime
-                .write(cell, BankCellValue::Dimension(value.map_value(word)))?,
+                .write(index, BankCell { value: word, level })?,
+            (StateCell::FontRuntime(cell), StateWord::Integer(word)) => self.font_runtime.write(
+                cell,
+                BankCellValue::Integer(BankCell { value: word, level }),
+            )?,
+            (StateCell::FontRuntime(cell), StateWord::Dimension(word)) => self.font_runtime.write(
+                cell,
+                BankCellValue::Dimension(BankCell { value: word, level }),
+            )?,
             _ => return Err(StateError::CellKindMismatch),
         }
         Ok(())
@@ -1794,17 +1814,17 @@ impl<G> DenseState<G> {
             .iter()
             .rev()
         {
-            match *entry {
+            match entry {
                 JournalEntry::Mutation(mutation) => {
-                    if !word_matches(mutation.cell, mutation.before)
-                        || !word_matches(mutation.cell, mutation.after)
+                    if !word_matches(mutation.cell, &mutation.before)
+                        || !word_matches(mutation.cell, &mutation.after)
                     {
                         return Err(StateError::CellKindMismatch);
                     }
                 }
-                JournalEntry::GroupExit(frame) => groups.push(frame),
+                JournalEntry::GroupExit(frame) => groups.push(*frame),
                 JournalEntry::GroupEnter(frame) => {
-                    if groups.pop() != Some(frame) {
+                    if groups.pop() != Some(*frame) {
                         return Err(StateError::InvalidCursor);
                     }
                 }
@@ -1826,12 +1846,12 @@ impl<G> DenseState<G> {
         // values after this checkpoint. Its font coordinates are roots too,
         // even when they are not the current value of their bank cell.
         for entry in self.journal.suffix(0, cursor.position() as usize) {
-            let JournalEntry::Mutation(mutation) = *entry else {
+            let JournalEntry::Mutation(mutation) = entry else {
                 continue;
             };
-            if font_root(mutation.before)
+            if font_root(&mutation.before)
                 .into_iter()
-                .chain(font_root(mutation.after))
+                .chain(font_root(&mutation.after))
                 .any(|font| !is_live(font))
             {
                 return Ok(false);
@@ -1846,7 +1866,7 @@ impl<G> DenseState<G> {
             .journal
             .suffix(cursor.position() as usize, self.journal.len())
         {
-            let JournalEntry::Mutation(mutation) = *entry else {
+            let JournalEntry::Mutation(mutation) = entry else {
                 continue;
             };
             if !matches!(
@@ -1856,7 +1876,7 @@ impl<G> DenseState<G> {
             {
                 continue;
             }
-            restored.push((mutation.cell, font_root(mutation.before)));
+            restored.push((mutation.cell, font_root(&mutation.before)));
         }
 
         if restored
@@ -1916,24 +1936,17 @@ impl<G> DenseState<G> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum DynamicMemoryRoot<G> {
     Definition(crate::DefinitionId<G>),
     TokenList(crate::TokenListId<G>),
     Nodes(crate::node_arena::DurableListId<G>),
 }
 
-impl<T: Copy> BankCell<T> {
-    fn map<U: Copy>(self, map: impl FnOnce(T) -> U) -> BankCell<U> {
+impl<T> BankCell<T> {
+    fn map<U>(self, map: impl FnOnce(T) -> U) -> BankCell<U> {
         BankCell {
             value: map(self.value),
-            level: self.level,
-        }
-    }
-
-    fn map_value<U: Copy>(self, value: U) -> BankCell<U> {
-        BankCell {
-            value,
             level: self.level,
         }
     }
@@ -1999,7 +2012,7 @@ fn restoration_value<G>(word: StateWord<G>) -> GroupRestorationValue<G> {
     }
 }
 
-fn word_matches<G>(cell: StateCell, word: StateWord<G>) -> bool {
+fn word_matches<G>(cell: StateCell, word: &StateWord<G>) -> bool {
     matches!(
         (cell, word),
         (StateCell::Meaning(_), StateWord::Meaning(_))
@@ -2021,10 +2034,10 @@ fn word_matches<G>(cell: StateCell, word: StateWord<G>) -> bool {
     )
 }
 
-fn font_root<G>(word: StateWord<G>) -> Option<FontId> {
+fn font_root<G>(word: &StateWord<G>) -> Option<FontId> {
     match word {
         StateWord::Meaning(meaning) => meaning.font(),
-        StateWord::Font(font) => Some(font),
+        StateWord::Font(font) => Some(*font),
         StateWord::Integer(_)
         | StateWord::Dimension(_)
         | StateWord::TokenList(_)

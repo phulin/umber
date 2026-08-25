@@ -448,11 +448,13 @@ pub(crate) fn detach<G>(
                     depth: form.depth,
                     entries: form
                         .attr
+                        .clone()
                         .map(|value| tokens(value.id()))
                         .transpose()?
                         .unwrap_or_default(),
                     resource_entries: form
                         .resources
+                        .clone()
                         .map(|value| tokens(value.id()))
                         .transpose()?
                         .unwrap_or_default(),
@@ -573,6 +575,7 @@ pub(crate) fn detach<G>(
     };
     let open_action = pdf
         .catalog_open_action
+        .clone()
         .map(|record| detach_action_record(record, &mut tokens))
         .transpose()?;
     let annotations = pdf
@@ -582,7 +585,7 @@ pub(crate) fn detach<G>(
             let data = record.data();
             Ok(DetachedPdfAnnotation {
                 object: record.object(),
-                dimensions: data.map(|value| value.dimensions),
+                dimensions: data.as_ref().map(|value| value.dimensions),
                 entries: data.map(|value| tokens(value.entries)).transpose()?,
             })
         })

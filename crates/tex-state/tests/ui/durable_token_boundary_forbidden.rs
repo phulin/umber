@@ -1,5 +1,5 @@
 use tex_state::{
-    CommandContext, TokenListId, TokenListView,
+    CommandContext, TokenListId,
     token::{Token, TokenWord},
 };
 
@@ -13,11 +13,11 @@ fn cross_generation_builder<G, H>(
         .unwrap();
 }
 
-fn view_outlives_admission<'a, G>(
-    context: &'a CommandContext<'a, G>,
+fn cross_generation_id<G, H>(
+    context: &CommandContext<'_, H>,
     id: TokenListId<G>,
-) -> TokenListView<'static, G> {
-    context.token_list(id)
+) {
+    let _ = context.token_list(id);
 }
 
 fn main() {}

@@ -55,10 +55,10 @@ pub(in crate::main_control) fn pdf_navigation_identity<G>(
             tex_state::PdfDestinationIdentity::Number(*number)
         }
         tex_state::PdfActionIdentifier::Name(tokens) => {
-            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(*tokens, stores))
+            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(tokens.clone(), stores))
         }
         tex_state::PdfActionIdentifier::Raw(tokens) => {
-            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(*tokens, stores))
+            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(tokens.clone(), stores))
         }
     }
 }
@@ -199,7 +199,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 .create_pdf_link(
                     dimensions,
                     attributes,
-                    action,
+                    action.clone(),
                     stores.execution_group_depth(),
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
@@ -257,7 +257,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                     .expect("empty PDF outline attributes fit admitted storage"),
             };
             stores
-                .create_pdf_outline(attributes, action, count, title.tokens)
+                .create_pdf_outline(attributes, action.clone(), count, title.tokens)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             reserve_navigation_action_targets(stores, &action)?;
         }
@@ -1185,7 +1185,9 @@ pub(in crate::main_control) fn applied_effect_observation<G>(
             // expansion through `\noexpand` and must retain `print_cs`'s
             // spelling and separator.
             channel: "terminal".into(),
-            value: ObservationValue::Bytes(message_tokens_text(stores, *tokens).into_bytes()),
+            value: ObservationValue::Bytes(
+                message_tokens_text(stores, tokens.clone()).into_bytes(),
+            ),
             source: None,
         }),
         ColdOperation::ShowTokens { tokens } => Some(EffectRecord {
@@ -1193,7 +1195,7 @@ pub(in crate::main_control) fn applied_effect_observation<G>(
             channel: "showtokens".into(),
             value: ObservationValue::Tokens(
                 stores
-                    .token_list(*tokens)
+                    .token_list(tokens.clone())
                     .iter()
                     .map(|word| observed_macro_token(word.semantic_token(), stores))
                     .collect(),
@@ -1221,7 +1223,7 @@ pub(in crate::main_control) fn applied_effect_observation<G>(
                 channel: format!("stream:{}", stream.normalized_number()),
                 value: ObservationValue::Tokens(
                     stores
-                        .token_list(*tokens)
+                        .token_list(tokens.clone())
                         .iter()
                         .map(|word| observed_macro_token(word.semantic_token(), stores))
                         .collect(),
