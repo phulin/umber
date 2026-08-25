@@ -142,7 +142,7 @@ impl ModeList {
     }
 
     pub fn take_nodes(&mut self) -> Vec<Node> {
-        std::mem::take(&mut self.sequence).take().0
+        std::mem::take(&mut self.sequence).into_semantic()
     }
 
     #[must_use]
@@ -1336,15 +1336,6 @@ impl ModeNest {
     pub fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
             levels: self.levels.clone(),
-        }
-    }
-
-    /// Publishes every live native-node sidecar at an externally visible
-    /// episode boundary. The immutable page roots are carried by the mode
-    /// summary; subsequent mutation invalidates only the affected sidecar.
-    pub(crate) fn publish_node_sidecars<G>(&mut self, stores: &mut Universe<G>) {
-        for level in &mut self.levels {
-            level.list.sequence.publish_sidecars(stores);
         }
     }
 

@@ -145,16 +145,17 @@ All production mutation of live TeX state should pass through `Universe` or simi
   shim used by executable profiling builds to attribute allocation calls and
   requested bytes to nested hot-core owner scopes.
 - `src/node.rs`: Storage-independent TeX node and box values with copy-only
-  provenance, directly owned glue, arena-owned token payloads, and typed list
-  coordinates.
+  provenance, directly owned glue, shared immutable stored-token payloads, and
+  typed list coordinates.
 - `src/node_sequence.rs`: Explicit mirrored-or-distinct semantic and
   TeX-physical operation buffers. Mirrored hot lists store one node/inline
   lineage channel with O(1) identity projection; cold detached extraction can
-  materialize two owned channels. The module also owns page-arena sidecar
-  publication, TeX-cell lineage metadata, and semantic-only equality.
-- `src/node_arena.rs`: Scratch, page, and generation-branded durable node-list
-  arenas; copy-only typed coordinates; owner-checked suffix cursors; borrowed
-  resolution; and exact-root dense relocation between lifetimes.
+  materialize two owned channels. Named checkpoints retain direct child
+  coordinates without publishing duplicate page-arena rows. The module also
+  owns TeX-cell lineage metadata and semantic-only equality.
+- `src/node_arena.rs`: Generation page and cold loaded-node arenas; copy-only
+  typed/rebranded coordinates; shared immutable checkpoint rows; owner-checked
+  suffix cursors; borrowed resolution; and cold-only exact-root relocation.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.

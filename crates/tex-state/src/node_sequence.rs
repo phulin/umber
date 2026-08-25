@@ -60,8 +60,6 @@ pub fn direct_high_cell_overlap(
 pub struct NodeSequence {
     semantic: Vec<Node>,
     projection: PhysicalProjection,
-    frozen_semantic: Option<PageListId>,
-    frozen_physical: Option<PageListId>,
     semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
     next_sequence_lineage_row: u32,
 }
@@ -99,8 +97,6 @@ impl NodeSequence {
         Self {
             semantic: nodes,
             projection: PhysicalProjection::Mirrored,
-            frozen_semantic: None,
-            frozen_physical: None,
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
         }
@@ -136,8 +132,6 @@ impl NodeSequence {
                 boundaries: physical_boundaries,
                 high_cell_lineages: physical_high_cell_lineages,
             },
-            frozen_semantic: None,
-            frozen_physical: None,
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
         }
@@ -207,6 +201,8 @@ impl NodeSequence {
     pub fn take(self) -> (Vec<Node>, Vec<Node>) {
         match self.projection {
             PhysicalProjection::Mirrored => {
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_node_diagnostic_projection(self.semantic.len());
                 let physical = self.semantic.clone();
                 (self.semantic, physical)
             }
@@ -214,9 +210,18 @@ impl NodeSequence {
         }
     }
 
+    /// Consumes the builder's semantic channel without materializing a
+    /// mirrored diagnostic channel that the caller will immediately discard.
+    #[must_use]
+    pub fn into_semantic(self) -> Vec<Node> {
+        self.semantic
+    }
+
     pub fn into_parts(self) -> (Vec<Node>, Vec<Node>, Vec<usize>) {
         match self.projection {
             PhysicalProjection::Mirrored => {
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_node_diagnostic_projection(self.semantic.len());
                 let physical = self.semantic.clone();
                 let boundaries = (0..=self.semantic.len()).collect();
                 (self.semantic, physical, boundaries)
@@ -228,7 +233,6 @@ impl NodeSequence {
     }
 
     pub fn push_mirrored(&mut self, node: Node) {
-        self.invalidate_frozen_sidecars();
         let row = self.next_sequence_lineage_row;
         self.next_sequence_lineage_row = self
             .next_sequence_lineage_row
@@ -269,7 +273,6 @@ impl NodeSequence {
     /// the resulting topology. Callers that perform a topology-aware rewrite
     /// replace both channels explicitly instead.
     pub fn mutate_semantic<R>(&mut self, mutate: impl FnOnce(&mut Vec<Node>) -> R) -> R {
-        self.invalidate_frozen_sidecars();
         let result = mutate(&mut self.semantic);
         self.projection = PhysicalProjection::Mirrored;
         let (semantic, next_sequence_lineage_row) = mirrored_high_cell_lineages(&self.semantic);
@@ -279,7 +282,6 @@ impl NodeSequence {
     }
 
     pub fn truncate(&mut self, semantic_len: usize, physical_len: usize) {
-        self.invalidate_frozen_sidecars();
         if matches!(self.projection, PhysicalProjection::Mirrored) {
             assert_eq!(
                 semantic_len, physical_len,
@@ -300,46 +302,17 @@ impl NodeSequence {
         }
     }
 
-    /// Materializes immutable node/reachability/provenance sidecars at an
-    /// externally visible episode boundary while retaining this builder as
-    /// the sole mutable continuation.
-    pub fn publish_sidecars<G>(&mut self, universe: &mut crate::Universe<G>) {
-        if self.frozen_semantic.is_none() {
-            self.frozen_semantic = Some(universe.publish_page_nodes(&self.semantic));
-        }
-        if self.frozen_physical.is_none() {
-            self.frozen_physical = match &self.projection {
-                PhysicalProjection::Mirrored => self.frozen_semantic,
-                PhysicalProjection::Distinct { nodes, .. } => {
-                    Some(universe.publish_page_nodes(nodes))
-                }
-            };
-        }
-    }
-
-    #[must_use]
-    pub fn frozen_sidecars(&self) -> Option<(PageListId, PageListId)> {
-        Some((self.frozen_semantic?, self.frozen_physical?))
-    }
-
     /// Whether this checkpointable sequence explicitly carries a page-arena
     /// coordinate in either its mutable channels or frozen sidecars.
     #[must_use]
     pub fn retains_page_node_handles(&self) -> bool {
-        self.frozen_semantic.is_some_and(|list| !list.is_empty())
-            || self.frozen_physical.is_some_and(|list| !list.is_empty())
-            || self.semantic.iter().any(node_retains_page_handle)
+        self.semantic.iter().any(node_retains_page_handle)
             || match &self.projection {
                 PhysicalProjection::Mirrored => false,
                 PhysicalProjection::Distinct { nodes, .. } => {
                     nodes.iter().any(node_retains_page_handle)
                 }
             }
-    }
-
-    fn invalidate_frozen_sidecars(&mut self) {
-        self.frozen_semantic = None;
-        self.frozen_physical = None;
     }
 }
 
@@ -416,7 +389,6 @@ fn direct_high_cell_lineages(node: &Node, row: u32) -> DirectHighCellLineages {
 mod tests {
     use super::*;
     use crate::font::NULL_FONT;
-    use crate::interner::InternerBudget;
     use crate::token::OriginId;
 
     fn char_node(ch: char) -> Node {
@@ -582,31 +554,24 @@ mod tests {
     }
 
     #[test]
-    fn mirrored_sidecars_share_one_published_page_list() {
-        let budget = InternerBudget::new(32, 32, 1024).expect("budget");
-        crate::with_universe(budget, |universe| {
-            let mut sequence = NodeSequence::mirrored(vec![Node::Penalty(7)]);
-            sequence.publish_sidecars(universe);
-            let (semantic, physical) = sequence.frozen_sidecars().expect("published sidecars");
-            assert_eq!(semantic, physical);
-            assert_eq!(
-                universe
-                    .page_node_list(semantic)
-                    .expect("published page list")
-                    .nodes(),
-                &[Node::Penalty(7)]
-            );
-
-            sequence.push_mirrored(Node::Penalty(8));
-            assert_eq!(sequence.frozen_sidecars(), None);
-        })
-        .expect("fresh universe");
-    }
-
-    #[test]
     fn semantic_equality_ignores_explicit_projection_storage() {
         let mirrored = NodeSequence::mirrored(vec![Node::Penalty(1)]);
         let distinct = NodeSequence::from_channels(vec![Node::Penalty(1)], vec![Node::Penalty(99)]);
         assert_eq!(mirrored, distinct);
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn consuming_only_the_semantic_channel_copies_no_node_payload() {
+        let sequence = NodeSequence::mirrored(vec![Node::Penalty(1), Node::Penalty(2)]);
+        let before = crate::measurement::node_graph_census();
+
+        assert_eq!(
+            sequence.into_semantic(),
+            [Node::Penalty(1), Node::Penalty(2)]
+        );
+        let delta = crate::measurement::node_graph_census().saturating_sub(before);
+        assert_eq!(delta.physical_copy_rows, 0);
+        assert_eq!(delta.physical_copy_nodes, 0);
     }
 }

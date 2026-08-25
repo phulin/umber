@@ -145,14 +145,25 @@ struct DecodedFormat {
 
 struct FormatNodeCollector<'a, G> {
     admitted: crate::stores::AdmittedState<'a, G>,
+    page_nodes: &'a crate::node_arena::PageNodeArena,
+    token_lists: &'a mut Vec<Vec<u32>>,
+    glue: &'a mut Vec<FormatGlue>,
     rows: Vec<FormatNodeList>,
     indices: std::collections::HashMap<crate::node_arena::DurableListId<G>, u32>,
 }
 
 impl<'a, G> FormatNodeCollector<'a, G> {
-    fn new(admitted: crate::stores::AdmittedState<'a, G>) -> Self {
+    fn new(
+        admitted: crate::stores::AdmittedState<'a, G>,
+        page_nodes: &'a crate::node_arena::PageNodeArena,
+        token_lists: &'a mut Vec<Vec<u32>>,
+        glue: &'a mut Vec<FormatGlue>,
+    ) -> Self {
         Self {
             admitted,
+            page_nodes,
+            token_lists,
+            glue,
             rows: Vec::new(),
             indices: std::collections::HashMap::new(),
         }
@@ -165,9 +176,11 @@ impl<'a, G> FormatNodeCollector<'a, G> {
         if let Some(&row) = self.indices.get(&root) {
             return Ok(row);
         }
+        let page_root = root.rebrand();
         let nodes = self
-            .admitted
-            .node_list(root)
+            .page_nodes
+            .get(page_root)
+            .or_else(|_| self.admitted.node_list(root))
             .map_err(|_| "format node root is not live".to_owned())?
             .nodes()
             .to_vec();
@@ -175,7 +188,7 @@ impl<'a, G> FormatNodeCollector<'a, G> {
             let mut children = Vec::new();
             node.visit_node_lists(|child| children.push(*child));
             for child in children {
-                self.capture_root(child)?;
+                self.capture_root(child.rebrand())?;
             }
         }
         let encoded = nodes
@@ -187,10 +200,28 @@ impl<'a, G> FormatNodeCollector<'a, G> {
                         if child.is_empty() {
                             0
                         } else {
-                            self.indices[&child]
+                            self.indices[&child.rebrand()]
                         }
                     })
-                    .map_payloads(crate::GlueId::format_index, |tokens| tokens.format_index());
+                    .map_payloads(
+                        |value| {
+                            let row = self.glue.len() as u32;
+                            self.glue.push(FormatGlue {
+                                width: value.width.raw(),
+                                stretch: value.stretch.raw(),
+                                stretch_order: value.stretch_order as u8,
+                                shrink: value.shrink.raw(),
+                                shrink_order: value.shrink_order as u8,
+                            });
+                            row
+                        },
+                        |tokens| {
+                            let row = self.token_lists.len() as u32;
+                            self.token_lists
+                                .push(tokens.words().iter().map(|word| word.raw()).collect());
+                            row
+                        },
+                    );
                 bincode::serialize(&node)
                     .map_err(|error| format!("cannot encode format node: {error}"))
             })
@@ -284,13 +315,14 @@ impl DetachedFormatImage {
                     .into_iter()
                     .map(crate::env::DynamicMemoryRoot::Nodes),
             );
-        let (definitions, token_lists, glue) = core.capture_format_values(pdf_roots);
+        let (definitions, mut token_lists, mut glue) = core.capture_format_values(pdf_roots);
         let fonts = universe
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
         let admitted = core.admit();
-        let mut node_lists = FormatNodeCollector::new(admitted);
+        let mut node_lists =
+            FormatNodeCollector::new(admitted, &universe.page_nodes, &mut token_lists, &mut glue);
         let pdf = universe
             .pdf
             .capture_format_bytes(
@@ -1329,30 +1361,44 @@ impl<G> Universe<G> {
         glue: &[crate::GlueId<G>],
         fonts: &[crate::ids::FontId],
     ) -> Result<Vec<crate::node_arena::DurableListId<G>>, FormatError> {
-        let mut installed = Vec::with_capacity(rows.len());
+        let mut installed: Vec<crate::node_arena::DurableListId<G>> =
+            Vec::with_capacity(rows.len());
         for row in rows {
-            let nodes = row
-                .nodes
-                .iter()
-                .map(|bytes| {
-                    let node: crate::node::Node<u32, u32, u32> = bincode::deserialize(bytes)
-                        .map_err(|error| FormatError::InvalidState(error.to_string()))?;
-                    let node = node
-                        .map_lists(|child| {
-                            if child == 0 {
-                                crate::node_arena::DurableListId::empty()
-                            } else {
-                                installed[child as usize - 1]
-                            }
-                        })
-                        .map_payloads(
-                            |value| glue[value as usize],
-                            |value| token_lists[value as usize].clone(),
-                        )
-                        .map_fonts(|font| fonts[font.raw() as usize]);
-                    Ok(node)
-                })
-                .collect::<Result<Vec<_>, FormatError>>()?;
+            let nodes = {
+                let admitted = self
+                    .core
+                    .as_ref()
+                    .expect("format candidate retains core")
+                    .admit();
+                row.nodes
+                    .iter()
+                    .map(|bytes| {
+                        let node: crate::node::Node<u32, u32, u32> = bincode::deserialize(bytes)
+                            .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+                        let node = node
+                            .map_lists(|child| {
+                                if child == 0 {
+                                    crate::node_arena::PageListId::empty()
+                                } else {
+                                    installed[child as usize - 1].rebrand()
+                                }
+                            })
+                            .map_payloads(
+                                |value| admitted.glue(glue[value as usize]),
+                                |value| {
+                                    crate::node::NodeTokenList::new(
+                                        admitted
+                                            .token_list(token_lists[value as usize].clone())
+                                            .iter()
+                                            .collect::<Vec<_>>(),
+                                    )
+                                },
+                            )
+                            .map_fonts(|font: crate::ids::FontId| fonts[font.raw() as usize]);
+                        Ok(node)
+                    })
+                    .collect::<Result<Vec<_>, FormatError>>()?
+            };
             let id = self
                 .core
                 .as_mut()
@@ -1362,7 +1408,7 @@ impl<G> Universe<G> {
                 .nodes_mut()
                 .publish(nodes)
                 .map_err(|_| FormatError::AllocationFailed)?;
-            installed.push(id);
+            installed.push(id.rebrand());
         }
         Ok(installed)
     }

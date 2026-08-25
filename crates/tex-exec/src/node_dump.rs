@@ -79,7 +79,7 @@ pub(crate) fn dump_durable_list<G>(
     let list = stores
         .node_list(owner)
         .expect("diagnostic root belongs to the live durable generation");
-    dump_nodes::<_, _, _, _, DurableDumpStorage>(
+    dump_nodes::<_, _, _, _, PageDumpStorage>(
         stores,
         list.nodes(),
         &config,
@@ -195,7 +195,7 @@ impl<G> DumpListProjection<G, DurableDumpStorage> for tex_state::node_arena::Dur
         let list = stores
             .node_list(*self)
             .expect("diagnostic child belongs to the live durable generation");
-        dump_nodes::<_, _, _, _, DurableDumpStorage>(
+        dump_nodes::<_, _, _, _, PageDumpStorage>(
             stores,
             list.nodes(),
             config,

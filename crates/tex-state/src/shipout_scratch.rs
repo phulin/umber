@@ -39,6 +39,14 @@ pub enum ShipoutListId<G> {
     Scratch(ShipoutScratchListId),
 }
 
+impl<G> ShipoutListId<G> {
+    /// Rebrands a child borrowed from a durable root's generation-owned row.
+    #[must_use]
+    pub fn durable_child(list: PageListId) -> Self {
+        Self::Durable(list.rebrand())
+    }
+}
+
 impl<G> Clone for ShipoutListId<G> {
     fn clone(&self) -> Self {
         *self

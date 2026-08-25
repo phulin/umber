@@ -470,24 +470,35 @@ Nodes have four storage roles:
 1. Execution scratch contains unfinished shaping words, packing probes, and
    temporary transformation indexes. These values are not nodes and never
    escape scratch.
-2. Current-generation mode/page storage contains material for open horizontal,
-   vertical, math, insertion, alignment, and page-builder lists. Save and
-   operation marks name storage cursors, so rollback restores roots and
-   truncates only unpublished suffixes.
-3. Current-generation durable node storage contains box-register values,
-   checkpoint roots, and any list known at construction time to survive its
-   originating mode/page lifetime.
+2. One current-generation mode/page arena contains material for open
+   horizontal, vertical, math, insertion, alignment, page-builder, box-register,
+   and PDF-form lists. Save and operation marks name storage cursors, so
+   rollback restores roots and truncates only unpublished suffixes. A
+   conservative durable bound protects rows rebranded into state carriers.
+3. Cold format materialization may own a physically separate generation-local
+   node arena. Loaded roots retain that arena; an ordinary runtime builder does
+   not publish into it.
 4. One generation-owned `ShipoutScratchArena<G>` contains only nodes genuinely
    derived by an active output attempt, currently math lowering. Stable rows
    retain warmed capacity; nested attempts take scalar marks and reset their
    complete suffix in O(1).
 
 All four storage classes are owned below the external store's current slot,
-not by a mode, group, box, or node. Builders select the final class before
-emitting a surviving node and seal it there. A TeX box copy may share an
-immutable durable segment by coordinate under the same slot lease; it never
-adds a per-node or per-list reference count. No live node closure is copied
-between storage classes.
+not by a mode, group, box, or node. Builders emit runtime nodes once into the
+generation page arena. Setbox, PDF-form, box, unbox, page, math, and alignment
+transitions transfer or rebrand coordinates. A TeX box copy shares the
+immutable row under the same slot lease; it never adds a per-node or per-list
+reference count. No live node closure is copied between storage classes.
+Retained runtime checkpoints share coarse immutable 64-row arena segments;
+post-fork publication opens an independent tail segment. Segment ownership is
+one aggregate checkpoint mechanism rather than a list-coordinate owner, and
+forking copies no node or token payload.
+
+Node token fields share the existing non-atomic stored-token payload for a
+true semantic alias. This applies to marks, deferred writes and specials, PDF
+literals and identifiers, and alignment templates. The node adds no word copy,
+content hash, owner search, `Arc`, or `Weak`; final drop of either semantic
+carrier releases the shared allocation exactly once.
 
 Shipout receives a typed `ShipoutRoot<G>` and traverses page or durable rows in
 place. Explicit operands are borrowed from page storage; box 255 and PDF forms

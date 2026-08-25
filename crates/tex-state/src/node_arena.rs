@@ -2,12 +2,13 @@
 //!
 //! Node-list coordinates never own storage. A scratch, page, or revision
 //! generation arena owns complete list rows, and callers resolve coordinates
-//! only while borrowing that arena. Values cross lifetime boundaries through
-//! explicit dense relocation from typed roots.
+//! only while borrowing that arena. Lifetime transitions rebrand coordinates
+//! while the generation-owned row stays in place.
 
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::glue::GlueSpec;
@@ -54,6 +55,10 @@ impl<L> NodeListId<L> {
             generation,
             _lifetime: PhantomData,
         }
+    }
+
+    pub(crate) const fn rebrand<D>(self) -> NodeListId<D> {
+        NodeListId::from_row(self.owner, self.row, self.generation)
     }
 
     const fn index(self) -> Option<usize> {
@@ -445,48 +450,61 @@ impl<L> NodeMemoryScratch<L> {
 pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     owner: u64,
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
+    segments: Vec<Option<Rc<NodeArenaSegment<L, Glue, Tokens>>>>,
+    segment_live_rows: Vec<u32>,
     accounting: MemoryAccounting,
-}
-
-impl<L, Glue, Tokens> Drop for NodeArena<L, Glue, Tokens> {
-    fn drop(&mut self) {
-        for row in self.rows.iter().flatten() {
-            self.accounting
-                .release_nodes(row.tex82_words, row.etex_words);
-        }
-    }
 }
 
 struct NodeArenaRow<L, Glue, Tokens> {
     generation: u64,
+    segment: u32,
+    offset: u32,
+    _lifetime: PhantomData<fn(&L, &Glue, &Tokens)>,
+}
+
+const NODE_ARENA_SEGMENT_ROWS: usize = 64;
+
+struct NodeArenaSegment<L, Glue, Tokens> {
+    rows: Vec<Option<NodeArenaAllocation<L, Glue, Tokens>>>,
+}
+
+struct NodeArenaAllocation<L, Glue, Tokens> {
     nodes: Box<[Node<NodeListId<L>, Glue, Tokens>]>,
     tex82_words: (usize, usize),
     etex_words: (usize, usize),
+    accounting: MemoryAccounting,
 }
 
-impl<L, Glue: Clone, Tokens: Clone> Clone for NodeArenaRow<L, Glue, Tokens> {
+impl<L, Glue, Tokens> Drop for NodeArenaAllocation<L, Glue, Tokens> {
+    fn drop(&mut self) {
+        self.accounting
+            .release_nodes(self.tex82_words, self.etex_words);
+    }
+}
+
+impl<L, Glue, Tokens> Clone for NodeArenaRow<L, Glue, Tokens> {
     fn clone(&self) -> Self {
         Self {
             generation: self.generation,
-            nodes: self.nodes.clone(),
-            tex82_words: self.tex82_words,
-            etex_words: self.etex_words,
+            segment: self.segment,
+            offset: self.offset,
+            _lifetime: PhantomData,
         }
     }
 }
 
-impl<L, Glue: Clone, Tokens: Clone> NodeArena<L, Glue, Tokens> {
+impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     /// Forks the immutable published rows while preserving their stable
     /// coordinates. The accepted arena is never mutated; subsequent
     /// publication is confined to the destination arena.
     pub(crate) fn fork(&self) -> Self {
-        for row in self.rows.iter().flatten() {
-            self.accounting
-                .allocate_nodes(row.tex82_words, row.etex_words);
-        }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_node_checkpoint_share(self.rows.iter().flatten().count());
         Self {
             owner: self.owner,
             rows: self.rows.clone(),
+            segments: self.segments.clone(),
+            segment_live_rows: self.segment_live_rows.clone(),
             accounting: self.accounting.clone(),
         }
     }
@@ -508,6 +526,84 @@ impl<L, Glue, Tokens> Default for NodeArena<L, Glue, Tokens> {
 }
 
 impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
+    fn allocation(&self, index: usize) -> Option<&NodeArenaAllocation<L, Glue, Tokens>> {
+        let row = self.rows.get(index)?.as_ref()?;
+        self.segments
+            .get(row.segment as usize)?
+            .as_ref()?
+            .rows
+            .get(row.offset as usize)?
+            .as_ref()
+    }
+
+    fn append_allocation(
+        &mut self,
+        generation: u64,
+        allocation: NodeArenaAllocation<L, Glue, Tokens>,
+    ) -> Result<(), NodeArenaError> {
+        let can_append = self
+            .segments
+            .last()
+            .and_then(Option::as_ref)
+            .is_some_and(|segment| {
+                Rc::strong_count(segment) == 1 && segment.rows.len() < NODE_ARENA_SEGMENT_ROWS
+            });
+        if !can_append {
+            self.segments
+                .try_reserve(1)
+                .map_err(|_| NodeArenaError::AllocationFailed)?;
+            self.segment_live_rows
+                .try_reserve(1)
+                .map_err(|_| NodeArenaError::AllocationFailed)?;
+            self.segments
+                .push(Some(Rc::new(NodeArenaSegment { rows: Vec::new() })));
+            self.segment_live_rows.push(0);
+        }
+        let segment_index = self.segments.len() - 1;
+        let segment = Rc::get_mut(
+            self.segments[segment_index]
+                .as_mut()
+                .expect("new node segment is present"),
+        )
+        .expect("appendable node segment is uniquely owned");
+        segment
+            .rows
+            .try_reserve(1)
+            .map_err(|_| NodeArenaError::AllocationFailed)?;
+        let offset =
+            u32::try_from(segment.rows.len()).map_err(|_| NodeArenaError::CapacityOverflow)?;
+        segment.rows.push(Some(allocation));
+        self.segment_live_rows[segment_index] += 1;
+        self.rows.push(Some(NodeArenaRow {
+            generation,
+            segment: u32::try_from(segment_index).map_err(|_| NodeArenaError::CapacityOverflow)?,
+            offset,
+            _lifetime: PhantomData,
+        }));
+        Ok(())
+    }
+
+    fn release_row(&mut self, index: usize) {
+        let Some(row) = self.rows[index].take() else {
+            return;
+        };
+        let segment_index = row.segment as usize;
+        let live = &mut self.segment_live_rows[segment_index];
+        *live -= 1;
+        if *live == 0 {
+            self.segments[segment_index] = None;
+        } else if let Some(segment) = self.segments[segment_index].as_mut().and_then(Rc::get_mut) {
+            let _ = segment.rows[row.offset as usize].take();
+        }
+    }
+
+    fn trim_empty_tail_segments(&mut self) {
+        while self.segments.last().is_some_and(Option::is_none) {
+            self.segments.pop();
+            self.segment_live_rows.pop();
+        }
+    }
+
     pub(crate) fn semantic_memory_usage(
         &self,
         root: NodeListId<L>,
@@ -524,10 +620,13 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             let mut dynamic = 0_usize;
             for offset in 0..scratch.semantic_order.len() {
                 let list = scratch.semantic_order[offset];
-                let row = self.rows[list.index().expect("postorder excludes empty lists")]
-                    .as_ref()
-                    .expect("postorder contains only live rows");
-                for node in row.nodes.iter() {
+                let index = list.index().expect("postorder excludes empty lists");
+                for node in self
+                    .allocation(index)
+                    .expect("postorder contains only live rows")
+                    .nodes
+                    .iter()
+                {
                     let (node_variable, node_dynamic) = node.tex_memory_words(etex_node_sizes);
                     variable = variable.saturating_add(node_variable);
                     dynamic = dynamic.saturating_add(node_dynamic);
@@ -553,8 +652,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                     .iter()
                     .copied()
                     .flat_map(|list| {
-                        self.rows[list.index().expect("postorder excludes empty lists")]
-                            .as_ref()
+                        self.allocation(list.index().expect("postorder excludes empty lists"))
                             .expect("postorder contains only live rows")
                             .nodes
                             .iter()
@@ -596,7 +694,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             _ => {}
         }
         marks.set_state(index, 1);
-        for node in row.nodes.iter() {
+        for node in self
+            .allocation(index)
+            .expect("validated row retains its allocation")
+            .nodes
+            .iter()
+        {
             let mut result = Ok(());
             let mut visit = |child: &NodeListId<L>| {
                 if result.is_ok() {
@@ -627,8 +730,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok(closure
             .into_iter()
             .flat_map(|list| {
-                self.rows[list.index().expect("postorder excludes empty lists")]
-                    .as_ref()
+                self.allocation(list.index().expect("postorder excludes empty lists"))
                     .expect("postorder contains only live rows")
                     .nodes
                     .iter()
@@ -654,6 +756,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Self {
             owner,
             rows: Vec::new(),
+            segments: Vec::new(),
+            segment_live_rows: Vec::new(),
             accounting,
         }
     }
@@ -699,6 +803,16 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok(())
     }
 
+    pub(crate) fn later_cursor(
+        &self,
+        left: NodeArenaCursor<L>,
+        right: NodeArenaCursor<L>,
+    ) -> Result<NodeArenaCursor<L>, NodeArenaError> {
+        self.validate_cursor(left)?;
+        self.validate_cursor(right)?;
+        Ok(if left.rows >= right.rows { left } else { right })
+    }
+
     /// Validates every font coordinate retained in the cursor's immutable
     /// prefix before a rollback can discard a font-store suffix.
     pub(crate) fn font_roots_are_live(
@@ -707,8 +821,11 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         mut is_live: impl FnMut(crate::ids::FontId) -> bool,
     ) -> Result<bool, NodeArenaError> {
         self.validate_cursor(cursor)?;
-        for row in self.rows[..cursor.rows as usize].iter().flatten() {
-            for node in row.nodes.iter() {
+        for index in 0..cursor.rows as usize {
+            let Some(allocation) = self.allocation(index) else {
+                continue;
+            };
+            for node in allocation.nodes.iter() {
                 let mut live = true;
                 node.visit_fonts(|font| live &= is_live(font));
                 if !live {
@@ -722,11 +839,11 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     /// Truncates a rejected suffix after callers restore every canonical root.
     pub fn truncate(&mut self, cursor: NodeArenaCursor<L>) -> Result<(), NodeArenaError> {
         self.validate_cursor(cursor)?;
-        for row in self.rows[cursor.rows as usize..].iter().flatten() {
-            self.accounting
-                .release_nodes(row.tex82_words, row.etex_words);
+        for index in (cursor.rows as usize..self.rows.len()).rev() {
+            self.release_row(index);
         }
         self.rows.truncate(cursor.rows as usize);
+        self.trim_empty_tail_segments();
         Ok(())
     }
 
@@ -738,6 +855,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         if nodes.is_empty() {
             return Ok(NodeListId::empty());
         }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_node_publication(nodes.len());
         for node in &nodes {
             let mut valid = true;
             node.visit_node_lists(|child| valid &= self.contains(*child));
@@ -759,12 +878,15 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         let tex82_words = node_words(&nodes, false);
         let etex_words = node_words(&nodes, true);
         self.accounting.allocate_nodes(tex82_words, etex_words);
-        self.rows.push(Some(NodeArenaRow {
+        self.append_allocation(
             generation,
-            nodes: nodes.into_boxed_slice(),
-            tex82_words,
-            etex_words,
-        }));
+            NodeArenaAllocation {
+                nodes: nodes.into_boxed_slice(),
+                tex82_words,
+                etex_words,
+                accounting: self.accounting.clone(),
+            },
+        )?;
         Ok(NodeListId::from_row(self.owner, next, generation))
     }
 
@@ -830,9 +952,9 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         let mut tokens = Vec::new();
         for list in order {
             let index = list.index().expect("postorder excludes empty lists");
-            for node in self.rows[index]
-                .as_ref()
-                .map(|row| row.nodes.as_ref())
+            for node in self
+                .allocation(index)
+                .map(|allocation| allocation.nodes.as_ref())
                 .expect("postorder contains only live rows")
             {
                 node.visit_payloads(
@@ -841,38 +963,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 );
             }
         }
-        Ok((glue, tokens))
-    }
-
-    pub(crate) fn escaping_payloads_with_scratch<D>(
-        &self,
-        roots: &[NodeListId<L>],
-        scratch: &mut NodeRelocationScratch<L, D>,
-    ) -> Result<(Vec<Glue>, Vec<Tokens>), NodeArenaError>
-    where
-        Glue: Clone,
-        Tokens: Clone,
-    {
-        scratch.begin();
-        for root in roots {
-            self.postorder_sparse(*root, &mut scratch.marks, &mut scratch.order)?;
-        }
-        let mut glue = Vec::new();
-        let mut tokens = Vec::new();
-        for list in scratch.order.iter().copied() {
-            let index = list.index().expect("postorder excludes empty lists");
-            for node in self.rows[index]
-                .as_ref()
-                .map(|row| row.nodes.as_ref())
-                .expect("postorder contains only live rows")
-            {
-                node.visit_payloads(
-                    |value| glue.push(value.clone()),
-                    |value| tokens.push(value.clone()),
-                );
-            }
-        }
-        scratch.order.clear();
         Ok((glue, tokens))
     }
 
@@ -898,30 +988,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             .rows
             .try_reserve(order.len())
             .map_err(|_| NodeArenaError::AllocationFailed)
-    }
-
-    pub(crate) fn reserve_promotion_with_scratch<D, OtherGlue, OtherTokens>(
-        &self,
-        roots: &[NodeListId<L>],
-        destination: &mut NodeArena<D, OtherGlue, OtherTokens>,
-        scratch: &mut NodeRelocationScratch<L, D>,
-    ) -> Result<(), NodeArenaError> {
-        scratch.begin();
-        for root in roots {
-            self.postorder_sparse(*root, &mut scratch.marks, &mut scratch.order)?;
-        }
-        let final_len = destination
-            .rows
-            .len()
-            .checked_add(scratch.order.len())
-            .ok_or(NodeArenaError::CapacityOverflow)?;
-        u32::try_from(final_len).map_err(|_| NodeArenaError::CapacityOverflow)?;
-        destination
-            .rows
-            .try_reserve(scratch.order.len())
-            .map_err(|_| NodeArenaError::AllocationFailed)?;
-        scratch.order.clear();
-        Ok(())
     }
 
     /// Relocates an exact closure while changing its semantic payload
@@ -985,9 +1051,9 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             let generation = NEXT_LIST_GENERATION.fetch_add(1, Ordering::Relaxed);
             assert_ne!(generation, 0, "node-list generation exhausted");
             let destination_id = NodeListId::from_row(destination.owner, row, generation);
-            let nodes = self.rows[source_index]
-                .as_ref()
-                .map(|row| row.nodes.as_ref())
+            let nodes = self
+                .allocation(source_index)
+                .map(|allocation| allocation.nodes.as_ref())
                 .expect("postorder contains only live rows")
                 .iter()
                 .cloned()
@@ -1004,18 +1070,23 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 })
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_node_external_materialization(nodes.len());
             scratch.relocation.insert(source_index, destination_id);
             let tex82_words = node_words(&nodes, false);
             let etex_words = node_words(&nodes, true);
             destination
                 .accounting
                 .allocate_nodes(tex82_words, etex_words);
-            destination.rows.push(Some(NodeArenaRow {
+            destination.append_allocation(
                 generation,
-                nodes,
-                tex82_words,
-                etex_words,
-            }));
+                NodeArenaAllocation {
+                    nodes,
+                    tex82_words,
+                    etex_words,
+                    accounting: destination.accounting.clone(),
+                },
+            )?;
         }
 
         let promoted_roots = roots
@@ -1057,7 +1128,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             _ => {}
         }
         state.set_state(index, 1);
-        for node in row.nodes.iter() {
+        for node in self
+            .allocation(index)
+            .expect("validated row retains its allocation")
+            .nodes
+            .iter()
+        {
             let mut result = Ok(());
             node.visit_node_lists(|child| {
                 if result.is_ok() {
@@ -1095,7 +1171,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             _ => {}
         }
         state[index] = 1;
-        for node in row.nodes.iter() {
+        for node in self
+            .allocation(index)
+            .expect("validated row retains its allocation")
+            .nodes
+            .iter()
+        {
             let mut result = Ok(());
             node.visit_node_lists(|child| {
                 if result.is_ok() {
@@ -1134,7 +1215,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             _ => {}
         }
         state[index] = 1;
-        for node in row.nodes.iter() {
+        for node in self
+            .allocation(index)
+            .expect("validated row retains its allocation")
+            .nodes
+            .iter()
+        {
             let mut result = Ok(());
             node.visit_semantic_node_lists(|child| {
                 if result.is_ok() {
@@ -1159,14 +1245,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         self.postorder(root, &mut state, &mut closure)?;
         for id in closure.into_iter().rev() {
             let index = id.index().expect("closure excludes the empty list");
-            if let Some(row) = self.rows[index].take() {
-                self.accounting
-                    .release_nodes(row.tex82_words, row.etex_words);
-            }
+            self.release_row(index);
         }
         while self.rows.last().is_some_and(Option::is_none) {
             self.rows.pop();
         }
+        self.trim_empty_tail_segments();
         Ok(())
     }
 
@@ -1214,9 +1298,9 @@ impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     #[must_use]
     pub fn nodes(&self) -> &'a NodeSlice<L, Glue, Tokens> {
         self.id.index().map_or(&[], |index| {
-            self.arena.rows[index]
-                .as_ref()
-                .map(|row| row.nodes.as_ref())
+            self.arena
+                .allocation(index)
+                .map(|allocation| allocation.nodes.as_ref())
                 .expect("validated node-list row is live")
         })
     }

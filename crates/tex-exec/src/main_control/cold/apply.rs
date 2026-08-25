@@ -1815,9 +1815,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::DeferredWrite { stream, tokens } => {
-            let tokens = tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).iter().collect::<Vec<_>>(),
-            );
+            let tokens = stores.node_token_list(&tokens);
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
@@ -1834,9 +1832,7 @@ pub(in crate::main_control) fn apply<G>(
             deferred: true,
             tokens,
         } => {
-            let tokens = tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).iter().collect::<Vec<_>>(),
-            );
+            let tokens = stores.node_token_list(&tokens);
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
@@ -2704,9 +2700,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            let tokens = tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).iter().collect::<Vec<_>>(),
-            );
+            let tokens = stores.node_token_list(&tokens);
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -2847,7 +2841,7 @@ pub(in crate::main_control) fn apply<G>(
                 diagnostic_context,
                 command.fuel,
             )?;
-            let output_level = crate::box_runtime::commit_current_list(
+            let mut output_level = crate::box_runtime::commit_current_list(
                 modes,
                 stores,
                 command.diagnostic_effects,
@@ -2870,7 +2864,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::page_output::resume_page_builder_after_output(
                 stores,
                 command.diagnostic_effects,
-                output_level.list().nodes().to_vec(),
+                output_level.list_mutation().take_nodes(),
                 crate::diagnostics::ExecutionDiagnosticContext::source_free(context),
             )?;
             // TeX82 §§1026/1054 resume the same `build_page` invocation that
@@ -3009,17 +3003,17 @@ pub(in crate::main_control) fn apply<G>(
                 let target = *active_math_fields.last().ok_or(ExecError::MissingToken {
                     context: "active math field",
                 })?;
-                let level = crate::box_runtime::commit_current_list(
+                let mut level = crate::box_runtime::commit_current_list(
                     modes,
                     stores,
                     command.diagnostic_effects,
                     command.fuel,
                 )?;
-                let list = finish_math_list(
-                    level.list().nodes(),
-                    level.list().incomplete_fraction(),
-                    stores,
-                )?;
+                let (nodes, incomplete) = {
+                    let mut list = level.list_mutation();
+                    (list.take_nodes(), list.take_incomplete_fraction())
+                };
+                let list = finish_math_list(nodes, incomplete, stores)?;
                 let field = collapse_singleton_math_group(stores, list);
                 fill_math_field_target(modes, stores, target, field);
                 active_math_fields.pop();
@@ -3107,13 +3101,13 @@ pub(in crate::main_control) fn apply<G>(
             // are dropped along with the popped mode level instead of ever
             // becoming node.
 
-            let level = crate::box_runtime::commit_current_list(
+            let mut level = crate::box_runtime::commit_current_list(
                 modes,
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            let children = stores.publish_page_nodes(level.list().nodes().to_vec());
+            let children = stores.publish_page_nodes(level.list_mutation().take_nodes());
             // TeX82 §1086 snapshots `d:=box_max_depth` before `unsave`.
             // The box body may assign a local, signed `\boxmaxdepth`; that
             // value governs this package operation even though the assignment

@@ -141,6 +141,69 @@ fn operation_scratch_promotes_only_declared_page_roots() {
     );
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn checkpoint_fork_shares_rows_without_physical_graph_copy() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let root = arena
+        .publish(vec![Node::Penalty(7)])
+        .expect("test fixture is valid");
+    let baseline = crate::measurement::node_graph_census();
+
+    let fork = arena.fork();
+    let delta = crate::measurement::node_graph_census().saturating_sub(baseline);
+
+    assert_eq!(delta.checkpoint_shared_rows, 1);
+    assert_eq!(delta.physical_copy_rows, 0);
+    assert_eq!(delta.physical_copy_nodes, 0);
+    assert_eq!(
+        std::rc::Rc::strong_count(arena.segments[0].as_ref().expect("segment")),
+        2
+    );
+    assert_eq!(
+        fork.get(root)
+            .expect("shared coordinate remains live")
+            .nodes(),
+        [Node::Penalty(7)]
+    );
+}
+
+#[test]
+fn checkpoint_fork_seals_a_coarse_segment_and_appends_independently() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let shared = arena
+        .publish(vec![Node::Penalty(7)])
+        .expect("test fixture is valid");
+    let mut fork = arena.fork();
+    let source_only = arena
+        .publish(vec![Node::Penalty(8)])
+        .expect("test fixture is valid");
+    let fork_only = fork
+        .publish(vec![Node::Penalty(9)])
+        .expect("test fixture is valid");
+
+    assert_eq!(arena.segments.len(), 2);
+    assert_eq!(fork.segments.len(), 2);
+    assert_eq!(
+        arena.get(shared).expect("shared row").nodes(),
+        [Node::Penalty(7)]
+    );
+    assert_eq!(
+        fork.get(shared).expect("shared row").nodes(),
+        [Node::Penalty(7)]
+    );
+    assert_eq!(
+        arena.get(source_only).expect("source row").nodes(),
+        [Node::Penalty(8)]
+    );
+    assert_eq!(
+        fork.get(fork_only).expect("fork row").nodes(),
+        [Node::Penalty(9)]
+    );
+    assert!(arena.get(fork_only).is_err());
+    assert!(fork.get(source_only).is_err());
+}
+
 #[test]
 fn rollback_cursor_is_owner_checked_and_truncates_only_suffix() {
     let mut arena = NodeArena::<PageLifetime>::new();

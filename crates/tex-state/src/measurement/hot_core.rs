@@ -249,6 +249,69 @@ pub struct SaveJournalCensus {
     pub maximum_checkpoint_group_depth: u64,
 }
 
+/// Physical node-graph events, separated from TeX logical aliasing.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodeGraphCensus {
+    pub rows_published: u64,
+    pub nodes_published: u64,
+    pub coordinate_transfers: u64,
+    pub logical_aliases: u64,
+    pub physical_copy_rows: u64,
+    pub physical_copy_nodes: u64,
+    pub external_materialization_rows: u64,
+    pub external_materialization_nodes: u64,
+    pub diagnostic_projection_rows: u64,
+    pub diagnostic_projection_nodes: u64,
+    pub checkpoint_sidecar_rows: u64,
+    pub checkpoint_sidecar_nodes: u64,
+    pub checkpoint_shared_rows: u64,
+}
+
+impl NodeGraphCensus {
+    #[must_use]
+    pub fn saturating_sub(self, baseline: Self) -> Self {
+        Self {
+            rows_published: self.rows_published.saturating_sub(baseline.rows_published),
+            nodes_published: self
+                .nodes_published
+                .saturating_sub(baseline.nodes_published),
+            coordinate_transfers: self
+                .coordinate_transfers
+                .saturating_sub(baseline.coordinate_transfers),
+            logical_aliases: self
+                .logical_aliases
+                .saturating_sub(baseline.logical_aliases),
+            physical_copy_rows: self
+                .physical_copy_rows
+                .saturating_sub(baseline.physical_copy_rows),
+            physical_copy_nodes: self
+                .physical_copy_nodes
+                .saturating_sub(baseline.physical_copy_nodes),
+            external_materialization_rows: self
+                .external_materialization_rows
+                .saturating_sub(baseline.external_materialization_rows),
+            external_materialization_nodes: self
+                .external_materialization_nodes
+                .saturating_sub(baseline.external_materialization_nodes),
+            diagnostic_projection_rows: self
+                .diagnostic_projection_rows
+                .saturating_sub(baseline.diagnostic_projection_rows),
+            diagnostic_projection_nodes: self
+                .diagnostic_projection_nodes
+                .saturating_sub(baseline.diagnostic_projection_nodes),
+            checkpoint_sidecar_rows: self
+                .checkpoint_sidecar_rows
+                .saturating_sub(baseline.checkpoint_sidecar_rows),
+            checkpoint_sidecar_nodes: self
+                .checkpoint_sidecar_nodes
+                .saturating_sub(baseline.checkpoint_sidecar_nodes),
+            checkpoint_shared_rows: self
+                .checkpoint_shared_rows
+                .saturating_sub(baseline.checkpoint_shared_rows),
+        }
+    }
+}
+
 impl RetainedGenerationCensus {
     #[must_use]
     pub fn saturating_sub(self, baseline: Self) -> Self {
@@ -406,6 +469,19 @@ static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
+static NODE_ROWS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
+static NODES_PUBLISHED: AtomicU64 = AtomicU64::new(0);
+static NODE_COORDINATE_TRANSFERS: AtomicU64 = AtomicU64::new(0);
+static NODE_LOGICAL_ALIASES: AtomicU64 = AtomicU64::new(0);
+static NODE_PHYSICAL_COPY_ROWS: AtomicU64 = AtomicU64::new(0);
+static NODE_PHYSICAL_COPY_NODES: AtomicU64 = AtomicU64::new(0);
+static NODE_EXTERNAL_MATERIALIZATION_ROWS: AtomicU64 = AtomicU64::new(0);
+static NODE_EXTERNAL_MATERIALIZATION_NODES: AtomicU64 = AtomicU64::new(0);
+static NODE_DIAGNOSTIC_PROJECTION_ROWS: AtomicU64 = AtomicU64::new(0);
+static NODE_DIAGNOSTIC_PROJECTION_NODES: AtomicU64 = AtomicU64::new(0);
+static NODE_CHECKPOINT_SIDECAR_ROWS: AtomicU64 = AtomicU64::new(0);
+static NODE_CHECKPOINT_SIDECAR_NODES: AtomicU64 = AtomicU64::new(0);
+static NODE_CHECKPOINT_SHARED_ROWS: AtomicU64 = AtomicU64::new(0);
 
 #[must_use]
 pub fn hot_core_allocation_scope(
@@ -584,6 +660,65 @@ pub fn save_journal_census() -> SaveJournalCensus {
             .load(Ordering::Relaxed),
         maximum_checkpoint_group_depth: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH
             .load(Ordering::Relaxed),
+    }
+}
+
+pub fn record_node_publication(nodes: usize) {
+    NODE_ROWS_PUBLISHED.fetch_add(1, Ordering::Relaxed);
+    NODES_PUBLISHED.fetch_add(nodes as u64, Ordering::Relaxed);
+}
+
+pub fn record_node_coordinate_transfer() {
+    NODE_COORDINATE_TRANSFERS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_node_logical_alias() {
+    NODE_LOGICAL_ALIASES.fetch_add(1, Ordering::Relaxed);
+}
+
+fn record_node_physical_copy(nodes: usize) {
+    NODE_PHYSICAL_COPY_ROWS.fetch_add(1, Ordering::Relaxed);
+    NODE_PHYSICAL_COPY_NODES.fetch_add(nodes as u64, Ordering::Relaxed);
+}
+
+pub fn record_node_external_materialization(nodes: usize) {
+    record_node_physical_copy(nodes);
+    NODE_EXTERNAL_MATERIALIZATION_ROWS.fetch_add(1, Ordering::Relaxed);
+    NODE_EXTERNAL_MATERIALIZATION_NODES.fetch_add(nodes as u64, Ordering::Relaxed);
+}
+
+pub fn record_node_diagnostic_projection(nodes: usize) {
+    record_node_physical_copy(nodes);
+    NODE_DIAGNOSTIC_PROJECTION_ROWS.fetch_add(1, Ordering::Relaxed);
+    NODE_DIAGNOSTIC_PROJECTION_NODES.fetch_add(nodes as u64, Ordering::Relaxed);
+}
+
+pub fn record_node_checkpoint_sidecar(nodes: usize) {
+    record_node_physical_copy(nodes);
+    NODE_CHECKPOINT_SIDECAR_ROWS.fetch_add(1, Ordering::Relaxed);
+    NODE_CHECKPOINT_SIDECAR_NODES.fetch_add(nodes as u64, Ordering::Relaxed);
+}
+
+pub fn record_node_checkpoint_share(rows: usize) {
+    NODE_CHECKPOINT_SHARED_ROWS.fetch_add(rows as u64, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn node_graph_census() -> NodeGraphCensus {
+    NodeGraphCensus {
+        rows_published: NODE_ROWS_PUBLISHED.load(Ordering::Relaxed),
+        nodes_published: NODES_PUBLISHED.load(Ordering::Relaxed),
+        coordinate_transfers: NODE_COORDINATE_TRANSFERS.load(Ordering::Relaxed),
+        logical_aliases: NODE_LOGICAL_ALIASES.load(Ordering::Relaxed),
+        physical_copy_rows: NODE_PHYSICAL_COPY_ROWS.load(Ordering::Relaxed),
+        physical_copy_nodes: NODE_PHYSICAL_COPY_NODES.load(Ordering::Relaxed),
+        external_materialization_rows: NODE_EXTERNAL_MATERIALIZATION_ROWS.load(Ordering::Relaxed),
+        external_materialization_nodes: NODE_EXTERNAL_MATERIALIZATION_NODES.load(Ordering::Relaxed),
+        diagnostic_projection_rows: NODE_DIAGNOSTIC_PROJECTION_ROWS.load(Ordering::Relaxed),
+        diagnostic_projection_nodes: NODE_DIAGNOSTIC_PROJECTION_NODES.load(Ordering::Relaxed),
+        checkpoint_sidecar_rows: NODE_CHECKPOINT_SIDECAR_ROWS.load(Ordering::Relaxed),
+        checkpoint_sidecar_nodes: NODE_CHECKPOINT_SIDECAR_NODES.load(Ordering::Relaxed),
+        checkpoint_shared_rows: NODE_CHECKPOINT_SHARED_ROWS.load(Ordering::Relaxed),
     }
 }
 

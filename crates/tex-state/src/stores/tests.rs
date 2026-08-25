@@ -208,7 +208,7 @@ fn constant_time_memory_count_tracks_aliases_and_final_release() {
             for register in [3, 4] {
                 admitted
                     .state()
-                    .assign_box_register(register, Some(nodes), AssignmentScope::Global)
+                    .assign_box_register(register, Some(nodes.rebrand()), AssignmentScope::Global)
                     .expect("box assignment");
             }
             nodes
@@ -225,7 +225,7 @@ fn constant_time_memory_count_tracks_aliases_and_final_release() {
         for _ in 0..3 {
             assert_eq!(
                 admitted
-                    .copied_node_closure_tex_memory_words(nodes, true, &mut scratch)
+                    .copied_node_closure_tex_memory_words(nodes.rebrand(), true, &mut scratch)
                     .expect("borrowed copied closure count"),
                 expected_copy,
             );
@@ -246,7 +246,11 @@ fn constant_time_memory_count_tracks_aliases_and_final_release() {
                 for _ in 0..8_192 {
                     assert_eq!(
                         admitted
-                            .copied_node_closure_tex_memory_words(nodes, true, &mut scratch)
+                            .copied_node_closure_tex_memory_words(
+                                nodes.rebrand(),
+                                true,
+                                &mut scratch,
+                            )
                             .expect("warmed borrowed copied closure count"),
                         expected_copy,
                     );

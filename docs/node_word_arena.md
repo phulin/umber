@@ -3,10 +3,10 @@
 ## Status
 
 This document defines the node-specific implementation of
-[Runtime storage lifetimes](runtime_storage_lifetimes.md). The former
-structural per-list payload-owner model is deleted. Runtime lists are now
-copy-only coordinates whose storage is owned by operation, page, or revision
-generation arenas.
+[Runtime storage lifetimes](runtime_storage_lifetimes.md). Runtime lists are
+copy-only coordinates whose immutable rows are owned by a generation page
+arena or by cold format materialization storage. A TeX lifetime transition
+rebrands a coordinate; it does not copy, relocate, or rewrite the row.
 
 The logical row representation is not a format ABI. It may be compacted into
 words and sidecars without changing the lifetime contract below, provided that
@@ -21,10 +21,10 @@ without storage. The public lifetime families are:
 
 - `ScratchListId` for unfinished shaping, transforms, packing probes, and
   speculative operation material;
-- `PageListId` for open modes, alignments, insertions, and page-builder
-  material; and
-- `DurableListId<G>` for lists retained by box registers or revision
-  checkpoints.
+- `PageListId` for generation-owned open modes, alignments, insertions,
+  page-builder material, and the physical rows later retained by boxes; and
+- `DurableListId<G>` for a generation-branded coordinate view retained by box
+  registers, PDF forms, or revision checkpoints.
 
 Shipout-derived nodes use a separate `ShipoutScratchListId`, not another
 `NodeListId<L>` alias. During output only, `ShipoutListId<G>` is the tagged
@@ -39,12 +39,21 @@ indexes its row directly. Arena and coordinate constructors remain private to
 the storage layer, so a coordinate from an unrelated arena of the same
 semantic class is rejected rather than aliasing an equal row number.
 
+Checkpoint forks share coarse immutable 64-row arena segments. Publication
+continues in a uniquely owned tail segment or opens a new one after a fork;
+the fork copies only compact row-location metadata and segment handles, never
+a node payload. The segment handle belongs to the checkpoint-generation
+operation, not to an individual list coordinate, so this adds no per-value
+owner or hot lookup.
+
 ## Payload placement
 
-Scratch and page rows carry glue and token payloads owned by that same
-semantic lifetime. A durable row carries `GlueId<G>` and `TokenListId<G>`
-instead. Those ids resolve only through the matching coarse generation owner;
-the node or list never retains an individual glue or token owner.
+Page rows carry final glue values directly. A node token field shares the
+immutable non-atomic stored-token allocation when its spelling came from a
+generation token list; constructing a mark, deferred write, special, PDF
+literal, PDF navigation value, or alignment template therefore copies no token
+words. Synthesized node-only token fields allocate their final owner once.
+Neither representation adds an `Arc`, `Weak`, registry row, or lookup.
 
 Diagnostic origins are copy-only coordinates and remain excluded from TeX
 node equality and artifact bytes. A selected shipout provenance consumer
@@ -79,23 +88,18 @@ continuation, and consumes it only at a terminal boundary. Nested box scopes
 therefore close in strict suffix order. A resource suspension keeps the same
 token; it never opens a replacement region or publishes a partial suffix.
 
-## Exact promotion
+## Lifetime transfer and cold materialization
 
-Promotion starts from explicit typed escape roots. The source arena performs a
-postorder walk over only schema-declared child fields and records one dense
-source-row-to-destination-row relocation vector. Shared children are copied
-once. Rows unrelated to the roots are not visited.
+Ordinary setbox and PDF-form publication validate the live page coordinate,
+advance the generation's conservative durable page bound, and rebrand the
+coordinate. `\copy` shares that immutable row; consuming `\box` and unbox
+operations transfer the coordinate while clearing the exact state carrier.
+No ordinary transition walks a closure or copies a node/token payload.
 
-Page glue and token payloads found during that same ordered traversal are
-batched through the generation's atomic `promote_values` seam. Durable node
-rows are then staged with the returned `GlueId<G>` and `TokenListId<G>` values
-and rewritten child coordinates. Destination list roots are returned only
-after the complete closure is initialized. A failure publishes no box
-register, checkpoint, mode, or page root.
-
-There is no content lookup, weak-candidate search, liveness scan, attempt-wide
-scan, in-place rewrite, forwarding pointer, or partially relocated visible
-graph.
+The old dense relocation machinery remains only for a node graph entering from
+a distinct cold format/materialization arena. That boundary starts from
+explicit typed roots and copies the exact closure after full validation. It is
+not callable from ordinary box, page, math, alignment, or token transitions.
 
 ## Boxes and generation ownership
 
@@ -105,10 +109,10 @@ state cells. The current revision, retained checkpoint, or in-session
 continuation owns the complete generation bundle which contains the durable
 node, token, glue, definition, and provenance arenas.
 
-Moving a durable box into page storage copies its exact closure when the page
-lifetime cannot borrow the durable arena through the operation. TeX `\copy`
-may reuse the same durable coordinate while the same coarse generation owner
-remains live. Neither operation adds per-list or per-node ownership.
+Moving a durable box into page or mode state rebrands its coordinate while the
+same coarse generation owner remains live. TeX `\copy` creates only the
+logical alias required by TeX. Neither operation adds per-list or per-node
+ownership.
 
 ## Shipout boundary
 
@@ -145,13 +149,17 @@ that bound, preserving partial-page checkpoints in either restore order.
 Pruning may leave the bound conservative; generation replacement releases the
 complete page arena.
 
+Mode summaries retain their existing child coordinates directly. Capturing a
+named boundary does not publish a second page-arena copy of the mutable mode
+buffer merely to manufacture a root; the summary's coordinate scan alone
+decides whether the conservative page bound must advance.
+
 `\setbox` uses the same rule with a different terminal publication: its exact
-operand closure is first promoted into durable generation storage and assigned
-to the register, including the save-journal mutation, and only then is the
-page region consumed. An overwritten durable coordinate may still be named by
-the journal, a checkpoint, or a PDF form record. Durable rows therefore cannot
-use this page-suffix rule; their eventual correction requires coarse
-reachability ownership across those exact restore carriers.
+operand region is transferred to the durable page prefix and assigned to the
+register, including the save-journal mutation. An overwritten coordinate may
+still be named by the journal, a checkpoint, or a PDF form record. The
+generation keeps a conservative monotonic durable bound; operation rollback
+restores the prior bound before truncating a rejected suffix.
 
 ## Semantic identity and detached boundaries
 

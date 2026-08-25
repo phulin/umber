@@ -894,8 +894,8 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     );
     command.retain_assignment_receipt(receipt);
     stores
-        .release_page_node_region(region)
-        .expect("published setbox owns the complete page suffix");
+        .retain_page_node_region(region)
+        .expect("published setbox transfers its complete page suffix");
 }
 
 /// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already
@@ -1293,13 +1293,13 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         context: "insert group",
     })?;
     schedule_aftergroup(command, stores, aftergroup)?;
-    let level = crate::box_runtime::commit_current_list(
+    let mut level = crate::box_runtime::commit_current_list(
         modes,
         stores,
         command.diagnostic_effects,
         command.fuel,
     )?;
-    let content = stores.publish_page_nodes(level.list().nodes().to_vec());
+    let content = stores.publish_page_nodes(level.list_mutation().take_nodes());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)

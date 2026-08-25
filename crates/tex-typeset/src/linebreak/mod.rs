@@ -274,7 +274,7 @@ impl ParagraphTape {
 
     #[must_use]
     pub fn into_semantic_nodes(self) -> Vec<Node> {
-        self.sequence.take().0
+        self.sequence.into_semantic()
     }
 }
 

@@ -8,9 +8,8 @@ use crate::durable_arena::{
 use crate::env::{DenseState, DynamicMemoryRoot, StateError};
 use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
-use crate::node::NodeTokenList;
 use crate::node_arena::{
-    DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
+    DurableListId, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
     NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena,
 };
 use crate::provenance::OriginRecord;
@@ -24,7 +23,7 @@ mod tests;
 /// Every mutable and immutable state owner for one revision generation.
 pub(crate) struct StateCore<G> {
     generation: GenerationOwner<G>,
-    nodes: DurableNodeArena<G>,
+    nodes: PageNodeArena,
     state: DenseState<G>,
 }
 
@@ -57,12 +56,7 @@ impl<G> StateCore<G> {
                 token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
             }
             DynamicMemoryRoot::Nodes(root) => {
-                let mut scratch = NodeMemoryScratch::default();
-                let _ = self
-                    .nodes
-                    .semantic_memory_usage(root, false, &mut scratch, |tokens| {
-                        token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
-                    });
+                let _ = root;
             }
         };
         self.state.visit_dynamic_memory_roots(&mut capture_root);
@@ -91,7 +85,7 @@ impl<G> StateCore<G> {
         let accounting = generation.memory_accounting();
         Ok(Self {
             generation: GenerationOwner::new(generation),
-            nodes: DurableNodeArena::with_memory_accounting(accounting),
+            nodes: PageNodeArena::with_memory_accounting(accounting),
             state: DenseState::new()?,
         })
     }
@@ -131,20 +125,20 @@ impl<G> StateCore<G> {
     }
 
     #[must_use]
-    pub(crate) fn durable_node_cursor(&self) -> NodeArenaCursor<G> {
+    pub(crate) fn durable_node_cursor(&self) -> NodeArenaCursor<PageLifetime> {
         self.nodes.cursor()
     }
 
     pub(crate) fn validate_durable_node_cursor(
         &self,
-        cursor: NodeArenaCursor<G>,
+        cursor: NodeArenaCursor<PageLifetime>,
     ) -> Result<(), NodeArenaError> {
         self.nodes.validate_cursor(cursor)
     }
 
     pub(crate) fn durable_font_roots_are_live(
         &self,
-        cursor: NodeArenaCursor<G>,
+        cursor: NodeArenaCursor<PageLifetime>,
         is_live: impl FnMut(crate::ids::FontId) -> bool,
     ) -> Result<bool, NodeArenaError> {
         self.nodes.font_roots_are_live(cursor, is_live)
@@ -152,7 +146,7 @@ impl<G> StateCore<G> {
 
     pub(crate) fn truncate_durable_nodes(
         &mut self,
-        cursor: NodeArenaCursor<G>,
+        cursor: NodeArenaCursor<PageLifetime>,
     ) -> Result<(), NodeArenaError> {
         self.nodes.truncate(cursor)
     }
@@ -191,9 +185,9 @@ impl<G> StateCore<G> {
 }
 
 pub(crate) struct DynamicMemoryScratch<G> {
-    nodes: NodeMemoryScratch<G>,
-    durable_to_page: NodeRelocationScratch<G, PageLifetime>,
-    page_to_durable: NodeRelocationScratch<PageLifetime, G>,
+    nodes: NodeMemoryScratch<PageLifetime>,
+    durable_to_page: NodeRelocationScratch<PageLifetime, PageLifetime>,
+    _brand: core::marker::PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Default for DynamicMemoryScratch<G> {
@@ -201,21 +195,15 @@ impl<G> Default for DynamicMemoryScratch<G> {
         Self {
             nodes: NodeMemoryScratch::default(),
             durable_to_page: NodeRelocationScratch::default(),
-            page_to_durable: NodeRelocationScratch::default(),
+            _brand: core::marker::PhantomData,
         }
-    }
-}
-
-impl<G> DynamicMemoryScratch<G> {
-    pub(crate) fn page_to_durable(&mut self) -> &mut NodeRelocationScratch<PageLifetime, G> {
-        &mut self.page_to_durable
     }
 }
 
 /// Immutable, already-admitted hot view.
 pub(crate) struct AdmittedState<'a, G> {
     generation: RwLockReadGuard<'a, Generation<G>>,
-    nodes: &'a DurableNodeArena<G>,
+    nodes: &'a PageNodeArena,
     state: &'a DenseState<G>,
 }
 
@@ -250,22 +238,22 @@ impl<'a, G> AdmittedState<'a, G> {
     pub(crate) fn node_list(
         &self,
         id: DurableListId<G>,
-    ) -> Result<NodeList<'a, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
-        self.nodes.get(id)
+    ) -> Result<NodeList<'a, PageLifetime>, NodeArenaError> {
+        self.nodes.get(id.rebrand())
     }
 
-    pub(crate) fn copy_node_into_page(
+    pub(crate) fn materialize_loaded_node_into_page(
         &self,
         root: DurableListId<G>,
         destination: &mut PageNodeArena,
         scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<PageListId, NodeArenaError> {
         Ok(self.nodes.promote_into_with_scratch(
-            &[root],
+            &[root.rebrand()],
             destination,
             &mut scratch.durable_to_page,
-            |id| self.glue(id),
-            |id| NodeTokenList::new(self.token_list(id).iter().collect::<Vec<_>>()),
+            core::convert::identity,
+            core::convert::identity,
         )?[0])
     }
 
@@ -275,9 +263,12 @@ impl<'a, G> AdmittedState<'a, G> {
         etex_node_sizes: bool,
         scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<(usize, usize), NodeArenaError> {
-        let (variable, dynamic, _) =
-            self.nodes
-                .semantic_memory_usage(root, etex_node_sizes, &mut scratch.nodes, |_| {})?;
+        let (variable, dynamic, _) = self.nodes.semantic_memory_usage(
+            root.rebrand(),
+            etex_node_sizes,
+            &mut scratch.nodes,
+            |_| {},
+        )?;
         Ok((variable.saturating_mul(2), dynamic))
     }
 
@@ -290,7 +281,7 @@ impl<'a, G> AdmittedState<'a, G> {
 /// Unique admitted view used for assignment and commit publication.
 pub(crate) struct AdmittedStateMut<'a, G> {
     generation: RwLockWriteGuard<'a, Generation<G>>,
-    nodes: &'a mut DurableNodeArena<G>,
+    nodes: &'a mut PageNodeArena,
     state: &'a mut DenseState<G>,
 }
 
@@ -309,7 +300,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.state
     }
 
-    pub(crate) fn nodes_mut(&mut self) -> &mut DurableNodeArena<G> {
+    pub(crate) fn nodes_mut(&mut self) -> &mut PageNodeArena {
         self.nodes
     }
 
@@ -422,8 +413,8 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn node_list(
         &self,
         id: DurableListId<G>,
-    ) -> Result<NodeList<'_, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
-        self.nodes.get(id)
+    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
+        self.nodes.get(id.rebrand())
     }
 
     pub(crate) fn copied_node_closure_tex_memory_words(
@@ -432,9 +423,12 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         etex_node_sizes: bool,
         scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<(usize, usize), NodeArenaError> {
-        let (variable, dynamic, _) =
-            self.nodes
-                .semantic_memory_usage(root, etex_node_sizes, &mut scratch.nodes, |_| {})?;
+        let (variable, dynamic, _) = self.nodes.semantic_memory_usage(
+            root.rebrand(),
+            etex_node_sizes,
+            &mut scratch.nodes,
+            |_| {},
+        )?;
         Ok((variable.saturating_mul(2), dynamic))
     }
 
@@ -445,57 +439,19 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.provenance_mut().allocate(value)
     }
 
-    pub(crate) fn copy_node_into_page(
+    pub(crate) fn materialize_loaded_node_into_page(
         &self,
         root: DurableListId<G>,
         destination: &mut PageNodeArena,
         scratch: &mut DynamicMemoryScratch<G>,
     ) -> Result<PageListId, NodeArenaError> {
         Ok(self.nodes.promote_into_with_scratch(
-            &[root],
+            &[root.rebrand()],
             destination,
             &mut scratch.durable_to_page,
-            |id| self.glue(id),
-            |id| NodeTokenList::new(self.token_list(id).iter().collect::<Vec<_>>()),
+            core::convert::identity,
+            core::convert::identity,
         )?[0])
-    }
-
-    pub(crate) fn promote_page_node(
-        &mut self,
-        source: &PageNodeArena,
-        root: PageListId,
-        scratch: &mut DynamicMemoryScratch<G>,
-    ) -> Result<DurableListId<G>, crate::universe::NodePromotionError> {
-        source.reserve_promotion_with_scratch(
-            &[root],
-            self.nodes_mut(),
-            &mut scratch.page_to_durable,
-        )?;
-        let (glue, tokens) =
-            source.escaping_payloads_with_scratch(&[root], &mut scratch.page_to_durable)?;
-        let token_promotions = tokens
-            .iter()
-            .map(|tokens| crate::universe::TokenListPromotion {
-                words: tokens.words(),
-            })
-            .collect::<Vec<_>>();
-        let receipt = self.promote_values(&[], &token_promotions, &glue, &[])?;
-        let mut glue_ids = receipt.glue.into_iter();
-        let mut token_ids = receipt.token_lists.into_iter();
-        let promoted = source.promote_into_with_scratch(
-            &[root],
-            self.nodes_mut(),
-            &mut scratch.page_to_durable,
-            |_| glue_ids.next().expect("one durable id per page glue root"),
-            |_| {
-                token_ids
-                    .next()
-                    .expect("one durable id per page token root")
-            },
-        )?;
-        debug_assert!(glue_ids.next().is_none());
-        debug_assert!(token_ids.next().is_none());
-        Ok(promoted[0])
     }
 
     /// Promotes one already-validated batch while this unique admitted borrow

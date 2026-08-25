@@ -809,7 +809,17 @@ fn push_detached_node_outline<G>(
     let list = universe
         .node_list(root)
         .map_err(|error| FormatFixtureError::Format(format!("box outline root: {error:?}")))?;
-    for (index, node) in list.nodes().iter().enumerate() {
+    push_detached_node_children(universe, list.nodes(), path, depth, output)
+}
+
+fn push_detached_node_children<G>(
+    universe: &tex_state::Universe<G>,
+    nodes: &[tex_state::node::Node],
+    path: &mut Vec<usize>,
+    depth: u8,
+    output: &mut Vec<DetachedNodeOutlineEntry>,
+) -> Result<(), FormatFixtureError> {
+    for (index, node) in nodes.iter().enumerate() {
         path.push(index);
         output.push(DetachedNodeOutlineEntry {
             path: path.clone(),
@@ -818,7 +828,12 @@ fn push_detached_node_outline<G>(
         if depth > 0
             && let tex_state::node::Node::HList(boxed) | tex_state::node::Node::VList(boxed) = node
         {
-            push_detached_node_outline(universe, boxed.children, path, depth - 1, output)?;
+            let children = universe
+                .durable_child_node_list(boxed.children)
+                .map_err(|error| {
+                    FormatFixtureError::Format(format!("box outline child: {error:?}"))
+                })?;
+            push_detached_node_children(universe, children.nodes(), path, depth - 1, output)?;
         }
         path.pop();
     }

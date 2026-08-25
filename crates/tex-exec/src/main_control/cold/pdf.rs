@@ -69,17 +69,13 @@ fn node_pdf_navigation_identifier<G>(
 ) -> tex_state::node::NodePdfActionIdentifier {
     match identifier {
         tex_state::PdfActionIdentifier::Name(tokens) => {
-            tex_state::node::NodePdfActionIdentifier::Name(tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).iter().collect::<Vec<_>>(),
-            ))
+            tex_state::node::NodePdfActionIdentifier::Name(stores.node_token_list(&tokens))
         }
         tex_state::PdfActionIdentifier::Number(number) => {
             tex_state::node::NodePdfActionIdentifier::Number(number)
         }
         tex_state::PdfActionIdentifier::Raw(tokens) => {
-            tex_state::node::NodePdfActionIdentifier::Raw(tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).iter().collect::<Vec<_>>(),
-            ))
+            tex_state::node::NodePdfActionIdentifier::Raw(stores.node_token_list(&tokens))
         }
     }
 }
@@ -315,14 +311,10 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 Whatsit::PdfThread(Box::new(tex_state::node::PdfThreadNode {
                     identifier: node_pdf_navigation_identifier(stores, identifier),
                     dimensions,
-                    attributes: attributes.map_or_else(
-                        tex_state::node::NodeTokenList::default,
-                        |value| {
-                            tex_state::node::NodeTokenList::new(
-                                stores.token_list(value.tokens).iter().collect::<Vec<_>>(),
-                            )
-                        },
-                    ),
+                    attributes: attributes
+                        .map_or_else(tex_state::node::NodeTokenList::default, |value| {
+                            stores.node_token_list(&value.tokens)
+                        }),
                     running,
                 })),
             )?;
@@ -432,9 +424,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
             text,
         } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
             mode,
-            tokens: tex_state::node::NodeTokenList::new(
-                stores.token_list(text.tokens).iter().collect::<Vec<_>>(),
-            ),
+            tokens: stores.node_token_list(&text.tokens),
         }),
         RootedPdfGraphicsRequest::Literal { mode, text, .. } => {
             Node::Whatsit(Whatsit::PdfLiteral {
@@ -1438,11 +1428,7 @@ impl DetachedArtifactSourceResolver {
         stores: &tex_state::CommandContext<'_, G>,
     ) -> Self {
         fn visit<G>(
-            node: &tex_state::node::Node<
-                tex_state::node_arena::DurableListId<G>,
-                tex_state::GlueId<G>,
-                tex_state::TokenListId<G>,
-            >,
+            node: &tex_state::node::Node,
             stores: &tex_state::CommandContext<'_, G>,
             recipes: &mut std::collections::HashMap<
                 tex_state::token::OriginId,
@@ -1462,7 +1448,7 @@ impl DetachedArtifactSourceResolver {
                 }
             }
             node.visit_semantic_node_lists(|child| {
-                if let Ok(list) = stores.node_list(*child) {
+                if let Ok(list) = stores.durable_child_node_list(*child) {
                     for node in list.nodes() {
                         visit(node, stores, recipes);
                     }

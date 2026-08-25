@@ -139,6 +139,7 @@ struct HotCoreProfilingReport {
     enabled: bool,
     hot_core_before: tex_state::measurement::HotCoreCensus,
     retained_generations_before: tex_state::measurement::RetainedGenerationCensus,
+    node_graph_before: tex_state::measurement::NodeGraphCensus,
 }
 
 #[cfg(feature = "profiling")]
@@ -148,6 +149,7 @@ impl HotCoreProfilingReport {
             enabled,
             hot_core_before: tex_state::measurement::hot_core_census(),
             retained_generations_before: tex_state::measurement::retained_generation_census(),
+            node_graph_before: tex_state::measurement::node_graph_census(),
         }
     }
 }
@@ -236,6 +238,24 @@ impl Drop for HotCoreProfilingReport {
             journal.maximum_checkpoint_unique_cells,
             journal.checkpoints_with_open_groups,
             journal.maximum_checkpoint_group_depth,
+        );
+        let nodes =
+            tex_state::measurement::node_graph_census().saturating_sub(self.node_graph_before);
+        eprintln!(
+            "NODE_GRAPH_CENSUS rows_published={} nodes_published={} coordinate_transfers={} logical_aliases={} physical_copy_rows={} physical_copy_nodes={} external_materialization_rows={} external_materialization_nodes={} diagnostic_projection_rows={} diagnostic_projection_nodes={} checkpoint_sidecar_rows={} checkpoint_sidecar_nodes={} checkpoint_shared_rows={}",
+            nodes.rows_published,
+            nodes.nodes_published,
+            nodes.coordinate_transfers,
+            nodes.logical_aliases,
+            nodes.physical_copy_rows,
+            nodes.physical_copy_nodes,
+            nodes.external_materialization_rows,
+            nodes.external_materialization_nodes,
+            nodes.diagnostic_projection_rows,
+            nodes.diagnostic_projection_nodes,
+            nodes.checkpoint_sidecar_rows,
+            nodes.checkpoint_sidecar_nodes,
+            nodes.checkpoint_shared_rows,
         );
     }
 }

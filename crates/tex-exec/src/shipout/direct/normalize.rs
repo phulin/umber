@@ -329,14 +329,7 @@ fn normalize_index<G>(
                 .nodes()
                 .get(index)
                 .expect("normalization index belongs to the frozen list");
-            classify_durable_node(
-                node,
-                stores,
-                list,
-                index,
-                suppress_deferred_streams,
-                in_hlist,
-            )
+            classify_durable_node(node, list, index, suppress_deferred_streams, in_hlist)
         }
     };
     match action {
@@ -623,25 +616,18 @@ fn classify_transient_node<G, List: Copy, Glue, Tokens>(
 }
 
 fn classify_durable_node<G>(
-    node: &Node<
-        tex_state::node_arena::DurableListId<G>,
-        tex_state::GlueId<G>,
-        tex_state::TokenListId<G>,
-    >,
-    stores: &Universe<G>,
+    node: &Node,
     source: tex_state::ShipoutListId<G>,
     index: usize,
     suppress_deferred_streams: bool,
     in_hlist: bool,
 ) -> NormalizeNode<G> {
     if let Node::Whatsit(whatsit) = node {
-        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| {
-            stores.glue(glue).expect("durable shipout glue is live")
-        }));
+        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
     }
     classify_transient_node(
         node,
-        |list| tex_state::ShipoutListId::Durable(list),
+        tex_state::ShipoutListId::durable_child,
         suppress_deferred_streams,
         in_hlist,
     )

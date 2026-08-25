@@ -236,48 +236,6 @@ fn mode_summary_restores_an_independent_semantic_builder() {
 }
 
 #[test]
-fn episode_boundary_freezes_builder_sidecars_and_mutation_invalidates_them() {
-    crate::test_harness::with_nonstop_universe(|universe| {
-        let mut nest = ModeNest::new();
-        nest.current_list_mutation().push(kern(11));
-        assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
-
-        nest.publish_node_sidecars(universe);
-        let (semantic, physical) = nest.levels[0]
-            .list
-            .sequence
-            .frozen_sidecars()
-            .expect("boundary materializes both projections");
-        let nodes = |root| {
-            universe
-                .page_node_list(root)
-                .expect("mode sidecar belongs to the page arena")
-                .nodes()
-                .to_vec()
-        };
-        assert_eq!(nodes(semantic), vec![kern(11)]);
-        assert_eq!(nodes(physical), vec![kern(11)]);
-
-        nest.current_list_mutation().push(kern(13));
-        assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
-        nest.publish_node_sidecars(universe);
-        let semantic = nest.levels[0]
-            .list
-            .sequence
-            .frozen_sidecars()
-            .expect("next boundary refreezes the changed builder")
-            .0;
-        assert_eq!(
-            universe
-                .page_node_list(semantic)
-                .expect("mode sidecar belongs to the page arena")
-                .nodes(),
-            [kern(11), kern(13)]
-        );
-    });
-}
-
-#[test]
 fn preexisting_node_write_barriers_apply_scoped_mutations() {
     let mut nest = ModeNest::new();
     nest.current_list_mutation().push(kern(11));

@@ -126,7 +126,7 @@ fn stage_form_inner<G>(
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
     let overlay = normalize_page(
-        ShipoutListId::Durable(children),
+        ShipoutListId::durable_child(children),
         (vertical, box_lr),
         (
             PendingPageEffects {
@@ -178,7 +178,7 @@ fn stage_form_inner<G>(
         emit_node_list(
             &command,
             &overlay,
-            &ShipoutListId::Durable(children),
+            &ShipoutListId::durable_child(children),
             output,
             &mut dvi_emitter,
             &mut emission,
@@ -308,13 +308,13 @@ pub(crate) fn stage_shipout<G>(
             match root {
                 Node::HList(box_node) => (
                     lower_box_header(box_node),
-                    ShipoutListId::Durable(box_node.children),
+                    ShipoutListId::durable_child(box_node.children),
                     false,
                     box_node.box_lr,
                 ),
                 Node::VList(box_node) => (
                     lower_box_header(box_node),
-                    ShipoutListId::Durable(box_node.children),
+                    ShipoutListId::durable_child(box_node.children),
                     true,
                     box_node.box_lr,
                 ),
@@ -667,25 +667,22 @@ impl<G> ShipoutPayload<G> for ScratchPayload {
 }
 
 impl<G> ShipoutPayload<G> for DurablePayload {
-    type List = tex_state::node_arena::DurableListId<G>;
-    type Glue = tex_state::GlueId<G>;
-    type Tokens = tex_state::TokenListId<G>;
+    type List = PageListId;
+    type Glue = tex_state::glue::GlueSpec;
+    type Tokens = tex_state::node::NodeTokenList;
 
     fn child(list: Self::List) -> ShipoutListId<G> {
-        ShipoutListId::Durable(list)
+        ShipoutListId::durable_child(list)
     }
-    fn glue(stores: &CommandContext<'_, G>, glue: Self::Glue) -> tex_state::glue::GlueSpec {
-        stores.glue(glue)
+    fn glue(_stores: &CommandContext<'_, G>, glue: Self::Glue) -> tex_state::glue::GlueSpec {
+        glue
     }
     fn visit_tokens<E>(
-        stores: &CommandContext<'_, G>,
+        _stores: &CommandContext<'_, G>,
         tokens: &Self::Tokens,
         mut visit: impl FnMut(TokenWord) -> Result<(), E>,
     ) -> Result<(), E> {
-        stores
-            .token_list(tokens.clone())
-            .iter()
-            .try_for_each(&mut visit)
+        tokens.words().iter().copied().try_for_each(&mut visit)
     }
 }
 

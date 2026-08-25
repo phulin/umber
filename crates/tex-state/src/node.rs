@@ -8,18 +8,70 @@ use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{OriginId, TokenWord};
 use crate::world::{PrintSink, StreamSlot};
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 /// Node-owned token payload used before and inside node arenas.
 ///
 /// The words are copied into the node's semantic-lifetime arena. No token
 /// payload carries a runtime owner or reference count.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct NodeTokenList(Box<[TokenWord]>);
+#[derive(Debug)]
+pub struct NodeTokenList {
+    words: Option<Rc<[TokenWord]>>,
+    accounting: Option<crate::memory_accounting::MemoryAccounting>,
+}
+
+impl Clone for NodeTokenList {
+    fn clone(&self) -> Self {
+        Self {
+            words: self.words.as_ref().map(Rc::clone),
+            accounting: self.accounting.clone(),
+        }
+    }
+}
+
+impl Drop for NodeTokenList {
+    fn drop(&mut self) {
+        if let Some(words) = &self.words
+            && Rc::strong_count(words) == 1
+            && let Some(accounting) = &self.accounting
+        {
+            accounting
+                .release_shared_dynamic(words.len().checked_add(1).expect("token word count"));
+        }
+    }
+}
+
+impl Default for NodeTokenList {
+    fn default() -> Self {
+        Self {
+            words: None,
+            accounting: None,
+        }
+    }
+}
+
+impl PartialEq for NodeTokenList {
+    fn eq(&self, other: &Self) -> bool {
+        self.words() == other.words()
+    }
+}
+
+impl Eq for NodeTokenList {}
+
+impl Hash for NodeTokenList {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.words().hash(state);
+    }
+}
 
 impl serde::Serialize for NodeTokenList {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serde::Serialize::serialize(
-            &self.0.iter().map(|word| word.raw()).collect::<Vec<_>>(),
+            &self
+                .words()
+                .iter()
+                .map(|word| word.raw())
+                .collect::<Vec<_>>(),
             serializer,
         )
     }
@@ -53,17 +105,31 @@ fn deserialize_font_id<'de, D: serde::Deserializer<'de>>(
 impl NodeTokenList {
     #[must_use]
     pub fn new(words: impl Into<Box<[TokenWord]>>) -> Self {
-        Self(words.into())
+        let words = words.into();
+        Self {
+            words: (!words.is_empty()).then(|| Rc::from(words)),
+            accounting: None,
+        }
+    }
+
+    pub(crate) fn shared(
+        words: Rc<[TokenWord]>,
+        accounting: crate::memory_accounting::MemoryAccounting,
+    ) -> Self {
+        Self {
+            words: Some(words),
+            accounting: Some(accounting),
+        }
     }
 
     #[must_use]
     pub fn words(&self) -> &[TokenWord] {
-        &self.0
+        self.words.as_deref().unwrap_or(&[])
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.words().is_empty()
     }
 }
 

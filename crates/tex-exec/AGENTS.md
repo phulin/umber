@@ -99,9 +99,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   and consumed by the unified executor's optional append-bounded evidence
   publication seam; every allocating category closes before operation commit.
 - `src/mode.rs` and `src/mode/`: mode nest, mutable native semantic/physical
-  node buffers, barrier-published page-arena sidecars, direct-value
-  paragraph/alignment glue, copy-only pending-character provenance, summaries,
-  and rollback journal. Alignment brace depth belongs only to `tex-command`.
+  node buffers, direct-value paragraph/alignment glue, copy-only
+  pending-character provenance, summaries, and rollback journal. Named
+  boundaries retain node coordinates directly and publish no duplicate arena
+  sidecar. Alignment brace depth belongs only to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.

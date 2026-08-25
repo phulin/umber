@@ -534,23 +534,13 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
         .columns
         .iter()
         .map(|templates| AlignColumn {
-            u_template: tex_state::node::NodeTokenList::new(
-                stores
-                    .token_list(
-                        templates
-                            .u_template
-                            .clone()
-                            .expect("alignment columns retain u templates"),
-                    )
-                    .iter()
-                    .collect::<Vec<_>>(),
+            u_template: stores.node_token_list(
+                templates
+                    .u_template
+                    .as_ref()
+                    .expect("alignment columns retain u templates"),
             ),
-            v_template: tex_state::node::NodeTokenList::new(
-                stores
-                    .token_list(templates.v_template.clone())
-                    .iter()
-                    .collect::<Vec<_>>(),
-            ),
+            v_template: stores.node_token_list(&templates.v_template),
         })
         .collect();
     let state = AlignState::new(

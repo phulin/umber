@@ -3997,7 +3997,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
-        let level = {
+        let mut level = {
             let mut context = stores.command_context().expect("live generation");
             crate::box_runtime::commit_current_list(
                 &mut self.modes,
@@ -4025,9 +4025,10 @@ impl<G> MainControl<G> {
         let (nodes, deleted) = {
             let context = stores.command_context().expect("live generation");
             let mut stores = LinearCommandContext::new(context);
-            let nodes = stores.publish_page_nodes(level.list().nodes()[..prefix_end].to_vec());
-            let deleted = first_forbidden
-                .map(|index| stores.publish_page_nodes(level.list().nodes()[index..].to_vec()));
+            let mut part = level.list_mutation().take_nodes();
+            let deleted = first_forbidden.map(|index| part.split_off(index));
+            let nodes = stores.publish_page_nodes(part);
+            let deleted = deleted.map(|nodes| stores.publish_page_nodes(nodes));
             let aftergroup = leave_group_payloads(
                 &mut stores,
                 &mut self.command,
@@ -4407,21 +4408,6 @@ impl<G> MainControl<G> {
         initial_boundaries: usize,
         initial_effect_pos: tex_state::EffectPos,
     ) {
-        if matches!(
-            boundary,
-            crate::EpisodeCommitBoundary::NamedCheckpoint(_)
-                | crate::EpisodeCommitBoundary::Terminal
-                | crate::EpisodeCommitBoundary::Semantic(
-                    crate::SemanticEpisodeBarrier::Effect
-                        | crate::SemanticEpisodeBarrier::Observer
-                        | crate::SemanticEpisodeBarrier::Diagnostic
-                        | crate::SemanticEpisodeBarrier::Format
-                        | crate::SemanticEpisodeBarrier::Output
-                        | crate::SemanticEpisodeBarrier::StateIdentity
-                )
-        ) {
-            self.modes.publish_node_sidecars(stores);
-        }
         self.episode_telemetry
             .record_commit(crate::EpisodeCommit::new(
                 operations
@@ -6165,17 +6151,17 @@ impl<G> MainControl<G> {
             )?;
         }
         let mut context = stores.command_context().expect("math-list admission");
-        let level = crate::box_runtime::commit_current_list(
+        let mut level = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
             diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
-        finish_math_list(
-            level.list().nodes(),
-            level.list().incomplete_fraction(),
-            &mut context,
-        )
+        let (nodes, incomplete) = {
+            let mut list = level.list_mutation();
+            (list.take_nodes(), list.take_incomplete_fraction())
+        };
+        finish_math_list(nodes, incomplete, &mut context)
     }
 
     /// Opens and runs one `\mathchoice` branch: TeX82 §1172/§1174's
@@ -9858,7 +9844,7 @@ fn start_fraction<G>(
     if list.incomplete_fraction().is_some() {
         return false;
     }
-    let numerator = stores.publish_page_nodes(&list.take_nodes());
+    let numerator = stores.publish_page_nodes_owned(list.take_nodes());
     list.set_incomplete_fraction(crate::mode::IncompleteFraction {
         numerator,
         thickness: match fraction.thickness {
@@ -9872,13 +9858,12 @@ fn start_fraction<G>(
 }
 
 fn finish_math_list<G>(
-    nodes: &[Node],
-    incomplete: Option<&crate::mode::IncompleteFraction>,
+    mut output: Vec<Node>,
+    incomplete: Option<crate::mode::IncompleteFraction>,
     stores: &mut CommandContext<'_, G>,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
-    let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
-        let denominator = stores.publish_page_nodes(output.clone());
+        let denominator = stores.publish_page_nodes(output);
         // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
         // recent `\left` or `\middle` in a math-left group.  Completion moves
         // only the nodes after that boundary into the numerator, then links
@@ -9954,8 +9939,8 @@ fn take_finished_math_list<G>(
         (list.take_nodes(), list.take_incomplete_fraction())
     };
     finish_math_list(
-        &nodes,
-        incomplete.as_ref(),
+        nodes,
+        incomplete,
         &mut stores.command_context().expect("math-list admission"),
     )
 }

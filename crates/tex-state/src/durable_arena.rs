@@ -153,6 +153,10 @@ impl<G> TokenListId<G> {
         self.words.iter().map(|word| word.raw()).collect()
     }
 
+    pub(crate) fn node_payload(&self) -> crate::node::NodeTokenList {
+        crate::node::NodeTokenList::shared(Rc::clone(&self.words), self.accounting.clone())
+    }
+
     #[cfg(test)]
     pub(crate) fn semantic_owner_count(&self) -> usize {
         Rc::strong_count(&self.words)

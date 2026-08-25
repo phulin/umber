@@ -117,7 +117,6 @@ impl<G> EngineCheckpoint<G> {
             .root_source_anchor()
             .and_then(|anchor| usize::try_from(anchor).ok())
             .unwrap_or(0);
-        nest.publish_node_sidecars(universe);
         let modes = nest.summary();
         let mode_hash = modes.semantic_fingerprint(universe);
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())

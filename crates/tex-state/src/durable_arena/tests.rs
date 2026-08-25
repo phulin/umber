@@ -215,3 +215,29 @@ fn token_list_aliases_release_exactly_on_owner_drop() {
         assert_eq!(id.semantic_owner_count(), 1);
     });
 }
+
+#[cfg(feature = "profiling")]
+#[test]
+fn node_payload_aliases_stored_tokens_without_copy_or_allocation() {
+    with_generation(|mut generation| {
+        let id = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(7), TokenWord::from_raw(9)])
+            .expect("published list");
+        let owner = crate::measurement::HotCoreAllocationOwner::SemanticApply;
+        let before = crate::measurement::hot_core_thread_allocation_measurement(owner);
+        let payload = {
+            let _scope = crate::measurement::hot_core_allocation_scope(owner);
+            id.node_payload()
+        };
+        let after = crate::measurement::hot_core_thread_allocation_measurement(owner);
+
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(id.semantic_owner_count(), 2);
+        assert_eq!(
+            payload.words(),
+            [TokenWord::from_raw(7), TokenWord::from_raw(9)]
+        );
+    });
+}

@@ -535,6 +535,7 @@ pub struct CommandContext<'a, G> {
     dependencies: &'a mut DependencyRuntime,
     fonts: &'a mut FontStore,
     page_nodes: &'a mut PageNodeArena,
+    durable_page_bound: &'a mut crate::node_arena::NodeArenaCursor<PageLifetime>,
     shipout_scratch: &'a mut ShipoutScratchArena<G>,
     page: &'a mut PageBuilderState,
     pdf: &'a mut PdfState<G>,
@@ -556,6 +557,7 @@ pub(super) struct CommandContextParts<'a, G> {
     pub dependencies: &'a mut DependencyRuntime,
     pub fonts: &'a mut FontStore,
     pub page_nodes: &'a mut PageNodeArena,
+    pub durable_page_bound: &'a mut crate::node_arena::NodeArenaCursor<PageLifetime>,
     pub shipout_scratch: &'a mut ShipoutScratchArena<G>,
     pub page: &'a mut PageBuilderState,
     pub pdf: &'a mut PdfState<G>,
@@ -579,6 +581,7 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
+            durable_page_bound,
             shipout_scratch,
             page,
             pdf,
@@ -599,6 +602,7 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
+            durable_page_bound,
             shipout_scratch,
             page,
             pdf,
@@ -795,6 +799,11 @@ impl<'a, G> CommandContext<'a, G> {
     #[inline(always)]
     pub fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.admitted.token_list(id)
+    }
+
+    /// Shares a stored token payload with a final generation-owned node.
+    pub fn node_token_list(&self, id: &TokenListId<G>) -> crate::node::NodeTokenList {
+        id.node_payload()
     }
 
     #[inline(always)]
@@ -1199,12 +1208,12 @@ impl<'a, G> CommandContext<'a, G> {
         value: Option<PageListId>,
         scope: AssignmentScope,
     ) -> Result<(), crate::NodePromotionError> {
-        let durable = value
-            .map(|root| {
-                self.admitted
-                    .promote_page_node(self.page_nodes, root, self.dynamic_memory_scratch)
-            })
-            .transpose()?;
+        let durable = value.map(|root| root.rebrand());
+        if durable.is_some() {
+            *self.durable_page_bound = self.page_nodes.cursor();
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_node_coordinate_transfer();
+        }
         self.admitted
             .state()
             .assign_box_register(index, durable, scope)
@@ -1224,9 +1233,10 @@ impl<'a, G> CommandContext<'a, G> {
         index: u16,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
-        let durable =
-            self.admitted
-                .promote_page_node(self.page_nodes, value, self.dynamic_memory_scratch)?;
+        let durable = value.rebrand();
+        *self.durable_page_bound = self.page_nodes.cursor();
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_node_coordinate_transfer();
         self.admitted
             .state()
             .replace_box_register(index, Some(durable))
@@ -1235,6 +1245,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         let root = self.box_register(index).ok().flatten()?;
+        let page_root = root.rebrand();
+        if self.page_nodes.contains(page_root) {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_node_logical_alias();
+            return Some(page_root);
+        }
         let words = self
             .admitted
             .copied_node_closure_tex_memory_words(
@@ -1251,7 +1267,7 @@ impl<'a, G> CommandContext<'a, G> {
             .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
         let copied = self
             .admitted
-            .copy_node_into_page(root, self.page_nodes, self.dynamic_memory_scratch)
+            .materialize_loaded_node_into_page(root, self.page_nodes, self.dynamic_memory_scratch)
             .expect("durable box closure belongs to the admitted generation");
         self.engine_usage
             .observe_node_copy(words.0, current_dynamic, words.1);
@@ -1280,8 +1296,23 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn node_list(
         &self,
         id: DurableListId<G>,
-    ) -> Result<NodeList<'_, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
+    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
+        let page = id.rebrand();
+        if self.page_nodes.contains(page) {
+            return self.page_nodes.get(page);
+        }
         self.admitted.node_list(id)
+    }
+
+    /// Resolves a child coordinate borrowed from a durable root.
+    pub fn durable_child_node_list(
+        &self,
+        id: PageListId,
+    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
+        if self.page_nodes.contains(id) {
+            return self.page_nodes.get(id);
+        }
+        self.admitted.node_list(id.rebrand())
     }
 
     #[inline(always)]
@@ -2826,10 +2857,10 @@ impl<'a, G> CommandContext<'a, G> {
             self.admitted.state_ref(),
             box_list,
         );
-        let box_list = self
-            .admitted
-            .promote_page_node(self.page_nodes, box_list, self.dynamic_memory_scratch)
-            .map_err(|_| crate::PdfObjectCapacityError)?;
+        let box_list = box_list.rebrand();
+        *self.durable_page_bound = self.page_nodes.cursor();
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_node_coordinate_transfer();
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
         self.pdf.initialize_form(
@@ -3158,6 +3189,14 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes.release_region(region)
     }
 
+    /// Consumes a completed region whose rows now have a durable box owner.
+    pub fn retain_page_node_region(
+        &self,
+        region: NodeArenaRegion<PageLifetime>,
+    ) -> Result<(), NodeArenaError> {
+        self.page_nodes.retain_region(region)
+    }
+
     /// Resolves one page-lifetime list while the admitted context is live.
     pub fn page_node_list(
         &self,
@@ -3279,11 +3318,11 @@ impl<'a, G> CommandContext<'a, G> {
                 if let Some(identifier) = identifier(node, source.field) {
                     identifier.words().iter().copied().try_for_each(&mut visit)
                 } else {
-                    let tokens = payload(node, source.field)
-                        .expect("shipout token field belongs to its durable source");
-                    self.admitted
-                        .token_list(tokens.clone())
+                    payload(node, source.field)
+                        .expect("shipout token field belongs to its durable source")
+                        .words()
                         .iter()
+                        .copied()
                         .try_for_each(&mut visit)
                 }
             }
@@ -3314,45 +3353,6 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         source: crate::ShipoutTokenSource<G>,
     ) -> Result<TokenListId<G>, DurableAllocationError> {
-        if let crate::ShipoutListId::Durable(list) = source.list {
-            let mut result = None;
-            self.visit_shipout_tokens::<core::convert::Infallible>(source, |_| Ok(()))
-                .expect("infallible durable token validation");
-            let node = self
-                .admitted
-                .node_list(list)
-                .expect("durable shipout token row is live")
-                .nodes()
-                .get(source.index)
-                .expect("durable shipout token index is live");
-            match (node, source.field) {
-                (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
-                        tokens, ..
-                    }),
-                    crate::ShipoutTokenField::DeferredWrite,
-                )
-                | (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
-                        tokens,
-                        ..
-                    }),
-                    crate::ShipoutTokenField::DeferredSpecial,
-                )
-                | (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
-                        tokens,
-                        ..
-                    }),
-                    crate::ShipoutTokenField::DeferredPdfLiteral,
-                ) => result = Some(tokens.clone()),
-                _ => {}
-            }
-            if let Some(result) = result {
-                return Ok(result);
-            }
-        }
-
         let builder = self.begin_token_list_builder()?;
         let append = |admitted: &mut AdmittedStateMut<'_, G>, words: &[TokenWord]| {
             for &word in words {
@@ -3427,8 +3427,64 @@ impl<'a, G> CommandContext<'a, G> {
                 };
                 append(&mut self.admitted, tokens)?;
             }
-            crate::ShipoutListId::Durable(_) => {
-                unreachable!("durable token source returned its shared row")
+            crate::ShipoutListId::Durable(list) => {
+                let page = list.rebrand();
+                let node = if self.page_nodes.contains(page) {
+                    self.page_nodes
+                        .get(page)
+                        .expect("durable page token row is live")
+                        .nodes()
+                        .get(source.index)
+                        .expect("durable page token index is live")
+                } else {
+                    let words = self
+                        .admitted
+                        .node_list(list)
+                        .expect("loaded durable token row is live")
+                        .nodes()
+                        .get(source.index)
+                        .and_then(|node| match (node, source.field) {
+                            (
+                                crate::node::Node::Whatsit(
+                                    crate::node::Whatsit::DeferredWrite { tokens, .. }
+                                    | crate::node::Whatsit::DeferredSpecial { tokens, .. }
+                                    | crate::node::Whatsit::DeferredPdfLiteral { tokens, .. },
+                                ),
+                                crate::ShipoutTokenField::DeferredWrite
+                                | crate::ShipoutTokenField::DeferredSpecial
+                                | crate::ShipoutTokenField::DeferredPdfLiteral,
+                            ) => Some(tokens.words().to_vec()),
+                            _ => None,
+                        })
+                        .expect("loaded durable shipout token field matches its source node");
+                    append(&mut self.admitted, &words)?;
+                    return self.seal_token_list_builder(builder);
+                };
+                let tokens = match (node, source.field) {
+                    (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredWrite,
+                    )
+                    | (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredSpecial,
+                    )
+                    | (
+                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                            tokens,
+                            ..
+                        }),
+                        crate::ShipoutTokenField::DeferredPdfLiteral,
+                    ) => tokens.words(),
+                    _ => panic!("durable shipout token field matches its source node"),
+                };
+                append(&mut self.admitted, tokens)?;
             }
         }
         self.seal_token_list_builder(builder)
