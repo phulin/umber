@@ -186,7 +186,7 @@ impl XRaySelector {
 }
 
 impl CommandIdentity {
-    fn from_meaning<G>(meaning: ResolvedMeaning<G>) -> Self {
+    fn from_meaning<G>(meaning: &ResolvedMeaning<G>) -> Self {
         match meaning {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                 tex_state::meaning::ExpandablePrimitive::ExpandAfter,
@@ -198,14 +198,14 @@ impl CommandIdentity {
                 tex_state::meaning::ExpandablePrimitive::EndCsName,
             )) => Self::EndCsName,
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
-                if let Some(selector) = ConvertSelector::from_primitive(primitive) {
+                if let Some(selector) = ConvertSelector::from_primitive(*primitive) {
                     Self::Convert(selector)
                 } else {
                     Self::Ordinary
                 }
             }
             ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) => {
-                if let Some(selector) = XRaySelector::from_primitive(primitive) {
+                if let Some(selector) = XRaySelector::from_primitive(*primitive) {
                     Self::XRay(selector)
                 } else {
                     Self::Ordinary
@@ -233,6 +233,30 @@ impl<G> CurrentCommand<G> {
         direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
     ) -> Self {
+        let mut destination = None;
+        Self::resolve_into(
+            &mut destination,
+            spelling,
+            delivery,
+            source_provenance,
+            direct_source,
+            direct_source_line,
+            state,
+        );
+        destination.expect("command resolution initializes its destination")
+    }
+
+    /// Resolves directly into the active delivery request's final slot.
+    pub(crate) fn resolve_into(
+        destination: &mut Option<Self>,
+        spelling: TracedTokenWord,
+        delivery: DeliveryStamp,
+        source_provenance: Option<SourceProvenance>,
+        direct_source: bool,
+        direct_source_line: Option<u32>,
+        state: &CommandContext<'_, G>,
+    ) {
+        debug_assert!(destination.is_none());
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
             Token::Cs(symbol) => (Some(symbol), state.meaning(symbol)),
@@ -287,11 +311,12 @@ impl<G> CurrentCommand<G> {
             ),
         };
         let macro_observation_operand = None;
-        Self {
+        let identity = CommandIdentity::from_meaning(&meaning);
+        *destination = Some(Self {
             spelling,
-            meaning: meaning.clone(),
+            meaning,
             macro_observation_operand,
-            identity: CommandIdentity::from_meaning(meaning),
+            identity,
             control_sequence,
             delivery,
             source_provenance,
@@ -299,7 +324,7 @@ impl<G> CurrentCommand<G> {
             direct_source_line,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             outer_recovery_space: false,
-        }
+        });
     }
 
     /// Replaces the effective meaning while retaining the exact delivered
@@ -448,6 +473,12 @@ impl<G> CurrentCommand<G> {
     #[must_use]
     pub fn meaning(&self) -> ResolvedMeaning<G> {
         self.meaning.clone()
+    }
+
+    /// Borrows the effective meaning without creating a transient alias.
+    #[must_use]
+    pub const fn meaning_ref(&self) -> &ResolvedMeaning<G> {
+        &self.meaning
     }
 
     pub(crate) const fn macro_observation_operand(&self) -> Option<i64> {

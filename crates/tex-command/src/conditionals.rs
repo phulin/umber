@@ -614,7 +614,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         // The following conditional is an operand of `\unless`, not an
         // ordinary expansion result: preserve its primitive command for the
         // shared evaluator to install the one inverted frame.
-        let next = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let mut next = None;
+        if self.get_token_into(&mut next)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let next = next.expect("command status initializes destination");
         let kind = match next.meaning() {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
                 ConditionalKind::from_primitive(primitive)
@@ -1112,7 +1116,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             // control sequence with the immutable primitive-table entry of
             // the same spelling. Aliases and character tokens are false.
             ConditionalKind::IfPdfPrimitive => {
-                let operand = self.get_next()?.ok_or(CommandError::input_invariant())?;
+                let mut operand = None;
+                if self.get_next_into(&mut operand)? != crate::DeliveryStatus::Command {
+                    return Err(CommandError::input_invariant());
+                }
+                let operand = operand.expect("command status initializes destination");
                 let Some(symbol) = operand.control_sequence() else {
                     return Ok(false);
                 };
@@ -1144,9 +1152,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn evaluate_ifdefined(&mut self) -> Result<bool, CommandError> {
         let episode =
             self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
-        let operand = self.get_next();
+        let mut operand = None;
+        let status = self.get_next_into(&mut operand);
         self.finish_scanner_episode(episode);
-        Ok(operand?.ok_or(CommandError::input_invariant())?.meaning()
+        if status? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        Ok(operand
+            .expect("command status initializes destination")
+            .meaning()
             != ResolvedMeaning::Static(Meaning::Undefined))
     }
 
@@ -1172,7 +1186,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// against the active character's own code and `\\ifcat\\noexpand~`
     /// against category 13.
     fn get_x_token_or_active_char(&mut self) -> Result<ResolvedMeaning<G>, CommandError> {
-        let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let mut command = None;
+        if self.get_x_token_into(&mut command)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let command = command.expect("command status initializes destination");
         Ok(match command.no_expand_active_character() {
             Some(ch) => ResolvedMeaning::Static(Meaning::CharToken {
                 ch,
@@ -1217,13 +1235,26 @@ impl<G> CommandProcessor<'_, '_, G> {
         let episode =
             self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
         let operands = (|| {
-            let first = self.get_next()?.ok_or(CommandError::input_invariant())?;
-            let second = self.get_next()?.ok_or(CommandError::input_invariant())?;
+            let mut first = None;
+            if self.get_next_into(&mut first)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let mut second = None;
+            if self.get_next_into(&mut second)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
             Ok::<_, CommandError>((first, second))
         })();
         self.finish_scanner_episode(episode);
         let (first, second) = operands?;
-        Ok(self.ifx_meaning_eq(first.meaning(), second.meaning()))
+        Ok(self.ifx_meaning_eq(
+            first
+                .expect("command status initializes destination")
+                .meaning(),
+            second
+                .expect("command status initializes destination")
+                .meaning(),
+        ))
     }
 
     /// TeX compares macro meanings by their defining token lists, not by the
@@ -1260,7 +1291,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// up the offending token, then continue as though `=` had been found),
     /// so the second operand is still scanned and the comparison completes.
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
-        let relation = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let mut relation = None;
+        if self.get_x_token_into(&mut relation)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let relation = relation.expect("command status initializes destination");
         match static_meaning(relation.meaning()) {
             Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
             Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
@@ -1809,10 +1844,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             .ok_or(CommandError::input_invariant())?;
 
         let mut nested_conditions = 0_u32;
+        let mut destination = None;
         loop {
-            let Some(command) = self.get_next()? else {
+            if self.get_next_into(&mut destination)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
-            };
+            }
+            let command = destination
+                .take()
+                .expect("command status initializes destination");
             if let Some(Meaning::ExpandablePrimitive(primitive)) = static_meaning(command.meaning())
                 && ConditionalKind::from_primitive(primitive).is_some()
             {

@@ -255,7 +255,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         call: &crate::CurrentCommand<G>,
     ) -> Result<MacroCallOutcome, CommandError> {
-        let ResolvedMeaning::Macro { flags, definition } = call.meaning() else {
+        let ResolvedMeaning::Macro { flags, definition } = call.meaning_ref() else {
             return Err(CommandError::input_invariant());
         };
         let macro_name = call
@@ -295,8 +295,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let scanned_arguments =
-            self.macro_call_scalar(&matching, definition.clone(), flags, pattern, parameter_len);
+        let scanned_arguments = self.macro_call_scalar(
+            &matching,
+            definition.clone(),
+            *flags,
+            pattern,
+            parameter_len,
+        );
         match scanned_arguments {
             Ok(()) => {}
             Err(CommandError::MacroPrefixMismatch) => {
@@ -369,7 +374,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self,
             CommandObservation::Macro(MacroRecord {
                 activation: true,
-                definition: self.definition_observation_operand(definition),
+                definition: self.definition_observation_operand(definition.clone()),
                 control_sequence: Some(self.state.resolve(macro_name).to_owned()),
                 argument: Some(pattern.parameter_count() as u8),
                 token_count: self.argument_token_count(arguments) as u64,
@@ -766,7 +771,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::ParagraphInMacroArgument);
             }
             let command = delivered
-                .take()
+                .as_ref()
                 .expect("command status initializes destination");
             // TeX82 §23's recovered `cur_cmd := spacer` is the return
             // value of the interrupted raw delivery, not a token linked into
@@ -774,14 +779,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             // aborts this match on the next demand; §306's already-owned
             // runaway pseudoprint must therefore end at the last real token.
             if command.is_outer_recovery_space() {
+                delivered = None;
                 continue;
             }
-            if self.outer_recovered_while_matching && is_paragraph_command(&command) {
+            if self.outer_recovered_while_matching && is_paragraph_command(command) {
                 let partial = self.argument_buffer(matching, tokens)?.collect::<Vec<_>>();
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
-            self.check_argument_paragraph(&command, flags, Some((matching, tokens)))?;
+            self.check_argument_paragraph(command, flags, Some((matching, tokens)))?;
             match command.spelling().semantic_token() {
                 Token::Char {
                     cat: Catcode::BeginGroup,
@@ -804,6 +810,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 _ => self.push_argument_token(matching, tokens, command.spelling())?,
             }
+            delivered = None;
         }
     }
 
@@ -822,25 +829,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut tokens = self.allocate_argument_buffer(matching)?;
         self.command.scratch.clear_delimiter_prefix();
         let mut depth = 0_u32;
-        let mut current = None;
         let mut delivered = None;
 
         loop {
-            let command = match current.take() {
-                Some(command) => command,
-                None => {
-                    if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
-                        return Err(CommandError::ParagraphInMacroArgument);
-                    }
-                    delivered
-                        .take()
-                        .expect("command status initializes destination")
-                }
-            };
+            if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
+            let command = delivered
+                .as_ref()
+                .expect("command status initializes destination");
             if command.is_outer_recovery_space() {
+                delivered = None;
                 continue;
             }
-            if self.outer_recovered_while_matching && is_paragraph_command(&command) {
+            if self.outer_recovered_while_matching && is_paragraph_command(command) {
                 let mut partial = self.argument_buffer(matching, tokens)?.collect::<Vec<_>>();
                 partial.extend(self.command.scratch.delimiter_prefix_words());
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
@@ -870,6 +872,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     tokens = self.strip_argument_outer_group(matching, tokens)?;
                     return Ok(tokens);
                 }
+                delivered = None;
                 continue;
             }
 
@@ -901,6 +904,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scratch
                         .push_delimiter_prefix(command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
+                    delivered = None;
                     continue;
                 }
 
@@ -908,6 +912,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // then applies §395 to the current token. A top-level `}`
                 // therefore never becomes delimited argument material.
                 if depth == 0 && is_end_group(token) {
+                    let command = delivered
+                        .take()
+                        .expect("command destination remains initialized");
                     return self.recover_extra_right_brace_argument(command);
                 }
 
@@ -916,22 +923,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // prefix. TeX.web §394 permits a recovered `\par` prefix;
                 // only this newly ordinary token is subject to the non-long
                 // paragraph check.
-                self.check_argument_paragraph(&command, flags, Some((matching, tokens)))?;
+                self.check_argument_paragraph(command, flags, Some((matching, tokens)))?;
                 self.push_delimited_argument_token(
                     matching,
                     tokens,
                     &mut depth,
                     command.spelling(),
                 )?;
+                delivered = None;
                 continue;
             }
 
             if depth == 0 && is_end_group(token) {
+                let command = delivered
+                    .take()
+                    .expect("command destination remains initialized");
                 return self.recover_extra_right_brace_argument(command);
             }
 
-            self.check_argument_paragraph(&command, flags, Some((matching, tokens)))?;
+            self.check_argument_paragraph(command, flags, Some((matching, tokens)))?;
             self.push_delimited_argument_token(matching, tokens, &mut depth, command.spelling())?;
+            delivered = None;
         }
     }
 
@@ -1120,7 +1132,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 /// synthetic outer-validity space, not on that space itself.
 fn is_paragraph_command<G>(command: &crate::CurrentCommand<G>) -> bool {
     matches!(
-        command.meaning(),
+        command.meaning_ref(),
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par))
     )
 }

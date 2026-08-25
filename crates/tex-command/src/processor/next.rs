@@ -295,7 +295,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandedFetch::GetXToken
         };
         let delivery = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch,
@@ -600,7 +599,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<super::DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
                 replay_completion: ReplayCompletionPolicy::Consume,
@@ -642,7 +640,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         let delivery = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
                 replay_completion: ReplayCompletionPolicy::Surface,
@@ -721,7 +718,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<super::DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
                 replay_completion: ReplayCompletionPolicy::Consume,
@@ -1618,14 +1614,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             ) {
                 self.record_meaning_lookup();
             }
-            *destination = Some(CurrentCommand::<G>::resolve(
+            CurrentCommand::<G>::resolve_into(
+                destination,
                 spelling,
                 delivery_stamp,
                 source_provenance,
                 direct_source,
                 direct_source_line,
                 &self.state,
-            ));
+            );
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal

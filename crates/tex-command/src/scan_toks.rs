@@ -1193,7 +1193,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let delivered;
             let spelling = {
                 let resumed_expansion = pending_expansion.take();
-                let (resumed_command, resumed_route, mut expansion_operand) =
+                let (resumed_route, mut expansion_operand) =
                     if let Some(mut pending) = resumed_expansion {
                         self.resume_current_command(&pending.command);
                         if let Some(child) = pending.child.take() {
@@ -1209,16 +1209,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                             }
                             self.scanner_resume = Some(key);
                         }
-                        (
-                            Some(pending.command),
-                            Some(pending.route),
-                            pending.operand.take(),
-                        )
+                        destination = Some(pending.command);
+                        (Some(pending.route), pending.operand.take())
                     } else {
-                        (None, None, None)
+                        (None, None)
                     };
-                let command = if resumed_command.is_some() {
-                    resumed_command
+                let command = if destination.is_some() {
+                    destination.take()
                 } else if expansion.is_expanded() {
                     match self.get_next_into(&mut destination) {
                         Ok(crate::DeliveryStatus::Command) => destination.take(),

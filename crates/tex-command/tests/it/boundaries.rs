@@ -435,7 +435,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         .nth(1)
         .and_then(|tail| tail.split("fn classify_pass_text_command(").next())
         .expect("locate canonical skipped-text loop");
-    assert!(pass_text.contains("self.get_next()?"));
+    assert!(pass_text.contains("self.get_next_into(&mut destination)?"));
     assert!(pass_text.contains("nested_conditions"));
     assert!(conditionals.contains("fn evaluate_ifx("));
     let ifx = conditionals
@@ -447,7 +447,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     // cosmetic: §365 clears `no_new_control_sequence` only inside
     // `get_token`, so reading an `\ifx` operand must not enter a new name in
     // the hash table.
-    assert_eq!(ifx.matches("self.get_next()").count(), 2);
+    assert_eq!(ifx.matches("self.get_next_into(").count(), 2);
     assert!(!ifx.contains("self.get_token()?"));
     assert!(!ifx.contains("self.get_x_token()?"));
     assert!(ifx.contains("begin_scanner_episode(ScannerStatus::Normal"));

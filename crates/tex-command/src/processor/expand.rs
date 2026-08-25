@@ -274,7 +274,7 @@ fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
 /// explicit fallback boundary.
 #[inline(always)]
 #[cfg(feature = "profiling")]
-fn is_ranked_fused_expansion<G>(meaning: ResolvedMeaning<G>) -> bool {
+fn is_ranked_fused_expansion<G>(meaning: &ResolvedMeaning<G>) -> bool {
     matches!(
         meaning,
         ResolvedMeaning::Macro { .. }
@@ -309,9 +309,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: CurrentCommand<G>,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
+        let mut destination = Some(command);
         let result = self.delivery_driver(
-            Some(command),
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::XToken,
@@ -366,7 +365,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let preserve = self.command.profile().capabilities().supports_etex();
         let mut destination = None;
         let result = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::GetXToken,
@@ -409,7 +407,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.apply_error_stop_recovery()?;
         let mut destination = None;
         let result = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::GetXToken,
@@ -457,8 +454,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         fetch: ExpandedFetch,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
+        *destination = pending;
         let result = self.delivery_driver(
-            pending,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch,
@@ -603,7 +601,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let etex_protected_fetch = self.command.profile().capabilities().supports_etex();
             let mut destination = None;
             let result = self.delivery_driver(
-                None,
                 DeliveryPolicy {
                     mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                         fetch: ExpandedFetch::GetXToken,
@@ -710,7 +707,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::GetXToken,
@@ -764,8 +760,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
+        debug_assert!(destination.is_none());
+        *destination = Some(command);
         let result = self.delivery_driver(
-            Some(command),
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::XToken,
@@ -828,7 +825,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
-            None,
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::XToken,
@@ -855,16 +851,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// lookahead has already fetched.
     pub(super) fn delivery_driver(
         &mut self,
-        pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
         self.last_delivery = None;
         match policy.mode {
-            DeliveryMode::Raw => self.raw_delivery_driver(pending, policy, destination),
+            DeliveryMode::Raw => {
+                debug_assert!(destination.is_none());
+                self.raw_delivery_driver(policy, destination)
+            }
             DeliveryMode::Expanded(expanded) => {
-                let mut pending = pending;
                 let mut resumed_pending = false;
                 if self
                     .scanner_resume
@@ -880,28 +876,26 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .expect("matched expansion frame"),
                         )
                         .map_err(crate::scan_toks::scratch_command_error)?;
-                    if pending.is_some_and(|command| command != retained.command) {
+                    if destination
+                        .as_ref()
+                        .is_some_and(|command| command != &retained.command)
+                    {
                         let key = self.scanner_resume.take().expect("matched expansion frame");
                         self.abort_continuation(key)?;
                         return Err(CommandError::input_invariant());
                     }
-                    pending = Some(retained.command.clone());
+                    *destination = Some(retained.command.clone());
                     resumed_pending = true;
                 }
-                if resumed_pending && let Some(command) = &pending {
+                if resumed_pending && let Some(command) = &destination {
                     self.resume_current_command(command);
                 }
                 let depth = self.command.transient.active_expansion_depth;
                 self.command.transient.active_expansion_depth = depth
                     .checked_add(1)
                     .ok_or_else(CommandError::input_invariant)?;
-                let result = self.expanded_delivery_driver(
-                    pending.take(),
-                    policy,
-                    expanded,
-                    resumed_pending,
-                    destination,
-                );
+                let result =
+                    self.expanded_delivery_driver(policy, expanded, resumed_pending, destination);
                 assert_eq!(
                     self.command.transient.active_expansion_depth,
                     depth + 1,
@@ -915,11 +909,9 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn raw_delivery_driver(
         &mut self,
-        pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        *destination = pending;
         loop {
             if destination.is_none() {
                 self.last_delivery = None;
@@ -966,13 +958,11 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn expanded_delivery_driver(
         &mut self,
-        mut pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
         expanded: ExpandedDeliveryPolicy,
         resumed_pending: bool,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        *destination = pending.take();
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
         let mut suppress_first_expansion_trace = resumed_pending;
@@ -1229,12 +1219,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         #[cfg(feature = "profiling")]
         {
-            if !is_ranked_fused_expansion(command.meaning()) {
+            if !is_ranked_fused_expansion(command.meaning_ref()) {
                 tex_state::measurement::record_hot_core_materialization(
                     tex_state::measurement::HotCoreMaterialization::ExpansionCommand,
                 );
             }
-            match command.meaning() {
+            match command.meaning_ref() {
                 ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
                     tex_state::measurement::record_hot_core_expandable_opcode(
                         usize::try_from(primitive.operand())
@@ -1275,46 +1265,50 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
         let mut suspended_resume = None;
-        let result = (|| match command.meaning() {
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
-                if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
-            {
-                self.expand_conditional(
-                    command,
-                    false,
-                    &mut expansion_resume,
-                    &mut suspended_resume,
-                )
-            }
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless)) => {
-                self.expand_unless(command, &mut expansion_resume, &mut suspended_resume)
-            }
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                primitive @ (ExpandablePrimitive::Else
-                | ExpandablePrimitive::Or
-                | ExpandablePrimitive::Fi),
-            )) => self.expand_conditional_delimiter(command, primitive),
-            ResolvedMeaning::Macro { .. } => {
-                match self.macro_call(command)? {
-                    crate::macro_call::MacroCallOutcome::Activated => {}
-                    crate::macro_call::MacroCallOutcome::PrefixMismatchRecovered => {}
+        let result = (|| {
+            let meaning = match command.meaning_ref() {
+                ResolvedMeaning::Static(meaning) => *meaning,
+                ResolvedMeaning::Macro { .. } => {
+                    match self.macro_call(command)? {
+                        crate::macro_call::MacroCallOutcome::Activated => {}
+                        crate::macro_call::MacroCallOutcome::PrefixMismatchRecovered => {}
+                    }
+                    return Ok(());
                 }
-                Ok(())
-            }
-            // TeX82 §375's `end_template` case replaces the inaccessible
-            // sentinel that ended a v-template with the distinct frozen
-            // `endv` token. Neither sentinel is a user-installable primitive;
-            // §780 gives them only frozen control-sequence slots.
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                ExpandablePrimitive::EndTemplate,
-            )) => self.insert_frozen_endv(),
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                ExpandablePrimitive::NoExpand,
-            )) => self.expand_noexpand(),
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                ExpandablePrimitive::ExpandAfter,
-            )) => self.expand_expandafter(),
-            ResolvedMeaning::Static(meaning) => match meaning {
+            };
+            match meaning {
+                Meaning::ExpandablePrimitive(primitive)
+                    if crate::conditionals::ConditionalKind::from_primitive(primitive)
+                        .is_some() =>
+                {
+                    self.expand_conditional(
+                        command,
+                        false,
+                        &mut expansion_resume,
+                        &mut suspended_resume,
+                    )
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless) => {
+                    self.expand_unless(command, &mut expansion_resume, &mut suspended_resume)
+                }
+                Meaning::ExpandablePrimitive(
+                    primitive @ (ExpandablePrimitive::Else
+                    | ExpandablePrimitive::Or
+                    | ExpandablePrimitive::Fi),
+                ) => self.expand_conditional_delimiter(command, primitive),
+                // TeX82 §375's `end_template` case replaces the inaccessible
+                // sentinel that ended a v-template with the distinct frozen
+                // `endv` token. Neither sentinel is a user-installable primitive;
+                // §780 gives them only frozen control-sequence slots.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
+                    self.insert_frozen_endv()
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
+                    self.expand_noexpand()
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
+                    self.expand_expandafter()
+                }
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
                     self.expand_csname(command, &mut expansion_resume, &mut suspended_resume)
                 }
@@ -1587,7 +1581,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Ok(())
                 }
                 _ => Err(CommandError::input_invariant()),
-            },
+            }
         })();
         if result
             .as_ref()
