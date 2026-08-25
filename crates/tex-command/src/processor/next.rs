@@ -207,6 +207,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         cursor,
                         &self.state,
                         self.command.attempt.arena(),
+                        &self.command.input.replay,
                         &self.command.scratch,
                     )
                     .is_none())
@@ -379,6 +380,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 cursor,
                 &self.state,
                 self.command.attempt.arena(),
+                &self.command.input.replay,
                 &self.command.scratch,
             )
             .is_some()
@@ -937,7 +939,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
             }
-            let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
+            let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last() else {
                 unreachable!("back_input above installed a token-list level");
             };
             assert_eq!(
@@ -945,18 +947,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                 0,
                 "no delivery occurs while e-TeX links aftergroup tokens"
             );
-            if cursor
-                .payload
-                .prepend_backed_up(tokens.into_iter().map(|spelling| BackedUpToken {
-                    spelling,
-                    source_provenance: None,
-                }))
-                .is_none()
-            {
-                unreachable!("back_input above installed a backed-up payload");
-            }
+            let TokenPayload::Replay { replay, .. } = cursor.payload else {
+                unreachable!("back_input above installed a replay payload");
+            };
+            let admitted = self
+                .command
+                .input
+                .replay
+                .prepend_backed_up(
+                    replay,
+                    tokens.into_iter().map(|spelling| BackedUpToken {
+                        spelling,
+                        source_provenance: None,
+                    }),
+                )
+                .map_err(|_| CommandError::input_invariant())?;
             let Ok(prepended) = u32::try_from(prepended) else {
                 return Err(CommandError::input_invariant());
+            };
+            debug_assert_eq!(admitted, prepended);
+            let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
+                unreachable!("back_input above installed a token-list level");
             };
             if cursor.frame.extend_limit(prepended).is_none() {
                 return Err(CommandError::input_invariant());
@@ -1170,6 +1181,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 cursor,
                 &self.state,
                 self.command.attempt.arena(),
+                &self.command.input.replay,
                 &self.command.scratch,
             )
             .is_some(),
@@ -1186,6 +1198,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 cursor,
                                 &self.state,
                                 self.command.attempt.arena(),
+                                &self.command.input.replay,
                                 &self.command.scratch,
                             )
                             .is_none()
@@ -1212,6 +1225,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 cursor,
                                 &self.state,
                                 self.command.attempt.arena(),
+                                &self.command.input.replay,
                                 &self.command.scratch,
                             )
                             .is_some(),
@@ -1246,14 +1260,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 cursor,
                 &self.state,
                 self.command.attempt.arena(),
+                &self.command.input.replay,
                 &self.command.scratch,
             )
             .is_some()
             || !matches!(
-                cursor
-                    .payload
-                    .backed_up_get(0)
-                    .map(|token| token.spelling.semantic_token()),
+                match cursor.payload {
+                    TokenPayload::Replay { replay, .. } => self
+                        .command
+                        .input
+                        .replay
+                        .get(replay, 0)
+                        .map(|(spelling, _)| spelling.semantic_token()),
+                    _ => None,
+                },
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
                     ..
@@ -1922,6 +1942,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             cursor,
                             &self.state,
                             self.command.attempt.arena(),
+                            &self.command.input.replay,
                             &self.command.scratch,
                         )
                     };
@@ -2203,12 +2224,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         cursor: &TokenCursor<G>,
         stores: &tex_state::CommandContext<'_, G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        replay_lane: &crate::input::ReplayLane<G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> Option<StoredTokenDelivery<G>> {
         let index = cursor.position();
         let position = u64::try_from(index).ok()?;
         let (spelling, advanced_replay, advanced_durable) = match &cursor.payload {
-            TokenPayload::Packed(chunk) => (chunk.get(index), None, None),
+            TokenPayload::Replay { replay, .. } => (replay_lane.get(*replay, index), None, None),
             TokenPayload::MacroReplacement { definition, .. } => (
                 stores
                     .definition(definition.clone())
@@ -2290,6 +2312,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             cursor,
                             &self.state,
                             self.command.attempt.arena(),
+                            &self.command.input.replay,
                             &self.command.scratch,
                         )
                         .is_none() =>

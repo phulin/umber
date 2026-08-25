@@ -268,6 +268,44 @@ fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
 }
 
 #[test]
+fn rollback_restores_replay_lane_coordinates_after_candidate_admission() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [Token::Char {
+                ch: 'a',
+                cat: Catcode::Other,
+            }],
+        );
+        let snapshot = command.snapshot(universe).expect("input state snapshots");
+        crate::test_harness::push(
+            &mut command,
+            [Token::Char {
+                ch: 'b',
+                cat: Catcode::Other,
+            }],
+        );
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("replay coordinate rolls back");
+        let mut capabilities = crate::CommandHostCapabilities::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor =
+            crate::test_harness::processor(&mut command, universe, &mut capabilities, &mut effects);
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("restored replay delivers")
+                .expect("restored replay is present")
+                .spelling(),
+            word('a')
+        );
+    });
+}
+
+#[test]
 fn dropping_a_summary_releases_its_unreachable_aggregate_root() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

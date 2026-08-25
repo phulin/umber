@@ -185,10 +185,7 @@ impl<G> MatchedKeywordPrefix<G> {
     }
 
     fn into_backed_up(self) -> impl Iterator<Item = crate::input::BackedUpToken> {
-        self.inline
-            .into_iter()
-            .take(self.len)
-            .flatten()
+        self.inline.into_iter().take(self.len).flatten()
     }
 }
 

@@ -13,9 +13,10 @@ mod tokenizer;
 mod tests;
 
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame, ReplayTrace,
-    RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason,
-    TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame,
+    PackedTokenOwnership, ReplayLane, ReplayTrace, RetirementBehavior, SourceLevel,
+    SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor,
+    TokenPayload, TokenPayloadSource, packed_token_frame,
 };
 pub(crate) use source::{
     LineBackingRegistry, RegisteredSource, SourceCursor, source_line_buffer_high_water,
@@ -48,6 +49,9 @@ pub use tokenizer::{
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
     pub(crate) levels: Vec<InputLevel<G>>,
+    /// Stable coarse-segment replay storage. Input levels carry only compact
+    /// coordinates; exact LIFO retirement restores lane cursors in O(1).
+    pub(crate) replay: ReplayLane<G>,
     /// TeX82's process-global `line`, retained after a physical source level
     /// retires while token-list input produced from that line remains live.
     ///
@@ -76,6 +80,7 @@ impl<G> Clone for InputState<G> {
     fn clone(&self) -> Self {
         Self {
             levels: self.levels.clone(),
+            replay: self.replay.clone(),
             retained_file_line_number: self.retained_file_line_number,
             terminal_context_line: self.terminal_context_line.clone(),
             pending_sources: self.pending_sources.clone(),
@@ -90,6 +95,7 @@ impl<G> Default for InputState<G> {
     fn default() -> Self {
         Self {
             levels: Vec::new(),
+            replay: ReplayLane::default(),
             retained_file_line_number: 0,
             terminal_context_line: None,
             pending_sources: BTreeMap::new(),
@@ -250,7 +256,7 @@ pub(crate) fn tracked_input_projection<G>(
                 ) {
                     return None;
                 }
-                project_token_cursor(&mut stack, cursor, state)?;
+                project_token_cursor(&mut stack, cursor, &input.replay, state)?;
             }
         }
     }
@@ -343,6 +349,7 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
 fn project_token_cursor<G>(
     hash: &mut ProjectionHasher,
     cursor: &TokenCursor<G>,
+    replay_lane: &ReplayLane<G>,
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
     hash.u64(u64::from(cursor.frame.position()));
@@ -371,9 +378,9 @@ fn project_token_cursor<G>(
         return None;
     }
     match &cursor.payload {
-        TokenPayload::Packed(chunk) => {
-            for index in 0..chunk.len() {
-                project_token(hash, chunk.word(index)?.token()?, state)?;
+        TokenPayload::Replay { replay, len } => {
+            for index in 0..*len as usize {
+                project_token(hash, replay_lane.get(*replay, index)?.0.token()?, state)?;
             }
         }
         TokenPayload::DurableList { cursor, .. } => {
@@ -448,6 +455,14 @@ impl ProjectionHasher {
     }
 }
 
+struct TokenContextStorage<'a, 'state, G> {
+    stores: &'a tex_state::CommandContext<'state, G>,
+    replay_lane: &'a ReplayLane<G>,
+    parameters: &'a crate::macro_call::ParameterState<G>,
+    attempt: &'a crate::attempt::AttemptArena<G>,
+    scratch: &'a crate::execution_scratch::ExecutionScratch<G>,
+}
+
 impl<G> InputState<G> {
     /// tex.web §310's `show_context` display for the canonical input stack.
     ///
@@ -495,7 +510,16 @@ impl<G> InputState<G> {
                 }
                 InputLevel::Tokens(tokens) => {
                     if Self::token_context_level(
-                        stores, tokens, current, parameters, attempt, scratch, widths,
+                        TokenContextStorage {
+                            stores,
+                            replay_lane: &self.replay,
+                            parameters,
+                            attempt,
+                            scratch,
+                        },
+                        tokens,
+                        current,
+                        widths,
                     )
                     .is_some()
                     {
@@ -620,7 +644,16 @@ impl<G> InputState<G> {
                 }
                 InputLevel::Tokens(tokens) => {
                     if let Some(rendered) = Self::token_context_level(
-                        stores, tokens, current, parameters, attempt, scratch, widths,
+                        TokenContextStorage {
+                            stores,
+                            replay_lane: &self.replay,
+                            parameters,
+                            attempt,
+                            scratch,
+                        },
+                        tokens,
+                        current,
+                        widths,
                     ) {
                         levels.push(rendered);
                     }
@@ -842,14 +875,18 @@ impl<G> InputState<G> {
 
     /// §314's `<Print type of token list>` and §315's pseudoprint.
     fn token_context_level(
-        stores: &tex_state::CommandContext<'_, G>,
+        storage: TokenContextStorage<'_, '_, G>,
         tokens: &TokenCursor<G>,
         current: bool,
-        parameters: &crate::macro_call::ParameterState<G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
+        let TokenContextStorage {
+            stores,
+            replay_lane,
+            parameters,
+            attempt,
+            scratch,
+        } = storage;
         fn payload_len<G>(
             _stores: &tex_state::CommandContext<'_, G>,
             tokens: &TokenCursor<G>,
@@ -857,7 +894,7 @@ impl<G> InputState<G> {
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> usize {
             match &tokens.payload {
-                TokenPayload::Packed(chunk) => chunk.len(),
+                TokenPayload::Replay { len, .. } => *len as usize,
                 TokenPayload::MacroReplacement { len, .. } => *len as usize,
                 TokenPayload::AttemptList { len, .. } => *len as usize,
                 TokenPayload::MacroArgument { len, .. } => *len as usize,
@@ -868,13 +905,16 @@ impl<G> InputState<G> {
         fn payload_token<G>(
             stores: &tex_state::CommandContext<'_, G>,
             tokens: &TokenCursor<G>,
+            replay_lane: &ReplayLane<G>,
             index: usize,
             _parameters: &crate::macro_call::ParameterState<G>,
             attempt: &crate::attempt::AttemptArena<G>,
             scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
-                TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
+                TokenPayload::Replay { replay, .. } => replay_lane
+                    .get(*replay, index)
+                    .map(|(word, _)| word.semantic_token()),
                 TokenPayload::MacroReplacement { definition, .. } => stores
                     .definition(definition.clone())
                     .replacement_text()
@@ -972,8 +1012,15 @@ impl<G> InputState<G> {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt, scratch)
-            {
+            if let Some(token) = payload_token(
+                stores,
+                tokens,
+                replay_lane,
+                index,
+                parameters,
+                attempt,
+                scratch,
+            ) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -1046,8 +1093,15 @@ impl<G> InputState<G> {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt, scratch)
-            {
+            if let Some(token) = payload_token(
+                stores,
+                tokens,
+                replay_lane,
+                index,
+                parameters,
+                attempt,
+                scratch,
+            ) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

@@ -125,11 +125,20 @@ impl<G> CommandState<G> {
             let InputLevel::Tokens(cursor) = level else {
                 return words;
             };
-            let owned = cursor
-                .payload
-                .transient_len()
-                .unwrap_or(0)
-                .saturating_add(cursor.payload.backed_up_len().unwrap_or(0));
+            let owned = match cursor.payload {
+                TokenPayload::Replay { replay, len }
+                    if matches!(
+                        self.input.replay.ownership(replay),
+                        Some(
+                            super::PackedTokenOwnership::Transient
+                                | super::PackedTokenOwnership::BackedUp
+                        )
+                    ) =>
+                {
+                    len as usize
+                }
+                _ => 0,
+            };
             words.saturating_add(owned)
         })
     }
@@ -181,13 +190,16 @@ impl<G> CommandState<G> {
         )
     }
 
-    pub(crate) fn push_token_level(
+    pub(crate) fn push_token_level<P: super::TokenPayloadSource<G>>(
         &mut self,
-        payload: TokenPayload<G>,
+        payload: P,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
+        let payload = payload
+            .admit(&mut self.input.replay)
+            .expect("generation replay lane admission");
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
         self.usage.record_input_push(self.input.levels.len());
         let identity = self.allocate_input_level_identity();
@@ -440,6 +452,12 @@ impl<G> CommandState<G> {
         };
         self.finish_macro_body_retirement(&cursor.behavior)
             .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
+        if let TokenPayload::Replay { replay, .. } = cursor.payload {
+            self.input
+                .replay
+                .release(replay)
+                .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
+        }
         let action = match cursor.retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -492,6 +510,12 @@ impl<G> CommandState<G> {
         };
         self.finish_macro_body_retirement(&cursor.behavior)
             .expect("final cleanup runs inside one direct operation");
+        if let TokenPayload::Replay { replay, .. } = cursor.payload {
+            self.input
+                .replay
+                .release(replay)
+                .expect("final cleanup preserves replay LIFO order");
+        }
         let action = match cursor.retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             RetirementBehavior::Pop

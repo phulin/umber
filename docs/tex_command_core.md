@@ -1656,24 +1656,14 @@ struct TokenCursor {
 }
 
 enum TokenPayload {
-    Packed(PackedTokenChunk),
-    Stored {
-        tokens: TokenListRef,
-        origins: OriginListRef,
-    },
+    Replay { replay: ReplayPayloadId, len: u32 },
     MacroReplacement {
-        admitted: u32,
         definition: MacroDefinitionId,
         len: u32,
     },
-    Transient(SharedTokenBuffer),
-    InlineTransient(TracedTokenWord),
-    BackedUp(SharedBackedUpBuffer),
-    InlineBackedUp(BackedUpToken),
-    ArgumentRange {
-        arguments: MacroArguments,
-        range: MacroArgumentRange,
-    },
+    MacroArgument { replay: MacroReplayCursor, len: u32 },
+    DurableList { cursor: TokenListCursor, len: u32 },
+    AttemptList { list: AttemptTokenListId, len: u32 },
 }
 
 enum TokenBehavior {
@@ -1708,26 +1698,30 @@ retain their exact values, with disjoint source, `everyeof`, and Umber replay
 kinds. Flags represent noexpand suppression, terminal-stop retirement, and
 retained v-template retirement independently of storage.
 
-`CommandState::push_token_level` is the single live admission boundary. Token
-factories directly construct a `PackedTokenChunk` for transient insertions,
-backup/noexpand levels, alignment templates, stored every-hooks, output replay,
-and other source-adjacent replay. Packed traced words are position-aligned and
-retain sparse structural roots once per chunk. Backed-up physical source
-coordinates occupy a cold inline-small sidecar and are materialized only for
-diagnostic rendering. Production `TokenPayload` is exhaustively packed,
-macro-replacement, or argument-range; the former rich stored, transient,
-inline, backup, and shared-buffer owners have no production representation.
-Tests may stage a rooted rich buffer to exercise pre-admission compatibility,
-but it is compiled out of runtime ownership. Macro replacement and
-argument-range payloads likewise contain only admitted chunk and span
-coordinates; they carry no shared token buffer.
+`CommandState::push_token_level` is the single live admission boundary.
+Transient insertions, backup/noexpand levels, alignment templates, stored
+every-hooks, output replay, and other source-adjacent replay stream their words
+and optional source provenance directly into one generation-owned `ReplayLane`.
+The input level retains only a typed entry coordinate and length. The lane uses
+coarse stable word/provenance segments: exact LIFO retirement returns whole
+segments to reusable high-water storage, while a snapshot shares immutable
+active segments and the current root opens a fresh tail before mutation. There
+is no per-level allocation, live-row relocation, compaction, forwarding, root
+search, or third generation. e-TeX aftergroup prefix linking appends a second
+span to the top entry and delivers that span before its body without shifting
+either span.
+
+Macro replacement, argument-range, durable-list, and attempt-list payloads
+remain direct coordinates into their existing owners. They do not enter the
+replay lane or acquire a shared token buffer.
 
 Detached resource continuations deliberately do not serialize a runtime frame
 or arena coordinate. Detachment projects packed words, backup coordinates,
 portable identity, and current offset into the existing handle-free DTO;
-materialization creates a fresh packed chunk/frame and advances it to that
-offset. Command snapshots clone the frame directly. Source continuations retain
-their exact physical byte/scalar/line cursor and rebuild the source frame after
+materialization admits a fresh destination-lane entry and frame, then advances
+it to that offset. Command snapshots clone the compact frame/coordinate and
+share immutable coarse lane segments. Source continuations retain their exact
+physical byte/scalar/line cursor and rebuild the source frame after
 registration, preserving diagnostic positions without publishing runtime
 coordinates.
 
@@ -1748,12 +1742,12 @@ definition-store entry cannot invalidate an active input level. General cold
 and stale lookup APIs retain their validation and rejection behavior.
 
 The centralized transient and backed-up constructors avoid caller-side rich
-staging for fixed insertions and create the packed chunk as the canonical
-payload. e-TeX's optimized `\aftergroup` prepend extends the same packed backup
-chunk while preserving save order and its compact frame identity. Snapshot
+staging for fixed insertions and stream directly into the replay lane. e-TeX's
+optimized `\aftergroup` prepend adds a prefix span to the same replay entry
+while preserving save order and its compact frame identity. Snapshot
 normalization, durable continuation remapping, origin adoption, and
-edited-source rehoming treat the packed representation as the canonical
-semantic payload.
+edited-source rehoming project the lane entry as the canonical semantic
+payload.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they
@@ -2607,10 +2601,13 @@ character token, so a control sequence `\let` to a keyword letter -- same
 on `cur_chr` alone, so a keyword letter matches under any category code.
 
 Keyword text is traversed directly rather than copied into a temporary letter
-list. The matched prefix uses 13 inline command slots, covering the complete
-current TeX82, e-TeX 2.6, and pdfTeX 1.40.29 production vocabulary; the public
-scanner retains an explicit heap spill for longer caller-supplied keywords, so
-the storage optimization introduces no semantic keyword-length limit.
+list. The matched prefix uses 13 inline `BackedUpToken` slots containing only
+the spelling and optional source provenance needed by mismatch replay; it does
+not retain resolved meanings or definition owners across a suspension. The
+bound covers the complete current TeX82, e-TeX 2.6, and pdfTeX 1.40.29
+production vocabulary. The public scanner retains an explicit heap spill for
+longer caller-supplied keywords, so the storage optimization introduces no
+semantic keyword-length limit.
 
 Integer, dimension, glue, muglue, and expression arithmetic use shared exact
 types from `tex-arith` and `tex-state`. The integer scanner owns decimal,

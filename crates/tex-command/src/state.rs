@@ -1987,10 +1987,11 @@ impl<G> CommandState<G> {
         let exhausted_backed_up_endv = matches!(top,
             InputLevel::Tokens(cursor)
                 if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && cursor
-                        .payload
-                        .backed_up_len()
-                        .is_some_and(|len| cursor.position() >= len)
+                    && matches!(cursor.payload,
+                        TokenPayload::Replay { replay, len }
+                            if self.input.replay.ownership(replay)
+                                == Some(crate::input::PackedTokenOwnership::BackedUp)
+                                && cursor.position() >= len as usize)
         );
         if exhausted_backed_up_endv
             && self
