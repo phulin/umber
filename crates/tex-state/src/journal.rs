@@ -177,6 +177,16 @@ pub(crate) struct SaveJournal<G> {
     save_stack: SaveStackProjection,
 }
 
+impl<G> Clone for SaveJournal<G> {
+    fn clone(&self) -> Self {
+        Self {
+            owner: self.owner,
+            entries: self.entries.clone(),
+            save_stack: self.save_stack,
+        }
+    }
+}
+
 impl<G> SaveJournal<G> {
     #[must_use]
     pub(crate) fn new() -> Self {

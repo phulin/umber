@@ -4835,6 +4835,13 @@ impl World {
             && (self.artifact_base..=self.artifact_pos()).contains(&snapshot.artifact_commit_len)
     }
 
+    /// Whether a strongly owned checkpoint root can seed a new retained
+    /// generation after the source timeline has published its prefix.
+    #[must_use]
+    pub(crate) fn snapshot_is_forkable(&self, snapshot: &WorldSnapshot) -> bool {
+        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
+    }
+
     fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
         snapshot.effect_pos >= self.effect_base
             && snapshot.effect_pos
@@ -4895,6 +4902,118 @@ impl World {
             Arc::make_mut(&mut self.artifact_commits).truncate(retained);
             Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
             Arc::make_mut(&mut self.artifact_publications).truncate(retained);
+        }
+        self.commit_mode = snapshot.commit_mode;
+        self.file_framing = snapshot.file_framing;
+        self.error_channel = snapshot.error_channel.clone();
+    }
+
+    /// Installs a retained checkpoint into a new generation. Accepted effects
+    /// become an immutable page-visible prefix, while the destination starts
+    /// a fresh publishable suffix at the same absolute semantic position.
+    pub(crate) fn install_checkpoint_fork(&mut self, snapshot: &WorldSnapshot) {
+        assert!(self.snapshot_is_forkable(snapshot));
+        self.input_identities
+            .rollback(snapshot.input_identities)
+            .expect("World input identity mark must name a retained ancestor");
+
+        let snapshot_base = usize::try_from(snapshot.effect_base.raw())
+            .expect("effect position must fit in memory address space");
+        let mut prefix = self.page_effect_prefix.as_ref().clone();
+        let mut sequences = self.page_effect_prefix_sequences.as_ref().clone();
+        let mut publications = self.page_effect_prefix_publications.as_ref().clone();
+        let mut publication_ordinals = self
+            .page_effect_prefix_publication_record_ordinals
+            .as_ref()
+            .clone();
+        let mut domains = self.page_effect_prefix_domains.as_ref().clone();
+        let mut semantic_ordinals = self
+            .page_effect_prefix_semantic_record_ordinals
+            .as_ref()
+            .clone();
+        let mut placement_orders = self
+            .page_effect_prefix_placement_intra_orders
+            .as_ref()
+            .clone();
+        prefix.truncate(snapshot_base);
+        sequences.truncate(snapshot_base);
+        publications.truncate(snapshot_base);
+        publication_ordinals.truncate(snapshot_base);
+        domains.truncate(snapshot_base);
+        semantic_ordinals.truncate(snapshot_base);
+        placement_orders.truncate(snapshot_base);
+        prefix.extend(snapshot.effects.iter().cloned());
+        sequences.extend(snapshot.effect_sequences.iter().copied());
+        publications.extend(snapshot.effect_publications.iter().copied());
+        publication_ordinals.extend(snapshot.effect_publication_record_ordinals.iter().copied());
+        domains.extend(snapshot.effect_domains.iter().copied());
+        semantic_ordinals.extend(snapshot.effect_semantic_record_ordinals.iter().copied());
+        placement_orders.extend(snapshot.effect_placement_intra_orders.iter().copied());
+        assert_eq!(prefix.len() as u64, snapshot.effect_pos.raw());
+        self.page_effect_prefix = Arc::new(prefix);
+        self.page_effect_prefix_sequences = Arc::new(sequences);
+        self.page_effect_prefix_publications = Arc::new(publications);
+        self.page_effect_prefix_publication_record_ordinals = Arc::new(publication_ordinals);
+        self.page_effect_prefix_domains = Arc::new(domains);
+        self.page_effect_prefix_semantic_record_ordinals = Arc::new(semantic_ordinals);
+        self.page_effect_prefix_placement_intra_orders = Arc::new(placement_orders);
+        self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
+
+        self.effect_base = snapshot.effect_pos;
+        self.effects = Arc::new(Vec::new());
+        self.effect_sequences = Arc::new(Vec::new());
+        self.effect_publications = Arc::new(Vec::new());
+        self.effect_publication_record_ordinals = Arc::new(Vec::new());
+        self.effect_domains = Arc::new(Vec::new());
+        self.effect_semantic_record_ordinals = Arc::new(Vec::new());
+        self.effect_placement_intra_orders = Arc::new(Vec::new());
+        self.active_effect_publication = None;
+        self.active_effect_output_attempt = None;
+        self.active_effect_domain = None;
+        self.provisional_page_output_receipts =
+            Arc::clone(&snapshot.provisional_page_output_receipts);
+        self.next_terminal_publication_identity = self
+            .next_terminal_publication_identity
+            .max(snapshot.next_terminal_publication_identity);
+        self.next_artifact_publication_identity = self
+            .next_artifact_publication_identity
+            .max(snapshot.next_artifact_publication_identity);
+        self.active_artifact_publication_group = None;
+        self.active_terminal_publication = None;
+        self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
+        self.next_effect_sequence = snapshot.next_effect_sequence;
+        self.next_effect_publication_record_ordinals =
+            snapshot.next_effect_publication_record_ordinals.clone();
+        self.next_publication_sequence = self
+            .next_publication_sequence
+            .max(snapshot.next_publication_sequence);
+        self.next_effect_publication_identity = self
+            .next_effect_publication_identity
+            .max(snapshot.next_effect_publication_identity);
+        self.next_effect_domain = snapshot.next_effect_domain;
+        self.next_effect_semantic_record_ordinals =
+            snapshot.next_effect_semantic_record_ordinals.clone();
+        self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
+        let mut ancestry = snapshot.effect_root_ancestry.as_ref().clone();
+        let root = effect_root_identity_for(&snapshot.effects);
+        if !ancestry.contains(&root) {
+            ancestry.push(root);
+        }
+        self.effect_root_ancestry = Arc::new(ancestry);
+        self.stream_bufs = snapshot.stream_bufs.clone();
+        self.rng = snapshot.rng;
+        self.pdf_rng = snapshot.pdf_rng.clone();
+        self.pdf_time_micros = snapshot.pdf_time_micros;
+        self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
+        self.shell_escape_policy = snapshot.shell_escape_policy;
+        self.inputs.truncate(snapshot.input_len);
+        self.input_dependencies = snapshot.input_dependencies.clone();
+        self.shell_escapes.truncate(snapshot.shell_escape_len);
+        if snapshot.commit_mode == WorldCommitMode::Retained {
+            self.artifact_base = snapshot.artifact_commit_len;
+            self.artifact_commits = Arc::new(Vec::new());
+            self.committed_artifacts = Arc::new(Vec::new());
+            self.artifact_publications = Arc::new(Vec::new());
         }
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;

@@ -126,6 +126,10 @@ impl<G> CommandGenerationOwner<G> {
         self.generation.same_generation(generation) && Arc::ptr_eq(&self.timeline, timeline)
     }
 
+    pub(crate) fn addresses_generation(&self, generation: &GenerationOwner<G>) -> bool {
+        self.generation.same_generation(generation)
+    }
+
     pub(crate) fn resolve(
         &self,
         cursor: CommandSnapshotCursor,
@@ -572,6 +576,48 @@ pub struct PreparedCommandRestore<G> {
 }
 
 impl<G> CommandState<G> {
+    /// Creates a fresh command timeline from one accepted summary while
+    /// retaining its immutable aggregate root. Runtime scratch and attempt
+    /// lanes are destination-local and begin quiescent.
+    #[doc(hidden)]
+    pub fn fork_summary(
+        summary: &CommandSummary<G>,
+        source: &Universe<G>,
+        destination: &Universe<G>,
+    ) -> Result<Self, CommandRestoreError> {
+        let source_generation = source
+            .generation_owner()
+            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
+        let destination_generation = destination
+            .generation_owner()
+            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
+        if !summary
+            .generation()
+            .addresses_generation(&source_generation)
+            || source_generation.same_generation(&destination_generation)
+        {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        let (roots, attempt) = summary
+            .generation()
+            .resolve(summary.cursor())
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        if !attempt.is_empty() {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        let fork = Self {
+            roots,
+            ..Self::default()
+        };
+        fork.profile()
+            .validate_fingerprint(
+                CommandProfileBoundary::Summary,
+                CommandProfileFingerprint::from_u64(summary.profile_fingerprint()),
+            )
+            .map_err(CommandRestoreError::Profile)?;
+        Ok(fork)
+    }
+
     /// Reports whether the live command machine can publish one named
     /// boundary without retaining a scanner, delivery, or attempt owner.
     ///

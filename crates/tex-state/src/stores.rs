@@ -29,6 +29,15 @@ pub(crate) struct StateCore<G> {
 }
 
 impl<G> StateCore<G> {
+    pub(crate) fn fork(&self) -> Self {
+        let generation = self.generation.generation().fork();
+        Self {
+            generation: GenerationOwner::new(generation),
+            nodes: self.nodes.fork(),
+            state: self.state.clone(),
+        }
+    }
+
     pub(crate) fn capture_format_values(
         &self,
         extra_roots: impl IntoIterator<Item = DynamicMemoryRoot<G>>,

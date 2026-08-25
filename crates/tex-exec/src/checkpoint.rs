@@ -5,7 +5,7 @@ use tex_command::{
 };
 use tex_state::{RuntimeCheckpoint, Universe, UniverseError};
 
-use crate::{ExecError, ModeNest, ModeNestSummary};
+use crate::{ExecError, MainControl, ModeNest, ModeNestSummary};
 
 #[cfg(test)]
 mod tests;
@@ -62,6 +62,30 @@ impl<G> Clone for EngineCheckpoint<G> {
 }
 
 impl<G> EngineCheckpoint<G> {
+    pub(crate) fn fork_state(
+        &self,
+        source: &Universe<G>,
+    ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
+        let destination = source
+            .fork_runtime_checkpoint(&self.runtime)
+            .map_err(CheckpointRestoreError::Runtime)?;
+        if !self.modes.font_roots_are_live(|font| {
+            destination.runtime_checkpoint_retains_font(&self.runtime, font)
+        }) {
+            return Err(CheckpointRestoreError::Runtime(UniverseError::State(
+                tex_state::StateError::InvalidCursor,
+            )));
+        }
+        let command = CommandState::fork_summary(self.command.as_ref(), source, &destination)
+            .map_err(CheckpointRestoreError::Command)?;
+        let modes =
+            ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
+        Ok((
+            destination,
+            MainControl::from_checkpoint_fork(command, modes),
+        ))
+    }
+
     /// Captures a named boundary. Command publication proves that no scanner,
     /// macro matcher, alignment delivery, or attempt arena remains live.
     pub fn capture_checkpoint(

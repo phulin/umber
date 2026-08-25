@@ -32,6 +32,7 @@ pub(crate) struct PreparedFontRuntime {
     row: FontRuntimeRow,
 }
 
+#[derive(Clone)]
 struct FontRuntimeRow {
     parameter_count: BankCell<i32>,
     parameters: Vec<BankCell<Scaled>>,
@@ -41,6 +42,7 @@ struct FontRuntimeRow {
     ligatures_disabled: BankCell<i32>,
 }
 
+#[derive(Clone)]
 pub(crate) struct FontRuntimeBank {
     rows: Vec<FontRuntimeRow>,
 }

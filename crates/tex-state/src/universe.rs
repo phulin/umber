@@ -444,6 +444,71 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    /// Creates a destination-local runtime from one retained checkpoint.
+    /// Validation is complete before the returned fork becomes visible.
+    #[doc(hidden)]
+    pub fn fork_runtime_checkpoint(
+        &self,
+        checkpoint: &RuntimeCheckpoint<G>,
+    ) -> Result<Self, UniverseError> {
+        let owner = checkpoint.state.owner();
+        let mark = checkpoint.state.mark();
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::validate_restore(
+            self, owner, mark,
+        )?;
+        if !self.world.snapshot_is_forkable(&checkpoint.world)
+            || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
+            || !self.fonts.validates(checkpoint.fonts)
+            || !self.sources.validates(checkpoint.sources)
+        {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+
+        let core = self.core.as_ref().ok_or(UniverseError::Retired)?.fork();
+        let destination_owner = core.generation_owner();
+        let mut fork = Self {
+            interner: None,
+            core: Some(core),
+            page_nodes: self.page_nodes.fork(),
+            retained_page_bound: self.retained_page_bound,
+            shipout_scratch: ShipoutScratchArena::default(),
+            fonts: self.fonts.clone(),
+            page: self.page.clone(),
+            pdf: self.pdf.fork_snapshot(&checkpoint.pdf),
+            sources: self.sources.clone(),
+            hyphenation: self.hyphenation.clone(),
+            world: self.world.clone(),
+            dependencies: self.dependencies.clone(),
+            interaction_mode: self.interaction_mode,
+            prepared_mag: self.prepared_mag,
+            error_context_widths: self.error_context_widths,
+            engine_usage: self.engine_usage.clone(),
+            dynamic_memory_scratch: crate::stores::DynamicMemoryScratch::default(),
+            provenance_demand: self.provenance_demand,
+            provenance_budgets: self.provenance_budgets,
+            primitive_names: self.primitive_names.clone(),
+            primitive_meanings: self.primitive_meanings.clone(),
+            pure_memo_config: self.pure_memo_config,
+            pure_memo_capability: self.pure_memo_capability.clone(),
+            restore_owner: None,
+        };
+        let retargeted = RuntimeCheckpoint {
+            state: GenerationCheckpoint::new(destination_owner, *mark),
+            page: checkpoint.page.clone(),
+            pdf: checkpoint.pdf.clone(),
+            world: checkpoint.world.clone(),
+            fonts: checkpoint.fonts,
+            sources: checkpoint.sources,
+            hyphenation: checkpoint.hyphenation.clone(),
+            dependencies: checkpoint.dependencies.clone(),
+            interaction_mode: checkpoint.interaction_mode,
+            prepared_mag: checkpoint.prepared_mag,
+            engine_usage: checkpoint.engine_usage.clone(),
+        };
+        fork.restore_runtime_checkpoint_with_roots_mode(&retargeted, || {}, true)?;
+        Ok(fork)
+    }
+
     pub(crate) fn interner(&self) -> &Interner {
         self.interner
             .as_deref()
@@ -1967,13 +2032,25 @@ impl<G> Universe<G> {
         checkpoint: &RuntimeCheckpoint<G>,
         transfer_external_roots: impl FnOnce(),
     ) -> Result<(), UniverseError> {
+        self.restore_runtime_checkpoint_with_roots_mode(checkpoint, transfer_external_roots, false)
+    }
+
+    fn restore_runtime_checkpoint_with_roots_mode(
+        &mut self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        transfer_external_roots: impl FnOnce(),
+        generation_fork: bool,
+    ) -> Result<(), UniverseError> {
         let owner = checkpoint.state.owner();
         let mark = checkpoint.state.mark();
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::validate_restore(
             self, owner, mark,
         )?;
-        if !self.world.snapshot_is_retained(&checkpoint.world)
-            || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
+        if !(if generation_fork {
+            self.world.snapshot_is_forkable(&checkpoint.world)
+        } else {
+            self.world.snapshot_is_retained(&checkpoint.world)
+        }) || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
             || !self.fonts.validates(checkpoint.fonts)
             || !self.sources.validates(checkpoint.sources)
         {
@@ -2008,8 +2085,14 @@ impl<G> Universe<G> {
             self, mark,
         );
         self.page = checkpoint.page.clone();
-        self.pdf.rollback(checkpoint.pdf.clone());
-        self.world.rollback(&checkpoint.world);
+        if !generation_fork {
+            self.pdf.rollback(checkpoint.pdf.clone());
+        }
+        if generation_fork {
+            self.world.install_checkpoint_fork(&checkpoint.world);
+        } else {
+            self.world.rollback(&checkpoint.world);
+        }
         self.hyphenation = checkpoint.hyphenation.clone();
         self.dependencies.restore_tracker(&checkpoint.dependencies);
         self.interaction_mode = checkpoint.interaction_mode;

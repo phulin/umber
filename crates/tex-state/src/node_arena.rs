@@ -464,6 +464,34 @@ struct NodeArenaRow<L, Glue, Tokens> {
     etex_words: (usize, usize),
 }
 
+impl<L, Glue: Clone, Tokens: Clone> Clone for NodeArenaRow<L, Glue, Tokens> {
+    fn clone(&self) -> Self {
+        Self {
+            generation: self.generation,
+            nodes: self.nodes.clone(),
+            tex82_words: self.tex82_words,
+            etex_words: self.etex_words,
+        }
+    }
+}
+
+impl<L, Glue: Clone, Tokens: Clone> NodeArena<L, Glue, Tokens> {
+    /// Forks the immutable published rows while preserving their stable
+    /// coordinates. The accepted arena is never mutated; subsequent
+    /// publication is confined to the destination arena.
+    pub(crate) fn fork(&self) -> Self {
+        for row in self.rows.iter().flatten() {
+            self.accounting
+                .allocate_nodes(row.tex82_words, row.etex_words);
+        }
+        Self {
+            owner: self.owner,
+            rows: self.rows.clone(),
+            accounting: self.accounting.clone(),
+        }
+    }
+}
+
 impl<L, Glue, Tokens> core::fmt::Debug for NodeArena<L, Glue, Tokens> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter

@@ -60,6 +60,13 @@ impl<G> PersistentInterpreter<G> {
         }
     }
 
+    pub(crate) fn from_state(state: CommandState<G>) -> Self {
+        Self {
+            state,
+            lifecycle: InterpreterLifecycle::default(),
+        }
+    }
+
     pub(crate) const fn state(&self) -> &CommandState<G> {
         &self.state
     }

@@ -461,6 +461,37 @@ pub(crate) struct DenseState<G> {
     next_group_lineage: u64,
 }
 
+impl<G> Clone for DenseState<G> {
+    fn clone(&self) -> Self {
+        Self {
+            meanings: self.meanings.clone(),
+            counts: self.counts.clone(),
+            dimensions: self.dimensions.clone(),
+            token_registers: self.token_registers.clone(),
+            glue_registers: self.glue_registers.clone(),
+            box_registers: self.box_registers.clone(),
+            mu_glue_registers: self.mu_glue_registers.clone(),
+            integer_parameters: self.integer_parameters.clone(),
+            dimension_parameters: self.dimension_parameters.clone(),
+            token_parameters: self.token_parameters.clone(),
+            glue_parameters: self.glue_parameters.clone(),
+            current_font: self.current_font.clone(),
+            math_family_fonts: self.math_family_fonts.clone(),
+            catcodes: self.catcodes.clone(),
+            lccodes: self.lccodes.clone(),
+            uccodes: self.uccodes.clone(),
+            sfcodes: self.sfcodes.clone(),
+            mathcodes: self.mathcodes.clone(),
+            delcodes: self.delcodes.clone(),
+            font_runtime: self.font_runtime.clone(),
+            fresh_parameter_profiles: self.fresh_parameter_profiles,
+            journal: self.journal.clone(),
+            groups: self.groups.clone(),
+            next_group_lineage: self.next_group_lineage,
+        }
+    }
+}
+
 impl<G> DenseState<G> {
     pub(crate) fn visit_dynamic_memory_roots(&self, mut visit: impl FnMut(DynamicMemoryRoot<G>)) {
         for meaning in self.meanings.values() {

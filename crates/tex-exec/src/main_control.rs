@@ -2037,6 +2037,14 @@ impl<G> Default for MainControl<G> {
 }
 
 impl<G> MainControl<G> {
+    pub(crate) fn from_checkpoint_fork(command: CommandState<G>, modes: ModeNest) -> Self {
+        Self {
+            command: PersistentInterpreter::from_state(command),
+            modes,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn arm_terminal_revision(&mut self, step: MainControlStep) {
         debug_assert!(matches!(
             step,

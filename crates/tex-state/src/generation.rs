@@ -139,6 +139,21 @@ impl<G> Generation<G> {
         }
     }
 
+    /// Creates the publisher bundle for an ordinary retained-generation
+    /// fork. Published definition and token-list payloads remain owned by
+    /// their exact semantic carriers; only destination-local publisher
+    /// cursors and compact direct-row stores are duplicated.
+    pub(crate) fn fork(&self) -> Self {
+        let accounting = self.accounting.clone();
+        Self {
+            accounting: accounting.clone(),
+            definitions: self.definitions.fork(accounting.clone()),
+            token_lists: self.token_lists.fork(accounting),
+            glue: self.glue.clone(),
+            provenance: self.provenance.clone(),
+        }
+    }
+
     #[must_use]
     pub(crate) fn memory_accounting(&self) -> MemoryAccounting {
         self.accounting.clone()

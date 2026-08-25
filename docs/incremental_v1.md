@@ -298,14 +298,16 @@ retained compatibility. Durable content and persistence identities remain
 unchanged. The session-local aHash comparison does not serialize the full
 mutable store or page graph. Root-key mismatch is the invalidation signal, so it visits only
 component roots dirtied since their retained snapshot projection.
-Restart uses one validated aggregate fork operation: clone the retained
-substrate, retarget ownership internally, and roll the clone back to the
-selected checkpoint atomically, rebinding the root frame to the in-progress
-revision as specified above. Restore atomicity follows by construction: input,
-mode, and root-frame state are prepared and validated against the fork, and
-the fork is swapped into the private executor only on success. Snapshots stay
-owner-exact and there is no general snapshot re-owner API; per-`Universe`
-cloning happens once per restart, never per checkpoint.
+Restart uses one validated aggregate fork operation. The accepted
+`EngineCheckpoint` seeds the sole free retained slot; immutable definition and
+stored-token owners are shared, destination-local mutable/runtime roots and a
+fresh command timeline are prepared off-slot, and the result is inserted only
+after complete validation. Restore atomicity therefore follows by
+construction: input, mode, and root-frame state are prepared and validated
+against the fork, and failure leaves the accepted slot unchanged. Snapshots
+stay owner-exact and there is no general snapshot re-owner API, retained-image
+fallback, wire round trip, or third generation. The aggregate preparation
+happens once per restart, never per checkpoint.
 
 Profiling builds split revision setup, restart forking, executor work,
 detached diagnostic/effect snapshots, checkpoint-history transition,

@@ -546,8 +546,12 @@ generation owns one conservative monotonic page-retention bound. A checkpoint
 with an explicit page handle in page-builder or mode state may raise that bound
 to the current page cursor; a checkpoint with no such carrier adds nothing.
 Rootless shipout may truncate only the suffix above the bound. Pruning need not
-lower it, and replacing the generation drops it wholesale. A checkpoint does
-not clone the live definition, node, provenance, input, or page object graph.
+lower it, and replacing the generation drops it wholesale. Capture does not
+clone the live definition, node, provenance, input, or page object graph. An
+ordinary retained-generation fork may later use that checkpoint to prepare the
+sole current slot: immutable definition and stored-token payload owners are
+shared directly, while mutable banks and runtime roots receive one
+destination-local representation.
 
 Marks can be created only at a boundary whose live builders are sealed and
 whose execution scratch is quiescent. A mark is not an owning reference to
@@ -587,8 +591,13 @@ distinct invariant generative brands. Prior admission is read-only; every
 revision-local allocation and mutable root belongs to current. Candidate
 creation consumes an exclusive current-candidate lease, so another factory or
 caller cannot issue a concurrent candidate. Candidate execution may compare
-detached evidence from prior, but an accepted current root cannot contain a
-prior-generation id or owner.
+detached evidence from prior. It may also be seeded by the one validated
+aggregate checkpoint-fork operation: the operation checks every accepted root
+first, constructs a fresh command timeline and destination-local
+mutable/runtime owners off-slot, and publishes them only after the complete
+fork succeeds. Shared definition and stored-token carriers keep their existing
+private non-atomic owners; no public id is retargeted and no accepted owner is
+mutated.
 
 Rejection consumes the exclusive lease, clears the current store slot, and
 leaves prior unchanged. Acceptance first requires quiescent scratch and
@@ -600,14 +609,15 @@ checkpoint or generation owner.
 
 There is no runtime compactor, relocation map, generation graph, forwarding
 pointer, slab splice, tracing collector, or content-equality merge. Routine
-edits do not clone the prior runtime graph. The current generation rebuilds
-only the state required by execution. Definitions and stored token lists
-release on their last semantic-owner drop; compact glue/provenance and durable
-node arenas retain their separate policies. Explicit format, artifact, and
-detached-continuation boundaries are the only cold copy paths. Whole-slot
-retirement remains the final release for generation-owned publishers, inline
-arenas, and reusable capacities. Node graph lifetime changes belong to the
-separate node transfer/copy work, not this shared-ownership policy.
+edits perform at most one aggregate checkpoint fork, never a per-checkpoint
+copy or a serialization round trip. Definitions and stored token lists release
+on their last semantic-owner drop; compact glue/provenance and durable node
+arenas retain their separate policies. Explicit format, artifact, and
+detached-continuation boundaries remain the cold detached-copy paths.
+Whole-slot retirement remains the final release for generation-owned
+publishers, inline arenas, and reusable capacities. Node graph lifetime changes
+belong to the separate node transfer/copy work, not this shared-ownership
+policy.
 
 ## Detached boundaries
 

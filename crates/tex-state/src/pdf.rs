@@ -1194,6 +1194,71 @@ pub(crate) struct PdfState<G> {
     thread_fingerprint: StateHashFragment,
 }
 
+impl<G> PdfState<G> {
+    /// Builds the mutable PDF authority for a retained-generation fork from
+    /// the exact existing checkpoint roots. Live suffixes above the checkpoint
+    /// are neither cloned nor installed in the destination.
+    pub(crate) fn fork_snapshot(&self, snapshot: &PdfStateSnapshot<G>) -> Self {
+        assert!(self.snapshot_is_retained(snapshot));
+        let cursor = &snapshot.cursor;
+        let space_font_names = self.space_font_names[..cursor.space_font_name_count].to_vec();
+        let space_font_name_lookup = space_font_names
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, name)| (name, index as u32))
+            .collect();
+        Self {
+            enabled: cursor.enabled,
+            next_object: cursor.next_object,
+            pages: self.pages[..cursor.page_count].to_vec(),
+            output_parameters: cursor.output_parameters,
+            pk_mode: cursor.pk_mode.clone(),
+            font_operations: self.font_operations[..cursor.font_operation_count].to_vec(),
+            font_resources: self.font_resources[..cursor.font_resource_count].to_vec(),
+            fingerprint: cursor.fingerprint,
+            match_state: snapshot.match_state.clone(),
+            external_images: snapshot.external_images.clone(),
+            external_image_fingerprint: cursor.external_image_fingerprint,
+            raw_objects: snapshot.raw_objects.clone(),
+            document_fragments: snapshot.document_fragments.clone(),
+            document_objects: cursor.document_objects,
+            catalog_open_action: cursor.catalog_open_action.clone(),
+            action_fingerprint: cursor.action_fingerprint,
+            page_reservations: snapshot.page_reservations.clone(),
+            page_reservation_fingerprint: cursor.page_reservation_fingerprint,
+            space_font_names,
+            space_font_name_lookup,
+            current_space_font_name: cursor.current_space_font_name,
+            space_font_name_fingerprint: cursor.space_font_name_fingerprint,
+            annotations: snapshot.annotations.clone(),
+            annotation_fingerprint: cursor.annotation_fingerprint,
+            links: snapshot.links.clone(),
+            link_fingerprint: cursor.link_fingerprint,
+            open_links: snapshot.open_links.clone(),
+            open_link_fingerprint: cursor.open_link_fingerprint,
+            color_stacks: snapshot.color_stacks.clone(),
+            color_stack_fingerprint: cursor.color_stack_fingerprint,
+            last_position: cursor.last_position,
+            snap_reference: cursor.snap_reference,
+            forms: snapshot.forms.clone(),
+            form_fingerprint: cursor.form_fingerprint,
+            next_form_resource: cursor.next_form_resource,
+            form_artifacts: snapshot.form_artifacts.clone(),
+            form_artifact_fingerprint: cursor.form_artifact_fingerprint,
+            return_value: cursor.return_value,
+            destinations: snapshot.destinations.clone(),
+            destination_fingerprint: cursor.destination_fingerprint,
+            structure_destinations: snapshot.structure_destinations.clone(),
+            structure_destination_fingerprint: cursor.structure_destination_fingerprint,
+            outlines: snapshot.outlines.clone(),
+            outline_fingerprint: cursor.outline_fingerprint,
+            threads: snapshot.threads.clone(),
+            thread_fingerprint: cursor.thread_fingerprint,
+        }
+    }
+}
+
 impl<G> Default for PdfState<G> {
     fn default() -> Self {
         let default_space_font = b"pdftexspace".to_vec();

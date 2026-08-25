@@ -523,6 +523,7 @@ pub enum BankError {
 }
 
 /// Contiguous current-value storage. Reads are one bounds-checked index.
+#[derive(Clone)]
 pub(crate) struct DenseBank<T: Clone> {
     cells: Vec<BankCell<T>>,
     default: T,
@@ -592,6 +593,7 @@ type Page<T> = Box<[BankCell<T>; PAGE_LEN]>;
 ///
 /// The complete page directory is allocated once. A read performs no search
 /// and absent pages evaluate their algorithmic default without allocation.
+#[derive(Clone)]
 pub(crate) struct PagedDenseBank<T: Clone> {
     pages: Vec<Option<Page<T>>>,
     len: u32,
@@ -677,6 +679,7 @@ impl<T: Clone + PartialEq> PagedDenseBank<T> {
 }
 
 /// TeX's dense 0--255 register prefix plus page/index dense e-TeX overflow.
+#[derive(Clone)]
 pub(crate) struct RegisterBank<T: Clone> {
     dense: [BankCell<T>; DENSE_REGISTER_COUNT],
     overflow: PagedDenseBank<T>,

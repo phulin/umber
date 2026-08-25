@@ -2,10 +2,10 @@ use super::{UniverseError, with_universe};
 use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
 use crate::interner::InternerBudget;
-use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
+use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_arena::NodeArenaError;
-use crate::token::Token;
+use crate::token::{Token, TokenWord};
 use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind};
 use std::path::PathBuf;
 use tex_arith::{GlueSetRatio, Scaled};
@@ -47,6 +47,42 @@ fn command_episode_admits_session_and_generation_once() {
             context.meaning(symbol.symbol()),
             ResolvedMeaning::Static(Meaning::Relax)
         );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn runtime_checkpoint_fork_shares_definition_and_token_payload_owners() {
+    with_universe(budget(), |universe| {
+        let symbol = universe.intern("shared").expect("intern symbol");
+        let words = [TokenWord::pack(Token::frozen_relax())];
+        let definition = universe
+            .allocate_definition(&[], &words)
+            .expect("definition");
+        let tokens = universe.allocate_token_list(&words).expect("token list");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition.clone()),
+                AssignmentScope::Global,
+            )
+            .expect("assign macro");
+        universe
+            .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
+            .expect("assign token register");
+        let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
+        let definition_owners = definition.semantic_owner_count();
+        let token_owners = tokens.semantic_owner_count();
+
+        let fork = universe
+            .fork_runtime_checkpoint(&checkpoint)
+            .expect("checkpoint fork");
+        assert!(definition.semantic_owner_count() > definition_owners);
+        assert!(tokens.semantic_owner_count() > token_owners);
+        drop(fork);
+
+        assert_eq!(definition.semantic_owner_count(), definition_owners);
+        assert_eq!(tokens.semantic_owner_count(), token_owners);
     })
     .expect("universe allocation");
 }

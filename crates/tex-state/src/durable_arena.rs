@@ -422,6 +422,19 @@ pub(crate) struct TokenListArena<G> {
 }
 
 impl<G> TokenListArena<G> {
+    pub(crate) fn fork(&self, accounting: MemoryAccounting) -> Self {
+        Self {
+            next_serial: self.next_serial,
+            chunks: Vec::new(),
+            builder_slots: Vec::new(),
+            free_builder_slots: Vec::new(),
+            free_chunk_head: NO_CHUNK,
+            next_builder_serial: 1,
+            accounting,
+            _brand: PhantomData,
+        }
+    }
+
     pub(super) fn new(
         _token: ArenaToken<G, TokenListNamespace>,
         accounting: MemoryAccounting,
@@ -717,6 +730,15 @@ pub(crate) struct GlueArena<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
+impl<G> Clone for GlueArena<G> {
+    fn clone(&self) -> Self {
+        Self {
+            rows: self.rows.clone(),
+            _brand: PhantomData,
+        }
+    }
+}
+
 impl<G> GlueArena<G> {
     pub(super) fn new(_token: ArenaToken<G, GlueNamespace>) -> Self {
         Self {
@@ -784,6 +806,15 @@ impl<G> GlueArena<G> {
 pub(crate) struct ProvenanceArena<G> {
     rows: Vec<OriginRecord>,
     _brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> Clone for ProvenanceArena<G> {
+    fn clone(&self) -> Self {
+        Self {
+            rows: self.rows.clone(),
+            _brand: PhantomData,
+        }
+    }
 }
 
 impl<G> ProvenanceArena<G> {

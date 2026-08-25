@@ -6,7 +6,8 @@ use std::sync::{Arc, Weak};
 
 use tex_state::{
     DetachedFormatImage, FormatError, ReachabilityStore, RetainedAttachmentKey,
-    RetainedStateAccessError, RetainedStateAdmission, RetainedStateGeneration,
+    RetainedStateAccessError, RetainedStateAdmission, RetainedStateForkBuild,
+    RetainedStateForkError, RetainedStateForkOperation, RetainedStateGeneration,
     RetainedStateOperation, RetainedStateRetirement, SessionEpochError, Universe, UniverseError,
     World,
 };
@@ -137,6 +138,29 @@ pub enum RetainedEngineAccessError {
     LiveAttachment,
     State(RetainedStateAccessError),
 }
+
+#[derive(Debug)]
+pub enum RetainedEngineForkError {
+    Access(RetainedEngineAccessError),
+    Restore(crate::CheckpointRestoreError),
+    SlotsExhausted,
+    IdentityExhausted,
+}
+
+impl core::fmt::Display for RetainedEngineForkError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Access(error) => write!(formatter, "checkpoint fork access failed: {error:?}"),
+            Self::Restore(error) => write!(formatter, "checkpoint fork restore failed: {error}"),
+            Self::SlotsExhausted => formatter.write_str("both retained generation slots are live"),
+            Self::IdentityExhausted => {
+                formatter.write_str("retained generation identity space is exhausted")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RetainedEngineForkError {}
 
 /// Scalar evidence that optional named roots were released without touching
 /// immutable rows in their shared generation.
@@ -271,6 +295,49 @@ impl<'store> RetainedEngineGeneration<'store> {
         })
     }
 
+    /// Creates the sole current slot from one accepted named checkpoint.
+    /// The returned attachment owns a restored [`crate::MainControl`]; a
+    /// caller takes it inside the first destination admission episode.
+    pub fn fork_checkpoint(
+        &mut self,
+        checkpoint: &RetainedCheckpointKey,
+    ) -> Result<
+        (
+            Self,
+            RetainedEngineAttachmentKey,
+            crate::ExecutionBudgetCounters,
+        ),
+        RetainedEngineForkError,
+    > {
+        let generation = next_generation();
+        let result = self.state.try_fork_owned(ForkCheckpoint {
+            generation,
+            source_generation: self.generation,
+            sidecars: &self.sidecars,
+            checkpoint,
+        });
+        let (state, sidecars, budget_counters) = match result {
+            Ok(result) => result,
+            Err(RetainedStateForkError::Operation(error)) => return Err(error),
+            Err(RetainedStateForkError::SlotsExhausted) => {
+                return Err(RetainedEngineForkError::SlotsExhausted);
+            }
+            Err(RetainedStateForkError::IdentityExhausted) => {
+                return Err(RetainedEngineForkError::IdentityExhausted);
+            }
+        };
+        Ok((
+            Self {
+                generation,
+                state,
+                sidecars,
+                liveness: Arc::new(()),
+            },
+            RetainedEngineAttachmentKey { generation },
+            budget_counters,
+        ))
+    }
+
     #[must_use]
     pub fn witness(&self) -> RetainedEngineGenerationWitness {
         RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
@@ -305,6 +372,54 @@ impl<'store> RetainedEngineGeneration<'store> {
         Ok(RetainedEngineRetirement {
             state: self.state.retire()?,
         })
+    }
+}
+
+struct ForkCheckpoint<'a> {
+    generation: u64,
+    source_generation: u64,
+    sidecars: &'a RetainedAttachmentKey,
+    checkpoint: &'a RetainedCheckpointKey,
+}
+
+impl RetainedStateForkOperation for ForkCheckpoint<'_> {
+    type Output = crate::ExecutionBudgetCounters;
+    type Error = RetainedEngineForkError;
+
+    fn run<G: 'static>(
+        self,
+        mut source: RetainedStateAdmission<'_, G>,
+    ) -> Result<RetainedStateForkBuild<G, Self::Output>, Self::Error> {
+        let (universe, sidecars) = source
+            .universe_and_attachment_mut::<EngineGenerationSidecars<G>>(self.sidecars)
+            .map_err(|error| RetainedEngineForkError::Access(error.into()))?;
+        if sidecars.generation != self.source_generation {
+            return Err(RetainedEngineForkError::Access(
+                RetainedEngineAccessError::ForeignGeneration,
+            ));
+        }
+        if sidecars.attachment.is_some() {
+            return Err(RetainedEngineForkError::Access(
+                RetainedEngineAccessError::LiveAttachment,
+            ));
+        }
+        let checkpoint = sidecars
+            .checkpoints
+            .get(self.source_generation, self.checkpoint)
+            .map_err(RetainedEngineForkError::Access)?;
+        let budget_counters = checkpoint.budget_counters();
+        let (universe, control) = checkpoint
+            .fork_state(universe)
+            .map_err(RetainedEngineForkError::Restore)?;
+        Ok(RetainedStateForkBuild::new(
+            universe,
+            Box::new(EngineGenerationSidecars::<G> {
+                generation: self.generation,
+                checkpoints: RetainedCheckpointSlots::default(),
+                attachment: Some(Box::new(control)),
+            }),
+            budget_counters,
+        ))
     }
 }
 
@@ -549,7 +664,7 @@ fn next_generation() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_command::CommandState;
+    use tex_command::{CommandProfile, CommandState, RegisteredSourceKind, SourceRegistration};
     use tex_state::env::AssignmentScope;
     use tex_state::interner::InternerBudget;
 
@@ -589,6 +704,173 @@ mod tests {
             admitted
                 .checkpoint(self.0)
                 .map(crate::EngineCheckpoint::boundary)
+        }
+    }
+
+    struct CaptureCount(i32);
+
+    impl RetainedEngineOperation for CaptureCount {
+        type Output = RetainedCheckpointKey;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            admitted
+                .universe()
+                .assign_count(0, self.0, AssignmentScope::Global)
+                .expect("baseline count");
+            let checkpoint = {
+                let universe = admitted.universe();
+                let mut control = crate::MainControl::tex82_initex(universe);
+                control
+                    .capture_checkpoint(
+                        crate::EngineBoundary::JobStart,
+                        universe,
+                        crate::ExecutionBudgetCounters {
+                            committed_steps: 7,
+                            cumulative_fuel: 11,
+                        },
+                    )
+                    .expect("quiescent checkpoint")
+            };
+            admitted.retain_checkpoint(checkpoint)
+        }
+    }
+
+    struct ConsumeFork {
+        runtime: RetainedEngineAttachmentKey,
+        replacement: i32,
+    }
+
+    impl RetainedEngineOperation for ConsumeFork {
+        type Output = (i32, RetainedCheckpointKey);
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            let mut control = admitted
+                .take_attachment::<crate::MainControl<G>>(self.runtime)
+                .expect("fork owns restored main control");
+            let before = admitted
+                .universe()
+                .command_context()
+                .expect("command context")
+                .count(0)
+                .expect("restored count");
+            admitted
+                .universe()
+                .assign_count(0, self.replacement, AssignmentScope::Global)
+                .expect("candidate mutation");
+            let checkpoint = control
+                .capture_checkpoint(
+                    crate::EngineBoundary::JobStart,
+                    admitted.universe(),
+                    crate::ExecutionBudgetCounters::default(),
+                )
+                .expect("candidate checkpoint");
+            (before, admitted.retain_checkpoint(checkpoint))
+        }
+    }
+
+    struct CaptureLoadedFormat;
+
+    impl RetainedEngineOperation for CaptureLoadedFormat {
+        type Output = RetainedCheckpointKey;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            let mut control = crate::MainControl::with_profile(CommandProfile::TEX82);
+            let checkpoint = control
+                .capture_checkpoint(
+                    crate::EngineBoundary::JobStart,
+                    admitted.universe(),
+                    crate::ExecutionBudgetCounters::default(),
+                )
+                .expect("loaded format checkpoint");
+            admitted.retain_checkpoint(checkpoint)
+        }
+    }
+
+    struct CaptureResourceInput;
+
+    impl RetainedEngineOperation for CaptureResourceInput {
+        type Output = RetainedCheckpointKey;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            let mut control = crate::MainControl::tex82_initex(admitted.universe());
+            control
+                .register_root_source(SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    std::sync::Arc::<[u8]>::from(&b"\\input child\\end"[..]),
+                ))
+                .expect("root source");
+            let checkpoint = control
+                .capture_checkpoint(
+                    crate::EngineBoundary::JobStart,
+                    admitted.universe(),
+                    crate::ExecutionBudgetCounters::default(),
+                )
+                .expect("resource checkpoint");
+            admitted.retain_checkpoint(checkpoint)
+        }
+    }
+
+    struct SuspendFork(RetainedEngineAttachmentKey);
+
+    impl RetainedEngineOperation for SuspendFork {
+        type Output = RetainedEngineAttachmentKey;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            let mut control = admitted
+                .take_attachment::<crate::MainControl<G>>(self.0)
+                .expect("fork runtime");
+            let step = control
+                .advance_episode(admitted.universe())
+                .expect("resource suspension");
+            assert!(matches!(
+                step,
+                crate::StepResult::Suspended(crate::ResourceNeed::Input { ref name, .. })
+                    if name == "child.tex"
+            ));
+            admitted.attach(control)
+        }
+    }
+
+    struct ResumeFork(RetainedEngineAttachmentKey);
+
+    impl RetainedEngineOperation for ResumeFork {
+        type Output = crate::StepResult;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            let mut control = admitted
+                .take_attachment::<crate::MainControl<G>>(self.0)
+                .expect("suspended runtime");
+            control.capabilities_mut().register_input(
+                "child.tex",
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    std::sync::Arc::<[u8]>::from(&b""[..]),
+                ),
+            );
+            for _ in 0..8 {
+                let step = control
+                    .advance_episode(admitted.universe())
+                    .expect("resource retry");
+                if step == crate::StepResult::Progress(crate::MainControlStep::End) {
+                    return step;
+                }
+            }
+            panic!("fulfilled resource input did not reach the terminal step")
+        }
+    }
+
+    struct ReadCount;
+
+    impl RetainedEngineOperation for ReadCount {
+        type Output = i32;
+
+        fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            admitted
+                .universe
+                .command_context()
+                .expect("command context")
+                .count(0)
+                .expect("count")
         }
     }
 
@@ -775,6 +1057,135 @@ mod tests {
         assert_eq!(
             second.with_admitted(Read(&key)),
             Ok(Err(RetainedEngineAccessError::ForeignGeneration))
+        );
+    }
+
+    #[test]
+    fn retained_checkpoint_fork_rejects_and_reuses_the_current_slot() {
+        let store = store();
+        let mut accepted =
+            RetainedEngineGeneration::new(&store, World::default()).expect("accepted");
+        let checkpoint = accepted
+            .with_admitted(CaptureCount(41))
+            .expect("checkpoint");
+        let accepted_witness = accepted.witness();
+
+        let occupied =
+            RetainedEngineGeneration::new(&store, World::default()).expect("occupied current slot");
+        assert!(matches!(
+            accepted.fork_checkpoint(&checkpoint),
+            Err(RetainedEngineForkError::SlotsExhausted)
+        ));
+        assert_eq!(accepted.with_admitted(ReadCount), Ok(41));
+        drop(occupied);
+
+        let (mut rejected, runtime, counters) = accepted
+            .fork_checkpoint(&checkpoint)
+            .expect("first candidate fork");
+        assert_eq!(counters.committed_steps, 7);
+        assert_eq!(counters.cumulative_fuel, 11);
+        let (before, _rejected_checkpoint) = rejected
+            .with_admitted(ConsumeFork {
+                runtime,
+                replacement: 99,
+            })
+            .expect("candidate admission");
+        assert_eq!(before, 41);
+        drop(rejected);
+        assert_eq!(
+            accepted
+                .with_admitted(ReadCount)
+                .expect("accepted admission"),
+            41,
+            "candidate rejection leaves the accepted state unchanged"
+        );
+
+        let (mut accepted_candidate, runtime, _) = accepted
+            .fork_checkpoint(&checkpoint)
+            .expect("reused current slot");
+        let (before, replacement_checkpoint) = accepted_candidate
+            .with_admitted(ConsumeFork {
+                runtime,
+                replacement: 52,
+            })
+            .expect("candidate admission");
+        assert_eq!(before, 41);
+        accepted.retire().expect("old prior retires");
+        assert!(!accepted_witness.is_live());
+        assert_eq!(
+            accepted_candidate
+                .with_admitted(ReadCount)
+                .expect("replacement admission"),
+            52,
+            "the accepted replacement survives old-prior retirement"
+        );
+
+        let (mut restarted, runtime, _) = accepted_candidate
+            .fork_checkpoint(&replacement_checkpoint)
+            .expect("later accepted restart");
+        let (before, _checkpoint) = restarted
+            .with_admitted(ConsumeFork {
+                runtime,
+                replacement: 73,
+            })
+            .expect("restart admission");
+        assert_eq!(before, 52);
+        drop(restarted);
+        assert_eq!(accepted_candidate.with_admitted(ReadCount), Ok(52));
+    }
+
+    #[test]
+    fn loaded_format_checkpoint_forks_the_first_document_without_retaining_the_image() {
+        let image = crate::test_harness::with_tex82_universe(|universe| {
+            universe
+                .assign_count(0, 314, AssignmentScope::Global)
+                .expect("format count");
+            universe.capture_format_image().expect("format image")
+        });
+        let store = store();
+        let mut accepted = RetainedEngineGeneration::from_format(&store, World::memory(), &image)
+            .expect("loaded format generation");
+        let checkpoint = accepted
+            .with_admitted(CaptureLoadedFormat)
+            .expect("format checkpoint admission");
+        drop(image);
+
+        let (mut current, runtime, _) = accepted
+            .fork_checkpoint(&checkpoint)
+            .expect("first document fork");
+        let (before, _checkpoint) = current
+            .with_admitted(ConsumeFork {
+                runtime,
+                replacement: 271,
+            })
+            .expect("first document admission");
+        assert_eq!(before, 314);
+        drop(current);
+        assert_eq!(accepted.with_admitted(ReadCount), Ok(314));
+    }
+
+    #[test]
+    fn forked_candidate_can_suspend_for_a_resource_and_resume_after_acceptance() {
+        let store = store();
+        let mut accepted =
+            RetainedEngineGeneration::new(&store, World::memory()).expect("accepted generation");
+        let checkpoint = accepted
+            .with_admitted(CaptureResourceInput)
+            .expect("resource checkpoint admission");
+        let (mut current, runtime, _) = accepted
+            .fork_checkpoint(&checkpoint)
+            .expect("resource candidate fork");
+        let suspension = current
+            .with_admitted(SuspendFork(runtime))
+            .expect("suspension admission");
+
+        accepted.retire().expect("accept current generation");
+        let resumed = current
+            .with_admitted(ResumeFork(suspension))
+            .expect("resume admission");
+        assert_eq!(
+            resumed,
+            crate::StepResult::Progress(crate::MainControlStep::End)
         );
     }
 

@@ -26,6 +26,49 @@ pub trait RetainedStateOperation {
     fn run<G: 'static>(self, admitted: RetainedStateAdmission<'_, G>) -> Self::Output;
 }
 
+/// Atomic constructor for one destination generation derived from an
+/// admitted retained source. The operation's generic runtime values are
+/// consumed into the new physical slot and cannot escape in `Output`.
+pub trait RetainedStateForkOperation {
+    type Output;
+    type Error;
+
+    fn run<G: 'static>(
+        self,
+        source: RetainedStateAdmission<'_, G>,
+    ) -> Result<RetainedStateForkBuild<G, Self::Output>, Self::Error>;
+}
+
+/// Fully prepared destination aggregate awaiting physical-slot publication.
+#[doc(hidden)]
+pub struct RetainedStateForkBuild<G, T> {
+    universe: Universe<G>,
+    attachment: Box<dyn Any>,
+    output: T,
+}
+
+impl<G, T> RetainedStateForkBuild<G, T> {
+    #[doc(hidden)]
+    pub fn new(universe: Universe<G>, attachment: Box<dyn Any>, output: T) -> Self {
+        Self {
+            universe,
+            attachment,
+            output,
+        }
+    }
+
+    fn into_parts(self) -> (Universe<G>, Box<dyn Any>, T) {
+        (self.universe, self.attachment, self.output)
+    }
+}
+
+#[derive(Debug)]
+pub enum RetainedStateForkError<E> {
+    Operation(E),
+    SlotsExhausted,
+    IdentityExhausted,
+}
+
 /// Branded mutable admission of one physical generation and its sidecars.
 pub struct RetainedStateAdmission<'a, G> {
     incarnation: u64,
@@ -267,6 +310,60 @@ impl<'store> RetainedStateGeneration<'store> {
             Ok(output) => output,
             Err(payload) => std::panic::resume_unwind(payload),
         }
+    }
+
+    /// Builds the sole free prior/current slot from one admitted retained
+    /// source. Nothing is inserted until the aggregate operation succeeds.
+    pub fn try_fork_owned<O: RetainedStateForkOperation>(
+        &mut self,
+        operation: O,
+    ) -> Result<(Self, RetainedAttachmentKey, O::Output), RetainedStateForkError<O::Error>> {
+        let key = self
+            .key
+            .expect("a live retained generation has a store slot");
+        let built = self
+            .store
+            .with_generation_mut(key, |physical| {
+                operation.run::<PhysicalGenerationCoordinate>(RetainedStateAdmission {
+                    incarnation: physical.incarnation,
+                    universe: &mut physical.universe,
+                    attachment: &mut physical.attachment,
+                })
+            })
+            .expect("a live retained generation keeps its store slot")
+            .map_err(RetainedStateForkError::Operation)?;
+        let (universe, attachment, output) = built.into_parts();
+        let incarnation = next_incarnation();
+        let physical = PhysicalStateGeneration {
+            incarnation,
+            universe,
+            attachment: Some(attachment),
+            #[cfg(feature = "profiling")]
+            _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
+        };
+        let key = self
+            .store
+            .insert_generation(physical)
+            .map_err(|error| match error {
+                ReachabilityStoreError::GenerationSlotsExhausted => {
+                    RetainedStateForkError::SlotsExhausted
+                }
+                ReachabilityStoreError::GenerationIdentityExhausted => {
+                    RetainedStateForkError::IdentityExhausted
+                }
+                ReachabilityStoreError::StaleGeneration => {
+                    unreachable!("insertion cannot report a stale generation")
+                }
+            })?;
+        Ok((
+            Self {
+                store: self.store.clone(),
+                key: Some(key),
+                owner: core::marker::PhantomData,
+            },
+            RetainedAttachmentKey { incarnation },
+            output,
+        ))
     }
 
     #[must_use]

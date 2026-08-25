@@ -146,6 +146,14 @@ pub(crate) struct DefinitionArena<G> {
 }
 
 impl<G> DefinitionArena<G> {
+    pub(crate) fn fork(&self, accounting: MemoryAccounting) -> Self {
+        Self {
+            next_serial: self.next_serial,
+            accounting,
+            _brand: PhantomData,
+        }
+    }
+
     pub(super) fn new(
         _token: ArenaToken<G, DefinitionNamespace>,
         accounting: MemoryAccounting,
