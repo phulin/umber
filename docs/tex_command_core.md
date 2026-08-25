@@ -4009,13 +4009,21 @@ plain.tex's `\footnote` reaching `$^{\the\footnotenum}$` -- showed all four
 (`umber2-johp.199`).
 
 `MathFieldBody::OpenGroup` is therefore the braced outcome: `tex-command`
-consumes only the mandatory brace, and `execute_live_math_group` opens
-`push_math`'s save and mode levels and steps main control until the group's
-own level is gone. Which brace is "its own" is decided by the group _depth_
-sampled before `push_math`, never by the innermost group kind: a nested
-subformula opens another `math_group` and any brace group inside the body
-opens a `simple_group`, so the innermost kind says nothing about whose
-closer arrived.
+consumes only the mandatory brace, and `MainControl::accept_math_field` opens
+`push_math`'s save and mode levels, retains §1153's typed parent-field
+destination, and returns to the ordinary production loop. Each body command
+is then its own normal main-control operation. In particular, a file enquiry
+inside a superscript uses the same generation-owned typed resource
+suspension as one at top level; the opener and already committed body
+commands are neither copied nor replayed. The delivered `}` is
+`EndMathGroup`, which performs §1186's `unsave`/`fin_mlist`, pops that exact
+destination, and fills the reserved nucleus or script field.
+
+This destination stack is executor structural state, not a command scanner
+or a caller-order mailbox. The command attempt and any suspended scanner
+frames remain wholly owned by the existing command-generation lifecycle;
+the math destination records only where §1186 writes after the ordinary
+resource continuation resumes.
 
 `\mathchoice` (§1172) is the same mechanism, not an exception to it.
 `append_choices` is `tail_append(new_choice); ... push_math(math_choice_group);
@@ -4030,9 +4038,10 @@ pushed and where the finished mlist is stored.
 Absorbing the four branches instead added a fifth observable difference on top
 of the four above: the absorbed branches are replayed from stored levels in
 _reverse_ order, so the oracle's `\displaystyle` branch arrived as
-`\scriptscriptstyle` (`umber2-johp.220`). `execute_live_math_group` takes the
-group kind as a parameter for this reason -- `math_group` and
-`math_choice_group` share every line of it.
+`\scriptscriptstyle` (`umber2-johp.220`). `execute_live_math_choice_group`
+therefore retains the same live input order for `math_choice_group`; ordinary
+`math_group` fields close through `EndMathGroup` in the production loop as
+described above.
 
 ### 33.9 `\aftergroup` is one backup per token, not one replay level
 

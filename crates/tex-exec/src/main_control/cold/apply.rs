@@ -65,6 +65,7 @@ pub(in crate::main_control) fn apply<G>(
     boxes: &mut ReplayBoxes<G>,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
+    active_math_fields: &mut Vec<ActiveMathFieldTarget>,
     active_math_left_boundaries: &[bool],
     active_math_shifts: &[MathShiftContext],
     prepared_dvi_pages: &mut PreparedDviPages,
@@ -2987,6 +2988,29 @@ pub(in crate::main_control) fn apply<G>(
                         context: "math group",
                     })?;
             schedule_aftergroup(command, stores, aftergroup)?;
+            if kind == GroupKind::Math {
+                // TeX82 §1186 runs `fin_mlist` in the right-brace command
+                // itself, then writes the result through §1153's saved field
+                // pointer. This is the ordinary main-control closer for the
+                // live group, not a return into a nested executor loop.
+                let target = *active_math_fields.last().ok_or(ExecError::MissingToken {
+                    context: "active math field",
+                })?;
+                let level = crate::box_runtime::commit_current_list(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.fuel,
+                )?;
+                let list = finish_math_list(
+                    level.list().nodes(),
+                    level.list().incomplete_fraction(),
+                    stores,
+                )?;
+                let field = collapse_singleton_math_group(stores, list);
+                fill_math_field_target(modes, stores, target, field);
+                active_math_fields.pop();
+            }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AlignmentRecovery { brace } => {

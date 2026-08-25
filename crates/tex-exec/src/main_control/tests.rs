@@ -5838,6 +5838,69 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
 }
 
 #[test]
+fn superscript_math_group_propagates_and_resumes_input_probe() {
+    // TeX82 §1153 returns from `scan_math` immediately after `push_math`;
+    // §1030 ordinary main control executes this braced superscript until
+    // §1186's right-brace command stores the finished mlist. A resource need
+    // in that body must therefore use the ordinary typed suspension seam. The
+    // global increment before the probe proves that resumption neither
+    // replays the opener nor restarts already committed body commands.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"$^{\global\advance\count0 by1 \openin0=child \ifeof0\else\closein0\fi}\global\count1=23",
+        );
+
+        let need = loop {
+            match control
+                .advance_episode(stores)
+                .expect("superscript file enquiry suspends")
+            {
+                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
+                StepResult::Progress(_) => {}
+                other => panic!("unexpected superscript probe step: {other:?}"),
+            }
+        };
+        let ResourceNeed::InputProbe { request } = &need else {
+            unreachable!();
+        };
+        assert_eq!(request.name, "child.tex");
+        assert_eq!(stores.count(0).expect("count register"), 1);
+        control.capabilities_mut().register_input_probe(
+            request.name.clone(),
+            tex_command::FileEnquiryResource::new(
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&b""[..]),
+                ),
+                None,
+            ),
+        );
+
+        for _ in 0..16 {
+            control
+                .advance_episode(stores)
+                .expect("superscript probe resumes through its right brace");
+            if stores.count(1).expect("count register") == 23 {
+                break;
+            }
+        }
+        assert_eq!(stores.count(0).expect("count register"), 1);
+        assert_eq!(stores.count(1).expect("count register"), 23);
+        assert!(control.active_math_fields.is_empty());
+        assert!(control.pending_resource_operation.is_none());
+        assert_eq!(
+            control
+                .advance_telemetry()
+                .resource_replayed_delivered_tokens,
+            0
+        );
+        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
+    });
+}
+
+#[test]
 fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
     // e-TeX [27.465] enters a nested general-text collector for `\unexpanded`.
     // Its expanded opener may suspend inside pdfTeX §1590 file enquiry; retry

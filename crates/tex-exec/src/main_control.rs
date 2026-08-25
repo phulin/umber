@@ -111,6 +111,22 @@ struct PreparedShipout {
     node: Node,
 }
 
+/// The exact parent-list field that TeX82 §1153 saved before `push_math`.
+///
+/// The target remains in the parent mode level while ordinary main control
+/// executes the braced field. Keeping this typed structural continuation lets
+/// every body command cross the normal host-resource suspension seam without
+/// replaying the opener or reconstructing a caller destination from command
+/// order.
+#[derive(Clone, Copy, Debug)]
+enum ActiveMathFieldTarget {
+    Nucleus {
+        node_index: usize,
+        simplify_accent: bool,
+    },
+    Script(ScriptTarget),
+}
+
 /// Production command main control with command-owned source consumption.
 #[derive(Debug)]
 pub struct MainControl<G> {
@@ -138,6 +154,10 @@ pub struct MainControl<G> {
     /// TeX82 §1174's `saved(-2)` branch count for each live `\mathchoice`,
     /// outermost first. e-TeX [49.1292] observes it through `\showgroups`.
     active_math_choices: Vec<usize>,
+    /// TeX82 §1153's `saved(0)` field destinations for live `math_group`
+    /// levels, outermost first. The save stack owns scope restoration; this
+    /// executor-side vector owns only the typed parent-list destination.
+    active_math_fields: Vec<ActiveMathFieldTarget>,
     /// e-TeX [48.1191]'s saved delimiter identity for each live
     /// `math_left_group`, outermost first. `true` denotes `\middle`.
     active_math_left_boundaries: Vec<bool>,
@@ -1954,6 +1974,7 @@ impl<G> Default for MainControl<G> {
             boxes: ReplayBoxes::default(),
             active_discretionaries: Vec::new(),
             active_math_choices: Vec::new(),
+            active_math_fields: Vec::new(),
             active_math_left_boundaries: Vec::new(),
             active_math_shifts: Vec::new(),
             skip_pointer_sources: Vec::new(),
@@ -2348,6 +2369,7 @@ impl<G> MainControl<G> {
             || !self.boxes.format_dump_is_quiescent()
             || !self.active_discretionaries.is_empty()
             || !self.active_math_choices.is_empty()
+            || !self.active_math_fields.is_empty()
             || !self.active_math_left_boundaries.is_empty()
             || !self.active_math_shifts.is_empty()
             || self.main_loop_active
@@ -5979,22 +6001,18 @@ impl<G> MainControl<G> {
         Ok(())
     }
 
-    /// Runs one live `push_math` group to its closing brace.
+    /// Runs one live `math_choice_group` to its closing brace.
     ///
-    /// Both of TeX82's braced mlist openers work this way. §1153 is
-    /// ``back_input; scan_left_brace; saved(0):=p; incr(save_ptr);
-    /// push_math(math_group)`` and §1172/§1174 are
-    /// ``push_math(math_choice_group); scan_left_brace``: in neither case is
-    /// the body absorbed, it is ordinary input that main control reads, and
-    /// the matching arm of `handle_right_brace` (§1186 for `math_group`,
-    /// §1174's `build_choices` for `math_choice_group`) closes it on the
+    /// TeX82 §1172/§1174 use
+    /// ``push_math(math_choice_group); scan_left_brace``: the body is ordinary
+    /// input that main control reads until §1174's `build_choices` sees its
     /// matching `}`. The mandatory brace has already been consumed by the
-    /// scanner that requested this group; this opens `push_math`'s save
-    /// level and mode level and steps until the brace that closes *this*
-    /// level arrives.
-    fn execute_live_math_group(
+    /// scanner that requested this group; this branch path opens the
+    /// save/mode levels and steps until that specific branch closes. Ordinary
+    /// §1153 `math_group` fields instead return directly to the production
+    /// main-control loop through [`Self::accept_math_field`].
+    fn execute_live_math_choice_group(
         &mut self,
-        kind: GroupKind,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
@@ -6011,7 +6029,7 @@ impl<G> MainControl<G> {
             &mut stores.command_context().expect("math-group admission"),
             &mut self.command,
             diagnostic_effects,
-            kind,
+            GroupKind::MathChoice,
         );
         self.modes.push_at_line(
             Mode::Math,
@@ -6038,7 +6056,7 @@ impl<G> MainControl<G> {
             > enclosing_depth
         {
             let step = self.execute_nested_operation(stores, None, diagnostic_effects)?;
-            // `execute_live_math_group` fuses the body into its opener's
+            // `execute_live_math_choice_group` fuses the body into its opener's
             // outer operation, but TeX finishes each nested command before
             // fetching the next one. Publish its completed diagnostic
             // program at that same boundary so a following immediate World
@@ -6120,10 +6138,10 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.command_scan_math_choice_group(stores, diagnostic_effects)?;
-        self.execute_live_math_group(GroupKind::MathChoice, stores, diagnostic_effects)
+        self.execute_live_math_choice_group(stores, diagnostic_effects)
     }
 
-    /// Stores one completed TeX82 §1151 field.
+    /// Stores one completed TeX82 §1151 field or opens its live §1153 group.
     ///
     /// §1151 ends with `math_type(p):=math_char; character(p):=qi(c mod 256)`
     /// and §1151's own `fam` rule -- it never builds a noad, so `c`'s class
@@ -6131,29 +6149,54 @@ impl<G> MainControl<G> {
     /// deferred input: the command processor has already read, expanded, and
     /// classified everything the field consumed, so nothing is replayed and
     /// no input level is opened (`umber2-johp.265`).
-    fn execute_math_field(
+    fn accept_math_field(
         &mut self,
         field: tex_command::MathFieldEpisode,
+        target: ActiveMathFieldTarget,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<MathField, ExecError> {
-        match field.body {
-            MathFieldBody::Missing => Ok(MathField::Empty),
-            MathFieldBody::Character(code) => Ok(MathField::MathChar(
+    ) -> Result<(), ExecError> {
+        let field = match field.body {
+            MathFieldBody::Missing => MathField::Empty,
+            MathFieldBody::Character(code) => MathField::MathChar(
                 math_char(
                     &stores.command_context().expect("live generation"),
                     u32::from(code),
                     field.provenance.primary,
                 )?
                 .1,
-            )),
+            ),
             MathFieldBody::OpenGroup => {
-                let list =
-                    self.execute_live_math_group(GroupKind::Math, stores, diagnostic_effects)?;
-                let context = stores.command_context().expect("live generation");
-                Ok(collapse_singleton_math_group(&context, list))
+                // TeX82 §1153 returns to `main_control` immediately after
+                // `push_math(math_group)`. The field body is not an inner
+                // executor loop: each of its commands must therefore retain
+                // the normal typed delivery/scanner/resource continuation.
+                // `EndMathGroup` consumes this exact destination at §1186.
+                enter_group(
+                    &mut stores.command_context().expect("math-group admission"),
+                    &mut self.command,
+                    diagnostic_effects,
+                    GroupKind::Math,
+                );
+                self.modes.push_at_line(
+                    Mode::Math,
+                    self.command
+                        .current_file_line_number()
+                        .try_into()
+                        .unwrap_or(i32::MAX),
+                )?;
+                self.active_math_fields.push(target);
+                self.main_loop_active = false;
+                return Ok(());
             }
-        }
+        };
+        fill_math_field_target(
+            &mut self.modes,
+            &stores.command_context().expect("math-field admission"),
+            target,
+            field,
+        );
+        Ok(())
     }
 
     fn apply_math_request(
@@ -6195,46 +6238,26 @@ impl<G> MainControl<G> {
                         MathField::Empty,
                     )));
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
-                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
-                // TeX82 §1186's second brace simplification: when a braced
-                // field contains exactly one accent noad and is the nucleus
-                // of an Ord atom, replace that Ord atom by the accent itself.
-                // Following scripts must attach to the accent, not to a
-                // wrapper whose converted nucleus and scripts become sibling
-                // boxes.
-                if kind == MathTextFieldKind::Ord
-                    && let MathField::SubMlist(ref list) = field
-                    && let [Node::MathNoad(accent)] = stores
-                        .page_node_list(*list)
-                        .expect("math field belongs to the live page arena")
-                        .nodes()
-                    && matches!(accent.kind, NoadKind::Accent { .. })
-                {
-                    self.modes
-                        .current_list_mutation()
-                        .with_node_mut(node_index, |node| {
-                            *node = Node::MathNoad(accent.clone());
-                        })
-                        .expect("reserved math noad must remain present");
-                } else {
-                    self.modes
-                        .current_list_mutation()
-                        .with_node_mut(node_index, |node| {
-                            let Node::MathNoad(noad) = node else {
-                                unreachable!("reserved math noad must remain a noad")
-                            };
-                            debug_assert!(matches!(noad.nucleus, MathField::Empty));
-                            noad.nucleus = field;
-                        })
-                        .expect("reserved math noad must remain present");
-                }
+                self.accept_math_field(
+                    episode,
+                    ActiveMathFieldTarget::Nucleus {
+                        node_index,
+                        simplify_accent: kind == MathTextFieldKind::Ord,
+                    },
+                    stores,
+                    diagnostic_effects,
+                )?;
             }
             MathRequest::Script(script) => {
                 let target =
                     reserve_script_target(self.modes.current_list_mutation(), stores, script.kind)?;
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
-                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
-                fill_script_target(self.modes.current_list_mutation(), target, field);
+                self.accept_math_field(
+                    episode,
+                    ActiveMathFieldTarget::Script(target),
+                    stores,
+                    diagnostic_effects,
+                )?;
             }
             MathRequest::Limits(kind) => {
                 if !apply_limits(self.modes.current_list_mutation(), kind) {
@@ -6318,16 +6341,25 @@ impl<G> MainControl<G> {
                     }));
             }
             MathRequest::Radical(delimiter) => {
-                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
-                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
+                let node_index = self.modes.current_list().nodes().len();
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         NoadKind::Radical {
                             delimiter: delimiter.code,
                         },
-                        field,
+                        MathField::Empty,
                     )));
+                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                self.accept_math_field(
+                    episode,
+                    ActiveMathFieldTarget::Nucleus {
+                        node_index,
+                        simplify_accent: false,
+                    },
+                    stores,
+                    diagnostic_effects,
+                )?;
             }
             MathRequest::Accent { character } => {
                 let accent = if let Some(accent) = character {
@@ -6350,20 +6382,29 @@ impl<G> MainControl<G> {
                     report.error().jump_out()?;
                     self.command_scan_math_character(stores, diagnostic_effects)?
                 };
-                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
-                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
                 let accent = math_char(
                     &stores.command_context().expect("live generation"),
                     u32::from(accent.code),
                     accent.provenance.primary,
                 )?
                 .1;
+                let node_index = self.modes.current_list().nodes().len();
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         NoadKind::Accent { accent },
-                        field,
+                        MathField::Empty,
                     )));
+                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                self.accept_math_field(
+                    episode,
+                    ActiveMathFieldTarget::Nucleus {
+                        node_index,
+                        simplify_accent: false,
+                    },
+                    stores,
+                    diagnostic_effects,
+                )?;
             }
             MathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
                 self.modes.current_list_mutation().push(Node::Glue {
@@ -8978,6 +9019,7 @@ impl<G> MainControl<G> {
                     &mut self.boxes,
                     &self.active_discretionaries,
                     &self.active_math_choices,
+                    &mut self.active_math_fields,
                     &self.active_math_left_boundaries,
                     &self.active_math_shifts,
                     &mut self.prepared_dvi_pages,
@@ -9678,6 +9720,55 @@ pub(crate) fn fill_script_target(
         *reserved = field;
     })
     .expect("reserved canonical script target must remain present");
+}
+
+/// Applies §1151/§1186's finished field to the parent list position saved by
+/// the opener. The mode level containing the field has already been popped.
+fn fill_math_field_target<G>(
+    modes: &mut ModeNest,
+    stores: &CommandContext<'_, G>,
+    target: ActiveMathFieldTarget,
+    field: MathField,
+) {
+    match target {
+        ActiveMathFieldTarget::Script(target) => {
+            fill_script_target(modes.current_list_mutation(), target, field);
+        }
+        ActiveMathFieldTarget::Nucleus {
+            node_index,
+            simplify_accent,
+        } => {
+            // TeX82 §1186's second brace simplification: when a braced
+            // field contains exactly one accent noad and is the nucleus of
+            // an Ord atom, replace that Ord atom by the accent itself.
+            let accent = if simplify_accent
+                && let MathField::SubMlist(list) = field
+                && let [Node::MathNoad(accent)] = stores
+                    .page_node_list(list)
+                    .expect("math field belongs to the live page arena")
+                    .nodes()
+                && matches!(accent.kind, NoadKind::Accent { .. })
+            {
+                Some(accent.clone())
+            } else {
+                None
+            };
+            modes
+                .current_list_mutation()
+                .with_node_mut(node_index, |node| {
+                    if let Some(accent) = accent {
+                        *node = Node::MathNoad(accent);
+                    } else {
+                        let Node::MathNoad(noad) = node else {
+                            unreachable!("reserved math noad must remain a noad")
+                        };
+                        debug_assert!(matches!(noad.nucleus, MathField::Empty));
+                        noad.nucleus = field;
+                    }
+                })
+                .expect("reserved math noad must remain present");
+        }
+    }
 }
 
 fn apply_limits(mut list: crate::mode::ModeListMutation<'_>, kind: MathLimitKind) -> bool {
