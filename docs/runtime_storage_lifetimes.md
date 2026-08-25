@@ -633,6 +633,16 @@ counting cloned row vectors, maps, tokens, colors, or forms. The exact arXiv
 baseline attribution remains 134.27 MiB of live bytes under PDF/checkpoint
 clone stacks and 33.477 billion profiled cycles for the complete row.
 
+The authenticated arXiv 20M row used the pinned 2026-03-01 distribution,
+schema-11 `pdflatex.fmt`, 123-key offline closure, fixed clock, 45-second and
+1,536 MiB guards, and the same input digests as the 854,600 KiB baseline.
+Three post-change runs produced wall/user/system seconds of
+18.09/19.46/1.98, 18.91/20.50/2.13, and 14.96/16.37/1.79, with peak RSS of
+653,472, 652,692, and 654,208 KiB. The median wall and user times were 18.09
+and 19.46 seconds, respectively, versus 19.78 and 20.46 seconds at baseline;
+median RSS was 653,472 KiB, 201,128 KiB lower. Every run stopped at the exact
+terminal vector `(20000000,19913119,2218327,6020965,16785710,4011)`.
+
 ## Incremental revisions and two-generation ownership
 
 An incremental session has exactly these possible live runtime generations:
