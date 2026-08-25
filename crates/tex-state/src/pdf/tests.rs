@@ -427,6 +427,42 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
 }
 
 #[test]
+fn candidate_acceptance_replaces_only_the_prior_pdf_suffix() {
+    let mut state = PdfState::<()>::default();
+    state.page_reservations.push(PdfPageReservation {
+        number: 1,
+        object: 11,
+    });
+    state.set_match(vec![1], vec![Some((0, 1))], 1, true);
+    let base = state.snapshot();
+
+    state.page_reservations.push(PdfPageReservation {
+        number: 2,
+        object: 12,
+    });
+    state.set_match(vec![2], vec![Some((0, 1))], 1, true);
+    state.begin_candidate_transaction(&base);
+    state.page_reservations.push(PdfPageReservation {
+        number: 3,
+        object: 13,
+    });
+    state.set_match(vec![3], vec![Some((0, 1))], 1, true);
+    state.accept_candidate_transaction();
+
+    assert_eq!(
+        state
+            .page_reservations
+            .iter()
+            .map(|row| row.number)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert_eq!(state.match_capture(0), Some((0, &[3][..])));
+    assert_eq!(state.undo_base, base.undo_pos);
+    assert_eq!(state.history_head().0, base.undo_pos + 1);
+}
+
+#[test]
 fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
     with_universe(budget(), |universe| {
         let tokens = universe

@@ -273,7 +273,6 @@ impl<G> PdfRawObjects<G> {
         self.0.last_object
     }
 
-    #[must_use]
     pub(crate) fn records(&self) -> impl Iterator<Item = &PdfRawObjectRecord<G>> {
         self.0.records.iter()
     }

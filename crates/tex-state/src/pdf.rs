@@ -614,21 +614,11 @@ impl<T> Extend<(u32, T)> for PdfDenseMap<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct PdfPayloadArena {
     rows: PdfRows<Box<[u8]>>,
     bytes: usize,
     accepted_bytes: Option<usize>,
-}
-
-impl Default for PdfPayloadArena {
-    fn default() -> Self {
-        Self {
-            rows: PdfRows::default(),
-            bytes: 0,
-            accepted_bytes: None,
-        }
-    }
 }
 
 impl PdfPayloadArena {
@@ -1613,13 +1603,13 @@ pub(crate) struct PdfState<G> {
 /// returns or commits that state before either physical slot is released.
 #[derive(Debug)]
 pub(crate) enum PdfStateSlot<G> {
-    Owned(PdfState<G>),
+    Owned(Box<PdfState<G>>),
     Loaned,
 }
 
 impl<G> Default for PdfStateSlot<G> {
     fn default() -> Self {
-        Self::Owned(PdfState::default())
+        Self::Owned(Box::default())
     }
 }
 
@@ -3326,7 +3316,6 @@ impl<G> PdfState<G> {
         }
     }
 
-    #[must_use]
     pub(crate) fn raw_objects(&self) -> impl Iterator<Item = &PdfRawObjectRecord<G>> {
         self.raw_objects.records()
     }
@@ -3556,14 +3545,13 @@ impl<G> PdfState<G> {
         self.font_operations.truncate(cursor.font_operation_count);
         self.font_resources.truncate(cursor.font_resource_count);
         self.fingerprint = cursor.fingerprint;
-        if self.transaction.is_some() {
-            let (undo_base, color_undo_base) = {
-                let transaction = self.transaction.as_ref().expect("transaction exists");
-                (
-                    transaction.base.undo_pos,
-                    transaction.base.cursor.color_undo_pos,
-                )
-            };
+        let transaction_bases = self.transaction.as_ref().map(|transaction| {
+            (
+                transaction.base.undo_pos,
+                transaction.base.cursor.color_undo_pos,
+            )
+        });
+        if let Some((undo_base, color_undo_base)) = transaction_bases {
             while undo_base + self.candidate_undo.len() as u64 > snapshot.undo_pos {
                 let undo = self
                     .candidate_undo

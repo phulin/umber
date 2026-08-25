@@ -1183,7 +1183,7 @@ impl<G> Universe<G> {
         token_lists: &[crate::TokenListId<G>],
         node_lists: &[crate::node_arena::DurableListId<G>],
     ) -> Result<(), FormatError> {
-        self.pdf = crate::pdf::PdfStateSlot::Owned(
+        self.pdf = crate::pdf::PdfStateSlot::Owned(Box::new(
             PdfState::restore_format_bytes(
                 bytes,
                 self.engine_usage.capacities().pdf,
@@ -1233,7 +1233,7 @@ impl<G> Universe<G> {
                 },
             )
             .map_err(FormatError::InvalidState)?,
-        );
+        ));
         Ok(())
     }
 
