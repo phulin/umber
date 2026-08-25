@@ -157,8 +157,9 @@ impl InlineKeyword {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct MatchedKeywordPrefix<G> {
-    inline: [Option<CurrentCommand<G>>; KEYWORD_PREFIX_INLINE_CAPACITY],
+    inline: [Option<crate::input::BackedUpToken>; KEYWORD_PREFIX_INLINE_CAPACITY],
     len: usize,
+    _generation: core::marker::PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> MatchedKeywordPrefix<G> {
@@ -166,6 +167,7 @@ impl<G> MatchedKeywordPrefix<G> {
         Self {
             inline: std::array::from_fn(|_| None),
             len: 0,
+            _generation: core::marker::PhantomData,
         }
     }
 
@@ -175,7 +177,10 @@ impl<G> MatchedKeywordPrefix<G> {
 
     fn push(&mut self, command: CurrentCommand<G>) {
         debug_assert!(self.len < KEYWORD_PREFIX_INLINE_CAPACITY);
-        self.inline[self.len] = Some(command);
+        self.inline[self.len] = Some(crate::input::BackedUpToken {
+            spelling: command.spelling(),
+            source_provenance: command.source_provenance(),
+        });
         self.len += 1;
     }
 
@@ -184,10 +189,6 @@ impl<G> MatchedKeywordPrefix<G> {
             .into_iter()
             .take(self.len)
             .flatten()
-            .map(|command| crate::input::BackedUpToken {
-                spelling: command.spelling(),
-                source_provenance: command.source_provenance(),
-            })
     }
 }
 
