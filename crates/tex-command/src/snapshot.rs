@@ -8,6 +8,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -20,10 +21,10 @@ use crate::state::{CommandState, CommandStateRoots};
 
 /// Monotonic identity source for in-session command checkpoints.
 ///
-/// The snapshot or summary is the sole owner of its copy-on-write aggregate
-/// roots. The timeline retains no root row or per-checkpoint metadata; it only
-/// prevents an old cursor from being paired with a later checkpoint on the
-/// same live command machine.
+/// The snapshot or summary is the sole retained owner of its thread-confined
+/// aggregate roots. The timeline retains no root row or per-checkpoint
+/// metadata; it only prevents an old cursor from being paired with a later
+/// checkpoint on the same live command machine.
 pub(crate) struct CommandTimeline<G> {
     next_serial: AtomicU32,
     brand: PhantomData<fn(&G) -> &G>,
@@ -75,10 +76,15 @@ impl<G> CommandTimeline<G> {
 }
 
 /// Sole coarse owner retained by one command snapshot or summary.
+///
+/// Command state and its in-session checkpoints never cross a thread boundary,
+/// so the aggregate root deliberately uses [`Rc`] while the independently
+/// shared generation and timeline capabilities retain their existing atomic
+/// owners.
 pub struct CommandGenerationOwner<G> {
     generation: GenerationOwner<G>,
     timeline: Arc<CommandTimeline<G>>,
-    roots: Arc<CommandStateRoots<G>>,
+    roots: Rc<CommandStateRoots<G>>,
     attempt: AttemptMark,
     serial: u32,
 }
@@ -88,7 +94,7 @@ impl<G> Clone for CommandGenerationOwner<G> {
         Self {
             generation: self.generation.clone(),
             timeline: Arc::clone(&self.timeline),
-            roots: Arc::clone(&self.roots),
+            roots: Rc::clone(&self.roots),
             attempt: self.attempt,
             serial: self.serial,
         }
@@ -105,7 +111,7 @@ impl<G> CommandGenerationOwner<G> {
     pub(crate) fn new(
         generation: GenerationOwner<G>,
         timeline: Arc<CommandTimeline<G>>,
-        roots: Arc<CommandStateRoots<G>>,
+        roots: Rc<CommandStateRoots<G>>,
         attempt: AttemptMark,
         cursor: CommandSnapshotCursor,
     ) -> Self {
@@ -133,8 +139,8 @@ impl<G> CommandGenerationOwner<G> {
     pub(crate) fn resolve(
         &self,
         cursor: CommandSnapshotCursor,
-    ) -> Option<(Arc<CommandStateRoots<G>>, AttemptMark)> {
-        (cursor.command_journal() == self.serial).then(|| (Arc::clone(&self.roots), self.attempt))
+    ) -> Option<(Rc<CommandStateRoots<G>>, AttemptMark)> {
+        (cursor.command_journal() == self.serial).then(|| (Rc::clone(&self.roots), self.attempt))
     }
 }
 
@@ -571,7 +577,7 @@ impl std::error::Error for CommandRestoreError {}
 /// Fully validated command-root switch. Applying it cannot fail.
 pub struct PreparedCommandRestore<G> {
     timeline: Arc<CommandTimeline<G>>,
-    roots: Arc<CommandStateRoots<G>>,
+    roots: Rc<CommandStateRoots<G>>,
     attempt: AttemptMark,
 }
 
@@ -647,7 +653,7 @@ impl<G> CommandState<G> {
             self.format_dump_is_quiescent(),
             "terminal format closure requires quiescent command state"
         );
-        self.roots = Arc::new(crate::state::CommandStateRoots::default());
+        self.roots = Rc::new(crate::state::CommandStateRoots::default());
         self.timeline = Arc::new(CommandTimeline::default());
         self.attempt = crate::CommandAttempt::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
@@ -822,7 +828,7 @@ impl<G> CommandState<G> {
             CommandGenerationOwner::new(
                 generation,
                 Arc::clone(&self.timeline),
-                Arc::clone(&self.roots),
+                Rc::clone(&self.roots),
                 attempt,
                 cursor,
             ),
@@ -850,7 +856,7 @@ impl<G> CommandState<G> {
             CommandGenerationOwner::new(
                 generation,
                 Arc::clone(&self.timeline),
-                Arc::clone(&self.roots),
+                Rc::clone(&self.roots),
                 attempt,
                 cursor,
             ),
@@ -880,7 +886,7 @@ impl<G> CommandState<G> {
             CommandGenerationOwner::new(
                 generation,
                 Arc::clone(&self.timeline),
-                Arc::clone(&self.roots),
+                Rc::clone(&self.roots),
                 attempt,
                 cursor,
             ),

@@ -2,6 +2,7 @@
 
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +31,21 @@ use crate::profile::{
     CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileFingerprint,
     CommandProfileMismatch,
 };
+
+#[cfg(test)]
+thread_local! {
+    static COMMAND_ROOT_CLONES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn command_root_clone_count() -> usize {
+    COMMAND_ROOT_CLONES.get()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_command_root_clone_count() {
+    COMMAND_ROOT_CLONES.set(0);
+}
 
 fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
     match reason {
@@ -145,6 +161,8 @@ pub struct CommandStateRoots<G> {
 
 impl<G> Clone for CommandStateRoots<G> {
     fn clone(&self) -> Self {
+        #[cfg(test)]
+        COMMAND_ROOT_CLONES.set(COMMAND_ROOT_CLONES.get().saturating_add(1));
         Self {
             engine_semantics: self.engine_semantics,
             input: self.input.clone(),
@@ -170,11 +188,13 @@ impl<G> Clone for CommandStateRoots<G> {
 /// Complete future-relevant state owned by the command machine.
 ///
 /// Named checkpoints retain one immutable aggregate root in the command
-/// timeline. Ordinary mutation uses copy-on-write only while such a root is
-/// retained, so checkpoint capture itself never clones the live command graph.
+/// timeline. The command machine and its checkpoints are one thread-confined
+/// ownership domain, so the coarse root uses non-atomic sharing. Ordinary
+/// mutation copies only on the first post-checkpoint write; warmed delivery
+/// performs neither atomic ownership traffic nor aggregate cloning.
 #[derive(Debug)]
 pub struct CommandState<G> {
-    pub(crate) roots: Arc<CommandStateRoots<G>>,
+    pub(crate) roots: Rc<CommandStateRoots<G>>,
     pub(crate) timeline: Arc<crate::snapshot::CommandTimeline<G>>,
     /// Runtime-only TeX82 stack accounting. Snapshot roots deliberately omit
     /// this tracker so high-water marks survive rollback without becoming
@@ -203,7 +223,7 @@ impl<G> Deref for CommandState<G> {
 
 impl<G> DerefMut for CommandState<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::make_mut(&mut self.roots)
+        Rc::make_mut(&mut self.roots)
     }
 }
 
@@ -344,7 +364,7 @@ impl<G> Default for CommandStateRoots<G> {
 impl<G> Default for CommandState<G> {
     fn default() -> Self {
         Self {
-            roots: Arc::new(CommandStateRoots::default()),
+            roots: Rc::new(CommandStateRoots::default()),
             timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
             usage: CommandUsageTracker::default(),
             attempt: crate::CommandAttempt::default(),
@@ -2090,7 +2110,7 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
         Self {
-            roots: Arc::new(CommandStateRoots {
+            roots: Rc::new(CommandStateRoots {
                 engine_semantics: CommandEngineSemantics::for_profile(profile),
                 expansion: ExpansionState {
                     profile,
