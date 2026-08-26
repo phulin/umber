@@ -200,6 +200,15 @@ compact status, and moves the command only to its final consumer or the exact
 typed expansion suspension slot. The slot is neither global nor a mailbox and
 never survives independently of its request.
 
+An admitted control-sequence spelling indexes and borrows its dense meaning row
+for resolution. Static meanings decode inside that borrow. A macro row acquires
+one `DefinitionId<G>` owner in the final owned `CurrentCommand`; borrowing the
+row itself acquires none. The temporary borrow ends before any command-driven
+mutation, while the final owner survives later assignment, group restoration,
+operation rollback, replay, retry, suspension, and generation retirement. TeX
+assignment level and journal state stay in the bank row and never enter the
+command.
+
 The publisher retains only a monotonic serial for cold format coordinates, and
 the token-list publisher retains warmed builder chunks and slots. Neither
 retains a published payload. A dead serial becomes an empty compatibility row

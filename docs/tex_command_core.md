@@ -194,6 +194,15 @@ moves out of this slot only into its final consumer or the one typed expansion
 suspension slot at a real resource barrier. There is no process-global slot,
 mailbox, destination inference, or nested-request reuse.
 
+Control-sequence resolution borrows the already-admitted dense meaning row
+through the live `CommandContext`. Static words decode during that borrow; a
+macro meaning clones its generation-branded definition owner exactly once into
+the owned `CurrentCommand`. The row borrow ends with resolution, before outer
+recovery, alignment handling, expansion, execution, assignment, replay, or
+suspension can mutate state. Assignment level remains solely in the dense bank,
+so delivered-command ownership does not duplicate journaling or reinterpret a
+meaning after delivery.
+
 The value-returning entry points are conveniences over the same destination
 driver; the executor hot loop and destination-aware callers use
 `get_next_into`, `get_token_into`, `get_x_token_into`, and the replay/alignment
