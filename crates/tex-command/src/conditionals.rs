@@ -1165,15 +1165,39 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_x_token_or_active_char()?;
-        let second = self.get_x_token_or_active_char()?;
-        Ok(Self::if_character_code(first) == Self::if_character_code(second))
+        let mut first = None;
+        self.get_x_token_or_active_char_into(&mut first)?;
+        let first = Self::if_character_code(
+            first
+                .as_ref()
+                .expect("conditional operand delivery initializes destination"),
+        );
+        let mut second = None;
+        self.get_x_token_or_active_char_into(&mut second)?;
+        let second = Self::if_character_code(
+            second
+                .as_ref()
+                .expect("conditional operand delivery initializes destination"),
+        );
+        Ok(first == second)
     }
 
     fn evaluate_ifcat(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_x_token_or_active_char()?;
-        let second = self.get_x_token_or_active_char()?;
-        Ok(Self::if_category_code(first) == Self::if_category_code(second))
+        let mut first = None;
+        self.get_x_token_or_active_char_into(&mut first)?;
+        let first = Self::if_category_code(
+            first
+                .as_ref()
+                .expect("conditional operand delivery initializes destination"),
+        );
+        let mut second = None;
+        self.get_x_token_or_active_char_into(&mut second)?;
+        let second = Self::if_category_code(
+            second
+                .as_ref()
+                .expect("conditional operand delivery initializes destination"),
+        );
+        Ok(first == second)
     }
 
     /// TeX.web §506's `get_x_token_or_active_char`, the operand fetch used by
@@ -1185,29 +1209,29 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `cur_chr` from the retained `cur_tok`, so `\\if\\noexpand~` compares
     /// against the active character's own code and `\\ifcat\\noexpand~`
     /// against category 13.
-    fn get_x_token_or_active_char(&mut self) -> Result<ResolvedMeaning<G>, CommandError> {
-        let mut command = None;
-        if self.get_x_token_into(&mut command)? != crate::DeliveryStatus::Command {
+    fn get_x_token_or_active_char_into(
+        &mut self,
+        destination: &mut Option<crate::CurrentCommand<G>>,
+    ) -> Result<(), CommandError> {
+        if self.get_x_token_into(destination)? != crate::DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
-        let command = command.expect("command status initializes destination");
-        Ok(match command.no_expand_active_character() {
-            Some(ch) => ResolvedMeaning::Static(Meaning::CharToken {
-                ch,
-                cat: tex_state::token::Catcode::Active,
-            }),
-            None => command.meaning(),
-        })
+        Ok(())
     }
 
     /// TeX.web part 28 maps every non-character `\\if` operand to the
     /// shared sentinel 256 before comparing character codes.
-    fn if_character_code(meaning: ResolvedMeaning<G>) -> u32 {
-        match meaning {
+    fn if_character_code(command: &crate::CurrentCommand<G>) -> u32 {
+        if let Some(ch) = command.no_expand_active_character()
+            && (ch as u32) <= u32::from(u8::MAX)
+        {
+            return ch as u32;
+        }
+        match command.meaning_ref() {
             ResolvedMeaning::Static(Meaning::CharToken { ch, .. })
-                if (ch as u32) <= u32::from(u8::MAX) =>
+                if (*ch as u32) <= u32::from(u8::MAX) =>
             {
-                ch as u32
+                *ch as u32
             }
             _ => 256,
         }
@@ -1215,9 +1239,12 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX.web part 28 maps every non-character `\\ifcat` operand to the
     /// shared `relax` command sentinel before comparing category commands.
-    fn if_category_code(meaning: ResolvedMeaning<G>) -> Option<tex_state::token::Catcode> {
-        match meaning {
-            ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(cat),
+    fn if_category_code(command: &crate::CurrentCommand<G>) -> Option<tex_state::token::Catcode> {
+        if command.no_expand_active_character().is_some() {
+            return Some(tex_state::token::Catcode::Active);
+        }
+        match command.meaning_ref() {
+            ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(*cat),
             _ => None,
         }
     }

@@ -3,7 +3,7 @@ use tex_state::env::AssignmentScope;
 use tex_state::meaning::MeaningWord;
 use tex_state::token::{Catcode, Token};
 
-use crate::{CommandHostCapabilities, CommandSemanticDiagnostic};
+use crate::{CommandHostCapabilities, CommandSemanticDiagnostic, DeliveryStatus};
 
 fn other(ch: char) -> Token {
     Token::Char {
@@ -29,15 +29,31 @@ fn install<G>(
 }
 
 fn next_character<G>(processor: &mut CommandProcessor<'_, '_, G>) -> char {
-    match processor
-        .get_x_token()
-        .expect("conditional delivery")
-        .expect("character after expansion")
+    let mut destination = None;
+    assert_eq!(
+        processor
+            .get_x_token_into(&mut destination)
+            .expect("conditional delivery"),
+        DeliveryStatus::Command
+    );
+    match destination
+        .expect("character delivery initializes destination")
         .meaning()
     {
         ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => ch,
         other => panic!("expected a character, found {other:?}"),
     }
+}
+
+fn assert_expanded_end<G>(processor: &mut CommandProcessor<'_, '_, G>) {
+    let mut destination = None;
+    assert_eq!(
+        processor
+            .get_x_token_into(&mut destination)
+            .expect("conditional end delivery"),
+        DeliveryStatus::End
+    );
+    assert!(destination.is_none());
 }
 
 #[test]
@@ -110,6 +126,50 @@ fn evaluating_delimiter_recovery_is_typed_and_frame_specific() {
 }
 
 #[test]
+fn active_character_operand_stays_in_the_caller_slot_for_conditional_treatment() {
+    crate::test_harness::with_universe(|universe| {
+        let no_expand = install(universe, "noexpand", ExpandablePrimitive::NoExpand);
+        let active_symbol = universe
+            .intern_active_character('~')
+            .expect("active character");
+        universe
+            .assign_meaning(
+                active_symbol,
+                MeaningWord::from_static(Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue)),
+                AssignmentScope::Global,
+            )
+            .expect("active character meaning");
+        let active = Token::Char {
+            ch: '~',
+            cat: Catcode::Active,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [no_expand, active]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let mut destination = None;
+        processor
+            .get_x_token_or_active_char_into(&mut destination)
+            .expect("conditional operand delivery");
+        let delivered = destination.expect("caller destination");
+        assert_eq!(delivered.spelling().semantic_token(), active);
+        assert_eq!(delivered.meaning(), ResolvedMeaning::Static(Meaning::Relax));
+        assert_eq!(CommandProcessor::if_character_code(&delivered), '~' as u32);
+        assert_eq!(
+            CommandProcessor::if_category_code(&delivered),
+            Some(Catcode::Active)
+        );
+    });
+}
+
+#[test]
 fn false_boolean_skips_to_else_and_matching_fi_retires_the_frame() {
     crate::test_harness::with_universe(|universe| {
         let if_false = install(universe, "iffalse", ExpandablePrimitive::IfFalse);
@@ -139,7 +199,7 @@ fn false_boolean_skips_to_else_and_matching_fi_retires_the_frame() {
                 .limit,
             IfLimit::Fi
         );
-        assert!(processor.get_x_token().expect("matching fi").is_none());
+        assert_expanded_end(&mut processor);
         assert!(processor.command.conditions.current().is_none());
     });
 }
@@ -174,7 +234,7 @@ fn ifx_compares_raw_operands_without_expanding_them() {
         );
 
         assert_eq!(next_character(&mut processor), 'y');
-        assert!(processor.get_x_token().expect("matching fi").is_none());
+        assert_expanded_end(&mut processor);
     });
 }
 
