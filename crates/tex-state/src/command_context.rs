@@ -680,9 +680,19 @@ impl<'a, G> CommandContext<'a, G> {
     /// symbol's retained name bytes again.
     #[inline(always)]
     pub fn compact_control_sequence_meaning(&self, symbol: Symbol) -> ResolvedMeaning<G> {
+        self.compact_control_sequence_meaning_word(symbol).resolve()
+    }
+
+    /// Borrows the direct dense meaning row for an already-admitted symbol.
+    ///
+    /// The returned word remains tied to this immutable command-context
+    /// borrow. Static meanings can be decoded in place; a macro caller must
+    /// acquire an owner only when constructing the final owned command.
+    #[inline(always)]
+    pub fn compact_control_sequence_meaning_word(&self, symbol: Symbol) -> &MeaningWord<G> {
         self.admitted
             .state_ref()
-            .meaning(symbol)
+            .meaning_word(symbol)
             .expect("command symbols are admitted")
     }
 
@@ -779,8 +789,7 @@ impl<'a, G> CommandContext<'a, G> {
         };
         self.primitive_meanings
             .get(usize::from(frozen.primitive_index()?))
-            .cloned()
-            .map(|meaning| meaning.resolve())
+            .map(MeaningWord::resolve)
     }
 
     #[must_use]

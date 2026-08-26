@@ -95,20 +95,24 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
             .expect("macro meaning");
 
         let command = resolved(universe, Token::Cs(symbol.symbol()));
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::from_static(Meaning::Relax),
+                AssignmentScope::Global,
+            )
+            .expect("replace delivered meaning");
+        drop(definition);
+
         let ResolvedMeaning::Macro {
             flags,
             definition: delivered,
-        } = command.meaning()
+        } = command.meaning_ref()
         else {
             panic!("macro meaning")
         };
-        assert_eq!(flags, MeaningFlags::LONG);
-        assert_eq!(delivered, definition);
-        let context = universe.command_context().expect("context");
-        assert_eq!(
-            context.definition(delivered).replacement_text(),
-            &[replacement]
-        );
+        assert_eq!(*flags, MeaningFlags::LONG);
+        assert_eq!(delivered.replacement_word(0), Some(replacement));
     });
 }
 

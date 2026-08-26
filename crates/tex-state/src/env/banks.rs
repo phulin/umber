@@ -573,6 +573,14 @@ impl<T: Clone> DenseBank<T> {
             .ok_or(BankError::IndexOutOfBounds)
     }
 
+    /// Borrows one direct-indexed row without cloning its stored value.
+    #[inline(always)]
+    pub(crate) fn get_ref(&self, index: u32) -> Result<&BankCell<T>, BankError> {
+        self.cells
+            .get(index as usize)
+            .ok_or(BankError::IndexOutOfBounds)
+    }
+
     #[inline(always)]
     pub(crate) fn write(&mut self, index: u32, cell: BankCell<T>) -> Result<(), BankError> {
         *self

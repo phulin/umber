@@ -61,6 +61,45 @@ fn admitted_meanings_are_direct_dense_slots() {
 }
 
 #[test]
+fn borrowed_meaning_row_acquires_one_owner_only_when_resolved() {
+    crate::generation::with_generation(|mut generation| {
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
+            .expect("definition");
+        let mut names = interner();
+        let selector = names.intern("borrowed").expect("selector");
+        let mut state = DenseState::new().expect("state allocation");
+        state
+            .admit_symbol(selector.symbol())
+            .expect("admit selector");
+        state
+            .assign_meaning(
+                selector.symbol(),
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.clone()),
+                AssignmentScope::Global,
+            )
+            .expect("assign macro");
+        assert_eq!(definition.semantic_owner_count(), 2);
+
+        let word = state.meaning_word(selector.symbol()).expect("borrow row");
+        assert_eq!(
+            definition.semantic_owner_count(),
+            2,
+            "borrowing the dense row must not acquire the macro owner"
+        );
+        let resolved = word.resolve();
+        assert_eq!(
+            definition.semantic_owner_count(),
+            3,
+            "resolving into the owned delivery acquires exactly one owner"
+        );
+        drop(resolved);
+        assert_eq!(definition.semantic_owner_count(), 2);
+    });
+}
+
+#[test]
 fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
     crate::generation::with_generation(|mut generation| {
         let definition = generation

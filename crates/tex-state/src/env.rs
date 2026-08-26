@@ -936,7 +936,13 @@ impl<G> DenseState<G> {
 
     #[inline(always)]
     pub(crate) fn meaning(&self, symbol: Symbol) -> Result<ResolvedMeaning<G>, StateError> {
-        Ok(self.meanings.get(symbol.raw())?.value.resolve())
+        Ok(self.meaning_word(symbol)?.resolve())
+    }
+
+    /// Borrows one admitted meaning row without acquiring its semantic owner.
+    #[inline(always)]
+    pub(crate) fn meaning_word(&self, symbol: Symbol) -> Result<&MeaningWord<G>, StateError> {
+        Ok(&self.meanings.get_ref(symbol.raw())?.value)
     }
 
     pub(crate) fn assign_meaning(
