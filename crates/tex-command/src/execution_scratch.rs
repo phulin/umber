@@ -325,7 +325,7 @@ struct PackedRange {
     len: u32,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 struct MacroSlot {
     serial: u64,
     watermark_segments: u32,
@@ -333,19 +333,6 @@ struct MacroSlot {
     arguments: [Option<PackedRange>; 9],
     argument_count: u8,
     live: bool,
-}
-
-impl Default for MacroSlot {
-    fn default() -> Self {
-        Self {
-            serial: 0,
-            watermark_segments: 0,
-            word_len: 0,
-            arguments: [None; 9],
-            argument_count: 0,
-            live: false,
-        }
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -957,7 +944,7 @@ impl<G> ExecutionScratch<G> {
             .delimiter_head
             .checked_add(self.delimiter_len)
             .ok_or(ScratchError::CapacityOverflow)?;
-        if tail as usize % MACRO_SEGMENT_WORDS == 0 {
+        if (tail as usize).is_multiple_of(MACRO_SEGMENT_WORDS) {
             self.delimiter_segments
                 .try_reserve(1)
                 .map_err(|_| ScratchError::AllocationFailed)?;
@@ -1203,7 +1190,7 @@ impl<G> ExecutionScratch<G> {
     }
 
     fn push_match_segment_word(&mut self, word: TracedTokenWord) -> Result<(), ScratchError> {
-        if self.match_word_len as usize % MACRO_SEGMENT_WORDS == 0 {
+        if (self.match_word_len as usize).is_multiple_of(MACRO_SEGMENT_WORDS) {
             self.match_segments
                 .try_reserve(1)
                 .map_err(|_| ScratchError::AllocationFailed)?;
