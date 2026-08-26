@@ -519,6 +519,7 @@ impl<G> Universe<G> {
     ) -> Result<Self, UniverseError> {
         let owner = checkpoint.state.owner();
         let mark = checkpoint.state.mark();
+        let destination_retained_page_bound = *mark.page();
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::validate_restore(
             self, owner, mark,
         )?;
@@ -579,6 +580,10 @@ impl<G> Universe<G> {
             self.return_rejected_pdf_from(&mut fork);
             return Err(error);
         }
+        // The destination was truncated to the selected checkpoint. Its
+        // conservative page bound must follow that same checkpoint rather
+        // than the source generation's potentially newer retained high-water.
+        fork.retained_page_bound = destination_retained_page_bound;
         Ok(fork)
     }
 

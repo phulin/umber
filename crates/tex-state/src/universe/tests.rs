@@ -88,6 +88,24 @@ fn runtime_checkpoint_fork_shares_definition_and_token_payload_owners() {
 }
 
 #[test]
+fn runtime_checkpoint_fork_resets_newer_retained_page_bound() {
+    with_universe(budget(), |universe| {
+        let checkpoint = universe.runtime_checkpoint().expect("empty checkpoint");
+        let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        universe
+            .runtime_checkpoint_with_page_roots(true)
+            .expect("newer retained page bound");
+
+        let mut fork = universe
+            .fork_runtime_checkpoint(&checkpoint)
+            .expect("older checkpoint fork");
+        fork.runtime_checkpoint()
+            .expect("forked retained bound addresses its truncated page arena");
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn primitive_installation_observes_only_canonical_multiletter_lookups() {
     with_universe(budget(), |universe| {
         universe.register_primitive_meaning("frozenonly", Meaning::Relax);
