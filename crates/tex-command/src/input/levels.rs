@@ -6,7 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tex_state::DefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
-use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token::{OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::attempt::AttemptTokenListId;
 use crate::macro_call::MacroActivationId;
@@ -148,7 +148,7 @@ pub(crate) enum SourceRetirement {
 /// semantics, end-of-level handling, and diagnostic explanation independent.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TokenCursor<G> {
-    pub(crate) payload: TokenPayload<G>,
+    pub(crate) span: PackedTokenSpanHandle<G>,
     pub(crate) behavior: TokenBehavior,
     pub(crate) retirement: RetirementBehavior,
     pub(crate) trace: ReplayTrace,
@@ -163,11 +163,22 @@ impl<G> TokenCursor<G> {
     pub(crate) fn position(&self) -> usize {
         self.frame.position() as usize
     }
+
+    /// Borrows the canonical word at the one scalar input position.
+    #[inline(always)]
+    pub(crate) fn token_at(&self, sources: PackedTokenSources<'_, G>) -> Option<PackedTokenAt> {
+        sources.token_at(&self.span, self.position())
+    }
 }
 
-/// Storage owning the tokens delivered by a token-list level.
+/// Typed lifetime handle for one immutable packed-token span.
+///
+/// The source domain is selected exactly once when the input level is
+/// created. Delivery thereafter uses [`PackedTokenSources::token_at`] with the
+/// same handle and the input frame's sole scalar position. The variants are a
+/// storage-boundary lifetime distinction, not separate delivery objects.
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum TokenPayload<G> {
+pub(crate) enum PackedTokenSpanHandle<G> {
     /// Compact coordinate into the generation-owned replay lane.
     Replay {
         replay: ReplayPayloadId<G>,
@@ -180,20 +191,19 @@ pub(crate) enum TokenPayload<G> {
     },
     /// One literal macro-argument replay range in generation-owned scratch.
     MacroArgument {
-        replay: crate::execution_scratch::MacroReplayCursor<G>,
+        range: crate::execution_scratch::MacroArgumentRange<G>,
         len: u32,
     },
-    /// One generation-durable token list, replayed through its stable chunk
-    /// cursor without materializing an input-owned word buffer.
+    /// One generation-durable immutable token list.
     DurableList {
-        cursor: tex_state::TokenListCursor<G>,
+        list: tex_state::TokenListId<G>,
         len: u32,
     },
     /// One attempt-local token list, replayed literally by range.
     AttemptList { list: AttemptTokenListId, len: u32 },
 }
 
-impl<G> Clone for TokenPayload<G> {
+impl<G> Clone for PackedTokenSpanHandle<G> {
     fn clone(&self) -> Self {
         match self {
             Self::Replay { replay, len } => Self::Replay {
@@ -204,12 +214,12 @@ impl<G> Clone for TokenPayload<G> {
                 definition: definition.clone(),
                 len: *len,
             },
-            Self::MacroArgument { replay, len } => Self::MacroArgument {
-                replay: *replay,
+            Self::MacroArgument { range, len } => Self::MacroArgument {
+                range: *range,
                 len: *len,
             },
-            Self::DurableList { cursor, len } => Self::DurableList {
-                cursor: cursor.clone(),
+            Self::DurableList { list, len } => Self::DurableList {
+                list: list.clone(),
                 len: *len,
             },
             Self::AttemptList { list, len } => Self::AttemptList {
@@ -223,11 +233,74 @@ impl<G> Clone for TokenPayload<G> {
 impl<G> Clone for TokenCursor<G> {
     fn clone(&self) -> Self {
         Self {
-            payload: self.payload.clone(),
+            span: self.span.clone(),
             behavior: self.behavior,
             retirement: self.retirement,
             trace: self.trace.clone(),
             frame: self.frame,
+        }
+    }
+}
+
+/// Canonical packed word plus its storage-independent diagnostic coordinates.
+///
+/// Only the first field participates in token semantics. Origins and source
+/// provenance remain separate so stored delivery never widens `TokenWord` or
+/// makes provenance part of control-sequence/meaning resolution.
+pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
+
+/// Borrowed storage boundary for every immutable stored-token source.
+pub(crate) struct PackedTokenSources<'a, G> {
+    replay: &'a ReplayLane<G>,
+    attempt: &'a crate::attempt::AttemptArena<G>,
+    scratch: &'a crate::execution_scratch::ExecutionScratch<G>,
+}
+
+impl<'a, G> PackedTokenSources<'a, G> {
+    pub(crate) const fn new(
+        replay: &'a ReplayLane<G>,
+        attempt: &'a crate::attempt::AttemptArena<G>,
+        scratch: &'a crate::execution_scratch::ExecutionScratch<G>,
+    ) -> Self {
+        Self {
+            replay,
+            attempt,
+            scratch,
+        }
+    }
+
+    /// Reads one canonical word through the admitted span handle.
+    ///
+    /// Safe Rust cannot store a self-reference into the owning command root,
+    /// so this small direct match is the sole storage-domain boundary. No
+    /// caller rebuilds a generic delivery object or repeats this routing.
+    #[inline(always)]
+    pub(crate) fn token_at(
+        &self,
+        span: &PackedTokenSpanHandle<G>,
+        index: usize,
+    ) -> Option<PackedTokenAt> {
+        match span {
+            PackedTokenSpanHandle::Replay { replay, .. } => self
+                .replay
+                .get(*replay, index)
+                .map(|(word, provenance)| (word.token_word(), word.origin(), provenance)),
+            PackedTokenSpanHandle::MacroReplacement { definition, .. } => definition
+                .replacement_word(index)
+                .map(|word| (word, OriginId::UNKNOWN, None)),
+            PackedTokenSpanHandle::MacroArgument { range, .. } => self
+                .scratch
+                .argument_word(*range, index)
+                .ok()
+                .map(|word| (word.token_word(), word.origin(), None)),
+            PackedTokenSpanHandle::AttemptList { list, .. } => self
+                .attempt
+                .token_word(*list, index)
+                .ok()
+                .map(|word| (word.token_word(), word.origin(), None)),
+            PackedTokenSpanHandle::DurableList { list, .. } => list
+                .word_at(index)
+                .map(|word| (word, OriginId::UNKNOWN, None)),
         }
     }
 }
@@ -549,7 +622,7 @@ impl<G> ReplayLane<G> {
         &mut self,
         tokens: impl IntoIterator<Item = BackedUpToken>,
         ownership: PackedTokenOwnership,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError> {
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         let word_mark = self.words.mark();
         let provenance_mark = self.provenance.mark();
         let mut start = None;
@@ -585,7 +658,7 @@ impl<G> ReplayLane<G> {
             prefix_provenance: None,
             ownership,
         });
-        Ok(TokenPayload::Replay {
+        Ok(PackedTokenSpanHandle::Replay {
             replay: ReplayPayloadId {
                 entry,
                 _generation: PhantomData,
@@ -671,18 +744,18 @@ impl<G> ReplayLane<G> {
     }
 }
 
-pub(crate) trait TokenPayloadSource<G> {
+pub(crate) trait PackedTokenSpanSource<G> {
     fn admit(
         self,
         lane: &mut ReplayLane<G>,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError>;
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError>;
 }
 
-impl<G> TokenPayloadSource<G> for TokenPayload<G> {
+impl<G> PackedTokenSpanSource<G> for PackedTokenSpanHandle<G> {
     fn admit(
         self,
         _lane: &mut ReplayLane<G>,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError> {
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         Ok(self)
     }
 }
@@ -691,11 +764,11 @@ pub(crate) struct TracedReplaySeed<I> {
     tokens: I,
     ownership: PackedTokenOwnership,
 }
-impl<G, I: Iterator<Item = TracedTokenWord>> TokenPayloadSource<G> for TracedReplaySeed<I> {
+impl<G, I: Iterator<Item = TracedTokenWord>> PackedTokenSpanSource<G> for TracedReplaySeed<I> {
     fn admit(
         self,
         lane: &mut ReplayLane<G>,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError> {
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         lane.push_words(
             self.tokens.map(|spelling| BackedUpToken {
                 spelling,
@@ -711,11 +784,11 @@ pub(crate) struct SemanticReplaySeed<I> {
     origin: OriginId,
     ownership: PackedTokenOwnership,
 }
-impl<G, I: Iterator<Item = Token>> TokenPayloadSource<G> for SemanticReplaySeed<I> {
+impl<G, I: Iterator<Item = Token>> PackedTokenSpanSource<G> for SemanticReplaySeed<I> {
     fn admit(
         self,
         lane: &mut ReplayLane<G>,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError> {
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         lane.push_words(
             self.tokens.map(|token| BackedUpToken {
                 spelling: TracedTokenWord::pack(token, self.origin),
@@ -729,11 +802,11 @@ impl<G, I: Iterator<Item = Token>> TokenPayloadSource<G> for SemanticReplaySeed<
 pub(crate) struct BackedReplaySeed<I> {
     tokens: I,
 }
-impl<G, I: Iterator<Item = BackedUpToken>> TokenPayloadSource<G> for BackedReplaySeed<I> {
+impl<G, I: Iterator<Item = BackedUpToken>> PackedTokenSpanSource<G> for BackedReplaySeed<I> {
     fn admit(
         self,
         lane: &mut ReplayLane<G>,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError> {
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         lane.push_words(self.tokens, PackedTokenOwnership::BackedUp)
     }
 }
@@ -742,11 +815,11 @@ pub(crate) struct StoredReplaySeed<'a, I> {
     tokens: &'a [Token],
     origins: I,
 }
-impl<G, I: Iterator<Item = OriginId>> TokenPayloadSource<G> for StoredReplaySeed<'_, I> {
+impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplaySeed<'_, I> {
     fn admit(
         mut self,
         lane: &mut ReplayLane<G>,
-    ) -> Result<TokenPayload<G>, crate::execution_scratch::ScratchError> {
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         lane.push_words(
             self.tokens.iter().copied().map(|token| BackedUpToken {
                 spelling: TracedTokenWord::pack(
@@ -760,7 +833,7 @@ impl<G, I: Iterator<Item = OriginId>> TokenPayloadSource<G> for StoredReplaySeed
     }
 }
 
-impl TokenPayload<()> {
+impl PackedTokenSpanHandle<()> {
     pub(crate) fn stored(
         tokens: &[Token],
         origins: impl IntoIterator<Item = OriginId>,
@@ -815,11 +888,12 @@ impl TokenPayload<()> {
     }
 }
 
-impl<G> TokenPayload<G> {
+impl<G> PackedTokenSpanHandle<G> {
     pub(crate) fn durable(words: tex_state::TokenListView<G>) -> Self {
+        let len = u32::try_from(words.len()).expect("durable token-list length exceeds u32");
         Self::DurableList {
-            cursor: words.cursor(),
-            len: u32::try_from(words.len()).expect("durable token-list length exceeds u32"),
+            list: words.into_id(),
+            len,
         }
     }
 
@@ -830,6 +904,156 @@ impl<G> TokenPayload<G> {
             Self::MacroArgument { len, .. } => *len as usize,
             Self::DurableList { len, .. } => *len as usize,
             Self::AttemptList { len, .. } => *len as usize,
+        }
+    }
+}
+
+/// Focused profiling harness for the uniform packed stored-token cursor.
+///
+/// Construction admits each real storage/lifetime domain once. [`Self::run`]
+/// then measures only canonical `TokenWord` access, scalar advancement, exact
+/// end-of-span retirement, and scalar rollback; it creates no alternate
+/// command-delivery semantics.
+#[cfg(any(test, feature = "profiling"))]
+pub struct MixedPackedCursorBenchmark<G> {
+    spans: [PackedTokenSpanHandle<G>; 5],
+    positions: [u32; 5],
+    replay: ReplayLane<G>,
+    attempt: crate::attempt::AttemptArena<G>,
+    scratch: crate::execution_scratch::ExecutionScratch<G>,
+}
+
+/// Absolute work receipt from one warmed mixed-source cursor run.
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MixedPackedCursorReceipt {
+    pub calls: u64,
+    pub retirements: u64,
+    pub rollbacks: u64,
+    pub checksum: u64,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+impl<G> MixedPackedCursorBenchmark<G> {
+    /// Admits replay, macro replacement/argument, attempt, and durable spans.
+    pub fn new(universe: &mut tex_state::Universe<G>) -> Self {
+        let semantic = ['r', 'm', 'a', 'd'].map(|ch| {
+            TokenWord::pack(Token::Char {
+                ch,
+                cat: crate::Catcode::Letter,
+            })
+        });
+        let traced = semantic.map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN));
+
+        let definition = universe
+            .allocate_definition(&[], &semantic)
+            .expect("mixed-cursor definition");
+        let durable = universe
+            .allocate_token_list(&semantic)
+            .expect("mixed-cursor durable list");
+        let durable = {
+            let context = universe.command_context().expect("command context");
+            PackedTokenSpanHandle::durable(context.token_list(durable))
+        };
+
+        let mut replay = ReplayLane::default();
+        let replay_span = replay
+            .push_words(
+                traced.map(|spelling| BackedUpToken {
+                    spelling,
+                    source_provenance: None,
+                }),
+                PackedTokenOwnership::Transient,
+            )
+            .expect("mixed-cursor replay span");
+
+        let mut attempt = crate::attempt::AttemptArena::default();
+        let attempt_list = attempt
+            .allocate_token_list(traced)
+            .expect("mixed-cursor attempt span");
+
+        let mut scratch = crate::execution_scratch::ExecutionScratch::default();
+        let matching = scratch
+            .begin_macro_match()
+            .expect("mixed-cursor macro frame");
+        let buffer = scratch
+            .begin_match_buffer(&matching)
+            .expect("mixed-cursor argument buffer");
+        for word in traced {
+            scratch
+                .push_match_word(&matching, buffer, word)
+                .expect("mixed-cursor argument word");
+        }
+        scratch
+            .finish_match_buffer(&matching, buffer)
+            .expect("mixed-cursor argument range");
+        let frame = scratch
+            .commit_macro_match(matching)
+            .expect("mixed-cursor sealed argument");
+        let range = scratch
+            .argument_range(frame, 1)
+            .expect("mixed-cursor live frame")
+            .expect("mixed-cursor first argument");
+
+        Self {
+            spans: [
+                replay_span,
+                PackedTokenSpanHandle::MacroReplacement {
+                    definition,
+                    len: semantic.len() as u32,
+                },
+                PackedTokenSpanHandle::MacroArgument {
+                    range,
+                    len: semantic.len() as u32,
+                },
+                PackedTokenSpanHandle::AttemptList {
+                    list: attempt_list,
+                    len: semantic.len() as u32,
+                },
+                durable,
+            ],
+            // Keep the rollback mark nonzero so restoration proves an exact
+            // cursor rather than merely resetting empty spans.
+            positions: [1; 5],
+            replay,
+            attempt,
+            scratch,
+        }
+    }
+
+    /// Runs `rounds * 5` packed accesses and restores the exact opening
+    /// scalar cursors after every source has crossed real span ends.
+    pub fn run(&mut self, rounds: u32) -> MixedPackedCursorReceipt {
+        let opening = self.positions;
+        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.scratch);
+        let mut checksum = 0_u64;
+        let mut retirements = 0_u64;
+        for _ in 0..rounds {
+            for (span, position) in self.spans.iter().zip(&mut self.positions) {
+                let (word, origin, provenance) = sources
+                    .token_at(span, *position as usize)
+                    .expect("mixed packed cursor remains within its span");
+                debug_assert_eq!(origin, OriginId::UNKNOWN);
+                debug_assert!(provenance.is_none());
+                checksum = checksum.wrapping_add(u64::from(word.raw()));
+                *position += 1;
+                if *position as usize == span.frame_len() {
+                    *position = 0;
+                    retirements += 1;
+                }
+            }
+        }
+        self.positions = opening;
+        for (span, position) in self.spans.iter().zip(self.positions) {
+            let _ = sources
+                .token_at(span, position as usize)
+                .expect("rollback restores the exact packed cursor");
+        }
+        MixedPackedCursorReceipt {
+            calls: u64::from(rounds) * self.spans.len() as u64,
+            retirements,
+            rollbacks: 1,
+            checksum,
         }
     }
 }

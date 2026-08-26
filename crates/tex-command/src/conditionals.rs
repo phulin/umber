@@ -8,7 +8,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
-use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
+use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
     ConditionId, ScannerStatus, ScannerStatusVisibility, ScannerWarning, SkippingContext,
@@ -1569,7 +1569,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .pending_diagnostics
             .push(INCOMPLETE_IF_DIAGNOSTIC);
         let level = self.command.push_token_level(
-            TokenPayload::transient([TracedTokenWord::pack(relax, OriginId::UNKNOWN)]),
+            PackedTokenSpanHandle::transient([TracedTokenWord::pack(relax, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

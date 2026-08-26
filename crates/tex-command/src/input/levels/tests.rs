@@ -1,8 +1,8 @@
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    BackedUpToken, BackupTreatment, InputLevelId, ReplayLane, ReplayTrace, RetirementBehavior,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload, TokenPayloadSource,
+    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenSpanHandle, PackedTokenSpanSource,
+    ReplayLane, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenCursor,
     packed_token_frame,
 };
 
@@ -19,11 +19,11 @@ fn traced(ch: char) -> TracedTokenWord {
 #[test]
 fn transient_payload_is_read_through_its_replay_coordinate() {
     let mut lane = ReplayLane::<()>::default();
-    let payload = TokenPayload::<()>::transient([traced('a'), traced('b')])
+    let payload = PackedTokenSpanHandle::<()>::transient([traced('a'), traced('b')])
         .admit(&mut lane)
         .expect("replay admission");
     assert_eq!(payload.frame_len(), 2);
-    let TokenPayload::Replay { replay, .. } = payload else {
+    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
         panic!("transient replay coordinate")
     };
     assert_eq!(lane.get(replay, 0).map(|entry| entry.0), Some(traced('a')));
@@ -33,17 +33,17 @@ fn transient_payload_is_read_through_its_replay_coordinate() {
 #[test]
 fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
     let mut lane = ReplayLane::<()>::default();
-    let first = TokenPayload::<()>::transient([traced('a')])
+    let first = PackedTokenSpanHandle::<()>::transient([traced('a')])
         .admit(&mut lane)
         .expect("first replay admission");
-    let TokenPayload::Replay { replay: first, .. } = first else {
+    let PackedTokenSpanHandle::Replay { replay: first, .. } = first else {
         panic!("first replay coordinate")
     };
     let high_water = std::sync::Arc::as_ptr(&lane.words.active[0].storage);
-    let second = TokenPayload::<()>::transient([traced('b')])
+    let second = PackedTokenSpanHandle::<()>::transient([traced('b')])
         .admit(&mut lane)
         .expect("second replay admission");
-    let TokenPayload::Replay { replay: second, .. } = second else {
+    let PackedTokenSpanHandle::Replay { replay: second, .. } = second else {
         panic!("second replay coordinate")
     };
 
@@ -55,7 +55,7 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
     lane.release(second).expect("top replay retires");
     lane.release(first).expect("older replay retires after top");
 
-    let warmed = TokenPayload::<()>::transient([traced('c')])
+    let warmed = PackedTokenSpanHandle::<()>::transient([traced('c')])
         .admit(&mut lane)
         .expect("warmed replay admission");
     assert_eq!(
@@ -63,7 +63,7 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
         high_water,
         "retired segment storage is reused"
     );
-    let TokenPayload::Replay { replay: warmed, .. } = warmed else {
+    let PackedTokenSpanHandle::Replay { replay: warmed, .. } = warmed else {
         panic!("warmed replay coordinate")
     };
     assert_eq!(lane.get(warmed, 0).map(|entry| entry.0), Some(traced('c')));
@@ -72,22 +72,22 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
 #[test]
 fn replay_lane_clone_preserves_prior_payload_while_current_reuses_lifo_state() {
     let mut current = ReplayLane::<()>::default();
-    let prior_payload = TokenPayload::<()>::backed_up([BackedUpToken {
+    let prior_payload = PackedTokenSpanHandle::<()>::backed_up([BackedUpToken {
         spelling: traced('p'),
         source_provenance: None,
     }])
     .admit(&mut current)
     .expect("prior replay admission");
-    let TokenPayload::Replay { replay: prior, .. } = prior_payload else {
+    let PackedTokenSpanHandle::Replay { replay: prior, .. } = prior_payload else {
         panic!("prior replay coordinate")
     };
     let snapshot = current.clone();
 
     current.release(prior).expect("current replay retires");
-    let candidate = TokenPayload::<()>::transient([traced('c')])
+    let candidate = PackedTokenSpanHandle::<()>::transient([traced('c')])
         .admit(&mut current)
         .expect("candidate replay admission");
-    let TokenPayload::Replay {
+    let PackedTokenSpanHandle::Replay {
         replay: candidate, ..
     } = candidate
     else {
@@ -114,7 +114,7 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     let _ = frame.advance();
     let mut lane = ReplayLane::default();
     let cursor: TokenCursor<()> = TokenCursor {
-        payload: TokenPayload::transient([traced('x')])
+        span: PackedTokenSpanHandle::transient([traced('x')])
             .admit(&mut lane)
             .expect("replay admission"),
         behavior,
@@ -139,18 +139,18 @@ fn stored_and_transient_payloads_have_the_same_semantic_words() {
         cat: Catcode::Other,
     };
     let mut lane = ReplayLane::<()>::default();
-    let stored = TokenPayload::<()>::stored(&[token], [OriginId::UNKNOWN])
+    let stored = PackedTokenSpanHandle::<()>::stored(&[token], [OriginId::UNKNOWN])
         .admit(&mut lane)
         .expect("stored admission");
     let transient =
-        TokenPayload::<()>::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)])
+        PackedTokenSpanHandle::<()>::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)])
             .admit(&mut lane)
             .expect("transient admission");
     assert_eq!(stored.frame_len(), transient.frame_len());
-    let TokenPayload::Replay { replay: stored, .. } = stored else {
+    let PackedTokenSpanHandle::Replay { replay: stored, .. } = stored else {
         panic!("stored replay payload")
     };
-    let TokenPayload::Replay {
+    let PackedTokenSpanHandle::Replay {
         replay: transient, ..
     } = transient
     else {
@@ -164,7 +164,19 @@ fn stored_and_transient_payloads_have_the_same_semantic_words() {
 
 #[test]
 fn replay_coordinates_keep_input_frames_compact() {
-    assert_eq!(std::mem::size_of::<TokenPayload<()>>(), 56);
-    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 112);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 112);
+    assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
+    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 96);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 96);
+}
+
+#[test]
+fn mixed_sources_share_one_cursor_and_restore_exact_nonzero_positions() {
+    crate::test_harness::with_universe(|universe| {
+        let mut benchmark = super::MixedPackedCursorBenchmark::new(universe);
+        let receipt = benchmark.run(8);
+        assert_eq!(receipt.calls, 40);
+        assert_eq!(receipt.retirements, 10);
+        assert_eq!(receipt.rollbacks, 1);
+        assert_ne!(receipt.checksum, 0);
+    });
 }

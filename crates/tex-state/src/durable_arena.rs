@@ -145,6 +145,12 @@ impl<G> TokenListId<G> {
         }
     }
 
+    /// Borrows one word from this immutable packed token span.
+    #[must_use]
+    pub fn word_at(&self, index: usize) -> Option<TokenWord> {
+        self.words.get(index).copied()
+    }
+
     pub(crate) const fn format_index(&self) -> u32 {
         self.serial.get() - 1
     }
@@ -340,6 +346,14 @@ impl<G> TokenListView<G> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.list.words.is_empty()
+    }
+
+    /// Transfers this immutable span's owner without another shared-owner
+    /// clone. Input uses this once while adapting a durable list to its
+    /// uniform packed span handle.
+    #[must_use]
+    pub fn into_id(self) -> TokenListId<G> {
+        self.list
     }
 
     #[must_use]

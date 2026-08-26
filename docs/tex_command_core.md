@@ -1655,25 +1655,25 @@ the synthetic `endlinechar` does.
 
 ### 12.2 Token cursor
 
-Payload, semantic delivery behavior, retirement, and trace explanation are
+Span ownership, semantic delivery behavior, retirement, and trace explanation are
 orthogonal:
 
 ```rust
 struct TokenCursor {
-    payload: TokenPayload,
+    span: PackedTokenSpanHandle,
     behavior: TokenBehavior,
     retirement: RetirementBehavior,
     trace: ReplayTrace,
     frame: PackedInputFrame,
 }
 
-enum TokenPayload {
+enum PackedTokenSpanHandle {
     Replay { replay: ReplayPayloadId, len: u32 },
     MacroReplacement {
         definition: MacroDefinitionId,
         len: u32,
     },
-    MacroArgument { replay: MacroReplayCursor, len: u32 },
+    MacroArgument { range: MacroArgumentRange, len: u32 },
     DurableList { cursor: TokenListCursor, len: u32 },
     AttemptList { list: AttemptTokenListId, len: u32 },
 }
@@ -1710,13 +1710,15 @@ retain their exact values, with disjoint source, `everyeof`, and Umber replay
 kinds. Flags represent noexpand suppression, terminal-stop retirement, and
 retained v-template retirement independently of storage.
 
-Stored delivery separates borrowed lookahead from consuming delivery. The
-lookahead path reads through the live payload coordinate without cloning its
-owner. The consuming path advances a durable `TokenListCursor` or macro replay
-cursor in place and advances the packed input frame under the same admitted
-mutable command root. It returns only the delivered spelling, provenance, and
-copy-only behavior; no temporary advanced cursor or shared token-list alias is
-constructed per word.
+Every source is adapted once at level creation into the same
+`PackedTokenSpanHandle` plus the packed frame's scalar offset. Stored delivery
+then calls `PackedTokenSources::token_at(handle, offset)` and advances only
+that offset. The storage boundary makes one small direct owner-domain match
+required by safe Rust; no delivery caller discriminates source variants,
+builds a generic stored-delivery object, advances a second durable or macro
+cursor, or clones a definition/token-list owner per word. `token_at` returns
+canonical `TokenWord`; origin and source provenance remain adjacent diagnostic
+coordinates and never become token or meaning semantics.
 
 `CommandState::push_token_level` is the single live admission boundary.
 Transient insertions, backup/noexpand levels, alignment templates, stored
@@ -1731,9 +1733,9 @@ search, or third generation. e-TeX aftergroup prefix linking appends a second
 span to the top entry and delivers that span before its body without shifting
 either span.
 
-Macro replacement, argument-range, durable-list, and attempt-list payloads
-remain direct coordinates into their existing owners. They do not enter the
-replay lane or acquire a shared token buffer.
+Macro replacement, argument-range, durable-list, and attempt-list spans remain
+direct coordinates into their existing owners. They do not enter the replay
+lane, acquire a shared token buffer, or copy their packed words at admission.
 
 Detached resource continuations deliberately do not serialize a runtime frame
 or arena coordinate. Detachment projects packed words, backup coordinates,

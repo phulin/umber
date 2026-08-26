@@ -4,7 +4,7 @@ use tex_state::interner::InternerBudget;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{GenerationBrand, Universe};
 
-use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
+use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::{CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState};
 
 fn budget() -> InternerBudget {
@@ -29,7 +29,7 @@ pub(crate) fn traced(token: Token) -> TracedTokenWord {
 
 pub(crate) fn push<G>(command: &mut CommandState<G>, tokens: impl IntoIterator<Item = Token>) {
     command.push_token_level(
-        TokenPayload::transient(tokens.into_iter().map(traced)),
+        PackedTokenSpanHandle::transient(tokens.into_iter().map(traced)),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,

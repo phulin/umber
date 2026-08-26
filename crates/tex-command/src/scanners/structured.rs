@@ -20,8 +20,8 @@ use tex_state::{
 use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
 
 use crate::input::{
-    BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason,
-    TokenBehavior, TokenPayload,
+    BackupTreatment, InputLevelId, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
+    StoredReplayReason, TokenBehavior,
 };
 use crate::processor::alignment::{PREAMBLE_ALIGN_STATE, is_character_command};
 use crate::processor::status::{
@@ -6566,7 +6566,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         observed: Token,
     ) -> InputLevelId {
         let level = self.command.push_token_level(
-            TokenPayload::transient(
+            PackedTokenSpanHandle::transient(
                 tokens
                     .into_iter()
                     .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
@@ -8031,7 +8031,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // backed-up forbidden command can open a second runaway episode.
             self.conserve_input_stack()?;
             self.command.push_token_level(
-                TokenPayload::transient([
+                PackedTokenSpanHandle::transient([
                     cr,
                     TracedTokenWord::pack(
                         Token::Char {
@@ -8133,7 +8133,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // into the scanner child. Commit may therefore reclaim the scanner
         // scope without leaving an attempt id in accepted command roots.
         let level = self.command.push_token_level(
-            TokenPayload::transient(shifted),
+            PackedTokenSpanHandle::transient(shifted),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

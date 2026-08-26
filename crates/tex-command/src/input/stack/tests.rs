@@ -1,7 +1,7 @@
 use super::{InputRetirementAction, InputRetirementError, InputRetirementReason};
 use crate::CommandState;
 use crate::input::{
-    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
+    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
 
 #[test]
@@ -9,7 +9,7 @@ fn one_exhausted_token_level_retires_once_with_its_semantic_reason() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();
         let identity = state.push_token_level(
-            TokenPayload::transient([]),
+            PackedTokenSpanHandle::transient([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::StopAtEnd,
             ReplayTrace::Stored(StoredReplayReason::EveryJob),
@@ -36,13 +36,13 @@ fn retirement_rejects_a_stale_level_identity_before_mutation() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();
         let older = state.push_token_level(
-            TokenPayload::transient([]),
+            PackedTokenSpanHandle::transient([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
         let current = state.push_token_level(
-            TokenPayload::transient([]),
+            PackedTokenSpanHandle::transient([]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

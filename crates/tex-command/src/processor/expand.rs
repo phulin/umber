@@ -14,8 +14,8 @@ use posix_regex::{PosixRegexBuilder, compile::Error as PosixRegexError};
 
 use crate::command::DeliveryStamp;
 use crate::input::{
-    BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, TokenBehavior,
-    TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
+    RetirementBehavior, TokenBehavior,
 };
 use crate::macro_call::MacroArguments;
 use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
@@ -1746,7 +1746,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::attempt_command_error)?
             .to_vec();
         let first = words.first().map(|word| word.semantic_token());
-        self.insert_expansion_list(TokenPayload::transient(words), first);
+        self.insert_expansion_list(PackedTokenSpanHandle::transient(words), first);
         Ok(())
     }
 
@@ -2258,7 +2258,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .map_err(crate::scan_toks::attempt_command_error)?
                         .to_vec();
                     let first = words.first().map(|word| word.semantic_token());
-                    self.insert_expansion_list(TokenPayload::transient(words), first);
+                    self.insert_expansion_list(PackedTokenSpanHandle::transient(words), first);
                 }
                 crate::InternalValue::Font(symbol) => {
                     self.push_rendered_tokens([Token::Cs(symbol)], opener);
@@ -2380,7 +2380,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.back_input(opener)?;
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), opener_origin);
             let level = self.command.push_token_level(
-                TokenPayload::backed_up([BackedUpToken {
+                PackedTokenSpanHandle::backed_up([BackedUpToken {
                     spelling: frozen_relax,
                     source_provenance: None,
                 }]),
@@ -3299,7 +3299,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn push_mark_text(&mut self, tokens: &tex_state::node::NodeTokenList) {
         let words = tokens.words();
         let level = self.command.push_token_level(
-            TokenPayload::stored_semantic(words),
+            PackedTokenSpanHandle::stored_semantic(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),
@@ -3375,7 +3375,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn push_rendered_tokens(&mut self, tokens: impl IntoIterator<Item = Token>, parent: OriginId) {
         let mut tokens = tokens.into_iter();
         let first = tokens.next();
-        let payload = TokenPayload::transient(
+        let payload = PackedTokenSpanHandle::transient(
             first
                 .into_iter()
                 .chain(tokens)
@@ -3392,7 +3392,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// choosing its own token type. `first` is the inserted list's leading
     /// token: §323's trace seam reports the current token of the level it just
     /// pushed, and an empty inserted list has none to report.
-    pub(crate) fn insert_expansion_list<P: crate::input::TokenPayloadSource<G>>(
+    pub(crate) fn insert_expansion_list<P: crate::input::PackedTokenSpanSource<G>>(
         &mut self,
         payload: P,
         first: Option<Token>,
@@ -3400,7 +3400,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.insert_expansion_list_with_behavior(payload, first, TokenBehavior::Recovery);
     }
 
-    fn insert_expansion_list_with_behavior<P: crate::input::TokenPayloadSource<G>>(
+    fn insert_expansion_list_with_behavior<P: crate::input::PackedTokenSpanSource<G>>(
         &mut self,
         payload: P,
         first: Option<Token>,
@@ -3435,7 +3435,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.conserve_input_stack()?;
         self.undo_alignment_delivery(&command);
         let level = self.command.push_token_level(
-            TokenPayload::backed_up([BackedUpToken {
+            PackedTokenSpanHandle::backed_up([BackedUpToken {
                 spelling: command.spelling(),
                 source_provenance: command.source_provenance(),
             }]),

@@ -132,12 +132,13 @@ collector (see `src/conditionals.rs`).
   superscript notation, invalid-character recovery steps, byte/scalar ranges,
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
-  source/token cursors over compact coordinates into the generation-owned
-  segmented replay lane and shared durable token-list cursors, cold backup
-  source coordinates, explicit stored/transient/backed-up TeX82 cell
-  ownership, exact LIFO segment reuse, orthogonal delivery/retirement
-  classifications, and compact admitted-macro replacement and argument-span
-  coordinates. A source level's `open_depths` field is `\tracingnesting`'s own
+  source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
+  replacement/argument, attempt, and durable sources adapt once at level
+  creation; delivery calls one storage-boundary `token_at` and advances only
+  the packed frame scalar. The module also owns cold backup source coordinates,
+  explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
+  reuse, and orthogonal delivery/retirement classifications. A source level's
+  `open_depths` field is `\tracingnesting`'s own
   record; see `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   centralized replay-lane admission, retained v-template lifecycle,

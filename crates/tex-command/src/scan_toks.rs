@@ -22,7 +22,7 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor};
 use tex_state::CommandLineSource;
 
-use crate::input::TokenPayload;
+use crate::input::PackedTokenSpanHandle;
 use crate::observation::{
     CommandObservation, DiagnosticRecord, InputReason, InputRecord, InputTransition,
     TokenListRecord,
@@ -1766,7 +1766,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         })?;
         let words = self.attempt_words(scanned.replacement_text)?.to_vec();
         let first = words.first().map(|word| word.semantic_token());
-        self.insert_expansion_list(TokenPayload::transient(words), first);
+        self.insert_expansion_list(PackedTokenSpanHandle::transient(words), first);
         Ok(())
     }
 }

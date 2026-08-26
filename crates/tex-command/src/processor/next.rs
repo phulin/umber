@@ -12,8 +12,9 @@ use crate::command::{CurrentCommand, DeliveryStamp};
 use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, CompactSourceStepQueries, CompactSourceTokenizationStep,
-    InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay, ReplayTrace,
-    RetirementBehavior, StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay, PackedTokenSources,
+    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    TokenCursor,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::input::SourceNameClass;
@@ -50,13 +51,6 @@ pub(crate) const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
 /// raw delivery reports it with deletions disabled and then restarts at the
 /// following character instead of producing a token for it.
 const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
-
-struct StoredTokenDelivery {
-    spelling: TracedTokenWord,
-    position: u64,
-    behavior: TokenBehavior,
-    source_provenance: Option<SourceProvenance>,
-}
 
 use super::alignment::AlignmentDeliveryState;
 use super::alignment::CELL_ALIGN_STATE;
@@ -201,14 +195,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return None;
                 };
                 (!matches!(cursor.behavior, TokenBehavior::VTemplate)
-                    && Self::peek_stored_token(
-                        cursor,
-                        &self.state,
-                        self.command.attempt.arena(),
-                        &self.command.input.replay,
-                        &self.command.scratch,
-                    )
-                    .is_none())
+                    && cursor
+                        .token_at(PackedTokenSources::new(
+                            &self.command.input.replay,
+                            self.command.attempt.arena(),
+                            &self.command.scratch,
+                        ))
+                        .is_none())
                 .then(|| cursor.identity())
             }) else {
                 return Ok(retired);
@@ -374,14 +367,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if Self::peek_stored_token(
-                cursor,
-                &self.state,
-                self.command.attempt.arena(),
-                &self.command.input.replay,
-                &self.command.scratch,
-            )
-            .is_some()
+            if cursor
+                .token_at(PackedTokenSources::new(
+                    &self.command.input.replay,
+                    self.command.attempt.arena(),
+                    &self.command.scratch,
+                ))
+                .is_some()
             {
                 break;
             }
@@ -455,7 +447,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.observe_unbalanced_delimiter_correction(recovery_name, previous);
         let level = self.command.push_token_level(
-            TokenPayload::transient([TracedTokenWord::pack(recovery, OriginId::UNKNOWN)]),
+            PackedTokenSpanHandle::transient([TracedTokenWord::pack(recovery, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -501,7 +493,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .primitive_token("cr")
             .ok_or(CommandError::input_invariant())?;
         let level = self.command.push_token_level(
-            TokenPayload::transient([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
+            PackedTokenSpanHandle::transient([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -842,7 +834,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// without ever delivering a token.
     pub(crate) fn back_list(&mut self, tokens: impl IntoIterator<Item = BackedUpToken>) {
         let level = self.command.push_token_level(
-            TokenPayload::backed_up(tokens),
+            PackedTokenSpanHandle::backed_up(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -889,7 +881,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 spelling.semantic_token(),
             ));
         let level = self.command.push_token_level(
-            TokenPayload::backed_up([BackedUpToken {
+            PackedTokenSpanHandle::backed_up([BackedUpToken {
                 spelling,
                 source_provenance: None,
             }]),
@@ -945,7 +937,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 0,
                 "no delivery occurs while e-TeX links aftergroup tokens"
             );
-            let TokenPayload::Replay { replay, .. } = cursor.payload else {
+            let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span else {
                 unreachable!("back_input above installed a replay payload");
             };
             let admitted = self
@@ -1018,7 +1010,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             OriginId::UNKNOWN,
         );
         let level = self.command.push_token_level(
-            TokenPayload::transient([par]),
+            PackedTokenSpanHandle::transient([par]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -1057,7 +1049,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .ok_or(CommandError::input_invariant())?,
         );
         let level = self.command.push_token_level(
-            TokenPayload::transient([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
+            PackedTokenSpanHandle::transient([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -1085,7 +1077,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let dollar = TracedTokenWord::pack(dollar_token, OriginId::UNKNOWN);
         let level = self.command.push_token_level(
-            TokenPayload::transient([dollar]),
+            PackedTokenSpanHandle::transient([dollar]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -1107,7 +1099,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// enclosing §325 backup remains `<to be read again>`.
     pub(crate) fn push_inserted_error_token(&mut self, token: Token) {
         let level = self.command.push_token_level(
-            TokenPayload::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)]),
+            PackedTokenSpanHandle::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -1131,7 +1123,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.report_named_token_list("output", output.clone());
         let words = self.state.token_list(output.clone());
         let level = self.command.push_token_level(
-            TokenPayload::durable(words),
+            PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
@@ -1175,14 +1167,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            InputLevel::Tokens(cursor) => Self::peek_stored_token(
-                cursor,
-                &self.state,
-                self.command.attempt.arena(),
-                &self.command.input.replay,
-                &self.command.scratch,
-            )
-            .is_some(),
+            InputLevel::Tokens(cursor) => cursor
+                .token_at(PackedTokenSources::new(
+                    &self.command.input.replay,
+                    self.command.attempt.arena(),
+                    &self.command.scratch,
+                ))
+                .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
@@ -1192,13 +1183,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     level,
                     InputLevel::Tokens(cursor)
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                            && Self::peek_stored_token(
-                                cursor,
-                                &self.state,
-                                self.command.attempt.arena(),
-                                &self.command.input.replay,
-                                &self.command.scratch,
-                            )
+                            && cursor
+                                .token_at(PackedTokenSources::new(
+                                    &self.command.input.replay,
+                                    self.command.attempt.arena(),
+                                    &self.command.scratch,
+                                ))
                             .is_none()
                 )
             });
@@ -1219,14 +1209,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                             } =>
                     {
                         Some(
-                            Self::peek_stored_token(
-                                cursor,
-                                &self.state,
-                                self.command.attempt.arena(),
-                                &self.command.input.replay,
-                                &self.command.scratch,
-                            )
-                            .is_some(),
+                            cursor
+                                .token_at(PackedTokenSources::new(
+                                    &self.command.input.replay,
+                                    self.command.attempt.arena(),
+                                    &self.command.scratch,
+                                ))
+                                .is_some(),
                         )
                     }
                     InputLevel::Source(_) | InputLevel::Tokens(_) => None,
@@ -1254,17 +1243,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || Self::peek_stored_token(
-                cursor,
-                &self.state,
-                self.command.attempt.arena(),
-                &self.command.input.replay,
-                &self.command.scratch,
-            )
-            .is_some()
+            || cursor
+                .token_at(PackedTokenSources::new(
+                    &self.command.input.replay,
+                    self.command.attempt.arena(),
+                    &self.command.scratch,
+                ))
+                .is_some()
             || !matches!(
-                match cursor.payload {
-                    TokenPayload::Replay { replay, .. } => self
+                match cursor.span {
+                    PackedTokenSpanHandle::Replay { replay, .. } => self
                         .command
                         .input
                         .replay
@@ -1315,7 +1303,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         self.back_input(command)?;
         let level = self.command.push_token_level(
-            TokenPayload::transient(
+            PackedTokenSpanHandle::transient(
                 closing
                     .iter()
                     .map(|&token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
@@ -1493,7 +1481,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.undo_alignment_delivery(&command);
 
         let level = self.command.push_token_level(
-            TokenPayload::backed_up([BackedUpToken {
+            PackedTokenSpanHandle::backed_up([BackedUpToken {
                 spelling: command.spelling(),
                 source_provenance: command.source_provenance(),
             }]),
@@ -1952,32 +1940,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                         };
                         debug_assert_eq!(cursor.identity(), identity);
                         debug_assert_eq!(cursor.position(), index);
-                        let next = Self::next_stored_token(
-                            cursor,
-                            &self.state,
-                            attempt,
-                            replay_lane,
-                            scratch,
-                        );
+                        let behavior = cursor.behavior;
+                        let next =
+                            cursor.token_at(PackedTokenSources::new(replay_lane, attempt, scratch));
                         if next.is_some()
                             && cursor.frame.advance().map(|position| position as usize)
                                 != Some(index)
                         {
                             return Err(CommandError::input_invariant());
                         }
-                        next
+                        next.map(|token| (token, behavior))
                     };
-                    if let Some(StoredTokenDelivery {
-                        spelling,
-                        position,
-                        behavior,
-                        source_provenance,
-                    }) = next
-                    {
+                    if let Some(((word, origin, source_provenance), behavior)) = next {
                         return Ok(Some(DeliveredToken {
-                            spelling,
+                            spelling: TracedTokenWord::from_parts(word, origin),
                             level: identity,
-                            position,
+                            position: u64::try_from(index)
+                                .map_err(|_| CommandError::input_invariant())?,
                             behavior,
                             source_provenance,
                             direct_source: false,
@@ -2168,65 +2147,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn next_stored_token(
-        cursor: &mut TokenCursor<G>,
-        stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        replay_lane: &crate::input::ReplayLane<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Option<StoredTokenDelivery> {
-        let delivery = Self::peek_stored_token(cursor, stores, attempt, replay_lane, scratch)?;
-        match &mut cursor.payload {
-            TokenPayload::MacroArgument { replay, .. } => {
-                scratch.advance_replay(replay).ok()?;
-            }
-            TokenPayload::DurableList { cursor, .. } => {
-                cursor.advance().then_some(())?;
-            }
-            TokenPayload::Replay { .. }
-            | TokenPayload::MacroReplacement { .. }
-            | TokenPayload::AttemptList { .. } => {}
-        }
-        Some(delivery)
-    }
-
-    fn peek_stored_token(
-        cursor: &TokenCursor<G>,
-        stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        replay_lane: &crate::input::ReplayLane<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Option<StoredTokenDelivery> {
-        let index = cursor.position();
-        let position = u64::try_from(index).ok()?;
-        let spelling = match &cursor.payload {
-            TokenPayload::Replay { replay, .. } => replay_lane.get(*replay, index),
-            TokenPayload::MacroReplacement { definition, .. } => stores
-                .definition(definition.clone())
-                .replacement_text()
-                .get(index)
-                .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
-            TokenPayload::MacroArgument { replay, .. } => scratch
-                .replay_word(*replay)
-                .ok()
-                .map(|spelling| (spelling, None)),
-            TokenPayload::AttemptList { list, .. } => attempt
-                .token_word(*list, index)
-                .ok()
-                .map(|spelling| (spelling, None)),
-            TokenPayload::DurableList { cursor, .. } => cursor
-                .current_word()
-                .map(|word| (TracedTokenWord::from_parts(word, OriginId::UNKNOWN), None)),
-        };
-        let spelling = spelling?;
-        Some(StoredTokenDelivery {
-            spelling: spelling.0,
-            position,
-            behavior: cursor.behavior,
-            source_provenance: spelling.1,
-        })
-    }
-
     /// TeX82 §§325 and 390 clean off *every* recently depleted token list
     /// before a new one is pushed. Both sections spell the same loop, and
     /// §390's comment states its purpose for both:
@@ -2255,14 +2175,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
-                        && Self::peek_stored_token(
-                            cursor,
-                            &self.state,
-                            self.command.attempt.arena(),
-                            &self.command.input.replay,
-                            &self.command.scratch,
-                        )
-                        .is_none() =>
+                        && cursor
+                            .token_at(PackedTokenSources::new(
+                                &self.command.input.replay,
+                                self.command.attempt.arena(),
+                                &self.command.scratch,
+                            ))
+                            .is_none() =>
                 {
                     Some(cursor.identity())
                 }
@@ -2422,7 +2341,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             })
             .collect();
         let level = self.command.push_token_level(
-            TokenPayload::transient(std::iter::once(first_token).chain(second_token)),
+            PackedTokenSpanHandle::transient(std::iter::once(first_token).chain(second_token)),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

@@ -14,10 +14,12 @@ mod tests;
 
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame,
-    PackedTokenOwnership, ReplayLane, ReplayTrace, RetirementBehavior, SourceLevel,
-    SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor,
-    TokenPayload, TokenPayloadSource, packed_token_frame,
+    PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource,
+    ReplayLane, ReplayTrace, RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement,
+    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
+#[cfg(feature = "profiling")]
+pub use levels::{MixedPackedCursorBenchmark, MixedPackedCursorReceipt};
 pub(crate) use source::{
     LineBackingRegistry, RegisteredSource, SourceCursor, source_line_buffer_high_water,
 };
@@ -371,27 +373,27 @@ fn project_token_cursor<G>(
         }
     });
     if matches!(
-        cursor.payload,
-        TokenPayload::MacroReplacement { .. }
-            | TokenPayload::AttemptList { .. }
-            | TokenPayload::MacroArgument { .. }
+        cursor.span,
+        PackedTokenSpanHandle::MacroReplacement { .. }
+            | PackedTokenSpanHandle::AttemptList { .. }
+            | PackedTokenSpanHandle::MacroArgument { .. }
     ) {
         return None;
     }
-    match &cursor.payload {
-        TokenPayload::Replay { replay, len } => {
+    match &cursor.span {
+        PackedTokenSpanHandle::Replay { replay, len } => {
             for index in 0..*len as usize {
                 project_token(hash, replay_lane.get(*replay, index)?.0.token()?, state)?;
             }
         }
-        TokenPayload::DurableList { cursor, .. } => {
-            for word in state.token_list(cursor.list()) {
+        PackedTokenSpanHandle::DurableList { list, .. } => {
+            for word in state.token_list(list.clone()) {
                 project_token(hash, word.semantic_token(), state)?;
             }
         }
-        TokenPayload::MacroReplacement { .. }
-        | TokenPayload::AttemptList { .. }
-        | TokenPayload::MacroArgument { .. } => {
+        PackedTokenSpanHandle::MacroReplacement { .. }
+        | PackedTokenSpanHandle::AttemptList { .. }
+        | PackedTokenSpanHandle::MacroArgument { .. } => {
             unreachable!("packed macro payloads fail closed above")
         }
     }
@@ -888,23 +890,16 @@ impl<G> InputState<G> {
             attempt,
             scratch,
         } = storage;
-        fn payload_len<G>(
+        fn span_len<G>(
             _stores: &tex_state::CommandContext<'_, G>,
             tokens: &TokenCursor<G>,
             _parameters: &crate::macro_call::ParameterState<G>,
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> usize {
-            match &tokens.payload {
-                TokenPayload::Replay { len, .. } => *len as usize,
-                TokenPayload::MacroReplacement { len, .. } => *len as usize,
-                TokenPayload::AttemptList { len, .. } => *len as usize,
-                TokenPayload::MacroArgument { len, .. } => *len as usize,
-                TokenPayload::DurableList { len, .. } => *len as usize,
-            }
+            tokens.span.frame_len()
         }
 
-        fn payload_token<G>(
-            stores: &tex_state::CommandContext<'_, G>,
+        fn span_token<G>(
             tokens: &TokenCursor<G>,
             replay_lane: &ReplayLane<G>,
             index: usize,
@@ -912,28 +907,9 @@ impl<G> InputState<G> {
             attempt: &crate::attempt::AttemptArena<G>,
             scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
-            match &tokens.payload {
-                TokenPayload::Replay { replay, .. } => replay_lane
-                    .get(*replay, index)
-                    .map(|(word, _)| word.semantic_token()),
-                TokenPayload::MacroReplacement { definition, .. } => stores
-                    .definition(definition.clone())
-                    .replacement_text()
-                    .get(index)
-                    .map(|word| word.semantic_token()),
-                TokenPayload::AttemptList { list, .. } => attempt
-                    .token_word(*list, index)
-                    .ok()
-                    .map(|word| word.semantic_token()),
-                TokenPayload::MacroArgument { replay, .. } => scratch
-                    .argument_word(replay.range(), index)
-                    .ok()
-                    .map(|word| word.semantic_token()),
-                TokenPayload::DurableList { cursor, .. } => stores
-                    .token_list(cursor.list())
-                    .get(index)
-                    .map(|word| word.semantic_token()),
-            }
+            PackedTokenSources::new(replay_lane, attempt, scratch)
+                .token_at(&tokens.span, index)
+                .map(|(word, _, _)| word.semantic_token())
         }
 
         fn render_token<G>(
@@ -961,7 +937,7 @@ impl<G> InputState<G> {
             let TokenBehavior::MacroBody(activation) = tokens.behavior else {
                 return None;
             };
-            let TokenPayload::MacroReplacement { definition, .. } = &tokens.payload else {
+            let PackedTokenSpanHandle::MacroReplacement { definition, .. } = &tokens.span else {
                 return None;
             };
             let activation = parameters
@@ -981,7 +957,7 @@ impl<G> InputState<G> {
         } else {
             None
         };
-        let count = payload_len(stores, tokens, parameters, scratch);
+        let count = span_len(stores, tokens, parameters, scratch);
         let split = tokens.position().min(count);
         let noexpand_marker = matches!(
             tokens.behavior,
@@ -1013,15 +989,9 @@ impl<G> InputState<G> {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(
-                stores,
-                tokens,
-                replay_lane,
-                index,
-                parameters,
-                attempt,
-                scratch,
-            ) {
+            if let Some(token) =
+                span_token(tokens, replay_lane, index, parameters, attempt, scratch)
+            {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -1094,15 +1064,9 @@ impl<G> InputState<G> {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(
-                stores,
-                tokens,
-                replay_lane,
-                index,
-                parameters,
-                attempt,
-                scratch,
-            ) {
+            if let Some(token) =
+                span_token(tokens, replay_lane, index, parameters, attempt, scratch)
+            {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

@@ -309,6 +309,14 @@ Sequential delivery dereferences and advances that already-owned cursor in
 place. It does not clone the token-list handle merely to read or validate one
 word; diagnostic lookahead borrows the same cursor without advancing it.
 
+Command input generalizes that rule across every stored source. Level creation
+adapts replay, macro replacement/argument, attempt, and durable owners into one
+typed `PackedTokenSpanHandle`; per-token delivery uses
+`PackedTokenSources::token_at(handle, scalar_offset)` and advances only the
+packed input frame. The storage boundary retains the unavoidable safe-Rust
+owner-domain choice. No source-specific delivery object, second advancing
+cursor, handle clone, relocation, or payload copy occurs per word.
+
 Reads, moves, restoration, warmed reuse, and explicit alias clones allocate no
 heap memory. An `Rc` count change is not construction of a new heap owner.
 Scratch token lists and macro arguments do not use shared ownership: their

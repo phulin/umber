@@ -103,6 +103,19 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
 }
 
 impl<G> DefinitionId<G> {
+    /// Borrows one packed replacement word through this already-owned
+    /// definition handle.
+    ///
+    /// Stored-token delivery keeps the handle in its input span, so this
+    /// access neither clones the non-atomic owner nor reconstructs a
+    /// [`DefinitionView`].
+    #[must_use]
+    pub fn replacement_word(&self, index: usize) -> Option<TokenWord> {
+        self.allocation.slice[self.allocation.head.parameter_len as usize..]
+            .get(index)
+            .copied()
+    }
+
     pub(crate) fn format_index(&self) -> u32 {
         self.allocation.head.serial.get() - 1
     }

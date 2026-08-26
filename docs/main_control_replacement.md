@@ -450,19 +450,20 @@ frame; its copy-only owner identity is the sole live level identity, and its
 existing exact 64-bit byte/scalar/line cursor as their cold physical sidecar;
 the frame's current offset is only a delivered-token count and is normalized
 when unchanged future state converges across comment edits. Token-level
-factories construct chunk-owned packed traced words directly for stored replay,
-backup/noexpand, alignment templates, inserted recovery, and every-hook
-payloads. Production `TokenPayload` has only packed, macro-replacement, and
-argument-range representations; no parallel rich token owner survives level
-construction or admission. Backup keeps physical source coordinates in a
-sparse cold sidecar, so ordinary word delivery does not construct diagnostic
-ranges. Resource suspension detaches handle-free words and coordinates, and
+factories adapt replay, macro replacement and argument, attempt, and durable
+storage once into one `PackedTokenSpanHandle`. Delivery uniformly calls
+`token_at(handle, frame.position)` and advances only the packed frame's scalar
+offset; the safe storage boundary owns the sole direct owner-domain match. No
+generic stored-delivery value, source-specific advancing cursor, per-word
+owner clone, or parallel rich token owner survives level admission. Backup
+keeps physical source coordinates in a sparse cold sidecar, so ordinary word
+delivery does not construct diagnostic ranges. Resource suspension detaches handle-free words and coordinates, and
 resume admits fresh input, macro, argument, and invocation chunks at the exact
 portable cursors. Runtime chunk identities never enter the continuation or
 schema-12 format DTOs. Live macro meaning and diagnostic reads admit one
-copy-only definition coordinate through the aggregate runtime-value registry
-and borrow its traced row; only cold detached or stale APIs repeat identity
-validation. Transaction marks remain for `umber2-awgc.4.2`.
+definition owner at macro entry; replacement delivery borrows its packed tail
+directly without reconstructing a view or changing its reference count.
+Transaction marks remain for `umber2-awgc.4.2`.
 
 The packed cutover itself has an assertion-bearing warmed gate for ordinary
 source delivery, packed backup/replay, stored replay, and macro matching,

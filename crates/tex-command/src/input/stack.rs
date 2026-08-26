@@ -8,8 +8,8 @@ use tex_state::token::OriginId;
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    FileFramingEvent, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SourceNameClass,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    FileFramingEvent, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
+    RetirementBehavior, SourceNameClass, StoredReplayReason, TokenBehavior, TokenCursor,
 };
 
 /// One committed input-lifecycle transition.
@@ -125,8 +125,8 @@ impl<G> CommandState<G> {
             let InputLevel::Tokens(cursor) = level else {
                 return words;
             };
-            let owned = match cursor.payload {
-                TokenPayload::Replay { replay, len }
+            let owned = match cursor.span {
+                PackedTokenSpanHandle::Replay { replay, len }
                     if matches!(
                         self.input.replay.ownership(replay),
                         Some(
@@ -180,7 +180,7 @@ impl<G> CommandState<G> {
             self.parameters
                 .push_activation(name, definition.clone(), arguments, invocation);
         self.push_token_level(
-            TokenPayload::MacroReplacement {
+            PackedTokenSpanHandle::MacroReplacement {
                 definition,
                 len: u32::try_from(replacement_len).expect("macro replacement exceeds u32"),
             },
@@ -190,23 +190,23 @@ impl<G> CommandState<G> {
         )
     }
 
-    pub(crate) fn push_token_level<P: super::TokenPayloadSource<G>>(
+    pub(crate) fn push_token_level<P: super::PackedTokenSpanSource<G>>(
         &mut self,
-        payload: P,
+        source: P,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
-        let payload = payload
+        let span = source
             .admit(&mut self.input.replay)
             .expect("generation replay lane admission");
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
         self.usage.record_input_push(self.input.levels.len());
         let identity = self.allocate_input_level_identity();
         let frame =
-            super::packed_token_frame(identity, payload.frame_len(), &behavior, retirement, &trace);
+            super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
         self.input.levels.push(InputLevel::Tokens(TokenCursor {
-            payload,
+            span,
             behavior,
             retirement,
             trace,
@@ -230,7 +230,7 @@ impl<G> CommandState<G> {
     ) -> Result<InputLevelId, crate::AttemptError> {
         self.attempt.arena().token_words(list)?;
         Ok(self.push_token_level(
-            TokenPayload::AttemptList { list, len },
+            PackedTokenSpanHandle::AttemptList { list, len },
             behavior,
             retirement,
             trace,
@@ -310,15 +310,9 @@ impl<G> CommandState<G> {
                 slot,
             }
         })?;
-        let replay = self.scratch.begin_argument_replay(range).map_err(|_| {
-            ParameterReplayError::ArgumentRangeOutsideBuffer {
-                activation: owner,
-                slot,
-            }
-        })?;
         let identity = self.push_token_level(
-            TokenPayload::MacroArgument {
-                replay,
+            PackedTokenSpanHandle::MacroArgument {
+                range,
                 len: u32::try_from(len).expect("macro argument length exceeds u32"),
             },
             TokenBehavior::Parameter,
@@ -452,7 +446,7 @@ impl<G> CommandState<G> {
         };
         self.finish_macro_body_retirement(&cursor.behavior)
             .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-        if let TokenPayload::Replay { replay, .. } = cursor.payload {
+        if let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span {
             self.input
                 .replay
                 .release(replay)
@@ -510,7 +504,7 @@ impl<G> CommandState<G> {
         };
         self.finish_macro_body_retirement(&cursor.behavior)
             .expect("final cleanup runs inside one direct operation");
-        if let TokenPayload::Replay { replay, .. } = cursor.payload {
+        if let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span {
             self.input
                 .replay
                 .release(replay)

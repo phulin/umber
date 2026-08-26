@@ -19,7 +19,7 @@ use crate::input::{
     SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::input::{
-    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
+    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{
@@ -1273,7 +1273,7 @@ impl<G> CommandState<G> {
     ) -> CommandReplayEpisode {
         let words = stores.token_list(tokens.clone());
         let identity = self.push_token_level(
-            TokenPayload::durable(words),
+            PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1433,7 +1433,7 @@ impl<G> CommandState<G> {
     ) {
         let words = stores.token_list(tokens.clone());
         let level = self.push_token_level(
-            TokenPayload::durable(words),
+            PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1893,7 +1893,7 @@ impl<G> CommandState<G> {
         // that is what names the level in the pinned observer's trace.
         let level = match template {
             None => self.push_token_level(
-                TokenPayload::transient([]),
+                PackedTokenSpanHandle::transient([]),
                 TokenBehavior::VTemplate,
                 RetirementBehavior::RetainExhaustedVTemplate,
                 ReplayTrace::OmitTemplate,
@@ -2006,8 +2006,8 @@ impl<G> CommandState<G> {
         let exhausted_backed_up_endv = matches!(top,
             InputLevel::Tokens(cursor)
                 if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && matches!(cursor.payload,
-                        TokenPayload::Replay { replay, len }
+                    && matches!(cursor.span,
+                        PackedTokenSpanHandle::Replay { replay, len }
                             if self.input.replay.ownership(replay)
                                 == Some(crate::input::PackedTokenOwnership::BackedUp)
                                 && cursor.position() >= len as usize)
@@ -2338,7 +2338,7 @@ impl<G> CommandState<G> {
         }
         let words = stores.token_list(every_eof.clone());
         Some(self.push_token_level(
-            TokenPayload::durable(words),
+            PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -2470,7 +2470,7 @@ impl<G> CommandState<G> {
         trace: ReplayTrace,
     ) -> InputLevelId {
         self.push_token_level(
-            TokenPayload::durable(stores.token_list(template)),
+            PackedTokenSpanHandle::durable(stores.token_list(template)),
             behavior,
             retirement,
             trace,

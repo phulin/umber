@@ -313,41 +313,6 @@ impl<G> Hash for MacroArgumentRange<G> {
 }
 
 #[derive(Debug)]
-pub(crate) struct MacroReplayCursor<G> {
-    range: MacroArgumentRange<G>,
-    current: ChunkCursor,
-    remaining: u32,
-}
-
-impl<G> Copy for MacroReplayCursor<G> {}
-impl<G> Clone for MacroReplayCursor<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<G> PartialEq for MacroReplayCursor<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.range == other.range
-            && self.current == other.current
-            && self.remaining == other.remaining
-    }
-}
-impl<G> Eq for MacroReplayCursor<G> {}
-impl<G> Hash for MacroReplayCursor<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.range.hash(state);
-        self.current.chunk.hash(state);
-        self.current.offset.hash(state);
-        self.remaining.hash(state);
-    }
-}
-impl<G> MacroReplayCursor<G> {
-    pub(crate) const fn range(self) -> MacroArgumentRange<G> {
-        self.range
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct MacroMatch<G> {
     frame: MacroFrameId<G>,
 }
@@ -1106,40 +1071,6 @@ impl<G> ExecutionScratch<G> {
         )
     }
 
-    pub(crate) fn begin_argument_replay(
-        &self,
-        range: MacroArgumentRange<G>,
-    ) -> Result<MacroReplayCursor<G>, ScratchError> {
-        self.validate_argument_range(range)?;
-        Ok(MacroReplayCursor {
-            range,
-            current: range.start,
-            remaining: range.len,
-        })
-    }
-
-    pub(crate) fn replay_word(
-        &self,
-        replay: MacroReplayCursor<G>,
-    ) -> Result<TracedTokenWord, ScratchError> {
-        if replay.remaining == 0 {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.cursor_word(replay.range.frame, replay.current, true)
-    }
-
-    pub(crate) fn advance_replay(
-        &self,
-        replay: &mut MacroReplayCursor<G>,
-    ) -> Result<(), ScratchError> {
-        if replay.remaining == 0 {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        replay.current = self.next_cursor(replay.current)?;
-        replay.remaining -= 1;
-        Ok(())
-    }
-
     pub(crate) fn argument_len(&self, range: MacroArgumentRange<G>) -> Result<usize, ScratchError> {
         self.validate_argument_range(range)?;
         Ok(range.len as usize)
@@ -1515,12 +1446,14 @@ mod tests {
             .argument_range(frame, 1)
             .expect("live frame")
             .expect("first argument");
-        let mut replay = scratch.begin_argument_replay(range).expect("replay cursor");
-        for expected in expected {
-            assert_eq!(scratch.replay_word(replay), Ok(expected));
-            scratch.advance_replay(&mut replay).expect("advance cursor");
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(scratch.argument_word(range, index), Ok(expected));
         }
-        assert!(scratch.replay_word(replay).is_err());
+        assert!(
+            scratch
+                .argument_word(range, MACRO_CHUNK_WORDS * 2 + 3)
+                .is_err()
+        );
         assert_eq!(scratch.copied_macro_words(), 0);
         scratch.pop_macro_frame(frame).expect("frame retirement");
         assert!(scratch.is_quiescent());
