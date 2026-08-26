@@ -3664,9 +3664,13 @@ compiled in every build.
 
 ## 33. Main-control integration
 
-`tex-exec` owns main control. Each bounded episode repeatedly asks
-`CommandProcessor` for an unexpandable `CurrentCommand`, dispatches its
-meaning, and performs stomach semantics under one aggregate rollback root.
+`tex-exec` owns main control. Each bounded episode repeatedly gives
+`CommandProcessor` its operation-local `Option<CurrentCommand>` destination,
+dispatches the unexpandable command written there, and performs stomach
+semantics under one aggregate rollback root. Raw preflight, ordinary expanded
+delivery, main-loop lookahead, alignment delivery, prefix scanning, leader
+handoff, and in-place reswitch all use that same caller-owned destination
+shape; the returned status carries no command.
 
 Execution may call narrow processor APIs to:
 
@@ -3699,6 +3703,13 @@ its scanner; alignment itself remains the destination only when suspension
 occurred while alignment still owned delivery. Retry therefore resumes the
 exact caller rather than fetching past a settled command or reconstructing an
 owner coordinate from command state.
+
+The call-local destination is empty on entry, is cleared only while a
+canonical filler loop continues, and never crosses a resource barrier.
+Preflight settlement consumes the command already in that slot and writes its
+settled replacement back into the same slot; it does not back up or redeliver
+the command. Replay completion and alignment events remain compact status
+variants and leave no command-bearing return envelope.
 
 Each bounded `MainControl` episode settles commands through the sole live
 command, mode, Universe, output, and World owners. A command-core

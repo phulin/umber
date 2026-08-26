@@ -396,6 +396,14 @@ the final command for one later backup. Internal recovery, ErrorStop deletion,
 math-shift lookahead, and output-list draining supply their local final or
 discard slots directly and create no returned command envelope.
 
+Main control likewise owns one call-local `Option<CurrentCommand>` final slot
+for raw preflight, ordinary expansion, main-loop lookahead, alignment bodies,
+prefixes, leader handoff, and `goto reswitch`. Delivery writes the completed
+command there and returns only a compact status. Filler loops clear and reuse
+that slot; a settled command moves directly into dispatch or its exact typed
+suspension owner. No command is cloned merely to cross the delivery API, and
+no settled command is backed up or redelivered across preflight.
+
 An exhausted alignment V-template is intentionally retained until TeX's
 semantic `endv` transition; it is not stale merely because it has delivered
 its last ordinary token. Likewise, a source registered in `pending_sources`
