@@ -59,6 +59,10 @@ macro argument, attempt, and durable owners; and five million indexed reads
 across one sealed 16,385-word macro argument. These rows separate source decode,
 lookup/probe, TeX-visible creation, packed meaning delivery, backed-up raw
 delivery, mixed packed-cursor traversal, and long segmented argument access.
+The macro-matching row also asserts that its successful first-token expansion
+does not increase the matched-word read counter: paragraph and removable-
+outer-group decisions must consume first-scan metadata rather than reread the
+staging span.
 The mixed row reports absolute
 calls, exact end-of-span retirements, one exact nonzero scalar rollback,
 elapsed time, and a semantic checksum. Stored replay loops assert zero

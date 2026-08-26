@@ -976,12 +976,17 @@ impl<G> MixedPackedCursorBenchmark<G> {
         let matching = scratch
             .begin_macro_match()
             .expect("mixed-cursor macro frame");
-        let buffer = scratch
+        let mut buffer = scratch
             .begin_match_buffer(&matching)
             .expect("mixed-cursor argument buffer");
         for word in traced {
             scratch
-                .push_match_word(&matching, buffer, word)
+                .push_match_word(
+                    &matching,
+                    &mut buffer,
+                    word,
+                    crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                )
                 .expect("mixed-cursor argument word");
         }
         scratch
@@ -1091,7 +1096,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
         let matching = scratch
             .begin_macro_match()
             .expect("long-argument macro frame");
-        let buffer = scratch
+        let mut buffer = scratch
             .begin_match_buffer(&matching)
             .expect("long-argument buffer");
         for index in 0..WORDS {
@@ -1102,8 +1107,9 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
             scratch
                 .push_match_word(
                     &matching,
-                    buffer,
+                    &mut buffer,
                     TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
+                    crate::execution_scratch::MacroArgumentTokenFacts::default(),
                 )
                 .expect("long-argument word");
         }

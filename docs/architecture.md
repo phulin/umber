@@ -113,7 +113,8 @@ Replay frames have three representations:
 
 - stored token lists for durable definitions and registers; and
 - one generation-owned absolute-offset segmented bump stack plus sealed ranges
-  for matched macro arguments and their replay frames; and
+  and first-scan paragraph/outer-group facts for matched macro arguments and
+  their replay frames; and
 - shared immutable transient `TracedTokenWord` buffers for pushback, inserted
   tokens, and rendered expansion results; uniquely owned buffers return to the
   allocation pool when their replay frame retires.

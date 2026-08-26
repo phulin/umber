@@ -6,6 +6,8 @@
 //! the physical segments to the shared high-water pool. No macro invocation
 //! owns a heap buffer or an attempt-arena scope.
 
+#[cfg(any(test, feature = "profiling"))]
+use core::cell::Cell;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 
@@ -278,6 +280,38 @@ pub(crate) struct MacroArgumentRange<G> {
     len: u32,
 }
 
+/// Exact TeX82 §394 facts established while one argument is collected.
+///
+/// `rejects_non_long_paragraph` records only a `par_token` which passed
+/// through §394's ordinary-token check. A token first held as a delimiter
+/// prefix is deliberately not equivalent, even if that prefix is later
+/// committed to the argument. `removable_outer_group` describes the collected
+/// pre-stripping span whose outer pair is omitted from the sealed range.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct MacroArgumentFacts {
+    rejects_non_long_paragraph: bool,
+    removable_outer_group: bool,
+}
+
+impl MacroArgumentFacts {
+    #[cfg(test)]
+    pub(crate) const fn rejects_non_long_paragraph(self) -> bool {
+        self.rejects_non_long_paragraph
+    }
+
+    pub(crate) const fn removable_outer_group(self) -> bool {
+        self.removable_outer_group
+    }
+}
+
+/// Facts about one token at the point §394 admits it as argument material.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct MacroArgumentTokenFacts {
+    pub(crate) rejects_non_long_paragraph: bool,
+    pub(crate) begin_group: bool,
+    pub(crate) end_group: bool,
+}
+
 impl<G> Copy for MacroArgumentRange<G> {}
 impl<G> Clone for MacroArgumentRange<G> {
     fn clone(&self) -> Self {
@@ -309,14 +343,8 @@ pub(crate) struct MacroMatchBuffer<G> {
     serial: u64,
     start_word: u32,
     end_word: Option<u32>,
+    facts: PendingArgumentFacts,
     _generation: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> Copy for MacroMatchBuffer<G> {}
-impl<G> Clone for MacroMatchBuffer<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -325,12 +353,59 @@ struct PackedRange {
     len: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PackedArgument {
+    range: PackedRange,
+    facts: MacroArgumentFacts,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum OuterGroupProgress {
+    #[default]
+    Empty,
+    Open(u32),
+    Closed,
+    Invalid,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PendingArgumentFacts {
+    rejects_non_long_paragraph: bool,
+    outer_group: OuterGroupProgress,
+}
+
+impl PendingArgumentFacts {
+    fn push(&mut self, facts: MacroArgumentTokenFacts) {
+        self.rejects_non_long_paragraph |= facts.rejects_non_long_paragraph;
+        self.outer_group = match self.outer_group {
+            OuterGroupProgress::Empty if facts.begin_group => OuterGroupProgress::Open(1),
+            OuterGroupProgress::Empty => OuterGroupProgress::Invalid,
+            OuterGroupProgress::Open(depth) if facts.begin_group => {
+                OuterGroupProgress::Open(depth.saturating_add(1))
+            }
+            OuterGroupProgress::Open(depth) if facts.end_group && depth > 1 => {
+                OuterGroupProgress::Open(depth - 1)
+            }
+            OuterGroupProgress::Open(1) if facts.end_group => OuterGroupProgress::Closed,
+            OuterGroupProgress::Open(depth) => OuterGroupProgress::Open(depth),
+            OuterGroupProgress::Closed | OuterGroupProgress::Invalid => OuterGroupProgress::Invalid,
+        };
+    }
+
+    const fn seal(self) -> MacroArgumentFacts {
+        MacroArgumentFacts {
+            rejects_non_long_paragraph: self.rejects_non_long_paragraph,
+            removable_outer_group: matches!(self.outer_group, OuterGroupProgress::Closed),
+        }
+    }
+}
+
 #[derive(Debug, Default, Eq, PartialEq)]
 struct MacroSlot {
     serial: u64,
     watermark_segments: u32,
     word_len: u32,
-    arguments: [Option<PackedRange>; 9],
+    arguments: [Option<PackedArgument>; 9],
     argument_count: u8,
     live: bool,
 }
@@ -353,7 +428,7 @@ impl MacroWordSegment {
 #[derive(Debug, Eq, PartialEq)]
 struct PendingMacroMatch {
     serial: u64,
-    arguments: [Option<PackedRange>; 9],
+    arguments: [Option<PackedArgument>; 9],
     argument_count: u8,
 }
 
@@ -420,6 +495,12 @@ pub(crate) struct ExecutionScratch<G> {
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
     copied_macro_words: u64,
+    /// Successful matching should append and classify, never read its stored
+    /// words back for paragraph or outer-group decisions. Diagnostic tracing
+    /// and observed token payloads are deliberate readers and remain visible
+    /// in this assertion-bearing profiling counter.
+    #[cfg(any(test, feature = "profiling"))]
+    match_word_reads: Cell<u64>,
 }
 
 impl<G> Default for ExecutionScratch<G> {
@@ -441,6 +522,8 @@ impl<G> Default for ExecutionScratch<G> {
             _generation: PhantomData,
             #[cfg(test)]
             copied_macro_words: 0,
+            #[cfg(any(test, feature = "profiling"))]
+            match_word_reads: Cell::new(0),
         }
     }
 }
@@ -825,6 +908,7 @@ impl<G> ExecutionScratch<G> {
             serial: matching.serial,
             start_word: self.match_word_len,
             end_word: None,
+            facts: PendingArgumentFacts::default(),
             _generation: PhantomData,
         })
     }
@@ -832,20 +916,23 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn push_match_word(
         &mut self,
         matching: &MacroMatch<G>,
-        buffer: MacroMatchBuffer<G>,
+        buffer: &mut MacroMatchBuffer<G>,
         word: TracedTokenWord,
+        facts: MacroArgumentTokenFacts,
     ) -> Result<(), ScratchError> {
         self.validate_buffer(matching, buffer)?;
         if buffer.end_word.is_some() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.push_match_segment_word(word)
+        self.push_match_segment_word(word)?;
+        buffer.facts.push(facts);
+        Ok(())
     }
 
     pub(crate) fn match_words(
         &self,
         matching: &MacroMatch<G>,
-        buffer: MacroMatchBuffer<G>,
+        buffer: &MacroMatchBuffer<G>,
     ) -> Result<MacroWords<'_, G>, ScratchError> {
         self.validate_buffer(matching, buffer)?;
         let end = buffer.end_word.unwrap_or(self.match_word_len);
@@ -862,7 +949,7 @@ impl<G> ExecutionScratch<G> {
         matching: &MacroMatch<G>,
         buffer: MacroMatchBuffer<G>,
     ) -> Result<MacroMatchBuffer<G>, ScratchError> {
-        self.validate_buffer(matching, buffer)?;
+        self.validate_buffer(matching, &buffer)?;
         if buffer.end_word.is_some() {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -874,8 +961,18 @@ impl<G> ExecutionScratch<G> {
             serial: buffer.serial,
             start_word: buffer.start_word + 1,
             end_word: Some(end - 1),
+            facts: buffer.facts,
             _generation: PhantomData,
         })
+    }
+
+    pub(crate) fn match_argument_facts(
+        &self,
+        matching: &MacroMatch<G>,
+        buffer: &MacroMatchBuffer<G>,
+    ) -> Result<MacroArgumentFacts, ScratchError> {
+        self.validate_buffer(matching, buffer)?;
+        Ok(buffer.facts.seal())
     }
 
     pub(crate) fn finish_match_buffer(
@@ -883,11 +980,14 @@ impl<G> ExecutionScratch<G> {
         matching: &MacroMatch<G>,
         buffer: MacroMatchBuffer<G>,
     ) -> Result<(), ScratchError> {
-        self.validate_buffer(matching, buffer)?;
+        self.validate_buffer(matching, &buffer)?;
         let end = buffer.end_word.unwrap_or(self.match_word_len);
-        let range = PackedRange {
-            start: buffer.start_word,
-            len: end - buffer.start_word,
+        let argument = PackedArgument {
+            range: PackedRange {
+                start: buffer.start_word,
+                len: end - buffer.start_word,
+            },
+            facts: buffer.facts.seal(),
         };
         let pending = self
             .pending_macro_match
@@ -896,7 +996,7 @@ impl<G> ExecutionScratch<G> {
         if pending.serial != matching.serial || pending.argument_count >= 9 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        pending.arguments[pending.argument_count as usize] = Some(range);
+        pending.arguments[pending.argument_count as usize] = Some(argument);
         pending.argument_count += 1;
         Ok(())
     }
@@ -1005,9 +1105,9 @@ impl<G> ExecutionScratch<G> {
             .checked_mul(MACRO_SEGMENT_WORDS as u32)
             .ok_or(ScratchError::CapacityOverflow)?;
         let mut arguments = pending.arguments;
-        for range in arguments.iter_mut().flatten() {
-            range.start = base
-                .checked_add(range.start)
+        for argument in arguments.iter_mut().flatten() {
+            argument.range.start = base
+                .checked_add(argument.range.start)
                 .ok_or(ScratchError::CapacityOverflow)?;
         }
         let slot = &mut self.macro_slots[slot_index_usize];
@@ -1068,14 +1168,22 @@ impl<G> ExecutionScratch<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(
-            self.sealed_slot(frame)?.arguments[usize::from(slot - 1)].map(|range| {
+            self.sealed_slot(frame)?.arguments[usize::from(slot - 1)].map(|argument| {
                 MacroArgumentRange {
                     frame,
-                    start: range.start,
-                    len: range.len,
+                    start: argument.range.start,
+                    len: argument.range.len,
                 }
             }),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn argument_facts(
+        &self,
+        range: MacroArgumentRange<G>,
+    ) -> Result<MacroArgumentFacts, ScratchError> {
+        Ok(self.sealed_argument(range)?.facts)
     }
 
     pub(crate) fn argument_len(&self, range: MacroArgumentRange<G>) -> Result<usize, ScratchError> {
@@ -1136,6 +1244,11 @@ impl<G> ExecutionScratch<G> {
         self.copied_macro_words
     }
 
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn match_word_reads(&self) -> u64 {
+        self.match_word_reads.get()
+    }
+
     fn validate_matching(&self, matching: &MacroMatch<G>) -> Result<(), ScratchError> {
         matches!(
             self.pending_macro_match,
@@ -1148,7 +1261,7 @@ impl<G> ExecutionScratch<G> {
     fn validate_buffer(
         &self,
         matching: &MacroMatch<G>,
-        buffer: MacroMatchBuffer<G>,
+        buffer: &MacroMatchBuffer<G>,
     ) -> Result<(), ScratchError> {
         self.validate_matching(matching)?;
         let end = buffer.end_word.unwrap_or(self.match_word_len);
@@ -1160,12 +1273,20 @@ impl<G> ExecutionScratch<G> {
     }
 
     fn validate_argument_range(&self, range: MacroArgumentRange<G>) -> Result<(), ScratchError> {
+        self.sealed_argument(range).map(drop)
+    }
+
+    fn sealed_argument(
+        &self,
+        range: MacroArgumentRange<G>,
+    ) -> Result<&PackedArgument, ScratchError> {
         self.sealed_slot(range.frame)?
             .arguments
             .iter()
             .flatten()
-            .any(|candidate| candidate.start == range.start && candidate.len == range.len)
-            .then_some(())
+            .find(|candidate| {
+                candidate.range.start == range.start && candidate.range.len == range.len
+            })
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
@@ -1218,6 +1339,9 @@ impl<G> ExecutionScratch<G> {
         {
             return Err(ScratchError::InvalidCoordinate);
         }
+        #[cfg(any(test, feature = "profiling"))]
+        self.match_word_reads
+            .set(self.match_word_reads.get().saturating_add(1));
         Self::segmented_word(&self.match_segments, index)
     }
 
@@ -1303,17 +1427,43 @@ mod tests {
         )
     }
 
+    fn brace(ch: char, cat: Catcode) -> TracedTokenWord {
+        TracedTokenWord::pack(Token::Char { ch, cat }, OriginId::UNKNOWN)
+    }
+
     fn seal_argument<G>(
         scratch: &mut ExecutionScratch<G>,
         words: impl IntoIterator<Item = TracedTokenWord>,
     ) -> MacroFrameId<G> {
         let matching = scratch.begin_macro_match().expect("macro match");
-        let buffer = scratch
+        let mut buffer = scratch
             .begin_match_buffer(&matching)
             .expect("argument buffer");
         for word in words {
+            let token = word.semantic_token();
             scratch
-                .push_match_word(&matching, buffer, word)
+                .push_match_word(
+                    &matching,
+                    &mut buffer,
+                    word,
+                    MacroArgumentTokenFacts {
+                        rejects_non_long_paragraph: false,
+                        begin_group: matches!(
+                            token,
+                            Token::Char {
+                                cat: Catcode::BeginGroup,
+                                ..
+                            }
+                        ),
+                        end_group: matches!(
+                            token,
+                            Token::Char {
+                                cat: Catcode::EndGroup,
+                                ..
+                            }
+                        ),
+                    },
+                )
                 .expect("argument word");
         }
         scratch
@@ -1407,19 +1557,144 @@ mod tests {
     }
 
     #[test]
+    fn first_scan_facts_seal_beside_the_range_without_word_rereads() {
+        let mut scratch = ExecutionScratch::<()>::default();
+        let matching = scratch.begin_macro_match().expect("macro match");
+        let mut buffer = scratch
+            .begin_match_buffer(&matching)
+            .expect("argument buffer");
+        let words = [
+            (
+                brace('{', Catcode::BeginGroup),
+                MacroArgumentTokenFacts {
+                    begin_group: true,
+                    ..MacroArgumentTokenFacts::default()
+                },
+            ),
+            (
+                brace('[', Catcode::BeginGroup),
+                MacroArgumentTokenFacts {
+                    begin_group: true,
+                    ..MacroArgumentTokenFacts::default()
+                },
+            ),
+            (
+                word('p'),
+                MacroArgumentTokenFacts {
+                    rejects_non_long_paragraph: true,
+                    ..MacroArgumentTokenFacts::default()
+                },
+            ),
+            (
+                brace(']', Catcode::EndGroup),
+                MacroArgumentTokenFacts {
+                    end_group: true,
+                    ..MacroArgumentTokenFacts::default()
+                },
+            ),
+            (
+                brace('}', Catcode::EndGroup),
+                MacroArgumentTokenFacts {
+                    end_group: true,
+                    ..MacroArgumentTokenFacts::default()
+                },
+            ),
+        ];
+        for (word, facts) in words {
+            scratch
+                .push_match_word(&matching, &mut buffer, word, facts)
+                .expect("argument word");
+        }
+        let facts = scratch
+            .match_argument_facts(&matching, &buffer)
+            .expect("pending facts");
+        assert!(facts.rejects_non_long_paragraph());
+        assert!(facts.removable_outer_group());
+        assert_eq!(scratch.match_word_reads(), 0);
+
+        let stripped = scratch
+            .strip_match_outer_group(&matching, buffer)
+            .expect("outer group strips by metadata");
+        scratch
+            .finish_match_buffer(&matching, stripped)
+            .expect("argument range");
+        let frame = scratch.commit_macro_match(matching).expect("sealed frame");
+        let range = scratch
+            .argument_range(frame, 1)
+            .expect("live frame")
+            .expect("first argument");
+        assert_eq!(scratch.argument_len(range), Ok(3));
+        assert_eq!(
+            scratch.argument_facts(range),
+            Ok(MacroArgumentFacts {
+                rejects_non_long_paragraph: true,
+                removable_outer_group: true,
+            })
+        );
+        assert_eq!(scratch.match_word_reads(), 0);
+
+        scratch.pop_macro_frame(frame).expect("frame retirement");
+        assert_eq!(
+            scratch.argument_facts(range),
+            Err(ScratchError::InvalidCoordinate)
+        );
+    }
+
+    #[test]
+    fn outer_group_fact_rejects_empty_one_token_and_trailing_material() {
+        let cases = [
+            (Vec::new(), false),
+            (vec![word('x')], false),
+            (
+                vec![
+                    brace('{', Catcode::BeginGroup),
+                    word('x'),
+                    brace('}', Catcode::EndGroup),
+                ],
+                true,
+            ),
+            (
+                vec![
+                    brace('{', Catcode::BeginGroup),
+                    word('x'),
+                    brace('}', Catcode::EndGroup),
+                    word('y'),
+                ],
+                false,
+            ),
+        ];
+        for (words, expected) in cases {
+            let mut scratch = ExecutionScratch::<()>::default();
+            let frame = seal_argument(&mut scratch, words);
+            let range = scratch
+                .argument_range(frame, 1)
+                .expect("live frame")
+                .expect("first argument");
+            assert_eq!(
+                scratch
+                    .argument_facts(range)
+                    .expect("sealed argument facts")
+                    .removable_outer_group(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn repeated_same_depth_replacement_reuses_one_slot_without_copying() {
         let mut scratch = ExecutionScratch::<()>::default();
         let mut frame = seal_argument(&mut scratch, [word('a')]);
         for index in 0..8_192 {
             let matching = scratch.begin_macro_match().expect("replacement match");
-            let buffer = scratch
+            let mut buffer = scratch
                 .begin_match_buffer(&matching)
                 .expect("replacement argument");
             scratch
                 .push_match_word(
                     &matching,
-                    buffer,
+                    &mut buffer,
                     word(if index % 2 == 0 { 'b' } else { 'c' }),
+                    MacroArgumentTokenFacts::default(),
                 )
                 .expect("replacement word");
             scratch
@@ -1443,11 +1718,16 @@ mod tests {
         let mut scratch = ExecutionScratch::<()>::default();
         let parent = seal_argument(&mut scratch, [word('p')]);
         let rejected = scratch.begin_macro_match().expect("rejected match");
-        let buffer = scratch
+        let mut buffer = scratch
             .begin_match_buffer(&rejected)
             .expect("rejected argument");
         scratch
-            .push_match_word(&rejected, buffer, word('x'))
+            .push_match_word(
+                &rejected,
+                &mut buffer,
+                word('x'),
+                MacroArgumentTokenFacts::default(),
+            )
             .expect("rejected word");
         scratch
             .discard_macro_match(rejected)
@@ -1504,11 +1784,16 @@ mod tests {
         let mut frame = seal_argument(&mut scratch, [word('a')]);
         let replace = |scratch: &mut ExecutionScratch<()>, frame: MacroFrameId<()>| {
             let matching = scratch.begin_macro_match().expect("replacement match");
-            let buffer = scratch
+            let mut buffer = scratch
                 .begin_match_buffer(&matching)
                 .expect("replacement buffer");
             scratch
-                .push_match_word(&matching, buffer, word('b'))
+                .push_match_word(
+                    &matching,
+                    &mut buffer,
+                    word('b'),
+                    MacroArgumentTokenFacts::default(),
+                )
                 .expect("replacement word");
             scratch
                 .finish_match_buffer(&matching, buffer)

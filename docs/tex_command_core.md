@@ -1835,9 +1835,14 @@ struct MacroArguments {
 ```
 
 `MacroArguments` is fixed at 16 bytes, `MacroActivation` at 48 bytes, and each
-argument record stores `[Option<MacroArgumentRange>; 9]` beside one contiguous
-traced-word span. The scalar matcher accumulates completed arguments in
-definition order through one reusable segmented sealing lane. Sealing moves
+argument record stores nine optional absolute ranges plus the exact §394
+paragraph and removable-outer-group facts established during their first
+scan, beside one contiguous traced-word span. The paragraph fact records only
+the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
+prefix and later committed after a mismatch is not reclassified. The scalar
+matcher accumulates completed arguments in definition order through one
+reusable segmented sealing lane. It consumes those facts for the non-`\long`
+decision and outer-pair removal without rereading stored words. Sealing moves
 whole physical segment owners onto the live absolute-offset bump stack and
 adds the frame base to its fixed range metadata; it copies no token word.
 Empty arguments retain empty half-open ranges. A compact

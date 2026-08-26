@@ -665,9 +665,15 @@ fn macro_argument_matching() {
         }
         let pending = processor.get_next().unwrap().unwrap();
         processor.back_input(pending).unwrap();
+        let match_word_reads = processor.macro_argument_match_word_reads();
         measure_zero("macro_matching_replay_expansion", || {
             assert_char(processor.get_x_token().unwrap().unwrap(), 'a');
         });
+        assert_eq!(
+            processor.macro_argument_match_word_reads(),
+            match_word_reads,
+            "macro paragraph and outer-group decisions reread matched words"
+        );
     });
 }
 

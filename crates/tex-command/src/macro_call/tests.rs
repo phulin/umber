@@ -1,5 +1,5 @@
 use tex_state::env::AssignmentScope;
-use tex_state::meaning::{MeaningFlags, MeaningWord};
+use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::{MacroCallOutcome, MacroParameterEscape};
@@ -38,6 +38,15 @@ fn install_macro<G>(
     name: &str,
     parameters: &[Token],
 ) -> Token {
+    install_macro_with_flags(universe, name, parameters, MeaningFlags::EMPTY)
+}
+
+fn install_macro_with_flags<G>(
+    universe: &mut tex_state::Universe<G>,
+    name: &str,
+    parameters: &[Token],
+    flags: MeaningFlags,
+) -> Token {
     let definition = universe
         .allocate_definition(
             &parameters
@@ -52,10 +61,22 @@ fn install_macro<G>(
     universe
         .assign_meaning(
             symbol,
-            MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+            MeaningWord::macro_definition(flags, definition),
             AssignmentScope::Global,
         )
         .expect("macro meaning");
+    Token::Cs(symbol.symbol())
+}
+
+fn install_par<G>(universe: &mut tex_state::Universe<G>) -> Token {
+    let symbol = universe.intern("par").expect("paragraph name");
+    universe
+        .assign_meaning(
+            symbol,
+            MeaningWord::from_static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)),
+            AssignmentScope::Global,
+        )
+        .expect("paragraph meaning");
     Token::Cs(symbol.symbol())
 }
 
@@ -357,6 +378,205 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
                 end,
                 letter('c')
             ]
+        );
+    });
+}
+
+#[test]
+fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
+    crate::test_harness::with_universe(|universe| {
+        let paragraph = install_par(universe);
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let long = install_macro_with_flags(
+            universe,
+            "longmacro",
+            &[Token::Param(1)],
+            MeaningFlags::LONG,
+        );
+        let short = install_macro(universe, "shortmacro", &[Token::Param(1)]);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [long, begin, paragraph, end, short, begin, paragraph, end],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let long_call = processor
+            .get_next()
+            .expect("long macro delivery")
+            .expect("long macro command");
+        assert_eq!(
+            processor.macro_call(&long_call),
+            Ok(MacroCallOutcome::Activated)
+        );
+        let arguments = processor.command.parameters.activations[0].arguments;
+        let range = processor
+            .command
+            .scratch
+            .argument_range(arguments.frame(), 1)
+            .expect("live long-macro frame")
+            .expect("long macro first argument");
+        let facts = processor
+            .command
+            .scratch
+            .argument_facts(range)
+            .expect("sealed long-macro facts");
+        assert!(facts.rejects_non_long_paragraph());
+        assert!(facts.removable_outer_group());
+        assert_eq!(processor.command.scratch.match_word_reads(), 0);
+
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("long argument replay")
+                .expect("paragraph argument token")
+                .spelling()
+                .semantic_token(),
+            paragraph
+        );
+        let short_call = processor
+            .get_next()
+            .expect("short macro delivery")
+            .expect("short macro command");
+        assert_eq!(
+            processor.macro_call(&short_call),
+            Err(crate::CommandError::ParagraphInMacroArgument)
+        );
+        assert_eq!(processor.command.scratch.frame_len(), 0);
+    });
+}
+
+#[test]
+fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
+    crate::test_harness::with_universe(|universe| {
+        let paragraph = install_par(universe);
+        let macro_token = install_macro(
+            universe,
+            "paragraphdelimiter",
+            &[Token::Param(1), paragraph, other(',')],
+        );
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [macro_token, paragraph, letter('x'), paragraph, other(',')],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let call = processor
+            .get_next()
+            .expect("delimited macro delivery")
+            .expect("delimited macro command");
+
+        assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
+        assert_eq!(
+            active_argument_tokens(processor.command),
+            [paragraph, letter('x')]
+        );
+        let arguments = processor.command.parameters.activations[0].arguments;
+        let range = processor
+            .command
+            .scratch
+            .argument_range(arguments.frame(), 1)
+            .expect("live delimited-macro frame")
+            .expect("delimited macro first argument");
+        assert!(
+            !processor
+                .command
+                .scratch
+                .argument_facts(range)
+                .expect("sealed delimited-macro facts")
+                .rejects_non_long_paragraph()
+        );
+        assert_eq!(processor.command.scratch.match_word_reads(), 0);
+    });
+}
+
+#[test]
+fn paragraph_fact_uses_token_identity_not_current_meaning() {
+    crate::test_harness::with_universe(|universe| {
+        let paragraph = install_par(universe);
+        let paragraph_id = universe.intern("par").expect("paragraph name");
+        let alias = universe.intern("paragraphalias").expect("alias name");
+        universe
+            .assign_meaning(
+                alias,
+                MeaningWord::from_static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Par,
+                )),
+                AssignmentScope::Global,
+            )
+            .expect("paragraph alias meaning");
+        universe
+            .assign_meaning(
+                paragraph_id,
+                MeaningWord::from_static(Meaning::Relax),
+                AssignmentScope::Global,
+            )
+            .expect("paragraph redefinition");
+        let macro_token = install_macro(universe, "shortidentity", &[Token::Param(1)]);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                macro_token,
+                Token::Cs(alias.symbol()),
+                macro_token,
+                paragraph,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let alias_call = processor
+            .get_next()
+            .expect("alias argument macro delivery")
+            .expect("alias argument macro command");
+        assert_eq!(
+            processor.macro_call(&alias_call),
+            Ok(MacroCallOutcome::Activated)
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("alias argument replay")
+                .expect("alias argument token")
+                .spelling()
+                .semantic_token(),
+            Token::Cs(alias.symbol())
+        );
+        let paragraph_call = processor
+            .get_next()
+            .expect("paragraph argument macro delivery")
+            .expect("paragraph argument macro command");
+        assert_eq!(
+            processor.macro_call(&paragraph_call),
+            Err(crate::CommandError::ParagraphInMacroArgument)
         );
     });
 }

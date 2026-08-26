@@ -207,6 +207,18 @@ pub struct CommandProcessor<'episode, 'admission, G> {
 pub struct CommandDeliveryCursor(u64);
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Number of transient matched-argument word reads in this generation.
+    ///
+    /// The profiling gate asserts that ordinary successful macro matching
+    /// does not increase this counter: paragraph and removable-outer-group
+    /// decisions consume first-scan facts instead. Tracing, diagnostics, and
+    /// external observation may intentionally materialize token text and do
+    /// increase it.
+    #[cfg(feature = "profiling")]
+    pub fn macro_argument_match_word_reads(&self) -> u64 {
+        self.command.scratch.match_word_reads()
+    }
+
     /// Captures the next observation delivery sequence for a typed retry.
     #[must_use]
     pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
