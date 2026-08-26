@@ -51,9 +51,12 @@ collector (see `src/conditionals.rs`).
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
-- `src/state.rs`: copy-on-write aggregate command roots, persistent command
-  state, cross-processor executor-owned replay-completion fences, and current-
-  generation execution scratch. Resource continuations retain the exclusive
+- `src/state.rs`: thread-confined non-atomic aggregate command roots,
+  persistent command state, cross-processor executor-owned replay-completion
+  fences, and current-generation execution scratch. A retained checkpoint
+  causes at most the first subsequent mutation to clone the coarse root;
+  warmed command delivery performs no atomic root admission. Resource
+  continuations retain the exclusive
   current-generation lease, its same scratch lanes, typed ids, and integer
   resume cursors; resumption re-borrows dense state and cancellation drops the
   current candidate wholesale. These are process-local command state, never
@@ -293,9 +296,10 @@ collector (see `src/conditionals.rs`).
   snapshots and named summaries backed by the command-root timeline and
   containing one coarse generation owner plus fixed scalar journal, arena,
   stack, source-anchor, and profile coordinates; capture never clones a live
-  command graph, validation never mutates the runtime, and capture requires
-  quiescent execution scratch. Restore installs roots before resetting scratch
-  lanes and truncating unpublished storage suffixes.
+  command graph, the coarse roots use a private non-atomic owner because they
+  never cross threads, validation never mutates the runtime, and capture
+  requires quiescent execution scratch. Restore installs roots before resetting
+  scratch lanes and truncating unpublished storage suffixes.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   and suspended-execution recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped

@@ -3015,10 +3015,13 @@ exact attempt mark, and binds them to the admitted state generation. The
 command timeline supplies only a monotonic identity serial; it owns no root or
 per-checkpoint row. Cloning either value retains that one owner and copies the
 cursor tuple; it does not clone input, token, definition, provenance,
-macro-activation, or attempt storage. Command roots fork copy-on-write only on
-the first mutation after capture. Restore validates the complete aggregate
-without mutation, then follows the owner-before-roots-before-truncation
-ordering in `runtime_storage_lifetimes.md`.
+macro-activation, or attempt storage. The aggregate root is a private
+thread-confined `Rc`, while the generation and timeline capabilities keep their
+independent atomic owners. Command roots therefore fork only on the first
+mutation after capture; the warmed delivery path performs no atomic root
+admission and no aggregate clone. Restore validates the complete aggregate
+without mutation, then follows the owner-before-roots-before-truncation ordering
+in `runtime_storage_lifetimes.md`.
 
 ### 28.2 Durable summary
 
