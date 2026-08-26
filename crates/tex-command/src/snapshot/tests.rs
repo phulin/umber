@@ -314,7 +314,9 @@ fn dropping_a_summary_releases_its_unreachable_aggregate_root() {
             .expect("quiescent command state publishes");
         let retained = Rc::downgrade(&summary.generation.roots);
 
-        command.begin_file_name().expect("command root forks");
+        command
+            .begin_file_name()
+            .expect("live command root mutates directly");
         assert!(retained.upgrade().is_some());
 
         drop(summary);
@@ -326,17 +328,19 @@ fn dropping_a_summary_releases_its_unreachable_aggregate_root() {
 }
 
 #[test]
-fn retained_root_clones_once_then_warmed_mutation_stays_exclusive() {
+fn named_checkpoint_forks_once_and_warmed_mutation_stays_exclusive() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
+        crate::state::reset_command_root_clone_count();
         let summary = command
             .publish_summary(universe)
             .expect("quiescent command state publishes");
-        crate::state::reset_command_root_clone_count();
-
-        command.begin_file_name().expect("first mutation forks");
         assert_eq!(crate::state::command_root_clone_count(), 1);
-        assert_eq!(Rc::strong_count(&command.roots), 1);
+
+        command
+            .begin_file_name()
+            .expect("post-capture mutation stays direct");
+        assert_eq!(crate::state::command_root_clone_count(), 1);
 
         command.end_file_name();
         command
@@ -396,17 +400,17 @@ fn stale_cursor_cannot_resolve_through_a_later_summary_owner() {
 fn repeated_8192_capture_prune_cycles_retain_constant_metadata() {
     crate::test_harness::with_universe(|universe| {
         let command = crate::CommandState::default();
-        let root_owners = Rc::strong_count(&command.roots);
         let timeline_owners = Arc::strong_count(&command.timeline);
 
         for _ in 0..8_192 {
             let summary = command
                 .publish_summary(universe)
                 .expect("summary publishes");
+            let retained = Rc::downgrade(&summary.generation.roots);
             drop(summary);
+            assert!(retained.upgrade().is_none());
         }
 
-        assert_eq!(Rc::strong_count(&command.roots), root_owners);
         assert_eq!(Arc::strong_count(&command.timeline), timeline_owners);
         assert_eq!(command.timeline.next_serial.load(Ordering::Relaxed), 8_192);
     });
@@ -414,7 +418,7 @@ fn repeated_8192_capture_prune_cycles_retain_constant_metadata() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn warmed_8192_capture_prune_cycles_allocate_zero_heap() {
+fn warmed_8192_capture_prune_cycles_allocate_one_isolated_root_each() {
     crate::test_harness::with_universe(|universe| {
         let command = crate::CommandState::default();
         let warm = command
@@ -434,9 +438,8 @@ fn warmed_8192_capture_prune_cycles_allocate_zero_heap() {
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
-        assert_eq!(after.calls - before.calls, 0);
-        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-        assert_eq!(Rc::strong_count(&command.roots), 1);
+        assert_eq!(after.calls - before.calls, 8_192);
+        assert!(after.requested_bytes > before.requested_bytes);
         assert_eq!(Arc::strong_count(&command.timeline), 1);
     });
 }

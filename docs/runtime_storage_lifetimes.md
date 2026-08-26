@@ -574,24 +574,28 @@ An operation mark is a fixed-size value containing journal cursors, stack
 lengths, scratch-lane lengths, durable storage cursors, mode/page cursors,
 source/effect ledger cursors, and the identity of the generation it addresses.
 A named checkpoint refers to either the current candidate or the prior
-accepted generation; it cannot retain a third generation. Its command owner
-directly retains the one aggregate copy-on-write root and exact attempt mark
-selected at capture; the command timeline contributes only a monotonic
-identity serial and owns no root row. The retained executor store is the sole
-checkpoint container. It reuses physical slots with generation-plus-serial
-validation and exact live-index backreferences, so pruning drops unretained
-owners in O(live checkpoints) without scanning full capacity. A checkpoint
-also contains compact marks and any optional coarse packed-bank snapshot. Its
+accepted generation; it cannot retain a third generation. Named-boundary
+publication explicitly clones the exclusively mutable live command root once
+into a private thread-confined `Rc` owner beside its exact attempt mark. The
+command timeline contributes only a monotonic identity serial and owns no root
+row. Retained-checkpoint clones share that cold owner; ordinary command
+mutation never enters shared ownership. The retained executor store is the
+sole checkpoint container. It reuses physical slots with
+generation-plus-serial validation and exact live-index backreferences, so
+pruning drops unretained owners in O(live checkpoints) without scanning full
+capacity. A checkpoint also contains compact marks and any optional coarse
+packed-bank snapshot. Its
 generation owns one conservative monotonic page-retention bound. A checkpoint
 with an explicit page handle in page-builder or mode state may raise that bound
 to the current page cursor; a checkpoint with no such carrier adds nothing.
 Rootless shipout may truncate only the suffix above the bound. Pruning need not
-lower it, and replacing the generation drops it wholesale. Capture does not
-clone the live definition, node, provenance, input, or page object graph. An
-ordinary retained-generation fork may later use that checkpoint to prepare the
-sole current slot: immutable definition and stored-token payload owners are
-shared directly, while mutable banks and runtime roots receive one
-destination-local representation.
+lower it, and replacing the generation drops it wholesale. The explicit
+command-root fork copies the aggregate's vectors and scalar coordinates but
+shares immutable definitions and stored-token payloads through their existing
+private owners; it does not traverse or copy definition, node, provenance, or
+page payload graphs. An ordinary retained-generation fork later clones that
+root into the sole current slot, while mutable banks and other runtime roots
+receive one destination-local representation.
 
 PDF state uses that rule directly. `PdfStateSnapshot` contains only inline
 scalars, canonical append-log lengths, one absolute general-undo position, one

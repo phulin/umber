@@ -3044,18 +3044,18 @@ The command component of such a retained boundary is generation-generic. A
 `CommandStateSnapshot<G>` and a live `CommandSummary<G>` each retain exactly
 one coarse `CommandGenerationOwner<G>` beside a fixed `CommandSnapshotCursor`
 of command-journal, arena-watermark, stack-length, and ordered-ledger
-positions. The owner directly retains the selected aggregate command roots and
-exact attempt mark, and binds them to the admitted state generation. The
+positions. Named-boundary publication explicitly clones the aggregate command
+root once into that owner and binds it to the admitted state generation. The
+live root remains exclusively mutable before and after publication. The
 command timeline supplies only a monotonic identity serial; it owns no root or
-per-checkpoint row. Cloning either value retains that one owner and copies the
-cursor tuple; it does not clone input, token, definition, provenance,
-macro-activation, or attempt storage. The aggregate root is a private
-thread-confined `Rc`, while the generation and timeline capabilities keep their
-independent atomic owners. Command roots therefore fork only on the first
-mutation after capture; the warmed delivery path performs no atomic root
-admission and no aggregate clone. Restore validates the complete aggregate
-without mutation, then follows the owner-before-roots-before-truncation ordering
-in `runtime_storage_lifetimes.md`.
+per-checkpoint row. Cloning a retained value shares its private thread-confined
+`Rc` owner and copies the cursor tuple; it does not clone the root again. The
+generation and timeline capabilities keep their independent atomic owners.
+Warmed delivery therefore performs no root admission, reference-count branch,
+or aggregate clone. Restore validates the complete aggregate without mutation,
+then explicitly clones the retained root into the live machine before
+truncation, following the owner-before-roots-before-truncation ordering in
+`runtime_storage_lifetimes.md`.
 
 ### 28.2 Durable summary
 

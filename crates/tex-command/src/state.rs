@@ -2,7 +2,6 @@
 
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -150,13 +149,13 @@ pub struct CommandStateRoots<G> {
     /// carry mechanism duplicating this one.
     ///
     /// Placing it here is safe under rollback for the same reason
-    /// `named_token_list_pushes` above already is: a snapshot retains the
-    /// current aggregate root in the command timeline, the first subsequent
-    /// mutation forks that root copy-on-write, and rollback reinstalls the
-    /// retained root before truncating attempt storage. A queued event from a
-    /// rolled-back step therefore disappears with every other command-state
-    /// mutation from that step, while a committed step's events survive until
-    /// the executor drains them with [`Self::take_file_framing_events`].
+    /// `named_token_list_pushes` above already is: checkpoint publication
+    /// explicitly forks an isolated aggregate root, and rollback clones that
+    /// retained root into the live command machine before truncating attempt
+    /// storage. A queued event from a rolled-back step therefore disappears
+    /// with every other command-state mutation from that step, while a
+    /// committed step's events survive until the executor drains them with
+    /// [`Self::take_file_framing_events`].
     pub(crate) file_framing_events: Vec<FileFramingEvent>,
 }
 
@@ -188,14 +187,13 @@ impl<G> Clone for CommandStateRoots<G> {
 
 /// Complete future-relevant state owned by the command machine.
 ///
-/// Named checkpoints retain one immutable aggregate root in the command
-/// timeline. The command machine and its checkpoints are one thread-confined
-/// ownership domain, so the coarse root uses non-atomic sharing. Ordinary
-/// mutation copies only on the first post-checkpoint write; warmed delivery
-/// performs neither atomic ownership traffic nor aggregate cloning.
+/// Named checkpoints retain explicitly forked immutable aggregate roots. The
+/// live root stays exclusively owned, so ordinary mutation is a direct borrow
+/// with no ownership admission or copy-on-write branch. Checkpoint owners use
+/// private non-atomic sharing because they remain thread-confined.
 #[derive(Debug)]
 pub struct CommandState<G> {
-    pub(crate) roots: Rc<CommandStateRoots<G>>,
+    pub(crate) roots: CommandStateRoots<G>,
     pub(crate) timeline: Arc<crate::snapshot::CommandTimeline<G>>,
     /// Runtime-only TeX82 stack accounting. Snapshot roots deliberately omit
     /// this tracker so high-water marks survive rollback without becoming
@@ -224,7 +222,7 @@ impl<G> Deref for CommandState<G> {
 
 impl<G> DerefMut for CommandState<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        Rc::make_mut(&mut self.roots)
+        &mut self.roots
     }
 }
 
@@ -365,7 +363,7 @@ impl<G> Default for CommandStateRoots<G> {
 impl<G> Default for CommandState<G> {
     fn default() -> Self {
         Self {
-            roots: Rc::new(CommandStateRoots::default()),
+            roots: CommandStateRoots::default(),
             timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
             usage: CommandUsageTracker::default(),
             attempt: crate::CommandAttempt::default(),
@@ -2111,14 +2109,14 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
         Self {
-            roots: Rc::new(CommandStateRoots {
+            roots: CommandStateRoots {
                 engine_semantics: CommandEngineSemantics::for_profile(profile),
                 expansion: ExpansionState {
                     profile,
                     ..ExpansionState::default()
                 },
                 ..CommandStateRoots::default()
-            }),
+            },
             ..Self::default()
         }
     }

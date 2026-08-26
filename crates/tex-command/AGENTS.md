@@ -51,11 +51,11 @@ collector (see `src/conditionals.rs`).
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
-- `src/state.rs`: thread-confined non-atomic aggregate command roots,
+- `src/state.rs`: exclusively mutable live aggregate command roots,
   persistent command state, cross-processor executor-owned replay-completion
-  fences, and current-generation execution scratch. A retained checkpoint
-  causes at most the first subsequent mutation to clone the coarse root;
-  warmed command delivery performs no atomic root admission. Resource
+  fences, and current-generation execution scratch. A named checkpoint
+  explicitly forks one coarse root into private thread-confined non-atomic
+  ownership; warmed command delivery performs no root admission. Resource
   continuations retain the exclusive
   current-generation lease, its same scratch lanes, typed ids, and integer
   resume cursors; resumption re-borrows dense state and cancellation drops the

@@ -1,10 +1,9 @@
 //! Bounded in-session command snapshots and named command summaries.
 //!
-//! A retained value owns one complete generation at coarse granularity and a
-//! fixed tuple of scalar cursors. It never owns, clones, or borrows an input,
-//! token, definition, provenance, or attempt row. The subsystem which owns the
-//! live command timeline is responsible for validating these cursors before it
-//! restores anything.
+//! A retained value owns one explicitly forked aggregate command root and a
+//! fixed tuple of scalar cursors. Checkpoint publication performs that cold
+//! fork; ordinary live mutation never enters shared ownership. The subsystem
+//! which owns the live command timeline validates the cursors before restore.
 
 use core::fmt;
 use core::marker::PhantomData;
@@ -140,7 +139,8 @@ impl<G> CommandGenerationOwner<G> {
         &self,
         cursor: CommandSnapshotCursor,
     ) -> Option<(Rc<CommandStateRoots<G>>, AttemptMark)> {
-        (cursor.command_journal() == self.serial).then(|| (Rc::clone(&self.roots), self.attempt))
+        (cursor.command_journal() == self.serial)
+            .then(|| (Rc::clone(&self.roots), self.attempt))
     }
 }
 
@@ -582,9 +582,9 @@ pub struct PreparedCommandRestore<G> {
 }
 
 impl<G> CommandState<G> {
-    /// Creates a fresh command timeline from one accepted summary while
-    /// retaining its immutable aggregate root. Runtime scratch and attempt
-    /// lanes are destination-local and begin quiescent.
+    /// Creates a fresh command timeline from one accepted summary. The cold
+    /// checkpoint fork is copied explicitly into an exclusively mutable live
+    /// root; runtime scratch and attempt lanes begin quiescent.
     #[doc(hidden)]
     pub fn fork_summary(
         summary: &CommandSummary<G>,
@@ -612,7 +612,7 @@ impl<G> CommandState<G> {
             return Err(CommandRestoreError::InvalidCursor);
         }
         let fork = Self {
-            roots,
+            roots: roots.as_ref().clone(),
             ..Self::default()
         };
         fork.profile()
@@ -653,7 +653,7 @@ impl<G> CommandState<G> {
             self.format_dump_is_quiescent(),
             "terminal format closure requires quiescent command state"
         );
-        self.roots = Rc::new(crate::state::CommandStateRoots::default());
+        self.roots = crate::state::CommandStateRoots::default();
         self.timeline = Arc::new(CommandTimeline::default());
         self.attempt = crate::CommandAttempt::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
@@ -812,9 +812,9 @@ impl<G> CommandState<G> {
         })
     }
 
-    /// Captures one exact in-session command root without cloning its live
-    /// graph. The returned owner directly retains the aggregate roots and the
-    /// bounded attempt mark; the timeline retains no per-snapshot row.
+    /// Captures one exact in-session command root by explicitly forking it at
+    /// this cold boundary. The live root remains exclusively mutable; the
+    /// returned owner retains the isolated fork and bounded attempt mark.
     pub fn snapshot(
         &self,
         universe: &Universe<G>,
@@ -828,7 +828,7 @@ impl<G> CommandState<G> {
             CommandGenerationOwner::new(
                 generation,
                 Arc::clone(&self.timeline),
-                Rc::clone(&self.roots),
+                Rc::new(self.roots.clone()),
                 attempt,
                 cursor,
             ),
@@ -856,7 +856,7 @@ impl<G> CommandState<G> {
             CommandGenerationOwner::new(
                 generation,
                 Arc::clone(&self.timeline),
-                Rc::clone(&self.roots),
+                Rc::new(self.roots.clone()),
                 attempt,
                 cursor,
             ),
@@ -864,8 +864,8 @@ impl<G> CommandState<G> {
         ))
     }
 
-    /// Publishes a bounded named-boundary summary without cloning the live
-    /// command graph.
+    /// Publishes a bounded named-boundary summary with one explicit aggregate
+    /// root fork. Ordinary mutation remains direct before and after capture.
     pub fn publish_summary(
         &self,
         universe: &Universe<G>,
@@ -886,7 +886,7 @@ impl<G> CommandState<G> {
             CommandGenerationOwner::new(
                 generation,
                 Arc::clone(&self.timeline),
-                Rc::clone(&self.roots),
+                Rc::new(self.roots.clone()),
                 attempt,
                 cursor,
             ),
@@ -931,7 +931,7 @@ impl<G> CommandState<G> {
             .arena()
             .validate_mark(restore.attempt)
             .map_err(|_| CommandRestoreError::InvalidCursor)?;
-        self.roots = restore.roots;
+        self.roots = restore.roots.as_ref().clone();
         self.attempt
             .arena_mut()
             .truncate(restore.attempt)
