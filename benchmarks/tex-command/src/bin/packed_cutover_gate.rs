@@ -20,6 +20,10 @@ use tex_state::token::{Catcode, Token, TokenWord};
 static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
 fn main() {
+    if std::env::args().any(|argument| argument == "--mixed-stored-only") {
+        warmed_mixed_stored_cursor();
+        return;
+    }
     assert!(std::mem::size_of::<tex_state::DefinitionId<()>>() <= 8);
     assert!(std::mem::size_of::<tex_state::ResolvedMeaning<()>>() <= 24);
     assert!(std::mem::size_of::<tex_state::PrimitiveHandle<()>>() <= 16);
@@ -29,6 +33,7 @@ fn main() {
     packed_backup_and_replay();
     warmed_backup_push_pop_throughput();
     stored_token_replay();
+    warmed_mixed_stored_cursor();
     warmed_short_interner_lookup();
     warmed_primitive_resolution();
     warmed_control_sequence_delivery();
@@ -36,6 +41,34 @@ fn main() {
     warmed_keyword_mismatch_throughput();
     destination_directed_warm_delivery();
     println!("packed token/macro cutover gate: PASS");
+}
+
+fn warmed_mixed_stored_cursor() {
+    const ROUNDS: u32 = 1_000_000;
+    with_universe(|universe| {
+        let mut benchmark = tex_command::MixedPackedCursorBenchmark::new(universe);
+        let _ = benchmark.run(64);
+        let mut receipt = None;
+        let mut elapsed = Duration::ZERO;
+        measure_zero("warmed_mixed_stored_cursor", || {
+            let start = Instant::now();
+            receipt = Some(black_box(benchmark.run(ROUNDS)));
+            elapsed = start.elapsed();
+        });
+        let receipt = receipt.expect("mixed cursor receipt");
+        assert_eq!(receipt.calls, u64::from(ROUNDS) * 5);
+        assert_eq!(receipt.retirements, u64::from(ROUNDS / 4) * 5);
+        assert_eq!(receipt.rollbacks, 1);
+        println!(
+            "warmed_mixed_stored_cursor calls={} retirements={} rollbacks={} checksum={} elapsed_ns={} ns_per_call={:.2}",
+            receipt.calls,
+            receipt.retirements,
+            receipt.rollbacks,
+            receipt.checksum,
+            elapsed.as_nanos(),
+            elapsed.as_nanos() as f64 / receipt.calls as f64,
+        );
+    });
 }
 
 fn warmed_primitive_resolution() {
