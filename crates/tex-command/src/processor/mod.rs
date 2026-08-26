@@ -67,12 +67,6 @@ pub(super) enum ReplayCompletionPolicy {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ControlSequenceCreation {
-    Forbid,
-    Allow,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ExpandedObservationPolicy {
     Commit,
     RawOnly,
@@ -111,7 +105,6 @@ pub(super) enum DeliveryMode {
 pub(super) struct DeliveryPolicy {
     mode: DeliveryMode,
     replay_completion: ReplayCompletionPolicy,
-    control_sequence_creation: ControlSequenceCreation,
     alignment_interception: AlignmentInterceptionPolicy,
 }
 
@@ -198,6 +191,10 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     command_trace_mode_prefix: Option<String>,
     command_trace_printed: bool,
     command_trace_count: usize,
+    /// TeX82 §365's temporary permission belongs exclusively to the next
+    /// source-tokenization step. Canonical token and command delivery never
+    /// inspect it.
+    create_source_control_sequences: bool,
 }
 
 /// Opaque observation-order cursor retained when executor preflight suspends
@@ -566,6 +563,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             command_trace_mode_prefix: None,
             command_trace_printed: false,
             command_trace_count: 0,
+            create_source_control_sequences: false,
         }
     }
 

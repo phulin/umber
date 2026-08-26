@@ -106,8 +106,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/packed_input.rs`: Fixed-width packed input-frame metadata and flags;
   token/source replay payload ownership remains in `tex-command`.
 - `src/interner.rs`: Bounded append-only session epoch for control-sequence
-  names and retained spellings, with explicit foreign-session admission and
-  whole-epoch retirement.
+  names and retained spellings, with one-probe find-or-intern status, explicit
+  foreign-session admission, and whole-epoch retirement.
 - `src/interner/tests.rs`: Session budget, namespace, stability, admission,
   and retirement tests.
 - `src/session_epoch.rs`: Cloneable coarse owner and exclusive physical lease

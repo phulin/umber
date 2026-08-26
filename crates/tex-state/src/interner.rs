@@ -442,18 +442,36 @@ impl Interner {
 
     /// Interns an ordinary escaped control-sequence spelling.
     pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        self.intern_control_sequence(named_kind(name), name)
+        self.intern_with_status(name).map(|(id, _)| id)
+    }
+
+    /// Interns an ordinary escaped control-sequence spelling and reports
+    /// whether this call appended its stable identity.
+    pub(crate) fn intern_with_status(
+        &mut self,
+        name: &str,
+    ) -> Result<(SymbolId, bool), InternerError> {
+        self.intern_control_sequence_with_status(named_kind(name), name)
     }
 
     /// Interns a name through TeX82 §259's hash-table path.
+    #[cfg(test)]
     pub(crate) fn intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        let id = self.intern(name)?;
-        if self.kind_id(id).expect("newly interned symbol is admitted")
-            == ControlSequenceKind::Named
-        {
+        self.intern_hash_with_status(name).map(|(id, _)| id)
+    }
+
+    /// Performs one TeX82 §259 lookup, appending only on a miss, and reports
+    /// whether the stable identity was new.
+    pub(crate) fn intern_hash_with_status(
+        &mut self,
+        name: &str,
+    ) -> Result<(SymbolId, bool), InternerError> {
+        let kind = named_kind(name);
+        let (id, created) = self.intern_control_sequence_with_status(kind, name)?;
+        if kind == ControlSequenceKind::Named {
             self.control_sequences.observe_hash_lookup(id.raw());
         }
-        Ok(id)
+        Ok((id, created))
     }
 
     /// Interns an active-character control sequence.
@@ -511,16 +529,25 @@ impl Interner {
         kind: ControlSequenceKind,
         name: &str,
     ) -> Result<SymbolId, InternerError> {
+        self.intern_control_sequence_with_status(kind, name)
+            .map(|(id, _)| id)
+    }
+
+    fn intern_control_sequence_with_status(
+        &mut self,
+        kind: ControlSequenceKind,
+        name: &str,
+    ) -> Result<(SymbolId, bool), InternerError> {
         if self.retired {
             return Err(InternerError::RetiredEpoch);
         }
         validate_character_kind(kind, name);
         let entry_kind = EntryKind::ControlSequence(kind);
         if let Some(slot) = self.lookup_slot(entry_kind, name) {
-            return Ok(SymbolId::new(self.epoch, slot));
+            return Ok((SymbolId::new(self.epoch, slot), false));
         }
         let slot = self.append(entry_kind, name)?;
-        Ok(SymbolId::new(self.epoch, slot))
+        Ok((SymbolId::new(self.epoch, slot), true))
     }
 
     fn append(&mut self, kind: EntryKind, value: &str) -> Result<u32, InternerError> {

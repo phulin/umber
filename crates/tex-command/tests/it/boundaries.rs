@@ -80,15 +80,17 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     );
     assert!(next.contains("CharacterMode::EightBitExact"));
     assert!(next.contains("CharacterMode::UnicodeExtended"));
-    assert!(expansion.contains("ControlSequenceCreation::Allow"));
-    assert!(expansion.contains("ControlSequenceCreation::Forbid"));
-    assert_eq!(
-        expansion
-            .matches("self.get_next_with_control_sequence_creation(")
-            .count(),
-        2,
-        "the raw and expanded typed drivers must be the only scalar-delivery callers"
+    assert!(
+        !expansion.contains("ControlSequenceCreation"),
+        "canonical command delivery must not carry source-name creation policy"
     );
+    assert_eq!(
+        expansion.matches("self.get_next_canonical(").count(),
+        2,
+        "raw and expanded drivers must share canonical ID delivery"
+    );
+    assert!(next.contains("create_source_control_sequences"));
+    assert!(next.contains("CompactSourceStepQueries for LiveSourceQueries"));
     assert!(
         !next.contains(".trace"),
         "diagnostic replay explanations must not select raw delivery semantics"
@@ -200,7 +202,6 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     );
     for (policy_axis, variants) in [
         ("ReplayCompletionPolicy", &["Consume", "Surface"][..]),
-        ("ControlSequenceCreation", &["Forbid", "Allow"][..]),
         (
             "ExpandedObservationPolicy",
             &["Commit", "RawOnly", "DeferIfExpanded"][..],
@@ -222,6 +223,10 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
             );
         }
     }
+    assert!(
+        !policies.contains("ControlSequenceCreation"),
+        "name creation belongs to source tokenization, not delivery policy"
+    );
     assert!(expansion.contains("ProtectedMacroHandling"));
     assert!(expansion.contains("UndefinedHandling"));
     assert!(

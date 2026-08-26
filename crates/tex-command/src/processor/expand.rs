@@ -26,9 +26,9 @@ use crate::{
 };
 
 use super::{
-    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, ControlSequenceCreation,
-    DeliveryMode, DeliveryPolicy, DeliveryStatus, ExpandedDeliveryPolicy,
-    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryMode,
+    DeliveryPolicy, DeliveryStatus, ExpandedDeliveryPolicy, ExpandedObservationPolicy,
+    FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 use crate::observation::{
@@ -320,7 +320,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     first_command: FirstCommandPolicy::Ordinary,
                 }),
                 replay_completion: ReplayCompletionPolicy::Consume,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             &mut destination,
@@ -382,7 +381,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     first_command: FirstCommandPolicy::Ordinary,
                 }),
                 replay_completion: ReplayCompletionPolicy::Surface,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             &mut destination,
@@ -416,7 +414,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     first_command: FirstCommandPolicy::Ordinary,
                 }),
                 replay_completion: ReplayCompletionPolicy::Consume,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             &mut destination,
@@ -466,7 +463,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     first_command: FirstCommandPolicy::Ordinary,
                 }),
                 replay_completion: ReplayCompletionPolicy::Consume,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             destination,
@@ -618,7 +614,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         first_command: FirstCommandPolicy::Ordinary,
                     }),
                     replay_completion: ReplayCompletionPolicy::Consume,
-                    control_sequence_creation: ControlSequenceCreation::Forbid,
                     alignment_interception: AlignmentInterceptionPolicy::Scalar,
                 },
                 &mut destination,
@@ -716,7 +711,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     first_command: FirstCommandPolicy::Ordinary,
                 }),
                 replay_completion: ReplayCompletionPolicy::Surface,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             destination,
@@ -776,7 +770,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                 }),
                 replay_completion: ReplayCompletionPolicy::Surface,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             destination,
@@ -834,7 +827,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     first_command: FirstCommandPolicy::MainLoopCharacter,
                 }),
                 replay_completion: ReplayCompletionPolicy::Surface,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             destination,
@@ -916,13 +908,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if destination.is_none() {
                 self.last_delivery = None;
                 self.charge_command_action()?;
-                match self.get_next_with_control_sequence_creation(
-                    matches!(
-                        policy.control_sequence_creation,
-                        ControlSequenceCreation::Allow
-                    ),
-                    destination,
-                )? {
+                match self.get_next_canonical(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
@@ -970,13 +956,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if destination.is_none() {
                 self.last_delivery = None;
                 self.charge_command_action()?;
-                match self.get_next_with_control_sequence_creation(
-                    matches!(
-                        policy.control_sequence_creation,
-                        ControlSequenceCreation::Allow
-                    ),
-                    destination,
-                )? {
+                match self.get_next_canonical(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {

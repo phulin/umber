@@ -178,11 +178,12 @@ belong in Beads epic `umber2-johp`; this file is not a task checklist.
 Raw `get_next`/`get_token`, expanded `get_x_token`/`x_token`, replay-aware
 fetches, main-loop lookahead, protected and undefined-preserving fetches, and
 alignment delivery are policies over one private command-delivery driver.
-The policy names control-sequence creation, replay-completion handling,
-expansion and its depth, terminal observation ownership, first-command
-handling, protected and undefined meanings, and alignment `end_template`
-interception independently. Canonically named methods remain as thin entry
-points; they do not own alternate fetch loops.
+The policy names replay-completion handling, expansion and its depth, terminal
+observation ownership, first-command handling, protected and undefined
+meanings, and alignment `end_template` interception independently. It does not
+name control-sequence creation: every token reaching the driver is already a
+character or a packed stable control-sequence identity. Canonically named
+methods remain as thin entry points; they do not own alternate fetch loops.
 
 The driver is destination-directed. Its caller provides the one final
 `Option<CurrentCommand<G>>` slot for that active request; raw resolution and
@@ -1924,12 +1925,15 @@ tokens is immediately observable. Source lines are never pre-tokenized beyond
 the next command.
 
 `SourceToken` remains owned for tokenizer and CLI consumers that need the
-semantic name itself. Production command delivery uses the same tokenizer
-state machine with a destination projection: while a transient name is still
-live, the active creation policy resolves it to a packed `TokenWord`, and only
-that compact identity plus direct-source provenance crosses back into
-`get_next`. The owned name therefore enters neither an input level nor a
-current command, snapshot, or suspension. `ControlSequenceName` keeps up to 24
+semantic name itself. Production source tokenization uses the same state
+machine with a destination projection: while a transient name is still live,
+the tokenizer's creating or non-creating boundary resolves it to a packed
+`TokenWord`, and only that compact identity plus direct-source provenance
+crosses into canonical command delivery. Delivery performs only
+`TokenWord`/control-sequence identity to current eqtb meaning resolution; it
+does not reconstruct a name, choose creation policy, or retain a fallback.
+The owned name therefore enters neither an input level nor a current command,
+snapshot, or suspension. `ControlSequenceName` keeps up to 24
 semantic character codes inline and spills longer names to an unbounded vector. A
 repository fixture census measured 9,770 control-word occurrences at median
 5, p95 15, p99 20, and maximum 31 characters; all registered primitive-name
@@ -1940,8 +1944,9 @@ lookup or interning, rather than moving the former tokenizer allocation into
 a temporary `String`; an already-spilled pathological name may allocate that
 temporary conversion.
 
-`get_token` temporarily enables the canonical control-sequence creation policy;
-ordinary `get_next` preserves TeX82's `no_new_control_sequence`. TeX82 §257
+`get_token` temporarily enables creation only at the source-tokenization seam;
+ordinary `get_next` leaves that seam in TeX82's non-creating
+`no_new_control_sequence` state. TeX82 §257
 sets that flag, §365 clears it only around `get_token`, and §374 clears it only
 around `\csname`'s own `id_lookup`, so a raw scan may not enter a name in the
 hash table at all — the interner is that hash table, and interning during raw
@@ -2088,10 +2093,12 @@ become normal input.
 
 ## 15. `get_token`, backup, and exact delivery
 
-`get_token_into` invokes the raw driver under canonical control-sequence
-creation policy and leaves the same `CurrentCommand` with its packed token
-spelling in the caller's destination. The value-returning `get_token` wrapper
-exists for compatibility outside the hot delivery chain.
+`get_token_into` temporarily grants its next source-tokenization step TeX82
+§365's creation permission, then invokes the same canonical raw driver and
+leaves the same `CurrentCommand` with its packed token spelling in the caller's
+destination. Stored, transient, and backed-up words never observe that
+permission. The value-returning `get_token` wrapper exists for compatibility
+outside the hot delivery chain.
 
 `back_input` implements TeX82 §325 in that section's order:
 

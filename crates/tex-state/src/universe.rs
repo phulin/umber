@@ -776,9 +776,8 @@ impl<G> Universe<G> {
         if self.core.is_none() {
             return Err(UniverseError::Retired);
         }
-        let is_new = self.interner().known(name).is_none();
-        let symbol = self.interner_mut().intern_hash(name)?;
-        if is_new && name.chars().nth(1).is_some() {
+        let (symbol, created) = self.interner_mut().intern_hash_with_status(name)?;
+        if created && name.chars().nth(1).is_some() {
             self.engine_usage.make_string(name);
         }
         self.core

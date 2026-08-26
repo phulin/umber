@@ -30,8 +30,8 @@ use super::CommandProcessor;
 use super::expand::{ExpandedFetch, ProtectedMacroHandling, UndefinedHandling};
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 use super::{
-    AlignmentInterceptionPolicy, ControlSequenceCreation, DeliveryMode, DeliveryPolicy,
-    ExpandedDeliveryPolicy, ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, DeliveryMode, DeliveryPolicy, ExpandedDeliveryPolicy,
+    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 /// TeX82 §336's `Incomplete \if...; all text was ignored after line N`.
@@ -300,7 +300,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                 }),
                 replay_completion: ReplayCompletionPolicy::Surface,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Surface,
             },
             destination,
@@ -594,7 +593,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
                 replay_completion: ReplayCompletionPolicy::Consume,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             destination,
@@ -635,7 +633,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
                 replay_completion: ReplayCompletionPolicy::Surface,
-                control_sequence_creation: ControlSequenceCreation::Forbid,
                 alignment_interception: AlignmentInterceptionPolicy::None,
             },
             destination,
@@ -691,9 +688,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Delivers one raw token for consumers which canonically permit a new
-    /// control-sequence spelling. The present interner records a spelling
-    /// without assigning it a meaning, so the policy boundary is explicit
-    /// even before diagnostic-only interning is separated further.
+    /// source control-sequence spelling.
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let mut destination = None;
         match self.get_token_into(&mut destination)? {
@@ -709,15 +704,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
+        debug_assert!(!self.create_source_control_sequences);
+        self.create_source_control_sequences = true;
         let delivery = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
                 replay_completion: ReplayCompletionPolicy::Consume,
-                control_sequence_creation: ControlSequenceCreation::Allow,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
             destination,
-        )?;
+        );
+        self.create_source_control_sequences = false;
+        let delivery = delivery?;
         debug_assert!(matches!(
             delivery,
             super::DeliveryStatus::End | super::DeliveryStatus::Command
@@ -1550,9 +1548,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.start_alignment_v_template(alignment, delimiter, delimiter_line)
     }
 
-    pub(super) fn get_next_with_control_sequence_creation(
+    pub(super) fn get_next_canonical(
         &mut self,
-        allow_control_sequence_creation: bool,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
@@ -1560,7 +1557,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Some(episode) = self.take_ready_replay_completion() {
                 return Ok(super::DeliveryStatus::ReplayCompleted(episode));
             }
-            let Some(delivery) = self.take_input_token(allow_control_sequence_creation)? else {
+            let Some(delivery) = self.take_input_token()? else {
                 if let Some(episode) = self.take_ready_replay_completion() {
                     return Ok(super::DeliveryStatus::ReplayCompleted(episode));
                 }
@@ -1715,10 +1712,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn take_input_token(
-        &mut self,
-        allow_control_sequence_creation: bool,
-    ) -> Result<Option<DeliveredToken>, CommandError> {
+    fn take_input_token(&mut self) -> Result<Option<DeliveredToken>, CommandError> {
         enum ActiveInput {
             Source {
                 identity: InputLevelId,
@@ -1792,7 +1786,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         level.cursor.backing_registered = true;
                     }
-                    let source_step = self.next_source_step(allow_control_sequence_creation);
+                    let source_step = self.next_source_step();
                     self.command.input.retain_active_file_line_number();
                     match source_step {
                         CompactSourceTokenizationStep::Token(token) => {
@@ -2104,10 +2098,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn next_source_step(
-        &mut self,
-        allow_control_sequence_creation: bool,
-    ) -> CompactSourceTokenizationStep {
+    fn next_source_step(&mut self) -> CompactSourceTokenizationStep {
         self.command
             .observe_active_source_dependencies(&mut self.state);
         let profile = self.command.profile();
@@ -2119,7 +2110,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let step = {
             let mut queries = LiveSourceQueries {
                 state: &mut self.state,
-                allow_control_sequence_creation,
+                create_control_sequences: self.create_source_control_sequences,
             };
             match profile.character_mode() {
                 CharacterMode::EightBitExact => self
@@ -2773,7 +2764,7 @@ fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
 /// two reads.
 struct LiveSourceQueries<'a, 'b, G> {
     state: &'a mut tex_state::CommandContext<'b, G>,
-    allow_control_sequence_creation: bool,
+    create_control_sequences: bool,
 }
 
 impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
@@ -2814,7 +2805,7 @@ impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
 
 impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
     /// Resolves a transient tokenizer spelling into the packed identity raw
-    /// delivery keeps. `allow_control_sequence_creation` is TeX82's
+    /// delivery keeps. `create_control_sequences` is TeX82's
     /// `no_new_control_sequence` inverted: §257 sets it, §365 clears it only
     /// around `get_token`, and §259 otherwise returns §222's dummy undefined
     /// control sequence for a missing hash name. Single-character, null,
@@ -2836,7 +2827,7 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
                 | SourceControlSequenceKind::Null => {
                     let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
                     name.with_text(|name| {
-                        if hashed && !self.allow_control_sequence_creation {
+                        if hashed && !self.create_control_sequences {
                             self.state
                                 .known_control_sequence(name)
                                 .map_or_else(Token::undefined_control_sequence, Token::Cs)

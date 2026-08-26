@@ -146,8 +146,10 @@ collector (see `src/conditionals.rs`).
   trace-independence tests.
 - `src/processor/`: public borrow-only processor facade with specialized raw
   and expanded delivery loops, expansion, scanner-status, and alignment
-  orchestration. The loops share the typed policy boundary but do not test a
-  raw-versus-expanded mode on every token.
+  orchestration. The loops share canonical token-to-current-meaning delivery;
+  creation permission exists only at source tokenization and is absent from
+  delivery policy. The loops do not test a raw-versus-expanded mode on every
+  token.
   The facade also resumes an executor-retained settled delivery and settles a
   raw preflight command without backing it up or delivering it twice.
   `status.rs` owns the one processor-level scanner episode mechanism for

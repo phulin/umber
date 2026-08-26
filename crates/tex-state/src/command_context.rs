@@ -4246,41 +4246,43 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn known_control_sequence(&mut self, name: &str) -> Option<Symbol> {
         let symbol = self.symbol(name)?;
-        self.admitted
-            .state()
-            .admit_symbol(symbol)
-            .expect("session-known symbol fits the current meaning bank");
+        self.ensure_symbol_admitted(symbol);
         Some(symbol)
+    }
+
+    fn ensure_symbol_admitted(&mut self, symbol: Symbol) {
+        if self.admitted.state_ref().meaning(symbol).is_err() {
+            self.admitted
+                .state()
+                .admit_symbol(symbol)
+                .expect("session-known symbol fits the current meaning bank");
+        }
     }
 
     fn intern_symbol(&mut self, id: Result<SymbolId, crate::interner::InternerError>) -> Symbol {
         let id = id.expect("command control-sequence interning stays within session budget");
-        self.admitted
-            .state()
-            .admit_symbol(id.symbol())
-            .expect("interned symbol fits the meaning bank");
+        self.ensure_symbol_admitted(id.symbol());
         id.symbol()
     }
 
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
-        let is_new = self.interner.known(name).is_none();
-        let id = self.interner.intern(name);
-        if is_new && name.chars().nth(1).is_some() {
+        let (id, created) = self
+            .interner
+            .intern_with_status(name)
+            .expect("command control-sequence interning stays within session budget");
+        if created && name.chars().nth(1).is_some() {
             self.engine_usage.make_string(name);
         }
-        self.intern_symbol(id)
+        self.ensure_symbol_admitted(id.symbol());
+        id.symbol()
     }
 
     pub fn intern(&mut self, name: &str) -> Result<SymbolId, crate::interner::InternerError> {
-        let is_new = self.interner.known(name).is_none();
-        let id = self.interner.intern(name)?;
-        if is_new && name.chars().nth(1).is_some() {
+        let (id, created) = self.interner.intern_with_status(name)?;
+        if created && name.chars().nth(1).is_some() {
             self.engine_usage.make_string(name);
         }
-        self.admitted
-            .state()
-            .admit_symbol(id.symbol())
-            .expect("interned symbol fits the meaning bank");
+        self.ensure_symbol_admitted(id.symbol());
         Ok(id)
     }
 
@@ -4302,12 +4304,15 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn intern_hash_control_sequence(&mut self, name: &str) -> Symbol {
-        let is_new = self.interner.known(name).is_none();
-        let id = self.interner.intern_hash(name);
-        if is_new && name.chars().nth(1).is_some() {
+        let (id, created) = self
+            .interner
+            .intern_hash_with_status(name)
+            .expect("command control-sequence interning stays within session budget");
+        if created && name.chars().nth(1).is_some() {
             self.engine_usage.make_string(name);
         }
-        self.intern_symbol(id)
+        self.ensure_symbol_admitted(id.symbol());
+        id.symbol()
     }
 
     pub fn intern_internal_control_sequence(&mut self, name: &str) -> Symbol {
