@@ -1909,9 +1909,14 @@ Catcode lookup happens per delivered character. A catcode assignment between
 tokens is immediately observable. Source lines are never pre-tokenized beyond
 the next command.
 
-`SourceToken` remains owned because it crosses the tokenizer and command/CLI
-consumer boundaries. Its `ControlSequenceName` keeps up to 24 semantic
-character codes inline and spills longer names to an unbounded vector. A
+`SourceToken` remains owned for tokenizer and CLI consumers that need the
+semantic name itself. Production command delivery uses the same tokenizer
+state machine with a destination projection: while a transient name is still
+live, the active creation policy resolves it to a packed `TokenWord`, and only
+that compact identity plus direct-source provenance crosses back into
+`get_next`. The owned name therefore enters neither an input level nor a
+current command, snapshot, or suspension. `ControlSequenceName` keeps up to 24
+semantic character codes inline and spills longer names to an unbounded vector. A
 repository fixture census measured 9,770 control-word occurrences at median
 5, p95 15, p99 20, and maximum 31 characters; all registered primitive-name
 literals were at most 17, so the bound covers more than 99% of measured source
@@ -1990,6 +1995,15 @@ There is one semantic raw-command operation. In conceptual order it:
 Steps may restart without returning a command, exactly as TeX restarts after
 ignored characters, exhausted input, parameter insertion, and template
 insertion.
+
+For direct source, creation or lookup consumes the transient tokenizer name and
+returns an escaped control-sequence token that already contains its compact
+session-local symbol coordinate. Stored tokens carry the same coordinate. Raw
+delivery uses it directly for the current meaning lookup; it does not resolve
+the retained name bytes merely to validate an identity already admitted when
+the token was created or restored. Active character spellings remain character
+tokens and resolve through their distinct active-character namespace before
+the same compact meaning lookup.
 
 The implemented scalar loop owns source and token-cursor selection, exact
 retirement/restart, stored token/origin reconstruction, `OutParameter` replay,

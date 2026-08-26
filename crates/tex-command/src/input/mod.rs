@@ -40,6 +40,7 @@ pub use tokenizer::{
     InvalidSourceCharacter, LexerState, SourceControlSequenceKind, SourceStepQueries, SourceToken,
     SourceTokenizationStep,
 };
+pub(crate) use tokenizer::{CompactSourceStepQueries, CompactSourceTokenizationStep};
 
 /// Persistent input-stack ownership.
 ///

@@ -446,10 +446,10 @@ impl SourceCursor {
     /// replacement comes back. A replacement that cannot be given an identity
     /// is no replacement: §363's `last>first` test simply fails and the
     /// file's line stands.
-    pub(crate) fn firm_up_the_line(
+    pub(crate) fn firm_up_the_line<Q: super::tokenizer::SourceStepQueries + ?Sized>(
         &mut self,
         endlinechar: i32,
-        queries: &mut dyn super::tokenizer::SourceStepQueries,
+        queries: &mut Q,
         lines: &mut LineBackingRegistry<'_>,
     ) {
         let Some(line) = self.line.as_ref() else {

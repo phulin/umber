@@ -13,6 +13,7 @@ use tex_state::{GroupFrame, GroupKind, StateError};
 use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
+use crate::input::{CompactSourceStepQueries, CompactSourceTokenizationStep};
 use crate::input::{
     FileFramingEvent, InputLevel, InputLevelId, PhysicalLine, RegisteredSource,
     RegisteredSourceKind, SourceCharacter, SourceCursor, SourceLevel, SourceNameClass,
@@ -2635,17 +2636,7 @@ impl<G> CommandState<G> {
             crate::CharacterMode::EightBitExact,
             "exact-byte tokenization requires an exact-byte command profile"
         );
-        let force_eof = self.input.force_eof
-            && self
-                .input
-                .levels
-                .iter()
-                .rev()
-                .find_map(|level| match level {
-                    InputLevel::Source(source) => Some(source.name_class == SourceNameClass::File),
-                    InputLevel::Tokens(_) => None,
-                })
-                == Some(true);
+        let force_eof = self.source_force_eof();
         let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
             return SourceTokenizationStep::End;
         };
@@ -2674,7 +2665,55 @@ impl<G> CommandState<G> {
             crate::CharacterMode::UnicodeExtended,
             "Unicode tokenization requires a UnicodeExtended command profile"
         );
-        let force_eof = self.input.force_eof
+        let force_eof = self.source_force_eof();
+        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
+            return SourceTokenizationStep::End;
+        };
+        cursor.next_unicode_step(endlinechar, force_eof, queries, &mut lines)
+    }
+
+    /// Tokenizes one exact-byte source step directly into compact command
+    /// delivery identity while the transient control-sequence name is live.
+    pub(crate) fn next_compact_exact_source_step(
+        &mut self,
+        endlinechar: i32,
+        queries: &mut dyn CompactSourceStepQueries,
+    ) -> CompactSourceTokenizationStep {
+        let profile = self.profile();
+        assert_eq!(
+            profile.character_mode(),
+            crate::CharacterMode::EightBitExact,
+            "exact-byte tokenization requires an exact-byte command profile"
+        );
+        let force_eof = self.source_force_eof();
+        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
+            return CompactSourceTokenizationStep::End;
+        };
+        cursor.next_compact_exact_byte_step(endlinechar, force_eof, queries, &mut lines)
+    }
+
+    /// Tokenizes one Unicode source step directly into compact command
+    /// delivery identity while the transient control-sequence name is live.
+    pub(crate) fn next_compact_unicode_source_step(
+        &mut self,
+        endlinechar: i32,
+        queries: &mut dyn CompactSourceStepQueries,
+    ) -> CompactSourceTokenizationStep {
+        let profile = self.profile();
+        assert_eq!(
+            profile.character_mode(),
+            crate::CharacterMode::UnicodeExtended,
+            "Unicode tokenization requires a UnicodeExtended command profile"
+        );
+        let force_eof = self.source_force_eof();
+        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
+            return CompactSourceTokenizationStep::End;
+        };
+        cursor.next_compact_unicode_step(endlinechar, force_eof, queries, &mut lines)
+    }
+
+    fn source_force_eof(&self) -> bool {
+        self.input.force_eof
             && self
                 .input
                 .levels
@@ -2684,11 +2723,7 @@ impl<G> CommandState<G> {
                     InputLevel::Source(source) => Some(source.name_class == SourceNameClass::File),
                     InputLevel::Tokens(_) => None,
                 })
-                == Some(true);
-        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
-            return SourceTokenizationStep::End;
-        };
-        cursor.next_unicode_step(endlinechar, force_eof, queries, &mut lines)
+                == Some(true)
     }
 
     /// Borrows the active source cursor beside the source-identity counter.

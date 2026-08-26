@@ -8,7 +8,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use tex_state::token::Catcode;
+use tex_state::token::{Catcode, TokenWord};
 
 use crate::profile::{CharacterCode, CharacterMode};
 
@@ -249,6 +249,28 @@ pub enum SourceTokenizationStep {
     End,
 }
 
+/// One production source step after control-sequence creation or lookup.
+///
+/// The owned source-token API retains names for tokenizer consumers. The
+/// command machine instead resolves that transient name at the tokenizer
+/// boundary and carries only the packed semantic identity into raw delivery.
+pub(crate) enum CompactSourceTokenizationStep {
+    Token(CompactSourceToken),
+    InvalidCharacter,
+    End,
+}
+
+pub(crate) struct CompactSourceToken {
+    pub(crate) word: TokenWord,
+    pub(crate) provenance: SourceProvenance,
+}
+
+enum SourceStep<T> {
+    Token(T),
+    InvalidCharacter(InvalidSourceCharacter),
+    End,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SuperscriptPolicy {
     ExactByte,
@@ -284,6 +306,10 @@ pub trait SourceStepQueries {
     }
 }
 
+pub(crate) trait CompactSourceStepQueries: SourceStepQueries {
+    fn compact_source_token(&mut self, token: &SourceToken) -> TokenWord;
+}
+
 /// Category codes alone: TeX82 §363's replacement can never fire.
 pub struct CatcodeQueries<F>(pub F);
 
@@ -302,14 +328,21 @@ impl SourceCursor {
         queries: &mut dyn SourceStepQueries,
         lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
-        self.next_source_step(
+        match self.next_source_step(
             endlinechar,
             force_eof,
             CharacterMode::EightBitExact,
             SuperscriptPolicy::ExactByte,
             queries,
             lines,
-        )
+            &mut |_, token| token,
+        ) {
+            SourceStep::Token(token) => SourceTokenizationStep::Token(token),
+            SourceStep::InvalidCharacter(invalid) => {
+                SourceTokenizationStep::InvalidCharacter(invalid)
+            }
+            SourceStep::End => SourceTokenizationStep::End,
+        }
     }
 
     /// Delivers one separately identified Unicode-extension tokenization step.
@@ -320,31 +353,89 @@ impl SourceCursor {
         queries: &mut dyn SourceStepQueries,
         lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
-        self.next_source_step(
+        match self.next_source_step(
             endlinechar,
             force_eof,
             CharacterMode::UnicodeExtended,
             SuperscriptPolicy::UnicodeExtended,
             queries,
             lines,
-        )
+            &mut |_, token| token,
+        ) {
+            SourceStep::Token(token) => SourceTokenizationStep::Token(token),
+            SourceStep::InvalidCharacter(invalid) => {
+                SourceTokenizationStep::InvalidCharacter(invalid)
+            }
+            SourceStep::End => SourceTokenizationStep::End,
+        }
     }
 
-    fn next_source_step(
+    pub(crate) fn next_compact_exact_byte_step(
+        &mut self,
+        endlinechar: i32,
+        force_eof: bool,
+        queries: &mut dyn CompactSourceStepQueries,
+        lines: &mut LineBackingRegistry<'_>,
+    ) -> CompactSourceTokenizationStep {
+        match self.next_source_step(
+            endlinechar,
+            force_eof,
+            CharacterMode::EightBitExact,
+            SuperscriptPolicy::ExactByte,
+            queries,
+            lines,
+            &mut |queries, token| CompactSourceToken {
+                word: queries.compact_source_token(&token),
+                provenance: token.provenance(),
+            },
+        ) {
+            SourceStep::Token(token) => CompactSourceTokenizationStep::Token(token),
+            SourceStep::InvalidCharacter(_) => CompactSourceTokenizationStep::InvalidCharacter,
+            SourceStep::End => CompactSourceTokenizationStep::End,
+        }
+    }
+
+    pub(crate) fn next_compact_unicode_step(
+        &mut self,
+        endlinechar: i32,
+        force_eof: bool,
+        queries: &mut dyn CompactSourceStepQueries,
+        lines: &mut LineBackingRegistry<'_>,
+    ) -> CompactSourceTokenizationStep {
+        match self.next_source_step(
+            endlinechar,
+            force_eof,
+            CharacterMode::UnicodeExtended,
+            SuperscriptPolicy::UnicodeExtended,
+            queries,
+            lines,
+            &mut |queries, token| CompactSourceToken {
+                word: queries.compact_source_token(&token),
+                provenance: token.provenance(),
+            },
+        ) {
+            SourceStep::Token(token) => CompactSourceTokenizationStep::Token(token),
+            SourceStep::InvalidCharacter(_) => CompactSourceTokenizationStep::InvalidCharacter,
+            SourceStep::End => CompactSourceTokenizationStep::End,
+        }
+    }
+
+    fn next_source_step<T, Q: SourceStepQueries + ?Sized>(
         &mut self,
         endlinechar: i32,
         force_eof: bool,
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
-        queries: &mut dyn SourceStepQueries,
+        queries: &mut Q,
         lines: &mut LineBackingRegistry<'_>,
-    ) -> SourceTokenizationStep {
+        emit: &mut impl FnMut(&mut Q, SourceToken) -> T,
+    ) -> SourceStep<T> {
         debug_assert_eq!(self.backing.mode, mode);
 
         loop {
             if self.line.is_none() {
                 if self.load_next_line(endlinechar).is_none() {
-                    return SourceTokenizationStep::End;
+                    return SourceStep::End;
                 }
                 lines.record_line_usage(self);
                 self.firm_up_the_line(endlinechar, queries, lines);
@@ -365,7 +456,7 @@ impl SourceCursor {
                     // e-TeX, §24.362 may first put `\everyeof` above this
                     // still-live source, so error context from that token list
                     // must still be able to pseudoprint the exhausted line.
-                    return SourceTokenizationStep::End;
+                    return SourceStep::End;
                 }
                 self.finish_line();
                 continue;
@@ -399,7 +490,7 @@ impl SourceCursor {
             match observed {
                 Catcode::Ignored => continue,
                 Catcode::Invalid => {
-                    return SourceTokenizationStep::InvalidCharacter(InvalidSourceCharacter {
+                    return SourceStep::InvalidCharacter(InvalidSourceCharacter {
                         code: character.code(),
                         range: character.range(),
                         scalar_range,
@@ -410,33 +501,36 @@ impl SourceCursor {
                     continue;
                 }
                 Catcode::Escape => {
-                    return SourceTokenizationStep::Token(self.scan_control_sequence(
+                    let token = self.scan_control_sequence(
                         character,
                         &bytes,
                         mode,
                         superscript,
                         &mut catcode,
-                    ));
+                    );
+                    return SourceStep::Token(emit(queries, token));
                 }
                 Catcode::Active => {
                     self.lexer_state = LexerState::MidLine;
-                    return SourceTokenizationStep::Token(SourceToken::ControlSequence {
+                    let token = SourceToken::ControlSequence {
                         name: std::iter::once(character.code()).collect(),
                         kind: SourceControlSequenceKind::Active,
                         range: character.range(),
                         scalar_range,
                         location: character.range().terminal_location(),
-                    });
+                    };
+                    return SourceStep::Token(emit(queries, token));
                 }
                 Catcode::Space => match self.lexer_state {
                     LexerState::MidLine => {
                         self.lexer_state = LexerState::SkipBlanks;
-                        return SourceTokenizationStep::Token(SourceToken::Character {
+                        let token = SourceToken::Character {
                             code: semantic_ascii(mode, b' '),
                             catcode: Catcode::Space,
                             range: character.range(),
                             scalar_range,
-                        });
+                        };
+                        return SourceStep::Token(emit(queries, token));
                     }
                     LexerState::SkipBlanks | LexerState::NewLine => continue,
                 },
@@ -451,12 +545,13 @@ impl SourceCursor {
                     // character into a physical line boundary.
                     if !character.is_synthetic() {
                         self.lexer_state = LexerState::MidLine;
-                        return SourceTokenizationStep::Token(SourceToken::Character {
+                        let token = SourceToken::Character {
                             code: character.code(),
                             catcode: Catcode::EndLine,
                             range: character.range(),
                             scalar_range,
-                        });
+                        };
+                        return SourceStep::Token(emit(queries, token));
                     }
                     let range = self.line_end_anchor();
                     let state = self.lexer_state;
@@ -464,16 +559,17 @@ impl SourceCursor {
                     self.lexer_state = LexerState::NewLine;
                     match state {
                         LexerState::MidLine => {
-                            return SourceTokenizationStep::Token(SourceToken::Character {
+                            let token = SourceToken::Character {
                                 code: semantic_ascii(mode, b' '),
                                 catcode: Catcode::Space,
                                 range,
                                 scalar_range,
-                            });
+                            };
+                            return SourceStep::Token(emit(queries, token));
                         }
                         LexerState::SkipBlanks => continue,
                         LexerState::NewLine => {
-                            return SourceTokenizationStep::Token(SourceToken::ControlSequence {
+                            let token = SourceToken::ControlSequence {
                                 name: b"par"
                                     .iter()
                                     .copied()
@@ -483,18 +579,20 @@ impl SourceCursor {
                                 range,
                                 scalar_range,
                                 location: range.terminal_location(),
-                            });
+                            };
+                            return SourceStep::Token(emit(queries, token));
                         }
                     }
                 }
                 _ => {
                     self.lexer_state = LexerState::MidLine;
-                    return SourceTokenizationStep::Token(SourceToken::Character {
+                    let token = SourceToken::Character {
                         code: character.code(),
                         catcode: observed,
                         range: character.range(),
                         scalar_range,
-                    });
+                    };
+                    return SourceStep::Token(emit(queries, token));
                 }
             }
         }

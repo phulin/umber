@@ -835,3 +835,16 @@ fn special_control_sequence_names_remain_inline() {
         assert!(!name.is_spilled());
     }
 }
+
+#[test]
+fn production_source_step_does_not_carry_owned_control_sequence_names() {
+    assert!(
+        std::mem::size_of::<super::CompactSourceToken>() <= 48,
+        "packed token identity plus direct provenance stays compact"
+    );
+    assert!(
+        std::mem::size_of::<super::CompactSourceTokenizationStep>()
+            < std::mem::size_of::<SourceTokenizationStep>(),
+        "production delivery must not inherit the owned tokenizer-name width"
+    );
+}

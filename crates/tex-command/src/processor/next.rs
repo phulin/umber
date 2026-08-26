@@ -6,14 +6,14 @@
 
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CurrentCommand, DeliveryStamp};
 use crate::error::CommandError;
 use crate::input::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputRetirementAction,
-    OutParameterReplay, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
-    TokenCursor, TokenPayload,
+    BackedUpToken, BackupTreatment, CompactSourceStepQueries, CompactSourceTokenizationStep,
+    InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay, ReplayTrace,
+    RetirementBehavior, StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::input::SourceNameClass;
@@ -21,7 +21,7 @@ use crate::input::{RegisteredSourceKind, SourceRegistration};
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
     AlignmentDelivery, AlignmentDeliveryEvent, CommandReplayDelivery, SourceControlSequenceKind,
-    SourceProvenance, SourceToken, SourceTokenizationStep,
+    SourceProvenance, SourceToken,
 };
 use tex_state::CommandLineSource;
 
@@ -1804,13 +1804,26 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         level.cursor.backing_registered = true;
                     }
-                    let source_step = self.next_source_step();
+                    let source_step = self.next_source_step(allow_control_sequence_creation);
                     self.command.input.retain_active_file_line_number();
                     match source_step {
-                        SourceTokenizationStep::Token(token) => {
+                        CompactSourceTokenizationStep::Token(token) => {
                             self.ensure_replacement_line_registration();
-                            let spelling =
-                                self.source_spelling(&token, allow_control_sequence_creation);
+                            let range = token.provenance.range();
+                            let origin = if range.end().saturating_sub(range.start()) == 1 {
+                                self.state.source_token_origin(
+                                    range.source(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            } else {
+                                self.state.source_range_origin(
+                                    range.source(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            };
+                            let spelling = TracedTokenWord::from_parts(token.word, origin);
                             let Some(InputLevel::Source(source)) =
                                 self.command.input.levels.last_mut()
                             else {
@@ -1829,12 +1842,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 level: identity,
                                 position,
                                 behavior: TokenBehavior::Ordinary,
-                                source_provenance: Some(token.provenance()),
+                                source_provenance: Some(token.provenance),
                                 direct_source: true,
                                 direct_source_line,
                             }));
                         }
-                        SourceTokenizationStep::InvalidCharacter(_) => {
+                        CompactSourceTokenizationStep::InvalidCharacter => {
                             // TeX82 §345 temporarily sets
                             // `deletions_allowed:=false`, calls `error`, restores
                             // it, and goes to `restart`. Umber's error channel
@@ -1853,7 +1866,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             );
                             continue;
                         }
-                        SourceTokenizationStep::End => {
+                        CompactSourceTokenizationStep::End => {
                             // e-TeX 2.6 etex.ch §24.362 inserts a non-null
                             // `\everyeof` above the still-live source. Its
                             // token-list level must therefore push and retire
@@ -2112,7 +2125,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn next_source_step(&mut self) -> SourceTokenizationStep {
+    fn next_source_step(
+        &mut self,
+        allow_control_sequence_creation: bool,
+    ) -> CompactSourceTokenizationStep {
         self.command
             .observe_active_source_dependencies(&mut self.state);
         let profile = self.command.profile();
@@ -2124,14 +2140,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         let step = {
             let mut queries = LiveSourceQueries {
                 state: &mut self.state,
+                allow_control_sequence_creation,
             };
             match profile.character_mode() {
                 CharacterMode::EightBitExact => self
                     .command
-                    .next_exact_source_step(endlinechar, &mut queries),
+                    .next_compact_exact_source_step(endlinechar, &mut queries),
                 CharacterMode::UnicodeExtended => self
                     .command
-                    .next_unicode_source_step(endlinechar, &mut queries),
+                    .next_compact_unicode_source_step(endlinechar, &mut queries),
             }
         };
         self.command
@@ -2149,63 +2166,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some((source, descriptor)) = self.command.take_active_line_registration() {
             let _ = self.state.register_source(source, descriptor);
         }
-    }
-
-    /// Resolves one scanned source token into its semantic spelling.
-    ///
-    /// `allow_control_sequence_creation` is TeX82's `no_new_control_sequence`
-    /// inverted. §257 sets that flag, §365 clears it only around `get_token`,
-    /// and §374 clears it only around `\csname`'s `id_lookup`, so a raw
-    /// `get_next` may not enter a new name into the hash table: §259's
-    /// `id_lookup` hands it §222's dummy `undefined_control_sequence`
-    /// instead. Section 356 sends only multiletter control words to the hash;
-    /// it resolves a one-letter word or control symbol to `single_base+c` and
-    /// an escape at line end to `null_cs`. Section 372 applies the same length
-    /// split to `\csname`, and §351 gives a blank line's `\par` `par_loc`;
-    /// all of those fixed eqtb locations exist before any scan.
-    fn source_spelling(
-        &mut self,
-        source_token: &SourceToken,
-        allow_control_sequence_creation: bool,
-    ) -> TracedTokenWord {
-        let token = match source_token {
-            SourceToken::Character { code, catcode, .. } => Token::Char {
-                ch: character_from_code(*code),
-                cat: *catcode,
-            },
-            SourceToken::ControlSequence { name, kind, .. } => match kind {
-                SourceControlSequenceKind::Active => Token::Char {
-                    ch: character_from_code(name[0]),
-                    cat: Catcode::Active,
-                },
-                SourceControlSequenceKind::Word
-                | SourceControlSequenceKind::Symbol
-                | SourceControlSequenceKind::Paragraph
-                | SourceControlSequenceKind::Null => {
-                    let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
-                    name.with_text(|name| {
-                        if hashed && !allow_control_sequence_creation {
-                            self.state
-                                .known_control_sequence(name)
-                                .map_or_else(Token::undefined_control_sequence, Token::Cs)
-                        } else if hashed {
-                            Token::Cs(self.state.intern_hash_control_sequence(name))
-                        } else {
-                            Token::Cs(self.state.intern_control_sequence(name))
-                        }
-                    })
-                }
-            },
-        };
-        let range = source_token.range();
-        let origin = if range.end().saturating_sub(range.start()) == 1 {
-            self.state
-                .source_token_origin(range.source(), range.start(), range.end())
-        } else {
-            self.state
-                .source_range_origin(range.source(), range.start(), range.end())
-        };
-        TracedTokenWord::pack(token, origin)
     }
 
     fn next_stored_token(
@@ -2894,6 +2854,7 @@ fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
 /// two reads.
 struct LiveSourceQueries<'a, 'b, G> {
     state: &'a mut tex_state::CommandContext<'b, G>,
+    allow_control_sequence_creation: bool,
 }
 
 impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
@@ -2929,6 +2890,47 @@ impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
             RegisteredSourceKind::Generated,
             replacement.into_bytes(),
         ))
+    }
+}
+
+impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
+    /// Resolves a transient tokenizer spelling into the packed identity raw
+    /// delivery keeps. `allow_control_sequence_creation` is TeX82's
+    /// `no_new_control_sequence` inverted: §257 sets it, §365 clears it only
+    /// around `get_token`, and §259 otherwise returns §222's dummy undefined
+    /// control sequence for a missing hash name. Single-character, null,
+    /// active, and blank-line `\par` spellings retain their fixed namespaces.
+    fn compact_source_token(&mut self, source_token: &SourceToken) -> TokenWord {
+        let token = match source_token {
+            SourceToken::Character { code, catcode, .. } => Token::Char {
+                ch: character_from_code(*code),
+                cat: *catcode,
+            },
+            SourceToken::ControlSequence { name, kind, .. } => match kind {
+                SourceControlSequenceKind::Active => Token::Char {
+                    ch: character_from_code(name[0]),
+                    cat: Catcode::Active,
+                },
+                SourceControlSequenceKind::Word
+                | SourceControlSequenceKind::Symbol
+                | SourceControlSequenceKind::Paragraph
+                | SourceControlSequenceKind::Null => {
+                    let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
+                    name.with_text(|name| {
+                        if hashed && !self.allow_control_sequence_creation {
+                            self.state
+                                .known_control_sequence(name)
+                                .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                        } else if hashed {
+                            Token::Cs(self.state.intern_hash_control_sequence(name))
+                        } else {
+                            Token::Cs(self.state.intern_control_sequence(name))
+                        }
+                    })
+                }
+            },
+        };
+        TokenWord::pack(token)
     }
 }
 

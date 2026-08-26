@@ -127,7 +127,8 @@ collector (see `src/conditionals.rs`).
   and focused line-contract tests.
 - `src/input/tokenizer.rs`, `src/input/tokenizer/tests.rs`: canonical
   token-at-a-time exact-byte and separately identified UnicodeExtended M/N/S
-  tokenization, semantic control-sequence spelling, profile-specific
+  tokenization, semantic control-sequence spelling, production projection of a
+  transient name into packed identity plus direct provenance, profile-specific
   superscript notation, invalid-character recovery steps, byte/scalar ranges,
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width

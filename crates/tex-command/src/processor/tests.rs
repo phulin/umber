@@ -78,6 +78,50 @@ fn direct_source_command_captures_its_physical_line_before_retirement() {
 }
 
 #[test]
+fn direct_source_control_sequences_preserve_creation_policy_after_compact_delivery() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &br"\previouslyunseen \previouslyunseen"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let forbidden = processor
+            .get_next()
+            .expect("forbidden-creation delivery")
+            .expect("first control sequence");
+        assert!(
+            forbidden
+                .spelling()
+                .semantic_token()
+                .is_undefined_control_sequence()
+        );
+        assert_eq!(forbidden.control_sequence(), None);
+
+        let allowed = processor
+            .get_token()
+            .expect("allowed-creation delivery")
+            .expect("second control sequence");
+        assert!(matches!(allowed.spelling().semantic_token(), Token::Cs(_)));
+        assert!(allowed.control_sequence().is_some());
+        assert_eq!(allowed.meaning(), Meaning::Undefined);
+    });
+}
+
+#[test]
 fn frozen_macro_primitive_observation_retains_endwrite_identity() {
     crate::test_harness::with_universe(|universe| {
         crate::install_tex82_unexpandable_primitives(universe);
