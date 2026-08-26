@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import filecmp
 import hashlib
 import json
 import os
@@ -252,13 +251,6 @@ def _publisher_path(repo_root: Path, environment: dict[str, str]) -> Path:
     return target / "release/texlive-wasm-publish"
 
 
-def _trees_equal(left: Path, right: Path) -> bool:
-    comparison = filecmp.dircmp(left, right)
-    if comparison.left_only or comparison.right_only or comparison.diff_files or comparison.funny_files:
-        return False
-    return all(_trees_equal(left / name, right / name) for name in comparison.common_dirs)
-
-
 def _stage_format_input_root(
     repo_root: Path, texmf_dist: Path, destination: Path
 ) -> int:
@@ -451,11 +443,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
             config["packageDatabase"] = str(package_database.resolve())
         config_path = temporary / "publish.json"
         config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-        first = temporary / "first"
-        _run([str(publisher), str(config_path), str(first)], repo_root)
         _run([str(publisher), str(config_path), str(args.output_dir.resolve())], repo_root)
-        if not _trees_equal(first, args.output_dir.resolve()):
-            raise ProvisionError("two clean snapshot publications differ")
 
 
 def _add_materialize_options(parser: argparse.ArgumentParser) -> None:

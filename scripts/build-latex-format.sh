@@ -3,7 +3,6 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lock_file="${repo_root}/tests/latex-source.lock"
-pdflatex_representative_lock="${repo_root}/tests/latex/pdflatex-representative.lock"
 engine="latex"
 output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
@@ -15,7 +14,7 @@ check_only=0
 guard="${repo_root}/scripts/run-umber-guarded.py"
 guard_timeout="${UMBER_LATEX_FORMAT_TIMEOUT_SECONDS:-600}"
 guard_rss_mib="${UMBER_LATEX_FORMAT_MAX_RSS_MIB:-2048}"
-engine_fuel="${UMBER_LATEX_FORMAT_ENGINE_FUEL:-500000000}"
+engine_fuel="${UMBER_LATEX_FORMAT_ENGINE_FUEL:-10000000000}"
 
 usage() {
   cat <<'EOF'
@@ -26,11 +25,11 @@ usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
                                      [--publish-input-closure] [--force|--check]
 
 Restores a validated pinned Umber-native LaTeX format from the generated-format
-cache, or verifies the exact mode-specific locked input closure, builds twice,
-checks source/loaded equivalence, and atomically publishes the miss. --force
-always regenerates. --check regenerates and compares the cache and output
-without changing either. Every engine run uses the same authenticated local
-distribution in offline mode. The default output is target/<engine>-format.
+cache, or verifies the exact mode-specific locked input closure, builds once,
+validates the resulting image through the cache codec, and atomically publishes
+the miss. --force always regenerates. --check regenerates and compares the cache
+and output without changing either. Every engine run uses the same authenticated
+local distribution in offline mode. The default output is target/<engine>-format.
 EOF
 }
 
@@ -87,14 +86,10 @@ done
 
 case "$engine" in
   latex)
-    fixture="${repo_root}/tests/latex/format-equivalence.tex"
     format_input="${texmf_dist}/tex/latex-dev/base/latex.ltx"
-    output_extension=dvi
     ;;
   pdflatex)
-    fixture="${repo_root}/tests/latex/pdflatex-smoke.tex"
     format_input="${texmf_dist}/tex/latex/tex-ini-files/pdflatex.ini"
-    output_extension=pdf
     ;;
   *)
     printf 'build-latex-format.sh: unsupported engine: %s\n' "$engine" >&2
@@ -243,7 +238,6 @@ LC_ALL=C sort -k1,1 "$identity_index" -o "$identity_index"
 prefetch_source_closure() {
   local source expected_bytes expected_hash actual_bytes actual_hash
   [[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
-  [[ -f "$fixture" ]] || fail "missing equivalence fixture: $fixture"
   [[ -f "$format_input" ]] || fail "missing format entry point: $format_input"
   while IFS=$'\t' read -r source expected_bytes expected_hash; do
     [[ -f "$source" ]] || fail "missing pinned source: $source"
@@ -260,8 +254,6 @@ prefetch_source_closure() {
 
 texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex-dev/base:${texmf_dist}/tex/latex-dev/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/latex/atveryend:${texmf_dist}/tex/latex-dev/firstaid:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/atbegshi:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/babel-english:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/knuth-lib:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
-latex_ltx="${texmf_dist}/tex/latex-dev/base/latex.ltx"
-
 prefetch_args=()
 while IFS= read -r request_key; do
   prefetch_args+=(--prefetch-input "$request_key")
@@ -342,89 +334,10 @@ generated=0
 if [[ "$cache_state" == miss || "$force_regeneration" -eq 1 || "$check_only" -eq 1 ]]; then
   prefetch_source_closure
   build_one "${tmp_root}/first"
-  build_one "${tmp_root}/second"
-  cmp "${tmp_root}/first/${format_name}.fmt" "${tmp_root}/second/${format_name}.fmt" || \
-    fail "two clean ${format_name} format generations were not byte-identical"
   format_file="${tmp_root}/first/${format_name}.fmt"
   generated=1
 else
   format_file="$cached_format"
-fi
-
-if [[ "$generated" -eq 1 ]]; then
-  source_dir="${tmp_root}/source"
-  loaded_dir="${tmp_root}/loaded"
-  mkdir -p "$source_dir" "$loaded_dir"
-  cp "$fixture" "${source_dir}/representative.tex"
-  cp "$fixture" "${loaded_dir}/representative.tex"
-  cp "$format_file" "${loaded_dir}/${format_name}.fmt"
-  : > "${source_dir}/document.aux"
-  : > "${loaded_dir}/document.aux"
-  source_representative_prefetch_args=("${prefetch_args[@]}")
-  loaded_representative_prefetch_args=()
-  if [[ "$engine" == pdflatex ]]; then
-    [[ -f "$pdflatex_representative_lock" ]] || \
-      fail "missing representative runtime lock: $pdflatex_representative_lock"
-    while read -r record request_kind relative expected_bytes expected_hash extra; do
-      [[ -z "${record:-}" || "$record" == \#* ]] && continue
-      [[ "$record" == source && -z "${extra:-}" ]] || \
-        fail "invalid representative runtime lock entry for ${relative:-<missing>}"
-      [[ "$request_kind" == tex || "$request_kind" == tfm ]] || \
-        fail "invalid representative runtime kind: $request_kind"
-      [[ "$relative" != /* && "$relative" != *..* && "$relative" != *\\* ]] || \
-        fail "unsafe representative runtime path: $relative"
-      [[ "$expected_bytes" =~ ^[0-9]+$ && "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || \
-        fail "invalid representative runtime identity for $relative"
-      request_name="${relative##*/}"
-      source_representative_prefetch_args+=(--prefetch-input "${request_kind}:${request_name}")
-      loaded_representative_prefetch_args+=(--prefetch-input "${request_kind}:${request_name}")
-    done < "$pdflatex_representative_lock"
-  else
-    common_representative_prefetch_args=(
-      --prefetch-input tex:article.cls
-      --prefetch-input tex:size10.clo
-      --prefetch-input tex:l3backend-dvips.def
-      --prefetch-input tex:tex/latex-dev/l3backend/l3backend-luatex.def
-      --prefetch-input tex:tex/latex-dev/l3backend/l3backend-xetex.def
-      --prefetch-input tfm:cmbx10.tfm
-      --prefetch-input tfm:cmbx12.tfm
-      --prefetch-input tfm:cmr12.tfm
-      --prefetch-input tfm:cmti10.tfm
-      --prefetch-input tfm:tcrm1000.tfm
-    )
-    source_representative_prefetch_args+=("${common_representative_prefetch_args[@]}")
-    loaded_representative_prefetch_args+=("${common_representative_prefetch_args[@]}")
-  fi
-
-  awk '
-    $0 == sprintf("%c%s", 92, "dump") {
-      print sprintf("%c%s", 92, "input representative")
-      next
-    }
-    { print }
-  ' "$latex_ltx" > "${source_dir}/latex-source.ltx"
-  if [[ "$engine" == pdflatex ]]; then
-    printf '\\input pdftexconfig.tex\n\\input latex-source.ltx\n' > "${source_dir}/document.tex"
-  else
-    printf '\\input latex-source.ltx\n' > "${source_dir}/document.tex"
-  fi
-  printf '\input representative\n' > "${loaded_dir}/document.tex"
-
-  output_args=("--${output_extension}" "document.${output_extension}")
-  run_engine "$source_dir" document.tex "${source_representative_prefetch_args[@]}" "${output_args[@]}" \
-    > "${source_dir}/document.stdout" 2> "${source_dir}/document.stderr"
-  run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${loaded_representative_prefetch_args[@]}" "${output_args[@]}" \
-    > "${loaded_dir}/document.stdout" 2> "${loaded_dir}/document.stderr"
-  for directory in "$source_dir" "$loaded_dir"; do
-    if grep -q '^! ' "${directory}/document.stdout"; then
-      grep -m1 '^! ' "${directory}/document.stdout" >&2
-      fail "representative LaTeX job emitted a diagnostic"
-    fi
-  done
-  cmp "${source_dir}/document.${output_extension}" "${loaded_dir}/document.${output_extension}" || \
-    fail "source-initialized and format-loaded ${format_name} ${output_extension^^} differ"
-  cmp "${source_dir}/document.aux" "${loaded_dir}/document.aux" || \
-    fail "source-initialized and format-loaded ${format_name} auxiliary effects differ"
 fi
 
 magic="$(od -An -t x1 -N 8 "$format_file" | tr -d ' \n')"

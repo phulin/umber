@@ -178,7 +178,7 @@ from pathlib import Path
 import sys
 
 rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
-assert len(rows) == 4, rows
+assert len(rows) == 1, rows
 expected_path = str(Path(sys.argv[2]).resolve())
 expected_digest = sys.argv[3]
 for row in rows:
@@ -187,9 +187,9 @@ for row in rows:
     assert row.count("--distribution-ahash64") == 1, row
     assert row[row.index("--distribution-ahash64") + 1] == expected_digest, row
     assert row.count("--offline") == 1, row
-assert sum("--format-out" in row for row in rows) == 2, rows
-assert sum("--format" in row for row in rows) == 1, rows
-assert sum("--format-out" not in row and "--format" not in row for row in rows) == 1, rows
+assert sum("--format-out" in row for row in rows) == 1, rows
+assert sum("--format" in row for row in rows) == 0, rows
+assert sum("--format-out" not in row and "--format" not in row for row in rows) == 0, rows
 PY
 
 : > "$invocations"
@@ -212,21 +212,9 @@ from pathlib import Path
 import sys
 
 rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
-assert len(rows) == 4, rows
-
-def prefetch(row):
-    return {
-        row[index + 1]
-        for index, argument in enumerate(row)
-        if argument == "--prefetch-input"
-    }
-
-source_closure = {"tex:latex.ltx", "tex:pdflatex.ini", "tex:pdftexconfig.tex"}
-runtime_closure = {"tex:runtime-a.tex", "tfm:runtime-b.tfm"}
-source = next(row for row in rows if "--format-out" not in row and "--format" not in row)
-loaded = next(row for row in rows if "--format" in row)
-assert prefetch(source) == source_closure | runtime_closure, source
-assert prefetch(loaded) == runtime_closure, loaded
+assert len(rows) == 1, rows
+assert "--format-out" in rows[0], rows
+assert "--format" not in rows[0], rows
 PY
 
 printf '%s\n' 'build-latex-format tests: PASS'

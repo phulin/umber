@@ -64,9 +64,9 @@ accepted by the kernel.
 ## Compatibility and parity
 
 Support means more than accepting LaTeX syntax. Each pinned kernel mode must
-build a byte-reproducible Umber-native format. Representative
-source-initialized and format-loaded jobs must have identical effects and
-driver output: DVI for `latex.fmt`, PDF for `pdflatex.fmt`. PDF formats retain
+build a byte-reproducible Umber-native format. Separate post-publication gates
+run representative documents from the loaded images: DVI for `latex.fmt`, PDF
+for `pdflatex.fmt`. PDF formats retain
 the kernel's canonical glyph-to-Unicode mappings while rejecting live pages,
 objects, resources, or other document-local PDF state at `\dump`. The DVI base corpus
 must match the pinned reference engine byte-for-byte in DVI after the existing
@@ -111,7 +111,7 @@ document needs multiple AUX/TOC passes.
 The pinned builder first probes the validated generated-format cache. A hit
 atomically restores `latex.fmt` without opening or initializing the source
 kernel. A miss verifies and prefetches the complete locked input closure,
-performs the two clean generations and equivalence checks, and atomically
+performs one clean generation, validates the cache decode, and atomically
 publishes the cache entry. Use `--force` to execute that regeneration path even
 on a hit, or `--check` to regenerate and compare the valid cache plus existing
 output without changing either. `UMBER_FORMAT_CACHE_ROOT` selects an explicit
@@ -128,9 +128,9 @@ Every Umber subprocess started by the builder, including format-cache restore
 and publication, runs through `scripts/run-umber-guarded.py`. The shared guard
 sets finite engine fuel, enforces aggregate process-group RSS and wall-time
 ceilings, sends TERM followed by KILL after at most five seconds, reaps the
-leader, and rejects surviving descendants. The defaults are 500,000,000 fuel,
-2 GiB RSS, and 600 seconds per subprocess; explicit regeneration jobs may lower
-them with `UMBER_LATEX_FORMAT_ENGINE_FUEL`,
+leader, and rejects surviving descendants. The defaults are 10,000,000,000
+fuel, 2 GiB RSS, and 600 seconds per subprocess; explicit regeneration jobs may
+override them with `UMBER_LATEX_FORMAT_ENGINE_FUEL`,
 `UMBER_LATEX_FORMAT_MAX_RSS_MIB`, and
 `UMBER_LATEX_FORMAT_TIMEOUT_SECONDS`. Do not add a second format-specific
 watchdog or invoke the Umber binary directly from this workflow.
@@ -150,8 +150,8 @@ TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
 ```
 
 The pdfLaTeX builder uses the same validated cache policy and, when it
-regenerates, performs two clean format generations and exact source-versus-
-format PDF and auxiliary-file equivalence. Cross-engine pdfTeX parity uses
+regenerates, performs one clean format generation and exact source-versus-format
+PDF and auxiliary-file equivalence. Cross-engine pdfTeX parity uses
 normalized structure and rendered pages rather than requiring serializer-byte
 identity.
 

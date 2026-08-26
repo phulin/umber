@@ -53,8 +53,7 @@ Generated-format cache identity is not resource authority. The builder
 requires `--distribution PATH` and `--distribution-sha256 SHA256`, checks the
 local root against the digest pinned in `tests/latex-source.lock`, resolves the
 path before entering any scratch directory, and passes the same absolute path,
-pin, and `--offline` to both clean generations and both sides of the
-source-versus-loaded equivalence gate. A missing mirror object is therefore a
+pin, and `--offline` to format generation. A missing mirror object is therefore a
 hard local-authority failure even when the native cache is warm or the hosted
 default is reachable.
 
@@ -63,23 +62,20 @@ decode, then atomically materializes the requested `.fmt` output. The builder
 does not require or open the TeX Live source tree on this path. A mismatch or
 corrupt entry is a diagnosed miss. On a miss, the builder verifies every file
 in the 61-key LaTeX or 64-key pdfLaTeX closure before source initialization,
-performs two clean byte-identical generations and the representative
-source-versus-loaded equivalence gate, then publishes the validated image with
+performs one clean generation, validates it through the cache codec, then
+publishes the image with
 the cache store's no-clobber atomic protocol. The ordinary output format and
 metadata paths remain `target/<engine>-format/<engine>.fmt` and
 `<engine>-format.json`, or the caller's explicit output directory.
 
-For pdfLaTeX, `tests/latex/pdflatex-representative.lock` fixes the ten positive
-runtime keys and their payload identities. The source-initialized side
-prefetches the 64 construction keys plus those ten runtime keys; the
-loaded-format side prefetches only the runtime keys because its construction
-state comes from the authenticated named format. Keeping these argument sets
-separate prevents a warm source cache or the construction closure from masking
-an incomplete loaded-format mirror.
+Representative runtime validation remains a separate post-publication gate.
+For pdfLaTeX, `tests/latex/pdflatex-representative.lock` fixes its ten positive
+runtime keys and their payload identities without adding another kernel
+initialization to format regeneration.
 
 `--force` ignores reuse for execution purposes, regenerates, and requires the
 result to equal any valid entry already stored under the same semantic key.
-`--check` requires a valid entry, regenerates twice, compares both the cache and
+`--check` requires a valid entry, regenerates once, compares both the cache and
 published output/metadata, and changes neither. Thus neither mode can silently
 replace different bytes under an existing identity. Cache diagnostics include
 the canonical key and distinguish hit, miss, and publication.

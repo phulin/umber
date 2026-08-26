@@ -3,7 +3,7 @@
 # Common fields: source|local <path> <bytes> <sha256>.
 # pdfLaTeX-only fields: pdflatex-source|pdflatex-local <path> <bytes> <sha256>.
 distribution texlive-20260301-texmf
-distribution_ahash64 unpublished-umber2-66p0.27
+distribution_ahash64 7d0fdcf5b35d0058
 format_schema 12
 source_date_epoch 1772323200
 source fonts/tfm/public/cm/cmex10.tfm 992 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92

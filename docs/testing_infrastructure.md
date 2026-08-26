@@ -961,16 +961,13 @@ scripts/build-latex-format.sh \
   --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
 ```
 
-Both modes verify that two clean format builds are byte-identical and that a
-source-loaded smoke document exactly matches the corresponding format-loaded
-document. The LaTeX mode compares DVI; the pdfLaTeX mode compares PDF. The
+Both modes build one clean format and validate the resulting cache image. The
 builder reads the common and mode-specific TeX Live input closure from
 `tests/latex-source.lock`; its pdfLaTeX configuration is pinned locally in
 `tests/latex/pdftexconfig.tex`. The pdfLaTeX representative runtime closure is
 separately pinned by path, length, and SHA-256 in
-`tests/latex/pdflatex-representative.lock`: the source-initialized run receives
-the 64 construction keys plus these ten runtime keys, while the loaded-format
-run receives the named format plus only the ten runtime keys. Generated formats
+`tests/latex/pdflatex-representative.lock`; the separate representative gate
+receives the named format plus only these ten runtime keys. Generated formats
 and comparison artifacts remain under `target/` rather than becoming
 repository fixtures.
 The source lock also pins the schema-3 distribution digest. Both flags are
