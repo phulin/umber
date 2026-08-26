@@ -1102,26 +1102,24 @@ pub(in crate::main_control) fn scan<G>(
             UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet,
         ) => unreachable!("let assignments are owned by fused hot dispatch"),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterGroup) => {
-            Ok(ColdOperation::AfterGroup(
-                processor
-                    .get_token()
-                    .map_err(command_error)?
-                    .ok_or(ExecError::MissingToken {
-                        context: "\\aftergroup",
-                    })?
-                    .spelling(),
-            ))
+            let mut destination = None;
+            processor
+                .get_token_into(&mut destination)
+                .map_err(command_error)?;
+            let command = destination.ok_or(ExecError::MissingToken {
+                context: "\\aftergroup",
+            })?;
+            Ok(ColdOperation::AfterGroup(command.spelling()))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterAssignment) => {
-            Ok(ColdOperation::AfterAssignment(
-                processor
-                    .get_token()
-                    .map_err(command_error)?
-                    .ok_or(ExecError::MissingToken {
-                        context: "\\afterassignment",
-                    })?
-                    .spelling(),
-            ))
+            let mut destination = None;
+            processor
+                .get_token_into(&mut destination)
+                .map_err(command_error)?;
+            let command = destination.ok_or(ExecError::MissingToken {
+                context: "\\afterassignment",
+            })?;
+            Ok(ColdOperation::AfterAssignment(command.spelling()))
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Message | UnexpandablePrimitive::ErrMessage),
@@ -2531,10 +2529,11 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                 global,
                 phase: ArithmeticScanPhase::TargetCommand,
             });
-            let target_command = processor
-                .get_x_token()
-                .map_err(command_error)?
-                .ok_or(ExecError::UnsupportedAssignmentTarget)?;
+            let mut destination = None;
+            processor
+                .get_x_token_into(&mut destination)
+                .map_err(command_error)?;
+            let target_command = destination.ok_or(ExecError::UnsupportedAssignmentTarget)?;
             *suspended = None;
             match target_command.meaning() {
                 tex_state::meaning::ResolvedMeaning::Macro { .. } => {
