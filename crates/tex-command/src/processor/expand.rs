@@ -355,25 +355,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.get_x_token_from_into(None, ExpandedFetch::GetXToken, destination)
     }
 
-    /// Delivers one expanded output-replay token, preserving protected macros
-    /// in e-TeX/pdfTeX exactly as `get_x_or_protected` does.
-    pub(crate) fn get_x_or_protected_with_replay_completion(
-        &mut self,
-    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
-        let mut destination = None;
-        let result = self.get_x_or_protected_with_replay_completion_into(&mut destination)?;
-        Ok(match result {
-            DeliveryStatus::End => None,
-            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            DeliveryStatus::ReplayCompleted(episode) => {
-                Some(CommandReplayDelivery::Completed(episode))
-            }
-            _ => unreachable!("protected delivery policy cannot produce this event"),
-        })
-    }
-
     /// Delivers protected replay-aware expansion into caller-provided storage.
     pub(crate) fn get_x_or_protected_with_replay_completion_into(
         &mut self,
