@@ -47,6 +47,11 @@ fn main() {
         "warmed_mixed_stored_cursor",
         warmed_mixed_stored_cursor,
     );
+    run_row(
+        only,
+        "warmed_long_macro_argument_cursor",
+        warmed_long_macro_argument_cursor,
+    );
     run_row(only, "known_name_lookup", warmed_short_interner_lookup);
     run_row(only, "primitive_resolution", warmed_primitive_resolution);
     run_row(
@@ -100,6 +105,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "warmed_backup_push_pop",
     "stored_token_replay",
     "warmed_mixed_stored_cursor",
+    "warmed_long_macro_argument_cursor",
     "known_name_lookup",
     "primitive_resolution",
     "source_known_creating_delivery",
@@ -144,6 +150,32 @@ fn warmed_mixed_stored_cursor() {
             elapsed.as_nanos() as f64 / receipt.calls as f64,
         );
     });
+}
+
+fn warmed_long_macro_argument_cursor() {
+    const CALLS: u32 = 5_000_000;
+    let mut benchmark = tex_command::LongMacroArgumentCursorBenchmark::<()>::new();
+    let _ = benchmark.run(64);
+    let mut receipt = None;
+    let mut elapsed = Duration::ZERO;
+    measure_zero("warmed_long_macro_argument_cursor", || {
+        let start = Instant::now();
+        receipt = Some(black_box(benchmark.run(CALLS)));
+        elapsed = start.elapsed();
+    });
+    let receipt = receipt.expect("long macro-argument cursor receipt");
+    assert_eq!(receipt.calls, u64::from(CALLS));
+    assert!(receipt.retirements > 0);
+    assert_eq!(receipt.rollbacks, 1);
+    println!(
+        "warmed_long_macro_argument_cursor calls={} retirements={} rollbacks={} checksum={} elapsed_ns={} ns_per_call={:.2}",
+        receipt.calls,
+        receipt.retirements,
+        receipt.rollbacks,
+        receipt.checksum,
+        elapsed.as_nanos(),
+        elapsed.as_nanos() as f64 / receipt.calls as f64,
+    );
 }
 
 fn warmed_primitive_resolution() {

@@ -180,3 +180,13 @@ fn mixed_sources_share_one_cursor_and_restore_exact_nonzero_positions() {
         assert_ne!(receipt.checksum, 0);
     });
 }
+
+#[test]
+fn long_macro_argument_crosses_segments_with_one_scalar_cursor() {
+    let mut benchmark = super::LongMacroArgumentCursorBenchmark::<()>::new();
+    let receipt = benchmark.run(16_390);
+    assert_eq!(receipt.calls, 16_390);
+    assert_eq!(receipt.retirements, 1);
+    assert_eq!(receipt.rollbacks, 1);
+    assert_ne!(receipt.checksum, 0);
+}

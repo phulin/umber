@@ -53,11 +53,13 @@ interning; only an already-spilled pathological name constructs a temporary
 backup/replay cycles; known creating, known non-creating, and stored-token
 control-sequence deliveries; 65,536 genuinely new creating and unknown
 non-creating source names; one million name-based and packed immutable
-primitive resolutions; 16,384 warmed failed-keyword scans; and five million
+primitive resolutions; 16,384 warmed failed-keyword scans; five million
 uniform stored-cursor calls split evenly across replay, macro replacement,
-macro argument, attempt, and durable owners. These rows separate source decode,
+macro argument, attempt, and durable owners; and five million indexed reads
+across one sealed 16,385-word macro argument. These rows separate source decode,
 lookup/probe, TeX-visible creation, packed meaning delivery, backed-up raw
-delivery, and mixed packed-cursor traversal. The mixed row reports absolute
+delivery, mixed packed-cursor traversal, and long segmented argument access.
+The mixed row reports absolute
 calls, exact end-of-span retirements, one exact nonzero scalar rollback,
 elapsed time, and a semantic checksum. Stored replay loops assert zero
 allocation calls and requested bytes after their input storage has reached high

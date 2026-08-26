@@ -1837,13 +1837,18 @@ struct MacroArguments {
 `MacroArguments` is fixed at 16 bytes, `MacroActivation` at 48 bytes, and each
 argument record stores `[Option<MacroArgumentRange>; 9]` beside one contiguous
 traced-word span. The scalar matcher accumulates completed arguments in
-definition order through one reusable `MacroArgumentBuilder`, then copies them
-once into the warmed command chunk. Empty arguments retain empty half-open
-ranges. A compact
+definition order through one reusable segmented sealing lane. Sealing moves
+whole physical segment owners onto the live absolute-offset bump stack and
+adds the frame base to its fixed range metadata; it copies no token word.
+Empty arguments retain empty half-open ranges. A compact
 `OutParameter(u8)` remains distinct from a literal parameter character emitted
 by the canonical `##` escape, so replay can substitute only the former without
-rewriting immutable macro definition token lists. Argument chunks hold 4,096
-words and 256 records. Quiescent top-level calls clear lengths but retain every
+rewriting immutable macro definition token lists. Argument segments hold 4,096
+words. A sealed range maps `start + input_position` directly to segment and
+slot; no argument-local cursor or chain traversal participates. Macro frames
+record their segment watermark, and exact LIFO retirement rewinds the logical
+stack while returning physical segments to the generation's reusable
+high-water pool. Quiescent top-level calls clear lengths but retain every
 warmed allocation. The processor appends one fixed-width invocation provenance
 record using the active activation's invocation coordinate as parent; no rooted
 weak value is created on replay. Node, diagnostic, and continuation boundaries

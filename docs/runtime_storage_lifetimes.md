@@ -381,8 +381,9 @@ and survival patterns differ:
 ```rust
 struct ExecutionScratch<G> {
     macro_frames: Vec<PackedMacroFrame<G>>,
-    macro_argument_words: Vec<TracedTokenWord>,
-    macro_argument_ranges: Vec<PackedArgumentRanges>,
+    macro_argument_segments: Vec<MacroWordSegment>,
+    macro_match_segments: Vec<MacroWordSegment>,
+    spare_macro_segments: Vec<MacroWordSegment>,
     scanner_frames: Vec<PackedScannerFrame<G>>,
     scanner_words: Vec<TracedTokenWord>,
     scanner_builders: Vec<PackedScannerBuilder<G>>,
@@ -392,8 +393,7 @@ struct ExecutionScratch<G> {
 
 struct ScratchCursors {
     macro_frames: u32,
-    macro_argument_words: u32,
-    macro_argument_ranges: u32,
+    macro_argument_segments: u32,
     scanner_frames: u32,
     scanner_words: u32,
     scanner_builders: u32,
@@ -412,9 +412,11 @@ copying, or compaction. Separate physical lanes let the macro restore its own
 argument-word length while the scanner destination is untouched.
 
 Macro and scanner nesting is ordinary push/pop over lane lengths. A macro
-frame records the opening lengths of its argument-word and argument-range
-lanes; a scanner frame records the opening lengths of its temporary-word and
-builder lanes. Return restores those lengths in O(1). No push creates an arena,
+frame records the opening segment watermark and up to nine absolute word
+ranges. The one matcher lane seals by moving whole segment owners onto that
+stack without copying token words; frame return restores the watermark and
+reuses the physical suffix. A scanner frame records the opening lengths of its
+temporary-word and builder lanes. No push creates an arena,
 scope capability, ownership token, loan, mailbox, watermark row, or parent
 graph. Fixed synchronous state stays in ordinary Rust stack locals. State that
 can suspend or become too deep for the Rust stack uses explicit packed frames

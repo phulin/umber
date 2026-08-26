@@ -112,8 +112,8 @@ endline rules, and input-level precedence. Tokens carry packed provenance.
 Replay frames have three representations:
 
 - stored token lists for durable definitions and registers; and
-- one shared immutable `TracedTokenWord` buffer plus ranges for matched macro
-  arguments and their replay frames; and
+- one generation-owned absolute-offset segmented bump stack plus sealed ranges
+  for matched macro arguments and their replay frames; and
 - shared immutable transient `TracedTokenWord` buffers for pushback, inserted
   tokens, and rendered expansion results; uniquely owned buffers return to the
   allocation pool when their replay frame retires.
@@ -126,9 +126,9 @@ continuation.
 
 Command snapshots retain each live source cursor over already owned backing
 together with source, replay, condition, alignment, provenance, and allocator
-state. Rollback never reopens a resource. Immutable argument and transient
-replay buffers remain shared across snapshots, so suspending and retrying a
-step does not copy live token volume.
+state. Rollback never reopens a resource. In-process suspension retains the
+same generation-owned argument segments and transient replay backing, so
+retrying a step does not copy live token volume.
 
 ## 5. Expansion engine
 

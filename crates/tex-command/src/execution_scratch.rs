@@ -1,17 +1,17 @@
 //! Generation-owned reusable command execution scratch.
 //!
-//! Macro matchers write into linked fixed-size chunks drawn from one coarse
-//! pool. Sealing transfers only a private slot descriptor to the activation;
-//! retirement splices the whole chain onto an intrusive free list in O(1).
-//! No macro invocation owns a heap buffer or an attempt-arena scope.
+//! Macro matchers write into one reusable segmented staging lane. Sealing
+//! moves whole segment owners onto an absolute-offset live bump stack without
+//! copying token words; strict-LIFO retirement rewinds that stack and returns
+//! the physical segments to the shared high-water pool. No macro invocation
+//! owns a heap buffer or an attempt-arena scope.
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 
-use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token::TracedTokenWord;
 
-const MACRO_CHUNK_WORDS: usize = 64;
-const NO_CHUNK: u32 = u32::MAX;
+const MACRO_SEGMENT_WORDS: usize = 4_096;
 
 #[derive(Debug)]
 struct ResumeFrameId<G> {
@@ -245,19 +245,6 @@ impl<T, G> ResumeFrameLane<T, G> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ChunkCursor {
-    chunk: u32,
-    offset: u8,
-}
-
-impl ChunkCursor {
-    const EMPTY: Self = Self {
-        chunk: NO_CHUNK,
-        offset: 0,
-    };
-}
-
 #[derive(Debug)]
 pub(crate) struct MacroFrameId<G> {
     slot: u32,
@@ -287,7 +274,7 @@ impl<G> Hash for MacroFrameId<G> {
 #[derive(Debug)]
 pub(crate) struct MacroArgumentRange<G> {
     frame: MacroFrameId<G>,
-    start: ChunkCursor,
+    start: u32,
     len: u32,
 }
 
@@ -306,22 +293,23 @@ impl<G> Eq for MacroArgumentRange<G> {}
 impl<G> Hash for MacroArgumentRange<G> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.frame.hash(state);
-        self.start.chunk.hash(state);
-        self.start.offset.hash(state);
+        self.start.hash(state);
         self.len.hash(state);
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct MacroMatch<G> {
-    frame: MacroFrameId<G>,
+    serial: u64,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 #[derive(Debug)]
 pub(crate) struct MacroMatchBuffer<G> {
-    frame: MacroFrameId<G>,
+    serial: u64,
     start_word: u32,
     end_word: Option<u32>,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Copy for MacroMatchBuffer<G> {}
@@ -333,52 +321,53 @@ impl<G> Clone for MacroMatchBuffer<G> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PackedRange {
-    start: ChunkCursor,
+    start: u32,
     len: u32,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 struct MacroSlot {
     serial: u64,
-    head: u32,
-    tail: u32,
+    watermark_segments: u32,
     word_len: u32,
     arguments: [Option<PackedRange>; 9],
     argument_count: u8,
     live: bool,
-    sealed: bool,
 }
 
 impl Default for MacroSlot {
     fn default() -> Self {
         Self {
             serial: 0,
-            head: NO_CHUNK,
-            tail: NO_CHUNK,
+            watermark_segments: 0,
             word_len: 0,
             arguments: [None; 9],
             argument_count: 0,
             live: false,
-            sealed: false,
         }
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct MacroWordChunk {
-    words: [TracedTokenWord; MACRO_CHUNK_WORDS],
-    len: u8,
-    next: u32,
+struct MacroWordSegment {
+    words: Vec<TracedTokenWord>,
 }
 
-impl Default for MacroWordChunk {
-    fn default() -> Self {
-        Self {
-            words: [TracedTokenWord::pack(Token::Param(1), OriginId::UNKNOWN); MACRO_CHUNK_WORDS],
-            len: 0,
-            next: NO_CHUNK,
-        }
+impl MacroWordSegment {
+    fn new() -> Result<Self, ScratchError> {
+        let mut words = Vec::new();
+        words
+            .try_reserve_exact(MACRO_SEGMENT_WORDS)
+            .map_err(|_| ScratchError::AllocationFailed)?;
+        Ok(Self { words })
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PendingMacroMatch {
+    serial: u64,
+    arguments: [Option<PackedRange>; 9],
+    argument_count: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -390,20 +379,18 @@ pub(crate) enum ScratchError {
 
 pub(crate) struct MacroWords<'a, G> {
     scratch: &'a ExecutionScratch<G>,
-    frame: MacroFrameId<G>,
-    current: ChunkCursor,
+    serial: u64,
+    current: u32,
     remaining: u32,
-    require_sealed: bool,
 }
 
 impl<G> Clone for MacroWords<'_, G> {
     fn clone(&self) -> Self {
         Self {
             scratch: self.scratch,
-            frame: self.frame,
+            serial: self.serial,
             current: self.current,
             remaining: self.remaining,
-            require_sealed: self.require_sealed,
         }
     }
 }
@@ -415,11 +402,8 @@ impl<G> Iterator for MacroWords<'_, G> {
         if self.remaining == 0 {
             return None;
         }
-        let word = self
-            .scratch
-            .cursor_word(self.frame, self.current, self.require_sealed)
-            .ok()?;
-        self.current = self.scratch.next_cursor(self.current).ok()?;
+        let word = self.scratch.match_word(self.serial, self.current).ok()?;
+        self.current += 1;
         self.remaining -= 1;
         Some(word)
     }
@@ -434,12 +418,15 @@ impl<G> ExactSizeIterator for MacroWords<'_, G> {}
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct ExecutionScratch<G> {
     macro_slots: Vec<MacroSlot>,
-    macro_free_slots: Vec<u32>,
-    macro_chunks: Vec<MacroWordChunk>,
-    free_chunk_head: u32,
+    macro_depth: u32,
+    macro_segments: Vec<MacroWordSegment>,
+    match_segments: Vec<MacroWordSegment>,
+    match_word_len: u32,
+    pending_macro_match: Option<PendingMacroMatch>,
+    delimiter_segments: Vec<MacroWordSegment>,
+    spare_macro_segments: Vec<MacroWordSegment>,
     next_macro_serial: u64,
-    delimiter_head: ChunkCursor,
-    delimiter_tail: u32,
+    delimiter_head: u32,
     delimiter_len: u32,
     scanner_resumes: ResumeFrameLane<ContinuationFrame<G>, G>,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
@@ -452,12 +439,15 @@ impl<G> Default for ExecutionScratch<G> {
     fn default() -> Self {
         Self {
             macro_slots: Vec::new(),
-            macro_free_slots: Vec::new(),
-            macro_chunks: Vec::new(),
-            free_chunk_head: NO_CHUNK,
+            macro_depth: 0,
+            macro_segments: Vec::new(),
+            match_segments: Vec::new(),
+            match_word_len: 0,
+            pending_macro_match: None,
+            delimiter_segments: Vec::new(),
+            spare_macro_segments: Vec::new(),
             next_macro_serial: 1,
-            delimiter_head: ChunkCursor::EMPTY,
-            delimiter_tail: NO_CHUNK,
+            delimiter_head: 0,
             delimiter_len: 0,
             scanner_resumes: ResumeFrameLane::default(),
             expression_frames: Vec::new(),
@@ -819,40 +809,23 @@ impl<G> ExecutionScratch<G> {
     }
 
     pub(crate) fn begin_macro_match(&mut self) -> Result<MacroMatch<G>, ScratchError> {
-        if self.delimiter_len != 0 {
+        if self.delimiter_len != 0
+            || self.pending_macro_match.is_some()
+            || self.match_word_len != 0
+            || !self.match_segments.is_empty()
+        {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let index = if let Some(index) = self.macro_free_slots.pop() {
-            index
-        } else {
-            let index = u32::try_from(self.macro_slots.len())
-                .map_err(|_| ScratchError::CapacityOverflow)?;
-            self.macro_slots
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-            self.macro_free_slots
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-            self.macro_slots.push(MacroSlot::default());
-            index
-        };
         let serial = self.next_macro_serial;
         self.next_macro_serial = self.next_macro_serial.wrapping_add(1).max(1);
-        let slot = &mut self.macro_slots[index as usize];
-        if slot.live {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        *slot = MacroSlot {
+        self.pending_macro_match = Some(PendingMacroMatch {
             serial,
-            live: true,
-            ..MacroSlot::default()
-        };
+            arguments: [None; 9],
+            argument_count: 0,
+        });
         Ok(MacroMatch {
-            frame: MacroFrameId {
-                slot: index,
-                serial,
-                _generation: PhantomData,
-            },
+            serial,
+            _generation: PhantomData,
         })
     }
 
@@ -860,10 +833,12 @@ impl<G> ExecutionScratch<G> {
         &self,
         matching: &MacroMatch<G>,
     ) -> Result<MacroMatchBuffer<G>, ScratchError> {
+        self.validate_matching(matching)?;
         Ok(MacroMatchBuffer {
-            frame: matching.frame,
-            start_word: self.matching_slot(matching)?.word_len,
+            serial: matching.serial,
+            start_word: self.match_word_len,
             end_word: None,
+            _generation: PhantomData,
         })
     }
 
@@ -877,7 +852,7 @@ impl<G> ExecutionScratch<G> {
         if buffer.end_word.is_some() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.push_frame_word(matching.frame, word)
+        self.push_match_segment_word(word)
     }
 
     pub(crate) fn match_words(
@@ -886,14 +861,12 @@ impl<G> ExecutionScratch<G> {
         buffer: MacroMatchBuffer<G>,
     ) -> Result<MacroWords<'_, G>, ScratchError> {
         self.validate_buffer(matching, buffer)?;
-        let slot = self.matching_slot(matching)?;
-        let end = buffer.end_word.unwrap_or(slot.word_len);
+        let end = buffer.end_word.unwrap_or(self.match_word_len);
         Ok(MacroWords {
             scratch: self,
-            frame: matching.frame,
-            current: self.cursor_at(slot, buffer.start_word)?,
+            serial: matching.serial,
+            current: buffer.start_word,
             remaining: end - buffer.start_word,
-            require_sealed: false,
         })
     }
 
@@ -906,14 +879,15 @@ impl<G> ExecutionScratch<G> {
         if buffer.end_word.is_some() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let end = self.matching_slot(matching)?.word_len;
+        let end = self.match_word_len;
         if end.saturating_sub(buffer.start_word) < 2 {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(MacroMatchBuffer {
-            frame: buffer.frame,
+            serial: buffer.serial,
             start_word: buffer.start_word + 1,
             end_word: Some(end - 1),
+            _generation: PhantomData,
         })
     }
 
@@ -923,28 +897,27 @@ impl<G> ExecutionScratch<G> {
         buffer: MacroMatchBuffer<G>,
     ) -> Result<(), ScratchError> {
         self.validate_buffer(matching, buffer)?;
-        let slot = self.matching_slot(matching)?;
-        let end = buffer.end_word.unwrap_or(slot.word_len);
+        let end = buffer.end_word.unwrap_or(self.match_word_len);
         let range = PackedRange {
-            start: self.cursor_at(slot, buffer.start_word)?,
+            start: buffer.start_word,
             len: end - buffer.start_word,
         };
-        let slot = self.matching_slot_mut(matching)?;
-        if slot.argument_count >= 9 {
+        let pending = self
+            .pending_macro_match
+            .as_mut()
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        if pending.serial != matching.serial || pending.argument_count >= 9 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        slot.arguments[slot.argument_count as usize] = Some(range);
-        slot.argument_count += 1;
+        pending.arguments[pending.argument_count as usize] = Some(range);
+        pending.argument_count += 1;
         Ok(())
     }
 
     pub(crate) fn clear_delimiter_prefix(&mut self) {
-        let head = self.delimiter_head.chunk;
-        let tail = self.delimiter_tail;
-        self.delimiter_head = ChunkCursor::EMPTY;
-        self.delimiter_tail = NO_CHUNK;
+        self.delimiter_head = 0;
         self.delimiter_len = 0;
-        self.release_chunk_chain(head, tail);
+        self.release_delimiter_segments();
     }
 
     pub(crate) const fn delimiter_prefix_len(&self) -> usize {
@@ -959,24 +932,20 @@ impl<G> ExecutionScratch<G> {
         &self,
         index: usize,
     ) -> Result<TracedTokenWord, ScratchError> {
-        let mut cursor = self.delimiter_head;
-        for _ in 0..index {
-            cursor = self.next_cursor(cursor)?;
+        if index >= self.delimiter_len as usize {
+            return Err(ScratchError::InvalidCoordinate);
         }
-        self.raw_cursor_word(cursor)
+        let index = self
+            .delimiter_head
+            .checked_add(u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        Self::segmented_word(&self.delimiter_segments, index)
     }
 
     pub(crate) fn delimiter_prefix_words(&self) -> impl Iterator<Item = TracedTokenWord> + '_ {
-        let mut cursor = self.delimiter_head;
-        let mut remaining = self.delimiter_len;
-        core::iter::from_fn(move || {
-            if remaining == 0 {
-                return None;
-            }
-            let word = self.raw_cursor_word(cursor).ok()?;
-            cursor = self.next_cursor(cursor).ok()?;
-            remaining -= 1;
-            Some(word)
+        (0..self.delimiter_len as usize).map(|index| {
+            self.delimiter_prefix_word(index)
+                .expect("live delimiter prefix")
         })
     }
 
@@ -984,20 +953,26 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         word: TracedTokenWord,
     ) -> Result<(), ScratchError> {
-        let (head, tail, len) = self.push_chain_word(
-            self.delimiter_head.chunk,
-            self.delimiter_tail,
-            self.delimiter_len,
-            word,
-        )?;
-        if self.delimiter_len == 0 {
-            self.delimiter_head = ChunkCursor {
-                chunk: head,
-                offset: 0,
-            };
+        let tail = self
+            .delimiter_head
+            .checked_add(self.delimiter_len)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        if tail as usize % MACRO_SEGMENT_WORDS == 0 {
+            self.delimiter_segments
+                .try_reserve(1)
+                .map_err(|_| ScratchError::AllocationFailed)?;
+            let segment = self.take_macro_segment()?;
+            self.delimiter_segments.push(segment);
         }
-        self.delimiter_tail = tail;
-        self.delimiter_len = len;
+        self.delimiter_segments
+            .last_mut()
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .words
+            .push(word);
+        self.delimiter_len = self
+            .delimiter_len
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
         Ok(())
     }
 
@@ -1005,21 +980,14 @@ impl<G> ExecutionScratch<G> {
         if self.delimiter_len == 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let cursor = self.delimiter_head;
-        let word = self.raw_cursor_word(cursor)?;
-        let next = self.next_cursor(cursor)?;
+        let word = Self::segmented_word(&self.delimiter_segments, self.delimiter_head)?;
+        self.delimiter_head = self
+            .delimiter_head
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
         self.delimiter_len -= 1;
-        if next.chunk != cursor.chunk {
-            self.push_free_chunk(cursor.chunk);
-        }
         if self.delimiter_len == 0 {
-            if next.chunk == cursor.chunk {
-                self.push_free_chunk(cursor.chunk);
-            }
-            self.delimiter_head = ChunkCursor::EMPTY;
-            self.delimiter_tail = NO_CHUNK;
-        } else {
-            self.delimiter_head = next;
+            self.clear_delimiter_prefix();
         }
         Ok(word)
     }
@@ -1031,8 +999,56 @@ impl<G> ExecutionScratch<G> {
         if self.delimiter_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let frame = matching.frame;
-        self.matching_slot_mut(&matching)?.sealed = true;
+        self.validate_matching(&matching)?;
+        let pending = self
+            .pending_macro_match
+            .take()
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        let slot_index = self.macro_depth;
+        let slot_index_usize = slot_index as usize;
+        if slot_index_usize == self.macro_slots.len() {
+            self.macro_slots
+                .try_reserve(1)
+                .map_err(|_| ScratchError::AllocationFailed)?;
+            self.macro_slots.push(MacroSlot::default());
+        }
+        let watermark_segments =
+            u32::try_from(self.macro_segments.len()).map_err(|_| ScratchError::CapacityOverflow)?;
+        let base = watermark_segments
+            .checked_mul(MACRO_SEGMENT_WORDS as u32)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        let mut arguments = pending.arguments;
+        for range in arguments.iter_mut().flatten() {
+            range.start = base
+                .checked_add(range.start)
+                .ok_or(ScratchError::CapacityOverflow)?;
+        }
+        let slot = &mut self.macro_slots[slot_index_usize];
+        if slot.live {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.macro_segments
+            .try_reserve(self.match_segments.len())
+            .map_err(|_| ScratchError::AllocationFailed)?;
+        self.macro_segments.append(&mut self.match_segments);
+        *slot = MacroSlot {
+            serial: pending.serial,
+            watermark_segments,
+            word_len: self.match_word_len,
+            arguments,
+            argument_count: pending.argument_count,
+            live: true,
+        };
+        self.match_word_len = 0;
+        self.macro_depth = self
+            .macro_depth
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        let frame = MacroFrameId {
+            slot: slot_index,
+            serial: matching.serial,
+            _generation: PhantomData,
+        };
         Ok(frame)
     }
 
@@ -1040,12 +1056,16 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         matching: MacroMatch<G>,
     ) -> Result<(), ScratchError> {
+        self.validate_matching(&matching)?;
+        self.pending_macro_match = None;
+        self.match_word_len = 0;
+        self.release_match_segments();
         self.clear_delimiter_prefix();
-        self.release_slot(matching.frame, false)
+        Ok(())
     }
 
     pub(crate) fn pop_macro_frame(&mut self, frame: MacroFrameId<G>) -> Result<(), ScratchError> {
-        self.release_slot(frame, true)
+        self.release_slot(frame)
     }
 
     pub(crate) fn argument_count(&self, frame: MacroFrameId<G>) -> Result<usize, ScratchError> {
@@ -1085,23 +1105,22 @@ impl<G> ExecutionScratch<G> {
         if index >= range.len as usize {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let mut cursor = range.start;
-        for _ in 0..index {
-            cursor = self.next_cursor(cursor)?;
-        }
-        self.cursor_word(range.frame, cursor, true)
+        let absolute = range
+            .start
+            .checked_add(u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        Self::segmented_word(&self.macro_segments, absolute)
     }
 
     pub(crate) fn argument_word_len(&self) -> usize {
-        self.macro_slots
+        self.macro_slots[..self.macro_depth as usize]
             .iter()
-            .filter(|slot| slot.live)
             .map(|slot| slot.word_len as usize)
             .sum()
     }
 
     pub(crate) fn frame_len(&self) -> usize {
-        self.macro_slots.iter().filter(|slot| slot.live).count()
+        self.macro_depth as usize
     }
 
     #[cfg(test)]
@@ -1110,12 +1129,19 @@ impl<G> ExecutionScratch<G> {
     }
 
     #[cfg(test)]
-    pub(crate) fn retained_chunk_len(&self) -> usize {
-        self.macro_chunks.len()
+    pub(crate) fn retained_segment_len(&self) -> usize {
+        self.macro_segments.len()
+            + self.match_segments.len()
+            + self.delimiter_segments.len()
+            + self.spare_macro_segments.len()
     }
 
     pub(crate) fn is_quiescent(&self) -> bool {
-        self.frame_len() == 0 && self.delimiter_len == 0 && self.scanner_resumes.live_len() == 0
+        self.frame_len() == 0
+            && self.pending_macro_match.is_none()
+            && self.match_word_len == 0
+            && self.delimiter_len == 0
+            && self.scanner_resumes.live_len() == 0
     }
 
     #[cfg(test)]
@@ -1123,21 +1149,13 @@ impl<G> ExecutionScratch<G> {
         self.copied_macro_words
     }
 
-    fn matching_slot(&self, matching: &MacroMatch<G>) -> Result<&MacroSlot, ScratchError> {
-        let slot = self.slot(matching.frame)?;
-        (!slot.sealed)
-            .then_some(slot)
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    fn matching_slot_mut(
-        &mut self,
-        matching: &MacroMatch<G>,
-    ) -> Result<&mut MacroSlot, ScratchError> {
-        let slot = self.slot_mut(matching.frame)?;
-        (!slot.sealed)
-            .then_some(slot)
-            .ok_or(ScratchError::InvalidCoordinate)
+    fn validate_matching(&self, matching: &MacroMatch<G>) -> Result<(), ScratchError> {
+        matches!(
+            self.pending_macro_match,
+            Some(PendingMacroMatch { serial, .. }) if serial == matching.serial
+        )
+        .then_some(())
+        .ok_or(ScratchError::InvalidCoordinate)
     }
 
     fn validate_buffer(
@@ -1145,9 +1163,10 @@ impl<G> ExecutionScratch<G> {
         matching: &MacroMatch<G>,
         buffer: MacroMatchBuffer<G>,
     ) -> Result<(), ScratchError> {
-        let slot = self.matching_slot(matching)?;
-        let end = buffer.end_word.unwrap_or(slot.word_len);
-        if buffer.frame != matching.frame || buffer.start_word > end || end > slot.word_len {
+        self.validate_matching(matching)?;
+        let end = buffer.end_word.unwrap_or(self.match_word_len);
+        if buffer.serial != matching.serial || buffer.start_word > end || end > self.match_word_len
+        {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(())
@@ -1164,16 +1183,15 @@ impl<G> ExecutionScratch<G> {
     }
 
     fn sealed_slot(&self, frame: MacroFrameId<G>) -> Result<&MacroSlot, ScratchError> {
-        let slot = self.slot(frame)?;
-        slot.sealed
-            .then_some(slot)
-            .ok_or(ScratchError::InvalidCoordinate)
+        self.slot(frame)
     }
 
     fn slot(&self, frame: MacroFrameId<G>) -> Result<&MacroSlot, ScratchError> {
         self.macro_slots
             .get(frame.slot as usize)
-            .filter(|slot| slot.live && slot.serial == frame.serial)
+            .filter(|slot| {
+                frame.slot < self.macro_depth && slot.live && slot.serial == frame.serial
+            })
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
@@ -1184,169 +1202,109 @@ impl<G> ExecutionScratch<G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
-    fn cursor_at(&self, slot: &MacroSlot, index: u32) -> Result<ChunkCursor, ScratchError> {
-        if index > slot.word_len {
-            return Err(ScratchError::InvalidCoordinate);
+    fn push_match_segment_word(&mut self, word: TracedTokenWord) -> Result<(), ScratchError> {
+        if self.match_word_len as usize % MACRO_SEGMENT_WORDS == 0 {
+            self.match_segments
+                .try_reserve(1)
+                .map_err(|_| ScratchError::AllocationFailed)?;
+            let segment = self.take_macro_segment()?;
+            self.match_segments.push(segment);
         }
-        if index == slot.word_len {
-            return if slot.tail == NO_CHUNK {
-                Ok(ChunkCursor::EMPTY)
-            } else {
-                Ok(ChunkCursor {
-                    chunk: slot.tail,
-                    offset: self.macro_chunks[slot.tail as usize].len,
-                })
-            };
-        }
-        let mut cursor = ChunkCursor {
-            chunk: slot.head,
-            offset: 0,
-        };
-        for _ in 0..index {
-            cursor = self.next_cursor(cursor)?;
-        }
-        Ok(cursor)
-    }
-
-    fn push_frame_word(
-        &mut self,
-        frame: MacroFrameId<G>,
-        word: TracedTokenWord,
-    ) -> Result<(), ScratchError> {
-        let slot = self.slot(frame)?;
-        let (head, tail, len) = self.push_chain_word(slot.head, slot.tail, slot.word_len, word)?;
-        let slot = self.slot_mut(frame)?;
-        slot.head = head;
-        slot.tail = tail;
-        slot.word_len = len;
+        self.match_segments
+            .last_mut()
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .words
+            .push(word);
+        self.match_word_len = self
+            .match_word_len
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
         Ok(())
     }
 
-    fn push_chain_word(
-        &mut self,
-        mut head: u32,
-        mut tail: u32,
-        len: u32,
-        word: TracedTokenWord,
-    ) -> Result<(u32, u32, u32), ScratchError> {
-        let tail_full =
-            tail == NO_CHUNK || self.macro_chunks[tail as usize].len as usize == MACRO_CHUNK_WORDS;
-        if tail_full {
-            let next = self.allocate_chunk()?;
-            if tail == NO_CHUNK {
-                head = next;
-            } else {
-                self.macro_chunks[tail as usize].next = next;
-            }
-            tail = next;
-        }
-        let chunk = &mut self.macro_chunks[tail as usize];
-        chunk.words[chunk.len as usize] = word;
-        chunk.len += 1;
-        Ok((
-            head,
-            tail,
-            len.checked_add(1).ok_or(ScratchError::CapacityOverflow)?,
-        ))
-    }
-
-    fn allocate_chunk(&mut self) -> Result<u32, ScratchError> {
-        if self.free_chunk_head != NO_CHUNK {
-            let index = self.free_chunk_head;
-            let chunk = &mut self.macro_chunks[index as usize];
-            self.free_chunk_head = chunk.next;
-            chunk.len = 0;
-            chunk.next = NO_CHUNK;
-            return Ok(index);
-        }
-        let index =
-            u32::try_from(self.macro_chunks.len()).map_err(|_| ScratchError::CapacityOverflow)?;
-        self.macro_chunks
-            .try_reserve(1)
-            .map_err(|_| ScratchError::AllocationFailed)?;
-        self.macro_chunks.push(MacroWordChunk::default());
-        Ok(index)
-    }
-
-    fn cursor_word(
-        &self,
-        frame: MacroFrameId<G>,
-        cursor: ChunkCursor,
-        require_sealed: bool,
-    ) -> Result<TracedTokenWord, ScratchError> {
-        if self.slot(frame)?.sealed != require_sealed {
+    fn match_word(&self, serial: u64, index: u32) -> Result<TracedTokenWord, ScratchError> {
+        if self
+            .pending_macro_match
+            .as_ref()
+            .is_none_or(|pending| pending.serial != serial)
+            || index >= self.match_word_len
+        {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.raw_cursor_word(cursor)
+        Self::segmented_word(&self.match_segments, index)
     }
 
-    fn raw_cursor_word(&self, cursor: ChunkCursor) -> Result<TracedTokenWord, ScratchError> {
-        let chunk = self
-            .macro_chunks
-            .get(cursor.chunk as usize)
-            .ok_or(ScratchError::InvalidCoordinate)?;
-        (cursor.offset < chunk.len)
-            .then(|| chunk.words[cursor.offset as usize])
+    fn segmented_word(
+        segments: &[MacroWordSegment],
+        absolute: u32,
+    ) -> Result<TracedTokenWord, ScratchError> {
+        let absolute = absolute as usize;
+        segments
+            .get(absolute / MACRO_SEGMENT_WORDS)
+            .and_then(|segment| segment.words.get(absolute % MACRO_SEGMENT_WORDS))
+            .copied()
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
-    fn next_cursor(&self, cursor: ChunkCursor) -> Result<ChunkCursor, ScratchError> {
-        let chunk = self
-            .macro_chunks
-            .get(cursor.chunk as usize)
-            .ok_or(ScratchError::InvalidCoordinate)?;
-        let offset = cursor.offset + 1;
-        if offset < chunk.len {
-            Ok(ChunkCursor {
-                chunk: cursor.chunk,
-                offset,
-            })
-        } else if offset == chunk.len {
-            Ok(ChunkCursor {
-                chunk: chunk.next,
-                offset: 0,
-            })
-        } else {
-            Err(ScratchError::InvalidCoordinate)
+    fn take_macro_segment(&mut self) -> Result<MacroWordSegment, ScratchError> {
+        if let Some(segment) = self.spare_macro_segments.pop() {
+            return Ok(segment);
+        }
+        let physical_count = self
+            .macro_segments
+            .len()
+            .saturating_add(self.match_segments.len())
+            .saturating_add(self.delimiter_segments.len())
+            .saturating_add(self.spare_macro_segments.len());
+        let required_capacity = physical_count
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        if self.spare_macro_segments.capacity() < required_capacity {
+            self.spare_macro_segments
+                .try_reserve_exact(required_capacity - self.spare_macro_segments.len())
+                .map_err(|_| ScratchError::AllocationFailed)?;
+        }
+        MacroWordSegment::new()
+    }
+
+    fn release_match_segments(&mut self) {
+        while let Some(mut segment) = self.match_segments.pop() {
+            segment.words.clear();
+            self.spare_macro_segments.push(segment);
         }
     }
 
-    fn release_slot(
-        &mut self,
-        frame: MacroFrameId<G>,
-        require_sealed: bool,
-    ) -> Result<(), ScratchError> {
-        let slot = self.slot_mut(frame)?;
-        if slot.sealed != require_sealed {
+    fn release_delimiter_segments(&mut self) {
+        while let Some(mut segment) = self.delimiter_segments.pop() {
+            segment.words.clear();
+            self.spare_macro_segments.push(segment);
+        }
+    }
+
+    fn release_slot(&mut self, frame: MacroFrameId<G>) -> Result<(), ScratchError> {
+        if self.macro_depth == 0 || frame.slot + 1 != self.macro_depth {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let head = slot.head;
-        let tail = slot.tail;
-        *slot = MacroSlot::default();
-        self.release_chunk_chain(head, tail);
-        self.macro_free_slots.push(frame.slot);
-        Ok(())
-    }
-
-    fn release_chunk_chain(&mut self, head: u32, tail: u32) {
-        if head == NO_CHUNK {
-            return;
+        let slot = self.slot(frame)?;
+        let watermark = slot.watermark_segments as usize;
+        *self.slot_mut(frame)? = MacroSlot::default();
+        while self.macro_segments.len() > watermark {
+            let mut segment = self
+                .macro_segments
+                .pop()
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            segment.words.clear();
+            self.spare_macro_segments.push(segment);
         }
-        self.macro_chunks[tail as usize].next = self.free_chunk_head;
-        self.free_chunk_head = head;
-    }
-
-    fn push_free_chunk(&mut self, chunk: u32) {
-        self.macro_chunks[chunk as usize].len = 0;
-        self.macro_chunks[chunk as usize].next = self.free_chunk_head;
-        self.free_chunk_head = chunk;
+        self.macro_depth -= 1;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_state::token::Catcode;
+    use tex_state::token::{Catcode, OriginId, Token};
 
     fn word(ch: char) -> TracedTokenWord {
         TracedTokenWord::pack(
@@ -1438,7 +1396,7 @@ mod tests {
     #[test]
     fn chunked_argument_seals_in_place_and_replays_sequentially() {
         let mut scratch = ExecutionScratch::<()>::default();
-        let expected = (0..(MACRO_CHUNK_WORDS * 2 + 3))
+        let expected = (0..(MACRO_SEGMENT_WORDS * 2 + 3))
             .map(|index| word(char::from(b'a' + (index % 26) as u8)))
             .collect::<Vec<_>>();
         let frame = seal_argument(&mut scratch, expected.iter().copied());
@@ -1451,18 +1409,18 @@ mod tests {
         }
         assert!(
             scratch
-                .argument_word(range, MACRO_CHUNK_WORDS * 2 + 3)
+                .argument_word(range, MACRO_SEGMENT_WORDS * 2 + 3)
                 .is_err()
         );
         assert_eq!(scratch.copied_macro_words(), 0);
         scratch.pop_macro_frame(frame).expect("frame retirement");
         assert!(scratch.is_quiescent());
         assert_eq!(scratch.retained_slot_len(), 1);
-        assert_eq!(scratch.retained_chunk_len(), 3);
+        assert_eq!(scratch.retained_segment_len(), 3);
     }
 
     #[test]
-    fn repeated_same_depth_replacement_reuses_two_slots_without_copying() {
+    fn repeated_same_depth_replacement_reuses_one_slot_without_copying() {
         let mut scratch = ExecutionScratch::<()>::default();
         let mut frame = seal_argument(&mut scratch, [word('a')]);
         for index in 0..8_192 {
@@ -1486,8 +1444,8 @@ mod tests {
                 .expect("replacement activation");
         }
         assert_eq!(scratch.frame_len(), 1);
-        assert_eq!(scratch.retained_slot_len(), 2);
-        assert_eq!(scratch.retained_chunk_len(), 2);
+        assert_eq!(scratch.retained_slot_len(), 1);
+        assert_eq!(scratch.retained_segment_len(), 2);
         assert_eq!(scratch.copied_macro_words(), 0);
         scratch.pop_macro_frame(frame).expect("final retirement");
         assert!(scratch.is_quiescent());
@@ -1514,6 +1472,42 @@ mod tests {
         assert_eq!(scratch.argument_word(range, 0), Ok(word('p')));
         scratch.pop_macro_frame(parent).expect("parent retirement");
         assert!(scratch.is_quiescent());
+    }
+
+    #[test]
+    fn nested_frames_rewind_strictly_and_reject_stale_absolute_ranges() {
+        let mut scratch = ExecutionScratch::<()>::default();
+        let parent = seal_argument(&mut scratch, [word('p')]);
+        let parent_range = scratch
+            .argument_range(parent, 1)
+            .expect("parent frame")
+            .expect("parent argument");
+        let child = seal_argument(
+            &mut scratch,
+            (0..(MACRO_SEGMENT_WORDS + 1)).map(|_| word('c')),
+        );
+        assert_eq!(
+            scratch.pop_macro_frame(parent),
+            Err(ScratchError::InvalidCoordinate)
+        );
+        assert_eq!(scratch.argument_word(parent_range, 0), Ok(word('p')));
+        scratch.pop_macro_frame(child).expect("child retirement");
+        scratch.pop_macro_frame(parent).expect("parent retirement");
+        assert_eq!(
+            scratch.argument_word(parent_range, 0),
+            Err(ScratchError::InvalidCoordinate)
+        );
+
+        let replacement = seal_argument(&mut scratch, [word('r')]);
+        assert_eq!(replacement.slot, parent.slot);
+        assert_ne!(replacement.serial, parent.serial);
+        assert_eq!(
+            scratch.argument_word(parent_range, 0),
+            Err(ScratchError::InvalidCoordinate)
+        );
+        scratch
+            .pop_macro_frame(replacement)
+            .expect("replacement retirement");
     }
 
     #[cfg(feature = "profiling")]
@@ -1551,8 +1545,8 @@ mod tests {
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-        assert_eq!(scratch.retained_slot_len(), 2);
-        assert_eq!(scratch.retained_chunk_len(), 2);
+        assert_eq!(scratch.retained_slot_len(), 1);
+        assert_eq!(scratch.retained_segment_len(), 2);
         assert_eq!(scratch.copied_macro_words(), 0);
         scratch.pop_macro_frame(frame).expect("final retirement");
     }

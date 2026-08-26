@@ -1058,6 +1058,107 @@ impl<G> MixedPackedCursorBenchmark<G> {
     }
 }
 
+/// Focused profiling harness for one long sealed macro-argument span.
+///
+/// The span crosses several coarse execution-scratch segments. [`Self::run`]
+/// exercises only the packed input frame's scalar position and the ordinary
+/// [`PackedTokenSources::token_at`] boundary used by production delivery.
+#[cfg(any(test, feature = "profiling"))]
+pub struct LongMacroArgumentCursorBenchmark<G> {
+    span: PackedTokenSpanHandle<G>,
+    position: u32,
+    replay: ReplayLane<G>,
+    attempt: crate::attempt::AttemptArena<G>,
+    scratch: crate::execution_scratch::ExecutionScratch<G>,
+}
+
+/// Absolute work receipt from one warmed long-argument cursor run.
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LongMacroArgumentCursorReceipt {
+    pub calls: u64,
+    pub retirements: u64,
+    pub rollbacks: u64,
+    pub checksum: u64,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+impl<G> LongMacroArgumentCursorBenchmark<G> {
+    /// Seals one 16,385-word argument, crossing four 4,096-word segments.
+    pub fn new() -> Self {
+        const WORDS: u32 = 16_385;
+        let mut scratch = crate::execution_scratch::ExecutionScratch::default();
+        let matching = scratch
+            .begin_macro_match()
+            .expect("long-argument macro frame");
+        let buffer = scratch
+            .begin_match_buffer(&matching)
+            .expect("long-argument buffer");
+        for index in 0..WORDS {
+            let semantic = TokenWord::pack(Token::Char {
+                ch: char::from(b'a' + (index % 26) as u8),
+                cat: crate::Catcode::Letter,
+            });
+            scratch
+                .push_match_word(
+                    &matching,
+                    buffer,
+                    TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
+                )
+                .expect("long-argument word");
+        }
+        scratch
+            .finish_match_buffer(&matching, buffer)
+            .expect("long-argument range");
+        let frame = scratch
+            .commit_macro_match(matching)
+            .expect("long-argument sealed frame");
+        let range = scratch
+            .argument_range(frame, 1)
+            .expect("long-argument live frame")
+            .expect("long-argument first range");
+        Self {
+            span: PackedTokenSpanHandle::MacroArgument { range, len: WORDS },
+            // A nonzero opening proves exact scalar restoration.
+            position: 1,
+            replay: ReplayLane::default(),
+            attempt: crate::attempt::AttemptArena::default(),
+            scratch,
+        }
+    }
+
+    /// Performs `calls` bounded indexed reads and restores the opening scalar.
+    pub fn run(&mut self, calls: u32) -> LongMacroArgumentCursorReceipt {
+        let opening = self.position;
+        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.scratch);
+        let mut checksum = 0_u64;
+        let mut retirements = 0_u64;
+        for _ in 0..calls {
+            let (word, origin, provenance) = sources
+                .token_at(&self.span, self.position as usize)
+                .expect("long macro-argument cursor remains within its span");
+            debug_assert_eq!(origin, OriginId::UNKNOWN);
+            debug_assert!(provenance.is_none());
+            checksum = checksum.wrapping_add(u64::from(word.raw()));
+            self.position += 1;
+            if self.position as usize == self.span.frame_len() {
+                self.position = 0;
+                retirements += 1;
+            }
+        }
+        self.position = opening;
+        let _ = sources
+            .token_at(&self.span, self.position as usize)
+            .expect("rollback restores the exact long-argument cursor");
+        LongMacroArgumentCursorReceipt {
+            calls: u64::from(calls),
+            retirements,
+            rollbacks: 1,
+            checksum,
+        }
+    }
+}
+
 /// One restored command plus the source range committed at its first delivery.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BackedUpToken {

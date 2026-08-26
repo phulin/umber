@@ -19,7 +19,10 @@ pub(crate) use levels::{
     StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
-pub use levels::{MixedPackedCursorBenchmark, MixedPackedCursorReceipt};
+pub use levels::{
+    LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
+    MixedPackedCursorReceipt,
+};
 pub(crate) use source::{
     LineBackingRegistry, RegisteredSource, SourceCursor, source_line_buffer_high_water,
 };

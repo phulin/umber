@@ -109,7 +109,10 @@ pub use input::{
     SourceTokenizationStep,
 };
 #[cfg(feature = "profiling")]
-pub use input::{MixedPackedCursorBenchmark, MixedPackedCursorReceipt};
+pub use input::{
+    LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
+    MixedPackedCursorReceipt,
+};
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
 pub use observation::canonical_names;
