@@ -29,10 +29,73 @@ fn main() {
     warmed_backup_push_pop_throughput();
     stored_token_replay();
     warmed_short_interner_lookup();
+    warmed_control_sequence_delivery();
     macro_argument_matching();
     warmed_keyword_mismatch_throughput();
     destination_directed_warm_delivery();
     println!("packed token/macro cutover gate: PASS");
+}
+
+fn warmed_control_sequence_delivery() {
+    const OPERATIONS: usize = 1_000_000;
+    const NAME: &str = "deliveryidentity";
+    with_universe(|universe| {
+        let symbol = universe.intern(NAME).expect("control sequence name");
+        let mut command = CommandState::default();
+        open_source(&mut command, &format!(r"\{NAME} ").repeat(OPERATIONS));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let start = Instant::now();
+        for _ in 0..OPERATIONS {
+            let delivered = processor.get_token().unwrap().unwrap();
+            assert_eq!(delivered.control_sequence(), Some(symbol.symbol()));
+            black_box(delivered);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "source_control_sequence_delivery throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
+
+    with_universe(|universe| {
+        let symbol = universe.intern(NAME).expect("control sequence name");
+        let words = vec![TokenWord::pack(Token::Cs(symbol.symbol())); OPERATIONS];
+        let stored = universe.allocate_token_list(&words).expect("stored tokens");
+        let mut command = CommandState::default();
+        {
+            let context = universe.command_context().expect("command context");
+            command.push_everyjob(&context, stored);
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let mut elapsed = Duration::ZERO;
+        measure_zero("stored_control_sequence_delivery_1m", || {
+            let start = Instant::now();
+            for _ in 0..OPERATIONS {
+                let delivered = processor.get_token().unwrap().unwrap();
+                assert_eq!(delivered.control_sequence(), Some(symbol.symbol()));
+                black_box(delivered);
+            }
+            elapsed = start.elapsed();
+        });
+        println!(
+            "stored_control_sequence_delivery throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
 }
 
 fn warmed_backup_push_pop_throughput() {

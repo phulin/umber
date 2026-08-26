@@ -50,8 +50,12 @@ interning; only an already-spilled pathological name constructs a temporary
 `String`.
 
 `packed_cutover_gate` additionally times one million warmed single-token
-backup/replay cycles and 16,384 warmed failed-keyword scans. Both loops assert
-zero allocation calls and requested bytes after their replay/input storage has
-reached high water, then report nanoseconds per complete operation for local
-before/after comparisons. The time is diagnostic rather than a correctness
-ceiling; the allocation assertions and structural size gates are deterministic.
+backup/replay cycles, one million direct-source and stored-token
+control-sequence deliveries, and 16,384 warmed failed-keyword scans. Stored
+replay loops assert zero allocation calls and requested bytes after their input
+storage has reached high water. Direct-source delivery retains its real
+append-only provenance rows, so its timing loop relies on the separate
+`command_allocations` rows for allocation comparison. Every timing row reports
+nanoseconds per complete operation for local before/after comparisons. The
+time is diagnostic rather than a correctness ceiling; the allocation
+assertions and structural size gates are deterministic.
