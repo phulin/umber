@@ -254,6 +254,24 @@ and cross-package prefetch hints so common package closures start concurrently
 without allowing one large package to exceed client resource limits.
 Production inventory floors reject seed-sized output.
 
+The full publisher input is reconstructed independently of Umber's hosted
+objects. `tests/texlive-runtime-source.lock` pins the complete dated TEXMF
+archive and the exact `texlive.tlpdb` byte range inside the 2026.0 release ISO.
+The primary checkout provisions both from explicit mirror directories with:
+
+```bash
+python3 scripts/provision.py runtime-source \
+  --mirror https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2026/ \
+  --mirror https://mirrors.ibiblio.org/pub/mirrors/CTAN/systems/texlive/Images/
+```
+
+The archive download is resumable and SHA-512-verified before extraction. The
+package database is fetched as a bounded HTTP range rather than downloading
+the complete ISO. Extraction and package-database installation occur in a
+staging directory followed by one atomic primary-tree replacement. Repeating
+the action verifies and reuses the installed inputs; `--offline` permits only
+already authenticated cached inputs.
+
 Format construction during publication is independently bound to an existing
 verified local distribution. The snapshot command defaults that authority
 to `target/texlive-snapshot` and the root digest committed in

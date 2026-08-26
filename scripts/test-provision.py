@@ -7,6 +7,7 @@ import hashlib
 import http.server
 import importlib.util
 import json
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -40,14 +41,35 @@ def expect_texlive_error(action, fragment: str) -> None:
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw_directory:
         root = Path(raw_directory)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
         hosted = root / "hosted"
         hosted.mkdir()
         payload = b"expected\n"
         (hosted / "sample.tex").write_bytes(payload)
+        range_requests: list[str] = []
 
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *_arguments) -> None:
                 pass
+
+            def do_GET(self) -> None:
+                requested_range = self.headers.get("Range")
+                if requested_range is None:
+                    super().do_GET()
+                    return
+                data = Path(self.translate_path(self.path)).read_bytes()
+                unit, raw_range = requested_range.split("=", 1)
+                raw_start, raw_end = raw_range.split("-", 1)
+                assert unit == "bytes"
+                start, end = int(raw_start), int(raw_end)
+                assert 0 <= start <= end < len(data)
+                range_requests.append(requested_range)
+                self.send_response(206)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+                self.send_header("Content-Length", str(end - start + 1))
+                self.end_headers()
+                self.wfile.write(data[start : end + 1])
 
         server = http.server.ThreadingHTTPServer(
             ("127.0.0.1", 0),
@@ -104,6 +126,67 @@ def main() -> None:
         (source_cache / "src/configure").write_bytes(b"wrong\n")
         provision.texlive.ensure_source_cache(source_cache, source_lock, offline=True)
         assert (source_cache / "src/configure").read_bytes() == b"configure\n"
+
+        runtime_payload = root / "runtime-payload"
+        locked_runtime = b"runtime input\n"
+        (runtime_payload / "texmf-dist/tex").mkdir(parents=True)
+        (runtime_payload / "texmf-dist/tex/locked.tex").write_bytes(locked_runtime)
+        (runtime_payload / "texmf-dist/ls-R").write_bytes(b"locked.tex\n")
+        runtime_archive = hosted / "fixture-runtime.tar.xz"
+        with tarfile.open(runtime_archive, "w:xz") as output:
+            output.add(runtime_payload, arcname="fixture-runtime")
+        package_database = b"name 00texlive.config\ndepend release/2026\n"
+        iso_prefix = b"fixture ISO prefix"
+        iso_suffix = b"fixture ISO suffix"
+        iso = hosted / "fixture-runtime.iso"
+        iso.write_bytes(iso_prefix + package_database + iso_suffix)
+        runtime_lock = tests / "texlive-runtime-source.lock"
+        runtime_lock.write_text(
+            "distribution fixture-runtime\n"
+            f"archive {runtime_archive.name} {runtime_archive.stat().st_size} "
+            f"{hashlib.sha512(runtime_archive.read_bytes()).hexdigest()}\n"
+            f"iso-slice {iso.name} {iso.stat().st_size} {len(iso_prefix)} "
+            f"{len(package_database)} {hashlib.sha512(package_database).hexdigest()}\n",
+            encoding="utf-8",
+        )
+        runtime_tree_lock = tests / "texlive-snapshot.lock"
+        runtime_tree_lock.write_text(
+            "distribution fixture-runtime\n"
+            "tree_ahash64 0123456789abcdef\n"
+            f"source tex/locked.tex {len(locked_runtime)} "
+            f"{hashlib.sha256(locked_runtime).hexdigest()}\n",
+            encoding="utf-8",
+        )
+        runtime_cache = root / "third_party"
+        runtime_cache.mkdir(exist_ok=True)
+        partial_archive = runtime_archive.read_bytes()
+        partial_length = len(partial_archive) // 2
+        (runtime_cache / f".{runtime_archive.name}.part").write_bytes(
+            partial_archive[:partial_length]
+        )
+        runtime_root = provision.texlive_release.ensure_runtime_source(
+            root,
+            (base,),
+            release_lock=runtime_lock,
+            snapshot_lock=runtime_tree_lock,
+        )
+        assert (runtime_root / "texmf-dist/tex/locked.tex").read_bytes() == locked_runtime
+        assert (runtime_root / "tlpkg/texlive.tlpdb").read_bytes() == package_database
+        assert range_requests == [
+            f"bytes={partial_length}-{len(partial_archive) - 1}",
+            f"bytes={len(iso_prefix)}-{len(iso_prefix) + len(package_database) - 1}"
+        ]
+        (runtime_root / "texmf-dist/tex/locked.tex").write_bytes(b"corrupt\n")
+        provision.texlive_release.ensure_runtime_source(
+            root,
+            (),
+            offline=True,
+            release_lock=runtime_lock,
+            snapshot_lock=runtime_tree_lock,
+        )
+        assert (runtime_root / "texmf-dist/tex/locked.tex").read_bytes() == locked_runtime
+        parsed = provision.parse_args(["runtime-source", "--mirror", base])
+        assert parsed.command == "runtime-source" and parsed.mirror == [base]
 
         texmf_dist = root / "texmf-dist"
         (texmf_dist / "tex/latex-dev/base").mkdir(parents=True)

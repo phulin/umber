@@ -1,0 +1,5 @@
+# Complete TeX Live 2026.0 runtime-source inputs. The provisioner appends each
+# filename to caller-supplied mirror directories and accepts only these bytes.
+distribution texlive-20260301-texmf
+archive texlive-20260301-texmf.tar.xz 4963412512 0b8f87622e4b9e31d4bd8c7720376aa9685e5ee299c896e3e1660459546a31e11508946f2c40a71671944c8b467483e5d4d859ff17698d239c7d5aced65d4a6b
+iso-slice texlive2026-20260301.iso 6784798720 6706509824 20196764 da34cb5b0484be0db6baee84fb3584eacfa5c0ddc0883e0ba6c1b27298a25fe0640b9df1e62c36fa10358874ca980b9635298d5b73811b3933294cca420c00a2

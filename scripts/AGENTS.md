@@ -16,12 +16,16 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   execution mirrors with selective payloads from hosted or explicit local
   authorities, accepted PDF font-closure positive/negative receipts, and locked
   runtime staging.
+- `texlive_release.py`: complete release-runtime acquisition from explicit
+  mirror directories, including resumable authenticated TEXMF archive download,
+  bounded ISO-range package-database recovery, and atomic primary-tree replacement.
 - `provision.py`: the sole provisioning CLI for primary/linked worktrees,
-  TeX Live source, reference oracles, execution mirrors, and publisher
+  TeX Live program and release-runtime sources, reference oracles, execution mirrors, and publisher
   snapshots; snapshot publication stages the complete locked
   format-construction closure as the highest-precedence runtime root.
-- `test-provision.py`: hermetic source acquisition, replacement, offline, and
-  ordered TRIP-locator coverage for the shared library and CLI.
+- `test-provision.py`: hermetic program-source and release-runtime acquisition,
+  replacement, ISO-range, offline, and ordered TRIP-locator coverage for the
+  shared libraries and CLI.
 - `measure-wasm-editor-memory.mjs`: deterministic self-contained retained-editor
   workload reporting WebAssembly linear-memory pages before construction, after
   compilation, and after disposal.

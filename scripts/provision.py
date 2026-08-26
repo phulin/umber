@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 import texlive
+import texlive_release
 
 NATIVE_ASSET_LOCK = Path("tests/native-test-assets.lock")
 CONFORMANCE_TEXLIVE_LOCK = Path("tests/conformance-texlive.lock")
@@ -476,6 +477,17 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     source = commands.add_parser("source", help="provision the shared 2026 source tree")
     source.add_argument("path", type=Path, nargs="?", default=Path.cwd())
     source.add_argument("--offline", action="store_true")
+    runtime_source = commands.add_parser(
+        "runtime-source", help="provision the complete pinned 2026 runtime source"
+    )
+    runtime_source.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+    runtime_source.add_argument(
+        "--mirror",
+        action="append",
+        default=[],
+        help="mirror directory containing a pinned release artifact; may be repeated",
+    )
+    runtime_source.add_argument("--offline", action="store_true")
     worktree = commands.add_parser("worktree", help="provision primary or linked-worktree tests")
     worktree.add_argument("path", type=Path)
     worktree.add_argument("--target-dir", type=Path)
@@ -511,6 +523,11 @@ def main(arguments: list[str] | None = None) -> int:
     repo_root = texlive.repository_root(getattr(args, "path", Path.cwd()))
     if args.command == "source":
         print(texlive.provision_source(repo_root, args.offline))
+    elif args.command == "runtime-source":
+        source_root = texlive_release.ensure_runtime_source(
+            repo_root, tuple(args.mirror), args.offline
+        )
+        print(f"provision: runtime source ready at {source_root}")
     elif args.command == "worktree":
         copied = provision_worktree(args.path, args.target_dir, args.offline)
         print(f"provision: PASS: {copied} asset(s) provisioned into {repo_root}")

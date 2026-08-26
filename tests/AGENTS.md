@@ -3,8 +3,10 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
-`tests/texlive-source.lock` pins the official TeX Live 2026 source archive and
-selected extracted files. `tests/conformance-texlive.lock` maps runtime files
+`tests/texlive-source.lock` pins the official TeX Live 2026 program-source
+archive and selected extracted files. `tests/texlive-runtime-source.lock` pins
+the complete 2026.0 TEXMF release archive and the exact package-database byte
+range in the dated ISO. `tests/conformance-texlive.lock` maps runtime files
 from the authenticated hosted 2026 snapshot to their repository destinations.
 `tests/native-test-assets.lock` includes those runtime records and is the
 explicit SHA-256 allowlist that `scripts/provision.py worktree` copies from the
