@@ -28,6 +28,7 @@ fn main() {
     packed_backup_and_replay();
     warmed_backup_push_pop_throughput();
     stored_token_replay();
+    warmed_short_interner_lookup();
     macro_argument_matching();
     warmed_keyword_mismatch_throughput();
     destination_directed_warm_delivery();
@@ -201,8 +202,9 @@ fn packed_backup_and_replay() {
 }
 
 fn stored_token_replay() {
+    const DELIVERIES: usize = 1_000_000;
     with_universe(|universe| {
-        let words = (0..16)
+        let words = (0..DELIVERIES + 64)
             .map(|_| {
                 TokenWord::pack(Token::Char {
                     ch: 't',
@@ -224,12 +226,55 @@ fn stored_token_replay() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        for _ in 0..3 {
-            assert_char(processor.get_token().unwrap().unwrap(), 't');
+        let mut destination = None;
+        for _ in 0..64 {
+            assert_eq!(
+                processor.get_token_into(&mut destination).unwrap(),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(destination.as_ref().expect("stored command"), 't');
+            destination = None;
         }
+        let mut elapsed = Duration::ZERO;
         measure_zero("stored_token_replay", || {
-            assert_char(processor.get_token().unwrap().unwrap(), 't');
+            let start = Instant::now();
+            for _ in 0..DELIVERIES {
+                assert_eq!(
+                    processor.get_token_into(&mut destination).unwrap(),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("stored command"), 't');
+                destination = None;
+            }
+            elapsed = start.elapsed();
         });
+        println!(
+            "stored_token_replay throughput_ns_per_token={:.2}",
+            elapsed.as_nanos() as f64 / DELIVERIES as f64
+        );
+    });
+}
+
+fn warmed_short_interner_lookup() {
+    const LOOKUPS: usize = 1_000_000;
+    with_universe(|universe| {
+        let par = universe.intern("par").expect("paragraph symbol").symbol();
+        let context = universe.command_context().expect("command context");
+        for _ in 0..64 {
+            assert_eq!(context.symbol("par"), Some(par));
+        }
+        let mut elapsed = Duration::ZERO;
+        measure_zero("warmed_short_interner_lookup", || {
+            let start = Instant::now();
+            for _ in 0..LOOKUPS {
+                assert_eq!(black_box(context.symbol(black_box("par"))), Some(par));
+            }
+            elapsed = start.elapsed();
+        });
+        println!(
+            "warmed_short_interner_lookup throughput_ns_per_lookup={:.2}",
+            elapsed.as_nanos() as f64 / LOOKUPS as f64
+        );
     });
 }
 
