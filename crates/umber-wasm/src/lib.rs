@@ -57,9 +57,6 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "CatalogPreparedBatch")]
     pub type JsCatalogPreparedBatch;
 
-    #[wasm_bindgen(typescript_type = "CatalogRawShard[]")]
-    pub type JsCatalogRawShards;
-
     #[wasm_bindgen(typescript_type = "string[]")]
     pub type JsCatalogKeys;
 

@@ -416,7 +416,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                 f"texmf-dist tree differs from lock: expected {expected_tree}, got {actual_tree}"
             )
         config = {
-            "schema": 6,
+            "schema": 8,
             "distribution": distribution,
             "objectsBaseUrl": args.objects_base_url,
             "shardBits": args.shard_bits,

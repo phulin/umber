@@ -7,7 +7,7 @@ use crate::manifest::{
 };
 use crate::selection::{FontRequestKey, LegacyMappingRequestKey};
 
-pub const HTML_SHARDED_ROOT_SCHEMA: u32 = 7;
+pub const HTML_SHARDED_ROOT_SCHEMA: u32 = 9;
 pub const HTML_INDEX_SHARD_SCHEMA: u32 = 4;
 pub const FONT_RECORD_SCHEMA: u32 = 2;
 pub const LEGACY_MAPPING_RECORD_SCHEMA: u32 = 2;

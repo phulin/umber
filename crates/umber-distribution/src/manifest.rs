@@ -11,7 +11,7 @@ use crate::json::{self, Value};
 
 pub const MANIFEST_SCHEMA: u32 = 2;
 pub const LEGACY_SHARDED_ROOT_SCHEMA: u32 = 5;
-pub const SHARDED_ROOT_SCHEMA: u32 = 6;
+pub const SHARDED_ROOT_SCHEMA: u32 = 8;
 pub const INDEX_SHARD_SCHEMA: u32 = 3;
 pub const MAX_SHARD_BITS: u8 = 16;
 pub const FORMAT_INPUT_CLOSURE_SCHEMA: u32 = 1;
@@ -294,12 +294,9 @@ impl ShardedManifestRoot {
             json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
         let mut root = object(value, "root manifest")?;
         let schema = u32_value(take(&mut root, "schema", "root manifest")?, "schema")?;
-        if !matches!(
-            schema,
-            LEGACY_SHARDED_ROOT_SCHEMA | SHARDED_ROOT_SCHEMA | HTML_SHARDED_ROOT_SCHEMA
-        ) {
+        if !matches!(schema, SHARDED_ROOT_SCHEMA | HTML_SHARDED_ROOT_SCHEMA) {
             return Err(ManifestParseError::new(format!(
-                "unsupported root manifest schema {schema}; expected {LEGACY_SHARDED_ROOT_SCHEMA}, {SHARDED_ROOT_SCHEMA}, or {HTML_SHARDED_ROOT_SCHEMA}"
+                "unsupported root manifest schema {schema}; expected {SHARDED_ROOT_SCHEMA} or {HTML_SHARDED_ROOT_SCHEMA}"
             )));
         }
         let distribution = string(
@@ -337,15 +334,6 @@ impl ShardedManifestRoot {
             .map(parse_formats)
             .transpose()?
             .unwrap_or_default();
-        if schema == LEGACY_SHARDED_ROOT_SCHEMA
-            && formats
-                .values()
-                .any(|format| format.input_closure.is_some())
-        {
-            return Err(ManifestParseError::new(
-                "format input closures require root manifest schema 3",
-            ));
-        }
         finish(root, "root manifest")?;
         validate_cross_references(&BTreeMap::new(), &BTreeMap::new(), &formats)?;
         Ok(Self {
@@ -963,7 +951,11 @@ pub(crate) fn validate_digest(value: &str, label: &str) -> Result<(), ManifestPa
     Ok(())
 }
 
-fn validate_path(value: &str, prefix: &str, label: &str) -> Result<(), ManifestParseError> {
+pub(crate) fn validate_path(
+    value: &str,
+    prefix: &str,
+    label: &str,
+) -> Result<(), ManifestParseError> {
     let Some(suffix) = value.strip_prefix(prefix) else {
         return Err(ManifestParseError::new(format!(
             "invalid {label} {value:?}"

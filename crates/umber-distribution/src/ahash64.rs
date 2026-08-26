@@ -5,3 +5,7 @@ pub(crate) fn digest(input: &[u8]) -> [u8; 8] {
         .value()
         .to_be_bytes()
 }
+
+pub(crate) fn shard_key(input: &[u8]) -> u64 {
+    AHash64::for_bytes(HashDomain::DistributionShardKey, input).value()
+}

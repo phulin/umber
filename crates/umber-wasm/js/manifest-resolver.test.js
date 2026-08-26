@@ -17,10 +17,42 @@ const shardIndex = (key, bits) => {
 	return prefix >>> (16 - bits);
 };
 const catalog = {
+	catalogCreateSession(text) {
+		const retained = new Map();
+		return {
+			prepareBatch(keys) {
+				const prepared = catalog.catalogPrepareBatch(text, keys);
+				prepared.shards = prepared.shards.filter(
+					({ index }) => !retained.has(index),
+				);
+				return prepared;
+			},
+			provideShard(index, bytes) {
+				const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+				const previous = retained.get(index);
+				if (previous !== undefined && previous !== decoded)
+					throw new Error(`index shard ${index} conflicts with retained bytes`);
+				retained.set(index, decoded);
+			},
+			planBatch(keys) {
+				return catalog.catalogPlanBatch(
+					text,
+					[...retained].map(([index, shardText]) => ({
+						index,
+						text: shardText,
+					})),
+					keys,
+				);
+			},
+			selectFormat(name) {
+				return catalog.catalogSelectFormat(text, name);
+			},
+		};
+	},
 	catalogPrepareBatch(text, keys) {
 		const root = JSON.parse(text);
 		if (
-			![5, 6, 7].includes(root.schema) ||
+			![8, 9].includes(root.schema) ||
 			!Number.isInteger(root.shardBits) ||
 			root.shardBits < 0 ||
 			root.shardBits > 16 ||
@@ -50,7 +82,7 @@ const catalog = {
 			if (
 				shard.distribution !== root.distribution ||
 				shard.index !== raw.index ||
-				shard.schema !== (root.schema === 7 ? 4 : 3)
+				shard.schema !== (root.schema === 9 ? 4 : 3)
 			)
 				throw new Error(`index shard ${raw.index} identity mismatch`);
 			for (const key of [
@@ -199,7 +231,7 @@ async function fixture() {
 	const format = formatEntry(payloads.format);
 	objectBytes.set(format.object, payloads.format);
 	const root = {
-		schema: 5,
+		schema: 8,
 		distribution: "texlive-fixture",
 		objectsBaseUrl: "https://cdn.example.test/objects/",
 		shardBits,
@@ -246,7 +278,7 @@ async function htmlFontFixture() {
 	const shardDigest = digest(shardBytes);
 	return {
 		root: {
-			schema: 7,
+			schema: 9,
 			distribution: "html-font-fixture",
 			objectsBaseUrl: "https://cdn.example.test/objects/",
 			shardBits: 0,
@@ -306,7 +338,7 @@ test("create verifies the pinned root before accepting its selection metadata", 
 		crypto: webcrypto,
 		catalog,
 	});
-	assert.equal(resolver.manifest.schema, 5);
+	assert.equal(resolver.manifest.schema, 8);
 	await assert.rejects(
 		HttpManifestResolver.create({
 			manifestUrl: "https://cdn.example.test/manifest-v2.json",
@@ -604,7 +636,7 @@ test("schema three format closures return validated positive responses", async (
 	const data = await fixture();
 	data.root = {
 		...data.root,
-		schema: 6,
+		schema: 8,
 		formats: {
 			plain: {
 				...data.root.formats.plain,

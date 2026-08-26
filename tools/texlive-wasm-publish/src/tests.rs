@@ -212,7 +212,7 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         }))?,
     )?;
     Ok(PublishConfig {
-        schema: 7,
+        schema: 9,
         distribution: "html-fixture-v1".to_owned(),
         objects_base_url: "https://cdn.example.test/html/objects/".to_owned(),
         shard_bits: 2,
@@ -255,7 +255,7 @@ fn root(name: &str, path: &Path) -> Result<RootConfig> {
 
 fn config(roots: Vec<RootConfig>) -> PublishConfig {
     PublishConfig {
-        schema: 6,
+        schema: 8,
         distribution: "texlive-fixture-2026".to_owned(),
         objects_base_url: "https://cdn.example.test/texlive/objects/".to_owned(),
         shard_bits: 3,
@@ -980,7 +980,7 @@ fn html_profile_is_reproducible_bounded_and_contains_only_html_resources() -> Re
 
     let publication = publish(&config, &output_a)?;
     publish(&config, &output_b)?;
-    assert_eq!(publication.root.schema, 7);
+    assert_eq!(publication.root.schema, 9);
     assert_eq!(publication.files.len(), 3);
     assert!(publication.files.contains_key("tex:plain.tex"));
     assert!(publication.files.contains_key("tex:article.cls"));

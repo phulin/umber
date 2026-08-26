@@ -1605,6 +1605,7 @@ dependencies = [
  "ts-rs",
  "umber",
  "umber-distribution",
+ "umber-hash",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

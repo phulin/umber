@@ -21,6 +21,7 @@ tex-state = { path = "../tex-state" }
 ts-rs.workspace = true
 umber = { path = "../umber" }
 umber-distribution = { path = "../umber-distribution" }
+umber-hash = { path = "../umber-hash" }
 wasm-bindgen = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -57,7 +57,6 @@ export type EditorPhase = "advance" | "stabilization";
 export type HostErrorCode = "compile" | "resolve" | "resource" | "invalid-binding" | "invalid-resolver" | "invalid-options" | "invalid-resource" | "invalid-resource-responses" | "removed-option" | "limit" | "attempt-limit" | "no-progress" | "operation-pending" | "disposed" | "worker-unavailable" | "worker-protocol" | "worker" | "timeout";
 export type CatalogShard = { index: number, object: string, ahash64: string, };
 export type CatalogPreparedBatch = { root: string, shards: Array<CatalogShard>, };
-export type CatalogRawShard = { index: number, text: string, };
 export type CatalogJobRequirement = "required" | "hint";
 export type CatalogJobKind = "file" | "font" | "legacy-font-mapping";
 export type CatalogJobEntry = { object: string, ahash64: string, bytes: number, virtualPath?: string, container?: FontContainer, programIdentity?: string, provenance?: string, fontKey?: string, unicodeMap?: Array<string | null>, fallback?: FontMappingFallback, };

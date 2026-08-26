@@ -258,7 +258,7 @@ def main() -> None:
         root_manifest = (
             json.dumps(
                 {
-                    "schema": 6,
+                    "schema": 8,
                     "distribution": "fixture-snapshot",
                     "objectsBaseUrl": "https://example.invalid/objects/",
                     "formats": {},

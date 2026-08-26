@@ -1,5 +1,5 @@
 {
-  "schema": 7,
+  "schema": 9,
   "distribution": "html-font-fixture",
   "objectsBaseUrl": "https://cdn.example.test/objects/",
   "shardBits": 0,

@@ -14,9 +14,8 @@ use std::time::Instant;
 use tex_fonts::AcceptedFontContainers;
 use tex_state::{FORMAT_SCHEMA_VERSION, World};
 use umber_distribution::{
-    FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, ManifestMiss,
-    ManifestRequest, ManifestShard, ObjectEntry, ShardedManifestRoot, select_shard,
-    shard_index_for_key,
+    FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, ObjectEntry,
+    ShardedManifestRoot, ValidatedPackedShard, shard_index_for_key,
 };
 use umber_fetch::{
     DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
@@ -33,7 +32,7 @@ use crate::{
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
-    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v6.json";
+    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v8.json";
 
 const MAX_INDEX_SHARD_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -220,16 +219,14 @@ pub struct ResolverTelemetry {
     pub manifest_parses: u64,
     /// Root or shard payload digest validations.
     pub manifest_validations: u64,
-    /// Complete shards verified and parsed for compact selection.
+    /// Complete packed shards validated and retained.
     pub shard_loads: u64,
-    /// Largest verified serialized root or shard parsed in one operation.
+    /// Largest verified serialized root or packed shard read in one operation.
     pub manifest_parse_peak_bytes: u64,
-    /// Selected file records currently retained by the verified owner.
-    pub retained_manifest_records: u64,
-    /// Authoritative selected-key misses currently retained by the owner.
-    pub retained_manifest_misses: u64,
-    /// Exact requested heap bytes owned by the compact selected evidence.
-    pub retained_manifest_requested_bytes: u64,
+    /// Packed shards currently retained by the verified owner.
+    pub retained_manifest_shards: u64,
+    /// Exact packed shard bytes retained by the verified owner.
+    pub retained_manifest_bytes: u64,
     pub object_requests: u64,
     pub object_cache_hits: u64,
     /// Content-addressed object payload validations, excluding response IDs.
@@ -960,7 +957,7 @@ fn read_classic_bib_resource(
 struct LoadedDistribution {
     root: Arc<ShardedManifestRoot>,
     local_root: Option<PathBuf>,
-    selected: Vec<VerifiedSelectionEvidence>,
+    shards: BTreeMap<u32, Arc<ValidatedPackedShard>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -969,61 +966,14 @@ struct SelectedDistributionRecord {
     object: ObjectEntry,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct VerifiedSelectionEvidence {
-    key: String,
-    record: Option<SelectedDistributionRecord>,
-}
-
 impl LoadedDistribution {
-    fn selected_record(&self, key: &str) -> Option<&Option<SelectedDistributionRecord>> {
-        self.selected
-            .binary_search_by(|evidence| evidence.key.as_str().cmp(key))
-            .ok()
-            .map(|index| &self.selected[index].record)
-    }
-
-    fn retain_selection(&mut self, key: String, record: Option<SelectedDistributionRecord>) {
-        match self
-            .selected
-            .binary_search_by(|evidence| evidence.key.as_str().cmp(&key))
-        {
-            Ok(index) => debug_assert_eq!(self.selected[index].record, record),
-            Err(index) => self
-                .selected
-                .insert(index, VerifiedSelectionEvidence { key, record }),
-        }
-    }
-
     fn record_retention(&self, telemetry: &mut ResolverTelemetry) {
-        telemetry.retained_manifest_records = self
-            .selected
-            .iter()
-            .filter(|evidence| evidence.record.is_some())
-            .count() as u64;
-        telemetry.retained_manifest_misses = self
-            .selected
-            .iter()
-            .filter(|evidence| evidence.record.is_none())
-            .count() as u64;
-        let vector_bytes = self
-            .selected
-            .capacity()
-            .saturating_mul(std::mem::size_of::<VerifiedSelectionEvidence>());
-        let string_bytes = self
-            .selected
-            .iter()
-            .map(|evidence| {
-                evidence.key.capacity()
-                    + evidence.record.as_ref().map_or(0, |record| {
-                        record.virtual_path.capacity()
-                            + record.object.object.capacity()
-                            + record.object.ahash64.capacity()
-                    })
-            })
-            .sum::<usize>();
-        telemetry.retained_manifest_requested_bytes =
-            vector_bytes.saturating_add(string_bytes) as u64;
+        telemetry.retained_manifest_shards = self.shards.len() as u64;
+        telemetry.retained_manifest_bytes = self
+            .shards
+            .values()
+            .map(|shard| shard.bytes().len() as u64)
+            .sum();
     }
 }
 
@@ -1051,9 +1001,8 @@ impl DistributionOwnerIdentity {
 
 /// Explicitly bounded owner for one immutable distribution identity.
 ///
-/// Cloned compile sessions share the verified root plus compact selected
-/// shard records and authoritative misses. Complete shard maps exist only while
-/// an unseen key is verified and selected. Object bytes still pass through
+/// Cloned compile sessions share the verified root plus every touched validated
+/// packed shard. Lookups probe those immutable bytes directly. Object bytes still pass through
 /// the content-addressed store on every session, so its ordinary corruption
 /// detection and offline/source-selection behavior remain in force. Dropping this
 /// owner drops the reusable manifest state.
@@ -1738,15 +1687,11 @@ impl DistributionResolver {
             .lock()
             .map_err(|_| NativeRunError::Cache("verified distribution owner poisoned".into()))?;
         let shared = state.loaded.as_mut().expect("root loaded before shard");
-        if request_keys
-            .iter()
-            .all(|key| shared.selected_record(key).is_some())
-        {
+        if shared.shards.contains_key(&index) {
             telemetry.verified_manifest_hits = telemetry.verified_manifest_hits.saturating_add(1);
             shared.record_retention(telemetry);
-            return Ok(selected_records(shared, request_keys));
+            return Ok(selected_records(&shared.shards[&index], request_keys));
         }
-        let shard_bits = loaded.root.shard_bits;
         let local_root = loaded.local_root.clone();
         let digest = loaded
             .root
@@ -1801,59 +1746,11 @@ impl DistributionResolver {
         telemetry.manifest_parse_peak_bytes =
             telemetry.manifest_parse_peak_bytes.max(bytes.len() as u64);
         check_cancelled(cancellation)?;
-        let text = std::str::from_utf8(&bytes)
+        let shard = ValidatedPackedShard::new(bytes, &loaded.root, index)
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
-        let shard = ManifestShard::parse(text)
-            .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
-        telemetry.manifest_parses = telemetry.manifest_parses.saturating_add(1);
-        shard
-            .validate_identity(&loaded.root, index)
-            .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
-        for key in shard.files.keys() {
-            if shard_index_for_key(key, shard_bits)
-                .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?
-                != index
-            {
-                return Err(NativeRunError::ManifestParse(format!(
-                    "lookup key {key} is not in its canonical shard"
-                )));
-            }
-        }
         telemetry.shard_loads = telemetry.shard_loads.saturating_add(1);
-        let requests = request_keys
-            .iter()
-            .map(|key| {
-                DistributionFileRequestKey::from_manifest_key(key)
-                    .map(ManifestRequest::File)
-                    .map_err(|error| NativeRunError::Selection(error.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let selected = select_shard(&shard, &requests);
-        for miss in selected.misses {
-            let ManifestMiss::File(key) = miss else {
-                unreachable!("native distribution batch selects only files")
-            };
-            shared.retain_selection(key.manifest_key().to_string(), None);
-        }
-        for job in selected.jobs {
-            let key = job.manifest_key.to_string();
-            if !request_keys.contains(&key) {
-                continue;
-            }
-            let record = SelectedDistributionRecord {
-                virtual_path: job
-                    .virtual_path
-                    .expect("selected file has an verified virtual path"),
-                object: job.object,
-            };
-            shared.retain_selection(key, Some(record));
-        }
-        debug_assert!(
-            request_keys
-                .iter()
-                .all(|key| shared.selected_record(key).is_some())
-        );
-        let selected = selected_records(shared, request_keys);
+        shared.shards.insert(index, Arc::new(shard));
+        let selected = selected_records(&shared.shards[&index], request_keys);
         shared.record_retention(telemetry);
         Ok(selected)
     }
@@ -1883,12 +1780,12 @@ impl DistributionResolver {
             let explicit = self.source.is_some();
             let path = PathBuf::from(&source);
             let local_path = if path.is_dir() {
-                let schema_six = path.join("manifest-v6.json");
-                let schema_five = path.join("manifest-v5.json");
-                if schema_six.exists() {
-                    schema_six
-                } else if schema_five.exists() {
-                    schema_five
+                let schema_nine = path.join("manifest-v9.json");
+                let schema_eight = path.join("manifest-v8.json");
+                if schema_nine.exists() {
+                    schema_nine
+                } else if schema_eight.exists() {
+                    schema_eight
                 } else {
                     path.join("manifest.json")
                 }
@@ -1945,7 +1842,7 @@ impl DistributionResolver {
             state.loaded = Some(LoadedDistribution {
                 root: Arc::new(root),
                 local_root,
-                selected: Vec::new(),
+                shards: BTreeMap::new(),
             });
         }
         Ok(state.loaded.as_ref().expect("distribution loaded").clone())
@@ -1953,7 +1850,7 @@ impl DistributionResolver {
 }
 
 fn selected_records(
-    loaded: &LoadedDistribution,
+    shard: &ValidatedPackedShard,
     request_keys: &[String],
 ) -> BTreeMap<String, Option<SelectedDistributionRecord>> {
     request_keys
@@ -1961,10 +1858,13 @@ fn selected_records(
         .map(|key| {
             (
                 key.clone(),
-                loaded
-                    .selected_record(key)
-                    .expect("verified evidence covers requested key")
-                    .clone(),
+                shard
+                    .lookup(key)
+                    .and_then(|record| record.file())
+                    .map(|file| SelectedDistributionRecord {
+                        virtual_path: file.virtual_path().to_owned(),
+                        object: file.object(),
+                    }),
             )
         })
         .collect()
@@ -1973,15 +1873,14 @@ fn selected_records(
 fn emit_failed_distribution_telemetry(telemetry: ResolverTelemetry) {
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
-            "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_parses={} manifest_validations={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_records={} retained_manifest_misses={} retained_manifest_requested_bytes={}",
+            "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_parses={} manifest_validations={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_shards={} retained_manifest_bytes={}",
             telemetry.manifest_reads,
             telemetry.manifest_parses,
             telemetry.manifest_validations,
             telemetry.shard_loads,
             telemetry.manifest_parse_peak_bytes,
-            telemetry.retained_manifest_records,
-            telemetry.retained_manifest_misses,
-            telemetry.retained_manifest_requested_bytes,
+            telemetry.retained_manifest_shards,
+            telemetry.retained_manifest_bytes,
         );
     }
 }

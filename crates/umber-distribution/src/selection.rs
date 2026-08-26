@@ -646,6 +646,90 @@ pub fn select_shards(
     })
 }
 
+/// Selects one ordered request batch directly from already-validated packed
+/// shards. Required jobs retain first-request order and inline dependency
+/// hints follow in discovery order.
+#[must_use]
+pub fn select_packed_shards(
+    shards: &BTreeMap<u32, crate::ValidatedPackedShard>,
+    shard_bits: u8,
+    requests: &[ManifestRequest],
+) -> Selection {
+    let mut selection = Selection::default();
+    let mut seen = BTreeSet::new();
+    let mut dependencies = Vec::new();
+    for request in requests {
+        let key = request.manifest_key();
+        if !seen.insert(key.0.clone()) {
+            continue;
+        }
+        let index = shard_index(&key, shard_bits).expect("validated request shard index");
+        let shard = &shards[&index];
+        let Some(record) = shard.lookup(key.as_str()) else {
+            selection.misses.push(match request {
+                ManifestRequest::File(key) => ManifestMiss::File(key.clone()),
+                ManifestRequest::Font(key) => ManifestMiss::Font(key.clone()),
+                ManifestRequest::LegacyMapping(key) => ManifestMiss::LegacyMapping(key.clone()),
+            });
+            continue;
+        };
+        let (object, virtual_path) = match request {
+            ManifestRequest::File(_) => {
+                let file = record
+                    .file()
+                    .expect("validated key kind matches request kind");
+                dependencies.extend(file.dependencies().map(|dependency| {
+                    (
+                        dependency.key().to_owned(),
+                        dependency.virtual_path().to_owned(),
+                        dependency.object(),
+                    )
+                }));
+                (file.object(), Some(file.virtual_path().to_owned()))
+            }
+            ManifestRequest::Font(_) => (
+                record
+                    .font()
+                    .expect("validated font metadata")
+                    .expect("validated key kind matches request kind")
+                    .object,
+                None,
+            ),
+            ManifestRequest::LegacyMapping(_) => (
+                record
+                    .legacy_mapping()
+                    .expect("validated mapping metadata")
+                    .expect("validated key kind matches request kind")
+                    .object,
+                None,
+            ),
+        };
+        selection.jobs.push(AcquisitionJob {
+            request: request.clone(),
+            manifest_key: key,
+            requirement: JobRequirement::Required,
+            object,
+            virtual_path,
+        });
+    }
+    for (key, virtual_path, object) in dependencies {
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let Ok(request) = FileRequestKey::from_manifest_key(&key) else {
+            continue;
+        };
+        selection.jobs.push(AcquisitionJob {
+            request: ManifestRequest::File(request),
+            manifest_key: ManifestLogicalKey(key),
+            requirement: JobRequirement::DependencyHint,
+            object,
+            virtual_path: Some(virtual_path),
+        });
+    }
+    selection
+}
+
 fn validate_logical_name(value: &str) -> Result<(), SelectionError> {
     if value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
         Err(SelectionError::new("invalid font logical name"))

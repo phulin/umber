@@ -615,8 +615,8 @@ def materialize_snapshot(
     root = _json_document(root_data, "root manifest")
     bits, shards = root.get("shardBits"), root.get("shards")
     formats, objects_url = root.get("formats"), root.get("objectsBaseUrl")
-    if root.get("schema") != 6:
-        raise TexliveError("root manifest is not schema 6")
+    if root.get("schema") != 8:
+        raise TexliveError("root manifest is not schema 8")
     if (
         not isinstance(bits, int)
         or not 0 <= bits <= 16

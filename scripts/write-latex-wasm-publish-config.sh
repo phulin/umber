@@ -22,7 +22,7 @@ shard_bits=8
 
 cat > "$output" <<EOF
 {
-  "schema": 6,
+  "schema": 8,
   "distribution": "${distribution}",
   "objectsBaseUrl": "${objects_base_url}",
   "shardBits": ${shard_bits},

@@ -2,7 +2,6 @@ import type { PersistentObjectCache } from "./persistent-cache.js";
 import type {
 	CatalogBatchPlan,
 	CatalogPreparedBatch,
-	CatalogRawShard,
 	NamedFormat,
 	ResourceRequest,
 	ResourceResponse,
@@ -54,16 +53,14 @@ export interface HttpManifestResolverOptions {
 }
 
 export interface DistributionCatalogBindings {
-	catalogPrepareBatch(
-		rootJson: string,
-		keys: readonly string[],
-	): CatalogPreparedBatch;
-	catalogPlanBatch(
-		rootJson: string,
-		shards: readonly CatalogRawShard[],
-		keys: readonly string[],
-	): CatalogBatchPlan;
-	catalogSelectFormat(rootJson: string, name: string): NamedFormat;
+	catalogCreateSession(rootJson: string): DistributionCatalogSession;
+}
+
+export interface DistributionCatalogSession {
+	prepareBatch(keys: readonly string[]): CatalogPreparedBatch;
+	provideShard(index: number, bytes: Uint8Array): void;
+	planBatch(keys: readonly string[]): CatalogBatchPlan;
+	selectFormat(name: string): NamedFormat;
 }
 
 export interface ManifestFile {

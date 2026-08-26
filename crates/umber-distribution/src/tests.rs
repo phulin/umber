@@ -379,7 +379,7 @@ fn classic_resource_kinds_use_stable_distribution_keys() {
 #[test]
 fn parses_sharded_root_and_full_inline_dependency_metadata() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
     assert_eq!(root.shard_digest(0), Some("aaaaaaaaaaaaaaaa"));
@@ -408,13 +408,13 @@ fn parses_sharded_root_and_full_inline_dependency_metadata() {
 #[test]
 fn root_serialization_and_sharding_are_canonical_catalog_operations() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
     assert_eq!(
         root.to_json(),
         concat!(
-            r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
+            r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
             "\n"
         )
     );
@@ -437,7 +437,7 @@ fn root_serialization_and_sharding_are_canonical_catalog_operations() {
 #[test]
 fn assembled_catalog_rejects_cross_shard_and_stale_dependency_semantics() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
     let shard = ManifestShard::parse(
@@ -450,10 +450,10 @@ fn assembled_catalog_rejects_cross_shard_and_stale_dependency_semantics() {
 
 #[test]
 fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
-    let inconsistent = r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":1,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#;
+    let inconsistent = r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":1,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#;
     assert!(ShardedManifestRoot::parse(inconsistent).is_err());
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
     let shard = ManifestShard::parse(r#"{"schema":3,"distribution":"other","index":0,"files":{}}"#)
@@ -464,7 +464,7 @@ fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
 #[test]
 fn parses_versioned_bounded_format_input_closures() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":6,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx","tfm:cmr10.tfm"]}}}}"#,
+        r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx","tfm:cmr10.tfm"]}}}}"#,
     )
     .expect("root manifest with input closure");
     let closure = root.formats["latex"]
@@ -479,7 +479,7 @@ fn parses_versioned_bounded_format_input_closures() {
 
 #[test]
 fn rejects_corrupt_duplicate_and_oversized_format_input_closures() {
-    let prefix = r#"{"schema":6,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["#;
+    let prefix = r#"{"schema":8,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["#;
     let suffix = r#"]}}}}"#;
     for keys in [
         r#"tex:latex.ltx","tex:latex.ltx"#,
@@ -541,11 +541,16 @@ fn verified_batch_owns_exact_shards_and_required_before_hint_order() {
     let (_, indexes) = prepare_batch(&catalog.root.to_json(), &requests).expect("prepare batch");
     let raw = indexes
         .iter()
-        .map(|index| (*index, catalog.shards[*index as usize].to_json()))
+        .map(|index| {
+            (
+                *index,
+                pack_shard(&catalog.shards[*index as usize]).expect("packed shard"),
+            )
+        })
         .collect::<Vec<_>>();
     let borrowed = raw
         .iter()
-        .map(|(index, text)| (*index, text.as_str()))
+        .map(|(index, bytes)| (*index, bytes.as_slice()))
         .collect::<Vec<_>>();
     let plan = verify_batch(&catalog.root.to_json(), &borrowed, &requests).expect("verified plan");
     assert_eq!(plan.selection.misses.len(), 1);
@@ -557,10 +562,68 @@ fn verified_batch_owns_exact_shards_and_required_before_hint_order() {
     );
 
     let mut tampered = raw;
-    tampered[0].1.push(' ');
+    tampered[0].1.push(b' ');
     let tampered = tampered
         .iter()
-        .map(|(index, text)| (*index, text.as_str()))
+        .map(|(index, bytes)| (*index, bytes.as_slice()))
         .collect::<Vec<_>>();
     assert!(verify_batch(&catalog.root.to_json(), &tampered, &requests).is_err());
+}
+
+#[test]
+fn packed_shards_are_deterministic_roundtrip_and_probe_exact_keys() {
+    let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
+    let catalog = shard_manifest(&manifest, 2).expect("sharded catalogue");
+    for (index, shard) in catalog.shards.iter().enumerate() {
+        let first = pack_shard(shard).expect("packed shard");
+        let second = pack_shard(shard).expect("repeat packed shard");
+        assert_eq!(first, second);
+        let validated = ValidatedPackedShard::new(first, &catalog.root, index as u32)
+            .expect("validated packed shard");
+        assert_eq!(unpack_shard(&validated), Ok(shard.clone()));
+        for key in shard
+            .files
+            .keys()
+            .chain(shard.fonts.keys())
+            .chain(shard.legacy_mappings.keys())
+        {
+            let record = validated.lookup(key).expect("exact packed lookup");
+            assert_eq!(record.key(), key);
+        }
+        assert!(validated.lookup("tex:authoritative-absence.sty").is_none());
+    }
+}
+
+#[test]
+fn packed_validator_rejects_offsets_tables_duplicates_and_wrong_identity() {
+    let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
+    let catalog = shard_manifest(&manifest, 0).expect("one packed shard");
+    let bytes = pack_shard(&catalog.shards[0]).expect("packed shard");
+
+    let mut bad_offset = bytes.clone();
+    bad_offset[52..56].copy_from_slice(&0_u32.to_le_bytes());
+    assert!(ValidatedPackedShard::new(bad_offset, &catalog.root, 0).is_err());
+
+    let bucket_count = u32::from_le_bytes(bytes[28..32].try_into().expect("bucket count"));
+    let bucket_offset = u32::from_le_bytes(bytes[48..52].try_into().expect("bucket offset"));
+    let occupied = (0..bucket_count)
+        .find(|bucket| {
+            let offset = bucket_offset as usize + *bucket as usize * 16 + 8;
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("bucket")) != u32::MAX
+        })
+        .expect("occupied bucket");
+    let empty = (0..bucket_count)
+        .find(|bucket| {
+            let offset = bucket_offset as usize + *bucket as usize * 16 + 8;
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("bucket")) == u32::MAX
+        })
+        .expect("empty bucket");
+    let occupied_offset = bucket_offset as usize + occupied as usize * 16;
+    let empty_offset = bucket_offset as usize + empty as usize * 16;
+    let mut duplicate = bytes.clone();
+    let bucket = duplicate[occupied_offset..occupied_offset + 16].to_vec();
+    duplicate[empty_offset..empty_offset + 16].copy_from_slice(&bucket);
+    assert!(ValidatedPackedShard::new(duplicate, &catalog.root, 0).is_err());
+
+    assert!(ValidatedPackedShard::new(bytes, &catalog.root, 1).is_err());
 }

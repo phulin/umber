@@ -117,7 +117,7 @@ jq -n \
   --arg stix_license_ahash64 "$($publisher --file-ahash64 "$repo_root/crates/tex-fonts/tests/fixtures/stix-two-math.LICENSE.txt")" \
   --argjson shard_bits "$shard_bits" \
   '{
-    schema: 7,
+    schema: 9,
     distribution: "umber-html-mvp-v1",
     objectsBaseUrl: $objects,
     shardBits: $shard_bits,

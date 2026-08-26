@@ -5,8 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use umber_distribution::{
     FontManifestRecord, HTML_SHARDED_ROOT_SCHEMA, LegacyMappingManifestRecord, Manifest,
-    ManifestShard, ObjectEntry, SHARDED_ROOT_SCHEMA, ShardedCatalog, ShardedManifestRoot,
-    assemble_sharded_catalog,
+    ObjectEntry, SHARDED_ROOT_SCHEMA, ShardedCatalog, ShardedManifestRoot, ValidatedPackedShard,
+    assemble_sharded_catalog, pack_shard, unpack_shard,
 };
 use umber_hash::{AHash64, HashDomain};
 
@@ -67,7 +67,7 @@ fn write_publication(publication: ShardedPublication, output: &Path) -> Result<S
     fs::create_dir_all(&objects)
         .with_context(|| format!("create output directory {}", objects.display()))?;
     for (shard, digest) in publication.shards.iter().zip(&publication.root.shards) {
-        let bytes = canonical_shard(shard).into_bytes();
+        let bytes = pack_shard(shard).context("encode packed index shard")?;
         let object = format!("ahash64-v1-{digest}");
         fs::write(objects.join(&object), &bytes)
             .with_context(|| format!("write index shard {object}"))?;
@@ -103,12 +103,9 @@ pub fn read_sharded_catalog(output: &Path) -> Result<ShardedPublication> {
         if ahash64(&bytes) != *digest {
             bail!("object for shard {index} does not match its declared digest");
         }
-        let text = std::str::from_utf8(&bytes).context("index shard is not UTF-8")?;
-        let parsed = ManifestShard::parse(text).context("parse index shard")?;
-        if parsed.to_json().as_bytes() != bytes {
-            bail!("index shard is not canonically serialized");
-        }
-        shards.push(parsed);
+        let packed = ValidatedPackedShard::new(bytes, &root, index as u32)
+            .context("validate packed index shard")?;
+        shards.push(unpack_shard(&packed).context("decode packed index shard")?);
     }
     assemble_sharded_catalog(root, shards).map_err(Into::into)
 }
@@ -151,10 +148,6 @@ fn read_verified_object(output: &Path, entry: &FetchEntry, label: &str) -> Resul
         bail!("object for {label} does not match declared digest and length");
     }
     Ok(bytes)
-}
-
-fn canonical_shard(shard: &ManifestShard) -> String {
-    shard.to_json()
 }
 
 fn read_verified_object_entry(

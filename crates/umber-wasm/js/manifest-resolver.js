@@ -127,9 +127,7 @@ export class HttpManifestResolver {
 	constructor(manifest, options = {}) {
 		this.catalog = options.catalog;
 		if (
-			!["catalogPrepareBatch", "catalogPlanBatch", "catalogSelectFormat"].every(
-				(name) => typeof this.catalog?.[name] === "function",
-			)
+			typeof this.catalog?.catalogCreateSession !== "function"
 		) {
 			throw new ManifestResolverError(
 				"invalid-options",
@@ -141,7 +139,8 @@ export class HttpManifestResolver {
 				typeof manifest === "string"
 					? manifest
 					: `${JSON.stringify(manifest)}\n`;
-			const prepared = this.catalog.catalogPrepareBatch(rootText, []);
+			this.catalogSession = this.catalog.catalogCreateSession(rootText);
+			const prepared = this.catalogSession.prepareBatch([]);
 			this.rootCanonical = prepared.root;
 			this.manifest = JSON.parse(this.rootCanonical);
 			this.manifest.formats ??= {};
@@ -312,21 +311,17 @@ export class HttpManifestResolver {
 						: encodeRequest(request),
 		}));
 		try {
-			const prepared = this.catalog.catalogPrepareBatch(
-				this.rootCanonical,
-				descriptors.map(({ key }) => key),
+			const keys = descriptors.map(({ key }) => key);
+			const prepared = this.catalogSession.prepareBatch(keys);
+			await Promise.all(
+				prepared.shards.map(async (shard) => {
+					this.catalogSession.provideShard(
+						shard.index,
+						await this.#shard(shard, signal),
+					);
+				}),
 			);
-			const shards = await Promise.all(
-				prepared.shards.map(async (shard) => ({
-					index: shard.index,
-					text: await this.#shard(shard, signal),
-				})),
-			);
-			const plan = this.catalog.catalogPlanBatch(
-				this.rootCanonical,
-				shards,
-				descriptors.map(({ key }) => key),
-			);
+			const plan = this.catalogSession.planBatch(keys);
 			return {
 				jobs: plan.jobs.map((job) => ({
 					key: job.manifestKey,
@@ -355,21 +350,10 @@ export class HttpManifestResolver {
 	async #shard(descriptor, signal) {
 		let pending = this.shardCache.get(descriptor.index);
 		if (pending === undefined) {
-			pending = (async () => {
-				const bytes = await this.#object(descriptor, signal, {
+			pending = this.#object(descriptor, signal, {
 					limit: MAX_SHARD_BYTES,
 					code: "shard-length",
 				});
-				try {
-					return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-				} catch (error) {
-					throw new ManifestResolverError(
-						"invalid-manifest",
-						`index shard ${descriptor.index} is not UTF-8`,
-						{ cause: error },
-					);
-				}
-			})();
 			this.shardCache.set(descriptor.index, pending);
 			pending.catch(() => {
 				if (this.shardCache.get(descriptor.index) === pending)
@@ -409,7 +393,7 @@ export class HttpManifestResolver {
 
 	formatMetadata(name) {
 		try {
-			return this.catalog.catalogSelectFormat(this.rootCanonical, name);
+			return this.catalogSession.selectFormat(name);
 		} catch (error) {
 			throw new ManifestResolverError(
 				"invalid-format",

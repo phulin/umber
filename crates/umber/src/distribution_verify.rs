@@ -13,7 +13,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use umber_distribution::{
-    ManifestShard, ObjectEntry, ShardedManifestRoot, assemble_sharded_catalog,
+    ObjectEntry, ShardedManifestRoot, ValidatedPackedShard, assemble_sharded_catalog, unpack_shard,
 };
 use umber_hash::{AHash64, AHash64Hasher, HashDomain};
 
@@ -95,20 +95,14 @@ pub fn verify_distribution(
     for (index, digest) in root.shards.iter().enumerate() {
         let path = local_object_path(distribution_root, &format!("ahash64-v1-{digest}"));
         let bytes = read_bounded(&path, MAX_MANIFEST_BYTES, "index shard")?;
+        let shard_bytes = bytes.len() as u64;
         verify_identity(&bytes, digest, &format!("index shard {index}"))?;
-        let text = std::str::from_utf8(&bytes)
+        let packed = ValidatedPackedShard::new(bytes, &root, index as u32)
+            .map_err(|error| DistributionVerificationError::at(&path, "validate", error))?;
+        let shard = unpack_shard(&packed)
             .map_err(|error| DistributionVerificationError::at(&path, "decode", error))?;
-        let shard = ManifestShard::parse(text)
-            .map_err(|error| DistributionVerificationError::at(&path, "parse", error))?;
-        if shard.to_json().as_bytes() != bytes {
-            return Err(DistributionVerificationError::at(
-                &path,
-                "verify",
-                "index shard is not canonically serialized",
-            ));
-        }
         report.shards = report.shards.saturating_add(1);
-        report.hashed_bytes = report.hashed_bytes.saturating_add(bytes.len() as u64);
+        report.hashed_bytes = report.hashed_bytes.saturating_add(shard_bytes);
         shards.push(shard);
     }
     let catalog = assemble_sharded_catalog(root, shards)
@@ -256,7 +250,7 @@ fn select_root_path(source: &Path) -> PathBuf {
     if !source.is_dir() {
         return source.to_owned();
     }
-    for name in ["manifest-v7.json", "manifest-v6.json", "manifest-v5.json"] {
+    for name in ["manifest-v9.json", "manifest-v8.json"] {
         let candidate = source.join(name);
         if candidate.exists() {
             return candidate;

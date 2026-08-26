@@ -945,14 +945,6 @@ pub struct CatalogPreparedBatchDto {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(rename = "CatalogRawShard")]
-pub struct CatalogRawShardDto {
-    pub index: u32,
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(rename = "CatalogJobRequirement")]
 pub enum CatalogJobRequirementDto {
@@ -1117,7 +1109,6 @@ pub fn typescript_declarations() -> String {
         HostErrorCodeDto,
         CatalogShardDto,
         CatalogPreparedBatchDto,
-        CatalogRawShardDto,
         CatalogJobRequirementDto,
         CatalogJobKindDto,
         CatalogJobEntryDto,

@@ -3,6 +3,7 @@
 use tempfile::TempDir;
 use tex_fonts::{FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey, VariationSelection};
 use tex_incr::RevisionId;
+use umber_distribution::{ManifestShard, pack_shard};
 
 use super::*;
 
@@ -86,12 +87,15 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
         "{{\"schema\":3,\"distribution\":\"watch-test\",\"index\":0,\"files\":{{\"tex:package.sty\":{{\"virtualPath\":\"/texlive/tex/package.sty\",\"object\":\"{object}\",\"ahash64\":\"{digest}\",\"bytes\":{}}}}}}}\n",
         package.len()
     );
-    let shard_digest = hex_digest(shard.as_bytes());
-    std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard).expect("index shard");
+    let packed =
+        pack_shard(&ManifestShard::parse(&shard).expect("typed shard")).expect("packed shard");
+    let shard_digest = hex_digest(&packed);
+    std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed)
+        .expect("index shard");
     let root = format!(
-        "{{\"schema\":5,\"distribution\":\"watch-test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+        "{{\"schema\":8,\"distribution\":\"watch-test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
     );
-    std::fs::write(distribution.join("manifest-v5.json"), root).expect("root manifest");
+    std::fs::write(distribution.join("manifest-v8.json"), root).expect("root manifest");
     let input = directory.path().join("watch.tex");
     let original = "\\input package.sty \\shipout\\vbox{\\hrule height 1pt}\\end";
     let edited = "\\input package.sty \\shipout\\vbox{\\hrule height 2pt}\\end";
@@ -146,7 +150,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
         "/texlive/tex/package.sty",
         package,
     );
-    let root_path = distribution.join("manifest-v5.json");
+    let root_path = distribution.join("manifest-v8.json");
     let root = std::fs::read(&root_path).expect("root manifest");
     let input = directory.path().join("main.tex");
     std::fs::write(&input, b"\\input package.sty \\end").expect("main input");
@@ -172,7 +176,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
     let cold_output = cold.compile(&cancellation).expect("cold compile");
     let cold_counters = cold.host_telemetry().resolver;
     assert_eq!(cold_counters.manifest_reads, 2);
-    assert_eq!(cold_counters.manifest_parses, 2);
+    assert_eq!(cold_counters.manifest_parses, 1);
     assert_eq!(cold_counters.manifest_validations, 2);
     assert_eq!(cold_counters.shard_loads, 1);
     assert_eq!(cold_counters.object_hashes, 1);
@@ -228,7 +232,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
 }
 
 #[test]
-fn verified_owner_retains_only_selected_records_and_replays_unseen_keys_offline() {
+fn verified_owner_retains_touched_packed_shards_and_replays_unseen_keys_offline() {
     let directory = TempDir::new().expect("distribution tempdir");
     let objects = directory.path().join("objects");
     std::fs::create_dir_all(&objects).expect("objects directory");
@@ -278,12 +282,9 @@ fn verified_owner_retains_only_selected_records_and_replays_unseen_keys_offline(
         response,
         ResourceResponse::FileUnavailable(key) if key.name() == "absent.pdf"
     )));
-    assert_eq!(cold.manifest_parses, 2);
-    assert_eq!(cold.manifest_parse_peak_bytes, shard.len() as u64);
-    assert_eq!(cold.retained_manifest_records, 1);
-    assert_eq!(cold.retained_manifest_misses, 1);
-    assert!(cold.retained_manifest_requested_bytes > 0);
-    assert!(cold.retained_manifest_requested_bytes < 2_048);
+    assert_eq!(cold.manifest_parses, 1);
+    assert_eq!(cold.retained_manifest_shards, 1);
+    assert!(cold.retained_manifest_bytes > 0);
 
     {
         let verified = resolver
@@ -291,15 +292,10 @@ fn verified_owner_retains_only_selected_records_and_replays_unseen_keys_offline(
             .lock()
             .expect("verified distribution state");
         let loaded = verified.loaded.as_ref().expect("loaded distribution");
-        assert!(matches!(
-            loaded.selected_record("tex:first.sty"),
-            Some(Some(_))
-        ));
-        assert!(matches!(
-            loaded.selected_record("tex:absent.pdf"),
-            Some(None)
-        ));
-        assert_eq!(loaded.selected_record("tex:later.sty"), None);
+        let shard = &loaded.shards[&0];
+        assert!(shard.lookup("tex:first.sty").is_some());
+        assert!(shard.lookup("tex:absent.pdf").is_none());
+        assert!(shard.lookup("tex:later.sty").is_some());
     }
 
     std::fs::remove_file(objects.join(format!("ahash64-v1-{}", digests[0])))
@@ -312,20 +308,22 @@ fn verified_owner_retains_only_selected_records_and_replays_unseen_keys_offline(
             &cancellation,
             &mut extended,
         )
-        .expect("unseen key reparses the verified cached shard offline")
+        .expect("unseen key probes the retained packed shard offline")
         .responses;
     assert!(matches!(
         responses.as_slice(),
         [ResourceResponse::File(file)] if file.request.name() == "later.sty" && file.bytes == later
     ));
-    assert_eq!(extended.manifest_reads, 1);
-    assert_eq!(extended.manifest_parses, 1);
-    assert_eq!(extended.manifest_validations, 1);
-    assert_eq!(extended.manifest_cache_hits, 1);
-    assert_eq!(extended.shard_loads, 1);
-    assert_eq!(extended.manifest_parse_peak_bytes, shard.len() as u64);
-    assert_eq!(extended.retained_manifest_records, 2);
-    assert_eq!(extended.retained_manifest_misses, 1);
+    assert_eq!(extended.manifest_reads, 0);
+    assert_eq!(extended.manifest_parses, 0);
+    assert_eq!(extended.manifest_validations, 0);
+    assert_eq!(extended.shard_loads, 0);
+    assert_eq!(extended.manifest_parse_peak_bytes, 0);
+    assert_eq!(extended.retained_manifest_shards, 1);
+    assert_eq!(
+        extended.retained_manifest_bytes,
+        cold.retained_manifest_bytes
+    );
 
     let mut warm = ResolverTelemetry::default();
     resolver
@@ -346,8 +344,8 @@ fn verified_owner_retains_only_selected_records_and_replays_unseen_keys_offline(
     assert_eq!(warm.shard_loads, 0);
     assert!(warm.verified_manifest_hits >= 2);
     assert_eq!(warm.manifest_parse_peak_bytes, 0);
-    assert_eq!(warm.retained_manifest_records, 2);
-    assert_eq!(warm.retained_manifest_misses, 1);
+    assert_eq!(warm.retained_manifest_shards, 1);
+    assert_eq!(warm.retained_manifest_bytes, cold.retained_manifest_bytes);
 }
 
 #[test]
@@ -491,9 +489,11 @@ fn write_sharded_root(
     std::fs::create_dir_all(&objects).expect("objects directory");
     let mut digests = Vec::new();
     for (body, publish) in shards {
-        let digest = hex_digest(body.as_bytes());
+        let shard = ManifestShard::parse(body).expect("typed shard fixture");
+        let bytes = pack_shard(&shard).expect("packed shard fixture");
+        let digest = hex_digest(&bytes);
         if *publish {
-            std::fs::write(objects.join(format!("ahash64-v1-{digest}")), body)
+            std::fs::write(objects.join(format!("ahash64-v1-{digest}")), bytes)
                 .expect("shard object");
         }
         digests.push(digest);
@@ -504,11 +504,11 @@ fn write_sharded_root(
         .collect::<Vec<_>>()
         .join(",");
     let root = format!(
-        "{{\"schema\":5,\"distribution\":\"{distribution}\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":{shard_bits},\"shardCount\":{},\"shards\":[{quoted}]}}\n",
+        "{{\"schema\":8,\"distribution\":\"{distribution}\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":{shard_bits},\"shardCount\":{},\"shards\":[{quoted}]}}\n",
         shards.len()
     )
     .into_bytes();
-    std::fs::write(directory.join("manifest-v5.json"), &root).expect("root manifest");
+    std::fs::write(directory.join("manifest-v8.json"), &root).expect("root manifest");
     (root, digests)
 }
 
@@ -935,15 +935,14 @@ fn exact_snapshot_delivers_corpus_tex_tfm_type1_and_vf_requests_offline() {
             .verified
             .lock()
             .expect("verified distribution state");
-        let entry = verified
-            .loaded
-            .as_ref()
-            .expect("loaded snapshot")
-            .selected_record(manifest_key)
-            .expect("selected-key evidence")
-            .as_ref()
-            .expect("compact record from canonical verified shard");
-        assert_eq!(hex_digest(&file.bytes), entry.object.ahash64);
+        let loaded = verified.loaded.as_ref().expect("loaded snapshot");
+        let index = shard_index_for_key(manifest_key, loaded.root.shard_bits)
+            .expect("canonical snapshot shard");
+        let entry = loaded.shards[&index]
+            .lookup(manifest_key)
+            .and_then(|record| record.file())
+            .expect("packed record from canonical verified shard");
+        assert_eq!(hex_digest(&file.bytes), entry.object().ahash64);
         assert_eq!(
             file.expected_digest,
             Some(FileContentId::for_bytes(&file.bytes))
@@ -1223,15 +1222,17 @@ fn schema_three_format_closure_does_not_drive_native_live_lookup() {
     let shard = format!(
         "{{\"schema\":3,\"distribution\":\"closure\",\"index\":0,\"files\":{{\"tex:article.cls\":{required_entry},\"tex:latex.ltx\":{closure_entry}}}}}\n"
     );
-    let shard_digest = hex_digest(shard.as_bytes());
-    std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard).expect("shard");
+    let packed =
+        pack_shard(&ManifestShard::parse(&shard).expect("typed shard")).expect("packed shard");
+    let shard_digest = hex_digest(&packed);
+    std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed).expect("shard");
     let root = format!(
-        "{{\"schema\":6,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"closure\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
+        "{{\"schema\":8,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"closure\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
         format_bytes.len(),
         crate::PACKAGE_VERSION,
         "1".repeat(16)
     );
-    std::fs::write(directory.path().join("manifest-v6.json"), root).expect("root");
+    std::fs::write(directory.path().join("manifest-v8.json"), root).expect("root");
     let cache = ObjectCache::new(directory.path().join("cache"));
     let mut resolver = DistributionResolver::new(
         cache.clone(),
@@ -1382,12 +1383,12 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
     let shard_digest = "0".repeat(16);
     let incompatible_schema = tex_state::FORMAT_SCHEMA_VERSION + 1;
     let root = format!(
-        "{{\"schema\":6,\"distribution\":\"schema-preflight\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{incompatible_schema},\"sourceDistribution\":\"schema-preflight\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0}}}}}}\n",
+        "{{\"schema\":8,\"distribution\":\"schema-preflight\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{incompatible_schema},\"sourceDistribution\":\"schema-preflight\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0}}}}}}\n",
         format_bytes.len(),
         crate::PACKAGE_VERSION,
         "1".repeat(16)
     );
-    std::fs::write(directory.path().join("manifest-v6.json"), root).expect("root manifest");
+    std::fs::write(directory.path().join("manifest-v8.json"), root).expect("root manifest");
 
     let cache_root = directory.path().join("cache");
     let cached_object = cache_root
@@ -1478,17 +1479,19 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
             "{{\"schema\":3,\"distribution\":\"closure-attempts\",\"index\":0,\"files\":{{{}}}}}\n",
             shard_entries.join(",")
         );
-        let shard_digest = hex_digest(shard.as_bytes());
-        std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard)
+        let packed =
+            pack_shard(&ManifestShard::parse(&shard).expect("typed shard")).expect("packed shard");
+        let shard_digest = hex_digest(&packed);
+        std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed)
             .expect("shard object");
         let root = format!(
-            "{{\"schema\":6,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"closure-attempts\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
+            "{{\"schema\":8,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"closure-attempts\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
             format.len(),
             crate::PACKAGE_VERSION,
             "1".repeat(16),
             closure_keys.join(",")
         );
-        std::fs::write(distribution.join("manifest-v6.json"), root).expect("root manifest");
+        std::fs::write(distribution.join("manifest-v8.json"), root).expect("root manifest");
 
         let input = directory.path().join("main.tex");
         std::fs::write(&input, b"\\input closure-00\n").expect("main input");
@@ -1573,7 +1576,7 @@ fn warm_root_shard_and_object_cache_resolve_offline() {
         .expect("warm caches");
     let mut offline = DistributionResolver::new(
         cache,
-        Some("https://example.invalid/manifest-v5.json".into()),
+        Some("https://example.invalid/manifest-v8.json".into()),
         Some(root_digest),
         true,
     );
