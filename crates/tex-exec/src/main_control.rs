@@ -1715,7 +1715,7 @@ impl ObservationBuffer {
         for record in other.records.drain(..) {
             self.committed(record);
         }
-        let consumed = std::mem::take(&mut other.receipt).consume();
+        let consumed = other.receipt.reset_for_next_operation();
         debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = self.attempted.saturating_add(omitted);
         self.receipt_attempted = self.receipt_attempted.saturating_add(
@@ -1729,7 +1729,7 @@ impl ObservationBuffer {
 
     fn append_to(&mut self, records: &mut Vec<CommandObservation>) {
         records.append(&mut self.records);
-        let consumed = std::mem::take(&mut self.receipt).consume();
+        let consumed = self.receipt.reset_for_next_operation();
         debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = 0;
         self.overflowed = false;
@@ -1739,7 +1739,7 @@ impl ObservationBuffer {
 
     fn clear(&mut self) {
         self.records.clear();
-        let consumed = std::mem::take(&mut self.receipt).consume();
+        let consumed = self.receipt.reset_for_next_operation();
         debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = 0;
         self.overflowed = false;

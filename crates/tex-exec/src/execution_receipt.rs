@@ -133,13 +133,7 @@ impl ExecutionReceipt {
         self.termination = termination;
     }
 
-    /// Consumes the typed projection at the observer publication seam.
-    ///
-    /// Reading every category here is deliberate: the receipt is an active
-    /// internal commit contract, not a shadow value built beside ordered
-    /// observations and then discarded. The returned projection lets the
-    /// caller verify the terminal fact against the result it publishes.
-    pub(crate) fn consume(self) -> ConsumedExecutionReceipt {
+    fn consumed_projection(&self) -> ConsumedExecutionReceipt {
         ConsumedExecutionReceipt {
             records: self
                 .mutations
@@ -153,6 +147,30 @@ impl ExecutionReceipt {
             termination: self.termination,
         }
     }
+
+    /// Consumes one operation's projection while retaining its warmed storage
+    /// for the next operation owned by the same observation buffer.
+    pub(crate) fn reset_for_next_operation(&mut self) -> ConsumedExecutionReceipt {
+        let consumed = self.consumed_projection();
+        self.mutations.clear();
+        self.resources.clear();
+        self.effects.semantic.clear();
+        self.effects.world.clear();
+        self.artifacts.clear();
+        self.diagnostics.clear();
+        self.termination = OperationTermination::Continue;
+        consumed
+    }
+
+    /// Consumes the typed projection at the observer publication seam.
+    ///
+    /// Reading every category here is deliberate: the receipt is an active
+    /// internal commit contract, not a shadow value built beside ordered
+    /// observations and then discarded. The returned projection lets the
+    /// caller verify the terminal fact against the result it publishes.
+    pub(crate) fn consume(self) -> ConsumedExecutionReceipt {
+        self.consumed_projection()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,3 +178,6 @@ pub(crate) struct ConsumedExecutionReceipt {
     pub(crate) records: usize,
     pub(crate) termination: OperationTermination,
 }
+
+#[cfg(test)]
+mod tests;

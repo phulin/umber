@@ -95,9 +95,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
   aggregate checkpoint restore, budgets, rooted command/mode summaries, and
   retained token/glue-root restoration coverage.
 - `src/dispatch.rs`: dispatch result, execution statistics, and prepared-page contract.
-- `src/execution_receipt.rs`: crate-private typed operation receipts assembled
-  and consumed by the unified executor's optional append-bounded evidence
-  publication seam; every allocating category closes before operation commit.
+- `src/execution_receipt.rs` and `src/execution_receipt/tests.rs`: crate-private
+  typed operation receipts assembled, consumed, and reset in place by the
+  unified executor's optional append-bounded evidence publication seam; every
+  allocating category closes before operation commit while warmed category
+  capacity remains with the operation owner.
 - `src/mode.rs` and `src/mode/`: mode nest, mutable native semantic/physical
   node buffers, direct-value paragraph/alignment glue, copy-only
   pending-character provenance, summaries, and rollback journal. Named

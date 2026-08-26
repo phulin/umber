@@ -456,11 +456,11 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
             "{method} must reject before vector growth"
         );
     }
-    let consume = receipt
-        .split_once("pub(crate) fn consume(self)")
-        .expect("active receipt consumer")
+    let projection = receipt
+        .split_once("fn consumed_projection(&self)")
+        .expect("active receipt projection")
         .1;
-    let consume = consume
+    let projection = projection
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
@@ -473,8 +473,33 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
         "self.diagnostics.len()",
         "self.termination",
     ] {
-        assert!(consume.contains(category), "unconsumed category {category}");
+        assert!(
+            projection.contains(category),
+            "unconsumed category {category}"
+        );
     }
+    let reset = receipt
+        .split_once("pub(crate) fn reset_for_next_operation(&mut self)")
+        .expect("reusable receipt reset")
+        .1;
+    for category in [
+        "self.mutations.clear()",
+        "self.resources.clear()",
+        "self.effects.semantic.clear()",
+        "self.effects.world.clear()",
+        "self.artifacts.clear()",
+        "self.diagnostics.clear()",
+    ] {
+        assert!(reset.contains(category), "unreset category {category}");
+    }
+    assert!(
+        receipt
+            .split_once("pub(crate) fn consume(self)")
+            .expect("terminal receipt consumer")
+            .1
+            .contains("self.consumed_projection()"),
+        "terminal consumption must use the same projection as operation reset"
+    );
 
     let control = include_str!("../src/main_control.rs");
     let operation = control

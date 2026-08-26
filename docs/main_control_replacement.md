@@ -704,6 +704,12 @@ records, or dependency projections. The observed interpreter writes compact
 typed records to an append-only sidecar and renders them after the command's
 semantic mutation commits.
 
+`ObservationBuffer` also owns one reusable typed execution receipt. Commit,
+rollback, and publication consume its projection and clear each category in
+place, retaining only the operation's warmed vector capacities. They do not
+move the whole receipt through `mem::take`, allocate a per-operation receipt,
+or retain completed records beyond the operation boundary.
+
 Dependency recording is selected once at episode admission. Direct state
 getters are used when no tracked region is active; there is no atomic check on
 every getter in that instantiation.
