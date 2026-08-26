@@ -126,9 +126,7 @@ export class HttpManifestResolver {
 
 	constructor(manifest, options = {}) {
 		this.catalog = options.catalog;
-		if (
-			typeof this.catalog?.catalogCreateSession !== "function"
-		) {
+		if (typeof this.catalog?.catalogCreateSession !== "function") {
 			throw new ManifestResolverError(
 				"invalid-options",
 				"the umber-wasm catalog bindings are required",
@@ -351,9 +349,9 @@ export class HttpManifestResolver {
 		let pending = this.shardCache.get(descriptor.index);
 		if (pending === undefined) {
 			pending = this.#object(descriptor, signal, {
-					limit: MAX_SHARD_BYTES,
-					code: "shard-length",
-				});
+				limit: MAX_SHARD_BYTES,
+				code: "shard-length",
+			});
 			this.shardCache.set(descriptor.index, pending);
 			pending.catch(() => {
 				if (this.shardCache.get(descriptor.index) === pending)
