@@ -224,7 +224,7 @@ impl<G> Clone for TokenCursor<G> {
     fn clone(&self) -> Self {
         Self {
             payload: self.payload.clone(),
-            behavior: self.behavior.clone(),
+            behavior: self.behavior,
             retirement: self.retirement,
             trace: self.trace.clone(),
             frame: self.frame,
