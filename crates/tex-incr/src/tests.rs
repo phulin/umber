@@ -126,7 +126,7 @@ fn unavailable_input_fatal_does_not_accept_the_revision() {
 
 #[test]
 fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
-    let session = session(RevisionId::new(1), "\\end");
+    let mut session = session(RevisionId::new(1), "\\end");
     let mut candidate = session.start_cold_candidate().expect("candidate");
     candidate.set_execution_budgets(tex_exec::ExecutionBudgets {
         steps: 0,
@@ -243,14 +243,82 @@ fn latex_compatibility_matches_fresh_and_loaded_candidates() {
     let mut loaded = session(RevisionId::new(1), source);
     loaded.set_command_profile(CommandProfile::ETEX26, false);
     loaded.set_command_compatibility(CommandCompatibility::Latex);
-    loaded.set_format_image(image);
     loaded.set_job_clock(clock);
+    loaded
+        .set_format_image(image)
+        .expect("loaded format checkpoint admission");
     let loaded_text = terminal_effect_text(&loaded.cold().expect("loaded LaTeX candidate"));
 
     for text in [fresh_text, loaded_text] {
         assert!(text.contains("created=D:20260809123423Z"), "{text}");
         assert!(!text.contains("Undefined control sequence"));
     }
+}
+
+#[test]
+fn loaded_format_checkpoint_survives_rejection_and_seeds_later_revisions() {
+    let mut format = session(RevisionId::new(1), r"\def\fmtvalue{41}\dump");
+    format.set_utf8_input_as_bytes(true);
+    let format = format.cold().expect("format construction");
+    let image = DetachedFormatImage::try_from_bytes(
+        format
+            .format_dump()
+            .expect("format dump")
+            .image
+            .as_bytes()
+            .to_vec(),
+    )
+    .expect("detached format image");
+
+    let mut loaded = session(RevisionId::new(1), r"\message{first=\fmtvalue}\end");
+    loaded.set_utf8_input_as_bytes(true);
+    loaded
+        .set_format_image(image)
+        .expect("initial format checkpoint admission");
+    let format_generation = loaded
+        .prior_generation
+        .as_ref()
+        .expect("loaded format is the accepted prior")
+        .generation
+        .witness();
+    assert_eq!(loaded.retained_generation_count(), 1);
+    assert_eq!(loaded.current_retained_checkpoint_count(), 1);
+
+    let rejected = loaded.start_cold_candidate().expect("first candidate");
+    let rejected_generation = rejected
+        .generation
+        .as_ref()
+        .expect("format checkpoint forked eagerly")
+        .witness();
+    drop(rejected);
+    assert!(format_generation.is_live());
+    assert!(!rejected_generation.is_live());
+
+    let first = loaded.cold().expect("replacement first candidate");
+    assert!(terminal_effect_text(&first).contains("first=41"));
+    assert!(
+        !format_generation.is_live(),
+        "acceptance retires the transport-loaded format generation"
+    );
+    let first_generation = loaded
+        .prior_generation
+        .as_ref()
+        .expect("first document is the accepted prior")
+        .generation
+        .witness();
+
+    let second = loaded
+        .advance(
+            RevisionId::new(2),
+            edit(&loaded, 0..0, r"\message{second=\fmtvalue}"),
+        )
+        .expect("later candidate forks the accepted JobStart checkpoint");
+    let terminal = terminal_effect_text(&second);
+    assert!(terminal.contains("second=41"), "{terminal}");
+    assert!(terminal.contains("first=41"), "{terminal}");
+    assert!(!first_generation.is_live());
+    assert_eq!(loaded.retained_generation_count(), 1);
+    assert_eq!(loaded.occupied_generation_slot_count(), 1);
 }
 
 #[test]

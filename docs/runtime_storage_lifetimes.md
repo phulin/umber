@@ -698,6 +698,17 @@ respectively, versus 19.78 and 20.46 seconds at baseline; median RSS was
 654,224 KiB, 200,376 KiB lower. Every run stopped at the exact terminal vector
 `(20000000,19913119,2218327,6020965,16785710,4011)`.
 
+Publishing the loaded format as the ordinary initial accepted checkpoint was
+measured with the same authenticated format, distribution, 123-key closure,
+clock, offline mode, and guards. Three fuel-1 runs reached 249,300, 249,304,
+and 249,496 KiB RSS, preserving the former 249,108 KiB cold full-buffer peak
+within run noise. Three 20M runs produced wall/user/system seconds of
+14.07/15.43/1.61, 13.54/14.94/1.51, and 14.00/15.35/1.59, with RSS of 536,064,
+536,644, and 536,068 KiB. Median RSS was 536,068 KiB, 118,156 KiB (115.39 MiB)
+below the preceding 654,224 KiB result. Every fuel-1 run stopped at
+`(1,1,0,1,0,0)`, and every 20M run preserved the exact terminal vector
+`(20000000,19913119,2218327,6020965,16785710,4011)`.
+
 `benchmarks/tex-state/src/bin/pdf_fork_metadata.rs` measures candidate
 begin-plus-reject by field family. At 10,000 rows every measured family is
 independent of accumulated size and performs zero allocation calls requesting
@@ -727,6 +738,15 @@ mutable/runtime owners off-slot, and publishes them only after the complete
 fork succeeds. Shared definition and stored-token carriers keep their existing
 private non-atomic owners; no public id is retargeted and no accepted owner is
 mutated.
+
+A loaded format enters this same model as the initial accepted generation.
+Admission consumes the validated detached image, materializes one generation,
+drops the image payload, and retains its pre-job `JobStart` checkpoint in the
+prior slot. The first document candidate therefore uses the same exclusive
+checkpoint fork as every later candidate. Rejection leaves that generation
+unchanged; the first acceptance retires it through the ordinary prior/current
+swap. There is no format-owned third generation, permanent image owner, or
+format-specific runtime lookup layer.
 
 Rejection consumes the exclusive lease, clears the current store slot, and
 leaves prior unchanged. Acceptance first requires quiescent scratch and

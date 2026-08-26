@@ -2627,6 +2627,16 @@ impl<G> MainControl<G> {
         self.preloaded_format = Some(format);
     }
 
+    /// Restores the host-selected INITEX framing bit after an aggregate
+    /// `JobStart` checkpoint is forked into a new revision generation.
+    /// Command and runtime semantics come from the checkpoint; this bit is
+    /// operational job framing and is deliberately absent from it.
+    pub fn set_initex_mode(&mut self, initex: bool) {
+        debug_assert!(self.startup_terminal_line.is_empty());
+        debug_assert!(self.root_main_source.is_none());
+        self.initex = initex;
+    }
+
     /// Selects the engine binary identity used by startup framing and shared
     /// compiled command semantics.
     pub fn set_engine_binary(&mut self, binary: crate::job::EngineBinaryIdentity) {

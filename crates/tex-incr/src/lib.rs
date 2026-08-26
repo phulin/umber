@@ -444,10 +444,6 @@ pub struct RevisionCandidate<'store> {
     root_framing: SourceFramingPolicy,
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
-    // One immutable session-level load input, shared only across candidates.
-    // Live durable values are still admitted into each candidate generation.
-    format_image: Option<Arc<DetachedFormatImage>>,
-    required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
     completed: Option<CandidateCompletion>,
     cumulative_fuel_limit: u64,
@@ -458,6 +454,7 @@ pub struct RevisionCandidate<'store> {
     advance_calls: u64,
     cumulative_fuel: u64,
     generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
+    checkpoint_control_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     candidate_lease: Option<CandidateLease>,
 }
@@ -473,20 +470,11 @@ impl<'store> RevisionCandidate<'store> {
     fn new_retained_generation(
         &self,
     ) -> Result<tex_exec::RetainedEngineGeneration<'store>, SessionError> {
-        let world = World::memory_with_clock(self.job_clock);
-        match &self.format_image {
-            Some(image) => tex_exec::RetainedEngineGeneration::from_format_owned(
-                self.reachability_store.clone(),
-                world,
-                image,
-            )
-            .map_err(SessionError::Format),
-            None => tex_exec::RetainedEngineGeneration::new_owned(
-                self.reachability_store.clone(),
-                world,
-            )
-            .map_err(SessionError::Epoch),
-        }
+        tex_exec::RetainedEngineGeneration::new_owned(
+            self.reachability_store.clone(),
+            World::memory_with_clock(self.job_clock),
+        )
+        .map_err(SessionError::Epoch)
     }
 
     pub fn drive_with_resource_resolvers(
@@ -502,6 +490,7 @@ impl<'store> RevisionCandidate<'store> {
             Some(generation) => generation,
             None => self.new_retained_generation()?,
         };
+        let checkpoint_control_key = self.checkpoint_control_key.take();
         let runtime_key = self.runtime_key.take();
         let result = generation
             .with_admitted(CandidateRun {
@@ -509,6 +498,7 @@ impl<'store> RevisionCandidate<'store> {
                 host,
                 cancellation,
                 failed_attempt_fuel: &mut failed_attempt_fuel,
+                checkpoint_control_key,
                 runtime_key,
             })
             .map_err(SessionError::RetainedEngine)?;
@@ -634,6 +624,7 @@ struct CandidateRun<'a, 'store> {
     host: &'a mut dyn ResourceHost,
     cancellation: &'a Cancellation,
     failed_attempt_fuel: &'a mut u64,
+    checkpoint_control_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
 }
 
@@ -654,15 +645,30 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                     };
                 }
             },
-            None => match initialize_candidate_runtime(&mut admitted, self.candidate) {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    return CandidateRunResult {
-                        execution: Err(error),
-                        runtime_key: None,
-                    };
+            None => {
+                let restored_control = match self.checkpoint_control_key {
+                    Some(key) => match admitted.take_attachment::<MainControl<G>>(key) {
+                        Ok(control) => Some(control),
+                        Err(error) => {
+                            return CandidateRunResult {
+                                execution: Err(SessionError::RetainedEngine(error)),
+                                runtime_key: None,
+                            };
+                        }
+                    },
+                    None => None,
+                };
+                match initialize_candidate_runtime(&mut admitted, self.candidate, restored_control)
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        return CandidateRunResult {
+                            execution: Err(error),
+                            runtime_key: None,
+                        };
+                    }
                 }
-            },
+            }
         };
         let execution = {
             let (universe, checkpoints) = admitted.parts();
@@ -688,6 +694,44 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
 struct CandidateRunResult {
     execution: Result<PlanExecution, SessionError>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
+}
+
+struct PublishInitialFormatCheckpoint {
+    profile: CommandProfile,
+    compatibility: CommandCompatibility,
+    required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
+}
+
+impl tex_exec::RetainedEngineOperation for PublishInitialFormatCheckpoint {
+    type Output = Result<tex_exec::RetainedCheckpointKey, SessionError>;
+
+    fn run<G: 'static>(
+        self,
+        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
+    ) -> Self::Output {
+        let universe = admitted.universe();
+        universe.begin_retained_session()?;
+        universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        register_materialized_primitives(universe, self.profile, self.compatibility);
+        if self.required_font_layout_policy == Some(tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+            && let Some(font) = universe
+                .command_context()
+                .map_err(SessionError::Universe)?
+                .font_artifact_recipes()
+                .into_iter()
+                .skip(1)
+                .find(|font| font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+        {
+            return Err(SessionError::FormatFontPolicy { name: font.name });
+        }
+        let mut control = MainControl::with_profile(self.profile);
+        let checkpoint = control.capture_checkpoint(
+            EngineBoundary::JobStart,
+            universe,
+            tex_exec::ExecutionBudgetCounters::default(),
+        )?;
+        Ok(admitted.retain_checkpoint(checkpoint))
+    }
 }
 
 struct CandidateRuntime<G> {
@@ -760,49 +804,33 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
 fn initialize_candidate_runtime<G: 'static>(
     admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
     candidate: &RevisionCandidate<'_>,
+    restored_control: Option<MainControl<G>>,
 ) -> Result<CandidateRuntime<G>, SessionError> {
     let (universe, checkpoints) = admitted.parts();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
-    if candidate.format_image.is_some()
-        && candidate.required_font_layout_policy
-            == Some(tex_fonts::FontLayoutPolicy::OpenTypePreferred)
-        && let Some(font) = universe
-            .command_context()
-            .map_err(SessionError::Universe)?
-            .font_artifact_recipes()
-            .into_iter()
-            .skip(1)
-            .find(|font| font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred)
-    {
-        return Err(SessionError::FormatFontPolicy { name: font.name });
-    }
     universe.begin_retained_session()?;
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    if candidate.format_image.is_none() {
+    if restored_control.is_none() {
         install_plain_catcodes(universe)?;
-    } else {
-        register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
     }
     for (path, bytes) in &candidate.registered_inputs {
         universe.world_mut().set_memory_file(path, bytes.clone())?;
     }
-    let mut control = candidate_control(
-        universe,
-        CandidateControlOptions {
-            job_name: &candidate.job_name,
-            source_path: &candidate.source_path,
-            bytes: source_file_bytes(
-                &candidate.plan.source,
-                candidate.root_source_is_byte_projection,
-            ),
-            profile: candidate.profile,
-            compatibility: candidate.compatibility,
-            initex: candidate.initex,
-            emit_dvi: candidate.dvi_output,
-            root_framing: candidate.root_framing,
-            root_framing_name: candidate.root_framing_name.as_deref(),
-        },
-    )?;
+    let options = CandidateControlOptions {
+        job_name: &candidate.job_name,
+        source_path: &candidate.source_path,
+        bytes: source_file_bytes(
+            &candidate.plan.source,
+            candidate.root_source_is_byte_projection,
+        ),
+        profile: candidate.profile,
+        compatibility: candidate.compatibility,
+        initex: candidate.initex,
+        emit_dvi: candidate.dvi_output,
+        root_framing: candidate.root_framing,
+        root_framing_name: candidate.root_framing_name.as_deref(),
+    };
+    let mut control = candidate_control(universe, &options, restored_control)?;
     control
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
@@ -817,6 +845,7 @@ fn initialize_candidate_runtime<G: 'static>(
             retained: checkpoints,
         },
     )?;
+    start_candidate_job(universe, &mut control, options)?;
     Ok(CandidateRuntime {
         control,
         ledger,
@@ -1061,7 +1090,8 @@ struct CandidateControlOptions<'a> {
 
 fn candidate_control<G>(
     universe: &mut Universe<G>,
-    options: CandidateControlOptions<'_>,
+    options: &CandidateControlOptions<'_>,
+    restored_control: Option<MainControl<G>>,
 ) -> Result<MainControl<G>, SessionError> {
     if options.initex {
         tex_command::install_tex82_expandable_primitives(universe);
@@ -1082,11 +1112,15 @@ fn candidate_control<G>(
             install_latex_compatibility(universe)?;
         }
     }
-    let mut control = if options.initex {
-        MainControl::prepared_initex(options.profile)
-    } else {
-        MainControl::with_profile(options.profile)
-    };
+    let mut control = restored_control.unwrap_or_else(|| {
+        if options.initex {
+            MainControl::prepared_initex(options.profile)
+        } else {
+            MainControl::with_profile(options.profile)
+        }
+    });
+    debug_assert_eq!(control.command_profile(), options.profile);
+    control.set_initex_mode(options.initex);
     if options.profile.dialect() == tex_command::CommandDialect::Pdftex14029 {
         control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
     }
@@ -1094,6 +1128,14 @@ fn candidate_control<G>(
     control
         .capabilities_mut()
         .set_startup_job_name(options.job_name);
+    Ok(control)
+}
+
+fn start_candidate_job<G>(
+    universe: &mut Universe<G>,
+    control: &mut MainControl<G>,
+    options: CandidateControlOptions<'_>,
+) -> Result<(), SessionError> {
     // tex.web §241 refreshes the four volatile clock cells at the same
     // lifecycle boundary that opens §536's transcript and frames §534's
     // startup line. This must precede root registration so §537's opening
@@ -1111,7 +1153,7 @@ fn candidate_control<G>(
     }
     control.register_root_source(registration)?;
     control.flush_pending_file_framing(universe);
-    Ok(control)
+    Ok(())
 }
 
 /// Typed result of resolving an accepted rendered event against a DOM revision.
@@ -1245,9 +1287,6 @@ pub struct Session<'store> {
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
-    // This coarse wire-image owner is not per-value runtime ownership: the
-    // generation arenas remain the sole owners of admitted durable values.
-    format_image: Option<Arc<DetachedFormatImage>>,
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
     utf8_input_as_bytes: bool,
@@ -1391,7 +1430,6 @@ impl<'store> Session<'store> {
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
-            format_image: None,
             required_font_layout_policy: None,
             job_clock: JobClock::default(),
             utf8_input_as_bytes: false,
@@ -1461,13 +1499,44 @@ impl<'store> Session<'store> {
         self.command_compatibility = compatibility;
     }
 
-    /// Selects one validated, handle-free format image for every candidate.
-    /// Each drive materializes it inside a fresh generation and drops that
-    /// generation before retaining any candidate or accepted state.
-    pub fn set_format_image(&mut self, image: DetachedFormatImage) {
+    /// Consumes one validated transport image and atomically publishes its
+    /// materialized runtime as the session's ordinary initial accepted
+    /// checkpoint. The image and all decoded payload vectors drop before this
+    /// method returns.
+    pub fn set_format_image(&mut self, image: DetachedFormatImage) -> Result<(), SessionError> {
         assert!(self.history.is_empty(), "format is fixed after execution");
-        self.format_image = Some(Arc::new(image));
+        assert!(
+            self.prior_generation.is_none(),
+            "one session admits at most one initial format checkpoint"
+        );
+        assert!(
+            !self.candidate_lease.is_claimed(),
+            "format admission precedes candidate construction"
+        );
+        let mut generation = tex_exec::RetainedEngineGeneration::from_format_owned(
+            self.reachability_store.clone(),
+            World::memory_with_clock(self.job_clock),
+            &image,
+        )
+        .map_err(SessionError::Format)?;
+        drop(image);
+        let checkpoint = generation
+            .with_admitted(PublishInitialFormatCheckpoint {
+                profile: self.effective_command_profile(),
+                compatibility: self.command_compatibility,
+                required_font_layout_policy: self.required_font_layout_policy,
+            })
+            .map_err(SessionError::RetainedEngine)??;
+        generation
+            .preflight_terminal(std::slice::from_ref(&checkpoint))
+            .map_err(SessionError::RetainedEngine)?;
+        self.prior_generation = Some(RetainedRevisionGeneration {
+            revision: self.revision,
+            generation,
+            checkpoint_keys: vec![checkpoint],
+        });
         self.initex = false;
+        Ok(())
     }
 
     pub fn set_required_font_layout_policy(&mut self, policy: tex_fonts::FontLayoutPolicy) {
@@ -1598,7 +1667,7 @@ impl<'store> Session<'store> {
         self.cold_with_resolvers(host)
     }
 
-    pub fn start_cold_candidate(&self) -> Result<RevisionCandidate<'store>, SessionError> {
+    pub fn start_cold_candidate(&mut self) -> Result<RevisionCandidate<'store>, SessionError> {
         self.candidate(CandidatePlan {
             base_revision: self.revision,
             base_content_hash: self.content_hash,
@@ -1621,7 +1690,7 @@ impl<'store> Session<'store> {
     }
 
     pub fn start_advance_candidate(
-        &self,
+        &mut self,
         next_revision: RevisionId,
         edit: Edit,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
@@ -1629,7 +1698,7 @@ impl<'store> Session<'store> {
     }
 
     pub fn start_advance_candidate_from_job_start(
-        &self,
+        &mut self,
         next_revision: RevisionId,
         edit: Edit,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
@@ -1641,7 +1710,7 @@ impl<'store> Session<'store> {
     }
 
     pub fn start_external_input_delta_candidate(
-        &self,
+        &mut self,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
         self.candidate(CandidatePlan {
             base_revision: self.revision,
@@ -1657,7 +1726,7 @@ impl<'store> Session<'store> {
     }
 
     fn start_advance_candidate_with_path(
-        &self,
+        &mut self,
         next_revision: RevisionId,
         edit: Edit,
         execution_path: RevisionExecutionPath,
@@ -1693,9 +1762,25 @@ impl<'store> Session<'store> {
         })
     }
 
-    fn candidate(&self, plan: CandidatePlan) -> Result<RevisionCandidate<'store>, SessionError> {
-        let format_image = self.format_image.clone();
+    fn candidate(
+        &mut self,
+        plan: CandidatePlan,
+    ) -> Result<RevisionCandidate<'store>, SessionError> {
         let candidate_lease = self.candidate_lease.claim()?;
+        let (generation, checkpoint_control_key) =
+            if let Some(prior) = self.prior_generation.as_mut() {
+                let checkpoint = prior
+                    .checkpoint_keys
+                    .first()
+                    .expect("every accepted generation retains its JobStart checkpoint");
+                let (generation, runtime, _budget_counters) = prior
+                    .generation
+                    .fork_checkpoint(checkpoint)
+                    .map_err(SessionError::RetainedEngineFork)?;
+                (Some(generation), Some(runtime))
+            } else {
+                (None, None)
+            };
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
             reachability_store: self.reachability_store.clone(),
@@ -1704,19 +1789,13 @@ impl<'store> Session<'store> {
             source_path: plan.layout.path().to_owned(),
             plan,
             registered_inputs: self.registered_inputs.clone(),
-            profile: if self.utf8_input_as_bytes || self.root_source_is_byte_projection {
-                self.command_profile
-            } else {
-                CommandProfile::unicode_extended(self.command_profile.dialect())
-            },
+            profile: self.effective_command_profile(),
             compatibility: self.command_compatibility,
             initex: self.initex,
             dvi_output: self.dvi_output,
             root_framing: self.root_framing,
             root_framing_name: self.root_framing_name.clone(),
             root_source_is_byte_projection: self.root_source_is_byte_projection,
-            format_image,
-            required_font_layout_policy: self.required_font_layout_policy,
             job_clock: self.job_clock,
             completed: None,
             cumulative_fuel_limit: MainControl::<GenerationBrand<'static>>::DEFAULT_FUEL_LIMIT,
@@ -1726,10 +1805,19 @@ impl<'store> Session<'store> {
             suspension_serial: 0,
             advance_calls: 0,
             cumulative_fuel: 0,
-            generation: None,
+            generation,
+            checkpoint_control_key,
             runtime_key: None,
             candidate_lease: Some(candidate_lease),
         })
+    }
+
+    fn effective_command_profile(&self) -> CommandProfile {
+        if self.utf8_input_as_bytes || self.root_source_is_byte_projection {
+            self.command_profile
+        } else {
+            CommandProfile::unicode_extended(self.command_profile.dialect())
+        }
     }
 
     pub fn prepare_revision_candidate(
@@ -2399,6 +2487,7 @@ pub enum SessionError {
     State(tex_state::StateError),
     Epoch(tex_state::SessionEpochError),
     RetainedEngine(tex_exec::RetainedEngineAccessError),
+    RetainedEngineFork(tex_exec::RetainedEngineForkError),
     Universe(tex_state::UniverseError),
     Fragment(tex_state::source_map::SourceMapError),
     Layout(EditorLayoutError),
@@ -2444,6 +2533,9 @@ impl fmt::Display for SessionError {
             Self::Epoch(error) => write!(f, "incremental session epoch failed: {error:?}"),
             Self::RetainedEngine(error) => {
                 write!(f, "incremental retained generation failed: {error:?}")
+            }
+            Self::RetainedEngineFork(error) => {
+                write!(f, "incremental checkpoint fork failed: {error}")
             }
             Self::Universe(error) => write!(f, "incremental runtime setup failed: {error:?}"),
             Self::Fragment(error) => write!(f, "editor fragment allocation failed: {error}"),
@@ -2527,8 +2619,9 @@ mod retained_generation_tests {
             Session::start(&session_store, "reject", RevisionId::new(1), "\\end", 1024)
                 .expect("session");
         let before = session.content_hash();
-        let foreign = Session::start(&foreign_store, "foreign", RevisionId::new(1), "\\end", 1024)
-            .expect("foreign session");
+        let mut foreign =
+            Session::start(&foreign_store, "foreign", RevisionId::new(1), "\\end", 1024)
+                .expect("foreign session");
         let mut candidate = foreign.start_cold_candidate().expect("candidate");
         drive_synchronous_candidate(&mut candidate, &mut DirectResourceHost).expect("drive");
         let transaction = session

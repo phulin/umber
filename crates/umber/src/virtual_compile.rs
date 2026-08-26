@@ -2034,10 +2034,12 @@ impl<'store> VirtualCompileSession<'store> {
                 session.set_command_profile(self.engine.command_profile(), self.format.is_none());
                 session.set_command_compatibility(self.engine.command_compatibility());
                 session.set_required_font_layout_policy(self.font_layout_policy);
-                if let Some(image) = format_image {
-                    session.set_format_image(image);
-                }
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
+                if let Some(image) = format_image {
+                    session
+                        .set_format_image(image)
+                        .map_err(|error| compile_error_from_session(&error, None))?;
+                }
                 session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
                 session.set_render_cache_budget(self.limits.output_bytes);
                 let startup_name = self
@@ -2070,7 +2072,7 @@ impl<'store> VirtualCompileSession<'store> {
                 response_generation: self.response_generation,
                 suspension_serial: 0,
             })
-        } else if let Some(session) = self.incremental.as_ref() {
+        } else if let Some(session) = self.incremental.as_mut() {
             let (next_revision, edit) = self
                 .pending_patch
                 .as_ref()

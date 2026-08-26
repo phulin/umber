@@ -427,7 +427,18 @@ Validation is complete, ordered, and bounded:
 5. validate every index, offset, tag, canonical order, uniqueness rule, and
    cross-section reference;
 6. validate graph topology and required roots; and
-7. publish immutable stores, then create fresh job-local overlays.
+7. publish the materialized stores as one destination generation.
+
+At session admission, the detached image is consumed and its encoded and
+decoded payload is dropped immediately after successful materialization. The
+session captures the generation's pre-job `JobStart` checkpoint and publishes
+it as the ordinary initial accepted generation. First and later document
+candidates use the same exclusive prior/current checkpoint fork and rollback
+path; the first accepted document retires the format generation normally.
+There is no permanent image owner or format-specific job overlay in the
+session. The immutable-base and mutable-overlay terminology used by the format
+decoder describes storage within the one materialized generation, not an
+additional runtime owner.
 
 Counts and offsets are widened before checked arithmetic and converted to
 host `usize` only after proving they fit the actual byte slice. Validation
