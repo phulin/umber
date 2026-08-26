@@ -3,7 +3,7 @@ use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, UnexpandablePrimiti
 use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::{MacroCallOutcome, MacroParameterEscape};
-use crate::{CommandHostCapabilities, CommandState};
+use crate::{CommandHostCapabilities, CommandState, DeliveryStatus};
 #[test]
 fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
     assert_eq!(
@@ -146,11 +146,17 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
+        let mut destination = None;
 
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("nested expansion")
+                .get_x_token_into(&mut destination)
+                .expect("nested expansion"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("inner result")
                 .spelling()
                 .semantic_token(),
@@ -159,8 +165,13 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         assert_eq!(processor.command.scratch.frame_len(), 2);
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("outer tail")
+                .get_x_token_into(&mut destination)
+                .expect("outer tail"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("tail token")
                 .spelling()
                 .semantic_token(),
@@ -169,8 +180,13 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         assert_eq!(processor.command.scratch.frame_len(), 1);
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("source separator")
+                .get_x_token_into(&mut destination)
+                .expect("source separator"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("separator token")
                 .spelling()
                 .semantic_token(),
@@ -180,8 +196,13 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
 
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("tail expansion")
+                .get_x_token_into(&mut destination)
+                .expect("tail expansion"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("tail result")
                 .spelling()
                 .semantic_token(),
@@ -192,8 +213,13 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         assert_eq!(processor.command.scratch.copied_macro_words(), 0);
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("post-tail source")
+                .get_x_token_into(&mut destination)
+                .expect("post-tail source"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("source token")
                 .spelling()
                 .semantic_token(),
@@ -251,11 +277,17 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
             &mut diagnostic_effects,
         );
         let mut actual = Vec::new();
+        let mut destination = None;
         for _ in 0..expected.len() * 2 {
-            actual.push(
+            assert_eq!(
                 processor
-                    .get_x_token()
-                    .expect("parameter replay")
+                    .get_x_token_into(&mut destination)
+                    .expect("parameter replay"),
+                DeliveryStatus::Command
+            );
+            actual.push(
+                destination
+                    .take()
                     .expect("argument token")
                     .spelling()
                     .semantic_token(),
@@ -265,8 +297,13 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
         assert_eq!(actual[expected.len()..], expected);
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("following source")
+                .get_x_token_into(&mut destination)
+                .expect("following source"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("following token")
                 .spelling()
                 .semantic_token(),
@@ -294,10 +331,14 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        let call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("macro delivery"),
+            DeliveryStatus::Command
+        );
+        let call = destination.take().expect("macro command");
 
         assert_eq!(
             processor.macro_call(&call).expect("macro call"),
@@ -306,8 +347,13 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
         assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("replacement")
+                .get_x_token_into(&mut destination)
+                .expect("replacement"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("argument replay")
                 .spelling()
                 .semantic_token(),
@@ -315,8 +361,13 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
         );
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("following source")
+                .get_x_token_into(&mut destination)
+                .expect("following source"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("following token")
                 .spelling()
                 .semantic_token(),
@@ -359,10 +410,14 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        let call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("macro delivery"),
+            DeliveryStatus::Command
+        );
+        let call = destination.take().expect("macro command");
 
         assert_eq!(
             processor.macro_call(&call).expect("macro call"),
@@ -415,10 +470,14 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             &mut diagnostic_effects,
         );
 
-        let long_call = processor
-            .get_next()
-            .expect("long macro delivery")
-            .expect("long macro command");
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("long macro delivery"),
+            DeliveryStatus::Command
+        );
+        let long_call = destination.take().expect("long macro command");
         assert_eq!(
             processor.macro_call(&long_call),
             Ok(MacroCallOutcome::Activated)
@@ -441,17 +500,25 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
 
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("long argument replay")
+                .get_x_token_into(&mut destination)
+                .expect("long argument replay"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("paragraph argument token")
                 .spelling()
                 .semantic_token(),
             paragraph
         );
-        let short_call = processor
-            .get_next()
-            .expect("short macro delivery")
-            .expect("short macro command");
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("short macro delivery"),
+            DeliveryStatus::Command
+        );
+        let short_call = destination.take().expect("short macro command");
         assert_eq!(
             processor.macro_call(&short_call),
             Err(crate::CommandError::ParagraphInMacroArgument)
@@ -482,10 +549,14 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        let call = processor
-            .get_next()
-            .expect("delimited macro delivery")
-            .expect("delimited macro command");
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("delimited macro delivery"),
+            DeliveryStatus::Command
+        );
+        let call = destination.take().expect("delimited macro command");
 
         assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
         assert_eq!(
@@ -553,26 +624,40 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
             &mut diagnostic_effects,
         );
 
-        let alias_call = processor
-            .get_next()
-            .expect("alias argument macro delivery")
-            .expect("alias argument macro command");
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("alias argument macro delivery"),
+            DeliveryStatus::Command
+        );
+        let alias_call = destination.take().expect("alias argument macro command");
         assert_eq!(
             processor.macro_call(&alias_call),
             Ok(MacroCallOutcome::Activated)
         );
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("alias argument replay")
+                .get_x_token_into(&mut destination)
+                .expect("alias argument replay"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("alias argument token")
                 .spelling()
                 .semantic_token(),
             Token::Cs(alias.symbol())
         );
-        let paragraph_call = processor
-            .get_next()
-            .expect("paragraph argument macro delivery")
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("paragraph argument macro delivery"),
+            DeliveryStatus::Command
+        );
+        let paragraph_call = destination
+            .take()
             .expect("paragraph argument macro command");
         assert_eq!(
             processor.macro_call(&paragraph_call),

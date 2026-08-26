@@ -2128,7 +2128,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &runaway);
             }
             if self.command.alignment.align_state < TEMPLATE_ALIGN_STATE {
-                while self.get_token()?.is_some() {}
+                loop {
+                    match self.get_token_into(&mut destination)? {
+                        crate::DeliveryStatus::Command => {
+                            destination
+                                .take()
+                                .expect("command status initializes destination");
+                        }
+                        crate::DeliveryStatus::End => break,
+                        _ => return Err(CommandError::input_invariant()),
+                    }
+                }
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
                 return Ok(());
             }

@@ -3,7 +3,7 @@ use tex_state::meaning::{MeaningFlags, MeaningWord};
 use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::ScanToksMode;
-use crate::{CommandHostCapabilities, CommandState};
+use crate::{CommandHostCapabilities, CommandState, DeliveryStatus};
 
 fn token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
@@ -52,10 +52,16 @@ fn balanced_collection_freezes_nested_tokens_in_the_attempt_arena() {
                 token('}', Catcode::EndGroup),
             ]
         );
+        let mut destination = None;
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("following delivery")
+                .get_x_token_into(&mut destination)
+                .expect("following delivery"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("following token")
                 .spelling()
                 .semantic_token(),
@@ -112,10 +118,16 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
                 .collect::<Vec<_>>(),
             [replacement]
         );
+        let mut destination = None;
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("following delivery")
+                .get_x_token_into(&mut destination)
+                .expect("following delivery"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
                 .expect("following token")
                 .spelling()
                 .semantic_token(),
