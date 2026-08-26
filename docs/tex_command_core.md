@@ -194,6 +194,16 @@ moves out of this slot only into its final consumer or the one typed expansion
 suspension slot at a real resource barrier. There is no process-global slot,
 mailbox, destination inference, or nested-request reuse.
 
+The input side of that same request uses one fixed call-local
+`RawDeliverySlot`. The top input level keeps its packed frame position,
+backing handle, source cursor, replay-completion frontier, and rollback
+authority. Its storage-lifetime tag was selected when the level was created;
+delivery borrows that domain, writes the spelling and only-present provenance
+directly into the raw slot, and advances the fixed frame in place. A macro
+parameter candidate pushes its argument range and restarts before current
+command construction. The raw slot is discarded on return and never enters a
+scanner or resource continuation.
+
 Control-sequence resolution borrows the already-admitted dense meaning row
 through the live `CommandContext`. Static words decode during that borrow; a
 macro meaning clones its generation-branded definition owner exactly once into

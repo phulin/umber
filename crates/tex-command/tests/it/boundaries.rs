@@ -69,10 +69,18 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         .expect("read input-level representation");
 
     assert_eq!(
-        next.matches("fn take_input_token(").count(),
+        next.matches("fn deliver_raw_input_into(").count(),
         1,
-        "the command core must have exactly one scalar input-level delivery loop"
+        "the command core must have exactly one destination-directed input delivery loop"
     );
+    for retired in ["fn take_input_token(", "ActiveInput", "DeliveredToken"] {
+        assert!(
+            !next.contains(retired),
+            "raw delivery must not retain the retired {retired} envelope"
+        );
+    }
+    assert!(next.contains("RawDeliverySlot::empty()"));
+    assert!(levels.contains("size_of::<RawDeliverySlot>() == 88"));
     assert_eq!(
         next.matches("fn next_source_step(").count(),
         1,

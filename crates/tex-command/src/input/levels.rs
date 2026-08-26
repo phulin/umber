@@ -164,12 +164,36 @@ impl<G> TokenCursor<G> {
         self.frame.position() as usize
     }
 
-    /// Borrows the canonical word at the one scalar input position.
+    /// Peeks without advancing for stack-conservation and lifecycle checks.
     #[inline(always)]
     pub(crate) fn token_at(&self, sources: PackedTokenSources<'_, G>) -> Option<PackedTokenAt> {
         sources.token_at(&self.span, self.position())
     }
+
+    /// Delivers the canonical word at the fixed frame's scalar position.
+    #[inline(always)]
+    pub(crate) fn deliver_into(
+        &mut self,
+        sources: PackedTokenSources<'_, G>,
+        destination: &mut RawDeliverySlot,
+    ) -> Result<bool, ()> {
+        let frame = self.frame;
+        let position = frame.position();
+        if !sources.deliver_at_into(&self.span, position, frame, destination) {
+            return Ok(false);
+        }
+        if self.frame.advance() != Some(position) {
+            return Err(());
+        }
+        Ok(true)
+    }
 }
+
+/// Canonical packed word plus its storage-independent diagnostic coordinates.
+///
+/// This value-returning view is reserved for non-delivering lifecycle probes.
+/// The default raw-delivery path writes into [`RawDeliverySlot`] instead.
+pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
 
 /// Typed lifetime handle for one immutable packed-token span.
 ///
@@ -242,12 +266,121 @@ impl<G> Clone for TokenCursor<G> {
     }
 }
 
-/// Canonical packed word plus its storage-independent diagnostic coordinates.
+/// Call-local destination for one raw input delivery.
 ///
-/// Only the first field participates in token semantics. Origins and source
-/// provenance remain separate so stored delivery never widens `TokenWord` or
-/// makes provenance part of control-sequence/meaning resolution.
-pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
+/// Input levels retain every future-relevant cursor and backing owner. This
+/// slot receives only the inputs needed to construct the final current
+/// command, is overwritten on each successful candidate, and never crosses a
+/// suspension or rollback boundary.
+pub(crate) struct RawDeliverySlot {
+    spelling: TracedTokenWord,
+    level: InputLevelId,
+    position: u64,
+    source_provenance: Option<SourceProvenance>,
+    direct_source_line: Option<u32>,
+    kind: InputFrameKind,
+    flags: InputFrameFlags,
+}
+
+impl RawDeliverySlot {
+    pub(crate) fn empty() -> Self {
+        Self {
+            spelling: TracedTokenWord::pack(
+                Token::Char {
+                    ch: '\0',
+                    cat: crate::Catcode::Other,
+                },
+                OriginId::UNKNOWN,
+            ),
+            level: InputLevelId(0),
+            position: 0,
+            source_provenance: None,
+            direct_source_line: None,
+            kind: InputFrameKind::Inserted,
+            flags: InputFrameFlags::empty(),
+        }
+    }
+
+    fn write_stored(
+        &mut self,
+        frame: PackedInputFrame,
+        position: u32,
+        word: TokenWord,
+        origin: OriginId,
+        source_provenance: Option<SourceProvenance>,
+    ) {
+        self.spelling = TracedTokenWord::from_parts(word, origin);
+        self.level = InputLevelId(frame.identity());
+        self.position = u64::from(position);
+        self.source_provenance = source_provenance;
+        self.direct_source_line = None;
+        self.kind = frame.kind();
+        self.flags = frame.flags();
+    }
+
+    pub(crate) fn write_source(
+        &mut self,
+        level: InputLevelId,
+        position: u64,
+        spelling: TracedTokenWord,
+        source_provenance: SourceProvenance,
+        direct_source_line: Option<u32>,
+    ) {
+        self.spelling = spelling;
+        self.level = level;
+        self.position = position;
+        self.source_provenance = Some(source_provenance);
+        self.direct_source_line = direct_source_line;
+        self.kind = InputFrameKind::Source;
+        self.flags = InputFrameFlags::empty();
+    }
+
+    pub(crate) fn write_end_template(
+        &mut self,
+        level: InputLevelId,
+        position: u64,
+        spelling: TracedTokenWord,
+    ) {
+        self.spelling = spelling;
+        self.level = level;
+        self.position = position;
+        self.source_provenance = None;
+        self.direct_source_line = None;
+        self.kind = InputFrameKind::AlignmentVTemplate;
+        self.flags = InputFrameFlags::empty();
+    }
+
+    pub(crate) const fn spelling(&self) -> TracedTokenWord {
+        self.spelling
+    }
+
+    pub(crate) const fn level(&self) -> InputLevelId {
+        self.level
+    }
+
+    pub(crate) const fn position(&self) -> u64 {
+        self.position
+    }
+
+    pub(crate) const fn source_provenance(&self) -> Option<SourceProvenance> {
+        self.source_provenance
+    }
+
+    pub(crate) const fn is_direct_source(&self) -> bool {
+        matches!(self.kind, InputFrameKind::Source)
+    }
+
+    pub(crate) const fn direct_source_line(&self) -> Option<u32> {
+        self.direct_source_line
+    }
+
+    pub(crate) const fn suppresses_expandable_control_sequence(&self) -> bool {
+        self.flags
+            .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE)
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<RawDeliverySlot>() == 88);
 
 /// Borrowed storage boundary for every immutable stored-token source.
 pub(crate) struct PackedTokenSources<'a, G> {
@@ -269,12 +402,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
         }
     }
 
-    /// Reads one canonical word through the admitted span handle.
-    ///
-    /// Safe Rust cannot store a self-reference into the owning command root,
-    /// so this small direct match is the sole storage-domain boundary. No
-    /// caller rebuilds a generic delivery object or repeats this routing.
-    #[inline(always)]
+    /// Peeks through an admitted span without advancing its input frame.
     pub(crate) fn token_at(
         &self,
         span: &PackedTokenSpanHandle<G>,
@@ -302,6 +430,61 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 .word_at(index)
                 .map(|word| (word, OriginId::UNKNOWN, None)),
         }
+    }
+
+    /// Writes one canonical word through the admitted span handle.
+    ///
+    /// Safe Rust cannot store a self-reference into the owning command root,
+    /// so this small direct match is the sole storage-domain boundary. No
+    /// caller rebuilds a generic delivery object or repeats this routing.
+    #[inline(always)]
+    pub(crate) fn deliver_at_into(
+        &self,
+        span: &PackedTokenSpanHandle<G>,
+        position: u32,
+        frame: PackedInputFrame,
+        destination: &mut RawDeliverySlot,
+    ) -> bool {
+        let index = position as usize;
+        match span {
+            PackedTokenSpanHandle::Replay { replay, .. } => {
+                let Some((word, provenance)) = self.replay.get(*replay, index) else {
+                    return false;
+                };
+                destination.write_stored(
+                    frame,
+                    position,
+                    word.token_word(),
+                    word.origin(),
+                    provenance,
+                );
+            }
+            PackedTokenSpanHandle::MacroReplacement { definition, .. } => {
+                let Some(word) = definition.replacement_word(index) else {
+                    return false;
+                };
+                destination.write_stored(frame, position, word, OriginId::UNKNOWN, None);
+            }
+            PackedTokenSpanHandle::MacroArgument { range, .. } => {
+                let Ok(word) = self.scratch.argument_word(*range, index) else {
+                    return false;
+                };
+                destination.write_stored(frame, position, word.token_word(), word.origin(), None);
+            }
+            PackedTokenSpanHandle::AttemptList { list, .. } => {
+                let Ok(word) = self.attempt.token_word(*list, index) else {
+                    return false;
+                };
+                destination.write_stored(frame, position, word.token_word(), word.origin(), None);
+            }
+            PackedTokenSpanHandle::DurableList { list, .. } => {
+                let Some(word) = list.word_at(index) else {
+                    return false;
+                };
+                destination.write_stored(frame, position, word, OriginId::UNKNOWN, None);
+            }
+        }
+        true
     }
 }
 

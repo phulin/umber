@@ -134,8 +134,9 @@ collector (see `src/conditionals.rs`).
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
   source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
-  creation; delivery calls one storage-boundary `token_at` and advances only
-  the packed frame scalar. The module also owns cold backup source coordinates,
+  creation; ordinary delivery writes through that lifetime tag into one
+  call-local `RawDeliverySlot` and advances only the packed frame scalar. The
+  slot never crosses suspension. The module also owns cold backup source coordinates,
   explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
   reuse, and orthogonal delivery/retirement classifications. A source level's
   `open_depths` field is `\tracingnesting`'s own

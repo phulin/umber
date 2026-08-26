@@ -13,8 +13,8 @@ use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, CompactSourceStepQueries, CompactSourceTokenizationStep,
     InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay, PackedTokenSources,
-    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
-    TokenCursor,
+    PackedTokenSpanHandle, RawDeliverySlot, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior, TokenCursor,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::input::SourceNameClass;
@@ -22,7 +22,7 @@ use crate::input::{RegisteredSourceKind, SourceRegistration};
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
     AlignmentDelivery, AlignmentDeliveryEvent, CommandReplayDelivery, SourceControlSequenceKind,
-    SourceProvenance, SourceToken,
+    SourceToken,
 };
 use tex_state::CommandLineSource;
 
@@ -1553,11 +1553,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
+        let mut raw_delivery = RawDeliverySlot::empty();
         loop {
             if let Some(episode) = self.take_ready_replay_completion() {
                 return Ok(super::DeliveryStatus::ReplayCompleted(episode));
             }
-            let Some(delivery) = self.take_input_token()? else {
+            if matches!(
+                self.deliver_raw_input_into(&mut raw_delivery)?,
+                RawInputStatus::End
+            ) {
                 if let Some(episode) = self.take_ready_replay_completion() {
                     return Ok(super::DeliveryStatus::ReplayCompleted(episode));
                 }
@@ -1573,39 +1577,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     continue;
                 }
                 return Ok(super::DeliveryStatus::End);
-            };
-            let DeliveredToken {
-                spelling,
-                level,
-                position,
-                behavior,
-                source_provenance,
-                direct_source,
-                direct_source_line,
-            } = delivery;
-
-            if let Token::Param(slot) = spelling.semantic_token() {
-                let replay = self
-                    .command
-                    .replay_out_parameter(level, slot)
-                    .map_err(|_| CommandError::input_invariant())?;
-                if let OutParameterReplay::Pushed(_parameter_level) = replay {
-                    observe!(
-                        self,
-                        CommandObservation::Input(InputRecord {
-                            transition: InputTransition::Push,
-                            reason: InputReason::Parameter,
-                            source_name: None,
-                            source: None,
-                            level: _parameter_level.0,
-                            position: 0,
-                        }),
-                    );
-                    continue;
-                }
             }
 
-            let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
+            let spelling = raw_delivery.spelling();
+            let delivery_stamp = DeliveryStamp::new(
+                raw_delivery.level().0,
+                raw_delivery.position(),
+                self.next_delivery_sequence,
+            );
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
             if matches!(
                 spelling.semantic_token(),
@@ -1621,19 +1600,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 destination,
                 spelling,
                 delivery_stamp,
-                source_provenance,
-                direct_source,
-                direct_source_line,
+                raw_delivery.source_provenance(),
+                raw_delivery.is_direct_source(),
+                raw_delivery.direct_source_line(),
                 &self.state,
             );
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal
             ));
-            if matches!(
-                behavior,
-                TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
-            ) {
+            if raw_delivery.suppresses_expandable_control_sequence() {
                 destination
                     .as_mut()
                     .expect("raw destination was initialized")
@@ -1712,48 +1688,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn take_input_token(&mut self) -> Result<Option<DeliveredToken>, CommandError> {
-        enum ActiveInput {
-            Source {
-                identity: InputLevelId,
-                position: u64,
-                registration:
-                    Option<(tex_state::SourceId, tex_state::source_map::SourceDescriptor)>,
-            },
-            Tokens {
-                identity: InputLevelId,
-                index: usize,
-            },
-        }
-
+    fn deliver_raw_input_into(
+        &mut self,
+        destination: &mut RawDeliverySlot,
+    ) -> Result<RawInputStatus, CommandError> {
         loop {
             if self.command.has_ready_replay_completion() {
-                return Ok(None);
+                return Ok(RawInputStatus::End);
             }
-            let Some(level) = self.command.input.levels.last().map(|level| match level {
-                // Delivery needs only the stable level coordinates and the
-                // immutable physical registration. Cloning `SourceLevel`
-                // here used to allocate a fresh `Box` and copy the complete
-                // mutable lexer/line cursor for every source token, even
-                // though `next_source_step` immediately advanced the live
-                // cursor instead. Keep the live level canonical, and clone
-                // the Arc-backed descriptor only once when the source first
-                // enters the aggregate map.
-                InputLevel::Source(source) => ActiveInput::Source {
-                    identity: source.identity(),
-                    position: source.cursor.next_physical_offset,
-                    registration: (!source.cursor.backing_registered).then(|| {
-                        (
-                            source.cursor.backing.id,
-                            source.cursor.backing.source_descriptor(),
-                        )
-                    }),
-                },
-                InputLevel::Tokens(cursor) => ActiveInput::Tokens {
-                    identity: cursor.identity(),
-                    index: cursor.position(),
-                },
-            }) else {
+            let Some(source_level) = self
+                .command
+                .input
+                .levels
+                .last()
+                .map(|level| matches!(level, InputLevel::Source(_)))
+            else {
                 observe!(
                     self,
                     CommandObservation::Input(InputRecord {
@@ -1767,218 +1716,209 @@ impl<G> CommandProcessor<'_, '_, G> {
                         position: 0,
                     }),
                 );
-                return Ok(None);
+                return Ok(RawInputStatus::End);
             };
-            match level {
-                ActiveInput::Source {
-                    identity,
-                    position,
-                    registration,
-                } => {
-                    if let Some((source, descriptor)) = registration {
-                        let _ = self.state.register_source(source, descriptor);
-                        let Some(InputLevel::Source(level)) = self.command.input.levels.last_mut()
+
+            if source_level {
+                // Source registration is cold and happens once. Keep the live
+                // cursor in the input root; only its Arc-backed descriptor is
+                // cloned for the aggregate source map.
+                let (identity, position, registration) = {
+                    let Some(InputLevel::Source(source)) = self.command.input.levels.last() else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    (
+                        source.identity(),
+                        source.cursor.next_physical_offset,
+                        (!source.cursor.backing_registered).then(|| {
+                            (
+                                source.cursor.backing.id,
+                                source.cursor.backing.source_descriptor(),
+                            )
+                        }),
+                    )
+                };
+                if let Some((source, descriptor)) = registration {
+                    let _ = self.state.register_source(source, descriptor);
+                    let Some(InputLevel::Source(level)) = self.command.input.levels.last_mut()
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    if level.identity() != identity {
+                        return Err(CommandError::input_invariant());
+                    }
+                    level.cursor.backing_registered = true;
+                }
+                let source_step = self.next_source_step();
+                self.command.input.retain_active_file_line_number();
+                match source_step {
+                    CompactSourceTokenizationStep::Token(token) => {
+                        self.ensure_replacement_line_registration();
+                        let range = token.provenance.range();
+                        let origin = if range.end().saturating_sub(range.start()) == 1 {
+                            self.state.source_token_origin(
+                                range.source(),
+                                range.start(),
+                                range.end(),
+                            )
+                        } else {
+                            self.state.source_range_origin(
+                                range.source(),
+                                range.start(),
+                                range.end(),
+                            )
+                        };
+                        let spelling = TracedTokenWord::from_parts(token.word, origin);
+                        let Some(InputLevel::Source(source)) = self.command.input.levels.last_mut()
                         else {
                             return Err(CommandError::input_invariant());
                         };
-                        if level.identity() != identity {
-                            return Err(CommandError::input_invariant());
-                        }
-                        level.cursor.backing_registered = true;
-                    }
-                    let source_step = self.next_source_step();
-                    self.command.input.retain_active_file_line_number();
-                    match source_step {
-                        CompactSourceTokenizationStep::Token(token) => {
-                            self.ensure_replacement_line_registration();
-                            let range = token.provenance.range();
-                            let origin = if range.end().saturating_sub(range.start()) == 1 {
-                                self.state.source_token_origin(
-                                    range.source(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            } else {
-                                self.state.source_range_origin(
-                                    range.source(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            };
-                            let spelling = TracedTokenWord::from_parts(token.word, origin);
-                            let Some(InputLevel::Source(source)) =
-                                self.command.input.levels.last_mut()
-                            else {
-                                return Err(CommandError::input_invariant());
-                            };
-                            let direct_source_line = source.cursor.line.as_ref().map(|line| {
+                        let direct_source_line =
+                            source.cursor.line.as_ref().map(|line| {
                                 u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
                             });
-                            if source.frame.identity() != identity.0
-                                || source.frame.advance().is_none()
-                            {
-                                return Err(CommandError::input_invariant());
-                            }
-                            return Ok(Some(DeliveredToken {
-                                spelling,
-                                level: identity,
-                                position,
-                                behavior: TokenBehavior::Ordinary,
-                                source_provenance: Some(token.provenance),
-                                direct_source: true,
-                                direct_source_line,
-                            }));
-                        }
-                        CompactSourceTokenizationStep::InvalidCharacter => {
-                            // TeX82 §345 temporarily sets
-                            // `deletions_allowed:=false`, calls `error`, restores
-                            // it, and goes to `restart`. Umber's error channel
-                            // deliberately has deletion disabled (tex-state's
-                            // print contract), so queuing this one report before
-                            // continuing has the same recovery boundary: the
-                            // offending character is consumed exactly once and
-                            // no later token is silently discarded.
-                            self.report_recoverable(
-                                INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
-                                "Text line contains an invalid character".into(),
-                                &[
-                                    "A funny symbol that I can't read has just been input.",
-                                    "Continue, and I'll forget that it ever happened.",
-                                ],
-                            );
-                            continue;
-                        }
-                        CompactSourceTokenizationStep::End => {
-                            // e-TeX 2.6 etex.ch §24.362 inserts a non-null
-                            // `\everyeof` above the still-live source. Its
-                            // token-list level must therefore push and retire
-                            // before §329 retires the pseudo-file.
-                            if let Some(level) =
-                                self.command.begin_pending_every_eof(&self.state, identity)
-                            {
-                                self.observe(CommandObservation::Input(InputRecord {
-                                    transition: InputTransition::Push,
-                                    reason: InputReason::EveryEof,
-                                    source_name: None,
-                                    source: None,
-                                    level: level.0,
-                                    position: 0,
-                                }));
-                                continue;
-                            }
-                            // TeX82 §343 checks outer validity immediately
-                            // after `end_file_reading`, before `get_next`
-                            // resumes the caller's input level.  In
-                            // particular, a skipped conditional that reaches
-                            // EOF in a nested `\\input` must insert frozen
-                            // `\\fi` above the parent, rather than allowing
-                            // the parent's next token to escape `pass_text`.
-                            if self
-                                .state
-                                .int_param(tex_state::env::banks::IntParam::TRACING_NESTING)
-                                > 1
-                            {
-                                let context = match self.command.input.levels.last() {
-                                    Some(InputLevel::Source(source))
-                                        if source.identity() == identity =>
-                                    {
-                                        self.command
-                                            .output_retiring_source_context(source, &self.state)
-                                    }
-                                    _ => return Err(CommandError::input_invariant()),
-                                };
-                                self.pending_file_warning_context = Some((identity, context));
-                            }
-                            let restart = self.retire_and_restart(identity)?;
-                            // §362 prints its `)` *before* `end_file_reading`
-                            // and `check_outer_validity`, so the bracket the
-                            // retirement just queued has to reach the
-                            // transcript here, not when the step ends: the
-                            // very next thing `recover_runaway_eof` may print
-                            // is `Incomplete \if...` or a runaway report,
-                            // which tex.web puts outside the file it has
-                            // already closed.
-                            if self.command.semantic_diagnostics.is_empty() {
-                                self.command.render_file_framing_events(&mut self.state);
-                            }
-                            match restart {
-                                RetirementRestart::Stop => return Ok(None),
-                                RetirementRestart::Continue => {
-                                    // TeX82 §343 calls `check_outer_validity`
-                                    // after every real source retirement. The
-                                    // scanner episode may predate this source:
-                                    // EOF still makes that unfinished scan a
-                                    // runaway before parent input can resume.
-                                    if self.recover_runaway_eof()? {
-                                        continue;
-                                    }
-                                }
-                                RetirementRestart::EndV(_) => {
-                                    return Err(CommandError::input_invariant());
-                                }
-                                RetirementRestart::Completed => {
-                                    return Ok(None);
-                                }
-                            }
-                        }
-                    }
-                }
-                ActiveInput::Tokens { identity, index } => {
-                    let next = {
-                        let attempt = self.command.attempt.arena();
-                        let scratch = &self.command.scratch;
-                        let roots = &mut self.command.roots;
-                        let replay_lane = &roots.input.replay;
-                        let Some(InputLevel::Tokens(cursor)) = roots.input.levels.last_mut() else {
-                            unreachable!("inspected token level remains a token level")
-                        };
-                        debug_assert_eq!(cursor.identity(), identity);
-                        debug_assert_eq!(cursor.position(), index);
-                        let behavior = cursor.behavior;
-                        let next =
-                            cursor.token_at(PackedTokenSources::new(replay_lane, attempt, scratch));
-                        if next.is_some()
-                            && cursor.frame.advance().map(|position| position as usize)
-                                != Some(index)
+                        if source.frame.identity() != identity.0 || source.frame.advance().is_none()
                         {
                             return Err(CommandError::input_invariant());
                         }
-                        next.map(|token| (token, behavior))
-                    };
-                    if let Some(((word, origin, source_provenance), behavior)) = next {
-                        return Ok(Some(DeliveredToken {
-                            spelling: TracedTokenWord::from_parts(word, origin),
-                            level: identity,
-                            position: u64::try_from(index)
-                                .map_err(|_| CommandError::input_invariant())?,
-                            behavior,
-                            source_provenance,
-                            direct_source: false,
-                            direct_source_line: None,
-                        }));
+                        destination.write_source(
+                            identity,
+                            position,
+                            spelling,
+                            token.provenance,
+                            direct_source_line,
+                        );
                     }
+                    CompactSourceTokenizationStep::InvalidCharacter => {
+                        // TeX82 §345 consumes the invalid character exactly
+                        // once, reports it with deletions disabled, and
+                        // restarts without publishing a raw delivery.
+                        self.report_recoverable(
+                            INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
+                            "Text line contains an invalid character".into(),
+                            &[
+                                "A funny symbol that I can't read has just been input.",
+                                "Continue, and I'll forget that it ever happened.",
+                            ],
+                        );
+                        continue;
+                    }
+                    CompactSourceTokenizationStep::End => {
+                        if let Some(level) =
+                            self.command.begin_pending_every_eof(&self.state, identity)
+                        {
+                            self.observe(CommandObservation::Input(InputRecord {
+                                transition: InputTransition::Push,
+                                reason: InputReason::EveryEof,
+                                source_name: None,
+                                source: None,
+                                level: level.0,
+                                position: 0,
+                            }));
+                            continue;
+                        }
+                        if self
+                            .state
+                            .int_param(tex_state::env::banks::IntParam::TRACING_NESTING)
+                            > 1
+                        {
+                            let context = match self.command.input.levels.last() {
+                                Some(InputLevel::Source(source))
+                                    if source.identity() == identity =>
+                                {
+                                    self.command
+                                        .output_retiring_source_context(source, &self.state)
+                                }
+                                _ => return Err(CommandError::input_invariant()),
+                            };
+                            self.pending_file_warning_context = Some((identity, context));
+                        }
+                        let restart = self.retire_and_restart(identity)?;
+                        if self.command.semantic_diagnostics.is_empty() {
+                            self.command.render_file_framing_events(&mut self.state);
+                        }
+                        match restart {
+                            RetirementRestart::Stop | RetirementRestart::Completed => {
+                                return Ok(RawInputStatus::End);
+                            }
+                            RetirementRestart::Continue => {
+                                if self.recover_runaway_eof()? {
+                                    continue;
+                                }
+                                continue;
+                            }
+                            RetirementRestart::EndV(_) => {
+                                return Err(CommandError::input_invariant());
+                            }
+                        }
+                    }
+                }
+            } else {
+                let (identity, index) = {
+                    let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last() else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    (cursor.identity(), cursor.frame.position())
+                };
+                let delivered = {
+                    let attempt = self.command.attempt.arena();
+                    let scratch = &self.command.scratch;
+                    let roots = &mut self.command.roots;
+                    let replay_lane = &roots.input.replay;
+                    let Some(InputLevel::Tokens(cursor)) = roots.input.levels.last_mut() else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    if cursor.identity() != identity || cursor.frame.position() != index {
+                        return Err(CommandError::input_invariant());
+                    }
+                    cursor
+                        .deliver_into(
+                            PackedTokenSources::new(replay_lane, attempt, scratch),
+                            destination,
+                        )
+                        .map_err(|()| CommandError::input_invariant())?
+                };
+                if !delivered {
                     match self.retire_and_restart(identity)? {
-                        RetirementRestart::Stop => return Ok(None),
-                        RetirementRestart::Continue => {}
+                        RetirementRestart::Stop | RetirementRestart::Completed => {
+                            return Ok(RawInputStatus::End);
+                        }
+                        RetirementRestart::Continue => continue,
                         RetirementRestart::EndV(level) => {
-                            return Ok(Some(DeliveredToken {
-                                spelling: TracedTokenWord::pack(
+                            destination.write_end_template(
+                                level,
+                                u64::from(index),
+                                TracedTokenWord::pack(
                                     self.state.frozen_end_template_token(),
                                     tex_state::token::OriginId::UNKNOWN,
                                 ),
-                                level,
-                                position: u64::try_from(index)
-                                    .map_err(|_| CommandError::input_invariant())?,
-                                behavior: TokenBehavior::VTemplate,
-                                source_provenance: None,
-                                direct_source: false,
-                                direct_source_line: None,
-                            }));
+                            );
                         }
-                        RetirementRestart::Completed => return Ok(None),
                     }
                 }
             }
+
+            if let Token::Param(slot) = destination.spelling().semantic_token() {
+                let replay = self
+                    .command
+                    .replay_out_parameter(destination.level(), slot)
+                    .map_err(|_| CommandError::input_invariant())?;
+                if let OutParameterReplay::Pushed(_parameter_level) = replay {
+                    observe!(
+                        self,
+                        CommandObservation::Input(InputRecord {
+                            transition: InputTransition::Push,
+                            reason: InputReason::Parameter,
+                            source_name: None,
+                            source: None,
+                            level: _parameter_level.0,
+                            position: 0,
+                        }),
+                    );
+                    continue;
+                }
+            }
+            return Ok(RawInputStatus::Delivered);
         }
     }
 
@@ -2720,17 +2660,9 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
     }
 }
 
-struct DeliveredToken {
-    spelling: TracedTokenWord,
-    level: InputLevelId,
-    position: u64,
-    behavior: TokenBehavior,
-    source_provenance: Option<SourceProvenance>,
-    /// True only for a token read directly from a physical source cursor.
-    /// Backups preserve their diagnostic range while remaining replay input.
-    direct_source: bool,
-    /// TeX82's live `line` captured before a direct source cursor can retire.
-    direct_source_line: Option<u32>,
+enum RawInputStatus {
+    Delivered,
+    End,
 }
 
 enum RetirementRestart {
