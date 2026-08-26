@@ -300,10 +300,12 @@ Git.
 
 ## Loading and execution
 
-A `FormatFixture` loads by decoding its validated bytes into a fresh `World`
+A `FormatFixture` loads by consuming its validated bytes into a fresh `World`
 and `Universe`, then reinstalling the selected profile's live primitive
-implementations. The returned `LoadedFormatFixture` owns that fresh universe
-until it constructs one retained `EngineSession` for a job.
+implementations. Admission releases the encoded buffer before construction and
+drains or moves the decoded rows into their destination owners; it does not
+retain a parallel format image. The returned `LoadedFormatFixture` owns that
+fresh universe until it constructs one retained `EngineSession` for a job.
 
 DVI font numbers are the immutable internal font allocation index minus one,
 as specified by tex.web §§617 and 642. The frozen font rows preserve that

@@ -256,11 +256,13 @@ These four sections are decoded into validated dense immutable prefixes with
 their canonical record indices. Kind 257 holds the name index; the token-list
 and glue indexes follow the canonical word and record regions inside kinds 272
 and 304. Fresh generation-tagged runtime identities are attached in bulk.
-Section-local DTO values are consumed while those runtime columns are built;
-the loader does not retain parallel name, token, macro, glue, or code-table
-rows for a later generic validation traversal. Cross-section environment and
-font-bank references are validated once against the installed column lengths
-before any `Stores` value is returned.
+After complete validation, admission consumes the detached image. It releases
+the encoded container before destination construction and drains definition,
+token-list, glue, font, and node rows into their final owners in canonical
+order. The loader does not retain a parallel decoded row set after a runtime
+column has been built. Cross-section environment and font-bank references are
+validated once against the installed column lengths before any `Stores` value
+is returned.
 Ordinary job-created values append after the prefix and use mutable overlay
 indexes with the existing interning, snapshot, and rollback paths. The
 process-wide compact symbol registry is resolved in one batch for names;
@@ -279,10 +281,12 @@ control-sequence identifier index, and pdfTeX expansion settings.
 
 The decoder validates metric structure, derivation order, identifiers,
 parameter-bank references from the environment overlay, and the last-font
-index before any store is published. It then constructs the dense font prefix
-in bulk, attaches fresh runtime identities, and rebuilds loaded-font lookup
-keys and immutable/complete semantic hash fragments without calling the
-ordinary font interning or mutable identifier/expansion paths.
+index before any store is published. It then moves each decoded metric and
+program vector into the dense font prefix, separates the mutable runtime bank,
+attaches fresh runtime identities, and rebuilds loaded-font lookup keys and
+immutable/complete semantic hash fragments without cloning the decoded font
+payload or calling the ordinary font interning or mutable
+identifier/expansion paths.
 
 The typed storage bank can represent 32768 rows, including `nullfont`: each
 font owns a 17-bit `fontdimen` subdomain inside the environment cell's 32-bit
@@ -360,7 +364,9 @@ diagnostic children of ordinary and leader boxes into the validated loaded
 payload before publication. Every zero-length projection is then canonicalized
 to the single empty row before dense DTO keys are assigned.
 
-Each list is restored once into compact storage in dependency order. Its
+Each list is restored once into compact storage in dependency order. Node token
+fields clone the already-published private non-atomic token-list owner rather
+than rebuilding token words. Its
 semantic identity is recomputed directly over that zero-allocation compact
 view, using only already validated child identities; the loader neither
 materializes a second owned `Vec<Node>` nor temporarily publishes an
@@ -429,16 +435,17 @@ Validation is complete, ordered, and bounded:
 6. validate graph topology and required roots; and
 7. publish the materialized stores as one destination generation.
 
-At session admission, the detached image is consumed and its encoded and
-decoded payload is dropped immediately after successful materialization. The
-session captures the generation's pre-job `JobStart` checkpoint and publishes
-it as the ordinary initial accepted generation. First and later document
-candidates use the same exclusive prior/current checkpoint fork and rollback
-path; the first accepted document retires the format generation normally.
-There is no permanent image owner or format-specific job overlay in the
-session. The immutable-base and mutable-overlay terminology used by the format
-decoder describes storage within the one materialized generation, not an
-additional runtime owner.
+At session admission, the detached image is consumed. Encoded container bytes
+are dropped before destination construction; decoded payload rows are drained
+or moved as their final runtime columns are installed, and no decoded image
+owner survives successful materialization. The session captures the
+generation's pre-job `JobStart` checkpoint and publishes it as the ordinary
+initial accepted generation. First and later document candidates use the same
+exclusive prior/current checkpoint fork and rollback path; the first accepted
+document retires the format generation normally. There is no permanent image
+owner or format-specific job overlay in the session. The immutable-base and
+mutable-overlay terminology used by the format decoder describes storage
+within the one materialized generation, not an additional runtime owner.
 
 Counts and offsets are widened before checked arithmetic and converted to
 host `usize` only after proving they fit the actual byte slice. Validation

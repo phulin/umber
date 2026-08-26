@@ -734,6 +734,19 @@ below the preceding 654,224 KiB result. Every fuel-1 run stopped at
 `(1,1,0,1,0,0)`, and every 20M run preserved the exact terminal vector
 `(20000000,19913119,2218327,6020965,16785710,4011)`.
 
+Consuming format admission was measured with the same authenticated schema-12
+format, distribution, 123-key closure, fixed clock, offline mode, and guards.
+The encoded image is released before destination construction, and decoded
+font, definition, token-list, glue, node-list, cell, hyphenation, and PDF rows
+are moved or drained into their final owners. Three fuel-1 runs reached 51,848,
+51,852, and 51,664 KiB RSS and preserved `(1,1,0,1,0,0)`, putting cold startup
+below the 150 MiB engine target. The profiling build reached 49,488 KiB RSS,
+reported zero physical or external node-graph copies, and retained the named
+cold-materialization, interpreter, and generation-boundary attribution. Its
+13,630,601,192 cumulative cold-materialization requested bytes describe arena
+capacity and repeated allocation requests during admission rather than live
+or retained bytes; peak process RSS is the resident-footprint guard.
+
 `benchmarks/tex-state/src/bin/pdf_fork_metadata.rs` measures candidate
 begin-plus-reject by field family. At 10,000 rows every measured family is
 independent of accumulated size and performs zero allocation calls requesting
@@ -765,13 +778,14 @@ private non-atomic owners; no public id is retargeted and no accepted owner is
 mutated.
 
 A loaded format enters this same model as the initial accepted generation.
-Admission consumes the validated detached image, materializes one generation,
-drops the image payload, and retains its pre-job `JobStart` checkpoint in the
-prior slot. The first document candidate therefore uses the same exclusive
-checkpoint fork as every later candidate. Rejection leaves that generation
-unchanged; the first acceptance retires it through the ordinary prior/current
-swap. There is no format-owned third generation, permanent image owner, or
-format-specific runtime lookup layer.
+Admission consumes the validated detached image, drops its encoded bytes
+before construction, drains or moves every decoded row into one generation,
+and retains its pre-job `JobStart` checkpoint in the prior slot. The first
+document candidate therefore uses the same exclusive checkpoint fork as every
+later candidate. Rejection leaves that generation unchanged; the first
+acceptance retires it through the ordinary prior/current swap. There is no
+format-owned third generation, permanent image owner, complete decoded/live
+overlap, or format-specific runtime lookup layer.
 
 Rejection consumes the exclusive lease, clears the current store slot, and
 leaves prior unchanged. Acceptance first requires quiescent scratch and

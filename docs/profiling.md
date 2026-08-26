@@ -721,8 +721,9 @@ format image, state, snapshots, rollback, semantic identity, cache identity,
 or INITEX construction path.
 
 The focused schema-12 Plain-format benchmark additionally counts allocator
-calls and requested bytes around exactly one restore, proves a byte-identical
-redump before timing, and then measures repeated fresh-Universe decode:
+calls and requested bytes around exactly one consuming restore, proves a
+byte-identical redump, and then measures repeated fresh-Universe episodes in
+which each input is validated once and consumed into its destination:
 
 ```bash
 CARGO_BUILD_JOBS=1 cargo bench \

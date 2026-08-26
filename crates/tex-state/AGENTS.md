@@ -73,8 +73,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/font.rs`: Stateful loaded-font store, font handles, null font,
   missing-character records, rollback marks, and handle-free artifact-facing
   recipes whose generated sources are named by semantic identity.
-- `src/format.rs` and `src/format/tests.rs`: Destination-stamped format
-  staging and infallible atomic publication after complete validation.
+- `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
+  format staging, decoded-row draining into final owners, and infallible atomic
+  publication after complete validation.
 - `src/format/schema.rs`: Handle-free schema-11 logical rows for names,
   immutable values, and sparse environment cells.
 - `src/format_container.rs`: Portable schema-11 format-image header, section directory, authoritative fingerprints, checksum, compression, and structural validation; no compatibility codec is retained.
