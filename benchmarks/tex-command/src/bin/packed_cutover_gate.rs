@@ -20,27 +20,102 @@ use tex_state::token::{Catcode, Token, TokenWord};
 static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
 fn main() {
-    if std::env::args().any(|argument| argument == "--mixed-stored-only") {
-        warmed_mixed_stored_cursor();
-        return;
-    }
     assert!(std::mem::size_of::<tex_state::DefinitionId<()>>() <= 8);
     assert!(std::mem::size_of::<tex_state::ResolvedMeaning<()>>() <= 24);
     assert!(std::mem::size_of::<tex_state::PrimitiveHandle<()>>() <= 16);
     assert!(std::mem::size_of::<tex_command::CurrentCommand<()>>() <= 144);
     assert!(std::mem::size_of::<DeliveryStatus>() <= 16);
-    ordinary_source_delivery();
-    packed_backup_and_replay();
-    warmed_backup_push_pop_throughput();
-    stored_token_replay();
-    warmed_mixed_stored_cursor();
-    warmed_short_interner_lookup();
-    warmed_primitive_resolution();
-    warmed_control_sequence_delivery();
-    macro_argument_matching();
-    warmed_keyword_mismatch_throughput();
-    destination_directed_warm_delivery();
+    let only = std::env::args().nth(1);
+    let only = only.as_deref().map(|row| {
+        if row == "--mixed-stored-only" {
+            "warmed_mixed_stored_cursor"
+        } else {
+            row.strip_prefix("--only=")
+                .expect("benchmark selector must be --only=<row>")
+        }
+    });
+    run_row(only, "ordinary_source_delivery", ordinary_source_delivery);
+    run_row(only, "packed_backup_and_replay", packed_backup_and_replay);
+    run_row(
+        only,
+        "warmed_backup_push_pop",
+        warmed_backup_push_pop_throughput,
+    );
+    run_row(only, "stored_token_replay", stored_token_replay);
+    run_row(
+        only,
+        "warmed_mixed_stored_cursor",
+        warmed_mixed_stored_cursor,
+    );
+    run_row(only, "known_name_lookup", warmed_short_interner_lookup);
+    run_row(only, "primitive_resolution", warmed_primitive_resolution);
+    run_row(
+        only,
+        "source_known_creating_delivery",
+        source_known_creating_delivery,
+    );
+    run_row(
+        only,
+        "source_known_probe_delivery",
+        source_known_probe_delivery,
+    );
+    run_row(
+        only,
+        "source_new_creating_delivery",
+        source_new_creating_delivery,
+    );
+    run_row(
+        only,
+        "source_unknown_probe_delivery",
+        source_unknown_probe_delivery,
+    );
+    run_row(
+        only,
+        "stored_control_sequence_delivery",
+        stored_control_sequence_delivery,
+    );
+    run_row(only, "macro_argument_matching", macro_argument_matching);
+    run_row(
+        only,
+        "warmed_keyword_mismatch",
+        warmed_keyword_mismatch_throughput,
+    );
+    run_row(
+        only,
+        "destination_directed_warm_delivery",
+        destination_directed_warm_delivery,
+    );
+    if let Some(only) = only {
+        assert!(
+            BENCHMARK_ROWS.contains(&only),
+            "unknown benchmark row {only}"
+        );
+    }
     println!("packed token/macro cutover gate: PASS");
+}
+
+const BENCHMARK_ROWS: &[&str] = &[
+    "ordinary_source_delivery",
+    "packed_backup_and_replay",
+    "warmed_backup_push_pop",
+    "stored_token_replay",
+    "warmed_mixed_stored_cursor",
+    "known_name_lookup",
+    "primitive_resolution",
+    "source_known_creating_delivery",
+    "source_known_probe_delivery",
+    "source_new_creating_delivery",
+    "source_unknown_probe_delivery",
+    "stored_control_sequence_delivery",
+    "macro_argument_matching",
+    "warmed_keyword_mismatch",
+    "destination_directed_warm_delivery",
+];
+
+fn run_row(only: Option<&str>, name: &str, row: fn()) {
+    if only.is_none_or(|only| only == name) {
+        row();
+    }
 }
 
 fn warmed_mixed_stored_cursor() {
@@ -112,7 +187,7 @@ fn warmed_primitive_resolution() {
     });
 }
 
-fn warmed_control_sequence_delivery() {
+fn source_known_creating_delivery() {
     const OPERATIONS: usize = 1_000_000;
     const NAME: &str = "deliveryidentity";
     with_universe(|universe| {
@@ -135,10 +210,105 @@ fn warmed_control_sequence_delivery() {
         }
         let elapsed = start.elapsed();
         println!(
-            "source_control_sequence_delivery throughput_ns_per_op={:.2}",
+            "source_known_creating_delivery operations={OPERATIONS} throughput_ns_per_op={:.2}",
             elapsed.as_nanos() as f64 / OPERATIONS as f64
         );
     });
+}
+
+fn source_known_probe_delivery() {
+    const OPERATIONS: usize = 1_000_000;
+    const NAME: &str = "deliveryidentity";
+    with_universe(|universe| {
+        let symbol = universe.intern(NAME).expect("control sequence name");
+        let mut command = CommandState::default();
+        open_source(&mut command, &format!(r"\{NAME} ").repeat(OPERATIONS));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let start = Instant::now();
+        for _ in 0..OPERATIONS {
+            let delivered = processor.get_next().unwrap().unwrap();
+            assert_eq!(delivered.control_sequence(), Some(symbol.symbol()));
+            black_box(delivered);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "source_known_probe_delivery operations={OPERATIONS} throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
+}
+
+fn source_new_creating_delivery() {
+    const OPERATIONS: usize = 65_536;
+    with_large_interner_universe(|universe| {
+        let source = unique_control_sequence_source("newname", OPERATIONS);
+        let mut command = CommandState::default();
+        open_source(&mut command, &source);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let start = Instant::now();
+        for _ in 0..OPERATIONS {
+            let delivered = processor.get_token().unwrap().unwrap();
+            assert!(delivered.control_sequence().is_some());
+            black_box(delivered);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "source_new_creating_delivery operations={OPERATIONS} throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
+}
+
+fn source_unknown_probe_delivery() {
+    const OPERATIONS: usize = 65_536;
+    with_large_interner_universe(|universe| {
+        let source = unique_control_sequence_source("probename", OPERATIONS);
+        let mut command = CommandState::default();
+        open_source(&mut command, &source);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let start = Instant::now();
+        for _ in 0..OPERATIONS {
+            let delivered = processor.get_next().unwrap().unwrap();
+            assert!(
+                delivered
+                    .spelling()
+                    .semantic_token()
+                    .is_undefined_control_sequence()
+            );
+            black_box(delivered);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "source_unknown_probe_delivery operations={OPERATIONS} throughput_ns_per_op={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64
+        );
+    });
+}
+
+fn stored_control_sequence_delivery() {
+    const OPERATIONS: usize = 1_000_000;
+    const NAME: &str = "deliveryidentity";
 
     with_universe(|universe| {
         let symbol = universe.intern(NAME).expect("control sequence name");
@@ -168,10 +338,27 @@ fn warmed_control_sequence_delivery() {
             elapsed = start.elapsed();
         });
         println!(
-            "stored_control_sequence_delivery throughput_ns_per_op={:.2}",
+            "stored_control_sequence_delivery operations={OPERATIONS} throughput_ns_per_op={:.2}",
             elapsed.as_nanos() as f64 / OPERATIONS as f64
         );
     });
+}
+
+fn unique_control_sequence_source(prefix: &str, operations: usize) -> String {
+    let mut source = String::with_capacity(operations.saturating_mul(prefix.len() + 10));
+    for index in 0..operations {
+        source.push('\\');
+        source.push_str(prefix);
+        let mut value = index;
+        let mut suffix = [b'a'; 8];
+        for byte in suffix.iter_mut().rev() {
+            *byte = b'a' + (value % 26) as u8;
+            value /= 26;
+        }
+        source.push_str(std::str::from_utf8(&suffix).expect("alphabetic suffix"));
+        source.push(' ');
+    }
+    source
 }
 
 fn warmed_backup_push_pop_throughput() {
@@ -454,6 +641,14 @@ fn macro_argument_matching() {
 
 fn with_universe(test: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>)) {
     let budget = InternerBudget::new(4_096, 4_096, 1 << 20).expect("benchmark interner budget");
+    tex_state::with_universe(budget, test).expect("benchmark universe");
+}
+
+fn with_large_interner_universe(
+    test: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>),
+) {
+    let budget =
+        InternerBudget::new(131_072, 131_072, 8 << 20).expect("large benchmark interner budget");
     tex_state::with_universe(budget, test).expect("benchmark universe");
 }
 

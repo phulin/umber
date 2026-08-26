@@ -50,16 +50,22 @@ interning; only an already-spilled pathological name constructs a temporary
 `String`.
 
 `packed_cutover_gate` additionally times one million warmed single-token
-backup/replay cycles, one million direct-source and stored-token
-control-sequence deliveries, one million name-based and packed immutable
-primitive resolutions, 16,384 warmed failed-keyword scans, and five million
+backup/replay cycles; known creating, known non-creating, and stored-token
+control-sequence deliveries; 65,536 genuinely new creating and unknown
+non-creating source names; one million name-based and packed immutable
+primitive resolutions; 16,384 warmed failed-keyword scans; and five million
 uniform stored-cursor calls split evenly across replay, macro replacement,
-macro argument, attempt, and durable owners. The mixed row reports absolute
+macro argument, attempt, and durable owners. These rows separate source decode,
+lookup/probe, TeX-visible creation, packed meaning delivery, backed-up raw
+delivery, and mixed packed-cursor traversal. The mixed row reports absolute
 calls, exact end-of-span retirements, one exact nonzero scalar rollback,
 elapsed time, and a semantic checksum. Stored replay loops assert zero
 allocation calls and requested bytes after their input storage has reached high
-water. Pass `--mixed-stored-only` to isolate that row under `perf stat` for
-absolute hardware cycles. Direct-source delivery retains its real
+water. Pass `--only=<row>` to run one named row in isolation under a
+hardware-counter tool such as `perf stat`; every timed row prints its operation
+count so the absolute counter can be normalized. The legacy
+`--mixed-stored-only` spelling remains an alias for the mixed stored-cursor
+row. Direct-source delivery retains its real
 append-only provenance rows, so its timing loop relies on the separate
 `command_allocations` rows for allocation comparison. Every timing row reports
 nanoseconds per complete operation for local before/after comparisons. The
