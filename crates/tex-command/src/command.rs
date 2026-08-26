@@ -247,15 +247,15 @@ impl<G> CurrentCommand<G> {
     }
 
     /// Resolves directly into the active delivery request's final slot.
-    pub(crate) fn resolve_into(
-        destination: &mut Option<Self>,
+    pub(crate) fn resolve_into<'destination>(
+        destination: &'destination mut Option<Self>,
         spelling: TracedTokenWord,
         delivery: DeliveryStamp,
         source_provenance: Option<SourceProvenance>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
-    ) {
+    ) -> &'destination mut Self {
         debug_assert!(destination.is_none());
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
@@ -325,6 +325,9 @@ impl<G> CurrentCommand<G> {
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             outer_recovery_space: false,
         });
+        destination
+            .as_mut()
+            .expect("command resolution initializes its destination")
     }
 
     /// Replaces the effective meaning while retaining the exact delivered

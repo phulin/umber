@@ -665,8 +665,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn get_next_character_code(
         &mut self,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let command = self.get_token()?;
-        if let Some(command) = &command
+        let mut destination = None;
+        match self.get_token_into(&mut destination)? {
+            super::DeliveryStatus::End => return Ok(None),
+            super::DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+        if let Some(command) = &destination
             && matches!(
                 command.spelling().semantic_token(),
                 Token::Char {
@@ -684,7 +689,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .alignment
                 .undo_delivery(command.alignment_adjustment());
         }
-        Ok(command)
+        Ok(destination)
     }
 
     /// Delivers one raw token for consumers which canonically permit a new
@@ -730,9 +735,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         while let Some(request) = self.state.take_error_recovery_request() {
             match request {
                 tex_state::print::ErrorRecoveryRequest::Delete(count) => {
+                    let mut deleted = None;
                     for _ in 0..count {
-                        if self.get_token()?.is_none() {
-                            break;
+                        match self.get_token_into(&mut deleted)? {
+                            super::DeliveryStatus::End => break,
+                            super::DeliveryStatus::Command => deleted = None,
+                            _ => unreachable!("ordinary token delivery returns only commands"),
                         }
                     }
                     let context = self.error_context();
@@ -777,9 +785,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         outer_horizontal: bool,
     ) -> Result<bool, CommandError> {
-        let Some(next) = self.get_token()? else {
-            return Ok(false);
-        };
+        let mut destination = None;
+        match self.get_token_into(&mut destination)? {
+            super::DeliveryStatus::End => return Ok(false),
+            super::DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+        let next = destination
+            .take()
+            .expect("command status initializes destination");
         if outer_horizontal && is_math_shift(&next) {
             Ok(true)
         } else {
@@ -797,9 +811,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §327 `back_error`, whose backup half lives here; the executor owns the
     /// accompanying ``Display math should end with $$`` diagnostic.
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
-        let Some(next) = self.get_x_token()? else {
-            return Ok(false);
-        };
+        let mut destination = None;
+        match self.get_x_token_into(&mut destination)? {
+            super::DeliveryStatus::End => return Ok(false),
+            super::DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }
+        let next = destination
+            .take()
+            .expect("command status initializes destination");
         if is_math_shift(&next) {
             Ok(true)
         } else {
@@ -1193,6 +1213,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
 
         if unbalanced {
+            let mut discarded = None;
             while self
                 .command
                 .input
@@ -1220,7 +1241,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 })
                 .unwrap_or(false)
             {
-                self.get_token()?.ok_or(CommandError::input_invariant())?;
+                match self.get_token_into(&mut discarded)? {
+                    super::DeliveryStatus::End => {
+                        return Err(CommandError::input_invariant());
+                    }
+                    super::DeliveryStatus::Command => discarded = None,
+                    _ => unreachable!("ordinary token delivery returns only commands"),
+                }
             }
         }
 
@@ -1596,7 +1623,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ) {
                 self.record_meaning_lookup();
             }
-            CurrentCommand::<G>::resolve_into(
+            let command = CurrentCommand::<G>::resolve_into(
                 destination,
                 spelling,
                 delivery_stamp,
@@ -1610,29 +1637,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 crate::processor::ScannerStatus::Normal
             ));
             if raw_delivery.suppresses_expandable_control_sequence() {
-                destination
-                    .as_mut()
-                    .expect("raw destination was initialized")
-                    .suppress_expandable();
+                command.suppress_expandable();
             }
             // Outer-validity recovery canonically backs up this exact raw
             // delivery before substituting its recovery space.
             self.last_delivery = Some(delivery_stamp);
-            self.check_outer_validity_entry(
-                destination
-                    .as_mut()
-                    .expect("raw destination was initialized"),
-            )?;
+            self.check_outer_validity_entry(command)?;
             let previous_align_state = self.command.alignment.align_state;
-            let adjustment = self.command.alignment.classify_delivery(
-                destination
-                    .as_mut()
-                    .expect("raw destination was initialized"),
-            );
-            destination
-                .as_mut()
-                .expect("raw destination was initialized")
-                .set_alignment_adjustment(adjustment);
+            self.command.alignment.classify_delivery(command);
+            let adjustment = command.alignment_adjustment();
             if self.command.alignment.active_alignment.is_some()
                 && !matches!(
                     adjustment,
@@ -1678,11 +1691,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 adjustment,
                 crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
             ) {
-                self.observe_raw_delivery(
-                    destination
-                        .as_ref()
-                        .expect("raw destination was initialized"),
-                );
+                self.observe_raw_delivery(command);
             }
             return Ok(super::DeliveryStatus::Command);
         }

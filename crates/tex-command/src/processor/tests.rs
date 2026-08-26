@@ -1,7 +1,21 @@
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::{CommandHostCapabilities, CommandState};
+use crate::{
+    AlignmentIdentity, CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation,
+    CommandObserver, CommandState, DeliveryStatus,
+};
+
+#[derive(Default)]
+struct RecordingObserver {
+    observations: Vec<CommandObservation>,
+}
+
+impl CommandObserver for RecordingObserver {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.observations.push(observation);
+    }
+}
 
 #[test]
 fn processor_episode_borrows_generation_and_delivers_one_current_command() {
@@ -34,6 +48,151 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
             }
         );
         assert!(processor.get_x_token().expect("end").is_none());
+    });
+}
+
+#[test]
+fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
+    crate::test_harness::with_universe(|universe| {
+        let brace = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [brace]);
+        let initial_align_state = command.alignment.align_state;
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let mut first = None;
+        assert_eq!(
+            processor.get_next_into(&mut first).expect("first delivery"),
+            DeliveryStatus::Command
+        );
+        let first = first.expect("first command");
+        let first_stamp = first.delivery_stamp();
+        let stale_copy = first.copy_for_backup();
+        assert_eq!(
+            processor.command.alignment.align_state,
+            initial_align_state + 1
+        );
+
+        processor.back_input(first).expect("first backup");
+        assert_eq!(
+            processor.command.alignment.align_state,
+            initial_align_state
+        );
+        assert_eq!(
+            processor.back_input(stale_copy),
+            Err(crate::CommandError::StaleDelivery)
+        );
+        assert_eq!(
+            processor.command.alignment.align_state,
+            initial_align_state
+        );
+
+        let mut replay = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut replay)
+                .expect("backup redelivery"),
+            DeliveryStatus::Command
+        );
+        let replay = replay.expect("replayed command");
+        assert_eq!(replay.spelling().semantic_token(), brace);
+        assert_ne!(replay.delivery_stamp(), first_stamp);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            initial_align_state + 1
+        );
+    });
+}
+
+#[test]
+fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .assign_code(
+                tex_state::env::CodeTableKind::Catcode,
+                '{',
+                i64::from(Catcode::BeginGroup as u8),
+                tex_state::env::AssignmentScope::Global,
+            )
+            .expect("opening-brace catcode");
+        let mut command = CommandState::default();
+        command.begin_alignment(AlignmentIdentity::new(7));
+        let source = command
+            .register_source(
+                crate::SourceRegistration::new(crate::RegisteredSourceKind::Generated, &b"{"[..])
+                    .with_name("raw-order.tex"),
+            )
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let (stamp, source_range, source_location) = {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                universe,
+                &mut capabilities,
+                &mut diagnostic_effects,
+            )
+            .with_observer(&mut observer);
+
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_next_into(&mut destination)
+                    .expect("raw delivery"),
+                DeliveryStatus::Command
+            );
+            let delivered = destination.as_ref().expect("delivered command");
+            (
+                delivered.delivery_stamp(),
+                delivered.source_range().expect("source range"),
+                delivered.source_location().expect("source location"),
+            )
+        };
+
+        let alignment_index = observer
+            .observations
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Alignment(record)
+                        if record.transition == "begin_group"
+                )
+            })
+            .expect("alignment observation");
+        let (raw_index, raw) = observer
+            .observations
+            .iter()
+            .enumerate()
+            .find_map(|(index, observation)| match observation {
+                CommandObservation::Command(record)
+                    if record.boundary == CommandDeliveryBoundary::Raw =>
+                {
+                    Some((index, record))
+                }
+                _ => None,
+            })
+            .expect("raw observation");
+        assert!(alignment_index < raw_index);
+        assert_eq!(raw.provenance.input_level, stamp.input_level());
+        assert_eq!(raw.provenance.position, stamp.position());
+        assert_eq!(raw.provenance.delivery_sequence, stamp.sequence());
+        assert_eq!(raw.provenance.source_range, Some(source_range));
+        assert_eq!(raw.provenance.source_location, Some(source_location));
     });
 }
 

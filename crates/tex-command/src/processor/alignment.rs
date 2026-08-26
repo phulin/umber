@@ -784,8 +784,8 @@ impl<G> AlignmentDeliveryState<G> {
     pub(crate) fn classify_delivery(
         &mut self,
         command: &mut CurrentCommand<G>,
-    ) -> AlignmentDeliveryAdjustment {
-        match command.spelling().semantic_token() {
+    ) {
+        let adjustment = match command.spelling().semantic_token() {
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
@@ -832,7 +832,8 @@ impl<G> AlignmentDeliveryState<G> {
                 self.intercept_delimiter(command, delimiter)
             }
             _ => AlignmentDeliveryAdjustment::None,
-        }
+        };
+        command.set_alignment_adjustment(adjustment);
     }
 
     /// TeX82 §325's own brace rule, stated over `cur_tok` alone:
