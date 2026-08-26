@@ -625,6 +625,19 @@ impl<G> SaveJournal<G> {
         &self.operation_entries[operation.operation_position as usize..]
     }
 
+    /// Returns one detached entry from an active operation's suffix.
+    ///
+    /// Rollback uses this narrow accessor so it can release the journal borrow
+    /// before mutating the corresponding state cell, without copying the whole
+    /// suffix into a temporary allocation.
+    pub(crate) fn operation_entry(
+        &self,
+        operation: &StateOperation<G>,
+        index: usize,
+    ) -> Option<JournalEntry<G>> {
+        self.operation_suffix(operation).get(index).cloned()
+    }
+
     pub(crate) fn truncate_checkpoint(&mut self, cursor: JournalCursor<G>) {
         assert_eq!(
             cursor.owner, self.owner,

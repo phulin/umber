@@ -139,16 +139,21 @@ fn hot_state_gate() -> (
                 direct_reads(&context, symbol)
             })
         };
-        let write_mark = universe.journal_cursor().expect("warm journal cursor");
-        {
+        let write_operation = universe
+            .begin_state_operation()
+            .expect("warm state operation");
+        for value in 0..WARM_WRITES {
             let mut context = universe.command_context().expect("write context");
             context
-                .assign_count(0, 1, AssignmentScope::Global)
-                .expect("prime one rollback slice");
+                .assign_count(0, value as i32, AssignmentScope::Global)
+                .expect("prime the rollback lane high-water");
         }
         universe
-            .restore_state(write_mark)
-            .expect("restore priming write");
+            .restore_state(write_operation)
+            .expect("restore priming writes");
+        let write_operation = universe
+            .begin_state_operation()
+            .expect("warmed state operation");
         let writes = measure(HotCoreAllocationOwner::SemanticApply, || {
             for value in 0..WARM_WRITES {
                 {
@@ -157,10 +162,10 @@ fn hot_state_gate() -> (
                         .assign_count(0, value as i32, AssignmentScope::Global)
                         .expect("same admitted count cell remains writable");
                 }
-                universe
-                    .restore_state(write_mark)
-                    .expect("discard one operation-local journal slice");
             }
+            universe
+                .restore_state(write_operation)
+                .expect("discard the operation-local journal suffix");
             black_box(universe.count(0).expect("read restored count"));
         });
 
@@ -205,20 +210,29 @@ fn hot_state_gate() -> (
         });
         let root = universe.publish_page_nodes(&[Node::Penalty(17)]);
         universe.assign_page_box_global(0, root);
-        let node_mark = universe.journal_cursor().expect("node journal cursor");
+        let operation = universe
+            .begin_state_operation()
+            .expect("warm node operation");
         for _ in 0..WARM_WRITES {
             let alias = universe.copy_box_to_page(0).expect("warm box alias remains live");
             universe.replace_page_box(0, alias);
-            universe.restore_state(node_mark).expect("restore warm node write");
         }
+        universe
+            .restore_state(operation)
+            .expect("restore warm node writes");
         let graph_before = node_graph_census();
+        let operation = universe
+            .begin_state_operation()
+            .expect("warmed node operation");
         let node_graph = measure(HotCoreAllocationOwner::SemanticApply, || {
             for _ in 0..WARM_WRITES {
                 let alias = universe.copy_box_to_page(0).expect("box alias remains live");
                 universe.replace_page_box(0, alias);
-                universe.restore_state(node_mark).expect("restore node write");
                 black_box(alias);
             }
+            universe
+                .restore_state(operation)
+                .expect("restore node writes");
         });
         let graph = node_graph_census().saturating_sub(graph_before);
         assert_eq!(graph.physical_copy_rows, 0);

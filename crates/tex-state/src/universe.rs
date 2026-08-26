@@ -171,7 +171,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
 /// Aggregate rollback roots retained while one shipout is speculative.
 struct ShipoutRollback<G> {
     state: StateOperation<G>,
-    durable: NodeArenaCursor<G>,
+    durable: NodeArenaCursor<PageLifetime>,
     page_nodes: NodeArenaCursor<PageLifetime>,
     page: PageBuilderState,
     pdf: crate::pdf::PdfStateSnapshot<G>,

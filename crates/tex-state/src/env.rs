@@ -1660,13 +1660,12 @@ impl<G> DenseState<G> {
         operation: StateOperation<G>,
     ) -> Result<(), StateError> {
         self.validate_operation_restore(&operation)?;
-        for entry in self
-            .journal
-            .operation_suffix(&operation)
-            .to_vec()
-            .into_iter()
-            .rev()
-        {
+        let suffix_len = self.journal.operation_suffix(&operation).len();
+        for index in (0..suffix_len).rev() {
+            let entry = self
+                .journal
+                .operation_entry(&operation, index)
+                .expect("operation suffix length remains stable during replay");
             match entry {
                 JournalEntry::Mutation(mutation) => self.write_cell(
                     mutation.cell(),

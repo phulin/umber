@@ -79,19 +79,24 @@ fn direct_state_access(c: &mut Criterion) {
             });
         }
 
-        let write_mark = universe.journal_cursor().expect("write cursor");
-        {
+        let write_operation = universe
+            .begin_state_operation()
+            .expect("prime state operation");
+        for value in 0..WARM_WRITES {
             let mut context = universe.command_context().expect("write context");
             context
-                .assign_count(0, 1, AssignmentScope::Global)
-                .expect("prime write slice");
+                .assign_count(0, value as i32, AssignmentScope::Global)
+                .expect("prime the rollback lane high-water");
         }
         universe
-            .restore_state(write_mark)
-            .expect("restore priming write");
+            .restore_state(write_operation)
+            .expect("restore priming writes");
         let mut value = 0_i32;
         c.bench_function("direct_state/same_cell_global_write", |b| {
             b.iter(|| {
+                let operation = universe
+                    .begin_state_operation()
+                    .expect("warmed state operation");
                 for _ in 0..WARM_WRITES {
                     value = value.wrapping_add(1);
                     {
@@ -100,10 +105,10 @@ fn direct_state_access(c: &mut Criterion) {
                             .assign_count(0, black_box(value), AssignmentScope::Global)
                             .expect("write admitted count");
                     }
-                    universe
-                        .restore_state(write_mark)
-                        .expect("discard operation-local journal slice");
                 }
+                universe
+                    .restore_state(operation)
+                    .expect("discard the operation-local journal suffix");
                 black_box(universe.count(0).expect("read restored count"));
             });
         });
@@ -152,17 +157,21 @@ fn node_graph_transfer(c: &mut Criterion) {
     with_universe(engine_budget(), |universe| {
         let root = universe.publish_page_nodes(&[Node::Penalty(17)]);
         universe.assign_page_box_global(0, root);
-        let mark = universe.journal_cursor().expect("node journal cursor");
         let mut group = c.benchmark_group("node_graph");
         group.throughput(Throughput::Elements(WARM_WRITES as u64));
         group.bench_function("warmed_transfer_and_alias", |b| {
             b.iter(|| {
+                let operation = universe
+                    .begin_state_operation()
+                    .expect("warmed node operation");
                 for _ in 0..WARM_WRITES {
                     let alias = universe.copy_box_to_page(0).expect("live box alias");
                     universe.replace_page_box(0, alias);
-                    universe.restore_state(mark).expect("restore node write");
                     black_box(alias);
                 }
+                universe
+                    .restore_state(operation)
+                    .expect("restore node writes");
             });
         });
         group.finish();
