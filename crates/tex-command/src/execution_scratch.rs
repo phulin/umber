@@ -1140,14 +1140,6 @@ impl<G> ExecutionScratch<G> {
         Ok(())
     }
 
-    pub(crate) fn advanced_replay(
-        &self,
-        mut replay: MacroReplayCursor<G>,
-    ) -> Result<MacroReplayCursor<G>, ScratchError> {
-        self.advance_replay(&mut replay)?;
-        Ok(replay)
-    }
-
     pub(crate) fn argument_len(&self, range: MacroArgumentRange<G>) -> Result<usize, ScratchError> {
         self.validate_argument_range(range)?;
         Ok(range.len as usize)

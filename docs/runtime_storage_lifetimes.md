@@ -131,6 +131,14 @@ engine session has a distinct session epoch layered over those builtins.
 Dynamic names are never inserted into a shared process-global mutable
 interner. A session-local `Symbol` cannot be admitted through another session.
 
+The lookup index remains the authority for spelling equality. One
+allocation-free, exact 64-bit recent key accelerates successful names of at
+most seven UTF-8 bytes: it packs the complete bytes, length, and namespace, so
+a hit performs neither hashing nor `memcmp`. The cache stores only the stable
+slot already issued by the append-only epoch and is cleared at whole-epoch
+retirement. It is not a second identity table, a revision owner, or durable
+state.
+
 Append-only does not mean unbounded daemon retention. A bounded daemon:
 
 - gives each independent job a fresh session epoch;
@@ -297,6 +305,9 @@ durable allocation, moves the words into a private `Rc<[TokenWord]>`, and
 immediately recycles the builder chain. The arena does not retain the published
 payload. A `TokenListView` or cursor owns a cloned or moved handle, so active
 input and expansion replay keep exactly the source they can still read.
+Sequential delivery dereferences and advances that already-owned cursor in
+place. It does not clone the token-list handle merely to read or validate one
+word; diagnostic lookahead borrows the same cursor without advancing it.
 
 Reads, moves, restoration, warmed reuse, and explicit alias clones allocate no
 heap memory. An `Rc` count change is not construction of a new heap owner.

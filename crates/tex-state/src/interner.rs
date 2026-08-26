@@ -6,6 +6,7 @@
 //! do not expose a cursor which can truncate this storage.
 
 use ahash::{AHashMap, AHasher};
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -261,6 +262,15 @@ enum EntryKind {
     Spelling,
 }
 
+/// Exact inline key for the short names with temporal locality in command
+/// delivery. Seven bytes, their length, and the complete entry namespace fit
+/// in one scalar, so a hit needs neither hashing nor a byte comparison.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ShortLookup {
+    key: u64,
+    slot: u32,
+}
+
 #[derive(Debug)]
 struct Entry {
     start: u32,
@@ -319,6 +329,7 @@ pub struct Interner {
     arena: String,
     entries: Vec<Entry>,
     index: AHashMap<u64, Vec<u32>>,
+    short_lookup: Cell<Option<ShortLookup>>,
     control_sequences: ControlSequenceLedger,
 }
 
@@ -402,6 +413,7 @@ impl Interner {
             arena: String::new(),
             entries: Vec::new(),
             index: AHashMap::new(),
+            short_lookup: Cell::new(None),
             control_sequences: ControlSequenceLedger::default(),
         }
     }
@@ -584,7 +596,15 @@ impl Interner {
     }
 
     fn lookup_slot(&self, kind: EntryKind, value: &str) -> Option<u32> {
-        self.index
+        let short_key = short_lookup_key(kind, value);
+        if let Some(key) = short_key
+            && let Some(cached) = self.short_lookup.get()
+            && cached.key == key
+        {
+            return Some(cached.slot);
+        }
+        let slot = self
+            .index
             .get(&lookup_hash(kind, value))?
             .iter()
             .copied()
@@ -592,7 +612,11 @@ impl Interner {
                 self.entries
                     .get(slot as usize)
                     .is_some_and(|entry| entry.kind == kind && self.entry_text(entry) == value)
-            })
+            });
+        if let (Some(key), Some(slot)) = (short_key, slot) {
+            self.short_lookup.set(Some(ShortLookup { key, slot }));
+        }
+        slot
     }
 
     /// Resolves a session-qualified control-sequence identity.
@@ -732,6 +756,7 @@ impl Interner {
         self.arena = String::new();
         self.entries = Vec::new();
         self.index = AHashMap::new();
+        self.short_lookup.set(None);
         self.control_sequences = ControlSequenceLedger::default();
         self.usage = InternerUsage::default();
         self.retired = true;
@@ -808,6 +833,26 @@ fn lookup_hash(kind: EntryKind, value: &str) -> u64 {
     kind.hash(&mut hasher);
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+fn short_lookup_key(kind: EntryKind, value: &str) -> Option<u64> {
+    let bytes = value.as_bytes();
+    if bytes.len() > 7 {
+        return None;
+    }
+    let tag = match kind {
+        EntryKind::ControlSequence(ControlSequenceKind::Null) => 0,
+        EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter) => 1,
+        EntryKind::ControlSequence(ControlSequenceKind::Named) => 2,
+        EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter) => 3,
+        EntryKind::ControlSequence(ControlSequenceKind::Internal) => 4,
+        EntryKind::Spelling => 5,
+    };
+    let mut key = tag | (bytes.len() as u64) << 3;
+    for (index, &byte) in bytes.iter().enumerate() {
+        key |= u64::from(byte) << (8 + index * 8);
+    }
+    Some(key)
 }
 
 #[cfg(test)]

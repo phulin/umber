@@ -842,7 +842,7 @@ pub(crate) struct BackedUpToken {
 }
 
 /// Semantic treatment applied while a token level delivers its payload.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TokenBehavior {
     Ordinary,
     /// A TeX recovery insertion that must retire before a scanner backs its

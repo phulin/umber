@@ -51,13 +51,11 @@ pub(crate) const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
 /// following character instead of producing a token for it.
 const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
-struct StoredTokenDelivery<G> {
+struct StoredTokenDelivery {
     spelling: TracedTokenWord,
     position: u64,
     behavior: TokenBehavior,
     source_provenance: Option<SourceProvenance>,
-    advanced_replay: Option<crate::execution_scratch::MacroReplayCursor<G>>,
-    advanced_durable: Option<tex_state::TokenListCursor<G>>,
 }
 
 use super::alignment::AlignmentDeliveryState;
@@ -203,7 +201,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return None;
                 };
                 (!matches!(cursor.behavior, TokenBehavior::VTemplate)
-                    && Self::next_stored_token(
+                    && Self::peek_stored_token(
                         cursor,
                         &self.state,
                         self.command.attempt.arena(),
@@ -376,7 +374,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if Self::next_stored_token(
+            if Self::peek_stored_token(
                 cursor,
                 &self.state,
                 self.command.attempt.arena(),
@@ -1177,7 +1175,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            InputLevel::Tokens(cursor) => Self::next_stored_token(
+            InputLevel::Tokens(cursor) => Self::peek_stored_token(
                 cursor,
                 &self.state,
                 self.command.attempt.arena(),
@@ -1194,7 +1192,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     level,
                     InputLevel::Tokens(cursor)
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                            && Self::next_stored_token(
+                            && Self::peek_stored_token(
                                 cursor,
                                 &self.state,
                                 self.command.attempt.arena(),
@@ -1221,7 +1219,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             } =>
                     {
                         Some(
-                            Self::next_stored_token(
+                            Self::peek_stored_token(
                                 cursor,
                                 &self.state,
                                 self.command.attempt.arena(),
@@ -1256,7 +1254,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || Self::next_stored_token(
+            || Self::peek_stored_token(
                 cursor,
                 &self.state,
                 self.command.attempt.arena(),
@@ -1932,47 +1930,37 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 ActiveInput::Tokens { identity, index } => {
                     let next = {
-                        let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last()
-                        else {
+                        let attempt = self.command.attempt.arena();
+                        let scratch = &self.command.scratch;
+                        let roots = std::sync::Arc::make_mut(&mut self.command.roots);
+                        let replay_lane = &roots.input.replay;
+                        let Some(InputLevel::Tokens(cursor)) = roots.input.levels.last_mut() else {
                             unreachable!("inspected token level remains a token level")
                         };
                         debug_assert_eq!(cursor.identity(), identity);
                         debug_assert_eq!(cursor.position(), index);
-                        Self::next_stored_token(
+                        let next = Self::next_stored_token(
                             cursor,
                             &self.state,
-                            self.command.attempt.arena(),
-                            &self.command.input.replay,
-                            &self.command.scratch,
-                        )
+                            attempt,
+                            replay_lane,
+                            scratch,
+                        );
+                        if next.is_some()
+                            && cursor.frame.advance().map(|position| position as usize)
+                                != Some(index)
+                        {
+                            return Err(CommandError::input_invariant());
+                        }
+                        next
                     };
                     if let Some(StoredTokenDelivery {
                         spelling,
                         position,
                         behavior,
                         source_provenance,
-                        advanced_replay,
-                        advanced_durable,
                     }) = next
                     {
-                        let InputLevel::Tokens(cursor) = self
-                            .command
-                            .input
-                            .levels
-                            .last_mut()
-                            .expect("inspected input level remains live")
-                        else {
-                            unreachable!("inspected token level remains a token level");
-                        };
-                        if cursor.frame.advance().map(|position| position as usize) != Some(index) {
-                            return Err(CommandError::input_invariant());
-                        }
-                        if let TokenPayload::MacroArgument { replay, .. } = &mut cursor.payload {
-                            *replay = advanced_replay.ok_or_else(CommandError::input_invariant)?;
-                        }
-                        if let TokenPayload::DurableList { cursor, .. } = &mut cursor.payload {
-                            *cursor = advanced_durable.ok_or_else(CommandError::input_invariant)?;
-                        }
                         return Ok(Some(DeliveredToken {
                             spelling,
                             level: identity,
@@ -2221,62 +2209,61 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn next_stored_token(
+        cursor: &mut TokenCursor<G>,
+        stores: &tex_state::CommandContext<'_, G>,
+        attempt: &crate::attempt::AttemptArena<G>,
+        replay_lane: &crate::input::ReplayLane<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+    ) -> Option<StoredTokenDelivery> {
+        let delivery = Self::peek_stored_token(cursor, stores, attempt, replay_lane, scratch)?;
+        match &mut cursor.payload {
+            TokenPayload::MacroArgument { replay, .. } => {
+                scratch.advance_replay(replay).ok()?;
+            }
+            TokenPayload::DurableList { cursor, .. } => {
+                cursor.advance().then_some(())?;
+            }
+            TokenPayload::Replay { .. }
+            | TokenPayload::MacroReplacement { .. }
+            | TokenPayload::AttemptList { .. } => {}
+        }
+        Some(delivery)
+    }
+
+    fn peek_stored_token(
         cursor: &TokenCursor<G>,
         stores: &tex_state::CommandContext<'_, G>,
         attempt: &crate::attempt::AttemptArena<G>,
         replay_lane: &crate::input::ReplayLane<G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Option<StoredTokenDelivery<G>> {
+    ) -> Option<StoredTokenDelivery> {
         let index = cursor.position();
         let position = u64::try_from(index).ok()?;
-        let (spelling, advanced_replay, advanced_durable) = match &cursor.payload {
-            TokenPayload::Replay { replay, .. } => (replay_lane.get(*replay, index), None, None),
-            TokenPayload::MacroReplacement { definition, .. } => (
-                stores
-                    .definition(definition.clone())
-                    .replacement_text()
-                    .get(index)
-                    .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
-                None,
-                None,
-            ),
-            TokenPayload::MacroArgument { replay, .. } => (
-                scratch
-                    .replay_word(*replay)
-                    .ok()
-                    .map(|spelling| (spelling, None)),
-                scratch.advanced_replay(*replay).ok(),
-                None,
-            ),
-            TokenPayload::AttemptList { list, .. } => (
-                attempt
-                    .token_word(*list, index)
-                    .ok()
-                    .map(|spelling| (spelling, None)),
-                None,
-                None,
-            ),
-            TokenPayload::DurableList { cursor, .. } => {
-                let spelling = stores
-                    .token_list_cursor_word(cursor.clone())
-                    .ok()
-                    .map(|word| (TracedTokenWord::from_parts(word, OriginId::UNKNOWN), None));
-                let mut advanced = cursor.clone();
-                let advanced = stores
-                    .advance_token_list_cursor(&mut advanced)
-                    .ok()
-                    .map(|()| advanced);
-                (spelling, None, advanced)
-            }
+        let spelling = match &cursor.payload {
+            TokenPayload::Replay { replay, .. } => replay_lane.get(*replay, index),
+            TokenPayload::MacroReplacement { definition, .. } => stores
+                .definition(definition.clone())
+                .replacement_text()
+                .get(index)
+                .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
+            TokenPayload::MacroArgument { replay, .. } => scratch
+                .replay_word(*replay)
+                .ok()
+                .map(|spelling| (spelling, None)),
+            TokenPayload::AttemptList { list, .. } => attempt
+                .token_word(*list, index)
+                .ok()
+                .map(|spelling| (spelling, None)),
+            TokenPayload::DurableList { cursor, .. } => cursor
+                .current_word()
+                .map(|word| (TracedTokenWord::from_parts(word, OriginId::UNKNOWN), None)),
         };
         let spelling = spelling?;
         Some(StoredTokenDelivery {
             spelling: spelling.0,
             position,
-            behavior: cursor.behavior.clone(),
+            behavior: cursor.behavior,
             source_provenance: spelling.1,
-            advanced_replay,
-            advanced_durable,
         })
     }
 
@@ -2308,7 +2295,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
-                        && Self::next_stored_token(
+                        && Self::peek_stored_token(
                             cursor,
                             &self.state,
                             self.command.attempt.arena(),

@@ -66,6 +66,30 @@ fn control_sequence_names_and_token_spellings_share_only_epoch_resources() {
 }
 
 #[test]
+fn exact_short_lookup_cache_preserves_namespaces_and_retirement() {
+    let mut interner = roomy();
+    let named = interner.intern("par").expect("named control sequence");
+    let internal = interner
+        .intern_internal("par")
+        .expect("internal control sequence");
+    let spelling = interner.intern_spelling("par").expect("retained spelling");
+
+    for _ in 0..10_000 {
+        assert_eq!(interner.known("par"), Some(named));
+    }
+    for _ in 0..10_000 {
+        assert_eq!(interner.get_spelling("par"), Some(spelling));
+    }
+    for _ in 0..10_000 {
+        assert_eq!(interner.intern_internal("par"), Ok(internal));
+    }
+
+    interner.retire().expect("retire epoch");
+    assert_eq!(interner.known("par"), None);
+    assert_eq!(interner.get_spelling("par"), None);
+}
+
+#[test]
 fn active_named_and_internal_namespaces_never_mutate_an_issued_identity() {
     let mut interner = roomy();
     let named = interner.intern("~").expect("named control symbol");

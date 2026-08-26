@@ -120,10 +120,9 @@ fn cross_chunk_replay_restarts_and_streaming_identity_are_exact() {
 
         let mut cursor = view.cursor();
         for expected in &expected {
-            assert_eq!(arena.cursor_word(cursor.clone()), Ok(*expected));
-            arena.advance_cursor(&mut cursor).expect("advance cursor");
+            assert_eq!(cursor.next_word(), Some(*expected));
         }
-        assert!(arena.cursor_word(cursor).is_err());
+        assert_eq!(cursor.next_word(), None);
 
         let mut view_hash = DefaultHasher::new();
         view.hash(&mut view_hash);

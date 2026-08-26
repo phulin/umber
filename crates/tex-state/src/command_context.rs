@@ -4,8 +4,7 @@ use crate::InteractionMode;
 use crate::definition_arena::{DefinitionId, DefinitionView};
 use crate::dependency::{DependencyKey, DependencyRuntime, DependencyValue, TrackedRegionBarrier};
 use crate::durable_arena::{
-    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListCursor, TokenListId,
-    TokenListView,
+    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
 use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
@@ -874,22 +873,6 @@ impl<'a, G> CommandContext<'a, G> {
         builder: TokenListBuilder<G>,
     ) -> Result<(), DurableAllocationError> {
         self.admitted.discard_token_list_builder(builder)
-    }
-
-    #[inline(always)]
-    pub fn token_list_cursor_word(
-        &self,
-        cursor: TokenListCursor<G>,
-    ) -> Result<TokenWord, DurableAllocationError> {
-        self.admitted.token_list_cursor_word(cursor)
-    }
-
-    #[inline(always)]
-    pub fn advance_token_list_cursor(
-        &self,
-        cursor: &mut TokenListCursor<G>,
-    ) -> Result<(), DurableAllocationError> {
-        self.admitted.advance_token_list_cursor(cursor)
     }
 
     #[inline(always)]

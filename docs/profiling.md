@@ -829,6 +829,31 @@ replacement total is 7.63% (2.74% and 4.89%; the typed entry is below 0.05%).
 No meaning cache, semantic shortcut, corpus change, or guard change is part of
 the optimization.
 
+Issue `umber2-xuty` then isolated the remaining stored-token and interner
+costs. Exact c167 ancestry put stored-token delivery beneath `scan_toks`, macro
+definition scanning, scalar scanners, expansion, and main control. It also
+assigned 1.32 profile points of interner lookup to repeated exact `par` lookup
+during macro argument matching, establishing the required short-name temporal
+locality before adding an accelerator.
+
+Durable delivery now borrows and advances its already-owning token cursor
+directly, with no per-word `Rc`/accounting clones or temporary advanced cursor.
+The session interner retains one exact packed recent key for successful names
+up to seven UTF-8 bytes; a hit compares the complete scalar key and bypasses
+both hashing and `memcmp`. Five focused optimized runs reduced median stored
+delivery from 164.49 to 123.27 ns/token (25.1%) and median warmed `par` lookup
+from 48.69 to 17.69 ns (63.7%); both allocation scopes remained zero.
+
+A same-host authenticated 20M capture preserved the exact work vector
+`(20000000,19913119,2218327,6020965,16785710,4011)` and lost zero samples.
+Against the retained c167 binary, stored-token self time fell from 4.23% to
+2.67%, interner slot lookup from 3.58% to 0.62%, and interner hashing from
+0.98% to 0.03%. No interner caller remained in sampled `memcmp`; its remaining
+3.00% belonged to primitive resolution and distribution work. Candidate and
+reference perf walls were 13.20 and 14.21 seconds, but the candidate includes
+two post-c167 integration fixes, so the symbol reductions and focused controls,
+not that whole-run wall delta, are the issue-local CPU evidence.
+
 ## Structural provenance lifecycle
 
 A profiling-feature CLI run with `--profiling-stats` emits one

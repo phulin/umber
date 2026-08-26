@@ -2,8 +2,7 @@
 
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 use crate::durable_arena::{
-    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListCursor, TokenListId,
-    TokenListView,
+    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
 use crate::env::{DenseState, DynamicMemoryRoot, StateError};
 use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
@@ -387,20 +386,6 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         builder: TokenListBuilder<G>,
     ) -> Result<(), DurableAllocationError> {
         self.generation.token_lists_mut().discard_builder(builder)
-    }
-
-    pub(crate) fn token_list_cursor_word(
-        &self,
-        cursor: TokenListCursor<G>,
-    ) -> Result<TokenWord, DurableAllocationError> {
-        self.generation.token_lists().cursor_word(cursor)
-    }
-
-    pub(crate) fn advance_token_list_cursor(
-        &self,
-        cursor: &mut TokenListCursor<G>,
-    ) -> Result<(), DurableAllocationError> {
-        self.generation.token_lists().advance_cursor(cursor)
     }
 
     pub(crate) fn allocate_glue(

@@ -1698,6 +1698,14 @@ retain their exact values, with disjoint source, `everyeof`, and Umber replay
 kinds. Flags represent noexpand suppression, terminal-stop retirement, and
 retained v-template retirement independently of storage.
 
+Stored delivery separates borrowed lookahead from consuming delivery. The
+lookahead path reads through the live payload coordinate without cloning its
+owner. The consuming path advances a durable `TokenListCursor` or macro replay
+cursor in place and advances the packed input frame under the same admitted
+mutable command root. It returns only the delivered spelling, provenance, and
+copy-only behavior; no temporary advanced cursor or shared token-list alias is
+constructed per word.
+
 `CommandState::push_token_level` is the single live admission boundary.
 Transient insertions, backup/noexpand levels, alignment templates, stored
 every-hooks, output replay, and other source-adjacent replay stream their words

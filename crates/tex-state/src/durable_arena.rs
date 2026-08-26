@@ -277,6 +277,33 @@ impl<G> TokenListCursor<G> {
     pub fn list(&self) -> TokenListId<G> {
         self.list.clone()
     }
+
+    /// Delivers and advances one word through this cursor's already-owned
+    /// immutable payload. The cursor itself is the lifetime proof, so the hot
+    /// sequential path needs no temporary shared-owner clone or arena lookup.
+    #[must_use]
+    pub fn next_word(&mut self) -> Option<TokenWord> {
+        let word = self.current_word()?;
+        self.offset += 1;
+        Some(word)
+    }
+
+    /// Borrows the word at the current sequential position without consuming
+    /// it. This supports canonical lookahead without cloning the exact owner.
+    #[must_use]
+    pub fn current_word(&self) -> Option<TokenWord> {
+        self.list.words.get(self.offset as usize).copied()
+    }
+
+    /// Advances a cursor after a successful borrowed lookahead.
+    #[must_use]
+    pub fn advance(&mut self) -> bool {
+        if self.offset as usize >= self.list.words.len() {
+            return false;
+        }
+        self.offset += 1;
+        true
+    }
 }
 impl<G> PartialEq for TokenListCursor<G> {
     fn eq(&self, other: &Self) -> bool {
@@ -378,14 +405,7 @@ impl<G> Iterator for TokenListWords<G> {
     type Item = TokenWord;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let word = self
-            .cursor
-            .list
-            .words
-            .get(self.cursor.offset as usize)
-            .copied()?;
-        self.cursor.offset += 1;
-        Some(word)
+        self.cursor.next_word()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -630,27 +650,6 @@ impl<G> TokenListArena<G> {
         builder: TokenListBuilder<G>,
     ) -> Result<(), DurableAllocationError> {
         self.release_builder_slot(builder, true)
-    }
-
-    pub(crate) fn cursor_word(
-        &self,
-        cursor: TokenListCursor<G>,
-    ) -> Result<TokenWord, DurableAllocationError> {
-        cursor
-            .list
-            .words
-            .get(cursor.offset as usize)
-            .copied()
-            .ok_or(DurableAllocationError::CapacityOverflow)
-    }
-
-    pub(crate) fn advance_cursor(
-        &self,
-        cursor: &mut TokenListCursor<G>,
-    ) -> Result<(), DurableAllocationError> {
-        self.cursor_word(cursor.clone())?;
-        cursor.offset += 1;
-        Ok(())
     }
 
     #[must_use]
