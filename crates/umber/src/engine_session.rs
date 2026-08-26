@@ -1509,6 +1509,8 @@ mod tests {
     ) -> R {
         let mut use_stores = Some(use_stores);
         if loaded {
+            let format = tex_state::DetachedFormatImage::try_from_bytes(format.as_bytes().to_vec())
+                .expect("validated format copy");
             tex_state::with_materialized_format(
                 crate::engine_interner_budget(),
                 World::memory(),

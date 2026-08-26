@@ -1135,7 +1135,7 @@ mod primitive_mode_tests {
         tex_state::with_materialized_format(
             engine_interner_budget(),
             World::default(),
-            &image,
+            image,
             |loaded| {
                 EngineMode::ETex.install_after_format(loaded);
                 assert_eq!(token_list_text(loaded, TokParam::ERR_HELP), "help-format");
@@ -1266,7 +1266,7 @@ mod primitive_mode_tests {
             tex_state::with_materialized_format(
                 engine_interner_budget(),
                 World::default(),
-                &image,
+                image,
                 |loaded| {
                     assert_eq!(loaded.primitive_meaning(primitive), None);
                     mode.install_after_format(loaded);
@@ -2268,10 +2268,13 @@ mod tests {
                 .set_memory_file("/project/image.png", png.clone())
                 .expect("image is seeded");
             if loaded {
+                let loaded_format =
+                    tex_state::DetachedFormatImage::try_from_bytes(format.as_bytes().to_vec())
+                        .expect("validated format copy");
                 tex_state::with_materialized_format(
                     engine_interner_budget(),
                     world,
-                    &format,
+                    loaded_format,
                     |stores| {
                         mode.install_after_format(stores);
                         exercise(stores, mode);

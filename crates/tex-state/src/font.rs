@@ -326,76 +326,89 @@ impl FontStore {
     }
 
     pub(crate) fn restore_format_fonts(
-        rows: &[crate::format::schema::FormatFont],
+        rows: Vec<crate::format::schema::FormatFont>,
         interner: &crate::interner::Interner,
-    ) -> Result<Self, &'static str> {
-        use crate::format::schema::FormatFontConstruction;
+    ) -> Result<(Self, Vec<crate::format::schema::FormatFontRuntime>), &'static str> {
+        use crate::format::schema::{FormatFont, FormatFontConstruction};
 
-        let rows = rows
-            .iter()
-            .map(|row| {
-                let construction = match row.construction {
-                    FormatFontConstruction::Loaded => FontConstruction::Loaded,
-                    FormatFontConstruction::Copied { source } => FontConstruction::Copied {
-                        source: FontSourceIdentity::from_bytes(source),
-                    },
-                    FormatFontConstruction::Letterspaced {
-                        source,
-                        amount,
-                        no_ligatures,
-                    } => FontConstruction::Letterspaced {
-                        source: FontSourceIdentity::from_bytes(source),
-                        amount,
-                        no_ligatures,
-                    },
-                    FormatFontConstruction::Expanded { source, ratio } => {
-                        FontConstruction::Expanded {
-                            source: FontSourceIdentity::from_bytes(source),
-                            ratio,
-                        }
-                    }
-                };
-                let font = LoadedFont::new(
-                    row.name.clone(),
-                    PathBuf::from(&row.name),
-                    row.content_hash,
-                    row.checksum,
-                    Scaled::from_raw(row.design_size),
-                    Scaled::from_raw(row.size),
-                    row.parameters
-                        .iter()
-                        .copied()
-                        .map(Scaled::from_raw)
-                        .collect(),
-                    FontMetrics::new(
-                        row.characters.clone(),
-                        row.lig_kern_program.clone(),
-                        row.right_boundary_char,
-                        row.left_boundary_program,
-                        row.extensible_recipes.clone(),
-                    ),
-                )
-                .with_font_info_words(row.font_info_words as usize)
-                .with_source_parameters(
-                    row.source_parameters
-                        .iter()
-                        .copied()
-                        .map(Scaled::from_raw)
-                        .collect(),
-                )
-                .with_construction(construction);
-                let identifier = row
-                    .identifier
-                    .map(|slot| {
-                        interner
-                            .symbol_at_slot(slot)
-                            .ok_or("format font identifier is not live")
-                    })
-                    .transpose()?;
-                Ok((font, identifier, row.expansion))
-            })
-            .collect::<Result<Vec<_>, &'static str>>()?;
-        Self::from_frozen(rows, interner)
+        let row_count = rows.len();
+        let mut restored = Vec::with_capacity(row_count);
+        let mut runtimes = Vec::with_capacity(row_count);
+        for row in rows {
+            let FormatFont {
+                name,
+                content_hash,
+                checksum,
+                design_size,
+                size,
+                parameters,
+                source_parameters,
+                font_info_words,
+                characters,
+                lig_kern_program,
+                right_boundary_char,
+                left_boundary_program,
+                extensible_recipes,
+                identifier,
+                expansion,
+                construction,
+                runtime,
+            } = row;
+            let construction = match construction {
+                FormatFontConstruction::Loaded => FontConstruction::Loaded,
+                FormatFontConstruction::Copied { source } => FontConstruction::Copied {
+                    source: FontSourceIdentity::from_bytes(source),
+                },
+                FormatFontConstruction::Letterspaced {
+                    source,
+                    amount,
+                    no_ligatures,
+                } => FontConstruction::Letterspaced {
+                    source: FontSourceIdentity::from_bytes(source),
+                    amount,
+                    no_ligatures,
+                },
+                FormatFontConstruction::Expanded { source, ratio } => FontConstruction::Expanded {
+                    source: FontSourceIdentity::from_bytes(source),
+                    ratio,
+                },
+            };
+            let path = PathBuf::from(&name);
+            let font = LoadedFont::new(
+                name,
+                path,
+                content_hash,
+                checksum,
+                Scaled::from_raw(design_size),
+                Scaled::from_raw(size),
+                parameters.into_iter().map(Scaled::from_raw).collect(),
+                FontMetrics::new(
+                    characters,
+                    lig_kern_program,
+                    right_boundary_char,
+                    left_boundary_program,
+                    extensible_recipes,
+                ),
+            )
+            .with_font_info_words(font_info_words as usize)
+            .with_source_parameters(
+                source_parameters
+                    .into_iter()
+                    .map(Scaled::from_raw)
+                    .collect(),
+            )
+            .with_construction(construction);
+            let identifier = identifier
+                .map(|slot| {
+                    interner
+                        .symbol_at_slot(slot)
+                        .ok_or("format font identifier is not live")
+                })
+                .transpose()?;
+            restored.push((font, identifier, expansion));
+            runtimes.push(runtime);
+        }
+        Ok((Self::from_frozen(restored, interner)?, runtimes))
     }
 
     pub(crate) fn from_frozen(

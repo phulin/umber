@@ -63,6 +63,10 @@ fn image() -> DetachedFormatImage {
     .expect("fresh universe")
 }
 
+fn validated_copy(image: &DetachedFormatImage) -> DetachedFormatImage {
+    DetachedFormatImage::try_from_bytes(image.as_bytes().to_vec()).expect("validated image copy")
+}
+
 #[test]
 fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
     let (image, before_capacity) = with_universe(budget(), |universe| {
@@ -93,32 +97,37 @@ fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
     })
     .expect("fresh universe");
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        let mut context = universe.command_context().expect("loaded context");
-        let loaded = context.detach_engine_usage_statistics();
-        assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
-        assert_eq!(loaded.control_sequences, 1);
-        assert_eq!(
-            (loaded.string_capacity, loaded.string_character_capacity),
-            before_capacity
-        );
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let mut context = universe.command_context().expect("loaded context");
+            let loaded = context.detach_engine_usage_statistics();
+            assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
+            assert_eq!(loaded.control_sequences, 1);
+            assert_eq!(
+                (loaded.string_capacity, loaded.string_character_capacity),
+                before_capacity
+            );
 
-        context.slow_make_string_pool_string("trip");
-        assert_eq!(context.detach_engine_usage_statistics(), loaded);
-        context.slow_make_string_pool_string("fresh");
-        context.slow_make_string_pool_string("fresh");
-        context.make_string_pool_string("fresh");
-        context.intern_hash_control_sequence("newcs");
-        assert_eq!(
-            context.detach_engine_usage_statistics().control_sequences,
-            1,
-            "format-loaded lookup reuses permanent occupancy"
-        );
-        context.intern_hash_control_sequence("freshcs");
-        let used = context.detach_engine_usage_statistics();
-        assert_eq!((used.strings, used.string_characters), (3, 17));
-        assert_eq!(used.control_sequences, 2);
-    })
+            context.slow_make_string_pool_string("trip");
+            assert_eq!(context.detach_engine_usage_statistics(), loaded);
+            context.slow_make_string_pool_string("fresh");
+            context.slow_make_string_pool_string("fresh");
+            context.make_string_pool_string("fresh");
+            context.intern_hash_control_sequence("newcs");
+            assert_eq!(
+                context.detach_engine_usage_statistics().control_sequences,
+                1,
+                "format-loaded lookup reuses permanent occupancy"
+            );
+            context.intern_hash_control_sequence("freshcs");
+            let used = context.detach_engine_usage_statistics();
+            assert_eq!((used.strings, used.string_characters), (3, 17));
+            assert_eq!(used.control_sequences, 2);
+        },
+    )
     .expect("materialize format");
 }
 
@@ -165,17 +174,22 @@ fn pdftex_string_pool_capacity_captures_roundtrips_and_becomes_the_loaded_baseli
         bytes
     );
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        let mut context = universe.command_context().expect("loaded context");
-        let loaded = context.detach_engine_usage_statistics();
-        assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
-        assert_eq!(
-            (loaded.string_capacity, loaded.string_character_capacity),
-            expected_loaded_capacity
-        );
-        context.slow_make_string_pool_string(&retained);
-        assert_eq!(context.detach_engine_usage_statistics(), loaded);
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let mut context = universe.command_context().expect("loaded context");
+            let loaded = context.detach_engine_usage_statistics();
+            assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
+            assert_eq!(
+                (loaded.string_capacity, loaded.string_character_capacity),
+                expected_loaded_capacity
+            );
+            context.slow_make_string_pool_string(&retained);
+            assert_eq!(context.detach_engine_usage_statistics(), loaded);
+        },
+    )
     .expect("materialize pdfTeX capacity format");
 }
 
@@ -201,7 +215,7 @@ fn format_capture_disables_texxet_enhancement_without_mutating_the_source() {
             crate::with_materialized_format(
                 crate::interner::InternerBudget::new(16, 16, 256).expect("destination budget"),
                 crate::World::memory(),
-                &image,
+                validated_copy(&image),
                 |loaded| {
                     assert_eq!(
                         loaded.int_param(crate::env::banks::IntParam::TEX_XET_STATE),
@@ -251,16 +265,21 @@ fn format_roundtrip_preserves_absolute_font_info_usage() {
     })
     .expect("source universe");
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("loaded context")
-                .detach_engine_usage_statistics()
-                .font_info_words,
-            110
-        );
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            assert_eq!(
+                universe
+                    .command_context()
+                    .expect("loaded context")
+                    .detach_engine_usage_statistics()
+                    .font_info_words,
+                110
+            );
+        },
+    )
     .expect("materialized format");
 }
 
@@ -399,32 +418,37 @@ fn main_memory_coordinates_are_validated_against_the_recorded_producer_profile()
 #[test]
 fn loaded_tex_format_can_expand_to_pdftex_capacity_and_recapture_that_profile() {
     let tex_image = image();
-    with_materialized_format(budget(), World::memory(), &tex_image, |universe| {
-        let loaded = universe
-            .command_context()
-            .expect("loaded context")
-            .detach_engine_usage_statistics();
-        assert_eq!(
-            loaded.capacity_profile,
-            crate::EngineCapacityProfile::Tex82Etex
-        );
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
-        let expanded = universe
-            .command_context()
-            .expect("expanded context")
-            .detach_engine_usage_statistics();
-        assert_eq!(
-            (expanded.capacity_profile, expanded.memory_word_capacity),
-            (crate::EngineCapacityProfile::Texlive2026, 5_000_000)
-        );
-        let recaptured = universe.capture_format_image().expect("recapture");
-        assert_eq!(
-            DetachedFormatImage::try_from_bytes(recaptured.as_bytes().to_vec())
-                .expect("validate recaptured profile")
-                .as_bytes(),
-            recaptured.as_bytes()
-        );
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&tex_image),
+        |universe| {
+            let loaded = universe
+                .command_context()
+                .expect("loaded context")
+                .detach_engine_usage_statistics();
+            assert_eq!(
+                loaded.capacity_profile,
+                crate::EngineCapacityProfile::Tex82Etex
+            );
+            universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
+            let expanded = universe
+                .command_context()
+                .expect("expanded context")
+                .detach_engine_usage_statistics();
+            assert_eq!(
+                (expanded.capacity_profile, expanded.memory_word_capacity),
+                (crate::EngineCapacityProfile::Texlive2026, 5_000_000)
+            );
+            let recaptured = universe.capture_format_image().expect("recapture");
+            assert_eq!(
+                DetachedFormatImage::try_from_bytes(recaptured.as_bytes().to_vec())
+                    .expect("validate recaptured profile")
+                    .as_bytes(),
+                recaptured.as_bytes()
+            );
+        },
+    )
     .expect("materialize TeX format under pdfTeX process");
 }
 
@@ -599,7 +623,7 @@ fn malformed_sections_cross_references_graphs_and_pdf_reject_before_staging() {
 }
 
 #[test]
-fn one_borrowed_image_materializes_as_isolated_fresh_jobs() {
+fn validated_bytes_materialize_as_isolated_fresh_jobs() {
     let image = image();
     let first_clock = JobClock {
         time: 10,
@@ -618,7 +642,7 @@ fn one_borrowed_image_materializes_as_isolated_fresh_jobs() {
     let first = with_materialized_format(
         budget(),
         World::memory_with_clock(first_clock),
-        &image,
+        validated_copy(&image),
         |universe| {
             assert_eq!(universe.world().job_clock(), first_clock);
             assert_eq!(universe.interaction_mode(), InteractionMode::Nonstop);
@@ -632,7 +656,7 @@ fn one_borrowed_image_materializes_as_isolated_fresh_jobs() {
     let second = with_materialized_format(
         budget(),
         World::memory_with_clock(second_clock),
-        &image,
+        validated_copy(&image),
         |universe| {
             assert_eq!(universe.world().job_clock(), second_clock);
             universe
@@ -651,7 +675,7 @@ fn one_borrowed_image_materializes_as_isolated_fresh_jobs() {
 fn foreign_staging_is_rejected_before_world_publication() {
     let image = image();
     with_format_destination(budget(), World::memory(), |destination| {
-        let mut staging = destination.stage(&image)?;
+        let mut staging = destination.stage(validated_copy(&image))?;
         staging.destination = staging.destination.wrapping_add(1);
         assert_eq!(
             destination.materialize(staging, |_| ()),
@@ -667,9 +691,9 @@ fn foreign_staging_is_rejected_before_world_publication() {
 fn staging_consumes_destination_once() {
     let image = image();
     with_format_destination(budget(), World::memory(), |destination| {
-        let staging = destination.stage(&image)?;
+        let staging = destination.stage(validated_copy(&image))?;
         assert!(matches!(
-            destination.stage(&image),
+            destination.stage(validated_copy(&image)),
             Err(FormatError::DestinationConsumed)
         ));
         destination
@@ -741,59 +765,64 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
     })
     .expect("source universe");
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        let alpha = universe.intern("alpha").expect("restored alpha");
-        let alias = universe.intern("alias").expect("restored alias");
-        let alpha_meaning = universe.meaning(alpha.symbol()).expect("alpha meaning");
-        let alias_meaning = universe.meaning(alias.symbol()).expect("alias meaning");
-        assert_eq!(alpha_meaning, alias_meaning);
-        let ResolvedMeaning::Macro { flags, definition } = alpha_meaning else {
-            panic!("restored macro meaning");
-        };
-        assert_eq!(flags, MeaningFlags::LONG);
-        assert_eq!(
-            universe
-                .core
-                .as_ref()
-                .expect("core")
-                .admit()
-                .definition(definition)
-                .replacement_text(),
-            [TokenWord::pack(Token::Cs(alpha.symbol()))]
-        );
-        assert_eq!(universe.count(42).expect("count"), 8_675_309);
-        let tokens = universe
-            .token_register(7)
-            .expect("token register")
-            .expect("token root");
-        assert_eq!(
-            universe
-                .core
-                .as_ref()
-                .expect("core")
-                .admit()
-                .token_list(tokens)
-                .iter()
-                .collect::<Vec<_>>(),
-            [TokenWord::pack(Token::Cs(alpha.symbol()))]
-        );
-        let glue = universe
-            .glue_register(9)
-            .expect("glue register")
-            .expect("glue root");
-        assert_eq!(universe.glue_value(glue).width, Scaled::from_raw(123));
-        assert_eq!(universe.catcode('@'), Catcode::Letter);
-        assert!(
-            universe
-                .command_context()
-                .expect("hyphenation admission")
-                .contains_hyphenation_pattern_for_language(3, &['a', 'b'])
-        );
-        assert_eq!(
-            universe.capture_format_image().expect("redump").as_bytes(),
-            image.as_bytes()
-        );
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let alpha = universe.intern("alpha").expect("restored alpha");
+            let alias = universe.intern("alias").expect("restored alias");
+            let alpha_meaning = universe.meaning(alpha.symbol()).expect("alpha meaning");
+            let alias_meaning = universe.meaning(alias.symbol()).expect("alias meaning");
+            assert_eq!(alpha_meaning, alias_meaning);
+            let ResolvedMeaning::Macro { flags, definition } = alpha_meaning else {
+                panic!("restored macro meaning");
+            };
+            assert_eq!(flags, MeaningFlags::LONG);
+            assert_eq!(
+                universe
+                    .core
+                    .as_ref()
+                    .expect("core")
+                    .admit()
+                    .definition(definition)
+                    .replacement_text(),
+                [TokenWord::pack(Token::Cs(alpha.symbol()))]
+            );
+            assert_eq!(universe.count(42).expect("count"), 8_675_309);
+            let tokens = universe
+                .token_register(7)
+                .expect("token register")
+                .expect("token root");
+            assert_eq!(
+                universe
+                    .core
+                    .as_ref()
+                    .expect("core")
+                    .admit()
+                    .token_list(tokens)
+                    .iter()
+                    .collect::<Vec<_>>(),
+                [TokenWord::pack(Token::Cs(alpha.symbol()))]
+            );
+            let glue = universe
+                .glue_register(9)
+                .expect("glue register")
+                .expect("glue root");
+            assert_eq!(universe.glue_value(glue).width, Scaled::from_raw(123));
+            assert_eq!(universe.catcode('@'), Catcode::Letter);
+            assert!(
+                universe
+                    .command_context()
+                    .expect("hyphenation admission")
+                    .contains_hyphenation_pattern_for_language(3, &['a', 'b'])
+            );
+            assert_eq!(
+                universe.capture_format_image().expect("redump").as_bytes(),
+                image.as_bytes()
+            );
+        },
+    )
     .expect("materialized logical format");
 }
 
@@ -838,20 +867,25 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
     });
     assert_eq!(image.decoded.definitions.len(), 2);
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        let redumped = universe
-            .capture_format_image()
-            .expect("redump loaded format");
-        assert_eq!(redumped.decoded.definitions.len(), 1);
-        assert_eq!(
-            redumped.decoded.definitions[0].replacement_text,
-            [TokenWord::pack(Token::Char {
-                ch: 'y',
-                cat: Catcode::Other,
-            })
-            .raw(),]
-        );
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let redumped = universe
+                .capture_format_image()
+                .expect("redump loaded format");
+            assert_eq!(redumped.decoded.definitions.len(), 1);
+            assert_eq!(
+                redumped.decoded.definitions[0].replacement_text,
+                [TokenWord::pack(Token::Char {
+                    ch: 'y',
+                    cat: Catcode::Other,
+                })
+                .raw(),]
+            );
+        },
+    )
     .expect("materialized format");
 }
 
@@ -901,14 +935,19 @@ fn configured_hyphenation_exception_capacity_roundtrips_with_format_usage() {
     })
     .expect("source universe");
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        let usage = universe
-            .command_context()
-            .expect("loaded context")
-            .detach_engine_usage_statistics();
-        assert_eq!(usage.hyphenation_exceptions, 0);
-        assert_eq!(usage.hyphenation_exception_capacity, 659);
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let usage = universe
+                .command_context()
+                .expect("loaded context")
+                .detach_engine_usage_statistics();
+            assert_eq!(usage.hyphenation_exceptions, 0);
+            assert_eq!(usage.hyphenation_exception_capacity, 659);
+        },
+    )
     .expect("materialized format");
 }
 
@@ -978,39 +1017,44 @@ fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
     })
     .expect("source universe");
 
-    with_materialized_format(budget(), World::memory(), &image, |universe| {
-        let selector = universe.intern("formatfont").expect("restored selector");
-        let ResolvedMeaning::Static(Meaning::Font(font)) =
-            universe.meaning(selector.symbol()).expect("font meaning")
-        else {
-            panic!("restored font selector")
-        };
-        assert_eq!(font.raw(), 1);
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("font admission")
-                .font_name(font),
-            "formatfont"
-        );
-        let root = universe
-            .box_register(12)
-            .expect("box register")
-            .expect("box root");
-        let admitted = universe.core.as_ref().expect("core").admit();
-        assert!(matches!(
-            admitted.node_list(root).expect("node list").nodes(),
-            [Node::Char { font: node_font, ch: 'X', .. }] if *node_font == font
-        ));
-        drop(admitted);
-        let context = universe.command_context().expect("PDF admission");
-        assert!(context.pdf_raw_object(raw_object).is_some());
-        assert!(context.pdf_form(form_object).is_some());
-        drop(context);
-        assert_eq!(
-            universe.capture_format_image().expect("redump").as_bytes(),
-            image.as_bytes()
-        );
-    })
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let selector = universe.intern("formatfont").expect("restored selector");
+            let ResolvedMeaning::Static(Meaning::Font(font)) =
+                universe.meaning(selector.symbol()).expect("font meaning")
+            else {
+                panic!("restored font selector")
+            };
+            assert_eq!(font.raw(), 1);
+            assert_eq!(
+                universe
+                    .command_context()
+                    .expect("font admission")
+                    .font_name(font),
+                "formatfont"
+            );
+            let root = universe
+                .box_register(12)
+                .expect("box register")
+                .expect("box root");
+            let admitted = universe.core.as_ref().expect("core").admit();
+            assert!(matches!(
+                admitted.node_list(root).expect("node list").nodes(),
+                [Node::Char { font: node_font, ch: 'X', .. }] if *node_font == font
+            ));
+            drop(admitted);
+            let context = universe.command_context().expect("PDF admission");
+            assert!(context.pdf_raw_object(raw_object).is_some());
+            assert!(context.pdf_form(form_object).is_some());
+            drop(context);
+            assert_eq!(
+                universe.capture_format_image().expect("redump").as_bytes(),
+                image.as_bytes()
+            );
+        },
+    )
     .expect("materialized full logical format");
 }

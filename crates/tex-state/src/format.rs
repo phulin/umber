@@ -1028,8 +1028,10 @@ impl<G> FormatDestination<G> {
         self.provenance = config;
     }
 
-    /// Rewrites a validated image into this destination's fresh generation.
-    pub fn stage(&mut self, image: &DetachedFormatImage) -> Result<FormatStaging<G>, FormatError> {
+    /// Consumes and rewrites a validated image into this destination's fresh
+    /// generation. Encoded bytes are released before destination construction,
+    /// and decoded rows are drained into their final owners.
+    pub fn stage(&mut self, image: DetachedFormatImage) -> Result<FormatStaging<G>, FormatError> {
         let epoch = SessionInternerEpoch::new(self.budget);
         let interner = epoch.lease().map_err(|_| FormatError::AllocationFailed)?;
         drop(epoch);
@@ -1038,7 +1040,7 @@ impl<G> FormatDestination<G> {
 
     fn stage_in_epoch(
         &mut self,
-        image: &DetachedFormatImage,
+        image: DetachedFormatImage,
         epoch: &SessionInternerEpoch,
     ) -> Result<FormatStaging<G>, FormatError> {
         let interner = epoch.lease().map_err(|error| {
@@ -1049,14 +1051,16 @@ impl<G> FormatDestination<G> {
 
     fn stage_with_interner(
         &mut self,
-        image: &DetachedFormatImage,
+        image: DetachedFormatImage,
         interner: crate::session_epoch::InternerLease,
     ) -> Result<FormatStaging<G>, FormatError> {
         let core = self.core.take().ok_or(FormatError::DestinationConsumed)?;
         let mut universe = Universe::new_format_candidate(interner, core);
-        universe.install_format_logical_rows(&image.decoded)?;
-        universe.interaction_mode =
-            decode_interaction_mode(image.decoded.metadata.interaction_mode)?;
+        let DetachedFormatImage { bytes, decoded } = image;
+        drop(bytes);
+        let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
+        universe.install_format_logical_rows(decoded)?;
+        universe.interaction_mode = interaction_mode;
         universe.set_format_provenance(self.provenance);
         Ok(FormatStaging {
             destination: self.identity,
@@ -1132,11 +1136,11 @@ pub fn with_format_destination<R>(
     })
 }
 
-/// Materializes one image entirely inside a fresh HRTB scope.
+/// Consumes and materializes one image entirely inside a fresh HRTB scope.
 pub fn with_materialized_format<R>(
     budget: InternerBudget,
     world: World,
-    image: &DetachedFormatImage,
+    image: DetachedFormatImage,
     use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> Result<R, FormatError> {
     with_format_destination(budget, world, |destination| {
@@ -1151,13 +1155,13 @@ pub fn with_materialized_format<R>(
     })
 }
 
-/// Materializes one image into a fresh revision generation while preserving
-/// the caller's exact session interning epoch.
+/// Consumes and materializes one image into a fresh revision generation while
+/// preserving the caller's exact session interning epoch.
 pub fn with_materialized_format_in_epoch<R>(
     budget: InternerBudget,
     world: World,
     epoch: &SessionInternerEpoch,
-    image: &DetachedFormatImage,
+    image: DetachedFormatImage,
     use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> Result<R, FormatError> {
     with_format_destination(budget, world, |destination| {
@@ -1172,12 +1176,15 @@ pub(crate) fn materialize_retained_format<G>(
     interner: crate::session_epoch::InternerLease,
     generation: crate::generation::Generation<G>,
     world: World,
-    image: &DetachedFormatImage,
+    image: DetachedFormatImage,
 ) -> Result<Universe<G>, FormatError> {
     let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
-    universe.install_format_logical_rows(&image.decoded)?;
-    universe.interaction_mode = decode_interaction_mode(image.decoded.metadata.interaction_mode)?;
+    let DetachedFormatImage { bytes, decoded } = image;
+    drop(bytes);
+    let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
+    universe.install_format_logical_rows(decoded)?;
+    universe.interaction_mode = interaction_mode;
     universe.world = world;
     universe.refresh_job_clock_parameters().map_err(|error| {
         FormatError::InvalidState(format!("retained format clock refresh failed: {error:?}"))
@@ -1269,12 +1276,22 @@ impl<G> Universe<G> {
         Ok(())
     }
 
-    fn install_format_logical_rows(&mut self, format: &DecodedFormat) -> Result<(), FormatError> {
-        self.engine_usage = crate::command_context::EngineUsageRuntime::restore_format_state(
-            &format.metadata.string_pool,
-        )
-        .map_err(FormatError::InvalidState)?;
-        for (slot, row) in format.names.iter().enumerate() {
+    fn install_format_logical_rows(&mut self, format: DecodedFormat) -> Result<(), FormatError> {
+        let DecodedFormat {
+            metadata,
+            names,
+            token_lists,
+            definitions,
+            glue: format_glue,
+            fonts: format_fonts,
+            hyphenation,
+            node_lists: format_node_lists,
+            cells,
+        } = format;
+        self.engine_usage =
+            crate::command_context::EngineUsageRuntime::restore_format_state(&metadata.string_pool)
+                .map_err(FormatError::InvalidState)?;
+        for (slot, row) in names.iter().enumerate() {
             if let Some(symbol) = self
                 .interner_mut()
                 .install_format_name(slot as u32, row)
@@ -1288,8 +1305,11 @@ impl<G> Universe<G> {
                     .map_err(|_| FormatError::AllocationFailed)?;
             }
         }
-        self.fonts = crate::font::FontStore::restore_format_fonts(&format.fonts, self.interner())
-            .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        drop(names);
+        let (fonts, font_runtimes) =
+            crate::font::FontStore::restore_format_fonts(format_fonts, self.interner())
+                .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        self.fonts = fonts;
         let fonts = (0..self.fonts.len())
             .map(|slot| {
                 self.fonts
@@ -1301,17 +1321,17 @@ impl<G> Universe<G> {
             .as_mut()
             .expect("format candidate retains core")
             .state_mut()
-            .install_format_font_runtimes(&format.fonts)
+            .install_format_font_runtimes(&font_runtimes)
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        let mut live_definitions = vec![false; format.definitions.len()];
-        for cell in &format.cells {
+        drop(font_runtimes);
+        let mut live_definitions = vec![false; definitions.len()];
+        for cell in &cells {
             if let FormatCell::Meaning(_, FormatMeaning::Macro { definition, .. }) = *cell {
                 live_definitions[definition as usize] = true;
             }
         }
-        let glue = format
-            .glue
-            .iter()
+        let glue = format_glue
+            .into_iter()
             .map(|value| {
                 Ok(crate::glue::GlueSpec {
                     width: crate::scaled::Scaled::from_raw(value.width),
@@ -1323,15 +1343,10 @@ impl<G> Universe<G> {
             })
             .collect::<Result<Vec<_>, FormatError>>()?;
         let promoted = self
-            .promote_format_values(
-                &format.definitions,
-                &live_definitions,
-                &format.token_lists,
-                &glue,
-            )
+            .promote_format_values(definitions, live_definitions, token_lists, glue)
             .map_err(|_| FormatError::AllocationFailed)?;
         let node_lists = self.install_format_node_lists(
-            &format.node_lists,
+            format_node_lists,
             &promoted.token_lists,
             &promoted.glue,
             &fonts,
@@ -1341,7 +1356,7 @@ impl<G> Universe<G> {
             .expect("format candidate retains core")
             .state_mut()
             .install_format_cells(
-                &format.cells,
+                &cells,
                 &promoted.definitions,
                 &promoted.token_lists,
                 &promoted.glue,
@@ -1349,14 +1364,15 @@ impl<G> Universe<G> {
                 &fonts,
             )
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        self.hyphenation = format.hyphenation.clone();
-        self.install_format_pdf(&format.metadata.pdf, &promoted.token_lists, &node_lists)?;
+        drop(cells);
+        self.hyphenation = hyphenation;
+        self.install_format_pdf(&metadata.pdf, &promoted.token_lists, &node_lists)?;
         Ok(())
     }
 
     fn install_format_node_lists(
         &mut self,
-        rows: &[FormatNodeList],
+        rows: Vec<FormatNodeList>,
         token_lists: &[crate::TokenListId<G>],
         glue: &[crate::GlueId<G>],
         fonts: &[crate::ids::FontId],
@@ -1371,10 +1387,11 @@ impl<G> Universe<G> {
                     .expect("format candidate retains core")
                     .admit();
                 row.nodes
-                    .iter()
+                    .into_iter()
                     .map(|bytes| {
-                        let node: crate::node::Node<u32, u32, u32> = bincode::deserialize(bytes)
-                            .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+                        let node: crate::node::Node<u32, u32, u32> =
+                            bincode::deserialize(&bytes)
+                                .map_err(|error| FormatError::InvalidState(error.to_string()))?;
                         let node = node
                             .map_lists(|child| {
                                 if child == 0 {
@@ -1385,14 +1402,7 @@ impl<G> Universe<G> {
                             })
                             .map_payloads(
                                 |value| admitted.glue(glue[value as usize]),
-                                |value| {
-                                    crate::node::NodeTokenList::new(
-                                        admitted
-                                            .token_list(token_lists[value as usize].clone())
-                                            .iter()
-                                            .collect::<Vec<_>>(),
-                                    )
-                                },
+                                |value| token_lists[value as usize].node_payload(),
                             )
                             .map_fonts(|font: crate::ids::FontId| fonts[font.raw() as usize]);
                         Ok(node)

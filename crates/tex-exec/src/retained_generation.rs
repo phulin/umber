@@ -263,7 +263,7 @@ impl<'store> RetainedEngineGeneration<'store> {
     pub fn from_format(
         store: &'store ReachabilityStore,
         world: World,
-        image: &DetachedFormatImage,
+        image: DetachedFormatImage,
     ) -> Result<Self, FormatError> {
         Self::from_format_owned(store.clone(), world, image)
     }
@@ -272,7 +272,7 @@ impl<'store> RetainedEngineGeneration<'store> {
     pub fn from_format_owned(
         store: ReachabilityStore,
         world: World,
-        image: &DetachedFormatImage,
+        image: DetachedFormatImage,
     ) -> Result<Self, FormatError> {
         let generation = next_generation();
         let mut state = RetainedStateGeneration::from_format_owned(store, world, image)?;
@@ -1171,13 +1171,11 @@ mod tests {
             universe.capture_format_image().expect("format image")
         });
         let store = store();
-        let mut accepted = RetainedEngineGeneration::from_format(&store, World::memory(), &image)
+        let mut accepted = RetainedEngineGeneration::from_format(&store, World::memory(), image)
             .expect("loaded format generation");
         let checkpoint = accepted
             .with_admitted(CaptureLoadedFormat)
             .expect("format checkpoint admission");
-        drop(image);
-
         let (mut current, runtime, _) = accepted
             .fork_checkpoint(&checkpoint)
             .expect("first document fork");

@@ -221,6 +221,11 @@ impl ValidatedFormatImage {
     }
 
     #[must_use]
+    pub fn into_detached(self) -> DetachedFormatImage {
+        self.0
+    }
+
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }

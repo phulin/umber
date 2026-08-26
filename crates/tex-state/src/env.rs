@@ -531,12 +531,12 @@ impl<G> DenseState<G> {
 
     pub(crate) fn install_format_font_runtimes(
         &mut self,
-        fonts: &[crate::format::schema::FormatFont],
+        fonts: &[crate::format::schema::FormatFontRuntime],
     ) -> Result<(), &'static str> {
         let mut runtime = FontRuntimeBank::new();
         for (raw, font) in fonts.iter().enumerate() {
             runtime
-                .install_format(raw as u32, &font.runtime)
+                .install_format(raw as u32, font)
                 .map_err(|_| "invalid format font runtime")?;
         }
         self.font_runtime = runtime;

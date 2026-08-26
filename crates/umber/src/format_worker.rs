@@ -1228,7 +1228,7 @@ mod tests {
         tex_state::with_materialized_format(
             crate::engine_interner_budget(),
             World::memory(),
-            &image,
+            image,
             |_| (),
         )
         .expect("forgery is decoder-valid");

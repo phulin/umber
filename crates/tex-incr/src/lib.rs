@@ -1541,10 +1541,9 @@ impl<'store> Session<'store> {
         let mut generation = tex_exec::RetainedEngineGeneration::from_format_owned(
             self.reachability_store.clone(),
             World::memory_with_clock(self.job_clock),
-            &image,
+            image,
         )
         .map_err(SessionError::Format)?;
-        drop(image);
         let checkpoint = generation
             .with_admitted(PublishInitialFormatCheckpoint {
                 profile: self.effective_command_profile(),

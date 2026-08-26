@@ -236,12 +236,12 @@ impl<'store> RetainedStateGeneration<'store> {
         })
     }
 
-    /// Materializes one validated format directly into a retained physical
+    /// Consumes one validated format directly into a retained physical
     /// generation under the caller's existing session epoch.
     pub fn from_format(
         store: &'store ReachabilityStore,
         world: World,
-        image: &DetachedFormatImage,
+        image: DetachedFormatImage,
     ) -> Result<Self, FormatError> {
         Self::from_format_owned(store.clone(), world, image)
     }
@@ -250,7 +250,7 @@ impl<'store> RetainedStateGeneration<'store> {
     pub fn from_format_owned(
         store: ReachabilityStore,
         world: World,
-        image: &DetachedFormatImage,
+        image: DetachedFormatImage,
     ) -> Result<Self, FormatError> {
         #[cfg(feature = "profiling")]
         let _allocation_scope = crate::measurement::hot_core_allocation_scope(

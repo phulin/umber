@@ -65,7 +65,7 @@ fn inspect_loaded<R>(
     tex_state::with_materialized_format(
         crate::engine_interner_budget(),
         world,
-        image.detached(),
+        image.into_detached(),
         |universe| {
             recipe.engine.install_after_format(universe);
             if let Some(mode) = interaction_mode {
@@ -493,7 +493,7 @@ fn recipe_hyphenation_capacity_reaches_the_loaded_usage_report() {
     tex_state::with_materialized_format(
         crate::engine_interner_budget(),
         test_world(),
-        fixture.image.detached(),
+        fixture.image.clone().into_detached(),
         |universe| {
             assert_eq!(
                 universe

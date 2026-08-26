@@ -1342,7 +1342,7 @@ mod tests {
             tex_state::with_materialized_format(
                 crate::engine_interner_budget(),
                 World::default(),
-                &format,
+                format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
                     assert_eq!(loaded.pdf_return_value(), 0);
@@ -1384,7 +1384,7 @@ mod tests {
             tex_state::with_materialized_format(
                 crate::engine_interner_budget(),
                 World::default(),
-                &format,
+                format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
                     assert_eq!(loaded.pdf_last_ximage_pages(), 0);
@@ -1908,7 +1908,7 @@ mod tests {
             tex_state::with_materialized_format(
                 crate::engine_interner_budget(),
                 world,
-                &format,
+                format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
                     crate::install_pdftex_format_primitives(loaded);
@@ -2128,7 +2128,7 @@ mod tests {
             tex_state::with_materialized_format(
                 crate::engine_interner_budget(),
                 World::default(),
-                &format,
+                format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
                     crate::install_pdftex_format_primitives(loaded);
@@ -2839,10 +2839,11 @@ mod tests {
             );
 
             let format = stores.dump_format().expect("pdfTeX parameter format");
+            let format_bytes = format.as_bytes().to_vec();
             tex_state::with_materialized_format(
                 crate::engine_interner_budget(),
                 World::default(),
-                &format,
+                format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
                     assert_eq!(
@@ -2850,7 +2851,7 @@ mod tests {
                             .capture_format_image()
                             .expect("recapture format")
                             .as_bytes(),
-                        format.as_bytes()
+                        format_bytes
                     );
                     assert_eq!(loaded.int_param(IntParam::PDF_COMPRESS_LEVEL), 5);
                     assert_eq!(

@@ -2022,13 +2022,14 @@ impl<'store> VirtualCompileSession<'store> {
                 .map_err(|error| CompileError::World(error.to_string()))?
                 .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
             let source = source.bytes().to_vec();
-            let format_image = if let Some(format) = &self.format {
-                let image = tex_state::DetachedFormatImage::try_from_bytes(format.clone())
+            let format_image = if let Some(format) = self.format.take() {
+                let image = tex_state::DetachedFormatImage::try_from_bytes(format)
                     .map_err(|error| CompileError::Format(error.to_string()))?;
                 Some(image)
             } else {
                 None
             };
+            let initex = format_image.is_none();
             let session = Box::new({
                 let mut session = tex_incr::Session::start_with_source_bytes_owned(
                     self.reachability_store.clone(),
@@ -2040,7 +2041,7 @@ impl<'store> VirtualCompileSession<'store> {
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
                 session.set_job_clock(self.clock);
-                session.set_command_profile(self.engine.command_profile(), self.format.is_none());
+                session.set_command_profile(self.engine.command_profile(), initex);
                 session.set_command_compatibility(self.engine.command_compatibility());
                 session.set_required_font_layout_policy(self.font_layout_policy);
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());

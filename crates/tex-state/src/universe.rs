@@ -1520,10 +1520,10 @@ impl<G> Universe<G> {
 
     pub(crate) fn promote_format_values(
         &mut self,
-        definitions: &[crate::format::schema::FormatDefinition],
-        live_definitions: &[bool],
-        token_lists: &[Vec<u32>],
-        glue_values: &[GlueSpec],
+        definitions: Vec<crate::format::schema::FormatDefinition>,
+        live_definitions: Vec<bool>,
+        token_lists: Vec<Vec<u32>>,
+        glue_values: Vec<GlueSpec>,
     ) -> Result<FormatPromotionReceipt<G>, PromotionError> {
         self.core
             .as_mut()

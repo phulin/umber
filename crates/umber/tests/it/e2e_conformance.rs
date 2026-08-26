@@ -1875,11 +1875,13 @@ fn assert_format_image_contract(format: &[u8], engine: EngineMode) {
         .set_memory_file("host-only-capability.tex", b"host-only".to_vec())
         .expect("stage host-only capability");
     for world in [host_world, World::memory()] {
+        let image = tex_state::DetachedFormatImage::try_from_bytes(image.as_bytes().to_vec())
+            .expect("validated detached format image copy");
         tex_state::with_materialized_format(
             tex_state::interner::InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
                 .expect("test interner budget"),
             world,
-            &image,
+            image,
             |loaded| {
                 assert!(
                     loaded.world().effect_records().is_empty(),

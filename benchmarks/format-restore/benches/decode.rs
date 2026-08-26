@@ -23,7 +23,9 @@ fn current_schema_image() -> DetachedFormatImage {
     .expect("benchmark universe")
 }
 
-fn materialize(image: &DetachedFormatImage) {
+fn materialize(bytes: &[u8]) {
+    let image = DetachedFormatImage::try_from_bytes(bytes.to_vec())
+        .expect("current-schema format must validate once");
     with_materialized_format(budget(), World::memory(), image, |universe| {
         black_box(universe.interaction_mode());
         black_box(
@@ -46,16 +48,25 @@ fn allocation_delta(
 }
 
 fn decode(c: &mut Criterion) {
-    // Validation is an explicit detached-input boundary and happens once. The
-    // measured operation is destination-local materialization of that already
-    // validated image.
     let captured = current_schema_image();
-    let image = DetachedFormatImage::try_from_bytes(captured.into_bytes())
+    let bytes = captured.into_bytes();
+    let image = DetachedFormatImage::try_from_bytes(bytes.clone())
         .expect("current-schema format must validate");
-    materialize(&image);
+    materialize(&bytes);
+
+    with_materialized_format(budget(), World::memory(), image, |universe| {
+        assert_eq!(
+            universe
+                .capture_format_image()
+                .expect("materialized format redumps")
+                .as_bytes(),
+            bytes
+        );
+    })
+    .expect("pinned format must redump byte-identically");
 
     let before = hot_core_census();
-    materialize(&image);
+    materialize(&bytes);
     let after = hot_core_census();
     let cold = allocation_delta(
         after.allocations[HotCoreAllocationOwner::ColdMaterialization as usize],
@@ -67,7 +78,7 @@ fn decode(c: &mut Criterion) {
     );
     eprintln!(
         "FORMAT_MATERIALIZATION_BENCH image_bytes={} cold_calls={} cold_bytes={} generation_calls={} generation_bytes={}",
-        image.as_bytes().len(),
+        bytes.len(),
         cold.calls,
         cold.requested_bytes,
         generation.calls,
@@ -75,7 +86,7 @@ fn decode(c: &mut Criterion) {
     );
 
     c.bench_function("loaded_format_materialization/current_schema", |b| {
-        b.iter(|| materialize(black_box(&image)));
+        b.iter(|| materialize(black_box(&bytes)));
     });
 }
 

@@ -458,7 +458,7 @@ impl LoadedFormatFixture {
                 provenance_demand,
                 provenance_budgets: ProvenanceBudgets::default(),
             });
-            let staging = destination.stage(image.detached())?;
+            let staging = destination.stage(image.into_detached())?;
             destination
                 .materialize(staging, |universe| {
                     recipe.engine.install_after_format(universe);

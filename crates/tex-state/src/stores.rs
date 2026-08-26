@@ -544,10 +544,10 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     /// relocation tables are reserved before the first value is published.
     pub(crate) fn promote_format_values(
         &mut self,
-        definitions: &[crate::format::schema::FormatDefinition],
-        live_definitions: &[bool],
-        token_lists: &[Vec<u32>],
-        glue_values: &[GlueSpec],
+        definitions: Vec<crate::format::schema::FormatDefinition>,
+        live_definitions: Vec<bool>,
+        token_lists: Vec<Vec<u32>>,
+        glue_values: Vec<GlueSpec>,
     ) -> Result<crate::universe::FormatPromotionReceipt<G>, crate::universe::PromotionError> {
         if definitions.len() != live_definitions.len() {
             return Err(crate::universe::PromotionError::CapacityOverflow);
@@ -555,7 +555,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         let definition_rows = live_definitions.iter().filter(|&&live| live).count();
         let definition_words = definitions
             .iter()
-            .zip(live_definitions)
+            .zip(&live_definitions)
             .filter(|(_, live)| **live)
             .try_fold(0usize, |total, (definition, _)| {
                 total
@@ -592,7 +592,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(glue_values.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for (row, definition) in definitions.iter().enumerate() {
+        for (row, definition) in definitions.into_iter().enumerate() {
             if !live_definitions[row] {
                 continue;
             }
@@ -602,13 +602,11 @@ impl<'a, G> AdmittedStateMut<'a, G> {
                 .allocate_from_iter(
                     definition
                         .parameter_text
-                        .iter()
-                        .copied()
+                        .into_iter()
                         .map(TokenWord::from_raw),
                     definition
                         .replacement_text
-                        .iter()
-                        .copied()
+                        .into_iter()
                         .map(TokenWord::from_raw),
                 )
                 .expect("the complete format definition batch was reserved");
@@ -618,11 +616,11 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             promoted_token_lists.push(
                 self.generation
                     .token_lists_mut()
-                    .allocate_from_iter(words.iter().copied().map(TokenWord::from_raw))
+                    .allocate_from_iter(words.into_iter().map(TokenWord::from_raw))
                     .expect("the complete format token-list batch was reserved"),
             );
         }
-        for &glue in glue_values {
+        for glue in glue_values {
             promoted_glue.push(
                 self.generation
                     .glue_mut()
