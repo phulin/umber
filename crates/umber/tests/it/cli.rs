@@ -2140,6 +2140,56 @@ fn run_resolves_area_less_input_through_texinputs_and_advances() {
     assert!(stdout.contains("after-hyphen"));
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the profiling binary.
+fn profiling_stats_flag_reports_feature_only_census() {
+    let temp_dir = tempfile::tempdir().expect("create profiling CLI temp dir");
+    let source = temp_dir.path().join("profiling.tex");
+    fs::write(&source, "\\def\\profilemacro{A}\\profilemacro\\end\n")
+        .expect("write profiling CLI fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--profiling-stats")
+        .arg(&source)
+        .output()
+        .expect("run profiling-enabled umber binary");
+    let stderr = String::from_utf8(output.stderr).expect("profiling stderr is utf-8");
+    assert!(output.status.success(), "{stderr}");
+    for prefix in [
+        "EXPANSION_STATS ",
+        "EXPANSION_TIMERS_NS ",
+        "HOT_CORE_CENSUS ",
+        "RETAINED_GENERATION_CENSUS ",
+        "SAVE_JOURNAL_CENSUS ",
+    ] {
+        assert_eq!(stderr.matches(prefix).count(), 1, "{prefix}: {stderr}");
+    }
+    assert!(
+        stderr.contains("\"expansion_opcodes\":{\"macro\":1"),
+        "the profiling census must observe the fixture's macro expansion: {stderr}"
+    );
+}
+
+#[cfg(not(feature = "profiling"))]
+#[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the shipping binary.
+fn profiling_stats_flag_is_absent_from_the_shipping_resolution() {
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "--profiling-stats", "unused.tex"])
+        .output()
+        .expect("run ordinary umber binary");
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("stderr is utf-8"),
+        "umber: run accepts one input path with optional --show-fixtures and --dvi <path>\n"
+    );
+}
+
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
 fn run_cold_offline_local_mirror_resolves_positive_and_negative_file_requests() {

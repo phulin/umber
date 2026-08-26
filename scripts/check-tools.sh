@@ -22,7 +22,7 @@ source "$repo_root/scripts/optional-check-runner.sh"
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-tools.sh \
   arxiv-corpus arxiv-census oracle-regeneration \
   parity-harness fixturegen texlive-wasm-publish \
-  clippy-reference-tools clippy-profiling-runner clippy-dvi-tools
+  profiling-cli clippy-reference-tools clippy-profiling-runner clippy-dvi-tools
 
 optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
   scripts/test-arxiv-corpus.sh
@@ -47,6 +47,12 @@ check_fixturegen() {
 optional_check_step fixturegen check_fixturegen
 optional_check_step texlive-wasm-publish \
   cargo test -q --tests --manifest-path tools/texlive-wasm-publish/Cargo.toml
+
+# Build the user-facing binary in its real profiling profile and prove that
+# the feature-only flag publishes a non-empty command census.
+optional_check_step profiling-cli \
+  cargo test -q --profile profiling -p umber --test it --features profiling \
+  profiling_stats_flag_reports_feature_only_census
 
 # The opt-in feature resolutions `scripts/check-lint-passes.py` records as
 # covered here rather than by the routine clippy gate.
