@@ -12,9 +12,10 @@ use std::rc::Rc;
 
 /// Node-owned token payload used before and inside node arenas.
 ///
-/// The words are copied into the node's semantic-lifetime arena. No token
-/// payload carries a runtime owner or reference count.
-#[derive(Debug)]
+/// Stored token-list transitions clone the existing generation-branded
+/// non-atomic owner, so the words remain in their final immutable allocation.
+/// Standalone construction is reserved for detached/cold values and tests.
+#[derive(Debug, Default)]
 pub struct NodeTokenList {
     words: Option<Rc<[TokenWord]>>,
     accounting: Option<crate::memory_accounting::MemoryAccounting>,
@@ -37,15 +38,6 @@ impl Drop for NodeTokenList {
         {
             accounting
                 .release_shared_dynamic(words.len().checked_add(1).expect("token word count"));
-        }
-    }
-}
-
-impl Default for NodeTokenList {
-    fn default() -> Self {
-        Self {
-            words: None,
-            accounting: None,
         }
     }
 }

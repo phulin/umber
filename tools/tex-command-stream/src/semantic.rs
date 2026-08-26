@@ -1734,7 +1734,17 @@ fn push_live_node_outline<G>(
     let list = universe
         .node_list(root)
         .map_err(|error| format!("box outline root: {error:?}"))?;
-    for (index, node) in list.nodes().iter().enumerate() {
+    push_live_node_slice_outline(universe, list.nodes(), path, depth, output)
+}
+
+fn push_live_node_slice_outline<G>(
+    universe: &tex_state::Universe<G>,
+    nodes: &[tex_state::node::Node],
+    path: &mut Vec<usize>,
+    depth: u8,
+    output: &mut Vec<umber::DetachedNodeOutlineEntry>,
+) -> Result<(), String> {
+    for (index, node) in nodes.iter().enumerate() {
         path.push(index);
         output.push(umber::DetachedNodeOutlineEntry {
             path: path.clone(),
@@ -1743,7 +1753,10 @@ fn push_live_node_outline<G>(
         if depth > 0
             && let tex_state::node::Node::HList(boxed) | tex_state::node::Node::VList(boxed) = node
         {
-            push_live_node_outline(universe, boxed.children, path, depth - 1, output)?;
+            let children = universe
+                .durable_child_node_list(boxed.children)
+                .map_err(|error| format!("box outline child: {error:?}"))?;
+            push_live_node_slice_outline(universe, children.nodes(), path, depth - 1, output)?;
         }
         path.pop();
     }

@@ -128,7 +128,7 @@ mod tests {
                     panic!("box register is not a vbox");
                 };
                 context
-                    .node_list(vbox.children)
+                    .durable_child_node_list(vbox.children)
                     .expect("vbox child list")
                     .nodes()
                     .iter()

@@ -1243,6 +1243,11 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
+    /// Obtains TeX's logical box copy as a page coordinate.
+    ///
+    /// Ordinary runtime boxes already live in the page arena and only rebrand
+    /// their coordinate. A box loaded from a detached format is materialized
+    /// once into the destination arena on first use.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         let root = self.box_register(index).ok().flatten()?;
         let page_root = root.rebrand();

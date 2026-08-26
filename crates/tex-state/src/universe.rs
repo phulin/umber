@@ -1740,8 +1740,8 @@ impl<G> Universe<G> {
         Ok(())
     }
 
-    /// Promotes a page-lifetime box and assigns its durable root atomically at
-    /// the TeX state boundary.
+    /// Rebrands a page-lifetime box coordinate and assigns it atomically at
+    /// the TeX state boundary without moving its graph.
     pub fn assign_page_box(
         &mut self,
         index: u16,
@@ -1801,7 +1801,11 @@ impl<G> Universe<G> {
             .expect("box register index is admitted")
     }
 
-    /// Copies a box-register closure into page-lifetime storage.
+    /// Obtains TeX's logical box copy as a page coordinate.
+    ///
+    /// Ordinary runtime boxes already live in the page arena and only rebrand
+    /// their coordinate. A box loaded from a detached format is materialized
+    /// once into the destination arena on first use.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         self.box_register(index)
             .expect("box register index is admitted")
