@@ -9,18 +9,18 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tex_command::{
-    AlignmentCellDelimiter, AlignmentCellOpening, AlignmentDelivery, AlignmentIdentity,
-    AlignmentRequest, AlignmentRequestResult, CommandError, CommandHostCapabilities,
-    CommandHostContext, CommandProcessor, CommandProfile, CommandState, FatalError,
-    FontLoadRequest, FontResource, GeneratedFontKind, HyphenationDataKind, ImmediateExtension,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest,
-    MathScriptKind, MathStyleKind, MathTextFieldKind, PdfImageRequest, PdfImageResource,
-    PdfReferenceObjectRequest, PreparedAlignmentCellTemplates, RegisteredSourceKind,
-    RestrictedIntegerClass, ScannedAccent, ScannedAccentBase, ScannedBoxConstruction,
-    ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload, ScannedDiscretionaryOpening,
-    ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    AlignmentCellDelimiter, AlignmentCellOpening, AlignmentIdentity, AlignmentRequest,
+    AlignmentRequestResult, CommandError, CommandHostCapabilities, CommandHostContext,
+    CommandProcessor, CommandProfile, CommandState, FatalError, FontLoadRequest, FontResource,
+    GeneratedFontKind, HyphenationDataKind, ImmediateExtension, MathDelimiterBoundary,
+    MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest, MathScriptKind,
+    MathStyleKind, MathTextFieldKind, PdfImageRequest, PdfImageResource, PdfReferenceObjectRequest,
+    PreparedAlignmentCellTemplates, RegisteredSourceKind, RestrictedIntegerClass, ScannedAccent,
+    ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
+    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
+    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -95,6 +95,66 @@ fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+    }
+}
+
+/// Writes TeX82 §404's next nonblank, non-relax expanded command into the
+/// executor's final command slot.
+///
+/// The command core owns every delivery and expansion transition. Main
+/// control owns only this reswitch/prefix classification and never returns a
+/// completed command through an intermediate convenience envelope.
+fn next_non_blank_non_relax_x_token_into<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    destination: &mut Option<tex_command::CurrentCommand<G>>,
+) -> Result<tex_command::DeliveryStatus, CommandError> {
+    loop {
+        match processor.get_x_token_into(destination)? {
+            tex_command::DeliveryStatus::End => return Ok(tex_command::DeliveryStatus::End),
+            tex_command::DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }
+        let command = destination
+            .as_ref()
+            .expect("command status initializes destination");
+        if !matches!(
+            static_meaning(command.meaning()),
+            Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            } | Meaning::Relax
+        ) {
+            return Ok(tex_command::DeliveryStatus::Command);
+        }
+        *destination = None;
+    }
+}
+
+/// Writes TeX82 §406's next nonblank expanded command into the reswitch
+/// destination while preserving `\relax`.
+fn next_non_blank_x_token_into<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    destination: &mut Option<tex_command::CurrentCommand<G>>,
+) -> Result<tex_command::DeliveryStatus, CommandError> {
+    loop {
+        match processor.get_x_token_into(destination)? {
+            tex_command::DeliveryStatus::End => return Ok(tex_command::DeliveryStatus::End),
+            tex_command::DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }
+        let command = destination
+            .as_ref()
+            .expect("command status initializes destination");
+        if !matches!(
+            static_meaning(command.meaning()),
+            Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            return Ok(tex_command::DeliveryStatus::Command);
+        }
+        *destination = None;
     }
 }
 
@@ -7250,21 +7310,29 @@ impl<G> MainControl<G> {
         // therefore owns the same pending mode prefix as every other
         // get_x_token boundary, including §1197's staged display-end probe.
         prepare_command_trace(&mut processor, mode, shown_mode);
-        let fetched = processor.get_x_token();
+        let mut destination = None;
+        let fetched = processor.get_x_token_into(&mut destination);
         let command_trace_printed = processor.command_trace_printed();
         match fetched {
-            Ok(Some(command))
+            Ok(tex_command::DeliveryStatus::Command)
                 if !matches!(
-                    command.meaning(),
+                    destination
+                        .as_ref()
+                        .expect("command status initializes destination")
+                        .meaning(),
                     ResolvedMeaning::Static(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
                     })
                 ) =>
             {
+                let command = destination
+                    .take()
+                    .expect("command status initializes destination");
                 processor.back_input(command).map_err(command_error)?;
             }
-            Ok(_) => {}
+            Ok(tex_command::DeliveryStatus::End | tex_command::DeliveryStatus::Command) => {}
+            Ok(_) => unreachable!("ordinary expanded delivery returns only commands"),
             Err(err) => return Err(command_error(err)),
         }
         diagnostics.extend(
@@ -7714,7 +7782,15 @@ impl<G> MainControl<G> {
             .innermost_group_kind();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
-        let (delivery, settled_in_preflight, trace_reported, fused_hot, fused_retry, fused_error) = {
+        let (
+            delivery_status,
+            destination,
+            settled_in_preflight,
+            trace_reported,
+            fused_hot,
+            fused_retry,
+            fused_error,
+        ) = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -7727,50 +7803,57 @@ impl<G> MainControl<G> {
             processor
                 .apply_error_stop_recovery()
                 .map_err(command_error)?;
-            let delivery = processor
-                .get_next_with_replay_completion()
+            let mut destination = None;
+            let mut delivery_status = processor
+                .get_next_with_replay_completion_into(&mut destination)
                 .map_err(command_error)?;
             let mut settled_in_preflight = false;
-            let mut delivery = match delivery {
-                Some(tex_command::CommandReplayDelivery::Command(command))
-                    if matches!(
-                        command.meaning(),
-                        ResolvedMeaning::Macro { .. }
-                            | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
-                            | ResolvedMeaning::Static(Meaning::Undefined | Meaning::Unknown(_))
-                    ) =>
-                {
-                    prepare_command_trace(&mut processor, mode, self.shown_mode);
-                    match processor.settle_current_command(command) {
-                        Ok(settled) => {
-                            settled_in_preflight = true;
-                            settled.map(tex_command::CommandReplayDelivery::Command)
-                        }
-                        Err(error) => {
-                            // The expansion driver moves its live command into
-                            // command state only after an actual immutable-host
-                            // suspension. Fuel and semantic failures have no
-                            // retry command and must not clone one speculatively.
-                            let retry_command = processor.pending_expansion_command().cloned();
-                            let scanner = processor.take_scanner_resume();
-                            let retry = retry_command.map(|command| {
-                                PendingPreflightCommand::<G>::Expanding {
-                                    command,
-                                    main_loop: self.main_loop_active,
-                                    cursor: processor.delivery_cursor(),
-                                    scanner,
-                                }
+            if delivery_status == tex_command::DeliveryStatus::Command
+                && matches!(
+                    destination
+                        .as_ref()
+                        .expect("command status initializes destination")
+                        .meaning(),
+                    ResolvedMeaning::Macro { .. }
+                        | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
+                        | ResolvedMeaning::Static(Meaning::Undefined | Meaning::Unknown(_))
+                )
+            {
+                let command = destination
+                    .take()
+                    .expect("command status initializes destination");
+                prepare_command_trace(&mut processor, mode, self.shown_mode);
+                match processor.settle_preflight_command_into(
+                    command,
+                    self.main_loop_active,
+                    &mut destination,
+                ) {
+                    Ok(status) => {
+                        settled_in_preflight = true;
+                        delivery_status = status;
+                    }
+                    Err(error) => {
+                        // The expansion driver moves its live command into
+                        // command state only after an actual immutable-host
+                        // suspension. Fuel and semantic failures have no
+                        // retry command and must not clone one speculatively.
+                        let retry_command = processor.pending_expansion_command().cloned();
+                        let scanner = processor.take_scanner_resume();
+                        let retry =
+                            retry_command.map(|command| PendingPreflightCommand::<G>::Expanding {
+                                command,
+                                main_loop: self.main_loop_active,
+                                cursor: processor.delivery_cursor(),
+                                scanner,
                             });
-                            drop(processor);
-                            return Err(PreflightDeliveryError {
-                                error: command_error(error),
-                                retry,
-                            });
-                        }
+                        drop(processor);
+                        return Err(PreflightDeliveryError {
+                            error: command_error(error),
+                            retry,
+                        });
                     }
                 }
-                delivery => delivery,
-            };
+            }
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -7792,9 +7875,10 @@ impl<G> MainControl<G> {
             // Diagnostics are a real reporting barrier: preserve their
             // established ordering before command tracing or operand work.
             // The common diagnostic-free path continues in this same borrow.
-            if diagnostics.is_empty()
-                && let Some(tex_command::CommandReplayDelivery::Command(command)) = delivery.take()
-            {
+            if diagnostics.is_empty() && delivery_status == tex_command::DeliveryStatus::Command {
+                let command = destination
+                    .take()
+                    .expect("command status initializes destination");
                 let continues_main_loop = self.main_loop_active
                     && matches!(
                         command.meaning(),
@@ -7875,11 +7959,12 @@ impl<G> MainControl<G> {
                         }
                     }
                 } else {
-                    delivery = Some(tex_command::CommandReplayDelivery::Command(command));
+                    destination = Some(command);
                 }
             }
             (
-                delivery,
+                delivery_status,
+                destination,
                 settled_in_preflight,
                 trace_reported,
                 fused_hot,
@@ -7907,26 +7992,29 @@ impl<G> MainControl<G> {
 
         let passive =
             || crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax);
-        let Some(delivery) = delivery else {
-            return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Prepared(Box::new(
-                    ColdOperation::<G>::EndOfInput,
-                )),
-                capabilities: passive(),
-                scanner: None,
-            }));
-        };
-        let tex_command::CommandReplayDelivery::Command(command) = delivery else {
-            let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
-                unreachable!();
-            };
-            return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Prepared(Box::new(
-                    ColdOperation::<G>::ReplayCompleted(episode),
-                )),
-                capabilities: passive(),
-                scanner: None,
-            }));
+        let command = match delivery_status {
+            tex_command::DeliveryStatus::End => {
+                return Ok(Some(PreflightDelivery::<G> {
+                    delivery: OperationDelivery::<G>::Prepared(Box::new(
+                        ColdOperation::<G>::EndOfInput,
+                    )),
+                    capabilities: passive(),
+                    scanner: None,
+                }));
+            }
+            tex_command::DeliveryStatus::ReplayCompleted(episode) => {
+                return Ok(Some(PreflightDelivery::<G> {
+                    delivery: OperationDelivery::<G>::Prepared(Box::new(
+                        ColdOperation::<G>::ReplayCompleted(episode),
+                    )),
+                    capabilities: passive(),
+                    scanner: None,
+                }));
+            }
+            tex_command::DeliveryStatus::Command => {
+                destination.expect("command status initializes destination")
+            }
+            _ => unreachable!("raw preflight delivery has no alignment event"),
         };
 
         let continues_main_loop = self.main_loop_active
@@ -9436,43 +9524,57 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<String, ExecError> {
-        let filename =
+        let filename = {
+            let mut processor = command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                stores.command_context().expect("live generation"),
+            );
+            let mut destination = None;
+            if processor
+                .get_x_token_into(&mut destination)
+                .map_err(command_error)?
+                != tex_command::DeliveryStatus::Command
             {
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut self.operation_observations,
-                    diagnostic_effects,
-                    stores.command_context().expect("live generation"),
-                );
-                let first = processor.get_x_token().map_err(command_error)?.ok_or(
-                    ExecError::MissingToken {
+                return Err(ExecError::MissingToken {
+                    context: "terminal filename",
+                });
+            }
+            let first = destination
+                .take()
+                .expect("command status initializes destination");
+            processor.back_input(first).map_err(command_error)?;
+            let mut filename = String::new();
+            loop {
+                if processor
+                    .get_x_token_into(&mut destination)
+                    .map_err(command_error)?
+                    != tex_command::DeliveryStatus::Command
+                {
+                    return Err(ExecError::MissingToken {
                         context: "terminal filename",
-                    },
-                )?;
-                processor.back_input(first).map_err(command_error)?;
-                let mut filename = String::new();
-                loop {
-                    let command = processor.get_x_token().map_err(command_error)?.ok_or(
-                        ExecError::MissingToken {
-                            context: "terminal filename",
-                        },
-                    )?;
-                    match command.spelling().semantic_token() {
-                        Token::Char {
-                            cat: Catcode::Space,
-                            ..
-                        } => break filename,
-                        Token::Char { ch, .. } => filename.push(ch),
-                        _ => {
-                            return Err(ExecError::MissingToken {
-                                context: "terminal filename character",
-                            });
-                        }
+                    });
+                }
+                let command = destination
+                    .take()
+                    .expect("command status initializes destination");
+                match command.spelling().semantic_token() {
+                    Token::Char {
+                        cat: Catcode::Space,
+                        ..
+                    } => break filename,
+                    Token::Char { ch, .. } => filename.push(ch),
+                    _ => {
+                        return Err(ExecError::MissingToken {
+                            context: "terminal filename character",
+                        });
                     }
                 }
-            };
+            }
+        };
         // The terminal line supplies only the startup filename.  It is not a
         // normal file-input level beneath the selected root, so retire its
         // exhausted source silently before main control starts.  The eventual
@@ -9489,11 +9591,12 @@ impl<G> MainControl<G> {
             diagnostic_effects,
             stores.command_context().expect("live generation"),
         );
-        let exhausted = processor.get_x_token();
+        let mut destination = None;
+        let exhausted = processor.get_x_token_into(&mut destination);
         let exhausted = exhausted.map_err(command_error);
         drop(processor);
         self.operation_observations = silenced;
-        let terminal_exhausted = exhausted?.is_none();
+        let terminal_exhausted = exhausted? == tex_command::DeliveryStatus::End;
         if !terminal_exhausted {
             return Err(ExecError::MissingToken {
                 context: "terminal filename terminator",
@@ -10420,9 +10523,17 @@ fn scan_noalign_body<G>(
     retry: &mut Option<PendingPreflightCommand<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
-    let Some(command) = processor.get_x_token().map_err(command_error)? else {
+    let mut destination = None;
+    if processor
+        .get_x_token_into(&mut destination)
+        .map_err(command_error)?
+        != tex_command::DeliveryStatus::Command
+    {
         return Ok(ColdOperation::<G>::EndOfInput.into());
-    };
+    }
+    let command = destination
+        .take()
+        .expect("command status initializes destination");
     report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
     match command.meaning() {
         ResolvedMeaning::Static(Meaning::CharToken {
@@ -12185,12 +12296,18 @@ fn dispatch_main_control_command<G>(
             )
         )
     {
-        command = processor
-            .next_non_blank_non_relax_x_token()
+        let mut destination = None;
+        if next_non_blank_non_relax_x_token_into(processor, &mut destination)
             .map_err(command_error)?
-            .ok_or(ExecError::MissingToken {
+            != tex_command::DeliveryStatus::Command
+        {
+            return Err(ExecError::MissingToken {
                 context: "leader glue",
-            })?;
+            });
+        }
+        command = destination
+            .take()
+            .expect("command status initializes destination");
     }
     let origin = command.origin();
     dispatch_main_control_command_inner(
@@ -12343,9 +12460,15 @@ fn dispatch_main_control_command_inner<G>(
                 )) => flags = flags | MeaningFlags::PROTECTED,
                 _ => break,
             }
-            command = match processor.next_non_blank_non_relax_x_token() {
-                Ok(Some(command)) => command,
-                Ok(None) => return Err(ExecError::MissingPrefixedCommand),
+            let mut destination = None;
+            command = match next_non_blank_non_relax_x_token_into(processor, &mut destination) {
+                Ok(tex_command::DeliveryStatus::Command) => destination
+                    .take()
+                    .expect("command status initializes destination"),
+                Ok(tex_command::DeliveryStatus::End) => {
+                    return Err(ExecError::MissingPrefixedCommand);
+                }
+                Ok(_) => unreachable!("ordinary expanded delivery returns only commands"),
                 Err(error) => {
                     let error = command_error(error);
                     if execution_error_needs_command_retry(&error) {
@@ -12422,35 +12545,71 @@ fn dispatch_main_control_command_inner<G>(
             ))
         ) {
             let next = if let Some(alignment) = alignment {
+                let mut destination = None;
                 loop {
                     match processor
-                        .get_x_alignment_delivery(false)
+                        .get_x_alignment_delivery_into(false, &mut destination)
                         .map_err(command_error)?
                     {
-                        None => return Ok(ColdOperation::<G>::EndOfInput.into()),
-                        Some(AlignmentDelivery::Completed(episode)) => {
+                        tex_command::DeliveryStatus::End => {
+                            return Ok(ColdOperation::<G>::EndOfInput.into());
+                        }
+                        tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                             return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
                         }
-                        Some(AlignmentDelivery::Event(event)) => {
+                        tex_command::DeliveryStatus::AlignmentEndTemplate => {
+                            let event = tex_command::AlignmentDeliveryEvent::EndTemplate(
+                                destination
+                                    .take()
+                                    .expect("alignment status initializes destination"),
+                            );
                             return scan_alignment_delivery_event(processor, alignment, event)
                                 .map(Into::into);
                         }
-                        Some(AlignmentDelivery::Command(next))
+                        tex_command::DeliveryStatus::AlignmentClosingBrace => {
+                            let event = tex_command::AlignmentDeliveryEvent::ClosingBrace(
+                                destination
+                                    .take()
+                                    .expect("alignment status initializes destination"),
+                            );
+                            return scan_alignment_delivery_event(processor, alignment, event)
+                                .map(Into::into);
+                        }
+                        tex_command::DeliveryStatus::Command
                             if matches!(
-                                next.meaning(),
+                                destination
+                                    .as_ref()
+                                    .expect("command status initializes destination")
+                                    .meaning(),
                                 ResolvedMeaning::Static(Meaning::CharToken {
                                     cat: Catcode::Space,
                                     ..
                                 })
-                            ) => {}
-                        Some(AlignmentDelivery::Command(next)) => break next,
+                            ) =>
+                        {
+                            destination = None
+                        }
+                        tex_command::DeliveryStatus::Command => {
+                            break destination
+                                .take()
+                                .expect("command status initializes destination");
+                        }
+                        tex_command::DeliveryStatus::PendingExpanded => {
+                            unreachable!("alignment delivery commits terminal observations");
+                        }
                     }
                 }
             } else {
-                let Some(next) = processor.next_non_blank_x_token().map_err(command_error)? else {
+                let mut destination = None;
+                if next_non_blank_x_token_into(processor, &mut destination)
+                    .map_err(command_error)?
+                    != tex_command::DeliveryStatus::Command
+                {
                     return Ok(ColdOperation::<G>::EndOfInput.into());
-                };
-                next
+                }
+                destination
+                    .take()
+                    .expect("command status initializes destination")
             };
             command = next;
             report_command_trace(processor, mode, &command, shown_mode);
@@ -12464,9 +12623,17 @@ fn dispatch_main_control_command_inner<G>(
                 ))
             )
         {
-            let Some(next) = processor.get_x_token().map_err(command_error)? else {
+            let mut destination = None;
+            if processor
+                .get_x_token_into(&mut destination)
+                .map_err(command_error)?
+                != tex_command::DeliveryStatus::Command
+            {
                 return Ok(ColdOperation::<G>::Continue.into());
-            };
+            }
+            let next = destination
+                .take()
+                .expect("command status initializes destination");
             suppress_left_boundary = matches!(
                 next.meaning(),
                 ResolvedMeaning::Static(
@@ -12673,12 +12840,18 @@ fn scan_leaders_step<G>(
             };
             let result = LeaderGlueResult::Payload { kind, payload };
             *suspended = Some(PendingOperationScanPhase::LeaderCommand { mode, result });
-            let glue_command = processor
-                .next_non_blank_non_relax_x_token()
+            let mut destination = None;
+            if next_non_blank_non_relax_x_token_into(processor, &mut destination)
                 .map_err(command_error)?
-                .ok_or(ExecError::MissingToken {
+                != tex_command::DeliveryStatus::Command
+            {
+                return Err(ExecError::MissingToken {
                     context: "leader glue",
-                })?;
+                });
+            }
+            let glue_command = destination
+                .take()
+                .expect("command status initializes destination");
             *suspended = None;
             let Some(operation) =
                 scan_leader_glue_command(processor, glue_command, mode, result, suspended)?
@@ -12693,12 +12866,18 @@ fn scan_leaders_step<G>(
         ScannedLeaderPayload::BoxRegister { index, copy } => {
             let result = LeaderGlueResult::Register { kind, index, copy };
             *suspended = Some(PendingOperationScanPhase::LeaderCommand { mode, result });
-            let glue_command = processor
-                .next_non_blank_non_relax_x_token()
+            let mut destination = None;
+            if next_non_blank_non_relax_x_token_into(processor, &mut destination)
                 .map_err(command_error)?
-                .ok_or(ExecError::MissingToken {
+                != tex_command::DeliveryStatus::Command
+            {
+                return Err(ExecError::MissingToken {
                     context: "leader glue",
-                })?;
+                });
+            }
+            let glue_command = destination
+                .take()
+                .expect("command status initializes destination");
             *suspended = None;
             let Some(operation) =
                 scan_leader_glue_command(processor, glue_command, mode, result, suspended)?
@@ -12717,12 +12896,17 @@ fn scan_retained_leader_command<G>(
     suspended: &mut Option<PendingOperationScanPhase>,
 ) -> Result<ColdOperation<G>, ExecError> {
     *suspended = Some(PendingOperationScanPhase::LeaderCommand { mode, result });
-    let glue_command = processor
-        .next_non_blank_non_relax_x_token()
-        .map_err(command_error)?
-        .ok_or(ExecError::MissingToken {
+    let mut destination = None;
+    if next_non_blank_non_relax_x_token_into(processor, &mut destination).map_err(command_error)?
+        != tex_command::DeliveryStatus::Command
+    {
+        return Err(ExecError::MissingToken {
             context: "leader glue",
-        })?;
+        });
+    }
+    let glue_command = destination
+        .take()
+        .expect("command status initializes destination");
     *suspended = None;
     scan_leader_glue_command(processor, glue_command, mode, result, suspended)?.ok_or(
         ExecError::MissingToken {
