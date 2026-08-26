@@ -675,7 +675,7 @@ fn entry_name(spec: &VerifiedBlobSpec) -> String {
     let mut digest = AHash64Hasher::new(HashDomain::CacheEnvelope);
     digest.write(b"umber.blob-store.key\0");
     digest.write(spec.namespace.as_bytes());
-    digest.write(&[0]);
+    digest.write([0]);
     digest.write(spec.key.as_bytes());
     format!("ahash64-v1-{}", digest.finish().hex())
 }

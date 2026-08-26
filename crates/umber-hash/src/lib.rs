@@ -118,8 +118,8 @@ impl AHash64Hasher {
             tail_len: 0,
         };
         hasher.write(PREFIX);
-        hasher.write(&[ALGORITHM_VERSION]);
-        hasher.write(&(domain as u64).to_le_bytes());
+        hasher.write([ALGORITHM_VERSION]);
+        hasher.write((domain as u64).to_le_bytes());
         hasher
     }
 

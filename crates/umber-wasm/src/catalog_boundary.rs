@@ -1,6 +1,5 @@
 use umber_distribution::{
-    JobRequirement, ManifestMiss, ManifestRequest, ShardedManifestRoot, authenticate_batch,
-    prepare_batch,
+    JobRequirement, ManifestMiss, ManifestRequest, ShardedManifestRoot, prepare_batch, verify_batch,
 };
 use wasm_bindgen::{JsCast as _, prelude::*};
 
@@ -22,7 +21,7 @@ fn requests(keys: &JsCatalogKeys) -> Result<Vec<ManifestRequest>, JsValue> {
 }
 
 /// Parses every supported root and returns its canonical value plus the unique
-/// authenticated shard objects required for one ordered request batch.
+/// verified shard objects required for one ordered request batch.
 #[wasm_bindgen(js_name = catalogPrepareBatch)]
 pub fn prepare(root_text: &str, keys: &JsCatalogKeys) -> Result<JsCatalogPreparedBatch, JsValue> {
     let requests = requests(keys)?;
@@ -36,7 +35,7 @@ pub fn prepare(root_text: &str, keys: &JsCatalogKeys) -> Result<JsCatalogPrepare
                 .to_owned();
             wire::CatalogShardDto {
                 index,
-                object: format!("ahash64-{ahash64}"),
+                object: format!("ahash64-v1-{ahash64}"),
                 ahash64,
             }
         })
@@ -48,7 +47,7 @@ pub fn prepare(root_text: &str, keys: &JsCatalogKeys) -> Result<JsCatalogPrepare
     .unchecked_into())
 }
 
-/// Authenticates exact shard bytes against the root and returns the complete
+/// Verifies exact shard bytes against the root and returns the complete
 /// required-before-hint transport plan. JavaScript owns only fetching.
 #[wasm_bindgen(js_name = catalogPlanBatch)]
 pub fn plan(
@@ -63,7 +62,7 @@ pub fn plan(
         .iter()
         .map(|shard| (shard.index, shard.text.as_str()))
         .collect::<Vec<_>>();
-    let batch = authenticate_batch(root_text, &borrowed, &requests).map_err(boundary_error)?;
+    let batch = verify_batch(root_text, &borrowed, &requests).map_err(boundary_error)?;
 
     let jobs = batch
         .selection
@@ -72,7 +71,7 @@ pub fn plan(
         .map(|job| {
             let key = job.manifest_key.as_str();
             let index = umber_distribution::shard_index_for_key(key, batch.root.shard_bits)
-                .expect("authenticated job key is canonical");
+                .expect("verified job key is canonical");
             let shard = &batch.shards[&index];
             let mut entry = wire::CatalogJobEntryDto {
                 object: job.object.object.clone(),

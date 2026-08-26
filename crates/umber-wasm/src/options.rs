@@ -283,10 +283,10 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
             },
             bytes,
             declared_object_ahash64: object_ahash64
-                .map(|digest| parse_digest(&digest).map(FontObjectIdentity::from_bytes))
+                .map(|digest| parse_ahash64(&digest).map(FontObjectIdentity::from_bytes))
                 .transpose()?,
             declared_program_identity: program_identity
-                .map(|digest| parse_digest(&digest).map(FontProgramIdentity::from_bytes))
+                .map(|digest| parse_ahash64(&digest).map(FontProgramIdentity::from_bytes))
                 .transpose()?,
             provenance,
             legacy_mapping: legacy_mapping
@@ -297,7 +297,7 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
                         ));
                     }
                     Ok(LegacyFontMapping {
-                        tfm_ahash64: parse_digest(&mapping.tfm_ahash64)?,
+                        tfm_ahash64: parse_ahash64(&mapping.tfm_ahash64)?,
                         encoding: mapping.encoding,
                         embeddable: mapping.embeddable,
                     })
@@ -317,7 +317,7 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
             virtual_path,
             bytes,
             expected_ahash64: expected_ahash64
-                .map(|digest| parse_digest(&digest))
+                .map(|digest| parse_ahash64(&digest))
                 .transpose()?,
         })),
         wire::ResourceResponseDto::PkFontUnavailable { key } => {
@@ -477,14 +477,34 @@ fn exact_unsigned_integer(value: f64, name: &str) -> Result<u32, JsValue> {
 
 fn parse_digest(value: &str) -> Result<[u8; 32], JsValue> {
     if value.len() != 64 {
-        return Err(js_error("ahash64 must contain 64 lowercase hex digits"));
+        return Err(js_error(
+            "content identity must contain 64 lowercase hex digits",
+        ));
     }
     let mut digest = [0u8; 32];
     for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
         let nibble = |byte| match byte {
             b'0'..=b'9' => Ok(byte - b'0'),
             b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(js_error("ahash64 must use lowercase hex")),
+            _ => Err(js_error("content identity must use lowercase hex")),
+        };
+        digest[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+    }
+    Ok(digest)
+}
+
+fn parse_ahash64(value: &str) -> Result<[u8; 8], JsValue> {
+    if value.len() != 16 {
+        return Err(js_error(
+            "aHash64 digest must contain 16 hexadecimal characters",
+        ));
+    }
+    let mut digest = [0_u8; 8];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let nibble = |byte| match byte {
+            b'0'..=b'9' => Ok(byte - b'0'),
+            b'a'..=b'f' => Ok(byte - b'a' + 10),
+            _ => Err(js_error("aHash64 digest must use lowercase hex")),
         };
         digest[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }
