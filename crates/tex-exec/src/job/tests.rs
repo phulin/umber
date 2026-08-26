@@ -427,12 +427,18 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
 fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
     // Web2C tex.ch [51.1332] owns `hash_extra` as executable runtime
     // configuration, and [51.1334] prints it independently of the loaded
-    // format's command family. The older profile is the negative control.
+    // format's command family. TeX82 is the compact negative control; the
+    // compiled e-TeX and pdfTeX binaries both use the TeX Live 2026 profile.
     for (profile, binary, expected) in [
+        (
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "15000+0",
+        ),
         (
             CommandProfile::ETEX26,
             EngineBinaryIdentity::Etex26,
-            "15000+0",
+            "15000+600000",
         ),
         (
             CommandProfile::TEX82,

@@ -4318,6 +4318,9 @@ fn invalid_legacy_platform_filesize_probe_expands_to_nothing() {
     let format = construct_test_format(EngineMode::Latex, "\\dump");
     let mut session = VirtualCompileSession::new(SessionOptions {
         format: Some(format.into_bytes()),
+        // The loaded format records the TeX Live process capacities selected
+        // by its LaTeX producer; do not execute it as the compact TeX82 binary.
+        engine: EngineMode::Latex,
         ..SessionOptions::default()
     })
     .expect("formatted session");
