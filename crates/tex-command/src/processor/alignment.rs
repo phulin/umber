@@ -781,10 +781,7 @@ impl<G> AlignmentDeliveryState<G> {
         Ok(())
     }
 
-    pub(crate) fn classify_delivery(
-        &mut self,
-        command: &mut CurrentCommand<G>,
-    ) {
+    pub(crate) fn classify_delivery(&mut self, command: &mut CurrentCommand<G>) {
         let adjustment = match command.spelling().semantic_token() {
             Token::Char {
                 cat: Catcode::BeginGroup,

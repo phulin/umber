@@ -389,6 +389,13 @@ tokenization. Parameter replay restarts from the delivered raw word before a
 `CurrentCommand` exists. The slot retains no backing handle or cursor, needs no
 rollback record, and is never moved into a typed suspension.
 
+Resolution returns a borrow of the initialized caller-owned command slot.
+Outer validity, alignment classification, and optional observation use that
+same borrow in canonical order; classification stores the exact adjustment on
+the final command for one later backup. Internal recovery, ErrorStop deletion,
+math-shift lookahead, and output-list draining supply their local final or
+discard slots directly and create no returned command envelope.
+
 An exhausted alignment V-template is intentionally retained until TeX's
 semantic `endv` transition; it is not stale merely because it has delivered
 its last ordinary token. Likewise, a source registered in `pending_sources`

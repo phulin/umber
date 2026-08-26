@@ -84,18 +84,12 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
         );
 
         processor.back_input(first).expect("first backup");
-        assert_eq!(
-            processor.command.alignment.align_state,
-            initial_align_state
-        );
+        assert_eq!(processor.command.alignment.align_state, initial_align_state);
         assert_eq!(
             processor.back_input(stale_copy),
             Err(crate::CommandError::StaleDelivery)
         );
-        assert_eq!(
-            processor.command.alignment.align_state,
-            initial_align_state
-        );
+        assert_eq!(processor.command.alignment.align_state, initial_align_state);
 
         let mut replay = None;
         assert_eq!(

@@ -213,6 +213,14 @@ suspension can mutate state. Assignment level remains solely in the dense bank,
 so delivered-command ownership does not duplicate journaling or reinterpret a
 meaning after delivery.
 
+`CurrentCommand::resolve_into` lends the initialized caller destination back
+to the raw driver, so the remaining delivery steps mutate and observe that
+one final command in place. Alignment classification writes its exact
+`AlignmentDeliveryAdjustment` into the same command before raw observation;
+backup later consumes that recorded adjustment rather than reclassifying the
+spelling. Internal ErrorStop deletion, math-shift lookahead, and recovery-list
+draining likewise provide their discard-or-backup slot directly to the driver.
+
 The value-returning entry points are conveniences over the same destination
 driver; the executor hot loop and destination-aware callers use
 `get_next_into`, `get_token_into`, `get_x_token_into`, and the replay/alignment
@@ -2033,7 +2041,8 @@ There is one semantic raw-command operation. In conceptual order it:
 5. resolves character command codes or the current control-sequence meaning;
 6. processes one-shot backed-up suppression;
 7. applies `scanner_status` outer-validity and EOF rules;
-8. updates `align_state` for literal character braces;
+8. updates `align_state` for literal character braces and records that exact
+   adjustment on the final current command;
 9. detects an alignment delimiter at the current base depth;
 10. pushes or retires the canonical template input required by that delimiter;
 11. records the semantic read and diagnostic provenance; and
