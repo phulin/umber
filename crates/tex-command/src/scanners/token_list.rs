@@ -15,7 +15,7 @@ use super::structured::{
     PendingTokenListOwner, StructuredScannerChildDestination,
 };
 use crate::scan_toks::ScanToksMode;
-use crate::{AttemptTokenListId, CommandError, CommandProcessor};
+use crate::{AttemptTokenListId, CommandError, CommandProcessor, processor::DeliveryStatus};
 
 /// A completed TeX token-register assignment operand.
 ///
@@ -382,9 +382,22 @@ impl<G> CommandProcessor<'_, '_, G> {
             )?;
             return Ok(self.token_register_rhs(index));
         }
-        let command = self
-            .next_non_blank_non_relax_x_token()?
-            .ok_or_else(|| CommandError::input_invariant())?;
+        let command = loop {
+            let mut command = None;
+            if self.get_x_token_into(&mut command)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = command.expect("command delivery initializes destination");
+            if !matches!(
+                static_meaning(command.meaning()),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                } | Meaning::Relax
+            ) {
+                break command;
+            }
+        };
         let collected = match static_meaning(command.meaning()) {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside

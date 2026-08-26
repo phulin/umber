@@ -7,7 +7,7 @@ use tex_state::ids::FontId;
 use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 
 use crate::scanners::MathFamilySize;
-use crate::{CommandError, CommandProcessor};
+use crate::{CommandError, CommandProcessor, processor::DeliveryStatus};
 
 impl<G> CommandProcessor<'_, '_, G> {
     /// Scans TeX82 §577's `scan_font_ident` through canonical expanded
@@ -49,7 +49,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         // §577's `@<Get the next non-blank non-call token@>` (§406).
         let command = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            let mut command = None;
+            if self.get_x_token_into(&mut command)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = command.expect("command delivery initializes destination");
             if !matches!(
                 static_meaning(command.meaning()),
                 Meaning::CharToken {

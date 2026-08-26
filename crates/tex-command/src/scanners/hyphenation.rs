@@ -25,7 +25,7 @@ use crate::scanners::structured::{
     PendingStructuredScalarPhase, PendingStructuredScanner, PendingStructuredScannerPhase,
     StructuredScannerChildDestination,
 };
-use crate::{CommandError, CommandProcessor};
+use crate::{CommandError, CommandProcessor, processor::DeliveryStatus};
 
 fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
@@ -156,7 +156,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         loop {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            let mut command = None;
+            if self.get_x_token_into(&mut command)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = command.expect("command delivery initializes destination");
             let character = match static_meaning(command.meaning()) {
                 // §935/§961's `letter,other_char`.
                 Meaning::CharToken {

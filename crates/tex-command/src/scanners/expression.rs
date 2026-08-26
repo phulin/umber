@@ -8,7 +8,7 @@ use tex_state::token::Catcode;
 
 use super::scalar::InternalValue;
 use crate::observation::canonical_names::glue_order_name;
-use crate::processor::CommandProcessor;
+use crate::processor::{CommandProcessor, DeliveryStatus};
 use crate::{
     CommandError, CommandObservation, CurrentCommand, FatalError, ObservationValue, ScannerRecord,
 };
@@ -335,19 +335,41 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             let factor = match phase {
                 PendingExpressionPhase::FactorLeading => {
-                    let first = match self.next_non_blank_x_token() {
-                        Ok(first) => first,
-                        Err(error) => {
-                            return self.suspend_expression(
-                                error,
-                                PendingExpressionScan {
-                                    primitive,
-                                    stack_mark,
-                                    frame,
-                                    overflow,
-                                    phase: PendingExpressionPhase::FactorLeading,
-                                },
-                            );
+                    let first = loop {
+                        let mut first = None;
+                        let delivery = match self.get_x_token_into(&mut first) {
+                            Ok(delivery) => delivery,
+                            Err(error) => {
+                                return self.suspend_expression(
+                                    error,
+                                    PendingExpressionScan {
+                                        primitive,
+                                        stack_mark,
+                                        frame,
+                                        overflow,
+                                        phase: PendingExpressionPhase::FactorLeading,
+                                    },
+                                );
+                            }
+                        };
+                        match delivery {
+                            DeliveryStatus::End => break None,
+                            DeliveryStatus::Command => {
+                                let first =
+                                    first.expect("command delivery initializes destination");
+                                if !matches!(
+                                    static_meaning(first.meaning()),
+                                    Meaning::CharToken {
+                                        cat: Catcode::Space,
+                                        ..
+                                    }
+                                ) {
+                                    break Some(first);
+                                }
+                            }
+                            _ => {
+                                unreachable!("ordinary expanded delivery returns only commands")
+                            }
                         }
                     };
                     if first
@@ -507,8 +529,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         parenthesized: bool,
     ) -> Result<ExpressionOperator, CommandError> {
-        let Some(command) = self.next_non_blank_x_token()? else {
-            return Ok(ExpressionOperator::None);
+        let command = loop {
+            let mut command = None;
+            let delivery = self.get_x_token_into(&mut command)?;
+            let command = match delivery {
+                DeliveryStatus::End => return Ok(ExpressionOperator::None),
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
+            };
+            if !matches!(
+                static_meaning(command.meaning()),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                break command;
+            }
         };
         for (character, operator) in [
             ('+', ExpressionOperator::Add),

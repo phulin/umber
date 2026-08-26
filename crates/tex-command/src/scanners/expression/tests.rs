@@ -2,7 +2,7 @@ use tex_state::env::AssignmentScope;
 use tex_state::meaning::{Meaning, MeaningWord, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token};
 
-use crate::{CommandHostCapabilities, CommandProfile, CommandState};
+use crate::{CommandHostCapabilities, CommandProfile, CommandState, processor::DeliveryStatus};
 
 fn other(ch: char) -> Token {
     Token::Char {
@@ -58,10 +58,15 @@ fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
             panic!("preloaded expression must complete synchronously")
         };
         assert_eq!(scanned.value, 14);
+        let mut following = None;
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("following")
+                .get_x_token_into(&mut following)
+                .expect("following"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            following
                 .expect("following token")
                 .spelling()
                 .semantic_token(),

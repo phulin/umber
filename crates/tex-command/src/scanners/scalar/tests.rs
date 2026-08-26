@@ -3,7 +3,7 @@ use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
-use crate::{CommandHostCapabilities, CommandState};
+use crate::{CommandHostCapabilities, CommandState, processor::DeliveryStatus};
 
 #[test]
 fn keyword_replay_keeps_scalar_continuations_compact() {
@@ -48,12 +48,15 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
             &mut diagnostic_effects,
         );
         assert_eq!(processor.scan_integer().expect("integer").value, -42);
+        let mut terminator = None;
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("terminator delivery")
-                .expect("terminator")
-                .meaning(),
+                .get_x_token_into(&mut terminator)
+                .expect("terminator delivery"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            terminator.expect("terminator").meaning(),
             Meaning::CharToken {
                 ch: 'X',
                 cat: Catcode::Other,
@@ -97,9 +100,14 @@ fn failed_keyword_replays_the_matched_prefix_before_the_offender() {
         assert!(!processor.scan_keyword("em").expect("keyword").value);
         let replayed = (0..3)
             .map(|_| {
-                processor
-                    .get_x_token()
-                    .expect("replayed delivery")
+                let mut replayed = None;
+                assert_eq!(
+                    processor
+                        .get_x_token_into(&mut replayed)
+                        .expect("replayed delivery"),
+                    DeliveryStatus::Command
+                );
+                replayed
                     .expect("replayed token")
                     .spelling()
                     .semantic_token()
@@ -179,10 +187,14 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
             };
             assert!(!scanned.value);
             for _ in 0..9 {
-                processor
-                    .get_x_token()
-                    .expect("replayed delivery")
-                    .expect("replayed token");
+                let mut replayed = None;
+                assert_eq!(
+                    processor
+                        .get_x_token_into(&mut replayed)
+                        .expect("replayed delivery"),
+                    DeliveryStatus::Command
+                );
+                replayed.expect("replayed token");
             }
         };
         run(&mut processor);
@@ -229,10 +241,15 @@ fn dimension_scanner_preserves_fractional_points_and_following_input() {
             processor.scan_dimension().expect("dimension").value,
             Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2)
         );
+        let mut terminator = None;
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("terminator")
+                .get_x_token_into(&mut terminator)
+                .expect("terminator"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            terminator
                 .expect("terminator token")
                 .spelling()
                 .semantic_token(),
@@ -274,10 +291,15 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
                 shrink_order: Order::Normal,
             }
         );
+        let mut terminator = None;
         assert_eq!(
             processor
-                .get_x_token()
-                .expect("terminator")
+                .get_x_token_into(&mut terminator)
+                .expect("terminator"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            terminator
                 .expect("terminator token")
                 .spelling()
                 .semantic_token(),

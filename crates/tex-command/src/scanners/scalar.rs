@@ -17,7 +17,7 @@ use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
     CommandError, CurrentCommand,
-    processor::{CommandProcessor, meaning_text},
+    processor::{CommandProcessor, DeliveryStatus, meaning_text},
 };
 use crate::{CommandObservation, ObservationValue, ScannerRecord};
 
@@ -946,8 +946,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             None => OriginId::UNKNOWN,
         };
         loop {
-            let command = match self.get_x_token() {
-                Ok(command) => command,
+            let mut command = None;
+            let delivery = match self.get_x_token_into(&mut command) {
+                Ok(delivery) => delivery,
                 Err(error) => {
                     return self.finish_scalar_call(
                         Err(error),
@@ -958,14 +959,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                 }
             };
-            let Some(command) = command else {
-                return Ok(ScannedScalar {
-                    value: false,
-                    recovery: ScalarRecovery::None,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                });
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                DeliveryStatus::End => {
+                    return Ok(ScannedScalar {
+                        value: false,
+                        recovery: ScalarRecovery::None,
+                        provenance: ScalarProvenance {
+                            primary: provenance,
+                        },
+                    });
+                }
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
@@ -1065,8 +1072,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             None => (MatchedKeywordPrefix::new(), OriginId::UNKNOWN),
         };
         while let Some(letter) = keyword.get(matched.len) {
-            let command = match self.get_x_token() {
-                Ok(command) => command,
+            let mut command = None;
+            let delivery = match self.get_x_token_into(&mut command) {
+                Ok(delivery) => delivery,
                 Err(error) => {
                     return self.finish_scalar_call(
                         Err(error),
@@ -1079,14 +1087,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                 }
             };
-            let Some(command) = command else {
-                // tex.web cannot reach this: `get_x_token` always yields, and
-                // exhausted input is `\\end`'s business. Restore the prefix
-                // the same way a mismatch would and report no keyword.
-                if !matched.is_empty() {
-                    self.back_matched_keyword_prefix(matched);
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
                 }
-                return Ok(Self::keyword_result(false, provenance));
+                DeliveryStatus::End => {
+                    // tex.web cannot reach this: `get_x_token` always yields, and
+                    // exhausted input is `\\end`'s business. Restore the prefix
+                    // the same way a mismatch would and report no keyword.
+                    if !matched.is_empty() {
+                        self.back_matched_keyword_prefix(matched);
+                    }
+                    return Ok(Self::keyword_result(false, provenance));
+                }
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
@@ -1285,8 +1299,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             ) => unreachable!(),
         };
         let first = loop {
-            let command = match self.get_x_token() {
-                Ok(command) => command,
+            let mut command = None;
+            let delivery = match self.get_x_token_into(&mut command) {
+                Ok(delivery) => delivery,
                 Err(error) => {
                     if retain_continuation && error.is_resource_suspension() {
                         *suspended = Some(PendingIntegerScan::Leading {
@@ -1297,14 +1312,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(error);
                 }
             };
-            let Some(command) = command else {
-                return Ok(ScannedScalar {
-                    value: 0,
-                    recovery: ScalarRecovery::InsertedZero,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                });
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                DeliveryStatus::End => {
+                    return Ok(ScannedScalar {
+                        value: 0,
+                        recovery: ScalarRecovery::InsertedZero,
+                        provenance: ScalarProvenance {
+                            primary: provenance,
+                        },
+                    });
+                }
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
@@ -1677,8 +1698,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         // character code), so it must see the token before any `back_input`
         // could split the quantity from its operand.
         let first = loop {
-            let command = match self.get_x_token() {
-                Ok(command) => command,
+            let mut command = None;
+            let delivery = match self.get_x_token_into(&mut command) {
+                Ok(delivery) => delivery,
                 Err(error) => {
                     *suspended = Some(PendingScalarFrame::DimensionLeading {
                         negative,
@@ -1690,8 +1712,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(error);
                 }
             };
-            let Some(command) = command else {
-                break None;
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                DeliveryStatus::End => break None,
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
@@ -1776,7 +1802,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let leading_point = is_point_token(&first);
                 self.back_input(first)?;
                 if leading_point {
-                    let _ = self.get_token()?;
+                    let mut point = None;
+                    match self.get_token_into(&mut point)? {
+                        DeliveryStatus::Command => {
+                            point.expect("command delivery initializes destination");
+                        }
+                        DeliveryStatus::End => {}
+                        _ => unreachable!("ordinary raw delivery returns only commands"),
+                    }
                     self.scan_dimension_units(
                         0,
                         true,
@@ -1822,7 +1855,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             .as_ref()
             .is_some_and(is_point_token);
         if decimal {
-            let _ = self.get_token()?;
+            let mut point = None;
+            match self.get_token_into(&mut point)? {
+                DeliveryStatus::Command => {
+                    point.expect("command delivery initializes destination");
+                }
+                DeliveryStatus::End => {}
+                _ => unreachable!("ordinary raw delivery returns only commands"),
+            }
         }
         self.scan_dimension_units(
             integer.value,
@@ -2195,8 +2235,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         // signed internal glue through the width-only dimension scanner
         // instead would drop its stretch and shrink.
         let first = loop {
-            let command = match self.get_x_token() {
-                Ok(command) => command,
+            let mut command = None;
+            let delivery = match self.get_x_token_into(&mut command) {
+                Ok(delivery) => delivery,
                 Err(error) => {
                     *suspended = Some(PendingScalarFrame::GlueLeading {
                         mu,
@@ -2207,8 +2248,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(error);
                 }
             };
-            let Some(command) = command else {
-                break None;
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                DeliveryStatus::End => break None,
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
@@ -2479,7 +2524,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_internal_value_or_zero(
         &mut self,
     ) -> Result<ScannedScalar<InternalValue>, CommandError> {
-        let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let mut command = None;
+        let delivery = self.get_x_token_into(&mut command)?;
+        if delivery != DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let command = command.expect("command delivery initializes destination");
         let provenance = ScalarProvenance {
             primary: command.origin(),
         };
@@ -2573,8 +2623,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<(i32, bool), CommandError> {
         loop {
-            let command = match self.get_x_token() {
-                Ok(command) => command,
+            let mut command = None;
+            let delivery = match self.get_x_token_into(&mut command) {
+                Ok(delivery) => delivery,
                 Err(error) => {
                     if error.is_resource_suspension()
                         && let Some((negative, provenance)) = integer_continuation
@@ -2591,8 +2642,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(error);
                 }
             };
-            let Some(command) = command else {
-                break;
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                DeliveryStatus::End => break,
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             match Self::radix_digit(&command) {
                 Some(digit) if digit < radix => {
@@ -2709,18 +2764,26 @@ impl<G> CommandProcessor<'_, '_, G> {
             });
             match pending.progress {
                 DimensionUnitProgress::Fraction { special_fil } => {
-                    let Some(command) = self.get_x_token()? else {
-                        pending.progress = if special_fil {
-                            DimensionUnitProgress::SpecialFilF
-                        } else if allow_infinite {
-                            DimensionUnitProgress::Keyword {
-                                cursor: 0,
-                                magnification: None,
-                            }
-                        } else {
-                            DimensionUnitProgress::ProbeLeading
-                        };
-                        continue;
+                    let mut command = None;
+                    let delivery = self.get_x_token_into(&mut command)?;
+                    let command = match delivery {
+                        DeliveryStatus::Command => {
+                            command.expect("command delivery initializes destination")
+                        }
+                        DeliveryStatus::End => {
+                            pending.progress = if special_fil {
+                                DimensionUnitProgress::SpecialFilF
+                            } else if allow_infinite {
+                                DimensionUnitProgress::Keyword {
+                                    cursor: 0,
+                                    magnification: None,
+                                }
+                            } else {
+                                DimensionUnitProgress::ProbeLeading
+                            };
+                            continue;
+                        }
+                        _ => unreachable!("ordinary expanded delivery returns only commands"),
                     };
                     match scalar_meaning(command.meaning()) {
                         Meaning::CharToken {
@@ -2782,12 +2845,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 DimensionUnitProgress::ProbeLeading => {
                     let command = loop {
-                        let Some(command) = self.get_x_token()? else {
-                            pending.progress = DimensionUnitProgress::Keyword {
-                                cursor: if mu { 4 } else { 1 },
-                                magnification: None,
-                            };
-                            break None;
+                        let mut command = None;
+                        let delivery = self.get_x_token_into(&mut command)?;
+                        let command = match delivery {
+                            DeliveryStatus::Command => {
+                                command.expect("command delivery initializes destination")
+                            }
+                            DeliveryStatus::End => {
+                                pending.progress = DimensionUnitProgress::Keyword {
+                                    cursor: if mu { 4 } else { 1 },
+                                    magnification: None,
+                                };
+                                break None;
+                            }
+                            _ => {
+                                unreachable!("ordinary expanded delivery returns only commands")
+                            }
                         };
                         if !matches!(
                             scalar_meaning(command.meaning()),
@@ -2983,9 +3056,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn expect_infinite_unit_character(&mut self, expected: char) -> Result<(), CommandError> {
-        let command = self
-            .get_x_token()?
-            .ok_or_else(|| CommandError::input_invariant())?;
+        let mut command = None;
+        let delivery = self.get_x_token_into(&mut command)?;
+        if delivery != DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let command = command.expect("command delivery initializes destination");
         if matches!(
             scalar_meaning(command.meaning()),
             Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)
@@ -3007,8 +3083,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut fraction_len = 0;
         if decimal {
             loop {
-                let Some(command) = self.get_x_token()? else {
-                    break;
+                let mut command = None;
+                let delivery = self.get_x_token_into(&mut command)?;
+                let command = match delivery {
+                    DeliveryStatus::Command => {
+                        command.expect("command delivery initializes destination")
+                    }
+                    DeliveryStatus::End => break,
+                    _ => unreachable!("ordinary expanded delivery returns only commands"),
                 };
                 match scalar_meaning(command.meaning()) {
                     Meaning::CharToken {
@@ -3046,9 +3128,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `scan_int` has already observed and backed up the leading `f`.
             // Replay it once, then finish the `fil` suffix without routing the
             // same candidate through unrelated physical-unit keywords.
-            let Some(first) = self.get_x_token()? else {
+            let mut first = None;
+            if self.get_x_token_into(&mut first)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
-            };
+            }
+            let first = first.expect("command delivery initializes destination");
             if !matches!(
                 scalar_meaning(first.meaning()),
                 Meaning::CharToken { ch: 'f', .. }
@@ -3277,8 +3361,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // \hsize` found no unit and §459 recovered it as `pt`
         // (umber2-johp.115).
         let command = loop {
-            let Some(command) = self.get_x_token()? else {
-                return Ok(None);
+            let mut command = None;
+            let delivery = self.get_x_token_into(&mut command)?;
+            let command = match delivery {
+                DeliveryStatus::Command => {
+                    command.expect("command delivery initializes destination")
+                }
+                DeliveryStatus::End => return Ok(None),
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if !matches!(
                 scalar_meaning(command.meaning()),
@@ -3329,8 +3419,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §443's `⟨Scan an optional space⟩`:
     /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
-        let Some(command) = self.get_x_token()? else {
-            return Ok(());
+        let mut command = None;
+        let delivery = self.get_x_token_into(&mut command)?;
+        let command = match delivery {
+            DeliveryStatus::Command => command.expect("command delivery initializes destination"),
+            DeliveryStatus::End => return Ok(()),
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
         };
         self.back_input_unless_spacer(command)?;
         Ok(())
@@ -3385,7 +3479,11 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
         for expected in ['i', 'l'] {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            let mut command = None;
+            if self.get_x_token_into(&mut command)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = command.expect("command delivery initializes destination");
             if !matches!(
                 scalar_meaning(command.meaning()),
                 Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)
