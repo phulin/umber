@@ -34,6 +34,22 @@ pub(crate) fn ignored_depth<G>(stores: &CommandContext<'_, G>) -> Scaled {
     }
 }
 
+/// Returns the ignored-depth sentinel through a prebound immutable registry
+/// handle on the ordinary executor capability-refresh path.
+pub(crate) fn ignored_depth_with_handle<G>(
+    stores: &CommandContext<'_, G>,
+    pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
+) -> Scaled {
+    if pdf_ignore_depth
+        .and_then(|handle| stores.resolve_primitive_handle(handle))
+        .is_some()
+    {
+        stores.dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
+    } else {
+        IGNORE_DEPTH
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParagraphParams {
     pub left_skip: GlueSpec,

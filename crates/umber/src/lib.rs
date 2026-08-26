@@ -1241,6 +1241,15 @@ mod primitive_mode_tests {
                     "{} must register {primitive}",
                     mode.name()
                 );
+                let source_handle = source
+                    .primitive_handle(primitive)
+                    .expect("source-built primitive handle");
+                assert_eq!(
+                    source.resolve_primitive_handle(source_handle),
+                    source.primitive_meaning(primitive),
+                    "{} source-built handle",
+                    mode.name()
+                );
                 let symbol = source.intern(primitive);
                 source.set_meaning(symbol, Meaning::Undefined);
                 run_memory_collecting_initex_artifacts_with_profile(
@@ -1274,6 +1283,15 @@ mod primitive_mode_tests {
                     let original = loaded
                         .primitive_meaning(primitive)
                         .unwrap_or_else(|| panic!("{} must restore {primitive}", mode.name()));
+                    let loaded_handle = loaded
+                        .primitive_handle(primitive)
+                        .expect("loaded-format primitive handle");
+                    assert_eq!(
+                        loaded.resolve_primitive_handle(loaded_handle),
+                        Some(original),
+                        "{} loaded-format handle",
+                        mode.name()
+                    );
                     let frozen = loaded
                         .primitive_token(primitive)
                         .expect("primitive token is reconstructed");

@@ -58,6 +58,15 @@ reject or cancel candidate:
   drop its continuations -> drop command/executor roots -> clear current slot
 ```
 
+The driver-completed primitive registry belongs to the first
+process/session-immutable row above. An executor can retain its fixed-width,
+generation-typed `PrimitiveHandle<G>` values and borrow the named immutable
+rows directly. Handles contain no definition owner, never address mutable eqtb
+cells, and are excluded from command roots, snapshots, formats, detached
+continuations, and revision transfer. Extending a registry invalidates handles
+issued against its prior extent; ordinary sessions bind only after complete
+INITEX installation or format-registry reconstruction.
+
 The implementation therefore has at most two live revision generations: the optional
 prior accepted generation and the exclusively leased current candidate. There
 is no third historical arena and no chunk-by-chunk history.

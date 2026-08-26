@@ -334,6 +334,10 @@ pub struct Interner {
 }
 
 impl Interner {
+    pub(crate) const fn epoch_identity(&self) -> u64 {
+        self.epoch.0
+    }
+
     pub(crate) fn capture_format_names(&self) -> Vec<crate::format::schema::FormatName> {
         self.entries
             .iter()

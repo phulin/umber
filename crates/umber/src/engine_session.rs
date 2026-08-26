@@ -313,6 +313,8 @@ impl<'a, G> EngineSession<'a, G> {
     }
     #[must_use]
     pub fn new(stores: &'a mut Universe<G>, profile: CommandProfile) -> Self {
+        let mut control = MainControl::with_profile(profile);
+        control.bind_primitive_handles(stores);
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
@@ -320,7 +322,7 @@ impl<'a, G> EngineSession<'a, G> {
             project_root_body_terminal_text: false,
             terminal_input_cursor: None,
             stores,
-            control: MainControl::with_profile(profile),
+            control,
             initex: false,
             loaded_job_framing: false,
             root_registered: false,
@@ -372,13 +374,15 @@ impl<'a, G> EngineSession<'a, G> {
     /// its fresh primitive profile into `stores`.
     #[must_use]
     pub fn prepared_initex(stores: &'a mut Universe<G>, profile: CommandProfile) -> Self {
+        let mut control = MainControl::prepared_initex(profile);
+        control.bind_primitive_handles(stores);
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
             terminal_text_cursor: stores.world().effect_pos(),
             project_root_body_terminal_text: false,
             terminal_input_cursor: None,
-            control: MainControl::prepared_initex(profile),
+            control,
             stores,
             initex: true,
             loaded_job_framing: false,

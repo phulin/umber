@@ -135,6 +135,72 @@ fn primitive_installation_observes_only_canonical_multiletter_lookups() {
 }
 
 #[test]
+fn primitive_handle_is_direct_immutable_and_registry_scoped() {
+    with_universe(budget(), |universe| {
+        universe.install_primitive_meaning("visible", Meaning::Relax);
+        let symbol = universe.intern("visible").expect("primitive symbol");
+        let handle = universe
+            .primitive_handle("visible")
+            .expect("static primitive handle");
+        assert_eq!(
+            universe.resolve_primitive_handle(handle),
+            Some(Meaning::Relax)
+        );
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("direct command-context lookup")
+                .resolve_primitive_handle(handle),
+            Some(Meaning::Relax),
+        );
+
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::from_static(Meaning::Undefined),
+                AssignmentScope::Global,
+            )
+            .expect("redefine visible control sequence");
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("meaning lookup")
+                .meaning(symbol.symbol()),
+            ResolvedMeaning::Static(Meaning::Undefined),
+            "the packed primitive handle must not cache the mutable eqtb cell"
+        );
+        assert_eq!(
+            universe.resolve_primitive_handle(handle),
+            Some(Meaning::Relax),
+            "the immutable original primitive remains available"
+        );
+
+        universe.register_primitive_meaning("later", Meaning::Undefined);
+        assert_eq!(
+            universe.resolve_primitive_handle(handle),
+            None,
+            "extending a registry invalidates handles issued before completion"
+        );
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("stale command-context lookup")
+                .resolve_primitive_handle(handle),
+            None,
+            "command admission enforces the same completed-registry extent",
+        );
+        let rebound = universe
+            .primitive_handle("visible")
+            .expect("rebound complete-registry handle");
+        assert_eq!(
+            universe.resolve_primitive_handle(rebound),
+            Some(Meaning::Relax)
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn csname_relaxes_previously_interned_undefined_control_sequence_only() {
     with_universe(budget(), |universe| {
         let undefined = universe.intern("latent").expect("intern undefined symbol");

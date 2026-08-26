@@ -92,6 +92,7 @@ pub mod page;
 mod pdf;
 #[cfg(all(feature = "profiling", feature = "testing"))]
 pub use pdf::{PdfForkProfileFamily, PdfForkProfileMeasurement, profile_pdf_fork_family};
+mod primitive;
 pub mod print;
 pub mod provenance;
 mod provenance_resolver;
@@ -200,6 +201,7 @@ pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
     PageFireUp, PageInteger,
 };
+pub use primitive::PrimitiveHandle;
 pub use provenance::{ProvenanceBudgets, ProvenanceDemand};
 pub use provenance_resolver::{
     ColdProvenanceDemand, DetachedGeneratedSourceSpan, DetachedOriginDiagnostic,

@@ -201,6 +201,16 @@ impl<G> MeaningWord<G> {
         }
     }
 
+    /// Borrows the scalar meaning without cloning a generation-local owner.
+    #[must_use]
+    pub(crate) const fn static_meaning(&self) -> Option<Meaning> {
+        match self {
+            Self::Static(word) => Some(Meaning::decode_stored(*word)),
+            Self::Font(font) => Some(Meaning::Font(*font)),
+            Self::Macro { .. } => None,
+        }
+    }
+
     /// Returns the exact live font coordinate retained by this meaning.
     #[must_use]
     pub(crate) const fn font(&self) -> Option<FontId> {

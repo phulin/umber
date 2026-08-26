@@ -881,6 +881,45 @@ impl<G> Universe<G> {
             })
     }
 
+    /// Resolves one immutable primitive row once into a packed direct handle.
+    ///
+    /// The handle names the frozen registry, not the mutable control-sequence
+    /// cell bearing the same spelling.  It therefore cannot bypass `\def`,
+    /// `\let`, or another assignment to that control sequence.
+    #[must_use]
+    pub fn primitive_handle(&self, name: &str) -> Option<crate::PrimitiveHandle<G>> {
+        let index = self
+            .primitive_names
+            .iter()
+            .position(|candidate| candidate == name)?;
+        self.primitive_meanings[index].static_meaning()?;
+        Some(crate::PrimitiveHandle::new(
+            self.interner().epoch_identity(),
+            u16::try_from(index).ok()?,
+            u16::try_from(self.primitive_meanings.len()).ok()?,
+        ))
+    }
+
+    /// Resolves a packed immutable primitive handle by direct indexing.
+    #[must_use]
+    pub fn resolve_primitive_handle(&self, handle: crate::PrimitiveHandle<G>) -> Option<Meaning> {
+        if handle.session_epoch() != self.interner().epoch_identity()
+            || handle.registry_len() != self.primitive_meanings.len()
+        {
+            return None;
+        }
+        self.primitive_meanings
+            .get(handle.index())?
+            .static_meaning()
+    }
+
+    /// Returns the current append-only primitive-registry extent.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn primitive_registry_len(&self) -> usize {
+        self.primitive_meanings.len()
+    }
+
     #[must_use]
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
         self.primitive_meanings

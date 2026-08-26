@@ -147,6 +147,10 @@ pub struct MainControl<G> {
     pure_memo_initialized: bool,
     fuel: tex_command::CommandFuelLedger,
     capabilities: CommandHostCapabilities,
+    /// Cold-bound direct handles into the immutable primitive registry.
+    /// These are process-local accelerators, not TeX state or format data.
+    primitive_registry_len: Option<usize>,
+    pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
     /// Host output capability for shipout traversal. `None` preserves the
     /// profile default: TeX/e-TeX emit DVI, while pdfTeX defers pages to its
     /// PDF driver. Virtual multi-output sessions set this explicitly.
@@ -1982,6 +1986,8 @@ impl<G> Default for MainControl<G> {
             pure_memo_initialized: false,
             fuel: tex_command::CommandFuelLedger::default(),
             capabilities: CommandHostCapabilities::default(),
+            primitive_registry_len: None,
+            pdf_ignore_depth: None,
             emit_dvi_override: None,
             modes: ModeNest::default(),
             max_save_stack: 0,
@@ -2300,11 +2306,26 @@ impl<G> MainControl<G> {
     pub fn tex82_initex(stores: &mut Universe<G>) -> Self {
         tex_command::install_tex82_expandable_primitives(stores);
         crate::install_unexpandable_primitives(stores);
-        Self {
+        let mut control = Self {
             command: PersistentInterpreter::new(CommandProfile::TEX82),
             next_alignment_identity: 1,
             initex: true,
             ..Self::default()
+        };
+        control.bind_primitive_handles(stores);
+        control
+    }
+
+    /// Binds process-local accelerators after INITEX installation or format
+    /// registry reconstruction has installed the complete driver profile.
+    pub fn bind_primitive_handles(&mut self, stores: &Universe<G>) {
+        self.primitive_registry_len = Some(stores.primitive_registry_len());
+        self.pdf_ignore_depth = stores.primitive_handle("pdfignoreddimen");
+    }
+
+    fn ensure_primitive_handles(&mut self, stores: &Universe<G>) {
+        if self.primitive_registry_len != Some(stores.primitive_registry_len()) {
+            self.bind_primitive_handles(stores);
         }
     }
 
@@ -3069,6 +3090,7 @@ impl<G> MainControl<G> {
     /// This is intentionally call-local capability state rather than part of
     /// a command snapshot or durable session summary.
     pub fn refresh_host_capabilities(&mut self, stores: &mut Universe<G>) {
+        self.ensure_primitive_handles(stores);
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
         self.capabilities.set_space_factor(
@@ -3080,7 +3102,7 @@ impl<G> MainControl<G> {
         );
         let ignored_depth = {
             let stores = stores.command_context().expect("live generation");
-            crate::mode::ignored_depth(&stores)
+            crate::mode::ignored_depth_with_handle(&stores, self.pdf_ignore_depth)
         };
         // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
         // readable only in vertical mode, where an unset `prev_depth` is

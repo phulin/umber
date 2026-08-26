@@ -801,6 +801,19 @@ impl<'a, G> CommandContext<'a, G> {
             .map(|index| self.primitive_meanings[index].resolve())
     }
 
+    /// Resolves a previously bound immutable primitive by direct indexing.
+    #[must_use]
+    pub fn resolve_primitive_handle(&self, handle: crate::PrimitiveHandle<G>) -> Option<Meaning> {
+        if handle.session_epoch() != self.interner.epoch_identity()
+            || handle.registry_len() != self.primitive_meanings.len()
+        {
+            return None;
+        }
+        self.primitive_meanings
+            .get(handle.index())?
+            .static_meaning()
+    }
+
     #[inline(always)]
     pub fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
         self.admitted.definition(id)

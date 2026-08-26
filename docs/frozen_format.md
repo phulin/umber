@@ -527,6 +527,13 @@ reconstructs its complete original-primitive registry without replacing the
 live meanings restored by the format. This preserves deliberately shadowed
 primitives while making primitive-enquiry and frozen-primitive tokens behave
 the same as source initialization, without replaying store construction.
+Once reconstruction is complete, the executor may bind generation-typed
+packed handles to immutable primitive rows. Source-built and loaded-format
+paths issue those handles from the same deterministic registry order; handle
+resolution never addresses the restored mutable meaning cells. Because the
+handles are process-local accelerators and are neither captured nor encoded,
+this optimization does not change schema 11, its ABI fingerprint, or its
+lookup-configuration fingerprint.
 
 ## Migration from schemas 9 and 10
 

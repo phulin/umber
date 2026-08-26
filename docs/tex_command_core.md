@@ -1533,6 +1533,18 @@ the executor's shorthand representation: `\hfil`/`\vfil` are 0,
 `\hfill`/`\vfill` are 1, `\hss`/`\vss` are 2,
 `\hfilneg`/`\vfilneg` are 3, and `\hskip`/`\vskip` are 4. This follows
 TeX82 §15's command-code definitions and §18's primitive initialization.
+
+Executor-owned references to an _original_ immutable primitive use a packed
+`PrimitiveHandle<G>` issued only after the driver has completed INITEX
+installation or loaded-format registry reconstruction. The handle contains a
+direct registry row plus its completed registry extent and is typed by the
+engine generation. Resolution validates that extent and indexes the immutable
+row directly; it never reads or caches the mutable eqtb meaning cell carrying
+the same spelling. Consequently `\def`, `\let`, and primitive shadowing retain
+their ordinary command-delivery semantics. These handles are process-local
+accelerators: command snapshots, formats, detached continuations, and semantic
+hashes contain none.
+
 Likewise TeX82 §53 registers `\openout`, `\write`, `\closeout`, `\special`,
 `\immediate`, and `\setlanguage` as the shared `extension` command with
 operands 0 through 5. The command core emits those raw identities. For
