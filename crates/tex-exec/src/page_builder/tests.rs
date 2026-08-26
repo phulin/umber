@@ -858,6 +858,8 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
 
 #[test]
 fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
+    // TeX82 §§1005--1007 compute cost 100 from this underfull page and
+    // replace the champion on an equal cost, leaving the least cost at 100.
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores.set_page_contents(PageContents::BoxThere);
@@ -870,6 +872,14 @@ fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
         check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
             .expect("white-box operation succeeds");
         assert_eq!(stores.least_page_cost(), 100);
+        stores.record_page_fire_up(stores.current_page_len());
+        assert_eq!(
+            stores
+                .page_fire_up()
+                .expect("the first breakpoint becomes champion")
+                .best_break(),
+            PageBreak::new(0)
+        );
         stores.push_current_page_node(Node::Penalty(1));
         check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
             .expect("white-box operation succeeds");
@@ -894,6 +904,34 @@ fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
             page_badness(&stores).expect("white-box operation succeeds"),
             100
         );
+    });
+}
+
+#[test]
+fn page_break_higher_cost_preserves_the_champion() {
+    // Negative control for TeX82 §§1005--1007: changing only the second
+    // candidate's penalty makes its cost 101, so it must not replace the
+    // cost-100 champion selected at the preceding breakpoint.
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        stores.set_page_contents(PageContents::BoxThere);
+        stores.set_page_dimension(PageDimension::Goal, s(100));
+        stores.set_page_dimension(PageDimension::Stretch, s(100));
+
+        check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
+            .expect("the cost-100 candidate succeeds");
+        stores.push_current_page_node(Node::Penalty(1));
+        check_break(&mut stores, &mut DiagnosticEffects::new(), 1)
+            .expect("the cost-101 candidate succeeds");
+
+        assert_eq!(stores.least_page_cost(), 100);
+        stores.record_page_fire_up(stores.current_page_len());
+        let fire_up = stores
+            .page_fire_up()
+            .expect("the selected champion can be observed");
+        assert_eq!(fire_up.best_break(), PageBreak::new(0));
+        assert_eq!(fire_up.best_size(), s(100));
+        assert_eq!(fire_up.trigger(), PageBreak::new(1));
     });
 }
 

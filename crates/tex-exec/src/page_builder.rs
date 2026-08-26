@@ -753,6 +753,9 @@ fn print_cost(diagnostic: &mut Diagnostic<'_>, value: i32) {
     }
 }
 
+/// TeX82 §§1005--1007's candidate-cost and champion transition: a
+/// candidate replaces the recorded break when its cost is equal to or below
+/// `least_page_cost`, while only awful cost or an eject penalty fires the page.
 fn check_break<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
