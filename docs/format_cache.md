@@ -1,6 +1,6 @@
 # Generated format cache
 
-Status: schema-11 cache identity and TeX validation in `umber`, unified verified
+Status: schema-12 cache identity and TeX validation in `umber`, unified verified
 native blob persistence in `umber-fetch`, and pinned LaTeX/pdfLaTeX generation
 integration implemented.
 
@@ -99,11 +99,11 @@ the pinned TeX Live 2026-03-01 LaTeX and pdfLaTeX tiers.
 ## Native entry and validation
 
 `umber::FormatCacheStore` owns the canonical key preimage, legacy format
-envelope, schema-11 decoder, and construction-evidence policy. It persists that
+envelope, schema-12 decoder, and construction-evidence policy. It persists that
 opaque envelope through `umber-fetch::BlobStore` under the `formats-v2`
 namespace. New entries live in the shared `blobs-v1` substrate; the former
 `formats-v2/sha256-<key>` layout remains a verified compatibility input and is
-warm-migrated on a hit. The exact schema-11 payload bytes are unchanged.
+warm-migrated on a hit. The exact schema-12 payload bytes are unchanged.
 
 The shared native blob storage opens the cache root one component at a time and
 retains root and namespace directory handles. Root components, the namespace,
@@ -134,7 +134,7 @@ performance event, not a source of trusted engine state.
 
 ## Native/browser and portability boundaries
 
-The schema-11 image and key preimage are host-neutral. Filesystem discovery,
+The schema-12 image and key preimage are host-neutral. Filesystem discovery,
 temporary files, atomic rename, locks, quarantine, permissions, and recovery
 belong only to the native `umber-fetch` boundary. Browser-packaged formats and HTTP/IndexedDB
 caches must not refer to native paths or treat a native entry envelope as a
@@ -144,7 +144,7 @@ the same Rust `Universe` decoder before use.
 
 Neither a release-manifest pin nor a cache key replaces format validation: the
 manifest authenticates acquisition, the cache key identifies generation
-inputs, and the schema-11 decoder establishes runtime compatibility and
+inputs, and the schema-12 decoder establishes runtime compatibility and
 structural validity. Formats are portable across native and browser hosts only
 when those three independent checks agree. The cache contains no process-local
 handles or job-local mutable state, consistent with

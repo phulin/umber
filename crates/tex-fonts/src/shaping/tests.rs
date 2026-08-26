@@ -59,7 +59,7 @@ fn loaded_font(
         ResolvedFont {
             request: key,
             container,
-            declared_object_sha256: Some(FontObjectIdentity::for_bytes(bytes)),
+            declared_object_ahash64: Some(FontObjectIdentity::for_bytes(bytes)),
             declared_program_identity: None,
             provenance: Some("committed SIL Open Font License 1.1 fixture".to_owned()),
             legacy_mapping: None,
@@ -72,7 +72,7 @@ fn loaded_font(
     LoadedFont::new(
         name,
         name,
-        [0; 32],
+        [0; 8],
         0,
         size,
         size,

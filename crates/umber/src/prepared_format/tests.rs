@@ -124,10 +124,15 @@ fn concurrent_providers_construct_once_and_recover_corruption() {
             && pair[0].construction_evidence() == pair[1].construction_evidence()
     }));
 
-    let entry = fs::read_dir(cache.path().join("blobs-v1"))
+    let entry = fs::read_dir(cache.path().join("blobs-v2"))
         .expect("cache namespace")
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("ahash64-v1-")
+        })
         .expect("published entry");
     fs::write(entry.path(), b"corrupt provider entry").expect("corrupt entry");
     let recovered =

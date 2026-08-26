@@ -1,11 +1,11 @@
 use tex_command::DimensionDiagnostic;
 use tex_out::dvi::{DviPagePlan, DviPagePlanCoEmitter};
 use tex_out::{
-    ArtifactEmitter, ArtifactNodeListEmitter, BoxNode as PageBoxNode,
-    ContentHash as PageContentHash, DEFAULT_BANNER, DiscKind as PageDiscKind, EffectSink,
-    FontResource, FontResourceConstruction, GlueKind as PageGlueKind, GlueOrder as PageGlueOrder,
-    GlueSign, GlueSpec as PageGlueSpec, JobInfo, KernKind as PageKernKind,
-    MarginKernSide as PageMarginKernSide, PageEffect, TokenCatcode,
+    ArtifactEmitter, ArtifactNodeListEmitter, BoxNode as PageBoxNode, DEFAULT_BANNER,
+    DiscKind as PageDiscKind, EffectSink, FontResource, FontResourceConstruction,
+    GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec,
+    JobInfo, KernKind as PageKernKind, MarginKernSide as PageMarginKernSide, PageEffect,
+    TokenCatcode,
 };
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
@@ -1630,7 +1630,7 @@ fn register_font_resource<G>(
     emission.fonts.push(FontResource {
         font_id: id,
         name: recipe.name,
-        tfm_content_hash: PageContentHash::new(recipe.tfm_content_hash),
+        tfm_content_hash: recipe.tfm_content_hash,
         tfm_checksum: recipe.tfm_checksum,
         design_size: recipe.design_size,
         at_size: recipe.at_size,

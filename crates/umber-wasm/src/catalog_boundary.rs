@@ -30,14 +30,14 @@ pub fn prepare(root_text: &str, keys: &JsCatalogKeys) -> Result<JsCatalogPrepare
     let shards = indexes
         .into_iter()
         .map(|index| {
-            let sha256 = root
+            let ahash64 = root
                 .shard_digest(index)
                 .expect("prepared shard index exists")
                 .to_owned();
             wire::CatalogShardDto {
                 index,
-                object: format!("sha256-{sha256}"),
-                sha256,
+                object: format!("ahash64-{ahash64}"),
+                ahash64,
             }
         })
         .collect();
@@ -76,7 +76,7 @@ pub fn plan(
             let shard = &batch.shards[&index];
             let mut entry = wire::CatalogJobEntryDto {
                 object: job.object.object.clone(),
-                sha256: job.object.sha256.clone(),
+                ahash64: job.object.ahash64.clone(),
                 bytes: wire::SafeInteger::new(job.object.bytes).map_err(boundary_error)?,
                 virtual_path: None,
                 container: None,
@@ -178,13 +178,13 @@ pub fn select_format(root_text: &str, name: &str) -> Result<JsNamedFormat, JsVal
     let dto = wire::NamedFormatDto {
         name: name.to_owned(),
         object: format.object.clone(),
-        sha256: format.sha256.clone(),
+        ahash64: format.ahash64.clone(),
         bytes: wire::SafeInteger::new(format.bytes).map_err(boundary_error)?,
         engine: format.engine.clone(),
         engine_version: format.engine_version.clone(),
         format_schema: format.format_schema,
         source_distribution: format.source_distribution.clone(),
-        source_manifest_sha256: format.source_manifest_sha256.clone(),
+        source_manifest_ahash64: format.source_manifest_ahash64.clone(),
         source_date_epoch: wire::SafeInteger::new(format.source_date_epoch)
             .map_err(boundary_error)?,
         input_closure: format

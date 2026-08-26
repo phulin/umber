@@ -979,7 +979,7 @@ mod tests {
         stores.intern_font(tex_state::font::LoadedFont::new(
             "second",
             "second.tfm",
-            tex_state::world::ContentHash::from_bytes(b"second").bytes(),
+            tex_fonts::font_content_hash(b"second"),
             0,
             tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),
             tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),

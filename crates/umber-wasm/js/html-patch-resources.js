@@ -3,7 +3,7 @@ import {
 	DEFAULT_LIMITS,
 	HtmlPatchError,
 	sameBytes,
-	verifySha256,
+	verifyAhash64,
 } from "./html-patch-shared.js";
 
 /** Content-addressed FontFace/object ownership behind an acknowledgement barrier. */
@@ -20,7 +20,7 @@ export class HtmlResourceRegistry {
 
 	constructor(options = {}) {
 		this.#document = options.document ?? globalThis.document;
-		this.#verify = options.verify ?? verifySha256;
+		this.#verify = options.verify ?? verifyAhash64;
 		this.#FontFace = options.FontFace ?? globalThis.FontFace;
 		this.#maxBytes = options.maxBytes ?? DEFAULT_LIMITS.maxResourceBytes;
 		this.#maxResourceBytes = options.maxResourceBytes ?? 64 * 1024 * 1024;

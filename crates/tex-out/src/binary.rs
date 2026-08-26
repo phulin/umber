@@ -1,20 +1,19 @@
 use crate::{
-    BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
-    GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, MarginKernSide,
-    MathGlyphSelection, MathOutputEvent, PageArtifact, PageEffect, PageNode, PageToken,
-    PdfAccessibilityEffect, PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier,
-    PdfDestinationKind, PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
+    BoxNode, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind, GlueOrder,
+    GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, MarginKernSide, MathGlyphSelection,
+    MathOutputEvent, PageArtifact, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
+    PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
+    PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 23;
+const VERSION: u8 = 24;
 const MATH_OUTPUT_VERSION: u8 = 23;
 const ADVANCED_FONT_INSTANCE_VERSION: u8 = 22;
 const FONT_LAYOUT_VERSION: u8 = 21;
 const PAGE_SIZE_VERSION: u8 = 20;
-const PRE_PAGE_SIZE_VERSION: u8 = 19;
 const THREAD_VERSION: u8 = 19;
 const IMAGE_VERSION: u8 = 18;
 const ANNOTATION_VERSION: u8 = 17;
@@ -22,7 +21,6 @@ const PRE_ANNOTATION_VERSION: u8 = 16;
 const PDF_ACCESSIBILITY_VERSION: u8 = 15;
 const FONT_CONSTRUCTION_VERSION: u8 = 14;
 const OPENTYPE_FONT_VERSION: u8 = 13;
-const LEGACY_VERSION: u8 = 12;
 
 mod wire {
     pub mod node {
@@ -319,19 +317,7 @@ pub(crate) fn from_bytes(
     };
     reader.expect_magic()?;
     let version = reader.u8()?;
-    if version != VERSION
-        && version != ADVANCED_FONT_INSTANCE_VERSION
-        && version != FONT_LAYOUT_VERSION
-        && version != PAGE_SIZE_VERSION
-        && version != PRE_PAGE_SIZE_VERSION
-        && version != IMAGE_VERSION
-        && version != ANNOTATION_VERSION
-        && version != PRE_ANNOTATION_VERSION
-        && version != PDF_ACCESSIBILITY_VERSION
-        && version != FONT_CONSTRUCTION_VERSION
-        && version != OPENTYPE_FONT_VERSION
-        && version != LEGACY_VERSION
-    {
+    if version != VERSION {
         return Err(ParseError::UnsupportedVersion(version));
     }
     let mag = reader.i32()?;
@@ -1487,10 +1473,6 @@ impl Writer {
         self.bytes(value.as_bytes());
     }
 
-    fn hash(&mut self, value: ContentHash) {
-        self.raw(&value.bytes());
-    }
-
     fn optional_scaled(&mut self, value: Option<Scaled>) {
         match value {
             Some(value) => {
@@ -1509,7 +1491,7 @@ impl Writer {
             }
             self.u32(font.font_id);
             self.str(&font.name);
-            self.hash(font.tfm_content_hash);
+            self.raw(&font.tfm_content_hash);
             self.u32(font.tfm_checksum);
             self.scaled(font.design_size);
             self.scaled(font.at_size);
@@ -2126,19 +2108,7 @@ impl Reader<'_> {
     fn header(&mut self) -> Result<(u8, crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
         self.expect_magic()?;
         let version = self.u8()?;
-        if version != VERSION
-            && version != ADVANCED_FONT_INSTANCE_VERSION
-            && version != FONT_LAYOUT_VERSION
-            && version != PAGE_SIZE_VERSION
-            && version != PRE_PAGE_SIZE_VERSION
-            && version != IMAGE_VERSION
-            && version != ANNOTATION_VERSION
-            && version != PRE_ANNOTATION_VERSION
-            && version != PDF_ACCESSIBILITY_VERSION
-            && version != FONT_CONSTRUCTION_VERSION
-            && version != OPENTYPE_FONT_VERSION
-            && version != LEGACY_VERSION
-        {
+        if version != VERSION {
             return Err(ParseError::UnsupportedVersion(version));
         }
         let mag = self.i32()?;
@@ -2303,12 +2273,6 @@ impl Reader<'_> {
         std::str::from_utf8(self.bytes_ref()?).map_err(|_| ParseError::InvalidUtf8)
     }
 
-    fn hash(&mut self) -> Result<ContentHash, ParseError> {
-        let mut bytes = [0; 32];
-        bytes.copy_from_slice(self.take(32)?);
-        Ok(ContentHash::new(bytes))
-    }
-
     fn optional_scaled(&mut self) -> Result<Option<Scaled>, ParseError> {
         match self.u8()? {
             0 => Ok(None),
@@ -2334,7 +2298,7 @@ impl Reader<'_> {
         for _ in 0..len {
             let font_id = self.u32()?;
             let name = self.str()?;
-            let tfm_content_hash = self.hash()?;
+            let tfm_content_hash = self.ahash64_identity()?;
             let tfm_checksum = self.u32()?;
             let design_size = self.scaled()?;
             let at_size = self.scaled()?;
@@ -2369,11 +2333,11 @@ impl Reader<'_> {
                     0 => None,
                     1 => {
                         let program_identity =
-                            tex_fonts::FontProgramIdentity::from_bytes(self.identity()?);
+                            tex_fonts::FontProgramIdentity::from_bytes(self.ahash64_identity()?);
                         let object_identity =
-                            tex_fonts::FontObjectIdentity::from_bytes(self.identity()?);
+                            tex_fonts::FontObjectIdentity::from_bytes(self.ahash64_identity()?);
                         let instance_identity =
-                            tex_fonts::FontInstanceIdentity::from_bytes(self.identity()?);
+                            tex_fonts::FontInstanceIdentity::from_bytes(self.ahash64_identity()?);
                         let container = match self.u8()? {
                             1 => tex_fonts::FontContainer::OpenType,
                             2 => tex_fonts::FontContainer::TrueType,
@@ -2495,7 +2459,7 @@ impl Reader<'_> {
                             let map_version = self.optional_u8("encoding map version")?;
                             let map_identity = match self.u8()? {
                                 0 => None,
-                                1 => Some(self.identity()?),
+                                1 => Some(self.ahash64_identity()?),
                                 tag => {
                                     return Err(ParseError::InvalidTag {
                                         kind: "encoding map identity",
@@ -2535,21 +2499,22 @@ impl Reader<'_> {
                 None
             };
             let (semantic_identity, construction) = if version >= FONT_CONSTRUCTION_VERSION {
-                let semantic_identity = tex_fonts::FontSourceIdentity::from_bytes(self.identity()?);
+                let semantic_identity =
+                    tex_fonts::FontSourceIdentity::from_bytes(self.ahash64_identity()?);
                 let tag = self.u8()?;
                 let construction = match tag {
                     wire::font_construction::LOADED => FontResourceConstruction::Loaded,
                     wire::font_construction::COPIED => FontResourceConstruction::Copied {
                         source_font_id: self.u32()?,
                         source_identity: tex_fonts::FontSourceIdentity::from_bytes(
-                            self.identity()?,
+                            self.ahash64_identity()?,
                         ),
                     },
                     wire::font_construction::LETTERSPACED => {
                         FontResourceConstruction::Letterspaced {
                             source_font_id: self.u32()?,
                             source_identity: tex_fonts::FontSourceIdentity::from_bytes(
-                                self.identity()?,
+                                self.ahash64_identity()?,
                             ),
                             amount: self.u16()? as i16,
                             no_ligatures: match self.u8()? {
@@ -2567,7 +2532,7 @@ impl Reader<'_> {
                     wire::font_construction::EXPANDED => FontResourceConstruction::Expanded {
                         source_font_id: self.u32()?,
                         source_identity: tex_fonts::FontSourceIdentity::from_bytes(
-                            self.identity()?,
+                            self.ahash64_identity()?,
                         ),
                         ratio: self.u16()? as i16,
                     },
@@ -2581,7 +2546,7 @@ impl Reader<'_> {
                 (semantic_identity, construction)
             } else {
                 (
-                    tex_fonts::FontSourceIdentity::from_bytes([0; 32]),
+                    tex_fonts::FontSourceIdentity::from_bytes([0; 8]),
                     FontResourceConstruction::Loaded,
                 )
             };
@@ -2602,10 +2567,10 @@ impl Reader<'_> {
         Ok(fonts)
     }
 
-    fn identity(&mut self) -> Result<[u8; 32], ParseError> {
-        self.take(32)?
-            .try_into()
-            .map_err(|_| ParseError::UnexpectedEof)
+    fn ahash64_identity(&mut self) -> Result<[u8; 8], ParseError> {
+        let mut bytes = [0; 8];
+        bytes.copy_from_slice(self.take(8)?);
+        Ok(bytes)
     }
 
     fn opentype_tag(&mut self) -> Result<[u8; 4], ParseError> {
@@ -2909,7 +2874,7 @@ impl Reader<'_> {
                 }),
                 wire::math_event::GLYPH => {
                     let font_instance =
-                        tex_fonts::FontInstanceIdentity::from_bytes(self.identity()?);
+                        tex_fonts::FontInstanceIdentity::from_bytes(self.ahash64_identity()?);
                     let glyph_id = self.u16()?;
                     let selection = match self.u8()? {
                         wire::math_selection::CMAP => MathGlyphSelection::Cmap {

@@ -25,6 +25,7 @@ tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }
 tex-fonts = { path = "../tex-fonts" }
 ttf-parser = "0.25.1"
+umber-hash = { path = "../umber-hash" }
 woff2-patched = "0.4.0"
 
 [dev-dependencies]

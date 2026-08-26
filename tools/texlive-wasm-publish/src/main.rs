@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use texlive_wasm_publish::{
-    PublishConfig, publish, publish_successor, tree_sha256, verify_sharded_snapshot,
+    PublishConfig, file_ahash64, publish, publish_successor, tree_ahash64, verify_sharded_snapshot,
     verify_successor,
 };
 use umber_distribution::Manifest;
@@ -14,16 +14,28 @@ use umber_distribution::Manifest;
 fn main() -> Result<()> {
     let mut arguments = env::args_os().skip(1);
     let Some(config_path) = arguments.next() else {
-        bail!("usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY | --tree-sha256 ROOT");
+        bail!(
+            "usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY | --tree-ahash64 ROOT | --file-ahash64 FILE"
+        );
     };
-    if config_path == "--tree-sha256" {
+    if config_path == "--tree-ahash64" {
         let Some(root) = arguments.next() else {
-            bail!("missing ROOT after --tree-sha256");
+            bail!("missing ROOT after --tree-ahash64");
         };
         if arguments.next().is_some() {
-            bail!("unexpected argument after --tree-sha256 ROOT");
+            bail!("unexpected argument after --tree-ahash64 ROOT");
         }
-        println!("{}", tree_sha256(Path::new(&root))?);
+        println!("{}", tree_ahash64(Path::new(&root))?);
+        return Ok(());
+    }
+    if config_path == "--file-ahash64" {
+        let Some(path) = arguments.next() else {
+            bail!("missing FILE after --file-ahash64");
+        };
+        if arguments.next().is_some() {
+            bail!("unexpected argument after --file-ahash64 FILE");
+        }
+        println!("{}", file_ahash64(Path::new(&path))?);
         return Ok(());
     }
     if config_path == "--shard-existing" {
@@ -70,23 +82,23 @@ fn main() -> Result<()> {
             bail!("missing BASE after --verify-successor");
         };
         let Some(flag) = arguments.next() else {
-            bail!("missing --base-sha256 after --verify-successor BASE");
+            bail!("missing --base-ahash64 after --verify-successor BASE");
         };
-        if flag != "--base-sha256" {
-            bail!("expected --base-sha256 after --verify-successor BASE");
+        if flag != "--base-ahash64" {
+            bail!("expected --base-ahash64 after --verify-successor BASE");
         }
-        let Some(base_sha256) = arguments.next() else {
-            bail!("missing SHA256 after --base-sha256");
+        let Some(base_ahash64) = arguments.next() else {
+            bail!("missing AHASH64 after --base-ahash64");
         };
         let Some(staging) = arguments.next() else {
-            bail!("missing STAGING after --base-sha256 SHA256");
+            bail!("missing STAGING after --base-ahash64 AHASH64");
         };
         if arguments.next().is_some() {
             bail!("unexpected argument after --verify-successor BASE STAGING");
         }
         verify_successor(
             Path::new(&base),
-            &base_sha256.to_string_lossy(),
+            &base_ahash64.to_string_lossy(),
             Path::new(&staging),
         )?;
         return Ok(());
@@ -96,15 +108,15 @@ fn main() -> Result<()> {
             bail!("missing BASE after --successor");
         };
         let Some(flag) = arguments.next() else {
-            bail!("missing --base-sha256 after --successor BASE");
+            bail!("missing --base-ahash64 after --successor BASE");
         };
-        if flag != "--base-sha256" {
-            bail!("expected --base-sha256 after --successor BASE");
+        if flag != "--base-ahash64" {
+            bail!("expected --base-ahash64 after --successor BASE");
         }
-        let Some(base_sha256) = arguments.next() else {
-            bail!("missing SHA256 after --base-sha256");
+        let Some(base_ahash64) = arguments.next() else {
+            bail!("missing AHASH64 after --base-ahash64");
         };
-        Some((base, base_sha256))
+        Some((base, base_ahash64))
     } else {
         None
     };
@@ -160,10 +172,10 @@ fn main() -> Result<()> {
     {
         *package_database = parent.join(&*package_database);
     }
-    if let Some((base, base_sha256)) = successor_base {
+    if let Some((base, base_ahash64)) = successor_base {
         publish_successor(
             Path::new(&base),
-            &base_sha256.to_string_lossy(),
+            &base_ahash64.to_string_lossy(),
             &config,
             Path::new(&output_path),
         )?;

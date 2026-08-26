@@ -8,7 +8,7 @@ engine="latex"
 output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
 distribution_path=""
-distribution_sha256=""
+distribution_ahash64=""
 publish_input_closure=0
 force_regeneration=0
 check_only=0
@@ -21,7 +21,7 @@ usage() {
   cat <<'EOF'
 usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
                                      --distribution PATH
-                                     --distribution-sha256 SHA256
+                                     --distribution-ahash64 AHASH64
                                      [--texmf-dist PATH] [--output-dir PATH]
                                      [--publish-input-closure] [--force|--check]
 
@@ -51,9 +51,9 @@ while [[ $# -gt 0 ]]; do
       distribution_path="$2"
       shift 2
       ;;
-    --distribution-sha256)
-      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --distribution-sha256' >&2; exit 2; }
-      distribution_sha256="$2"
+    --distribution-ahash64)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --distribution-ahash64' >&2; exit 2; }
+      distribution_ahash64="$2"
       shift 2
       ;;
     --output-dir)
@@ -113,12 +113,12 @@ output_dir="${output_dir:-${repo_root}/target/${format_name}-format}"
   printf '%s\n' 'build-latex-format.sh: --distribution PATH is required' >&2
   exit 2
 }
-[[ -n "$distribution_sha256" ]] || {
-  printf '%s\n' 'build-latex-format.sh: --distribution-sha256 SHA256 is required' >&2
+[[ -n "$distribution_ahash64" ]] || {
+  printf '%s\n' 'build-latex-format.sh: --distribution-ahash64 AHASH64 is required' >&2
   exit 2
 }
-[[ "$distribution_sha256" =~ ^[0-9a-f]{64}$ ]] || {
-  printf '%s\n' 'build-latex-format.sh: --distribution-sha256 must be 64 lowercase hexadecimal characters' >&2
+[[ "$distribution_ahash64" =~ ^[0-9a-f]{16}$ ]] || {
+  printf '%s\n' 'build-latex-format.sh: --distribution-ahash64 must be 16 lowercase hexadecimal characters' >&2
   exit 2
 }
 
@@ -138,27 +138,29 @@ sha256() {
 [[ -f "$lock_file" ]] || fail "missing source lock: $lock_file"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$lock_file")"
-locked_distribution_sha256="$(awk '$1 == "distribution_sha256" { print $2 }' "$lock_file")"
+locked_distribution_ahash64="$(awk '$1 == "distribution_ahash64" { print $2 }' "$lock_file")"
 format_schema="$(awk '$1 == "format_schema" { print $2 }' "$lock_file")"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$lock_file")"
-[[ -n "$distribution" && -n "$locked_distribution_sha256" && \
+[[ -n "$distribution" && -n "$locked_distribution_ahash64" && \
   -n "$format_schema" && -n "$source_date_epoch" ]] || \
   fail "source lock is missing required metadata"
-[[ "$locked_distribution_sha256" =~ ^[0-9a-f]{64}$ ]] || \
-  fail "source lock has an invalid distribution SHA-256"
-[[ "$distribution_sha256" == "$locked_distribution_sha256" ]] || \
-  fail "distribution SHA-256 does not match the source lock: expected $locked_distribution_sha256, got $distribution_sha256"
+[[ "$locked_distribution_ahash64" =~ ^[0-9a-f]{16}$ ]] || \
+  fail "source lock has an invalid distribution aHash64"
+[[ "$distribution_ahash64" == "$locked_distribution_ahash64" ]] || \
+  fail "distribution aHash64 does not match the source lock: expected $locked_distribution_ahash64, got $distribution_ahash64"
 
 if [[ -d "$distribution_path" ]]; then
   distribution_path="$(cd "$distribution_path" && pwd -P)"
-  if [[ -f "$distribution_path/manifest-v3.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v3.json"
-  elif [[ -f "$distribution_path/manifest-v2.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v2.json"
+  if [[ -f "$distribution_path/manifest-v7.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v7.json"
+  elif [[ -f "$distribution_path/manifest-v6.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v6.json"
+  elif [[ -f "$distribution_path/manifest-v5.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v5.json"
   elif [[ -f "$distribution_path/manifest.json" ]]; then
     distribution_manifest="$distribution_path/manifest.json"
   else
-    fail "distribution directory has no manifest-v3.json, manifest-v2.json, or manifest.json: $distribution_path"
+    fail "distribution directory has no manifest-v7.json, manifest-v6.json, manifest-v5.json, or manifest.json: $distribution_path"
   fi
 elif [[ -f "$distribution_path" ]]; then
   distribution_directory="$(cd "$(dirname "$distribution_path")" && pwd -P)"
@@ -167,9 +169,13 @@ elif [[ -f "$distribution_path" ]]; then
 else
   fail "distribution path is not a local file or directory: $distribution_path"
 fi
-actual_distribution_sha256="$(sha256 "$distribution_manifest")"
-[[ "$actual_distribution_sha256" == "$distribution_sha256" ]] || \
-  fail "distribution root digest mismatch for $distribution_manifest: expected $distribution_sha256, got $actual_distribution_sha256"
+cd "$repo_root"
+cargo build -q --release --manifest-path tools/texlive-wasm-publish/Cargo.toml
+publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/release/texlive-wasm-publish"
+[[ -x "$publisher" ]] || fail "publisher was not built at $publisher"
+actual_distribution_ahash64="$($publisher --file-ahash64 "$distribution_manifest")"
+[[ "$actual_distribution_ahash64" == "$distribution_ahash64" ]] || \
+  fail "distribution root digest mismatch for $distribution_manifest: expected $distribution_ahash64, got $actual_distribution_ahash64"
 
 scratch_parent="${UMBER_LATEX_FORMAT_WORK_ROOT:-${output_dir}/work}"
 mkdir -p "$scratch_parent"
@@ -228,7 +234,7 @@ while read -r kind relative expected_bytes expected_hash extra; do
     request_key="tex:${request_name}"
   fi
   printf '%s\n' "$request_key" >> "$closure_index"
-  printf '%s\t%s\t%s\n' "$request_key" "$expected_hash" "$expected_bytes" >> "$identity_index"
+  printf '%s\t%s\t%s\n' "$request_key" "$($publisher --file-ahash64 "$source")" "$expected_bytes" >> "$identity_index"
 done < "$lock_file"
 LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' | LC_ALL=C sort > "$expected_receipt"
 LC_ALL=C sort -u "$closure_index" -o "$closure_index"
@@ -283,7 +289,7 @@ run_engine() {
     SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
       run_umber run "--${engine}" \
         --distribution "$distribution_path" \
-        --distribution-sha256 "$distribution_sha256" \
+        --distribution-ahash64 "$distribution_ahash64" \
         --offline \
         "$@"
   )
@@ -434,13 +440,13 @@ elif [[ "$generated" -eq 1 ]]; then
     run_umber format-cache store "${cache_args[@]}" --format "$format_file" >/dev/null
 fi
 
-format_sha256="$(sha256 "$format_file")"
+format_ahash64="$($publisher --file-ahash64 "$format_file")"
 format_bytes="$(wc -c < "$format_file" | tr -d ' ')"
-source_manifest_sha256="$(sha256 "$lock_file")"
-metadata_schema=1
+source_manifest_ahash64="$distribution_ahash64"
+metadata_schema=3
 closure_metadata=""
 if [[ "$publish_input_closure" -eq 1 ]]; then
-  metadata_schema=2
+  metadata_schema=4
   input_closure_json="$(awk '
     BEGIN { print "    \"keys\": [" }
     {
@@ -454,7 +460,7 @@ if [[ "$publish_input_closure" -eq 1 ]]; then
     BEGIN { print "{\n  \"schema\": 1,\n  \"inputs\": [" }
     {
       if (NR > 1) printf ",\n"
-      printf "    {\"key\": \"%s\", \"sha256\": \"%s\", \"bytes\": %s}", $1, $2, $3
+      printf "    {\"key\": \"%s\", \"ahash64\": \"%s\", \"bytes\": %s}", $1, $2, $3
     }
     END { print "\n  ]\n}" }
   ' "$identity_index" > "${tmp_root}/${format_name}-input-identities.json"
@@ -464,14 +470,14 @@ cat > "${tmp_root}/${format_name}-format.json" <<EOF
 {
   "schema": ${metadata_schema},
   "name": "${format_name}",
-  "object": "sha256-${format_sha256}",
-  "sha256": "${format_sha256}",
+  "object": "ahash64-v1-${format_ahash64}",
+  "ahash64": "${format_ahash64}",
   "bytes": ${format_bytes},
   "engine": "umber",
   "engineVersion": "${engine_version}",
   "formatSchema": ${format_schema},
   "sourceDistribution": "${distribution}",
-  "sourceManifestSha256": "${source_manifest_sha256}",
+  "sourceManifestAhash64": "${source_manifest_ahash64}",
   "sourceDateEpoch": ${source_date_epoch}${closure_metadata}
 }
 EOF
@@ -501,5 +507,5 @@ else
   fi
 fi
 
-printf 'Umber %s format: sha256=%s bytes=%s schema=%s source=%s\n' \
-  "$format_name" "$format_sha256" "$format_bytes" "$format_schema" "$distribution"
+printf 'Umber %s format: ahash64-v1=%s bytes=%s schema=%s source=%s\n' \
+  "$format_name" "$format_ahash64" "$format_bytes" "$format_schema" "$distribution"

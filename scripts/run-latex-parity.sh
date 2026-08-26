@@ -7,7 +7,7 @@ source_dir="${repo_root}/third_party/latex2e-parity/source"
 case_list="${repo_root}/third_party/latex2e-parity/dvi-cases.txt"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
 format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-format_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 format_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
 format_file=""
@@ -217,7 +217,7 @@ prepare_format() {
     UMBER_LATEX_FORMAT_WORK_ROOT="$scratch_parent" \
       "$format_builder" --texmf-dist "$texmf_dist" \
         --distribution "$format_distribution" \
-        --distribution-sha256 "$format_distribution_sha256" \
+        --distribution-ahash64 "$format_distribution_ahash64" \
         --output-dir "$format_output_dir" \
         > /dev/null
     format_build_count=$((format_build_count + 1))
@@ -270,7 +270,7 @@ while [[ $# -gt 0 ]]; do
     --output-dir) output_dir="$2"; shift 2 ;;
     --texmf-dist) shift 2 ;;
     --distribution) shift 2 ;;
-    --distribution-sha256) shift 2 ;;
+    --distribution-ahash64) shift 2 ;;
     *) exit 2 ;;
   esac
 done

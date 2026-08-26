@@ -1,19 +1,19 @@
 {
-  "schema": 2,
+  "schema": 4,
   "distribution": "html-font-fixture",
   "index": 0,
   "files": {},
   "fonts": {
     "font:1:636d752d73657269662d726f6d616e:0:d::6b65726e=00000001,6c696761=00000001:ltr:6c61746e:656e": {
-      "schema": 1,
-      "object": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "schema": 2,
+      "object": "ahash64-v1-dddddddddddddddd",
+      "ahash64": "dddddddddddddddd",
       "bytes": 404,
       "container": "woff2",
-      "programIdentity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "programIdentity": "bbbbbbbbbbbbbbbb",
       "featurePolicyVersion": 1,
       "provenance": {
-        "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "identity": "aaaaaaaaaaaaaaaa",
         "upstream": "CMU Serif",
         "upstreamVersion": "0.7.0",
         "sourceUrl": "https://example.test/cmu",
@@ -21,9 +21,9 @@
         "conversionVersion": "1.0"
       },
       "license": {
-        "identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-        "object": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "identity": "ffffffffffffffff",
+        "object": "ahash64-v1-eeeeeeeeeeeeeeee",
+        "ahash64": "eeeeeeeeeeeeeeee",
         "bytes": 100,
         "spdx": "OFL-1.1",
         "embeddable": true,
@@ -32,22 +32,22 @@
     }
   },
   "legacyMappings": {
-    "legacy-mapping:1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1:html-layout:4f5431": {
-      "schema": 1,
-      "tfmSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "legacy-mapping:2:cccccccccccccccc:1:html-layout:4f5431": {
+      "schema": 2,
+      "tfmAhash64": "cccccccccccccccc",
       "fontKey": "font:1:636d752d73657269662d726f6d616e:0:d::6b65726e=00000001,6c696761=00000001:ltr:6c61746e:656e",
-      "object": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "object": "ahash64-v1-dddddddddddddddd",
+      "ahash64": "dddddddddddddddd",
       "bytes": 404,
       "container": "woff2",
-      "programIdentity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "programIdentity": "bbbbbbbbbbbbbbbb",
       "unicodeMap": ["__UNICODE_MAP__"],
       "mappingVersion": 1,
       "fontdimenVersion": 1,
       "featurePolicyVersion": 1,
       "fallback": "classic-tfm-exact",
       "provenance": {
-        "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "identity": "aaaaaaaaaaaaaaaa",
         "upstream": "CMU Serif",
         "upstreamVersion": "0.7.0",
         "sourceUrl": "https://example.test/cmu",
@@ -55,9 +55,9 @@
         "conversionVersion": "1.0"
       },
       "license": {
-        "identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-        "object": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "identity": "ffffffffffffffff",
+        "object": "ahash64-v1-eeeeeeeeeeeeeeee",
+        "ahash64": "eeeeeeeeeeeeeeee",
         "bytes": 100,
         "spdx": "OFL-1.1",
         "embeddable": true,

@@ -7,10 +7,10 @@ use crate::manifest::{
 };
 use crate::selection::{FontRequestKey, LegacyMappingRequestKey};
 
-pub const HTML_SHARDED_ROOT_SCHEMA: u32 = 4;
-pub const HTML_INDEX_SHARD_SCHEMA: u32 = 2;
-pub const FONT_RECORD_SCHEMA: u32 = 1;
-pub const LEGACY_MAPPING_RECORD_SCHEMA: u32 = 1;
+pub const HTML_SHARDED_ROOT_SCHEMA: u32 = 7;
+pub const HTML_INDEX_SHARD_SCHEMA: u32 = 4;
+pub const FONT_RECORD_SCHEMA: u32 = 2;
+pub const LEGACY_MAPPING_RECORD_SCHEMA: u32 = 2;
 const POLICY_VERSION: u32 = 1;
 const MAX_METADATA_BYTES: usize = 4096;
 const MAX_LICENSE_BYTES: u64 = 1024 * 1024;
@@ -124,9 +124,9 @@ pub(crate) fn parse_legacy_mapping_records(
             LEGACY_MAPPING_RECORD_SCHEMA,
             "legacy mapping record",
         )?;
-        let tfm_sha256 = string(take(&mut fields, "tfmSha256", &key)?, "tfmSha256")?;
-        validate_digest(&tfm_sha256, "TFM digest")?;
-        if tfm_sha256 != request.tfm_sha256() {
+        let tfm_ahash64 = string(take(&mut fields, "tfmAhash64", &key)?, "tfmAhash64")?;
+        validate_digest(&tfm_ahash64, "TFM digest")?;
+        if tfm_ahash64 != request.tfm_ahash64() {
             return Err(ManifestParseError::new(format!(
                 "legacy mapping {key} TFM digest does not match its request key"
             )));
@@ -385,8 +385,8 @@ pub(crate) fn write_legacy_mapping_records(
         out.push_str(":{");
         out.push_str("\"schema\":");
         out.push_str(&record.schema.to_string());
-        out.push_str(",\"tfmSha256\":");
-        json_string(out, record.request.tfm_sha256());
+        out.push_str(",\"tfmAhash64\":");
+        json_string(out, record.request.tfm_ahash64());
         out.push_str(",\"fontKey\":");
         json_string(out, &record.font_request.manifest_key().to_string());
         write_object(out, &record.object);
@@ -444,8 +444,8 @@ fn write_record_prefix(
 fn write_object(out: &mut String, object: &ObjectEntry) {
     out.push_str(",\"object\":");
     json_string(out, &object.object);
-    out.push_str(",\"sha256\":");
-    json_string(out, &object.sha256);
+    out.push_str(",\"ahash64\":");
+    json_string(out, &object.ahash64);
     out.push_str(",\"bytes\":");
     out.push_str(&object.bytes.to_string());
 }

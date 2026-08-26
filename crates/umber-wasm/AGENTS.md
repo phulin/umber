@@ -30,8 +30,8 @@ the manifest's validated content-addressed object name.
 - `tests/virtual_font_acquisition.rs`: focused host-neutral WASM coverage for
   typed virtual-font resource retries and their recursive PDF resource closure.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
-- `assets/plain.fmt`: reproducible Umber-native Plain format image.
-- `assets/plain-format.json`: published digest and compatibility metadata.
+- `assets/plain.fmt`: retained schema-11 regeneration input; it is not shipped.
+- `assets/plain-format.json`: explicit schema-12 republication status metadata.
 - `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: repository-only
   conformance fixtures and license; the npm runtime inventory excludes both.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.

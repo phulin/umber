@@ -13,7 +13,7 @@ use tempfile::TempDir;
 
 use super::*;
 
-const BLOB_DIRECTORY: &str = "blobs-v1";
+const BLOB_DIRECTORY: &str = "blobs-v2";
 
 fn identity(mode: FormatEngineMode) -> FormatCacheIdentity {
     FormatCacheIdentity::current(
@@ -55,7 +55,7 @@ fn canonical_key_covers_every_identity_component() {
     );
     assert_eq!(
         original.key().hex(),
-        "403b2a6f3863827a3ea7dd5ec690fe14ebdfba0dce693831c7488ab2d7007834"
+        "5c4e5d432c91c32bacdf76b3420d383ea1187b4edda141c73b2df03644829f8a"
     );
 
     let mutations = [
@@ -356,15 +356,11 @@ fn corrupt_truncated_and_decoder_invalid_entries_recover_as_misses() {
                 let key_len =
                     u16::from_le_bytes(entry[14..16].try_into().expect("blob key length field"))
                         as usize;
-                let outer_payload = 64 + namespace_len + key_len;
+                let outer_payload = 40 + namespace_len + key_len;
                 let metadata_len =
                     read_u32(&entry[outer_payload..], 12).expect("metadata length") as usize;
                 let image = outer_payload + ENTRY_HEADER_LEN + metadata_len;
                 entry[image] ^= 0x01;
-                let image_digest = Sha256::digest(&entry[image..]);
-                entry[outer_payload + 24..outer_payload + 56].copy_from_slice(&image_digest);
-                let blob_digest = Sha256::digest(&entry[outer_payload..]);
-                entry[28..60].copy_from_slice(&blob_digest);
             }
         }
         fs::write(&path, entry).expect("corrupt entry");
@@ -529,7 +525,7 @@ fn competing_processes_serialize_publication_and_leave_no_temporary_files() {
     assert_eq!(
         names
             .iter()
-            .filter(|name| name.starts_with("sha256-"))
+            .filter(|name| name.starts_with("ahash64-v1-"))
             .count(),
         1
     );

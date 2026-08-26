@@ -3,12 +3,12 @@ import test from "node:test";
 
 import { cacheKey, MemoryObjectCache } from "./persistent-cache.js";
 
-const DIGEST = "a".repeat(64);
+const DIGEST = "a".repeat(16);
 
 test("cache keys isolate distributions and reject malformed identities", () => {
 	assert.notEqual(cacheKey("texlive-a", DIGEST), cacheKey("texlive-b", DIGEST));
 	assert.throws(() => cacheKey("", DIGEST), /distribution/);
-	assert.throws(() => cacheKey("texlive-a", "bad"), /sha256/);
+	assert.throws(() => cacheKey("texlive-a", "bad"), /ahash64/);
 });
 
 test("memory cache copies bytes and keeps versions isolated", async () => {

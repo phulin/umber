@@ -1,11 +1,11 @@
 //! Strict, host-neutral distribution manifest parsing and object selection.
 
+mod ahash64;
 mod catalog;
 mod html;
 mod json;
 mod manifest;
 mod selection;
-mod sha256;
 
 pub use html::{
     FONT_RECORD_SCHEMA, FontManifestRecord, HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA,
@@ -27,6 +27,6 @@ pub use selection::{
 #[cfg(test)]
 mod tests;
 pub use catalog::{
-    AuthenticatedBatchPlan, ShardedCatalog, assemble_sharded_catalog, authenticate_batch,
-    prepare_batch, shard_manifest, shard_manifest_with_records,
+    ShardedCatalog, VerifiedBatchPlan, assemble_sharded_catalog, prepare_batch, shard_manifest,
+    shard_manifest_with_records, verify_batch,
 };

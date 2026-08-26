@@ -18,7 +18,7 @@ pub(crate) struct VerifiedDownloader {
 pub(crate) struct DownloadPolicy<'a> {
     pub(crate) subject: &'static str,
     pub(crate) length: LengthPolicy,
-    pub(crate) expected_sha256: &'a str,
+    pub(crate) expected_ahash64: &'a str,
     pub(crate) retries: usize,
 }
 
@@ -138,7 +138,7 @@ impl VerifiedDownloader {
             _ => {}
         }
         let actual = hex_digest(&bytes);
-        if actual != policy.expected_sha256 {
+        if actual != policy.expected_ahash64 {
             return Err(DownloadFailure::DigestMismatch { actual });
         }
         Ok(bytes)

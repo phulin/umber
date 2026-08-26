@@ -22,8 +22,8 @@ fn request(key: &str, bytes: &[u8], limit: u64) -> FetchRequest {
     FetchRequest {
         request_key: key.into(),
         object: ObjectEntry {
-            object: format!("sha256-{digest}"),
-            sha256: digest,
+            object: format!("ahash64-v1-{digest}"),
+            ahash64: digest,
             bytes: bytes.len() as u64,
         },
         max_bytes: limit,
@@ -100,7 +100,7 @@ fn fetches_a_manifest_only_when_it_matches_the_trust_pin() {
     let server = FixtureServer::new(vec![Reply::ok(bytes)]);
     let error = fetch_manifest_with_test_agent(
         &format!("{}manifest.json", server.base_url),
-        &"0".repeat(64),
+        &"a".repeat(16),
         &FetchCancellation::new(),
         &server.agent(Duration::from_secs(1)),
     )
@@ -157,7 +157,7 @@ fn manifest_policy_does_not_inherit_object_retries() {
     let error = client
         .acquire_manifest(
             &format!("{}manifest.json", server.base_url),
-            &"0".repeat(64),
+            &"a".repeat(16),
             &FetchCancellation::new(),
         )
         .expect_err("a bad manifest trust pin must fail without object retries");
@@ -180,7 +180,7 @@ fn read_only_store_miss_does_not_create_cache_paths() {
 }
 
 #[test]
-fn explicit_cache_verifier_authenticates_every_current_blob() {
+fn explicit_cache_verifier_checks_every_current_blob() {
     let temp = TempDir::new().expect("cache tempdir");
     let store = BlobStore::new(temp.path());
     let object = b"object payload";
@@ -249,7 +249,10 @@ fn legacy_object_layout_is_verified_and_migrated() {
     let temp = TempDir::new().expect("cache tempdir");
     let bytes = b"legacy cached object";
     let digest = hex_digest(bytes);
-    let legacy = temp.path().join("objects").join(format!("sha256-{digest}"));
+    let legacy = temp
+        .path()
+        .join("objects")
+        .join(format!("ahash64-v1-{digest}"));
     std::fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy directory");
     std::fs::write(&legacy, bytes).expect("legacy object");
     let store = BlobStore::new(temp.path());
@@ -303,7 +306,7 @@ fn returns_typed_404_with_key_and_digest() {
     }]);
     let cache_dir = TempDir::new().expect("cache tempdir");
     let request = request("tfm:missing.tfm", bytes, 1024);
-    let expected_digest = request.object.sha256.clone();
+    let expected_digest = request.object.ahash64.clone();
 
     let error = client(&server, 1, Duration::from_secs(1), 2)
         .fetch_batch(
@@ -359,7 +362,7 @@ fn rejects_corruption_and_truncation_without_caching() {
     )));
     assert!(
         cache
-            .load_object(&requests[0].object.sha256, expected.len() as u64)
+            .load_object(&requests[0].object.ahash64, expected.len() as u64)
             .expect("load cache")
             .is_none()
     );
@@ -476,7 +479,7 @@ fn cancellation_after_download_does_not_publish_or_return_bytes() {
     );
     assert!(
         cache
-            .load_object(&request.object.sha256, request.object.bytes)
+            .load_object(&request.object.ahash64, request.object.bytes)
             .expect("load cache")
             .is_none(),
         "cancelled download must not be published"
@@ -607,7 +610,10 @@ fn concurrent_processes_publish_one_verified_cache_object() {
     assert_eq!(
         entries
             .iter()
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("ahash64-v1-"))
             .count(),
         1,
         "temporary files are cleaned up"

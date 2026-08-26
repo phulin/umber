@@ -25,7 +25,7 @@ fn protruding_font() -> LoadedFont {
     LoadedFont::new(
         "microtype",
         "microtype.tfm",
-        [42; 32],
+        [42; 8],
         0,
         sp(10 * 65_536),
         sp(10 * 65_536),

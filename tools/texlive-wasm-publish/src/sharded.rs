@@ -3,12 +3,12 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
 use umber_distribution::{
     FontManifestRecord, HTML_SHARDED_ROOT_SCHEMA, LegacyMappingManifestRecord, Manifest,
     ManifestShard, ObjectEntry, SHARDED_ROOT_SCHEMA, ShardedCatalog, ShardedManifestRoot,
     assemble_sharded_catalog,
 };
+use umber_hash::{AHash64, HashDomain};
 
 pub const ROOT_SCHEMA: u32 = SHARDED_ROOT_SCHEMA;
 
@@ -68,7 +68,7 @@ fn write_publication(publication: ShardedPublication, output: &Path) -> Result<S
         .with_context(|| format!("create output directory {}", objects.display()))?;
     for (shard, digest) in publication.shards.iter().zip(&publication.root.shards) {
         let bytes = canonical_shard(shard).into_bytes();
-        let object = format!("sha256-{digest}");
+        let object = format!("ahash64-v1-{digest}");
         fs::write(objects.join(&object), &bytes)
             .with_context(|| format!("write index shard {object}"))?;
     }
@@ -86,7 +86,7 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
 /// Authenticate a complete root and all of its shards without requiring the
 /// payload objects. This is the trust boundary used when an immutable
 /// content-addressed publication is succeeded in place: unchanged payloads
-/// remain authenticated by their records, while the successor stages only
+/// remain verified by their records, while the successor stages only
 /// changed payloads and the newly derived index objects.
 pub fn read_sharded_catalog(output: &Path) -> Result<ShardedPublication> {
     let root_bytes = fs::read(output.join("manifest.json")).context("read root manifest")?;
@@ -97,10 +97,10 @@ pub fn read_sharded_catalog(output: &Path) -> Result<ShardedPublication> {
     }
     let mut shards = Vec::with_capacity(root.shards.len());
     for (index, digest) in root.shards.iter().enumerate() {
-        let object = format!("sha256-{digest}");
+        let object = format!("ahash64-v1-{digest}");
         let bytes = fs::read(output.join("objects").join(&object))
             .with_context(|| format!("read object for shard {index}"))?;
-        if sha256(&bytes) != *digest {
+        if ahash64(&bytes) != *digest {
             bail!("object for shard {index} does not match its declared digest");
         }
         let text = std::str::from_utf8(&bytes).context("index shard is not UTF-8")?;
@@ -147,7 +147,7 @@ pub fn shard_index(key: &str, shard_bits: u8) -> usize {
 fn read_verified_object(output: &Path, entry: &FetchEntry, label: &str) -> Result<Vec<u8>> {
     let bytes = fs::read(output.join("objects").join(&entry.object))
         .with_context(|| format!("read object for {label}"))?;
-    if bytes.len() as u64 != entry.bytes || sha256(&bytes) != entry.sha256 {
+    if bytes.len() as u64 != entry.bytes || ahash64(&bytes) != entry.ahash64 {
         bail!("object for {label} does not match declared digest and length");
     }
     Ok(bytes)
@@ -166,15 +166,15 @@ fn read_verified_object_entry(
         output,
         &FetchEntry {
             object: entry.object.clone(),
-            sha256: entry.sha256.clone(),
+            ahash64: entry.ahash64.clone(),
             bytes: entry.bytes,
         },
         label,
     )
 }
 
-fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+fn ahash64(bytes: &[u8]) -> String {
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
 
 pub fn referenced_objects(publication: &ShardedPublication) -> BTreeSet<String> {
@@ -193,7 +193,7 @@ pub fn referenced_objects(publication: &ShardedPublication) -> BTreeSet<String> 
                 .root
                 .shards
                 .iter()
-                .map(|digest| format!("sha256-{digest}")),
+                .map(|digest| format!("ahash64-v1-{digest}")),
         )
         .chain(publication.fonts.values().flat_map(|record| {
             [

@@ -10,7 +10,7 @@ import { IndexedDbObjectCache } from "./persistent-cache.js";
 
 export { ManifestResolverError } from "./manifest-schema.js";
 
-const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
 const MAX_CONCURRENCY = 32;
 const DEFAULT_CONCURRENCY = 8;
 const MAX_ROOT_BYTES = 1024 * 1024;
@@ -20,25 +20,28 @@ const MAX_RESOLVED_FILES = 4096;
 const DEFAULT_CACHED_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_BYTES = 256 * 1024 * 1024;
 
-export const TEXLIVE_2026_MANIFEST_URL =
-	"https://assets.umber.ink/texlive/texlive-20260301/manifest-v3.json";
-export const TEXLIVE_2026_MANIFEST_SHA256 =
-	"43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b";
+// Installed by the external publication tracked in umber2-66p0.27.
+export const TEXLIVE_2026_MANIFEST_URL = undefined;
+export const TEXLIVE_2026_MANIFEST_AHASH64 = undefined;
 
 export class HttpManifestResolver {
 	static async create(options) {
-		const fetchImplementation = options.fetch ?? platformFetch();
-		const crypto = options.crypto ?? globalThis.crypto;
-		if (typeof fetchImplementation !== "function" || !crypto?.subtle) {
+		if (
+			options.manifestUrl === undefined &&
+			options.manifestAHash64 === undefined
+		)
 			throw new ManifestResolverError(
-				"invalid-options",
-				"fetch and Web Crypto SubtleCrypto are required",
+				"default-distribution-unpublished",
+				"the default deterministic aHash64 distribution has not been published; provide a migrated manifestUrl and manifestAHash64",
 			);
+		const fetchImplementation = options.fetch ?? platformFetch();
+		if (typeof fetchImplementation !== "function") {
+			throw new ManifestResolverError("invalid-options", "fetch is required");
 		}
-		if (!DIGEST_PATTERN.test(options.manifestSha256)) {
+		if (!DIGEST_PATTERN.test(options.manifestAHash64)) {
 			throw new ManifestResolverError(
 				"invalid-options",
-				"manifestSha256 must be a lowercase SHA-256 digest",
+				"manifestAHash64 must be a lowercase aHash64 digest",
 			);
 		}
 		const persistentMode = options.persistentCache ?? "http";
@@ -52,7 +55,7 @@ export class HttpManifestResolver {
 		try {
 			bytes = await persistentStore?.get(
 				manifestIdentity,
-				options.manifestSha256,
+				options.manifestAHash64,
 			);
 		} catch {}
 		if (bytes === undefined) {
@@ -78,20 +81,23 @@ export class HttpManifestResolver {
 				limit: MAX_ROOT_BYTES,
 			});
 		}
-		const actual = await digestBytes(crypto, bytes);
-		if (actual !== options.manifestSha256) {
+		const actual = deterministicAhash64Hex(bytes);
+		if (actual !== options.manifestAHash64) {
 			try {
-				await persistentStore?.delete(manifestIdentity, options.manifestSha256);
+				await persistentStore?.delete(
+					manifestIdentity,
+					options.manifestAHash64,
+				);
 			} catch {}
 			throw new ManifestResolverError(
 				"manifest-digest",
-				`root manifest digest ${actual} does not match pinned ${options.manifestSha256}`,
+				`root manifest digest ${actual} does not match pinned ${options.manifestAHash64}`,
 			);
 		}
 		try {
 			await persistentStore?.put(
 				manifestIdentity,
-				options.manifestSha256,
+				options.manifestAHash64,
 				bytes,
 			);
 		} catch {}
@@ -107,7 +113,6 @@ export class HttpManifestResolver {
 		}
 		return new HttpManifestResolver(rootText, {
 			fetch: fetchImplementation,
-			crypto,
 			concurrency: options.concurrency,
 			persistentCache: options.persistentCache,
 			cacheStore: persistentStore,
@@ -148,7 +153,6 @@ export class HttpManifestResolver {
 			);
 		}
 		this.fetch = options.fetch ?? platformFetch();
-		this.crypto = options.crypto ?? globalThis.crypto;
 		this.concurrency = validateConcurrency(
 			options.concurrency ?? DEFAULT_CONCURRENCY,
 		);
@@ -170,11 +174,8 @@ export class HttpManifestResolver {
 			(persistentMode === "indexeddb"
 				? new IndexedDbObjectCache({ indexedDB: options.indexedDB })
 				: undefined);
-		if (typeof this.fetch !== "function" || !this.crypto?.subtle) {
-			throw new ManifestResolverError(
-				"invalid-options",
-				"fetch and Web Crypto SubtleCrypto are required",
-			);
+		if (typeof this.fetch !== "function") {
+			throw new ManifestResolverError("invalid-options", "fetch is required");
 		}
 		this.objectCache = new Map();
 		this.shardCache = new Map();
@@ -252,7 +253,7 @@ export class HttpManifestResolver {
 											type: "font",
 											container: job.entry.container,
 											bytes,
-											objectSha256: job.entry.sha256,
+											objectAHash64: job.entry.ahash64,
 											...(job.entry.programIdentity === undefined
 												? {}
 												: { programIdentity: job.entry.programIdentity }),
@@ -264,7 +265,7 @@ export class HttpManifestResolver {
 											fontKey: job.entry.fontKey,
 											container: job.entry.container,
 											bytes,
-											objectSha256: job.entry.sha256,
+											objectAHash64: job.entry.ahash64,
 											...(job.entry.programIdentity === undefined
 												? {}
 												: { programIdentity: job.entry.programIdentity }),
@@ -434,13 +435,13 @@ export class HttpManifestResolver {
 	}
 
 	#object(entry, signal, limits = {}) {
-		let pending = this.objectCache.get(entry.sha256);
+		let pending = this.objectCache.get(entry.ahash64);
 		if (pending === undefined) {
 			pending = this.#download(entry, signal, limits);
-			this.objectCache.set(entry.sha256, pending);
+			this.objectCache.set(entry.ahash64, pending);
 			pending.catch(() => {
-				if (this.objectCache.get(entry.sha256) === pending)
-					this.objectCache.delete(entry.sha256);
+				if (this.objectCache.get(entry.ahash64) === pending)
+					this.objectCache.delete(entry.ahash64);
 			});
 		}
 		return pending;
@@ -476,7 +477,7 @@ export class HttpManifestResolver {
 		try {
 			await this.persistentStore?.put(
 				this.manifest.distribution,
-				entry.sha256,
+				entry.ahash64,
 				bytes,
 			);
 		} catch {}
@@ -489,7 +490,7 @@ export class HttpManifestResolver {
 		try {
 			bytes = await this.persistentStore.get(
 				this.manifest.distribution,
-				entry.sha256,
+				entry.ahash64,
 			);
 		} catch {
 			return undefined;
@@ -502,7 +503,7 @@ export class HttpManifestResolver {
 			try {
 				await this.persistentStore.delete(
 					this.manifest.distribution,
-					entry.sha256,
+					entry.ahash64,
 				);
 			} catch {}
 			return undefined;
@@ -525,11 +526,11 @@ export class HttpManifestResolver {
 				`${entry.object} returned ${bytes.byteLength} bytes; expected ${entry.bytes ?? `at most ${limit}`}`,
 			);
 		}
-		const digest = await digestBytes(this.crypto, bytes);
-		if (digest !== entry.sha256)
+		const digest = deterministicAhash64Hex(bytes);
+		if (digest !== entry.ahash64)
 			throw new ManifestResolverError(
 				"object-digest",
-				`${entry.object} digest ${digest} does not match ${entry.sha256}`,
+				`${entry.object} digest ${digest} does not match ${entry.ahash64}`,
 			);
 	}
 }
@@ -570,10 +571,10 @@ function groupByObject(jobs) {
 	const groups = [];
 	const indexes = new Map();
 	for (const job of jobs) {
-		let index = indexes.get(job.entry.sha256);
+		let index = indexes.get(job.entry.ahash64);
 		if (index === undefined) {
 			index = groups.length;
-			indexes.set(job.entry.sha256, index);
+			indexes.set(job.entry.ahash64, index);
 			groups.push([]);
 		}
 		groups[index].push(job);
@@ -720,9 +721,54 @@ function throwIfAborted(signal) {
 		);
 }
 
-async function digestBytes(crypto, bytes) {
-	return Array.from(
-		new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
-		(byte) => byte.toString(16).padStart(2, "0"),
-	).join("");
+export function deterministicAhash64Hex(bytes, domain = 1) {
+	const mask = (1n << 64n) - 1n;
+	const multiple = 6364136223846793005n;
+	const pad = 0x1319_8a2e_0370_7344n;
+	let state = 0x243f_6a88_85a3_08d3n;
+	let length = 0n;
+	let tail = [];
+	const rotateLeft = (value, bits) => {
+		const shift = BigInt(bits) & 63n;
+		return ((value << shift) | (value >> ((64n - shift) & 63n))) & mask;
+	};
+	const foldedMultiply = (left, right) => {
+		const product = left * right;
+		return ((product & mask) ^ (product >> 64n)) & mask;
+	};
+	const mix = (word) => {
+		state = (foldedMultiply(state ^ word, multiple) + pad) & mask;
+	};
+	const write = (part) => {
+		length += BigInt(part.length);
+		for (const byte of part) {
+			tail.push(byte);
+			if (tail.length === 8) {
+				let word = 0n;
+				for (let index = 0; index < 8; index++)
+					word |= BigInt(tail[index]) << BigInt(index * 8);
+				mix(word);
+				tail = [];
+			}
+		}
+	};
+	write(new TextEncoder().encode("umber-ahash64\0"));
+	write(Uint8Array.of(1));
+	const domainBytes = new Uint8Array(8);
+	let domainValue = BigInt(domain);
+	for (let index = 0; index < 8; index++) {
+		domainBytes[index] = Number(domainValue & 0xffn);
+		domainValue >>= 8n;
+	}
+	write(domainBytes);
+	write(bytes);
+	if (tail.length !== 0) {
+		let word = 0n;
+		for (let index = 0; index < tail.length; index++)
+			word |= BigInt(tail[index]) << BigInt(index * 8);
+		mix(word ^ rotateLeft(BigInt(tail.length), 48));
+	}
+	state = foldedMultiply(state ^ length, pad ^ rotateLeft(length, 17));
+	state = rotateLeft(state, Number(state & 63n));
+	return state.toString(16).padStart(16, "0");
 }

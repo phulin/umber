@@ -58,6 +58,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/corpus-manifest`: dependency-free parser for the external corpus manifest used by host-side parity tooling.
 - `crates/umber-distribution`: dependency-free immutable distribution manifest parsing, request-key encoding, and acquisition selection.
 - `crates/umber-fetch`: native content-addressed distribution cache and bounded blocking HTTPS acquisition.
+- `crates/umber-hash`: portable, versioned deterministic aHash64 identities shared by persisted distribution and output contracts.
 - `crates/umber-interrupt`: repository-owned safe Ctrl-C registration and platform signal dispatch.
 - `crates/bib-model`: typed immutable bibliography values, builders, options, diagnostics, and frozen documents.
 - `crates/bib-unicode`: pinned immutable Unicode compatibility resource boundary.
@@ -144,7 +145,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Snapshot-sensitive corpus and format work must pass the explicit regenerated
   2026-03-01 distribution path to Umber (normally
   `--distribution target/texlive-snapshot`, resolved from the owning checkout)
-  plus its authenticated `--distribution-sha256` pin and must not rely on the
+  plus its authenticated `--distribution-ahash64` pin and must not rely on the
   default hosted manifest. The native cache is shared
   and content-addressed rather than snapshot-partitioned: stop concurrent Umber
   runs before purging its `objects`/`manifests` namespaces, then warm only from

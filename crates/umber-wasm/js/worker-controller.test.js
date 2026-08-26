@@ -8,7 +8,7 @@ import {
 } from "./worker-controller.js";
 import { outputTransfers, runCompileMessage } from "./worker-entry.js";
 
-const manifestSha256 = "1".repeat(64);
+const manifestAHash64 = "1".repeat(64);
 
 function privateFontResponse(bytes) {
 	return {
@@ -70,7 +70,7 @@ function request(Worker, control = {}) {
 		new Map([["main.tex", new Uint8Array([1, 0, 2])]]),
 		{
 			manifestUrl: "https://cdn.example.test/manifest.json",
-			manifestSha256,
+			manifestAHash64,
 			persistentCache: "http",
 		},
 		{ Worker, workerUrl: "worker.js", timeoutMs: 100, ...control },
@@ -173,7 +173,10 @@ test("owner abort and timeout terminate a worker even while it is unresponsive",
 		const promise = compileInWorker(
 			{ mainPath: "main.tex" },
 			new Map([["main.tex", source]]),
-			{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
+			{
+				manifestUrl: "https://cdn.example.test/manifest.json",
+				manifestAHash64,
+			},
 			{ Worker, workerUrl: "worker.js", timeoutMs: 5 },
 		);
 		await assert.rejects(
@@ -245,7 +248,7 @@ test("retained worker editor preserves lifecycle and binary output", async () =>
 	const editor = await createEditorSessionInWorker(
 		{ mainPath: "main.tex", outputs: ["dvi"] },
 		new Map([["main.tex", new Uint8Array([1, 0, 2])]]),
-		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
+		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestAHash64 },
 		{ Worker, workerUrl: "worker.js", timeoutMs: 100 },
 	);
 	const first = await editor.advance();
@@ -345,7 +348,7 @@ test("worker stabilization can be cancelled without terminating the session", as
 	const editor = await createEditorSessionInWorker(
 		{ mainPath: "main.tex", outputs: ["dvi"] },
 		new Map(),
-		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
+		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestAHash64 },
 		{ Worker, workerUrl: "worker.js", timeoutMs: 100 },
 	);
 	let progress;
@@ -417,7 +420,7 @@ test("preflights all worker input limits before copying or construction", async 
 					fixture.files,
 					{
 						manifestUrl: "https://cdn.example.test/manifest.json",
-						manifestSha256,
+						manifestAHash64,
 						resourceResponses: fixture.resourceResponses,
 					},
 					{ Worker },
@@ -445,7 +448,7 @@ test("worker copies typed font resources without detaching caller bytes", async 
 		new Map(),
 		{
 			manifestUrl: "https://cdn.example.test/manifest.json",
-			manifestSha256,
+			manifestAHash64,
 			resourceResponses: [privateFontResponse(woff2)],
 		},
 		{ Worker },
@@ -477,7 +480,7 @@ test("rejects ambiguous inline and manifest-selected formats", async () => {
 			new Map(),
 			{
 				manifestUrl: "https://cdn.example.test/manifest.json",
-				manifestSha256,
+				manifestAHash64,
 				format: "plain",
 			},
 			{ Worker },
@@ -504,7 +507,7 @@ test("controller forwards a named manifest format without transferring bytes", a
 		new Map([["main.tex", new Uint8Array([1])]]),
 		{
 			manifestUrl: "https://cdn.example.test/manifest.json",
-			manifestSha256,
+			manifestAHash64,
 			format: "plain",
 		},
 		{ Worker, timeoutMs: 100 },
@@ -656,7 +659,7 @@ test("removed fontResources option names the typed replacement API", async () =>
 			new Map(),
 			{
 				manifestUrl: "https://cdn.example.test/manifest.json",
-				manifestSha256,
+				manifestAHash64,
 				fontResources: [],
 			},
 			{ Worker },

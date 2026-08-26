@@ -160,7 +160,7 @@ pub struct RenderDocument {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderFont {
     pub key: HtmlFontKey,
-    pub identity: [u8; 32],
+    pub identity: [u8; 8],
     pub digest_hex: String,
     pub family: String,
 }
@@ -237,7 +237,7 @@ pub struct RenderText {
     pub text: String,
     pub font: HtmlFontKey,
     pub family: String,
-    pub resource: [u8; 32],
+    pub resource: [u8; 8],
     pub direction: RenderDirection,
     pub script: Option<[u8; 4]>,
     pub language: Option<String>,
@@ -296,7 +296,7 @@ pub enum RenderSpecialAction {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderResource {
-    pub identity: [u8; 32],
+    pub identity: [u8; 8],
     pub bytes: Vec<u8>,
     pub family: String,
     pub provenance: String,
@@ -437,7 +437,7 @@ pub fn build_positioned_render_document<R: HtmlFontAssets>(
         }
     }
     let mut resolved = BTreeMap::<HtmlFontKey, ResolvedFont>::new();
-    let mut resources = BTreeMap::<[u8; 32], RenderResource>::new();
+    let mut resources = BTreeMap::<[u8; 8], RenderResource>::new();
     let mut resource_bytes = 0usize;
     for page in pages {
         for font in &page.fonts {
@@ -452,10 +452,10 @@ pub fn build_positioned_render_document<R: HtmlFontAssets>(
                     message,
                 })?;
             let checked = validate_font(font, web, assets.realized_opentype(font), options)?;
-            resources.entry(checked.web.sha256).or_insert_with(|| {
+            resources.entry(checked.web.ahash64).or_insert_with(|| {
                 resource_bytes = resource_bytes.saturating_add(checked.web.woff2.len());
                 RenderResource {
-                    identity: checked.web.sha256,
+                    identity: checked.web.ahash64,
                     bytes: checked.web.woff2.clone(),
                     family: checked.family.clone(),
                     provenance: checked.web.provenance.clone(),
@@ -507,7 +507,7 @@ pub fn build_positioned_render_document<R: HtmlFontAssets>(
         .iter()
         .map(|(key, font)| RenderFont {
             key: key.clone(),
-            identity: font.web.sha256,
+            identity: font.web.ahash64,
             digest_hex: font.digest_hex.clone(),
             family: font.family.clone(),
         })
@@ -612,7 +612,7 @@ fn render_page(
                     text,
                     font: HtmlFontKey::from(*artifact_font),
                     family: font.family.clone(),
-                    resource: font.web.sha256,
+                    resource: font.web.ahash64,
                     direction: if opentype.is_some_and(|font| {
                         font.direction == tex_fonts::WritingDirection::RightToLeft
                     }) {

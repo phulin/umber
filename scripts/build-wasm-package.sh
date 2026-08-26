@@ -19,8 +19,7 @@ for module in "$crate"/js/*.js; do
   [[ "$module" == *.test.js ]] || cp "$module" "$temporary/package/"
 done
 cp "$crate"/js/*.d.ts "$temporary/package/"
-cp "$crate"/assets/plain.fmt \
-  "$crate"/assets/plain-format.json \
+cp "$crate"/assets/plain-format.json \
   "$crate"/assets/plain-source.lock \
   "$temporary/package/assets/"
 cp "$crate"/examples/*.html "$crate"/examples/*.js "$temporary/package/examples/"

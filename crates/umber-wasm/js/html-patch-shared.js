@@ -1,7 +1,10 @@
 export const HTML_NS = "http://www.w3.org/1999/xhtml";
 export const SVG_NS = "http://www.w3.org/2000/svg";
 export const KEY = /^[0-9a-f]{32}$/;
-export const DIGEST = /^[0-9a-f]{64}$/;
+
+import { deterministicAhash64Hex } from "./manifest-resolver.js";
+
+export const DIGEST = /^[0-9a-f]{16}$/;
 export const SESSION = /^[0-9a-f]{32}$/;
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -184,20 +187,8 @@ export function safeDestination(value) {
 	);
 }
 
-export async function verifySha256(identity, bytes) {
-	if (!globalThis.crypto?.subtle) {
-		throw new HtmlPatchError(
-			"crypto-unavailable",
-			"Web Crypto SHA-256 is required",
-		);
-	}
-	const digest = new Uint8Array(
-		await globalThis.crypto.subtle.digest("SHA-256", bytes),
-	);
-	return (
-		[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("") ===
-		identity
-	);
+export async function verifyAhash64(identity, bytes) {
+	return deterministicAhash64Hex(bytes, 24) === identity;
 }
 
 export function sameBytes(left, right) {

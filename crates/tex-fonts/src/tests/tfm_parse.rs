@@ -658,11 +658,11 @@ fn parsed_tfm_constructs_the_canonical_loaded_font() {
         .map(|parameter| parameter.value)
         .collect();
     let expected_font_info_words = font.font_info_words();
-    let loaded = font.into_loaded_font("cmr10", "fonts/cmr10.tfm", [7; 32]);
+    let loaded = font.into_loaded_font("cmr10", "fonts/cmr10.tfm", [7; 8]);
 
     assert_eq!(loaded.name(), "cmr10");
     assert_eq!(loaded.path(), std::path::Path::new("fonts/cmr10.tfm"));
-    assert_eq!(loaded.content_hash(), [7; 32]);
+    assert_eq!(loaded.content_hash(), [7; 8]);
     assert_eq!(loaded.metrics(), &expected_metrics);
     assert_eq!(loaded.parameters(), expected_parameters);
     assert_eq!(loaded.font_info_words(), expected_font_info_words);

@@ -686,7 +686,7 @@ it.
 ## 14. Portable format images
 
 `tex-state` owns a fixed-width little-endian frozen-format container, currently
-at schema 11. Its canonical section directory, alignment and zero-padding
+at schema 12. Its canonical section directory, alignment and zero-padding
 rules, whole-image checksum, exact ABI and lookup-configuration fingerprints,
 relative/index reference model, validation order, literal hash-table layout,
 and immutable-versus-job-local state boundary are specified in

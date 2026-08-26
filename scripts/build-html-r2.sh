@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-2026/texmf-dist}"
 snapshot_lock="${repo_root}/tests/texlive-snapshot.lock"
 format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-format_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 output_dir="${repo_root}/target/html-r2"
 objects_base_url="https://assets.umber.ink/html/umber-html-mvp-v1/objects/"
 shard_bits=4
@@ -13,7 +13,7 @@ shard_bits=4
 usage() {
   cat <<'EOF'
 usage: scripts/build-html-r2.sh [--texmf-dist PATH]
-       [--distribution PATH] [--distribution-sha256 SHA256] [--output-dir PATH]
+       [--distribution PATH] [--distribution-ahash64 AHASH64] [--output-dir PATH]
        [--objects-base-url HTTPS-URL] [--shard-bits BITS]
 
 Builds two byte-identical copies of the immutable contract-v1 HTML-only R2
@@ -27,19 +27,11 @@ fail() {
   exit 1
 }
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --texmf-dist) texmf_dist="${2:-}"; shift 2 ;;
     --distribution) format_distribution="${2:-}"; shift 2 ;;
-    --distribution-sha256) format_distribution_sha256="${2:-}"; shift 2 ;;
+    --distribution-ahash64) format_distribution_ahash64="${2:-}"; shift 2 ;;
     --output-dir) output_dir="${2:-}"; shift 2 ;;
     --objects-base-url) objects_base_url="${2:-}"; shift 2 ;;
     --shard-bits) shard_bits="${2:-}"; shift 2 ;;
@@ -70,14 +62,14 @@ format_dir="$tmp_root/formats"
   --publish-input-closure \
   --texmf-dist "$texmf_dist" \
   --distribution "$format_distribution" \
-  --distribution-sha256 "$format_distribution_sha256" \
+  --distribution-ahash64 "$format_distribution_ahash64" \
   --output-dir "$format_dir/latex"
 "$repo_root/scripts/build-latex-format.sh" \
   --engine pdflatex \
   --publish-input-closure \
   --texmf-dist "$texmf_dist" \
   --distribution "$format_distribution" \
-  --distribution-sha256 "$format_distribution_sha256" \
+  --distribution-ahash64 "$format_distribution_ahash64" \
   --output-dir "$format_dir/pdflatex"
 
 # The format trace includes two repository-owned configuration inputs. Give
@@ -95,11 +87,11 @@ done < "$repo_root/tests/latex-source.lock"
 cd "$repo_root"
 cargo build -q --release --manifest-path tools/texlive-wasm-publish/Cargo.toml
 publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/release/texlive-wasm-publish"
-expected_tree_hash="$(awk '$1 == "tree_sha256" { print $2 }' "$snapshot_lock")"
-tree_hash="$($publisher --tree-sha256 "$texmf_dist")"
+expected_tree_hash="$(awk '$1 == "tree_ahash64" { print $2 }' "$snapshot_lock")"
+tree_hash="$($publisher --tree-ahash64 "$texmf_dist")"
 [[ "$tree_hash" == "$expected_tree_hash" ]] || \
   fail "texmf-dist tree differs from immutable snapshot lock: expected $expected_tree_hash, got $tree_hash"
-local_tree_hash="$($publisher --tree-sha256 "$local_root")"
+local_tree_hash="$($publisher --tree-ahash64 "$local_root")"
 
 config="$tmp_root/publish.json"
 jq -n \
@@ -116,19 +108,23 @@ jq -n \
   --arg pdflatex_inputs "$format_dir/pdflatex/pdflatex-input-identities.json" \
   --arg catalog "$repo_root/tools/texlive-wasm-publish/catalog/html-mvp-v1.json" \
   --arg cmu "$repo_root/crates/umber-wasm/assets/cmu-serif-500-roman.woff2" \
+  --arg cmu_ahash64 "$($publisher --file-ahash64 "$repo_root/crates/umber-wasm/assets/cmu-serif-500-roman.woff2")" \
   --arg cmu_license "$repo_root/crates/umber-wasm/assets/CMU-OFL.txt" \
+  --arg cmu_license_ahash64 "$($publisher --file-ahash64 "$repo_root/crates/umber-wasm/assets/CMU-OFL.txt")" \
   --arg stix "$repo_root/crates/tex-fonts/tests/fixtures/stix-two-math.woff2" \
+  --arg stix_ahash64 "$($publisher --file-ahash64 "$repo_root/crates/tex-fonts/tests/fixtures/stix-two-math.woff2")" \
   --arg stix_license "$repo_root/crates/tex-fonts/tests/fixtures/stix-two-math.LICENSE.txt" \
+  --arg stix_license_ahash64 "$($publisher --file-ahash64 "$repo_root/crates/tex-fonts/tests/fixtures/stix-two-math.LICENSE.txt")" \
   --argjson shard_bits "$shard_bits" \
   '{
-    schema: 4,
+    schema: 7,
     distribution: "umber-html-mvp-v1",
     objectsBaseUrl: $objects,
     shardBits: $shard_bits,
     profile: "html",
     roots: [
-      {name: "texlive-runtime", path: $texmf, treeSha256: $texmf_hash},
-      {name: "format-local-inputs", path: $local, treeSha256: $local_hash}
+      {name: "texlive-runtime", path: $texmf, treeAhash64: $texmf_hash},
+      {name: "format-local-inputs", path: $local, treeAhash64: $local_hash}
     ],
     formats: [
       {path: $latex, metadata: $latex_meta, inputIdentities: $latex_inputs},
@@ -138,10 +134,10 @@ jq -n \
       runtimeFileKeys: [],
       catalog: $catalog,
       objectSources: {
-        "1b875e541dc5c517cd11d244710d8639addbe91a0bb1ba55e7c4593225c7a970": $cmu,
-        "73273dffdefe2e5f1e138084d4a4b65b1c50df2ab0179f78484f31beefe30d84": $cmu_license,
-        "cb1149b7c8b7b194eff7f42e20cf9e7a9706d342ffc2b14765624577d8be38e3": $stix,
-        "0c8825913b60d858aacdb33c4ca6660a7d64b0d6464702efbb19313f5765861a": $stix_license
+        ($cmu_ahash64): $cmu,
+        ($cmu_license_ahash64): $cmu_license,
+        ($stix_ahash64): $stix,
+        ($stix_license_ahash64): $stix_license
       },
       inventory: {
         maximumLogicalFiles: 128,
@@ -162,6 +158,6 @@ diff -qr "$first" "$output_dir" >/dev/null || fail "two clean HTML publications 
 
 objects="$(find "$output_dir/objects" -type f | wc -l | tr -d ' ')"
 bytes="$(find "$output_dir/objects" -type f -exec stat -f '%z' {} + | awk '{ total += $1 } END { print total + 0 }')"
-manifest_digest="$(sha256 "$output_dir/manifest.json")"
-printf 'HTML R2 staging: shards=%s objects=%s bytes=%s root_sha256=%s output=%s\n' \
+manifest_digest="$("$publisher" --file-ahash64 "$output_dir/manifest.json")"
+printf 'HTML R2 staging: shards=%s objects=%s bytes=%s root_ahash64=%s output=%s\n' \
   "$((1 << shard_bits))" "$objects" "$bytes" "$manifest_digest" "$output_dir"

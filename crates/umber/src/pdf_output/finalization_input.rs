@@ -340,7 +340,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
                             (
                                 name.as_bytes().to_vec(),
                                 PdfVirtualLocalTfmInput {
-                                    content_hash: cached.content_id.bytes(),
+                                    content_hash: tex_fonts::font_content_hash(&cached.bytes),
                                     bytes: Arc::from(cached.bytes.as_slice()),
                                     design_font: cached.font.clone(),
                                 },

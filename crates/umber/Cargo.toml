@@ -52,6 +52,7 @@ umber-vfs = { path = "../umber-vfs" }
 bincode.workspace = true
 serde.workspace = true
 umber-fetch = { path = "../umber-fetch" }
+umber-hash = { path = "../umber-hash" }
 umber-interrupt = { path = "../umber-interrupt" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

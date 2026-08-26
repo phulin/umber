@@ -700,7 +700,7 @@ baseline attribution remains 134.27 MiB of live bytes under PDF/checkpoint
 clone stacks and 33.477 billion profiled cycles for the complete row.
 
 The authenticated arXiv 20M row used the pinned 2026-03-01 distribution,
-schema-11 `pdflatex.fmt`, 123-key offline closure, fixed clock, 45-second and
+schema-12 `pdflatex.fmt`, 123-key offline closure, fixed clock, 45-second and
 1,536 MiB guards, and the same input digests as the 854,600 KiB baseline.
 Three final transactional runs produced wall/user/system seconds of
 13.90/15.02/1.66, 13.43/14.81/1.52, and 14.10/15.50/1.63, each with peak RSS

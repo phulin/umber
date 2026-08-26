@@ -10,7 +10,6 @@ use crate::token::{Catcode, Token, TokenWord};
 use crate::world::{JobClock, World};
 use crate::{AssignmentScope, CodeTableKind, InteractionMode, with_universe};
 use tex_arith::Scaled;
-use tex_content::ContentHash;
 use tex_fonts::{FontMetrics, LoadedFont};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -221,7 +220,7 @@ fn test_font() -> LoadedFont {
     LoadedFont::new(
         "formatfont",
         "/fonts/formatfont.tfm",
-        ContentHash::from_bytes(b"format font metrics").bytes(),
+        tex_fonts::font_content_hash(b"format font metrics"),
         0x1234_5678,
         Scaled::from_raw(10 * Scaled::UNITY),
         Scaled::from_raw(12 * Scaled::UNITY),

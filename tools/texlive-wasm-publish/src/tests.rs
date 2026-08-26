@@ -4,13 +4,13 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::Result;
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use umber_distribution::{FontRequestKey, LegacyMappingRequestKey};
+use umber_hash::{AHash64, HashDomain};
 
 use super::{
     FormatConfig, HtmlInventoryConfig, HtmlProfileConfig, InventoryConfig, PublicationProfile,
-    PublishConfig, RootConfig, publish, publish_successor, shard_index, tree_sha256,
+    PublishConfig, RootConfig, publish, publish_successor, shard_index, tree_ahash64,
     verify_sharded_snapshot, verify_successor,
 };
 
@@ -22,7 +22,45 @@ fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
+}
+
+fn migrated_plain_format(
+    fixture: &TempDir,
+    label: &str,
+) -> Result<(std::path::PathBuf, serde_json::Value)> {
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
+    let mut bytes = fs::read(assets.join("plain.fmt"))?;
+    bytes[8..12].copy_from_slice(&12_u32.to_le_bytes());
+    let path = fixture.path().join(format!("{label}.fmt"));
+    fs::write(&path, &bytes)?;
+    let ahash64 = digest(&bytes);
+    Ok((
+        path,
+        serde_json::json!({
+            "schema": 3,
+            "name": "plain",
+            "object": format!("ahash64-v1-{ahash64}"),
+            "ahash64": ahash64,
+            "bytes": bytes.len(),
+            "engine": "umber",
+            "engineVersion": "fixture",
+            "formatSchema": 12,
+            "sourceDistribution": "fixture",
+            "sourceManifestAhash64": "a".repeat(16),
+            "sourceDateEpoch": 0
+        }),
+    ))
+}
+
+fn write_metadata(
+    fixture: &TempDir,
+    label: &str,
+    metadata: &serde_json::Value,
+) -> Result<std::path::PathBuf> {
+    let path = fixture.path().join(format!("{label}.json"));
+    fs::write(&path, serde_json::to_vec_pretty(metadata)?)?;
+    Ok(path)
 }
 
 fn write_input_identities(
@@ -36,7 +74,7 @@ fn write_input_identities(
         .map(|(key, bytes)| {
             serde_json::json!({
                 "key": key,
-                "sha256": digest(bytes),
+                "ahash64": digest(bytes),
                 "bytes": bytes.len(),
             })
         })
@@ -71,23 +109,23 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         write(&root_path, relative, bytes)?;
     }
 
-    let format_bytes = [b"UMBRFMT\0".as_slice(), &11_u32.to_le_bytes()].concat();
+    let format_bytes = [b"UMBRFMT\0".as_slice(), &12_u32.to_le_bytes()].concat();
     let format_path = fixture.path().join("plain.fmt");
     fs::write(&format_path, &format_bytes)?;
     let format_metadata = fixture.path().join("plain-format.json");
     fs::write(
         &format_metadata,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema": 2,
+            "schema": 4,
             "name": "plain-html",
-            "object": format!("sha256-{}", digest(&format_bytes)),
-            "sha256": digest(&format_bytes),
+            "object": format!("ahash64-v1-{}", digest(&format_bytes)),
+            "ahash64": digest(&format_bytes),
             "bytes": format_bytes.len(),
             "engine": "umber",
             "engineVersion": "fixture",
-            "formatSchema": 11,
+            "formatSchema": 12,
             "sourceDistribution": "fixture",
-            "sourceManifestSha256": "1".repeat(64),
+            "sourceManifestAhash64": "a".repeat(16),
             "sourceDateEpoch": 1,
             "inputClosure": {"schema": 1, "keys": ["tex:plain.tex", "tfm:cmr10.tfm"]}
         }))?,
@@ -121,7 +159,7 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         .chain(std::iter::repeat_n(serde_json::Value::Null, 255))
         .collect::<Vec<_>>();
     let provenance = serde_json::json!({
-        "identity": "2".repeat(64),
+        "identity": "a".repeat(16),
         "upstream": "Fixture Serif",
         "upstreamVersion": "1",
         "sourceUrl": "https://example.test/font",
@@ -129,33 +167,33 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         "conversionVersion": "1"
     });
     let license = serde_json::json!({
-        "identity": "3".repeat(64),
-        "object": format!("sha256-{license_digest}"),
-        "sha256": license_digest,
+        "identity": "a".repeat(16),
+        "object": format!("ahash64-v1-{license_digest}"),
+        "ahash64": license_digest,
         "bytes": license_bytes.len(),
         "spdx": "OFL-1.1",
         "embeddable": true,
         "redistributable": true
     });
     let object = serde_json::json!({
-        "object": format!("sha256-{font_digest}"),
-        "sha256": font_digest,
+        "object": format!("ahash64-v1-{font_digest}"),
+        "ahash64": font_digest,
         "bytes": font_bytes.len(),
         "container": "woff2",
-        "programIdentity": "4".repeat(64)
+        "programIdentity": "a".repeat(16)
     });
     let catalog_path = fixture.path().join("html-catalog.json");
     fs::write(
         &catalog_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema": 2,
+            "schema": 4,
             "distribution": "html-fixture-v1",
             "index": 0,
             "files": {},
             "fonts": {
                 font_key.clone(): {
-                    "schema": 1,
-                    "object": object["object"], "sha256": object["sha256"], "bytes": object["bytes"],
+                    "schema": 2,
+                    "object": object["object"], "ahash64": object["ahash64"], "bytes": object["bytes"],
                     "container": object["container"], "programIdentity": object["programIdentity"],
                     "featurePolicyVersion": 1,
                     "provenance": provenance.clone(), "license": license.clone()
@@ -163,8 +201,8 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
             },
             "legacyMappings": {
                 mapping_key: {
-                    "schema": 1, "tfmSha256": tfm_digest, "fontKey": font_key,
-                    "object": object["object"], "sha256": object["sha256"], "bytes": object["bytes"],
+                    "schema": 2, "tfmAhash64": tfm_digest, "fontKey": font_key,
+                    "object": object["object"], "ahash64": object["ahash64"], "bytes": object["bytes"],
                     "container": object["container"], "programIdentity": object["programIdentity"],
                     "unicodeMap": unicode_map, "mappingVersion": 1, "fontdimenVersion": 1,
                     "featurePolicyVersion": 1, "fallback": "classic-tfm-exact",
@@ -174,7 +212,7 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         }))?,
     )?;
     Ok(PublishConfig {
-        schema: 4,
+        schema: 7,
         distribution: "html-fixture-v1".to_owned(),
         objects_base_url: "https://cdn.example.test/html/objects/".to_owned(),
         shard_bits: 2,
@@ -211,13 +249,13 @@ fn root(name: &str, path: &Path) -> Result<RootConfig> {
     Ok(RootConfig {
         name: name.to_owned(),
         path: path.to_owned(),
-        tree_sha256: tree_sha256(path)?,
+        tree_ahash64: tree_ahash64(path)?,
     })
 }
 
 fn config(roots: Vec<RootConfig>) -> PublishConfig {
     PublishConfig {
-        schema: 3,
+        schema: 6,
         distribution: "texlive-fixture-2026".to_owned(),
         objects_base_url: "https://cdn.example.test/texlive/objects/".to_owned(),
         shard_bits: 3,
@@ -245,7 +283,7 @@ fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
         .arg("texlive-2026-03-01")
         .arg("https://cdn.example.test/latex/objects/")
         .arg("/fixture/texmf-dist")
-        .arg("0".repeat(64))
+        .arg("a".repeat(16))
         .arg("/fixture/latex.fmt")
         .arg("/fixture/latex-format.json")
         .arg("/fixture/latex-input-identities.json")
@@ -278,10 +316,11 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     write(&second, "tex/extra.tex", b"extra\n")?;
 
     let mut config = config(vec![root("first", &first)?, root("second", &second)?]);
-    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
+    let (format_path, metadata) = migrated_plain_format(&fixture, "stable-plain")?;
+    let metadata_path = write_metadata(&fixture, "stable-plain", &metadata)?;
     config.formats.push(FormatConfig {
-        path: assets.join("plain.fmt"),
-        metadata: assets.join("plain-format.json"),
+        path: format_path,
+        metadata: metadata_path,
         input_identities: None,
     });
     let output_a = fixture.path().join("out-a");
@@ -312,10 +351,10 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
         inline.virtual_path,
         manifest.files["tfm:cmr10.tfm"].virtual_path
     );
-    assert_eq!(inline.sha256, manifest.files["tfm:cmr10.tfm"].sha256);
+    assert_eq!(inline.ahash64, manifest.files["tfm:cmr10.tfm"].ahash64);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
-    assert_eq!(format.format_schema, 11);
+    assert_eq!(format.format_schema, 12);
     assert_eq!(
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
@@ -324,23 +363,24 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
 }
 
 #[test]
-fn sparse_successor_reuses_an_authenticated_base_and_stages_only_changes() -> Result<()> {
+fn sparse_successor_reuses_an_verified_base_and_stages_only_changes() -> Result<()> {
     let fixture = TempDir::new()?;
     let base_root = fixture.path().join("base-root");
     fs::create_dir_all(&base_root)?;
     write(&base_root, "tex/plain/base/plain.tex", b"old plain\n")?;
     write(&base_root, "tex/other.tex", b"unchanged\n")?;
-    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
+    let (format_path, metadata) = migrated_plain_format(&fixture, "successor-plain")?;
+    let metadata_path = write_metadata(&fixture, "successor-plain", &metadata)?;
     let mut base_config = config(vec![root("base", &base_root)?]);
     base_config.dependencies.clear();
     base_config.formats.push(FormatConfig {
-        path: assets.join("plain.fmt"),
-        metadata: assets.join("plain-format.json"),
+        path: format_path,
+        metadata: metadata_path,
         input_identities: None,
     });
     let base_output = fixture.path().join("base-output");
     let base = publish(&base_config, &base_output)?;
-    let base_sha256 = digest(&fs::read(base_output.join("manifest.json"))?);
+    let base_ahash64 = digest(&fs::read(base_output.join("manifest.json"))?);
     let payloads = base
         .files
         .values()
@@ -359,19 +399,19 @@ fn sparse_successor_reuses_an_authenticated_base_and_stages_only_changes() -> Re
     let successor_output = fixture.path().join("successor-output");
     let successor = publish_successor(
         &base_output,
-        &base_sha256,
+        &base_ahash64,
         &successor_config,
         &successor_output,
     )?;
-    verify_successor(&base_output, &base_sha256, &successor_output)?;
-    assert!(verify_successor(&base_output, &"0".repeat(64), &successor_output).is_err());
+    verify_successor(&base_output, &base_ahash64, &successor_output)?;
+    assert!(verify_successor(&base_output, &"a".repeat(16), &successor_output).is_err());
 
     assert_eq!(
         successor.files["tex:other.tex"],
         base.files["tex:other.tex"]
     );
     assert_eq!(
-        successor.files["tex:plain.tex"].sha256,
+        successor.files["tex:plain.tex"].ahash64,
         digest(b"new plain\n")
     );
     assert!(
@@ -396,10 +436,8 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     fs::create_dir_all(&root_path)?;
     write(&root_path, "tex/plain.tex", b"plain")?;
     write(&root_path, "fonts/tfm/public/cm/cmr10.tfm", b"tfm")?;
-    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
-    let mut metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
-    metadata["schema"] = 2.into();
+    let (format_path, mut metadata) = migrated_plain_format(&fixture, "closure-plain")?;
+    metadata["schema"] = 4.into();
     metadata["inputClosure"] = serde_json::json!({
         "schema": 1,
         "keys": ["tfm:cmr10.tfm", "tex:plain.tex"]
@@ -409,7 +447,7 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     let mut config = config(vec![root("runtime", &root_path)?]);
     config.dependencies.clear();
     config.formats.push(FormatConfig {
-        path: assets.join("plain.fmt"),
+        path: format_path,
         metadata: metadata_path,
         input_identities: Some(write_input_identities(
             &fixture,
@@ -477,10 +515,8 @@ fn rejects_format_built_from_a_shadowed_runtime_input() -> Result<()> {
         development,
     )?;
 
-    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
-    let mut metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
-    metadata["schema"] = 2.into();
+    let (format_path, mut metadata) = migrated_plain_format(&fixture, "shadowed-plain")?;
+    metadata["schema"] = 4.into();
     metadata["inputClosure"] = serde_json::json!({
         "schema": 1,
         "keys": ["tex:expl3-code.tex"]
@@ -491,7 +527,7 @@ fn rejects_format_built_from_a_shadowed_runtime_input() -> Result<()> {
     let mut config = config(vec![root("runtime", &root_path)?]);
     config.dependencies.clear();
     config.formats.push(FormatConfig {
-        path: assets.join("plain.fmt"),
+        path: format_path,
         metadata: metadata_path,
         input_identities: Some(write_input_identities(
             &fixture,
@@ -531,10 +567,8 @@ fn format_language_configuration_is_the_published_runtime_winner() -> Result<()>
         b"generated runtime language configuration\n",
     )?;
 
-    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
-    let mut metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
-    metadata["schema"] = 2.into();
+    let (format_path, mut metadata) = migrated_plain_format(&fixture, "language-plain")?;
+    metadata["schema"] = 4.into();
     metadata["inputClosure"] = serde_json::json!({
         "schema": 1,
         "keys": ["tex:language.dat"]
@@ -542,7 +576,7 @@ fn format_language_configuration_is_the_published_runtime_winner() -> Result<()>
     let metadata_path = fixture.path().join("format.json");
     fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)?;
     let format = FormatConfig {
-        path: assets.join("plain.fmt"),
+        path: format_path,
         metadata: metadata_path,
         input_identities: Some(write_input_identities(
             &fixture,
@@ -586,9 +620,7 @@ fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
     let root_path = fixture.path().join("root");
     fs::create_dir_all(&root_path)?;
     write(&root_path, "tex/plain.tex", b"plain")?;
-    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
-    let base: serde_json::Value =
-        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
+    let (format_path, base) = migrated_plain_format(&fixture, "invalid-closure-plain")?;
     for (label, keys) in [
         ("duplicate", vec!["tex:plain.tex".to_owned(); 2]),
         (
@@ -599,14 +631,14 @@ fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
         ),
     ] {
         let mut metadata = base.clone();
-        metadata["schema"] = 2.into();
+        metadata["schema"] = 4.into();
         metadata["inputClosure"] = serde_json::json!({"schema": 1, "keys": keys});
         let metadata_path = fixture.path().join(format!("{label}.json"));
         fs::write(&metadata_path, serde_json::to_vec(&metadata)?)?;
         let mut config = config(vec![root("runtime", &root_path)?]);
         config.dependencies.clear();
         config.formats.push(FormatConfig {
-            path: assets.join("plain.fmt"),
+            path: format_path.clone(),
             metadata: metadata_path,
             input_identities: None,
         });
@@ -616,7 +648,7 @@ fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
 }
 
 #[test]
-fn partitions_by_leading_sha256_bits_and_proves_authoritative_absence() -> Result<()> {
+fn partitions_by_leading_ahash64_bits_and_proves_authoritative_absence() -> Result<()> {
     let fixture = TempDir::new()?;
     let root_path = fixture.path().join("root");
     fs::create_dir_all(&root_path)?;
@@ -658,7 +690,7 @@ fn verifier_rejects_noncanonical_and_tampered_shards() -> Result<()> {
     let publication = publish(&config, &output)?;
     let shard_path = output
         .join("objects")
-        .join(format!("sha256-{}", publication.root.shards[0]));
+        .join(format!("ahash64-v1-{}", publication.root.shards[0]));
     let canonical = fs::read(&shard_path)?;
 
     let mut noncanonical = canonical.clone();
@@ -727,7 +759,7 @@ fn rejects_case_fold_collisions_and_invalid_paths() -> Result<()> {
     let invalid = fixture.path().join("invalid");
     fs::create_dir_all(&invalid)?;
     write(&invalid, "tex/bad\\name.tex", b"bad")?;
-    let error = tree_sha256(&invalid).expect_err("backslash path must fail");
+    let error = tree_ahash64(&invalid).expect_err("backslash path must fail");
     assert!(error.to_string().contains("invalid TEXMF path"));
     Ok(())
 }
@@ -746,7 +778,7 @@ fn rejects_changed_pinned_root_and_unknown_dependency() -> Result<()> {
         publish(&changed, &fixture.path().join("changed-out")).expect_err("changed root must fail");
     assert!(error.to_string().contains("digest mismatch"));
 
-    changed.roots[0].tree_sha256 = tree_sha256(&root_path)?;
+    changed.roots[0].tree_ahash64 = tree_ahash64(&root_path)?;
     changed.dependencies.insert(
         "tex:plain.tex".to_owned(),
         vec!["tfm:missing.tfm".to_owned()],
@@ -823,7 +855,7 @@ fn publishes_nested_ec_tfm_under_its_basename_request_key() -> Result<()> {
         metric.virtual_path,
         "/texlive/fonts/tfm/jknappen/ec/ectt0800.tfm"
     );
-    assert_eq!(metric.sha256, digest(bytes));
+    assert_eq!(metric.ahash64, digest(bytes));
     assert_eq!(metric.bytes, bytes.len() as u64);
     Ok(())
 }
@@ -948,7 +980,7 @@ fn html_profile_is_reproducible_bounded_and_contains_only_html_resources() -> Re
 
     let publication = publish(&config, &output_a)?;
     publish(&config, &output_b)?;
-    assert_eq!(publication.root.schema, 4);
+    assert_eq!(publication.root.schema, 7);
     assert_eq!(publication.files.len(), 3);
     assert!(publication.files.contains_key("tex:plain.tex"));
     assert!(publication.files.contains_key("tex:article.cls"));

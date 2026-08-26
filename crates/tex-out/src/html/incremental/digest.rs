@@ -178,7 +178,7 @@ pub(super) fn node_value_digest(value: &RenderNodeValue, matching: bool) -> Rend
 
 fn encode_font_key(hash: &mut CanonicalHash, value: &HtmlFontKey) {
     hash.string(&value.name);
-    hash.bytes(&value.tfm_content_hash.bytes());
+    hash.bytes(&value.tfm_content_hash);
     hash.u32(value.tfm_checksum);
     hash.i32(value.design_size_raw);
     hash.i32(value.at_size_raw);
@@ -341,7 +341,7 @@ impl CanonicalHash {
         }
     }
 
-    fn option_digest(&mut self, value: Option<[u8; 32]>) {
+    fn option_digest(&mut self, value: Option<[u8; 8]>) {
         match value {
             Some(value) => {
                 self.u8(1);

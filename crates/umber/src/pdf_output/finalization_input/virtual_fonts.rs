@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 use tex_fonts::{FontSourceIdentity, VfCommand};
 use tex_out::pdf::{PdfFontInput, PdfFontMetricsInput, PdfFontProgramInput};
-use tex_out::{ContentHash, FontResource, FontResourceConstruction};
+use tex_out::{FontResource, FontResourceConstruction};
 use tex_state::{
     DetachedPdfCompletion, DetachedPdfFontOperation, FontArtifactConstructionRecipe,
     FontArtifactRecipe,
@@ -205,7 +205,7 @@ fn materialize_local_instance(
     let loaded = tfm.into_loaded_font(
         name.clone(),
         PathBuf::from(format!("{name}.tfm")),
-        cached.content_id.bytes(),
+        tex_fonts::font_content_hash(&cached.bytes),
     );
     let identity = loaded.source_identity();
     if let std::collections::btree_map::Entry::Vacant(e) = fonts.entry(identity) {
@@ -291,7 +291,7 @@ fn materialize_local_instance(
             artifact_resource: FontResource {
                 font_id: 0,
                 name: name.clone(),
-                tfm_content_hash: ContentHash::new(loaded.content_hash()),
+                tfm_content_hash: loaded.content_hash(),
                 tfm_checksum: loaded.checksum(),
                 design_size: loaded.design_size(),
                 at_size: loaded.size(),

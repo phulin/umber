@@ -1819,13 +1819,15 @@ fn pdf_bitmap_fallback_crosses_the_typed_session_boundary() {
     assert_eq!(request.dpi(), 600);
     assert_eq!(request.logical_name(), b"cmr10.600pk");
     let bytes = include_bytes!("../../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk").to_vec();
-    let expected_sha256 = Some(sha2::Sha256::digest(&bytes).into());
+    let expected_ahash64 = Some(
+        umber_hash::AHash64::for_bytes(umber_hash::HashDomain::PkProgram, &bytes).to_le_bytes(),
+    );
     session
         .provide_resources(vec![ResourceResponse::PkFont(ResolvedPkFont {
             request: request.clone(),
             virtual_path: "/texlive/fonts/pk/ljfour/public/cm/cmr10.600pk".into(),
             bytes,
-            expected_sha256,
+            expected_ahash64,
         })])
         .expect("typed PK response");
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
@@ -1866,7 +1868,7 @@ fn provide_cmu_font(session: &mut VirtualCompileSession, request: FontRequest) {
             request: request.key,
             container: FontContainer::Woff2,
             bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: Some("CMU Serif under the SIL OFL".to_owned()),
             legacy_mapping,
@@ -1887,7 +1889,7 @@ fn legacy_mapping_for(name: &str) -> Option<tex_fonts::LegacyFontMapping> {
     }
     encoding[0] = Some("Γ".to_owned());
     Some(tex_fonts::LegacyFontMapping {
-        tfm_sha256: tex_state::ContentHash::from_bytes(tfm).bytes(),
+        tfm_ahash64: tex_fonts::font_content_hash(tfm),
         encoding,
         embeddable: true,
     })
@@ -2049,8 +2051,8 @@ fn classic_html_font_names_bind_one_tfm_identity() {
         tex_fonts::FontFeaturePolicy::default(),
     )
     .expect("font key");
-    let first = ContentHash::from_bytes(b"first TFM").bytes();
-    let conflicting = ContentHash::from_bytes(b"conflicting TFM").bytes();
+    let first = tex_fonts::font_content_hash(b"first TFM");
+    let conflicting = tex_fonts::font_content_hash(b"conflicting TFM");
     let mut fonts = BTreeMap::new();
 
     register_classic_html_paint_font(&mut fonts, key.clone(), "cmr10", first)
@@ -2071,8 +2073,8 @@ fn classic_html_font_names_bind_one_tfm_identity() {
     );
     let message = error.to_string();
     assert!(message.contains("cmr10"));
-    assert!(message.contains(&hex_sha256(first)));
-    assert!(message.contains(&hex_sha256(conflicting)));
+    assert!(message.contains(&hex_ahash64(first)));
+    assert!(message.contains(&hex_ahash64(conflicting)));
 }
 
 #[test]
@@ -2143,7 +2145,7 @@ fn cmu_response(request: FontRequest) -> ResolvedFont {
         request: request.key,
         container: FontContainer::Woff2,
         bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
-        declared_object_sha256: None,
+        declared_object_ahash64: None,
         declared_program_identity: None,
         provenance: Some("CMU Serif under the SIL OFL".to_owned()),
         legacy_mapping,
@@ -3317,7 +3319,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
 }
 
 #[test]
-fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
+fn every_engine_mode_has_source_and_schema_12_format_artifact_equivalence() {
     let source = b"\\catcode123=1 \\catcode125=2 \\shipout\\hbox{}\\end";
     for engine in [
         EngineMode::Tex82,
@@ -3329,7 +3331,7 @@ fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
         let format = construct_test_format(engine, "\\dump");
         assert_eq!(
             u32::from_le_bytes(format.as_bytes()[8..12].try_into().expect("schema bytes")),
-            11
+            12
         );
 
         let mut formatted = VirtualCompileSession::new(SessionOptions {
@@ -3629,7 +3631,7 @@ fn modern_policy_rejects_classic_preloaded_format_fonts_before_execution() {
             .intern_font(tex_fonts::LoadedFont::new(
                 "classic-format-font",
                 "classic-format-font.tfm",
-                [1; 32],
+                [1; 8],
                 0,
                 tex_state::scaled::Scaled::from_raw(10 << 16),
                 tex_state::scaled::Scaled::from_raw(10 << 16),
@@ -4488,7 +4490,7 @@ fn invalid_mixed_batch_publishes_nothing() {
         request: font.key,
         container: FontContainer::Woff2,
         bytes: b"wOF2".to_vec(),
-        declared_object_sha256: None,
+        declared_object_ahash64: None,
         declared_program_identity: None,
         provenance: None,
         legacy_mapping: None,

@@ -9,7 +9,7 @@ import type {
 } from "./umber_wasm.js";
 
 export const TEXLIVE_2026_MANIFEST_URL: string;
-export const TEXLIVE_2026_MANIFEST_SHA256: string;
+export const TEXLIVE_2026_MANIFEST_AHASH64: string;
 
 export type FileKind =
 	| "tex"
@@ -39,7 +39,7 @@ export interface ResolvedDownload {
 
 export interface HttpManifestResolverOptions {
 	manifestUrl: string;
-	manifestSha256: string;
+	manifestAHash64: string;
 	persistentCache?: "http" | "indexeddb" | "none";
 	offline?: boolean;
 	concurrency?: number;
@@ -69,7 +69,7 @@ export interface DistributionCatalogBindings {
 export interface ManifestFile {
 	virtualPath: string;
 	object: string;
-	sha256: string;
+	ahash64: string;
 	bytes: number;
 	dependencies?: readonly ManifestDependency[];
 }
@@ -80,13 +80,13 @@ export interface ManifestDependency extends Omit<ManifestFile, "dependencies"> {
 
 export interface ManifestFormat {
 	object: string;
-	sha256: string;
+	ahash64: string;
 	bytes: number;
 	engine: "umber";
 	engineVersion: string;
 	formatSchema: number;
 	sourceDistribution: string;
-	sourceManifestSha256: string;
+	sourceManifestAhash64: string;
 	sourceDateEpoch: number;
 	inputClosure?: { schema: 1; keys: readonly string[] };
 }
@@ -103,7 +103,7 @@ export interface ProvenanceRecord {
 export interface LicenseRecord {
 	identity: string;
 	object: string;
-	sha256: string;
+	ahash64: string;
 	bytes: number;
 	spdx: string;
 	embeddable: true;
@@ -113,7 +113,7 @@ export interface LicenseRecord {
 export interface ManifestFontRecord {
 	schema: 1;
 	object: string;
-	sha256: string;
+	ahash64: string;
 	bytes: number;
 	container: "woff2";
 	programIdentity?: string;
@@ -124,7 +124,7 @@ export interface ManifestFontRecord {
 
 export interface LegacyMappingRequest {
 	type: "legacy-font-mapping";
-	tfmSha256: string;
+	tfmAhash64: string;
 	layoutPolicyVersion: 1;
 	purpose: "html-layout" | "html-paint";
 	encodingCatalog?: string;
@@ -134,7 +134,7 @@ export interface ResolvedLegacyMapping extends LegacyMappingRequest {
 	fontKey: string;
 	container: "woff2";
 	bytes: Uint8Array;
-	objectSha256: string;
+	objectAHash64: string;
 	programIdentity?: string;
 	unicodeMap: readonly (string | null)[];
 	fallback: "classic-tfm-exact" | "error";
@@ -173,7 +173,7 @@ export class HttpManifestResolver {
 		manifest: TexLiveManifest,
 		options?: Omit<
 			HttpManifestResolverOptions,
-			"manifestUrl" | "manifestSha256" | "signal"
+			"manifestUrl" | "manifestAHash64" | "signal"
 		>,
 	);
 	readonly manifest: TexLiveManifest;

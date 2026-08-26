@@ -75,7 +75,7 @@ fn width_font(name: &str, salt: u8) -> LoadedFont {
     LoadedFont::new(
         name,
         name,
-        [salt; 32],
+        [salt; 8],
         0,
         sp(10),
         sp(10),

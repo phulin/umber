@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use umber_hash::{AHash64, AHash64Hasher, HashDomain};
 
 #[cfg(unix)]
 #[path = "blob_store_unix.rs"]
@@ -14,10 +14,10 @@ mod native;
 #[path = "blob_store_unsupported.rs"]
 mod native;
 
-pub(crate) const BLOB_DIRECTORY: &str = "blobs-v1";
+pub(crate) const BLOB_DIRECTORY: &str = "blobs-v2";
 const BLOB_MAGIC: [u8; 8] = *b"UMBRBLOB";
-const BLOB_SCHEMA: u32 = 1;
-const HEADER_LEN: usize = 64;
+const BLOB_SCHEMA: u32 = 2;
+const HEADER_LEN: usize = 40;
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -69,7 +69,7 @@ pub struct VerifiedBlobSpec {
     namespace: String,
     key: String,
     max_bytes: u64,
-    expected_sha256: Option<String>,
+    expected_ahash64: Option<String>,
     expected_bytes: Option<u64>,
 }
 
@@ -83,7 +83,7 @@ impl VerifiedBlobSpec {
             namespace: namespace.into(),
             key: key.into(),
             max_bytes,
-            expected_sha256: None,
+            expected_ahash64: None,
             expected_bytes: None,
         };
         spec.validate()?;
@@ -92,18 +92,18 @@ impl VerifiedBlobSpec {
 
     pub fn content_addressed(
         namespace: impl Into<String>,
-        sha256: impl Into<String>,
+        ahash64: impl Into<String>,
         bytes: u64,
         max_bytes: u64,
     ) -> Result<Self, CacheError> {
-        let digest = sha256.into();
+        let digest = ahash64.into();
         validate_digest(&digest)
             .map_err(|source| CacheError::new("validate digest for", &digest, source))?;
         if bytes > max_bytes {
             return Err(invalid_spec("declared blob length exceeds its limit"));
         }
         let mut spec = Self::new(namespace, digest.clone(), max_bytes)?;
-        spec.expected_sha256 = Some(digest);
+        spec.expected_ahash64 = Some(digest);
         spec.expected_bytes = Some(bytes);
         Ok(spec)
     }
@@ -506,7 +506,7 @@ impl VerifiedBlobSpec {
 fn encode_entry(spec: &VerifiedBlobSpec, bytes: &[u8]) -> Vec<u8> {
     let namespace = spec.namespace.as_bytes();
     let key = spec.key.as_bytes();
-    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let digest = AHash64::for_bytes(HashDomain::CacheEnvelope, bytes).to_le_bytes();
     let mut entry = Vec::with_capacity(HEADER_LEN + namespace.len() + key.len() + bytes.len());
     entry.extend_from_slice(&BLOB_MAGIC);
     entry.extend_from_slice(&BLOB_SCHEMA.to_le_bytes());
@@ -537,7 +537,7 @@ fn verify_encoded_entry(
     if header[..8] != BLOB_MAGIC
         || u32::from_le_bytes(header[8..12].try_into().expect("fixed header slice")) != BLOB_SCHEMA
         || header[16..20] != [0; 4]
-        || header[60..64] != [0; 4]
+        || header[36..40] != [0; 4]
     {
         return Err(invalid_cache_entry(path, "invalid cache envelope header"));
     }
@@ -573,7 +573,8 @@ fn verify_encoded_entry(
             "cache filename does not match its embedded identity",
         ));
     }
-    let mut digest = Sha256::new();
+    let mut digest = AHash64Hasher::new(HashDomain::CacheEnvelope);
+    let mut content = AHash64Hasher::new(HashDomain::DistributionContent);
     let mut remaining = payload_len;
     let mut buffer = [0_u8; 64 * 1024];
     while remaining != 0 {
@@ -581,11 +582,12 @@ fn verify_encoded_entry(
             .expect("bounded verification read length");
         file.read_exact(&mut buffer[..length])
             .map_err(|error| CacheError::new("read verification payload from", path, error))?;
-        digest.update(&buffer[..length]);
+        digest.write(&buffer[..length]);
+        content.write(&buffer[..length]);
         remaining -= length as u64;
     }
-    let actual: [u8; 32] = digest.finalize().into();
-    if actual.as_slice() != &header[28..60] {
+    let actual = digest.finish().to_le_bytes();
+    if actual.as_slice() != &header[28..36] {
         return Err(invalid_cache_entry(
             path,
             "cache payload does not match its envelope digest",
@@ -594,7 +596,7 @@ fn verify_encoded_entry(
     if matches!(namespace.as_str(), "objects" | "manifests") {
         validate_digest(&key)
             .map_err(|_| invalid_cache_entry(path, "content-addressed cache key is invalid"))?;
-        if hex_bytes(&actual) != key {
+        if content.finish().hex() != key {
             return Err(invalid_cache_entry(
                 path,
                 "cache payload does not match its content-addressed key",
@@ -633,13 +635,13 @@ fn decode_entry<'a>(spec: &VerifiedBlobSpec, entry: &'a [u8]) -> Option<&'a [u8]
         return None;
     }
     let payload = &entry[metadata_end..];
-    let digest: [u8; 32] = Sha256::digest(payload).into();
-    if digest.as_slice() != &entry[28..60]
+    let digest = AHash64::for_bytes(HashDomain::CacheEnvelope, payload).to_le_bytes();
+    if digest.as_slice() != &entry[28..36]
         || !payload_shape_matches(spec, payload)
         || spec
-            .expected_sha256
+            .expected_ahash64
             .as_ref()
-            .is_some_and(|expected| hex_bytes(&digest) != *expected)
+            .is_some_and(|expected| hex_digest(payload) != *expected)
     {
         return None;
     }
@@ -649,7 +651,7 @@ fn decode_entry<'a>(spec: &VerifiedBlobSpec, entry: &'a [u8]) -> Option<&'a [u8]
 fn verify_payload(spec: &VerifiedBlobSpec, bytes: &[u8]) -> io::Result<()> {
     if !payload_shape_matches(spec, bytes)
         || spec
-            .expected_sha256
+            .expected_ahash64
             .as_ref()
             .is_some_and(|expected| hex_digest(bytes) != *expected)
     {
@@ -670,19 +672,19 @@ fn payload_shape_matches(spec: &VerifiedBlobSpec, bytes: &[u8]) -> bool {
 }
 
 fn entry_name(spec: &VerifiedBlobSpec) -> String {
-    let mut digest = Sha256::new();
-    digest.update(b"umber.blob-store.key\0");
-    digest.update(spec.namespace.as_bytes());
-    digest.update([0]);
-    digest.update(spec.key.as_bytes());
-    format!("sha256-{}", hex_bytes(&digest.finalize()))
+    let mut digest = AHash64Hasher::new(HashDomain::CacheEnvelope);
+    digest.write(b"umber.blob-store.key\0");
+    digest.write(spec.namespace.as_bytes());
+    digest.write(&[0]);
+    digest.write(spec.key.as_bytes());
+    format!("ahash64-v1-{}", digest.finish().hex())
 }
 
 fn legacy_path(root: &Path, spec: &VerifiedBlobSpec) -> Option<PathBuf> {
     match spec.namespace.as_str() {
         "objects" | "manifests" => Some(
             root.join(&spec.namespace)
-                .join(format!("sha256-{}", spec.key)),
+                .join(format!("ahash64-v1-{}", spec.key)),
         ),
         "formats-v2" => Some(root.join("formats-v2").join(&spec.key)),
         _ => None,
@@ -690,20 +692,11 @@ fn legacy_path(root: &Path, spec: &VerifiedBlobSpec) -> Option<PathBuf> {
 }
 
 pub(crate) fn hex_digest(bytes: &[u8]) -> String {
-    hex_bytes(&Sha256::digest(bytes))
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use fmt::Write as _;
-        write!(output, "{byte:02x}").expect("writing to a string cannot fail");
-    }
-    output
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
 
 fn validate_digest(digest: &str) -> io::Result<()> {
-    if digest.len() == 64
+    if digest.len() == 16
         && digest
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
@@ -712,7 +705,7 @@ fn validate_digest(digest: &str) -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "digest must be 64 lowercase hexadecimal characters",
+            "digest must be 16 lowercase hexadecimal characters",
         ))
     }
 }

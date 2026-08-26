@@ -1,45 +1,46 @@
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const STORE_NAME = "objects";
-const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
 
 export class IndexedDbObjectCache {
 	constructor(options = {}) {
 		this.indexedDB = options.indexedDB ?? globalThis.indexedDB;
-		this.databaseName = options.databaseName ?? "umber-texlive-cache";
+		this.databaseName =
+			options.databaseName ?? "umber-texlive-ahash64-v1-cache";
 		if (!this.indexedDB?.open) {
 			throw new Error("IndexedDB is unavailable");
 		}
 		this.database = undefined;
 	}
 
-	async get(distribution, sha256) {
+	async get(distribution, ahash64) {
 		const database = await this.#database();
 		const record = await requestResult(
 			database
 				.transaction(STORE_NAME, "readonly")
 				.objectStore(STORE_NAME)
-				.get(cacheKey(distribution, sha256)),
+				.get(cacheKey(distribution, ahash64)),
 		);
 		if (record === undefined) return undefined;
 		return new Uint8Array(record.bytes).slice();
 	}
 
-	async put(distribution, sha256, bytes) {
+	async put(distribution, ahash64, bytes) {
 		if (!(bytes instanceof Uint8Array))
 			throw new TypeError("cache bytes must be a Uint8Array");
 		const database = await this.#database();
 		const transaction = database.transaction(STORE_NAME, "readwrite");
 		transaction.objectStore(STORE_NAME).put({
-			key: cacheKey(distribution, sha256),
+			key: cacheKey(distribution, ahash64),
 			bytes: bytes.slice().buffer,
 		});
 		await transactionDone(transaction);
 	}
 
-	async delete(distribution, sha256) {
+	async delete(distribution, ahash64) {
 		const database = await this.#database();
 		const transaction = database.transaction(STORE_NAME, "readwrite");
-		transaction.objectStore(STORE_NAME).delete(cacheKey(distribution, sha256));
+		transaction.objectStore(STORE_NAME).delete(cacheKey(distribution, ahash64));
 		await transactionDone(transaction);
 	}
 
@@ -61,16 +62,16 @@ export class MemoryObjectCache {
 		this.objects = new Map();
 	}
 
-	async get(distribution, sha256) {
-		return this.objects.get(cacheKey(distribution, sha256))?.slice();
+	async get(distribution, ahash64) {
+		return this.objects.get(cacheKey(distribution, ahash64))?.slice();
 	}
 
-	async put(distribution, sha256, bytes) {
-		this.objects.set(cacheKey(distribution, sha256), bytes.slice());
+	async put(distribution, ahash64, bytes) {
+		this.objects.set(cacheKey(distribution, ahash64), bytes.slice());
 	}
 
-	async delete(distribution, sha256) {
-		this.objects.delete(cacheKey(distribution, sha256));
+	async delete(distribution, ahash64) {
+		this.objects.delete(cacheKey(distribution, ahash64));
 	}
 
 	close() {
@@ -78,14 +79,14 @@ export class MemoryObjectCache {
 	}
 }
 
-export function cacheKey(distribution, sha256) {
+export function cacheKey(distribution, ahash64) {
 	if (typeof distribution !== "string" || distribution.length === 0) {
 		throw new TypeError("distribution must be a non-empty string");
 	}
-	if (!DIGEST_PATTERN.test(sha256)) {
-		throw new TypeError("sha256 must be 64 lowercase hexadecimal characters");
+	if (!DIGEST_PATTERN.test(ahash64)) {
+		throw new TypeError("ahash64 must be 16 lowercase hexadecimal characters");
 	}
-	return JSON.stringify([distribution, sha256]);
+	return JSON.stringify([distribution, ahash64]);
 }
 
 function openDatabase(indexedDB, databaseName) {

@@ -493,7 +493,7 @@ fn microtype_font(name: &str, width: i32) -> LoadedFont {
     LoadedFont::new(
         name,
         format!("{name}.tfm"),
-        [width as u8; 32],
+        [width as u8; 8],
         0,
         sp(width),
         sp(width),

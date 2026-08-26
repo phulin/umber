@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ $# -ne 8 ]]; then
   printf '%s\n' \
-    'usage: write-latex-wasm-publish-config.sh OUTPUT DISTRIBUTION OBJECTS-BASE-URL RUNTIME-ROOT TREE-SHA256 FORMAT METADATA INPUT-IDENTITIES' >&2
+    'usage: write-latex-wasm-publish-config.sh OUTPUT DISTRIBUTION OBJECTS-BASE-URL RUNTIME-ROOT TREE-AHASH64 FORMAT METADATA INPUT-IDENTITIES' >&2
   exit 2
 fi
 
@@ -11,7 +11,7 @@ output="$1"
 distribution="$2"
 objects_base_url="$3"
 runtime_root="$4"
-tree_sha256="$5"
+tree_ahash64="$5"
 format_path="$6"
 metadata_path="$7"
 input_identities_path="$8"
@@ -22,7 +22,7 @@ shard_bits=8
 
 cat > "$output" <<EOF
 {
-  "schema": 3,
+  "schema": 6,
   "distribution": "${distribution}",
   "objectsBaseUrl": "${objects_base_url}",
   "shardBits": ${shard_bits},
@@ -30,7 +30,7 @@ cat > "$output" <<EOF
     {
       "name": "latex-base-runtime",
       "path": "${runtime_root}",
-      "treeSha256": "${tree_sha256}"
+      "treeAhash64": "${tree_ahash64}"
     }
   ],
   "dependencies": {

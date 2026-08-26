@@ -720,7 +720,7 @@ restoration-owned heap buffers. These process-local counters do not enter the
 format image, state, snapshots, rollback, semantic identity, cache identity,
 or INITEX construction path.
 
-The focused schema-11 Plain-format benchmark additionally counts allocator
+The focused schema-12 Plain-format benchmark additionally counts allocator
 calls and requested bytes around exactly one restore, proves a byte-identical
 redump before timing, and then measures repeated fresh-Universe decode:
 

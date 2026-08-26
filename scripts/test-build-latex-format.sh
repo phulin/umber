@@ -13,6 +13,7 @@ mkdir -p \
   "${fixture_repo}/texmf-dist/tex/latex-dev/base" \
   "${fixture_repo}/distribution" \
   "${fixture_repo}/target/release" \
+  "${fixture_repo}/tools/texlive-wasm-publish/target/release" \
   "${tmp_root}/bin" \
   "${tmp_root}/cache"
 cp "${repo_root}/scripts/build-latex-format.sh" "${fixture_repo}/scripts/"
@@ -21,7 +22,7 @@ printf '\\end\n' > "${fixture_repo}/tests/latex/format-equivalence.tex"
 printf '\\end\n' > "${fixture_repo}/tests/latex/pdflatex-smoke.tex"
 printf 'pdf configuration\n' > "${fixture_repo}/tests/latex/pdftexconfig.tex"
 printf '\\input latex.ltx\n' > "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini"
-printf '{"schema":3}\n' > "${fixture_repo}/distribution/manifest-v3.json"
+printf '{"schema":6}\n' > "${fixture_repo}/distribution/manifest-v6.json"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -31,15 +32,15 @@ sha256_file() {
   fi
 }
 
-distribution_sha256="$(sha256_file "${fixture_repo}/distribution/manifest-v3.json")"
+distribution_ahash64=dddddddddddddddd
 source_sha256="$(sha256_file "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx")"
 pdflatex_source_sha256="$(sha256_file "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini")"
 pdftexconfig_sha256="$(sha256_file "${fixture_repo}/tests/latex/pdftexconfig.tex")"
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<EOF
 distribution fixture
-distribution_sha256 ${distribution_sha256}
-format_schema 11
+distribution_ahash64 ${distribution_ahash64}
+format_schema 12
 source_date_epoch 1
 source tex/latex-dev/base/latex.ltx 6 ${source_sha256}
 pdflatex-source tex/latex/tex-ini-files/pdflatex.ini 17 ${pdflatex_source_sha256}
@@ -105,7 +106,7 @@ with Path(os.environ["UMBER_TEST_INVOCATIONS"]).open("a", encoding="utf-8") as o
     output.write(json.dumps(arguments) + "\n")
 if "--format-out" in arguments:
     output = Path(arguments[arguments.index("--format-out") + 1])
-    output.write_bytes(b"UMBRFMT\0" + struct.pack("<I", 11) + b"fixture")
+    output.write_bytes(b"UMBRFMT\0" + struct.pack("<I", 12) + b"fixture")
 if "--input-records-out" in arguments:
     output = Path(arguments[arguments.index("--input-records-out") + 1])
     output.write_bytes(Path(os.environ["UMBER_TEST_INPUT_RECEIPT"]).read_bytes())
@@ -113,11 +114,22 @@ for option in ("--dvi", "--pdf"):
     if option in arguments:
         Path(arguments[arguments.index(option) + 1]).write_bytes(b"artifact\n")
 EOF
+cat > "${fixture_repo}/tools/texlive-wasm-publish/target/release/texlive-wasm-publish" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --file-ahash64 && -f "$2" ]]
+case "${2##*/}" in
+  manifest-v6.json) printf '%s\n' dddddddddddddddd ;;
+  *.fmt) printf '%s\n' eeeeeeeeeeeeeeee ;;
+  *) printf '%s\n' ffffffffffffffff ;;
+esac
+EOF
 chmod +x \
   "${tmp_root}/bin/cargo" \
   "${tmp_root}/bin/rustc" \
   "${fixture_repo}/scripts/build-latex-format.sh" \
   "${fixture_repo}/scripts/run-umber-guarded.py" \
+  "${fixture_repo}/tools/texlive-wasm-publish/target/release/texlive-wasm-publish" \
   "${fixture_repo}/target/release/umber"
 
 expect_failure() {
@@ -133,20 +145,20 @@ expect_failure() {
 
 builder="${fixture_repo}/scripts/build-latex-format.sh"
 expect_failure '--distribution PATH is required' "$builder"
-expect_failure '--distribution-sha256 SHA256 is required' \
+expect_failure '--distribution-ahash64 AHASH64 is required' \
   "$builder" --distribution "${fixture_repo}/distribution"
-expect_failure '--distribution-sha256 must be 64 lowercase hexadecimal characters' \
+expect_failure '--distribution-ahash64 must be 16 lowercase hexadecimal characters' \
   "$builder" \
     --distribution "${fixture_repo}/distribution" \
-    --distribution-sha256 BAD
-expect_failure 'distribution SHA-256 does not match the source lock' \
+    --distribution-ahash64 BAD
+expect_failure 'distribution aHash64 does not match the source lock' \
   "$builder" \
     --distribution "${fixture_repo}/distribution" \
-    --distribution-sha256 0000000000000000000000000000000000000000000000000000000000000000
+    --distribution-ahash64 0000000000000000
 expect_failure 'distribution path is not a local file or directory' \
   "$builder" \
     --distribution "${fixture_repo}/absent" \
-    --distribution-sha256 "$distribution_sha256"
+    --distribution-ahash64 "$distribution_ahash64"
 
 PATH="${tmp_root}/bin:${PATH}" \
 XDG_CACHE_HOME="${tmp_root}/cache" \
@@ -156,11 +168,11 @@ UMBER_TEST_INVOCATIONS="$invocations" \
   "$builder" \
     --texmf-dist "${fixture_repo}/texmf-dist" \
     --distribution "${fixture_repo}/distribution" \
-    --distribution-sha256 "$distribution_sha256" \
+    --distribution-ahash64 "$distribution_ahash64" \
     --output-dir "${fixture_repo}/output" \
     --force >/dev/null
 
-python3 - "$invocations" "${fixture_repo}/distribution" "$distribution_sha256" <<'PY'
+python3 - "$invocations" "${fixture_repo}/distribution" "$distribution_ahash64" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -172,8 +184,8 @@ expected_digest = sys.argv[3]
 for row in rows:
     assert row.count("--distribution") == 1, row
     assert row[row.index("--distribution") + 1] == expected_path, row
-    assert row.count("--distribution-sha256") == 1, row
-    assert row[row.index("--distribution-sha256") + 1] == expected_digest, row
+    assert row.count("--distribution-ahash64") == 1, row
+    assert row[row.index("--distribution-ahash64") + 1] == expected_digest, row
     assert row.count("--offline") == 1, row
 assert sum("--format-out" in row for row in rows) == 2, rows
 assert sum("--format" in row for row in rows) == 1, rows
@@ -190,7 +202,7 @@ UMBER_TEST_INVOCATIONS="$invocations" \
     --engine pdflatex \
     --texmf-dist "${fixture_repo}/texmf-dist" \
     --distribution "${fixture_repo}/distribution" \
-    --distribution-sha256 "$distribution_sha256" \
+    --distribution-ahash64 "$distribution_ahash64" \
     --output-dir "${fixture_repo}/pdflatex-output" \
     --force >/dev/null
 

@@ -1,14 +1,15 @@
 //! Detached Type-1 PFB decoding for PDF embedding.
 
-use sha2::{Digest, Sha256};
+use md5::Digest as _;
 use std::collections::BTreeSet;
+use umber_hash::{AHash64, HashDomain};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct PdfType1ProgramIdentity([u8; 32]);
+pub struct PdfType1ProgramIdentity([u8; 8]);
 
 impl PdfType1ProgramIdentity {
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 }
@@ -63,7 +64,9 @@ impl PdfType1Program {
         if segment < 2 || cursor != bytes.len() {
             return Err(PdfType1ProgramError::MissingEndMarker);
         }
-        let identity = PdfType1ProgramIdentity(Sha256::digest(&decoded).into());
+        let identity = PdfType1ProgramIdentity(
+            AHash64::for_bytes(HashDomain::Type1Program, &decoded).to_le_bytes(),
+        );
         Ok(Self {
             identity,
             bytes: decoded,
@@ -112,7 +115,9 @@ impl PdfType1Program {
         let length2 = u32::try_from(encrypted.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
         let length3 = u32::try_from(trailer.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
         Ok(Self {
-            identity: PdfType1ProgramIdentity(Sha256::digest(&bytes).into()),
+            identity: PdfType1ProgramIdentity(
+                AHash64::for_bytes(HashDomain::Type1Program, &bytes).to_le_bytes(),
+            ),
             bytes,
             length1,
             length2,
@@ -540,7 +545,7 @@ mod tests {
         let program = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
         assert_eq!(program.bytes(), b"abcdef");
         assert_eq!(program.lengths(), [3, 2, 1]);
-        assert_ne!(program.identity().bytes(), [0; 32]);
+        assert_ne!(program.identity().bytes(), [0; 8]);
     }
 
     #[test]

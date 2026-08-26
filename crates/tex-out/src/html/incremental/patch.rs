@@ -35,7 +35,7 @@ pub struct PatchPlan {
     pub title: Option<String>,
     pub language: Option<String>,
     pub resource_additions: Vec<RenderResource>,
-    pub resource_releases: Vec<[u8; 32]>,
+    pub resource_releases: Vec<[u8; 8]>,
     pub operations: Vec<PatchOp>,
 }
 

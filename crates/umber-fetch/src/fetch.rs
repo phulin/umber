@@ -258,7 +258,7 @@ impl FetchClient {
                     .find(|request| request.request_key == object.request_key)
                     .expect("fetched object came from the input batch");
                 if let Err(error) =
-                    cache.store_object(&request.object.sha256, request.object.bytes, &object.bytes)
+                    cache.store_object(&request.object.ahash64, request.object.bytes, &object.bytes)
                 {
                     return Err(BatchFetchError {
                         diagnostics: vec![cache_diagnostic(request, error)],
@@ -288,13 +288,13 @@ impl FetchClient {
                 },
             ));
         }
-        if request.object.object != format!("sha256-{}", request.object.sha256) {
+        if request.object.object != format!("ahash64-v1-{}", request.object.ahash64) {
             return Err(diagnostic(
                 request,
                 FetchFailure::InvalidUrl("object name does not match its digest".into()),
             ));
         }
-        match cache.load_object(&request.object.sha256, request.object.bytes) {
+        match cache.load_object(&request.object.ahash64, request.object.bytes) {
             Ok(Some(bytes)) => {
                 check_cancelled(request, cancellation)?;
                 return Ok(fetched(request, bytes, true));
@@ -307,7 +307,7 @@ impl FetchClient {
         let policy = DownloadPolicy {
             subject: "distribution objects",
             length: LengthPolicy::Exact(request.object.bytes),
-            expected_sha256: &request.object.sha256,
+            expected_ahash64: &request.object.ahash64,
             retries: self.config.retries,
         };
         self.downloader
@@ -368,7 +368,7 @@ fn cancelled_batch(requests: &[FetchRequest]) -> BatchFetchError {
 fn diagnostic(request: &FetchRequest, failure: FetchFailure) -> FetchDiagnostic {
     FetchDiagnostic {
         request_key: request.request_key.clone(),
-        object_digest: request.object.sha256.clone(),
+        object_digest: request.object.ahash64.clone(),
         failure,
     }
 }
@@ -380,7 +380,7 @@ fn cache_diagnostic(request: &FetchRequest, error: CacheError) -> FetchDiagnosti
 fn fetched(request: &FetchRequest, bytes: Vec<u8>, cache_hit: bool) -> FetchedObject {
     FetchedObject {
         request_key: request.request_key.clone(),
-        object_digest: request.object.sha256.clone(),
+        object_digest: request.object.ahash64.clone(),
         bytes,
         cache_hit,
     }

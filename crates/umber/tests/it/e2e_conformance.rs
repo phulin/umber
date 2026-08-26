@@ -669,7 +669,7 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
 }
 
 #[test]
-fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
+fn trip_profiles_reuse_verified_provider_entries_and_fresh_jobs() {
     let cache = tempfile::tempdir().expect("scoped provider cache");
     let launcher = super::umber_format_worker_launcher();
     let mut identities = Vec::new();
@@ -707,7 +707,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
         assert_eq!(
             first.construction_evidence(),
             second.construction_evidence(),
-            "warm entry must retain authenticated construction evidence"
+            "warm entry must retain verified construction evidence"
         );
 
         for (assignment, expected) in [("\\count0=41\\end\n", 41), ("\\end\n", 0)] {
@@ -756,13 +756,16 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
 
     assert_ne!(identities[0], identities[1]);
     assert_eq!(
-        fs::read_dir(cache.path().join("blobs-v1"))
+        fs::read_dir(cache.path().join("blobs-v2"))
             .expect("provider cache namespace")
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("ahash64-v1-"))
             .count(),
         2,
-        "one authenticated entry must be published for each profile identity"
+        "one verified entry must be published for each profile identity"
     );
 }
 
@@ -1296,7 +1299,7 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
 }
 
 #[test]
-fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
+fn plain_provider_reuses_one_verified_construction_with_fresh_jobs() {
     let repo_root = test_support::repository_root();
     let recipe = plain_format_recipe(&repo_root).expect("complete Plain recipe");
     let cache = tempfile::tempdir().expect("isolated persistent Plain cache");
@@ -1325,10 +1328,13 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
         second.construction_evidence()
     );
     assert_eq!(
-        fs::read_dir(cache.path().join("blobs-v1"))
+        fs::read_dir(cache.path().join("blobs-v2"))
             .expect("Plain provider namespace")
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("ahash64-v1-"))
             .count(),
         1,
         "all Plain routes must publish exactly one construction identity"

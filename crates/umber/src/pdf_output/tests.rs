@@ -198,7 +198,7 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
         .local_tfms
         .get_mut(b"cmex10".as_slice())
         .expect("nested local TFM")
-        .content_hash = [0; 32];
+        .content_hash = [0; 8];
     assert!(matches!(
         tex_out::pdf::finalize_pdf(&bad_hash),
         Err(tex_out::pdf::PdfBuildError::InvalidVirtualLocalTfm { .. })

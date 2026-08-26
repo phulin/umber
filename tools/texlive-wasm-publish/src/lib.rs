@@ -12,21 +12,27 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use umber_distribution::{
     FileRequestKey, FontManifestRecord, HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA,
     LegacyMappingManifestRecord, ManifestFile, ManifestFormat, ManifestShard, NamedFormat,
 };
+use umber_hash::{AHash64, HashDomain};
 
 pub use sharded::{
     ShardedPublication, prune_unreferenced_objects, read_sharded_catalog, shard_index,
     verify_sharded_snapshot, write_html_sharded_manifest, write_sharded_manifest,
 };
 
-pub use scan::tree_sha256;
+pub use scan::tree_ahash64;
 use scan::{Candidate, scan_roots};
 use tlpdb::PackageDatabase;
 pub use umber_distribution::Manifest;
+
+/// Hash one published object with the repository-owned content-identity domain.
+pub fn file_ahash64(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    Ok(AHash64::for_bytes(HashDomain::DistributionContent, &bytes).hex())
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -92,7 +98,7 @@ pub struct InventoryConfig {
 pub struct RootConfig {
     pub name: String,
     pub path: PathBuf,
-    pub tree_sha256: String,
+    pub tree_ahash64: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -115,7 +121,7 @@ struct FormatInputIdentities {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FormatInputIdentity {
     key: String,
-    sha256: String,
+    ahash64: String,
     bytes: u64,
 }
 
@@ -157,16 +163,16 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublicati
     verify_sharded_snapshot(output).context("verify staged sharded snapshot")
 }
 
-/// Publish a sparse successor to an authenticated complete sharded catalog.
+/// Publish a sparse successor to an verified complete sharded catalog.
 ///
-/// The base directory must contain the canonical root and every authenticated
+/// The base directory must contain the canonical root and every verified
 /// shard, but need not duplicate unchanged content-addressed payloads. Roots
 /// in `config` are an ordered overlay and may replace or add logical keys. The
 /// output contains every successor shard plus exactly the changed payload and
 /// format objects.
 pub fn publish_successor(
     base: &Path,
-    base_sha256: &str,
+    base_ahash64: &str,
     config: &PublishConfig,
     output: &Path,
 ) -> Result<ShardedPublication> {
@@ -177,8 +183,8 @@ pub fn publish_successor(
     if config.package_database.is_some() || !config.dependencies.is_empty() {
         bail!("sparse successors preserve the base dependency graph");
     }
-    verify_base_root(base, base_sha256)?;
-    let base = read_sharded_catalog(base).context("authenticate successor base catalog")?;
+    verify_base_root(base, base_ahash64)?;
+    let base = read_sharded_catalog(base).context("verify successor base catalog")?;
     if config.distribution != base.root.distribution
         || config.objects_base_url != base.root.objects_base_url
         || config.shard_bits != base.root.shard_bits
@@ -205,7 +211,7 @@ pub fn publish_successor(
                         .unwrap_or(&file.virtual_path)
                         .to_owned(),
                     source: PathBuf::new(),
-                    sha256: file.sha256.clone(),
+                    ahash64: file.ahash64.clone(),
                     bytes: file.bytes,
                 },
             )
@@ -219,13 +225,13 @@ pub fn publish_successor(
             .unwrap_or_default();
         let bytes = fs::read(&replacement.source)
             .with_context(|| format!("read successor object {}", replacement.source.display()))?;
-        let object = format!("sha256-{}", replacement.sha256);
+        let object = format!("ahash64-v1-{}", replacement.ahash64);
         files.insert(
             key.clone(),
             ManifestFile {
                 virtual_path: format!("/texlive/{}", replacement.relative),
                 object: object.clone(),
-                sha256: replacement.sha256.clone(),
+                ahash64: replacement.ahash64.clone(),
                 bytes: replacement.bytes,
                 dependencies,
             },
@@ -264,15 +270,15 @@ pub fn publish_successor(
     Ok(publication)
 }
 
-/// Verify a sparse successor staging directory against its authenticated base.
+/// Verify a sparse successor staging directory against its verified base.
 pub fn verify_successor(
     base: &Path,
-    base_sha256: &str,
+    base_ahash64: &str,
     output: &Path,
 ) -> Result<ShardedPublication> {
-    verify_base_root(base, base_sha256)?;
-    let base = read_sharded_catalog(base).context("authenticate successor base catalog")?;
-    let successor = read_sharded_catalog(output).context("authenticate successor catalog")?;
+    verify_base_root(base, base_ahash64)?;
+    let base = read_sharded_catalog(base).context("verify successor base catalog")?;
+    let successor = read_sharded_catalog(output).context("verify successor catalog")?;
     if successor.root.distribution != base.root.distribution
         || successor.root.objects_base_url != base.root.objects_base_url
         || successor.root.shard_bits != base.root.shard_bits
@@ -306,15 +312,15 @@ pub fn verify_successor(
 }
 
 fn verify_base_root(base: &Path, expected: &str) -> Result<()> {
-    if expected.len() != 64
+    if expected.len() != 16
         || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
         || expected.bytes().any(|byte| byte.is_ascii_uppercase())
     {
-        bail!("successor base SHA-256 must contain 64 lowercase hexadecimal characters");
+        bail!("successor base aHash64 must contain 16 lowercase hexadecimal characters");
     }
     let bytes = fs::read(base.join("manifest.json")).context("read successor base root")?;
-    if format!("{:x}", Sha256::digest(bytes)) != expected {
-        bail!("successor base root does not match its pinned SHA-256");
+    if distribution_ahash64(&bytes) != expected {
+        bail!("successor base root does not match its pinned aHash64");
     }
     Ok(())
 }
@@ -354,8 +360,7 @@ fn read_verified_successor_object(
 ) -> Result<()> {
     let bytes = fs::read(output.join("objects").join(&entry.object))
         .with_context(|| format!("read successor object for {label}"))?;
-    if bytes.len() as u64 != entry.bytes || format!("{:x}", Sha256::digest(&bytes)) != entry.sha256
-    {
+    if bytes.len() as u64 != entry.bytes || distribution_ahash64(&bytes) != entry.ahash64 {
         bail!("successor object for {label} does not match declared digest and length");
     }
     Ok(())
@@ -384,14 +389,14 @@ fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
     for (key, candidate) in winners {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
-        let object = format!("sha256-{}", candidate.sha256);
+        let object = format!("ahash64-v1-{}", candidate.ahash64);
         objects.entry(object.clone()).or_insert(bytes.clone());
         files.insert(
             key.clone(),
             ManifestFile {
                 virtual_path: format!("/texlive/{}", candidate.relative),
                 object,
-                sha256: candidate.sha256,
+                ahash64: candidate.ahash64,
                 bytes: u64::try_from(bytes.len()).context("file length exceeds u64")?,
                 dependencies: dependencies.get(&key).cloned().unwrap_or_default(),
             },
@@ -437,7 +442,7 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
     for format in &config.formats {
         let (name, manifest_format, bytes) = load_format(format, &winners)?;
         let closure = manifest_format.input_closure.as_ref().with_context(|| {
-            format!("HTML format {name:?} must carry an authenticated input closure")
+            format!("HTML format {name:?} must carry an verified input closure")
         })?;
         selected_keys.extend(closure.keys.iter().cloned());
         if formats
@@ -494,14 +499,14 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
     for (key, candidate) in selected {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
-        let object = format!("sha256-{}", candidate.sha256);
+        let object = format!("ahash64-v1-{}", candidate.ahash64);
         objects.entry(object.clone()).or_insert(bytes.clone());
         files.insert(
             key.clone(),
             ManifestFile {
                 virtual_path: format!("/texlive/{}", candidate.relative),
                 object,
-                sha256: candidate.sha256,
+                ahash64: candidate.ahash64,
                 bytes: u64::try_from(bytes.len()).context("file length exceeds u64")?,
                 dependencies: selected_dependencies.get(&key).cloned().unwrap_or_default(),
             },
@@ -554,7 +559,7 @@ fn validate_html_catalog(
     }
     for (key, mapping) in mappings {
         if !files.iter().any(|(file_key, candidate)| {
-            file_key.starts_with("tfm:") && candidate.sha256 == mapping.request.tfm_sha256()
+            file_key.starts_with("tfm:") && candidate.ahash64 == mapping.request.tfm_ahash64()
         }) {
             bail!("legacy mapping {key} does not reference a selected exact TFM object");
         }
@@ -584,7 +589,7 @@ fn prepare_html_catalog_objects(
                 .values()
                 .flat_map(|record| [&record.object, &record.license.object]),
         )
-        .map(|entry| (entry.sha256.clone(), entry.clone()))
+        .map(|entry| (entry.ahash64.clone(), entry.clone()))
         .collect::<BTreeMap<_, _>>();
     if html.object_sources.keys().collect::<BTreeSet<_>>() != expected.keys().collect() {
         bail!("HTML objectSources must exactly cover the catalog font and license digests");
@@ -593,9 +598,9 @@ fn prepare_html_catalog_objects(
         let source = &html.object_sources[&digest];
         let bytes = fs::read(source)
             .with_context(|| format!("read HTML catalog object {}", source.display()))?;
-        if format!("{:x}", Sha256::digest(&bytes)) != digest
+        if distribution_ahash64(&bytes) != digest
             || bytes.len() as u64 != entry.bytes
-            || entry.object != format!("sha256-{digest}")
+            || entry.object != format!("ahash64-v1-{digest}")
         {
             bail!("HTML catalog object {digest} does not match its declared digest and length");
         }
@@ -714,8 +719,8 @@ fn load_format(
     let metadata = named.format;
     let bytes = fs::read(&config.path)
         .with_context(|| format!("read format image {}", config.path.display()))?;
-    let actual = format!("{:x}", Sha256::digest(&bytes));
-    if actual != metadata.sha256 || bytes.len() as u64 != metadata.bytes {
+    let actual = distribution_ahash64(&bytes);
+    if actual != metadata.ahash64 || bytes.len() as u64 != metadata.bytes {
         bail!("format image digest or length does not match its metadata");
     }
     if bytes.get(..8) != Some(b"UMBRFMT\0") {
@@ -735,11 +740,15 @@ fn load_format(
         validate_format_input_identities(&named.name, config, &closure.keys, winners)?;
     } else if config.input_identities.is_some() {
         bail!(
-            "format {:?} supplies input identities without an authenticated input closure",
+            "format {:?} supplies input identities without an verified input closure",
             named.name
         );
     }
     Ok((named.name, metadata, bytes))
+}
+
+fn distribution_ahash64(bytes: &[u8]) -> String {
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
 
 fn validate_format_input_identities(
@@ -766,12 +775,12 @@ fn validate_format_input_identities(
         let key = input.key.clone();
         FileRequestKey::from_manifest_key(&input.key)
             .with_context(|| format!("invalid format input identity key {:?}", input.key))?;
-        if input.sha256.len() != 64
-            || !input.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || input.sha256.bytes().any(|byte| byte.is_ascii_uppercase())
+        if input.ahash64.len() != 16
+            || !input.ahash64.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || input.ahash64.bytes().any(|byte| byte.is_ascii_uppercase())
         {
             bail!(
-                "format input identity {:?} must use a lowercase SHA-256 digest",
+                "format input identity {:?} must use a lowercase aHash64 digest",
                 input.key
             );
         }
@@ -782,20 +791,20 @@ fn validate_format_input_identities(
     let identity_keys = identities.keys().cloned().collect::<Vec<_>>();
     if identity_keys != closure_keys {
         bail!(
-            "format {format_name:?} input identity keys do not exactly match its authenticated closure"
+            "format {format_name:?} input identity keys do not exactly match its verified closure"
         );
     }
     for (key, expected) in identities {
         let winner = winners.get(&key).with_context(|| {
             format!("format {format_name:?} input {key:?} is absent from pinned roots")
         })?;
-        if winner.sha256 != expected.sha256 || winner.bytes != expected.bytes {
+        if winner.ahash64 != expected.ahash64 || winner.bytes != expected.bytes {
             bail!(
-                "format {format_name:?} was constructed from {key:?} sha256={} bytes={}, but the published runtime winner {} has sha256={} bytes={}",
-                expected.sha256,
+                "format {format_name:?} was constructed from {key:?} ahash64={} bytes={}, but the published runtime winner {} has ahash64={} bytes={}",
+                expected.ahash64,
                 expected.bytes,
                 winner.relative,
-                winner.sha256,
+                winner.ahash64,
                 winner.bytes
             );
         }

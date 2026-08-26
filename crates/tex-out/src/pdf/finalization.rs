@@ -169,7 +169,7 @@ pub struct PdfVirtualFontInput {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfVirtualLocalTfmInput {
-    pub content_hash: [u8; 32],
+    pub content_hash: tex_fonts::FontContentHash,
     pub bytes: Arc<[u8]>,
     /// Design-size validation receipt. The exact bytes remain authoritative
     /// for every packet-local sized instance.

@@ -33,18 +33,18 @@ fn output() -> PdfOutputParameters {
 #[test]
 fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
     let mut state = PdfState::<()>::default();
-    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 32], None);
+    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], None);
     let first = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(1),
-            tex_fonts::FontSourceIdentity::from_bytes([1; 32]),
+            tex_fonts::FontSourceIdentity::from_bytes([1; 8]),
             identity,
         )
         .expect("first PDF font resource");
     let alias = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(2),
-            tex_fonts::FontSourceIdentity::from_bytes([2; 32]),
+            tex_fonts::FontSourceIdentity::from_bytes([2; 8]),
             identity,
         )
         .expect("aliased PDF font resource");
@@ -62,11 +62,11 @@ fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
 #[test]
 fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
     let mut state = PdfState::<()>::default();
-    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 32], None);
+    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], None);
     let base = crate::ids::FontId::testing_new(1);
     let scaled = crate::ids::FontId::testing_new(2);
-    let base_identity = tex_fonts::FontSourceIdentity::from_bytes([1; 32]);
-    let scaled_identity = tex_fonts::FontSourceIdentity::from_bytes([2; 32]);
+    let base_identity = tex_fonts::FontSourceIdentity::from_bytes([1; 8]);
+    let scaled_identity = tex_fonts::FontSourceIdentity::from_bytes([2; 8]);
     let first = state
         .ensure_font_resource(base, base_identity, identity)
         .expect("base PDF font resource");
@@ -106,7 +106,7 @@ fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
             };
             crate::FontArtifactRecipe {
                 name: name.to_owned(),
-                tfm_content_hash: [7; 32],
+                tfm_content_hash: [7; 8],
                 tfm_checksum: 0,
                 design_size: Scaled::from_raw(10 * Scaled::UNITY),
                 at_size: Scaled::from_raw(at_size * Scaled::UNITY),
@@ -374,10 +374,10 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
     let mut state = PdfState::<()>::default();
     state.font_resources.push(PdfFontResourceRecord {
         font: FontId::testing_new(7),
-        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
+        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
         resource_number: 7,
         object_number: 11,
-        identity: tex_fonts::PdfFontResourceIdentity::new([8; 32], None),
+        identity: tex_fonts::PdfFontResourceIdentity::new([8; 8], None),
     });
     let payload = state.payloads.store(vec![1]);
     state.external_images.push(PdfExternalImageEntry {
@@ -681,7 +681,7 @@ fn pdf_checkpoint_capture_allocates_nothing_independent_of_payload_size() {
         state
             .allocate_external_image(
                 PdfExternalImageSource {
-                    identity: ContentHash::new([9; 32]),
+                    identity: ContentHash::new([9; 8]),
                     metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
                         format: PdfRasterFormat::Png,
                         width: 1,

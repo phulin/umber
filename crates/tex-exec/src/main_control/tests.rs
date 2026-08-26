@@ -14746,7 +14746,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
             request: key,
             container: tex_fonts::FontContainer::Woff2,
             bytes,
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: None,
             legacy_mapping: None,

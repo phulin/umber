@@ -378,10 +378,10 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "test-support",
  "umber-distribution",
+ "umber-hash",
 ]
 
 [[package]]
@@ -392,6 +392,13 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "umber-distribution"
+version = "0.1.0"
+dependencies = [
+ "umber-hash",
+]
+
+[[package]]
+name = "umber-hash"
 version = "0.1.0"
 
 [[package]]

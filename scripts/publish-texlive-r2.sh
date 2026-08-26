@@ -17,10 +17,10 @@ checkers=16
 retries=5
 expected_objects=152560
 expected_bytes=3520195192
-expected_manifest_sha256="43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b"
+expected_manifest_ahash64=""
 successor_base=""
-successor_base_sha256=""
-manifest_name="manifest-v3.json"
+successor_base_ahash64=""
+manifest_name="manifest-v6.json"
 dry_run=0
 profile="full"
 root_pin_explicit=0
@@ -46,11 +46,11 @@ options:
   --dry-run                     validate and show rclone's transfer plan only
   --expected-objects N          exact staged/remote object count
   --expected-bytes N            exact staged/remote object bytes
-  --expected-manifest-sha256 H  exact manifest digest
+  --expected-manifest-ahash64 H  exact manifest digest
   --successor-base PATH         authenticated root/shards reused by a sparse successor
-  --successor-base-sha256 H     exact immutable base root digest
-  --manifest-name NAME          unique schema-3 root key for a sparse successor
-  --root-sha256 H               alias for --expected-manifest-sha256; required for HTML
+  --successor-base-ahash64 H     exact immutable base root digest
+  --manifest-name NAME          unique schema-6 root key for a sparse successor
+  --root-ahash64 H               alias for --expected-manifest-ahash64; required for HTML
   --rclone PATH                 rclone executable
   --rclone-remote NAME          existing configured rclone remote
   --curl PATH                   curl executable
@@ -66,14 +66,6 @@ EOF
 fail() {
   printf 'publish-texlive-r2.sh: %s\n' "$*" >&2
   exit 1
-}
-
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
 }
 
 positive_integer() {
@@ -114,10 +106,10 @@ while [[ $# -gt 0 ]]; do
     --retries) retries="${2:-}"; shift 2 ;;
     --expected-objects) expected_objects="${2:-}"; shift 2 ;;
     --expected-bytes) expected_bytes="${2:-}"; shift 2 ;;
-    --expected-manifest-sha256) expected_manifest_sha256="${2:-}"; root_pin_explicit=1; shift 2 ;;
-    --root-sha256) expected_manifest_sha256="${2:-}"; root_pin_explicit=1; shift 2 ;;
+    --expected-manifest-ahash64) expected_manifest_ahash64="${2:-}"; root_pin_explicit=1; shift 2 ;;
+    --root-ahash64) expected_manifest_ahash64="${2:-}"; root_pin_explicit=1; shift 2 ;;
     --successor-base) successor_base="${2:-}"; shift 2 ;;
-    --successor-base-sha256) successor_base_sha256="${2:-}"; shift 2 ;;
+    --successor-base-ahash64) successor_base_ahash64="${2:-}"; shift 2 ;;
     --manifest-name) manifest_name="${2:-}"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --rclone) rclone="${2:-}"; shift 2 ;;
@@ -132,20 +124,20 @@ done
 [[ "$profile" == full || "$profile" == html ]] || fail "--profile must be full or html"
 if [[ "$profile" == html ]]; then
   [[ -z "$successor_base" ]] || fail "HTML publication does not support sparse successors"
-  [[ "$manifest_name" == manifest-v3.json ]] || fail "HTML publication does not accept --manifest-name"
-  (( root_pin_explicit == 1 )) || fail "HTML publication requires an explicit --root-sha256 pin"
+  [[ "$manifest_name" == manifest-v6.json ]] || fail "HTML publication does not accept --manifest-name"
+  (( root_pin_explicit == 1 )) || fail "HTML publication requires an explicit --root-ahash64 pin"
   [[ "$snapshot" == html/* ]] || fail "HTML publication requires a distinct html/ immutable prefix"
-  manifest_name="manifest-v4.json"
+  manifest_name="manifest-v7.json"
 fi
 if [[ -n "$successor_base" ]]; then
   [[ "$profile" == full ]] || fail "sparse successor requires the full profile"
   [[ -d "$successor_base/objects" && -f "$successor_base/manifest.json" ]] || fail "invalid successor base: $successor_base"
-  [[ "$successor_base_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "sparse successor requires --successor-base-sha256"
-  [[ "$manifest_name" =~ ^manifest-v3-[a-z0-9][a-z0-9.-]*\.json$ ]] || fail "sparse successor requires a unique manifest-v3-NAME.json key"
-elif [[ "$manifest_name" != manifest-v3.json && "$profile" == full ]]; then
+  [[ "$successor_base_ahash64" =~ ^[0-9a-f]{16}$ ]] || fail "sparse successor requires --successor-base-ahash64"
+  [[ "$manifest_name" =~ ^manifest-v6-[a-z0-9][a-z0-9.-]*\.json$ ]] || fail "sparse successor requires a unique manifest-v6-NAME.json key"
+elif [[ "$manifest_name" != manifest-v6.json && "$profile" == full ]]; then
   fail "--manifest-name requires --successor-base"
-elif [[ -n "$successor_base_sha256" ]]; then
-  fail "--successor-base-sha256 requires --successor-base"
+elif [[ -n "$successor_base_ahash64" ]]; then
+  fail "--successor-base-ahash64 requires --successor-base"
 fi
 
 [[ -d "$staging/objects" ]] || fail "missing staged objects directory: $staging/objects"
@@ -159,14 +151,14 @@ positive_integer "$checkers" || fail "--checkers must be a positive integer"
 positive_integer "$retries" || fail "--retries must be a positive integer"
 positive_integer "$expected_objects" || fail "--expected-objects must be a positive integer"
 positive_integer "$expected_bytes" || fail "--expected-bytes must be a positive integer"
-[[ "$expected_manifest_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "invalid expected manifest SHA-256"
+[[ "$expected_manifest_ahash64" =~ ^[0-9a-f]{16}$ ]] || fail "invalid expected manifest aHash64; the default is unpublished pending umber2-66p0.27"
 command -v "$rclone" >/dev/null 2>&1 || fail "rclone executable not found: $rclone"
 command -v "$curl" >/dev/null 2>&1 || fail "curl executable not found: $curl"
 [[ -x "$publisher" ]] || fail "publisher/verifier executable not found: $publisher"
 [[ "$rclone_remote" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "invalid rclone remote name"
 
 if [[ -n "$successor_base" ]]; then
-  "$publisher" --verify-successor "$successor_base" --base-sha256 "$successor_base_sha256" "$staging" || fail "staged sparse successor verification failed"
+  "$publisher" --verify-successor "$successor_base" --base-ahash64 "$successor_base_ahash64" "$staging" || fail "staged sparse successor verification failed"
 else
   "$publisher" --verify-sharded "$staging" || fail "staged sharded manifest verification failed"
 fi
@@ -203,8 +195,8 @@ else
 fi
 [[ "$local_objects" == "$expected_objects" ]] || fail "staged object count $local_objects does not match expected $expected_objects"
 [[ "$local_bytes" == "$expected_bytes" ]] || fail "staged object bytes $local_bytes does not match expected $expected_bytes"
-actual_manifest_sha256="$(sha256 "$staging/manifest.json")"
-[[ "$actual_manifest_sha256" == "$expected_manifest_sha256" ]] || fail "staged manifest digest $actual_manifest_sha256 does not match expected $expected_manifest_sha256"
+actual_manifest_ahash64="$("$publisher" --file-ahash64 "$staging/manifest.json")"
+[[ "$actual_manifest_ahash64" == "$expected_manifest_ahash64" ]] || fail "staged manifest digest $actual_manifest_ahash64 does not match expected $expected_manifest_ahash64"
 
 common_flags=(
   --transfers "$transfers"
@@ -221,8 +213,8 @@ fi
 remote_objects="${rclone_remote}:${bucket}/${snapshot}/objects"
 remote_manifest="${rclone_remote}:${bucket}/${snapshot}/${manifest_name}"
 
-printf 'Validated staging: objects=%s bytes=%s manifest_sha256=%s\n' \
-  "$local_objects" "$local_bytes" "$actual_manifest_sha256"
+printf 'Validated staging: objects=%s bytes=%s manifest_ahash64=%s\n' \
+  "$local_objects" "$local_bytes" "$actual_manifest_ahash64"
 
 copy_flags=(
   --immutable
@@ -272,8 +264,8 @@ public_manifest="$tmp_root/manifest.json"
   --dump-header "$headers" \
   "$public_prefix/$manifest_name" \
   --output "$public_manifest"
-public_manifest_sha256="$(sha256 "$public_manifest")"
-[[ "$public_manifest_sha256" == "$expected_manifest_sha256" ]] || fail "public manifest digest $public_manifest_sha256 does not match expected $expected_manifest_sha256"
+public_manifest_ahash64="$("$publisher" --file-ahash64 "$public_manifest")"
+[[ "$public_manifest_ahash64" == "$expected_manifest_ahash64" ]] || fail "public manifest digest $public_manifest_ahash64 does not match expected $expected_manifest_ahash64"
 grep -Eiq '^access-control-allow-origin:[[:space:]]*\*' "$headers" || fail "public manifest response does not allow cross-origin browser access"
 
 # Verify deterministic representatives spread across the sorted object set.
@@ -289,9 +281,10 @@ for line in "${representative_lines[@]}"; do
     --dump-header "$headers" \
     "$public_prefix/objects/$name" \
     --output "$public_object"
-  [[ "$(sha256 "$public_object")" == "${name#sha256-}" ]] || fail "public object $name failed digest verification"
+  [[ "$name" == ahash64-v1-* ]] || fail "public object has a non-aHash64 name: $name"
+  [[ "$("$publisher" --file-ahash64 "$public_object")" == "${name#ahash64-v1-}" ]] || fail "public object $name failed digest verification"
   grep -Eiq '^access-control-allow-origin:[[:space:]]*\*' "$headers" || fail "public object $name does not allow cross-origin browser access"
 done
 
 printf 'Published %s: objects=%s bytes=%s manifest=%s digest=%s\n' \
-  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/$manifest_name" "$expected_manifest_sha256"
+  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/$manifest_name" "$expected_manifest_ahash64"

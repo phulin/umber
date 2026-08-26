@@ -5,11 +5,11 @@ use std::{
     process::Command,
 };
 
-use sha2::{Digest, Sha256};
 use test_support::{
     CorpusCase, assert_matches_fixture, closed_case::FixtureCase, corpus_cases, dvi, normalize,
     read_binary_fixture,
 };
+use umber_hash::{AHash64, HashDomain};
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
 
@@ -30,7 +30,7 @@ fn distribution_verifier_is_an_explicit_positive_and_negative_cache_control() {
     let cache = directory.path().join("cache");
     let store = umber_fetch::BlobStore::new(&cache);
     let bytes = b"explicit verifier fixture";
-    let digest = format!("{:x}", Sha256::digest(bytes));
+    let digest = hex_ahash64(bytes);
     let spec = umber_fetch::VerifiedBlobSpec::content_addressed(
         "objects",
         &digest,
@@ -1312,7 +1312,7 @@ fn unfinished_pdf_thread_does_not_replace_the_requested_output() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn unavailable_delayed_pdf_image_does_not_replace_the_requested_output() {
+fn unpublished_default_distribution_does_not_replace_the_requested_output() {
     let temp_dir = tempfile::tempdir().expect("create missing-image output temp dir");
     let source = temp_dir.path().join("missing-image.tex");
     let pdf = temp_dir.path().join("missing-image.pdf");
@@ -1343,8 +1343,8 @@ fn unavailable_delayed_pdf_image_does_not_replace_the_requested_output() {
     assert_eq!(
         String::from_utf8(first.stderr).expect("stderr is utf-8"),
         concat!(
-            "umber: incremental execution failed: pdfTeX error (ext5): ",
-            "cannot read image file missing.png: image is unavailable\n",
+            "umber: the default deterministic aHash64 distribution has not been published; ",
+            "pass --distribution and --distribution-ahash64 for a migrated local or hosted root\n",
         )
     );
     assert_eq!(
@@ -2210,39 +2210,39 @@ fn run_cold_offline_local_mirror_resolves_positive_and_negative_file_requests() 
     )
     .expect("write source");
     let remote = b"\\message{from-distribution}\n";
-    let object_digest = hex_sha256(remote);
-    let object = format!("sha256-{object_digest}");
+    let object_digest = hex_ahash64(remote);
+    let object = format!("ahash64-v1-{object_digest}");
     fs::write(objects.join(&object), remote).expect("write object");
     let first_shard = format!(
-        "{{\"schema\":1,\"distribution\":\"test-snapshot\",\"index\":0,\"files\":{{\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/tex/remote.tex\",\"object\":\"{object}\",\"sha256\":\"{object_digest}\",\"bytes\":{}}}}}}}\n",
+        "{{\"schema\":3,\"distribution\":\"test-snapshot\",\"index\":0,\"files\":{{\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/tex/remote.tex\",\"object\":\"{object}\",\"ahash64\":\"{object_digest}\",\"bytes\":{}}}}}}}\n",
         remote.len()
     );
     let second_shard =
-        "{\"schema\":1,\"distribution\":\"test-snapshot\",\"index\":1,\"files\":{}}\n";
-    let first_shard_digest = hex_sha256(first_shard.as_bytes());
-    let second_shard_digest = hex_sha256(second_shard.as_bytes());
+        "{\"schema\":3,\"distribution\":\"test-snapshot\",\"index\":1,\"files\":{}}\n";
+    let first_shard_digest = hex_ahash64(first_shard.as_bytes());
+    let second_shard_digest = hex_ahash64(second_shard.as_bytes());
     fs::write(
-        objects.join(format!("sha256-{first_shard_digest}")),
+        objects.join(format!("ahash64-v1-{first_shard_digest}")),
         first_shard,
     )
     .expect("write first shard");
     fs::write(
-        objects.join(format!("sha256-{second_shard_digest}")),
+        objects.join(format!("ahash64-v1-{second_shard_digest}")),
         second_shard,
     )
     .expect("write second shard");
     let manifest = format!(
-        "{{\"schema\":2,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":1,\"shardCount\":2,\"shards\":[\"{first_shard_digest}\",\"{second_shard_digest}\"]}}\n"
+        "{{\"schema\":6,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":1,\"shardCount\":2,\"shards\":[\"{first_shard_digest}\",\"{second_shard_digest}\"]}}\n"
     );
-    fs::write(distribution.join("manifest-v2.json"), &manifest).expect("write manifest");
-    let manifest_digest = hex_sha256(manifest.as_bytes());
+    fs::write(distribution.join("manifest-v6.json"), &manifest).expect("write manifest");
+    let manifest_digest = hex_ahash64(manifest.as_bytes());
 
     let first = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .env("XDG_CACHE_HOME", &cache)
         .args(["run", "--show-fixtures", "--offline", "--distribution"])
         .arg(&distribution)
-        .args(["--distribution-sha256", &manifest_digest])
+        .args(["--distribution-ahash64", &manifest_digest])
         .arg(&source)
         .output()
         .expect("run cold local distribution");
@@ -2265,7 +2265,7 @@ fn run_cold_offline_local_mirror_resolves_positive_and_negative_file_requests() 
         .env("XDG_CACHE_HOME", &cache)
         .args(["run", "--show-fixtures", "--offline", "--distribution"])
         .arg(&distribution)
-        .args(["--distribution-sha256", &manifest_digest])
+        .args(["--distribution-ahash64", &manifest_digest])
         .arg(&source)
         .output()
         .expect("run warm offline distribution");
@@ -2289,7 +2289,7 @@ fn run_rejects_a_manifest_that_mismatches_its_pin() {
     fs::write(&source, "\\input absent \\end\n").expect("write source");
     fs::write(
         &manifest,
-        "{\"schema\":1,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/\",\"files\":{}}",
+            "{\"schema\":2,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/\",\"files\":{}}",
     )
     .expect("write manifest");
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -2298,8 +2298,8 @@ fn run_rejects_a_manifest_that_mismatches_its_pin() {
             "run",
             "--distribution",
             manifest.to_str().expect("UTF-8 path"),
-            "--distribution-sha256",
-            "0000000000000000000000000000000000000000000000000000000000000000",
+            "--distribution-ahash64",
+            "0000000000000000",
         ])
         .arg(&source)
         .output()
@@ -2320,26 +2320,29 @@ fn run_offline_local_mirror_miss_names_the_exact_object_digest() {
     fs::create_dir_all(&objects).expect("create distribution");
     fs::write(&source, "\\input remote \\end\n").expect("write source");
     let bytes = b"\\relax\n";
-    let digest = hex_sha256(bytes);
+    let digest = hex_ahash64(bytes);
     let entry = format!(
-        "\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/remote.tex\",\"object\":\"sha256-{digest}\",\"sha256\":\"{digest}\",\"bytes\":{}}}",
+        "\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/remote.tex\",\"object\":\"ahash64-v1-{digest}\",\"ahash64\":\"{digest}\",\"bytes\":{}}}",
         bytes.len()
     );
     let shard =
-        format!("{{\"schema\":1,\"distribution\":\"test\",\"index\":0,\"files\":{{{entry}}}}}\n");
-    let shard_digest = hex_sha256(shard.as_bytes());
-    fs::write(objects.join(format!("sha256-{shard_digest}")), shard).expect("write shard");
+        format!("{{\"schema\":3,\"distribution\":\"test\",\"index\":0,\"files\":{{{entry}}}}}\n");
+    let shard_digest = hex_ahash64(shard.as_bytes());
+    fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard).expect("write shard");
     fs::write(
-        distribution.join("manifest-v2.json"),
+        distribution.join("manifest-v6.json"),
         format!(
-            "{{\"schema\":2,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+            "{{\"schema\":6,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
         ),
     )
     .expect("write manifest");
+    let root = fs::read(distribution.join("manifest-v6.json")).expect("read manifest");
+    let root_digest = hex_ahash64(&root);
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("XDG_CACHE_HOME", temp_dir.path().join("empty-cache"))
         .args(["run", "--offline", "--distribution"])
         .arg(&distribution)
+        .args(["--distribution-ahash64", &root_digest])
         .arg(&source)
         .output()
         .expect("run offline miss");
@@ -2347,15 +2350,14 @@ fn run_offline_local_mirror_miss_names_the_exact_object_digest() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("failed to read ")
-            && stderr.contains(&format!("sha256-{digest}"))
+            && stderr.contains(&format!("ahash64-v1-{digest}"))
             && !stderr.contains("tex:remote.tex"),
         "{stderr}"
     );
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+fn hex_ahash64(bytes: &[u8]) -> String {
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
 
 #[test]

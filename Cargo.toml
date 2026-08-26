@@ -33,6 +33,7 @@ default-members = [
   "crates/tex-state",
   "crates/tex-state/profiling-allocator",
   "crates/tex-typeset",
+  "crates/umber-hash",
   "crates/umber",
   "crates/umber-distribution",
   "crates/umber-fetch",

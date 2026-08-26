@@ -1,8 +1,8 @@
 {
-  "schema": 4,
+  "schema": 7,
   "distribution": "html-font-fixture",
   "objectsBaseUrl": "https://cdn.example.test/objects/",
   "shardBits": 0,
   "shardCount": 1,
-  "shards": ["1111111111111111111111111111111111111111111111111111111111111111"]
+  "shards": ["1111111111111111"]
 }

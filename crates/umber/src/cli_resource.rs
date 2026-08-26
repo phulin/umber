@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
-use sha2::{Digest, Sha256};
 use tex_fonts::AcceptedFontContainers;
 use tex_state::{FORMAT_SCHEMA_VERSION, World};
 use umber_distribution::{
@@ -23,6 +22,7 @@ use umber_fetch::{
     DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
     FetchFailure, FetchRequest, ManifestFetchError, ObjectCache,
 };
+use umber_hash::{AHash64, HashDomain};
 
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileError, CompileTelemetry, EngineMode,
@@ -33,9 +33,7 @@ use crate::{
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
-    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v3.json";
-pub const DEFAULT_DISTRIBUTION_SHA256: &str =
-    "43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b";
+    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v6.json";
 
 const MAX_INDEX_SHARD_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -48,7 +46,7 @@ pub struct NativeRunOptions {
     pub outputs: OutputCapabilitySet,
     pub html_asset_directory: Option<String>,
     pub distribution: Option<String>,
-    pub distribution_sha256: Option<String>,
+    pub distribution_ahash64: Option<String>,
     pub offline: bool,
     pub expansion_fuel: Option<u64>,
 }
@@ -75,6 +73,7 @@ pub enum NativeRunError {
         limit: u64,
     },
     DistributionPinRequired(String),
+    DefaultDistributionUnpublished,
     DistributionUnavailable(Vec<String>),
     DistributionShardUnavailable {
         index: u32,
@@ -110,7 +109,10 @@ impl fmt::Display for NativeRunError {
             }
             Self::DistributionPinRequired(source) => write!(
                 f,
-                "distribution {source} requires --distribution-sha256 (or UMBER_DISTRIBUTION_SHA256)"
+                "distribution {source} requires --distribution-ahash64 (or UMBER_DISTRIBUTION_AHASH64)"
+            ),
+            Self::DefaultDistributionUnpublished => f.write_str(
+                "the default deterministic aHash64 distribution has not been published; pass --distribution and --distribution-ahash64 for a migrated local or hosted root",
             ),
             Self::DistributionUnavailable(keys) => write!(
                 f,
@@ -210,19 +212,19 @@ pub struct ResolverTelemetry {
     pub local_hits: u64,
     pub manifest_lookups: u64,
     pub manifest_cache_hits: u64,
-    /// Authenticated root/shard snapshots reused from the bounded owner.
-    pub authenticated_manifest_hits: u64,
+    /// Verified root/shard snapshots reused from the bounded owner.
+    pub verified_manifest_hits: u64,
     /// Root or shard payloads read from local, persistent-cache, or transport bytes.
     pub manifest_reads: u64,
     /// Strict root or shard parser invocations.
     pub manifest_parses: u64,
-    /// Root or shard payload digest authentications.
-    pub manifest_authentications: u64,
-    /// Complete shards authenticated and parsed for compact selection.
+    /// Root or shard payload digest validations.
+    pub manifest_validations: u64,
+    /// Complete shards verified and parsed for compact selection.
     pub shard_loads: u64,
-    /// Largest authenticated serialized root or shard parsed in one operation.
+    /// Largest verified serialized root or shard parsed in one operation.
     pub manifest_parse_peak_bytes: u64,
-    /// Selected file records currently retained by the authenticated owner.
+    /// Selected file records currently retained by the verified owner.
     pub retained_manifest_records: u64,
     /// Authoritative selected-key misses currently retained by the owner.
     pub retained_manifest_misses: u64,
@@ -230,7 +232,7 @@ pub struct ResolverTelemetry {
     pub retained_manifest_requested_bytes: u64,
     pub object_requests: u64,
     pub object_cache_hits: u64,
-    /// Content-addressed object payload authentications, excluding response IDs.
+    /// Content-addressed object payload validations, excluding response IDs.
     pub object_hashes: u64,
 }
 
@@ -322,13 +324,13 @@ fn pdf_font_closure_receipt_bytes(
             crate::PdfFontClosureResourceOutcome::Resolved {
                 virtual_path,
                 bytes,
-                sha256,
+                ahash64,
             } => {
                 validate_receipt_field(virtual_path)?;
                 output.extend_from_slice(
                     format!(
                         "resolved\t{semantic_kind}\t{request_name}\t{manifest_key}\t{virtual_path}\t{bytes}\t{}\n",
-                        encode_hex(sha256)
+                        encode_hex(ahash64)
                     )
                     .as_bytes(),
                 );
@@ -408,7 +410,7 @@ pub struct NativeCompileSession<'owner> {
 }
 
 impl<'owner> NativeCompileSession<'owner> {
-    /// Starts a fresh engine session while reusing the owner's authenticated
+    /// Starts a fresh engine session while reusing the owner's verified
     /// immutable distribution root and compact selected-shard evidence.
     pub fn new_with_owners(
         options: &NativeRunOptions,
@@ -848,7 +850,8 @@ impl LocalResolver {
         self.resolved_inputs
             .borrow_mut()
             .push((content.path().to_owned(), bytes.len()));
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let digest =
+            umber_hash::AHash64::for_bytes(umber_hash::HashDomain::PkProgram, &bytes).to_le_bytes();
         let virtual_path = self.virtual_path(
             FileKind::GenericAsset,
             content.path(),
@@ -858,7 +861,7 @@ impl LocalResolver {
             request: request.clone(),
             virtual_path: virtual_path.to_string_lossy().into_owned(),
             bytes,
-            expected_sha256: Some(digest),
+            expected_ahash64: Some(digest),
         })
     }
 
@@ -957,7 +960,7 @@ fn read_classic_bib_resource(
 struct LoadedDistribution {
     root: Arc<ShardedManifestRoot>,
     local_root: Option<PathBuf>,
-    selected: Vec<AuthenticatedSelectionEvidence>,
+    selected: Vec<VerifiedSelectionEvidence>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -967,7 +970,7 @@ struct SelectedDistributionRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct AuthenticatedSelectionEvidence {
+struct VerifiedSelectionEvidence {
     key: String,
     record: Option<SelectedDistributionRecord>,
 }
@@ -988,7 +991,7 @@ impl LoadedDistribution {
             Ok(index) => debug_assert_eq!(self.selected[index].record, record),
             Err(index) => self
                 .selected
-                .insert(index, AuthenticatedSelectionEvidence { key, record }),
+                .insert(index, VerifiedSelectionEvidence { key, record }),
         }
     }
 
@@ -1006,7 +1009,7 @@ impl LoadedDistribution {
         let vector_bytes = self
             .selected
             .capacity()
-            .saturating_mul(std::mem::size_of::<AuthenticatedSelectionEvidence>());
+            .saturating_mul(std::mem::size_of::<VerifiedSelectionEvidence>());
         let string_bytes = self
             .selected
             .iter()
@@ -1015,7 +1018,7 @@ impl LoadedDistribution {
                     + evidence.record.as_ref().map_or(0, |record| {
                         record.virtual_path.capacity()
                             + record.object.object.capacity()
-                            + record.object.sha256.capacity()
+                            + record.object.ahash64.capacity()
                     })
             })
             .sum::<usize>();
@@ -1025,7 +1028,7 @@ impl LoadedDistribution {
 }
 
 #[derive(Default)]
-struct AuthenticatedDistributionState {
+struct VerifiedDistributionState {
     loaded: Option<LoadedDistribution>,
 }
 
@@ -1040,7 +1043,7 @@ impl DistributionOwnerIdentity {
     fn from_options(options: &NativeRunOptions) -> Self {
         Self {
             source: options.distribution.clone(),
-            expected: options.distribution_sha256.clone(),
+            expected: options.distribution_ahash64.clone(),
             offline: options.offline,
         }
     }
@@ -1048,16 +1051,16 @@ impl DistributionOwnerIdentity {
 
 /// Explicitly bounded owner for one immutable distribution identity.
 ///
-/// Cloned compile sessions share the authenticated root plus compact selected
+/// Cloned compile sessions share the verified root plus compact selected
 /// shard records and authoritative misses. Complete shard maps exist only while
-/// an unseen key is authenticated and selected. Object bytes still pass through
+/// an unseen key is verified and selected. Object bytes still pass through
 /// the content-addressed store on every session, so its ordinary corruption
 /// detection and offline/source-selection behavior remain in force. Dropping this
 /// owner drops the reusable manifest state.
 pub struct NativeDistributionOwner {
     cache: ObjectCache,
     identity: DistributionOwnerIdentity,
-    authenticated: Arc<Mutex<AuthenticatedDistributionState>>,
+    verified: Arc<Mutex<VerifiedDistributionState>>,
 }
 
 impl NativeDistributionOwner {
@@ -1072,7 +1075,7 @@ impl NativeDistributionOwner {
         Self {
             cache,
             identity: DistributionOwnerIdentity::from_options(options),
-            authenticated: Arc::new(Mutex::new(AuthenticatedDistributionState::default())),
+            verified: Arc::new(Mutex::new(VerifiedDistributionState::default())),
         }
     }
 
@@ -1083,12 +1086,12 @@ impl NativeDistributionOwner {
                 "distribution owner identity does not match the compile options".to_owned(),
             ));
         }
-        Ok(DistributionResolver::with_authenticated_state(
+        Ok(DistributionResolver::with_verified_state(
             self.cache.clone(),
             identity.source,
             identity.expected,
             identity.offline,
-            Arc::clone(&self.authenticated),
+            Arc::clone(&self.verified),
         ))
     }
 }
@@ -1106,7 +1109,7 @@ struct DistributionResolver {
     source: Option<String>,
     expected: Option<String>,
     offline: bool,
-    authenticated: Arc<Mutex<AuthenticatedDistributionState>>,
+    verified: Arc<Mutex<VerifiedDistributionState>>,
 }
 
 impl DistributionResolver {
@@ -1117,28 +1120,28 @@ impl DistributionResolver {
         expected: Option<String>,
         offline: bool,
     ) -> Self {
-        Self::with_authenticated_state(
+        Self::with_verified_state(
             cache,
             source,
             expected,
             offline,
-            Arc::new(Mutex::new(AuthenticatedDistributionState::default())),
+            Arc::new(Mutex::new(VerifiedDistributionState::default())),
         )
     }
 
-    fn with_authenticated_state(
+    fn with_verified_state(
         cache: ObjectCache,
         source: Option<String>,
         expected: Option<String>,
         offline: bool,
-        authenticated: Arc<Mutex<AuthenticatedDistributionState>>,
+        verified: Arc<Mutex<VerifiedDistributionState>>,
     ) -> Self {
         Self {
             client: DistributionClient::new(cache, FetchClientConfig::default()),
             source,
             expected,
             offline,
-            authenticated,
+            verified,
         }
     }
 
@@ -1208,7 +1211,13 @@ impl DistributionResolver {
                             Ok(file) => responses.push(ResourceResponse::PkFont(ResolvedPkFont {
                                 request: request.clone(),
                                 virtual_path: file.virtual_path,
-                                expected_sha256: Some(Sha256::digest(&file.bytes).into()),
+                                expected_ahash64: Some(
+                                    umber_hash::AHash64::for_bytes(
+                                        umber_hash::HashDomain::PkProgram,
+                                        &file.bytes,
+                                    )
+                                    .to_le_bytes(),
+                                ),
                                 bytes: file.bytes,
                             })),
                             Err(NativeRunError::DistributionUnavailable(_)) => {
@@ -1500,7 +1509,7 @@ impl DistributionResolver {
             for key in keys {
                 match selected
                     .get(&key)
-                    .expect("authenticated selection covers every requested key")
+                    .expect("verified selection covers every requested key")
                 {
                     Some(entry) => {
                         required.insert(key, entry.clone());
@@ -1592,7 +1601,7 @@ impl DistributionResolver {
         if let Some(bytes) = self
             .client
             .store()
-            .load_object(&entry.sha256, entry.bytes)
+            .load_object(&entry.ahash64, entry.bytes)
             .map_err(|error| NativeRunError::Cache(error.to_string()))?
         {
             telemetry.object_cache_hits = telemetry.object_cache_hits.saturating_add(1);
@@ -1601,7 +1610,7 @@ impl DistributionResolver {
         }
         let object = umber_distribution::ObjectEntry {
             object: entry.object,
-            sha256: entry.sha256,
+            ahash64: entry.ahash64,
             bytes: entry.bytes,
         };
         if let Some(root) = &loaded.local_root {
@@ -1609,7 +1618,7 @@ impl DistributionResolver {
             check_cancelled(cancellation)?;
             self.client
                 .store()
-                .store_object(&object.sha256, object.bytes, &bytes)
+                .store_object(&object.ahash64, object.bytes, &bytes)
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
             telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
             eprintln!("umber: acquired 1 distribution resource(s)");
@@ -1654,9 +1663,9 @@ impl DistributionResolver {
             return Ok(Vec::new());
         }
         let local_root = self
-            .authenticated
+            .verified
             .lock()
-            .map_err(|_| NativeRunError::Cache("authenticated distribution owner poisoned".into()))?
+            .map_err(|_| NativeRunError::Cache("verified distribution owner poisoned".into()))?
             .loaded
             .as_ref()
             .and_then(|loaded| loaded.local_root.clone());
@@ -1667,7 +1676,7 @@ impl DistributionResolver {
             match self
                 .client
                 .store()
-                .load_object(&request.object.sha256, request.object.bytes)
+                .load_object(&request.object.ahash64, request.object.bytes)
             {
                 Ok(Some(bytes)) => {
                     telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
@@ -1687,7 +1696,7 @@ impl DistributionResolver {
                 check_cancelled(cancellation)?;
                 self.client
                     .store()
-                    .store_object(&request.object.sha256, request.object.bytes, &bytes)
+                    .store_object(&request.object.ahash64, request.object.bytes, &bytes)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?;
                 telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
                 found.push((request.request_key, bytes, false));
@@ -1724,17 +1733,16 @@ impl DistributionResolver {
     ) -> Result<BTreeMap<String, Option<SelectedDistributionRecord>>, NativeRunError> {
         check_cancelled(cancellation)?;
         let loaded = self.load(cancellation, telemetry)?;
-        let authenticated = Arc::clone(&self.authenticated);
-        let mut state = authenticated.lock().map_err(|_| {
-            NativeRunError::Cache("authenticated distribution owner poisoned".into())
-        })?;
+        let verified = Arc::clone(&self.verified);
+        let mut state = verified
+            .lock()
+            .map_err(|_| NativeRunError::Cache("verified distribution owner poisoned".into()))?;
         let shared = state.loaded.as_mut().expect("root loaded before shard");
         if request_keys
             .iter()
             .all(|key| shared.selected_record(key).is_some())
         {
-            telemetry.authenticated_manifest_hits =
-                telemetry.authenticated_manifest_hits.saturating_add(1);
+            telemetry.verified_manifest_hits = telemetry.verified_manifest_hits.saturating_add(1);
             shared.record_retention(telemetry);
             return Ok(selected_records(shared, request_keys));
         }
@@ -1754,7 +1762,7 @@ impl DistributionResolver {
             bytes
         } else {
             let bytes = if let Some(local_root) = &local_root {
-                let path = local_object_path(local_root, &format!("sha256-{digest}"));
+                let path = local_object_path(local_root, &format!("ahash64-v1-{digest}"));
                 let bytes =
                     match read_bounded(&path, MAX_INDEX_SHARD_BYTES, "distribution index shard") {
                         Ok(bytes) => bytes,
@@ -1775,7 +1783,7 @@ impl DistributionResolver {
             } else if self.offline {
                 return Err(shard_unavailable_error(index, &digest, request_keys, None));
             } else {
-                let url = format!("{}sha256-{digest}", loaded.root.objects_base_url);
+                let url = format!("{}ahash64-v1-{digest}", loaded.root.objects_base_url);
                 self.client
                     .acquire_manifest(&url, &digest, cancellation)
                     .map_err(map_distribution_client_error)?
@@ -1789,7 +1797,7 @@ impl DistributionResolver {
             bytes
         };
         telemetry.manifest_reads = telemetry.manifest_reads.saturating_add(1);
-        telemetry.manifest_authentications = telemetry.manifest_authentications.saturating_add(1);
+        telemetry.manifest_validations = telemetry.manifest_validations.saturating_add(1);
         telemetry.manifest_parse_peak_bytes =
             telemetry.manifest_parse_peak_bytes.max(bytes.len() as u64);
         check_cancelled(cancellation)?;
@@ -1835,7 +1843,7 @@ impl DistributionResolver {
             let record = SelectedDistributionRecord {
                 virtual_path: job
                     .virtual_path
-                    .expect("selected file has an authenticated virtual path"),
+                    .expect("selected file has an verified virtual path"),
                 object: job.object,
             };
             shared.retain_selection(key, Some(record));
@@ -1856,16 +1864,18 @@ impl DistributionResolver {
         telemetry: &mut ResolverTelemetry,
     ) -> Result<LoadedDistribution, NativeRunError> {
         check_cancelled(cancellation)?;
-        let authenticated = Arc::clone(&self.authenticated);
-        let mut state = authenticated.lock().map_err(|_| {
-            NativeRunError::Cache("authenticated distribution owner poisoned".into())
-        })?;
+        let verified = Arc::clone(&self.verified);
+        let mut state = verified
+            .lock()
+            .map_err(|_| NativeRunError::Cache("verified distribution owner poisoned".into()))?;
         if let Some(loaded) = &state.loaded {
-            telemetry.authenticated_manifest_hits =
-                telemetry.authenticated_manifest_hits.saturating_add(1);
+            telemetry.verified_manifest_hits = telemetry.verified_manifest_hits.saturating_add(1);
             return Ok(loaded.clone());
         }
         {
+            if self.source.is_none() && self.expected.is_none() {
+                return Err(NativeRunError::DefaultDistributionUnpublished);
+            }
             let source = self
                 .source
                 .clone()
@@ -1873,12 +1883,12 @@ impl DistributionResolver {
             let explicit = self.source.is_some();
             let path = PathBuf::from(&source);
             let local_path = if path.is_dir() {
-                let schema_three = path.join("manifest-v3.json");
-                let schema_two = path.join("manifest-v2.json");
-                if schema_three.exists() {
-                    schema_three
-                } else if schema_two.exists() {
-                    schema_two
+                let schema_six = path.join("manifest-v6.json");
+                let schema_five = path.join("manifest-v5.json");
+                if schema_six.exists() {
+                    schema_six
+                } else if schema_five.exists() {
+                    schema_five
                 } else {
                     path.join("manifest.json")
                 }
@@ -1886,10 +1896,7 @@ impl DistributionResolver {
                 path.clone()
             };
             let is_local = local_path.exists() || (!source.contains("://") && explicit);
-            let expected = self
-                .expected
-                .clone()
-                .or_else(|| (!explicit).then(|| DEFAULT_DISTRIBUTION_SHA256.to_owned()));
+            let expected = self.expected.clone();
             let (manifest_bytes, local_root) = if is_local {
                 let bytes = read_bounded(
                     &local_path,
@@ -1898,8 +1905,8 @@ impl DistributionResolver {
                 )?;
                 if let Some(expected) = &expected {
                     verify_manifest_digest(&bytes, expected)?;
-                    telemetry.manifest_authentications =
-                        telemetry.manifest_authentications.saturating_add(1);
+                    telemetry.manifest_validations =
+                        telemetry.manifest_validations.saturating_add(1);
                 }
                 (bytes, local_path.parent().map(Path::to_owned))
             } else {
@@ -1923,8 +1930,7 @@ impl DistributionResolver {
                         .map_err(map_distribution_client_error)?
                         .bytes
                 };
-                telemetry.manifest_authentications =
-                    telemetry.manifest_authentications.saturating_add(1);
+                telemetry.manifest_validations = telemetry.manifest_validations.saturating_add(1);
                 (bytes, None)
             };
             telemetry.manifest_reads = telemetry.manifest_reads.saturating_add(1);
@@ -1957,7 +1963,7 @@ fn selected_records(
                 key.clone(),
                 loaded
                     .selected_record(key)
-                    .expect("authenticated evidence covers requested key")
+                    .expect("verified evidence covers requested key")
                     .clone(),
             )
         })
@@ -1967,10 +1973,10 @@ fn selected_records(
 fn emit_failed_distribution_telemetry(telemetry: ResolverTelemetry) {
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
-            "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_parses={} manifest_authentications={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_records={} retained_manifest_misses={} retained_manifest_requested_bytes={}",
+            "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_parses={} manifest_validations={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_records={} retained_manifest_misses={} retained_manifest_requested_bytes={}",
             telemetry.manifest_reads,
             telemetry.manifest_parses,
-            telemetry.manifest_authentications,
+            telemetry.manifest_validations,
             telemetry.shard_loads,
             telemetry.manifest_parse_peak_bytes,
             telemetry.retained_manifest_records,
@@ -2145,8 +2151,7 @@ fn verify_manifest_digest(bytes: &[u8], expected: &str) -> Result<(), NativeRunE
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
 
 #[allow(

@@ -11,6 +11,13 @@ shared manifest crate, typed unavailable responses, native cache/fetch layer,
 CLI integration, sharded R2 publication, native and browser production pins,
 and the cross-frontend cold/warm/offline parity gate are implemented.
 
+Distribution integrity now means deterministic `ahash64-v1` corruption
+detection, not cryptographic validation. The native blob envelope is
+schema 2 under `blobs-v2`; object names and cache keys contain 16 lowercase
+hex digits. The hosted default is intentionally unavailable until
+`umber2-66p0.27` republishes the complete snapshot and installs new pins. An
+old SHA root is rejected rather than used as a compatibility fallback.
+
 ## Problem
 
 A user compiling a real document should not have to install TeX Live or
@@ -50,9 +57,9 @@ time.
 Instead, both frontends fetch from a **published snapshot**: a pinned,
 reproducible, content-addressed object store plus manifest derived from a
 distribution tree. This is exactly the model `tools/texlive-wasm-publish`
-implements: objects named by SHA-256 and a
+implements: objects named by aHash64 and a
 [sharded manifest](distribution_manifest.md) whose pinned root transitively
-authenticates sorted `kind:name` index shards, object metadata, and complete
+verifys sorted `kind:name` index shards, object metadata, and complete
 inline dependency hints.
 
 The initial distribution is the **most recent TeX Live snapshot,
@@ -93,7 +100,7 @@ The crate performs no I/O, has no dependencies, and compiles for
 serialization; the CLI fetcher consumes the same API. Authored JavaScript
 retains transport and resource-response adaptation but does not parse or
 select catalogue records. It passes exact root/shard text through the WASM
-boundary, where `umber-distribution` authenticates one batch and returns its
+boundary, where `umber-distribution` verifys one batch and returns its
 ordered jobs and typed misses. Shared fixtures and resolver tests preserve the
 same root/shard bytes, request order, hints, and misses.
 
@@ -199,7 +206,7 @@ sent straight to the object fetch batch without consulting the dependency's
 own shard. A batch is still published to the VFS only after every required
 object succeeds; failed speculative objects are omitted.
 
-The native authenticated owner does not keep those complete parsed shards.
+The native verified owner does not keep those complete parsed shards.
 After a full shard has passed digest, strict-schema, identity, and complete file
 partition validation, it keeps only selected file verification records and
 authoritative selected-key misses. Unselected maps and inline hints drop with
@@ -248,10 +255,10 @@ without allowing one large package to exceed client resource limits.
 Production inventory floors reject seed-sized output.
 
 Format construction during publication is independently bound to an existing
-authenticated local distribution. The snapshot command defaults that authority
+verified local distribution. The snapshot command defaults that authority
 to `target/texlive-snapshot` and the root digest committed in
 `tests/latex-source.lock`; `--format-distribution` and
-`--format-distribution-sha256` select another explicit prior mirror. Every
+`--format-distribution-ahash64` select another explicit prior mirror. Every
 builder engine runs offline against that path, so publication cannot bootstrap
 from a hosted default or an unlabelled warm cache.
 
@@ -268,14 +275,14 @@ path.
 The production command is `scripts/publish-texlive-r2.sh`. Its checked-in
 defaults pin the verified 8-bit-sharded `texlive-20260301` staging bundle,
 bucket `umber-assets`, public origin `https://assets.umber.ink`, 152,560
-objects, 3,520,195,192 object bytes, and `manifest-v3.json` SHA-256
+objects, 3,520,195,192 object bytes, and `manifest-v3.json` aHash64
 `43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.
 By default, the ignored repository `.env` must contain `R2_S3_ACCOUNT_ID`,
 `R2_S3_ACCESS_KEY_ID`, and `R2_S3_SECRET_ACCESS_KEY`; the latter two are the R2
 S3 access-key pair, not a Wrangler API token. The script parses only those
 exact dotenv keys, passes them through rclone's process environment, and
 neither prints them nor creates a persistent rclone config. An operator with an
-existing authenticated rclone profile may instead pass `--rclone-remote NAME`;
+existing verified rclone profile may instead pass `--rclone-remote NAME`;
 that path does not read `.env` and leaves credential storage to rclone. Both
 paths disable rclone's bucket-creation preflight: the release credential needs
 object read/write access, not account-level bucket creation authority.
@@ -309,7 +316,7 @@ mutating objects.
   manifest URL or a local manifest path (air-gapped mirrors work by pointing
   at a directory).
 - `--offline` (and `UMBER_OFFLINE=1`) disables network acquisition. Resolution
-  still uses project files, the verified persistent cache, and the authenticated
+  still uses project files, the verified persistent cache, and the verified
   `objects/` store beside an explicitly selected local manifest. A remote pin
   without warm cache entries produces a distribution-unavailable diagnostic
   naming the exact request keys; a local mirror with a referenced object missing

@@ -42,14 +42,12 @@
 			"types": "./source-map.d.ts",
 			"import": "./source-map.js"
 		},
-		"./plain.fmt": "./assets/plain.fmt",
 		"./plain-format.json": "./assets/plain-format.json"
 	},
 	"files": [
 		"*.js",
 		"*.d.ts",
 		"*.wasm",
-		"assets/plain.fmt",
 		"assets/plain-format.json",
 		"assets/plain-source.lock",
 		"examples/",

@@ -68,7 +68,7 @@ fn parses_preamble_local_font_and_typed_short_packet() {
     assert_eq!(program.comment(), b"ok");
     assert_eq!(program.checksum(), 0x1234_5678);
     assert_eq!(program.design_size(), 10 * FIX_ONE);
-    assert_ne!(program.identity().bytes(), [0; 32]);
+    assert_ne!(program.identity().bytes(), [0; 8]);
     assert_eq!(program.local_fonts()[0].logical_name(), b"cmr10");
 
     let packet = program.packet(65).expect("packet exists");

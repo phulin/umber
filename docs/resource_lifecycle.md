@@ -7,6 +7,15 @@ boundary. Existing distribution, native, and WebAssembly identities are
 compatibility inputs. This contract does not create a second resolver or
 scheduler.
 
+Repository-owned distribution and font/resource identities are deterministic
+64-bit aHash v1 values with explicit domains and fixed seeds. They provide
+stable selection and accidental-corruption detection across native and WASM,
+not adversarial authenticity. Persisted format schema 12, page-artifact schema
+24, font response schema 3, distribution roots 6/7, shards 3/4, and cache
+envelope schema 2 reject their SHA-era predecessors. External source locks,
+oracle fixtures, corpus evidence, and parity output digests remain SHA-256
+because those external/evidentiary contracts are outside resource admission.
+
 This document defines the typed lifecycle connecting engine resource needs,
 VFS admission, verified acquisition, incremental candidates, bibliography
 closure, native hosts, and browser hosts. It complements the implemented
@@ -74,7 +83,7 @@ The existing semantic identities are frozen compatibility inputs:
 | File                | `ResourceDomain`, `FileKind`, normalized relative name                                                        | `umber-vfs`                   |
 | OpenType font       | logical name, face, variation instance and coordinates, feature policy, purposes, direction, script, language | `tex-fonts`                   |
 | PK font             | exact TeX name bytes, resolved DPI, frozen mode                                                               | `tex-fonts`                   |
-| Legacy font mapping | schema, TFM SHA-256, layout-policy version, purpose, optional encoding catalogue                              | `umber-distribution`          |
+| Legacy font mapping | schema, TFM aHash64, layout-policy version, purpose, optional encoding catalogue                              | `umber-distribution`          |
 
 The target owner of the closed key union, intent, batching, generic admission
 state, and binding metadata is `umber-vfs`. Domain crates still construct and
@@ -183,7 +192,7 @@ pub enum ResolutionOutcome {
 A `Miss` is scoped to one provider. Ordered composition may try the next
 source. Only the scheduling policy owner, after all applicable providers miss,
 may create `AuthoritativeUnavailable`. Corruption, invalid catalogues,
-authentication, limits, I/O failure, and cancellation are not misses.
+validation, limits, I/O failure, and cancellation are not misses.
 
 `AcquiredCandidate` is private to the scheduler and may contain source details.
 `VerifiedCandidate` is host-neutral and contains no handle. Domain validation
@@ -204,18 +213,18 @@ pub enum LengthExpectation {
 pub struct VerificationReceipt {
     pub actual_bytes: u64,
     pub content_id: ContentId,
-    pub sha256: Option<[u8; 32]>,
+    pub ahash64: Option<[u8; 8]>,
     pub source: SelectionProvenance,
 }
 ```
 
-Catalogue objects require exact length and SHA-256. Local objects without a
+Catalogue objects require exact length and aHash64. Local objects without a
 declared digest remain bounded by `AtMost`; admission still computes their
 domain-separated content identity. Declared VFS content, font object/program,
 or PK identities are additional checks. An omitted declaration never skips
 hard limits or domain validation.
 
-Provenance contains a bounded typed source class and authenticated catalogue
+Provenance contains a bounded typed source class and verified catalogue
 identity when applicable, but no credential, URL, native path, JavaScript
 object, cache timestamp, or retry history. Cache hit versus download is
 telemetry and cannot change admission or accepted output.
@@ -227,7 +236,7 @@ structure; an adapter never bypasses it.
 
 The native implementation has exactly two internal transition authorities.
 One policy-parameterized downloader enforces HTTPS or loopback transport,
-exact or bounded length, SHA-256, retries, and cooperative cancellation for
+exact or bounded length, aHash64, retries, and cooperative cancellation for
 both objects and manifests. One per-key locked store-entry state machine owns
 current-entry verification, semantic quarantine, compatibility migration,
 construction, durable no-clobber publication, and winner revalidation for
@@ -265,17 +274,17 @@ files nor accepted input observations.
 
 ## Phase ownership
 
-| Phase                                                      | Sole authority                                        |
-| ---------------------------------------------------------- | ----------------------------------------------------- |
-| Semantic key union, intent, and admission                  | `umber-vfs`                                           |
-| Domain key construction and validation                     | requesting engine, `tex-fonts`, or bibliography crate |
-| Catalogue encoding, parsing, selection, authenticated miss | `umber-distribution`                                  |
-| Native acquisition, verification, persistent store         | `umber-fetch::DistributionClient`                     |
-| Suspension and retained resource capability                | `tex-exec`                                            |
-| Candidate lifetime and revision acceptance                 | `tex-incr`                                            |
-| Native provider order and scheduling                       | `umber`                                               |
-| Browser async provider order and scheduling                | authored JavaScript in `umber-wasm`                   |
-| Bibliography closure and detached result                   | `bib-engine`                                          |
+| Phase                                                 | Sole authority                                        |
+| ----------------------------------------------------- | ----------------------------------------------------- |
+| Semantic key union, intent, and admission             | `umber-vfs`                                           |
+| Domain key construction and validation                | requesting engine, `tex-fonts`, or bibliography crate |
+| Catalogue encoding, parsing, selection, verified miss | `umber-distribution`                                  |
+| Native acquisition, verification, persistent store    | `umber-fetch::DistributionClient`                     |
+| Suspension and retained resource capability           | `tex-exec`                                            |
+| Candidate lifetime and revision acceptance            | `tex-incr`                                            |
+| Native provider order and scheduling                  | `umber`                                               |
+| Browser async provider order and scheduling           | authored JavaScript in `umber-wasm`                   |
+| Bibliography closure and detached result              | `bib-engine`                                          |
 
 No owner reconstructs another owner's index. Native and browser adapters
 consume the same requests and return the same admission DTOs, but remain

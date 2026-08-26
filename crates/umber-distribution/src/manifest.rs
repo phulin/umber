@@ -9,10 +9,10 @@ use crate::html::{
 };
 use crate::json::{self, Value};
 
-pub const MANIFEST_SCHEMA: u32 = 1;
-pub const LEGACY_SHARDED_ROOT_SCHEMA: u32 = 2;
-pub const SHARDED_ROOT_SCHEMA: u32 = 3;
-pub const INDEX_SHARD_SCHEMA: u32 = 1;
+pub const MANIFEST_SCHEMA: u32 = 2;
+pub const LEGACY_SHARDED_ROOT_SCHEMA: u32 = 5;
+pub const SHARDED_ROOT_SCHEMA: u32 = 6;
+pub const INDEX_SHARD_SCHEMA: u32 = 3;
 pub const MAX_SHARD_BITS: u8 = 16;
 pub const FORMAT_INPUT_CLOSURE_SCHEMA: u32 = 1;
 pub const MAX_FORMAT_INPUTS: usize = 256;
@@ -44,7 +44,7 @@ pub struct ManifestShard {
 pub struct ShardFile {
     pub virtual_path: String,
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     pub bytes: u64,
     pub dependencies: Vec<DependencyHint>,
 }
@@ -54,7 +54,7 @@ pub struct DependencyHint {
     pub key: String,
     pub virtual_path: String,
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     pub bytes: u64,
 }
 
@@ -71,7 +71,7 @@ pub struct Manifest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObjectEntry {
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     pub bytes: u64,
 }
 
@@ -79,7 +79,7 @@ pub struct ObjectEntry {
 pub struct ManifestFile {
     pub virtual_path: String,
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     pub bytes: u64,
     pub dependencies: Vec<String>,
 }
@@ -87,7 +87,7 @@ pub struct ManifestFile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ManifestFont {
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     pub bytes: u64,
     pub container: String,
     pub provenance: Option<String>,
@@ -96,13 +96,13 @@ pub struct ManifestFont {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ManifestFormat {
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     pub bytes: u64,
     pub engine: String,
     pub engine_version: String,
     pub format_schema: u32,
     pub source_distribution: String,
-    pub source_manifest_sha256: String,
+    pub source_manifest_ahash64: String,
     pub source_date_epoch: u64,
     pub input_closure: Option<FormatInputClosure>,
 }
@@ -131,7 +131,7 @@ impl ManifestFile {
     pub fn object_entry(&self) -> ObjectEntry {
         ObjectEntry {
             object: self.object.clone(),
-            sha256: self.sha256.clone(),
+            ahash64: self.ahash64.clone(),
             bytes: self.bytes,
         }
     }
@@ -142,7 +142,7 @@ impl ShardFile {
     pub fn object_entry(&self) -> ObjectEntry {
         ObjectEntry {
             object: self.object.clone(),
-            sha256: self.sha256.clone(),
+            ahash64: self.ahash64.clone(),
             bytes: self.bytes,
         }
     }
@@ -153,7 +153,7 @@ impl DependencyHint {
     pub fn object_entry(&self) -> ObjectEntry {
         ObjectEntry {
             object: self.object.clone(),
-            sha256: self.sha256.clone(),
+            ahash64: self.ahash64.clone(),
             bytes: self.bytes,
         }
     }
@@ -164,7 +164,7 @@ impl ManifestFormat {
     pub fn object_entry(&self) -> ObjectEntry {
         ObjectEntry {
             object: self.object.clone(),
-            sha256: self.sha256.clone(),
+            ahash64: self.ahash64.clone(),
             bytes: self.bytes,
         }
     }
@@ -179,9 +179,9 @@ impl NamedFormat {
             take(&mut envelope, "schema", "format metadata")?,
             "format metadata schema",
         )?;
-        if !matches!(metadata_schema, 1 | 2) {
+        if !matches!(metadata_schema, 3 | 4) {
             return Err(ManifestParseError::new(format!(
-                "unsupported format metadata schema {metadata_schema}; expected 1 or 2"
+                "unsupported format metadata schema {metadata_schema}; expected 3 or 4"
             )));
         }
         let name = string(take(&mut envelope, "name", "format metadata")?, "name")?;
@@ -209,14 +209,14 @@ impl NamedFormat {
         formats.insert(name.clone(), Value::Object(envelope));
         let mut parsed = parse_formats(Value::Object(formats))?;
         let format = parsed.remove(&name).expect("inserted named format exists");
-        if metadata_schema == 1 && format.input_closure.is_some() {
+        if metadata_schema == 3 && format.input_closure.is_some() {
             return Err(ManifestParseError::new(
-                "format metadata schema 1 cannot contain an input closure",
+                "format metadata schema 3 cannot contain an input closure",
             ));
         }
-        if metadata_schema == 2 && format.input_closure.is_none() {
+        if metadata_schema == 4 && format.input_closure.is_none() {
             return Err(ManifestParseError::new(
-                "format metadata schema 2 requires an input closure",
+                "format metadata schema 4 requires an input closure",
             ));
         }
         Ok(Self {
@@ -405,8 +405,8 @@ fn write_compact_format(out: &mut String, entry: &ManifestFormat) {
     json_string(out, "object");
     out.push(':');
     json_string(out, &entry.object);
-    out.push_str(",\"sha256\":");
-    json_string(out, &entry.sha256);
+    out.push_str(",\"ahash64\":");
+    json_string(out, &entry.ahash64);
     out.push_str(",\"bytes\":");
     out.push_str(&entry.bytes.to_string());
     out.push_str(",\"engine\":");
@@ -417,8 +417,8 @@ fn write_compact_format(out: &mut String, entry: &ManifestFormat) {
     out.push_str(&entry.format_schema.to_string());
     out.push_str(",\"sourceDistribution\":");
     json_string(out, &entry.source_distribution);
-    out.push_str(",\"sourceManifestSha256\":");
-    json_string(out, &entry.source_manifest_sha256);
+    out.push_str(",\"sourceManifestAhash64\":");
+    json_string(out, &entry.source_manifest_ahash64);
     out.push_str(",\"sourceDateEpoch\":");
     out.push_str(&entry.source_date_epoch.to_string());
     if let Some(closure) = &entry.input_closure {
@@ -523,9 +523,9 @@ impl ManifestShard {
             out.push(':');
             json_string(&mut out, &entry.object);
             out.push(',');
-            json_string(&mut out, "sha256");
+            json_string(&mut out, "ahash64");
             out.push(':');
-            json_string(&mut out, &entry.sha256);
+            json_string(&mut out, &entry.ahash64);
             out.push(',');
             json_string(&mut out, "bytes");
             out.push(':');
@@ -551,9 +551,9 @@ impl ManifestShard {
                     out.push(':');
                     json_string(&mut out, &dependency.object);
                     out.push(',');
-                    json_string(&mut out, "sha256");
+                    json_string(&mut out, "ahash64");
                     out.push(':');
-                    json_string(&mut out, &dependency.sha256);
+                    json_string(&mut out, &dependency.ahash64);
                     out.push(',');
                     json_string(&mut out, "bytes");
                     out.push(':');
@@ -579,21 +579,21 @@ fn validate_shard_object_conflicts(
 ) -> Result<(), ManifestParseError> {
     let mut lengths = BTreeMap::new();
     for entry in files.values() {
-        check_digest_length(&mut lengths, &entry.sha256, entry.bytes)?;
+        check_digest_length(&mut lengths, &entry.ahash64, entry.bytes)?;
     }
     for entry in fonts.values() {
-        check_digest_length(&mut lengths, &entry.object.sha256, entry.object.bytes)?;
+        check_digest_length(&mut lengths, &entry.object.ahash64, entry.object.bytes)?;
         check_digest_length(
             &mut lengths,
-            &entry.license.object.sha256,
+            &entry.license.object.ahash64,
             entry.license.object.bytes,
         )?;
     }
     for entry in mappings.values() {
-        check_digest_length(&mut lengths, &entry.object.sha256, entry.object.bytes)?;
+        check_digest_length(&mut lengths, &entry.object.ahash64, entry.object.bytes)?;
         check_digest_length(
             &mut lengths,
-            &entry.license.object.sha256,
+            &entry.license.object.ahash64,
             entry.license.object.bytes,
         )?;
     }
@@ -619,7 +619,7 @@ fn parse_shard_files(value: Value) -> Result<BTreeMap<String, ShardFile>, Manife
             ShardFile {
                 virtual_path,
                 object: object_entry.object,
-                sha256: object_entry.sha256,
+                ahash64: object_entry.ahash64,
                 bytes: object_entry.bytes,
                 dependencies,
             },
@@ -656,7 +656,7 @@ fn parse_dependency_hints(
             key,
             virtual_path,
             object: object_entry.object,
-            sha256: object_entry.sha256,
+            ahash64: object_entry.ahash64,
             bytes: object_entry.bytes,
         });
     }
@@ -681,8 +681,8 @@ fn parse_files(value: Value) -> Result<BTreeMap<String, ManifestFile>, ManifestP
             validate_file_key(dependency)?;
         }
         finish(entry, &format!("file {key}"))?;
-        if let Some(previous) = paths.insert(virtual_path.clone(), object_entry.sha256.clone())
-            && previous != object_entry.sha256
+        if let Some(previous) = paths.insert(virtual_path.clone(), object_entry.ahash64.clone())
+            && previous != object_entry.ahash64
         {
             return Err(ManifestParseError::new(format!(
                 "virtual path {virtual_path} has conflicting objects"
@@ -693,7 +693,7 @@ fn parse_files(value: Value) -> Result<BTreeMap<String, ManifestFile>, ManifestP
             ManifestFile {
                 virtual_path,
                 object: object_entry.object,
-                sha256: object_entry.sha256,
+                ahash64: object_entry.ahash64,
                 bytes: object_entry.bytes,
                 dependencies,
             },
@@ -724,7 +724,7 @@ fn parse_fonts(value: Value) -> Result<BTreeMap<String, ManifestFont>, ManifestP
             name,
             ManifestFont {
                 object: object_entry.object,
-                sha256: object_entry.sha256,
+                ahash64: object_entry.ahash64,
                 bytes: object_entry.bytes,
                 container,
                 provenance,
@@ -753,11 +753,11 @@ fn parse_formats(value: Value) -> Result<BTreeMap<String, ManifestFormat>, Manif
             return Err(ManifestParseError::new("formatSchema must be positive"));
         }
         let source_distribution = nonempty_string(&mut entry, "sourceDistribution", &name)?;
-        let source_manifest_sha256 = string(
-            take(&mut entry, "sourceManifestSha256", &name)?,
-            "sourceManifestSha256",
+        let source_manifest_ahash64 = string(
+            take(&mut entry, "sourceManifestAhash64", &name)?,
+            "sourceManifestAhash64",
         )?;
-        validate_digest(&source_manifest_sha256, "source manifest digest")?;
+        validate_digest(&source_manifest_ahash64, "source manifest digest")?;
         let source_date_epoch = number(
             take(&mut entry, "sourceDateEpoch", &name)?,
             "sourceDateEpoch",
@@ -771,13 +771,13 @@ fn parse_formats(value: Value) -> Result<BTreeMap<String, ManifestFormat>, Manif
             name,
             ManifestFormat {
                 object: object_entry.object,
-                sha256: object_entry.sha256,
+                ahash64: object_entry.ahash64,
                 bytes: object_entry.bytes,
                 engine,
                 engine_version,
                 format_schema,
                 source_distribution,
-                source_manifest_sha256,
+                source_manifest_ahash64,
                 source_date_epoch,
                 input_closure,
             },
@@ -813,9 +813,9 @@ pub(crate) fn parse_object_entry(
     label: &str,
 ) -> Result<ObjectEntry, ManifestParseError> {
     let object = string(take(fields, "object", label)?, "object")?;
-    let sha256 = string(take(fields, "sha256", label)?, "sha256")?;
-    validate_digest(&sha256, label)?;
-    if object != format!("sha256-{sha256}") {
+    let ahash64 = string(take(fields, "ahash64", label)?, "ahash64")?;
+    validate_digest(&ahash64, label)?;
+    if object != format!("ahash64-v1-{ahash64}") {
         return Err(ManifestParseError::new(format!(
             "object name for {label} does not match its digest"
         )));
@@ -828,7 +828,7 @@ pub(crate) fn parse_object_entry(
     }
     Ok(ObjectEntry {
         object,
-        sha256,
+        ahash64,
         bytes,
     })
 }
@@ -847,10 +847,10 @@ fn validate_cross_references(
                 )));
             }
         }
-        check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
+        check_digest_length(&mut digest_lengths, &entry.ahash64, entry.bytes)?;
     }
     for entry in fonts.values() {
-        check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
+        check_digest_length(&mut digest_lengths, &entry.ahash64, entry.bytes)?;
     }
     for entry in formats.values() {
         if let Some(closure) = &entry.input_closure {
@@ -862,7 +862,7 @@ fn validate_cross_references(
                 }
             }
         }
-        check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
+        check_digest_length(&mut digest_lengths, &entry.ahash64, entry.bytes)?;
     }
     Ok(())
 }
@@ -951,13 +951,13 @@ fn validate_format_name(name: &str) -> Result<(), ManifestParseError> {
 }
 
 pub(crate) fn validate_digest(value: &str, label: &str) -> Result<(), ManifestParseError> {
-    if value.len() != 64
+    if value.len() != 16
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
         return Err(ManifestParseError::new(format!(
-            "{label} must use a 64-character lowercase SHA-256 digest"
+            "{label} must use a 16-character lowercase aHash64 digest"
         )));
     }
     Ok(())

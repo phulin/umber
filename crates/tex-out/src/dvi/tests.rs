@@ -7,8 +7,8 @@ use super::{
     DviError, DviPagePlan, DviPagePlanBuilder, DviPagePlanCoEmitter, DviStreamWriter, write_dvi,
 };
 use crate::{
-    BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
-    JobInfo, LeaderPayload, PageArtifact, PageEffect, PageNode,
+    BoxNode, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
+    LeaderPayload, PageArtifact, PageEffect, PageNode,
 };
 use tex_arith::Scaled;
 
@@ -1264,14 +1264,14 @@ fn font_resource(font_id: u32, name: &str) -> FontResource {
     FontResource {
         font_id,
         name: name.to_owned(),
-        tfm_content_hash: ContentHash::from_bytes(name.as_bytes()),
+        tfm_content_hash: tex_fonts::font_content_hash(name.as_bytes()),
         tfm_checksum: 0x1234_5678,
         design_size: sp(655_360),
         at_size: sp(655_360),
         layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         mapping_fallback: None,
         opentype: None,
-        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id as u8; 32]),
+        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id as u8; 8]),
         construction: crate::FontResourceConstruction::Loaded,
     }
 }

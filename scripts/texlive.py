@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared, authenticated TeX Live acquisition and provisioning primitives."""
+"""Shared, deterministic TeX Live acquisition and provisioning primitives."""
 
 from __future__ import annotations
 
@@ -18,13 +18,16 @@ from urllib.parse import urljoin
 SOURCE_LOCK = Path("tests/texlive-source.lock")
 DEFAULT_SOURCE_CACHE = Path("third_party/texlive-source")
 DEFAULT_ROOT_URL = (
-    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v3.json"
+    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v6.json"
 )
-DEFAULT_ROOT_SHA256 = (
-    "43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b"
-)
+# Installed by the external republication tracked in umber2-66p0.27.
+DEFAULT_ROOT_AHASH64 = ""
 MAX_MANIFEST_BYTES = 32 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
+AHASH64_MASK = (1 << 64) - 1
+AHASH64_SEED = 0x243F6A8885A308D3
+AHASH64_PAD = 0x13198A2E03707344
+AHASH64_MULTIPLE = 6364136223846793005
 
 
 class TexliveError(Exception):
@@ -79,6 +82,80 @@ def hash_file(path: Path, algorithm: str = "sha256") -> str:
         for chunk in iter(lambda: source.read(CHUNK_BYTES), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+class AHash64:
+    """Streaming copy of crates/umber-hash's version-1 portable algorithm."""
+
+    def __init__(self, domain: int) -> None:
+        self.state = AHASH64_SEED
+        self.length = 0
+        self.tail = bytearray()
+        self.write(b"umber-ahash64\0")
+        self.write(bytes((1,)))
+        self.write(domain.to_bytes(8, "little"))
+
+    def write(self, data: bytes) -> None:
+        self.length += len(data)
+        data = bytes(self.tail) + data
+        words = len(data) // 8
+        for index in range(words):
+            self._mix(int.from_bytes(data[index * 8 : index * 8 + 8], "little"))
+        self.tail = bytearray(data[words * 8 :])
+
+    def finish(self) -> str:
+        if self.tail:
+            word = int.from_bytes(self.tail.ljust(8, b"\0"), "little")
+            self._mix(word ^ (len(self.tail) << 48))
+        state = _folded_multiply(
+            self.state ^ self.length,
+            AHASH64_PAD ^ _rotate_left(self.length, 17),
+        )
+        return f"{_rotate_left(state, state & 63):016x}"
+
+    def _mix(self, word: int) -> None:
+        self.state = (
+            _folded_multiply(self.state ^ word, AHASH64_MULTIPLE) + AHASH64_PAD
+        ) & AHASH64_MASK
+
+
+def _rotate_left(value: int, amount: int) -> int:
+    amount &= 63
+    return ((value << amount) | (value >> ((64 - amount) & 63))) & AHASH64_MASK
+
+
+def _folded_multiply(left: int, right: int) -> int:
+    product = left * right
+    return ((product & AHASH64_MASK) ^ (product >> 64)) & AHASH64_MASK
+
+
+def ahash64_bytes(data: bytes, domain: int = 1) -> str:
+    digest = AHash64(domain)
+    digest.write(data)
+    return digest.finish()
+
+
+def ahash64_file(path: Path, domain: int = 1) -> str:
+    digest = AHash64(domain)
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(CHUNK_BYTES), b""):
+            digest.write(chunk)
+    return digest.finish()
+
+
+def verify_ahash64_file(path: Path, identity: Identity, label: str) -> None:
+    if not path.is_file():
+        raise TexliveError(f"missing {label}: {path}")
+    actual_bytes = path.stat().st_size
+    if actual_bytes != identity.bytes:
+        raise TexliveError(
+            f"length mismatch for {label} {path}: expected {identity.bytes}, got {actual_bytes}"
+        )
+    actual_digest = ahash64_file(path)
+    if actual_digest != identity.digest:
+        raise TexliveError(
+            f"aHash64 mismatch for {label} {path}: expected {identity.digest}, got {actual_digest}"
+        )
 
 
 def verify_file(path: Path, identity: Identity, algorithm: str, label: str) -> None:
@@ -406,14 +483,24 @@ def _json_document(data: bytes, label: str) -> dict:
 def _read_verified_bytes(path: Path, identity: Identity) -> bytes | None:
     if not path.exists():
         return None
-    verify_file(path, identity, "sha256", "cached snapshot object")
+    verify_ahash64_file(path, identity, "cached snapshot object")
     return path.read_bytes()
 
 
 def _acquire_snapshot_object(url: str, path: Path, identity: Identity, offline: bool) -> bytes:
     data = _read_verified_bytes(path, identity)
     if data is None:
-        _download(url, path, identity, "sha256", offline)
+        if offline:
+            raise TexliveError(f"missing {path} while running --offline")
+        request = urllib.request.Request(url, headers={"User-Agent": "umber-texlive/1"})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                data = response.read(identity.bytes + 1)
+        except urllib.error.URLError as error:
+            raise TexliveError(f"download failed for {url}: {error}") from error
+        if len(data) != identity.bytes or ahash64_bytes(data) != identity.digest:
+            raise TexliveError(f"aHash64 or length mismatch for downloaded snapshot object {url}")
+        _write_atomic(path, data)
         data = path.read_bytes()
     return data
 
@@ -421,12 +508,12 @@ def _acquire_snapshot_object(url: str, path: Path, identity: Identity, offline: 
 def _seed_snapshot_object(
     path: Path, identity: Identity, object_roots: tuple[Path, ...]
 ) -> bytes | None:
-    name = f"sha256-{identity.digest}"
+    name = f"ahash64-v1-{identity.digest}"
     for root in object_roots:
         candidate = root / name
         if not candidate.exists():
             continue
-        verify_file(candidate, identity, "sha256", "seed snapshot object")
+        verify_ahash64_file(candidate, identity, "seed snapshot object")
         data = candidate.read_bytes()
         _write_atomic(path, data)
         return data
@@ -436,13 +523,13 @@ def _seed_snapshot_object(
 def _seed_snapshot_shard(
     path: Path, digest: str, object_roots: tuple[Path, ...]
 ) -> bytes | None:
-    name = f"sha256-{digest}"
+    name = f"ahash64-v1-{digest}"
     for root in object_roots:
         candidate = root / name
         if not candidate.exists():
             continue
         data = candidate.read_bytes()
-        if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
+        if len(data) > MAX_MANIFEST_BYTES or ahash64_bytes(data) != digest:
             raise TexliveError(f"seed snapshot shard failed verification: {candidate}")
         _write_atomic(path, data)
         return data
@@ -464,15 +551,15 @@ def _write_atomic(path: Path, data: bytes) -> None:
 
 
 def _shard_index(key: str, bits: int) -> int:
-    value = int.from_bytes(hashlib.sha256(key.encode()).digest()[:2], "big")
-    return value >> (16 - bits) if bits else 0
+    value = int(ahash64_bytes(key.encode(), 2), 16)
+    return value >> (64 - bits) if bits else 0
 
 
 def materialize_snapshot(
     output: Path,
     *,
     root_url: str = DEFAULT_ROOT_URL,
-    root_sha256: str = DEFAULT_ROOT_SHA256,
+    root_ahash64: str = DEFAULT_ROOT_AHASH64,
     source_root_path: Path | None = None,
     object_roots: tuple[Path, ...] = (),
     texmf_roots: tuple[Path, ...] = (),
@@ -483,8 +570,12 @@ def materialize_snapshot(
 ) -> dict[str, int | str]:
     if source_root_path is None and not root_url.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
         raise TexliveError("root URL must use HTTPS")
-    if not valid_digest(root_sha256, 64):
-        raise TexliveError("invalid root SHA-256")
+    if not root_ahash64:
+        raise TexliveError(
+            "the deterministic aHash64 distribution is unpublished; see umber2-66p0.27"
+        )
+    if not valid_digest(root_ahash64, 16):
+        raise TexliveError("invalid root aHash64")
     object_roots = tuple(root.resolve() for root in object_roots)
     texmf_roots = tuple(root.resolve() for root in texmf_roots)
     for root in (*object_roots, *texmf_roots):
@@ -497,13 +588,13 @@ def materialize_snapshot(
         source_root_data = source_root_path.read_bytes()
         if (
             len(source_root_data) > MAX_MANIFEST_BYTES
-            or hashlib.sha256(source_root_data).hexdigest() != root_sha256
+            or ahash64_bytes(source_root_data) != root_ahash64
         ):
             raise TexliveError(f"root manifest identity mismatch for {source_root_path}")
-    root_path = output / "manifest-v3.json"
+    root_path = output / "manifest-v6.json"
     if root_path.exists():
         data = root_path.read_bytes()
-        if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != root_sha256:
+        if len(data) > MAX_MANIFEST_BYTES or ahash64_bytes(data) != root_ahash64:
             raise TexliveError(f"existing root manifest failed verification: {root_path}")
         root_data = data
     elif source_root_data is not None:
@@ -518,20 +609,20 @@ def materialize_snapshot(
                 root_data = response.read(MAX_MANIFEST_BYTES + 1)
         except urllib.error.URLError as error:
             raise TexliveError(f"download failed for {root_url}: {error}") from error
-        if len(root_data) > MAX_MANIFEST_BYTES or hashlib.sha256(root_data).hexdigest() != root_sha256:
+        if len(root_data) > MAX_MANIFEST_BYTES or ahash64_bytes(root_data) != root_ahash64:
             raise TexliveError(f"root manifest identity mismatch for {root_url}")
         _write_atomic(root_path, root_data)
     root = _json_document(root_data, "root manifest")
     bits, shards = root.get("shardBits"), root.get("shards")
     formats, objects_url = root.get("formats"), root.get("objectsBaseUrl")
-    if root.get("schema") != 3:
-        raise TexliveError("root manifest is not schema 3")
+    if root.get("schema") != 6:
+        raise TexliveError("root manifest is not schema 6")
     if (
         not isinstance(bits, int)
         or not 0 <= bits <= 16
         or not isinstance(shards, list)
         or len(shards) != 1 << bits
-        or any(not isinstance(digest, str) or not valid_digest(digest, 64) for digest in shards)
+        or any(not isinstance(digest, str) or not valid_digest(digest, 16) for digest in shards)
     ):
         raise TexliveError("invalid shard inventory")
     if not isinstance(formats, dict) or not isinstance(objects_url, str) or not objects_url.startswith("https://") and not objects_url.startswith(("http://127.0.0.1:", "http://localhost:")):
@@ -558,7 +649,7 @@ def materialize_snapshot(
         if not isinstance(closure, dict) or closure.get("schema") != 1 or not isinstance(closure.get("keys"), list):
             raise TexliveError(f"unknown or invalid format: {name}")
         requested.update(closure["keys"])
-        objects[record["object"]] = Identity(record["bytes"], record["sha256"])
+        objects[record["object"]] = Identity(record["bytes"], record["ahash64"])
     if requested.intersection(unavailable):
         key = min(requested.intersection(unavailable))
         raise TexliveError(f"conflicting positive and unavailable runtime key: {key}")
@@ -568,11 +659,11 @@ def materialize_snapshot(
     shard_documents: dict[int, dict] = {}
     for index, digest in enumerate(shards):
         identity = Identity(MAX_MANIFEST_BYTES, digest)
-        name = f"sha256-{digest}"
+        name = f"ahash64-v1-{digest}"
         path = output / "objects" / name
         if path.exists():
             data = path.read_bytes()
-            if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
+            if len(data) > MAX_MANIFEST_BYTES or ahash64_bytes(data) != digest:
                 raise TexliveError(f"existing shard failed verification: {path}")
         else:
             data = _seed_snapshot_shard(path, digest, object_roots)
@@ -582,11 +673,11 @@ def materialize_snapshot(
                 request = urllib.request.Request(urljoin(objects_url, name), headers={"User-Agent": "umber-texlive/1"})
                 with urllib.request.urlopen(request, timeout=60) as response:
                     data = response.read(MAX_MANIFEST_BYTES + 1)
-                if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != digest:
+                if len(data) > MAX_MANIFEST_BYTES or ahash64_bytes(data) != digest:
                     raise TexliveError(f"shard identity mismatch: {name}")
                 _write_atomic(path, data)
         shard = _json_document(data, f"shard {index}")
-        if shard.get("schema") != 1 or shard.get("distribution") != root.get("distribution") or shard.get("index") != index:
+        if shard.get("schema") != 3 or shard.get("distribution") != root.get("distribution") or shard.get("index") != index:
             raise TexliveError(f"shard {index} identity mismatch")
         files = shard.get("files")
         if not isinstance(files, dict) or any(
@@ -606,9 +697,9 @@ def materialize_snapshot(
         record = shard_documents[_shard_index(key, bits)].get("files", {}).get(key)
         if not isinstance(record, dict):
             raise TexliveError(f"requested key is absent from its canonical shard: {key}")
-        identity = Identity(record.get("bytes"), record.get("sha256"))
-        if key in expected and expected[key] != identity:
-            raise TexliveError(f"requested key differs from pinned lock identity: {key}")
+        identity = Identity(record.get("bytes"), record.get("ahash64"))
+        if key in expected and expected[key].bytes != identity.bytes:
+            raise TexliveError(f"requested key length differs from pinned source lock: {key}")
         objects[record["object"]] = identity
         virtual = str(record.get("virtualPath", "")).removeprefix("/texlive/")
         virtual_path = _safe_relative(virtual, label=f"virtual path for {key}")
@@ -616,7 +707,7 @@ def materialize_snapshot(
         object_virtuals.setdefault(record["object"], virtual_path)
     total = 0
     for name, identity in sorted(objects.items()):
-        if name != f"sha256-{identity.digest}" or identity.bytes < 0:
+        if name != f"ahash64-v1-{identity.digest}" or identity.bytes < 0:
             raise TexliveError(f"invalid object record: {name}")
         object_path = output / "objects" / name
         data = _read_verified_bytes(object_path, identity)
@@ -627,7 +718,12 @@ def materialize_snapshot(
                     candidate = texmf_root / virtual
                     if not candidate.exists():
                         continue
-                    verify_file(candidate, identity, "sha256", "seed TEXMF object")
+                    key_expected = expected.get(f"tfm:{virtual.name}") or expected.get(
+                        f"tex:{virtual.name}"
+                    )
+                    if key_expected is not None:
+                        verify_file(candidate, key_expected, "sha256", "pinned seed TEXMF source")
+                    verify_ahash64_file(candidate, identity, "seed TEXMF object")
                     data = candidate.read_bytes()
                     _write_atomic(object_path, data)
                     break
@@ -649,7 +745,7 @@ def materialize_snapshot(
             except OSError:
                 shutil.copyfile(source, destination)
     return {
-        "root_sha256": root_sha256,
+        "root_ahash64": root_ahash64,
         "shards": len(shards),
         "keys": len(requested),
         "unavailable_keys": len(unavailable),
@@ -697,13 +793,13 @@ def verify_runtime_tree(texmf_dist: Path, lock_path: Path) -> tuple[str, str]:
             continue
         if fields[0] == "distribution" and len(fields) == 2:
             distribution = fields[1]
-        elif fields[0] == "tree_sha256" and len(fields) == 2:
+        elif fields[0] == "tree_ahash64" and len(fields) == 2:
             tree_digest = fields[1]
         elif fields[0] == "source" and len(fields) == 4:
             relative = _safe_relative(fields[1], label="snapshot source")
             verify_file(texmf_dist / relative, Identity(int(fields[2]), fields[3]), "sha256", "snapshot source")
         else:
             raise TexliveError(f"{lock_path}:{number}: invalid snapshot-lock record")
-    if not distribution or not valid_digest(tree_digest, 64):
+    if not distribution or not valid_digest(tree_digest, 16):
         raise TexliveError(f"{lock_path}: missing distribution or tree digest")
     return distribution, tree_digest

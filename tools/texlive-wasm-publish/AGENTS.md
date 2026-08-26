@@ -4,9 +4,9 @@ This standalone tool publishes browser distribution inputs. Its output must be b
 
 All accepted source paths are normalized relative POSIX paths. Reject symlinks, non-UTF-8 paths, traversal, backslashes, and physical case-fold path collisions. Logical lookup keys remain case-sensitive because TeX Live contains case-distinct basenames in separate paths. Lookup precedence is configured root order followed by normalized path order. Verify the complete supported-file tree digest before writing output.
 
-Object names are derived solely from SHA-256. Manifest serialization uses ordered maps and one trailing newline. Dependency entries are hints and must refer to valid logical keys, but are not required to be transitively complete.
+Object names are derived solely from deterministic aHash64 v1. Manifest serialization uses ordered maps and one trailing newline. Dependency entries are hints and must refer to valid logical keys, but are not required to be transitively complete.
 
-Sparse schema-3 successors authenticate the complete base root and all base
+Sparse schema-3 successors verify the complete base root and all base
 shards, preserve its distribution, object base URL, and shard policy, and
 stage every derived successor shard plus every changed payload. They may add
 or replace lookup keys but must not remove a base key, and must replace exactly
@@ -28,7 +28,7 @@ manifest format objects.
 
 The separate `html` publication profile emits root schema 4 and shard schema
 2. It verifies the complete configured roots but selects only explicit runtime
-keys plus every selected format's authenticated closure. Its TEXMF inputs are
+keys plus every selected format's verified closure. Its TEXMF inputs are
 limited to `tex/` and TFM; WOFF2 and license objects come from an exact
 schema-2 catalog/object-source set. Never weaken this allow-list to admit VF,
 AFM, ENC, maps, PK, Type 1, or SFNT transport objects. HTML inventory ceilings
@@ -47,5 +47,5 @@ are independent of the full snapshot.
 - `src/main.rs`: small JSON-config command-line entry point.
 - `catalog/html-mvp-v1.json`: canonical committed contract for the pinned
   repository TFM, WOFF2, license, provenance, and policy inputs. Publication
-  strictly parses it and authenticates every referenced object; there is no
+  strictly parses it and verifies every referenced object; there is no
   executable shadow catalogue.

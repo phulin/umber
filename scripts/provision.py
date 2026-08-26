@@ -334,21 +334,23 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
             f"format source distribution {format_source_distribution or '<missing>'} "
             f"differs from snapshot distribution {distribution}"
         )
-    format_distribution_sha256 = next(
+    format_distribution_ahash64 = next(
         (
             fields[1]
             for raw_line in (repo_root / "tests/latex-source.lock").read_text().splitlines()
-            if (fields := raw_line.split())[:1] == ["distribution_sha256"]
+            if (fields := raw_line.split())[:1] == ["distribution_ahash64"]
             and len(fields) == 2
         ),
         "",
     )
-    if not texlive.valid_digest(format_distribution_sha256, 64):
-        raise ProvisionError("format source lock has no valid distribution SHA-256")
-    if args.format_distribution_sha256 is not None:
-        format_distribution_sha256 = args.format_distribution_sha256
-    if not texlive.valid_digest(format_distribution_sha256, 64):
-        raise ProvisionError("invalid format distribution SHA-256")
+    if not texlive.valid_digest(format_distribution_ahash64, 16):
+        raise ProvisionError(
+            "format source lock has no published distribution aHash64; see umber2-66p0.27"
+        )
+    if args.format_distribution_ahash64 is not None:
+        format_distribution_ahash64 = args.format_distribution_ahash64
+    if not texlive.valid_digest(format_distribution_ahash64, 16):
+        raise ProvisionError("invalid format distribution aHash64")
     format_distribution = (
         args.format_distribution or repo_root / "target/texlive-snapshot"
     ).resolve()
@@ -385,8 +387,8 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                     str(texmf_dist),
                     "--distribution",
                     str(format_distribution),
-                    "--distribution-sha256",
-                    format_distribution_sha256,
+                    "--distribution-ahash64",
+                    format_distribution_ahash64,
                     "--output-dir",
                     str(format_root / engine),
                 ],
@@ -408,7 +410,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
 
         def tree_hash(path: Path) -> str:
             return subprocess.run(
-                [str(publisher), "--tree-sha256", str(path)],
+                [str(publisher), "--tree-ahash64", str(path)],
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -421,7 +423,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                 f"texmf-dist tree differs from lock: expected {expected_tree}, got {actual_tree}"
             )
         config = {
-            "schema": 3,
+            "schema": 6,
             "distribution": distribution,
             "objectsBaseUrl": args.objects_base_url,
             "shardBits": args.shard_bits,
@@ -429,10 +431,10 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                 {
                     "name": "format-construction-inputs",
                     "path": str(format_input_root),
-                    "treeSha256": tree_hash(format_input_root),
+                    "treeAhash64": tree_hash(format_input_root),
                 },
-                {"name": "texlive-runtime", "path": str(texmf_dist), "treeSha256": actual_tree},
-                {"name": "texlive-generated-runtime", "path": str(generated_root), "treeSha256": tree_hash(generated_root)},
+                {"name": "texlive-runtime", "path": str(texmf_dist), "treeAhash64": actual_tree},
+                {"name": "texlive-generated-runtime", "path": str(generated_root), "treeAhash64": tree_hash(generated_root)},
             ],
             "inventory": {"minimumLogicalFiles": 100000, "minimumObjects": 50000, "minimumBytes": 1000000000},
             "formats": [
@@ -457,7 +459,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
 
 def _add_materialize_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root-url", default=texlive.DEFAULT_ROOT_URL)
-    parser.add_argument("--root-sha256", default=texlive.DEFAULT_ROOT_SHA256)
+    parser.add_argument("--root-ahash64", default=texlive.DEFAULT_ROOT_AHASH64)
     parser.add_argument("--root-path", type=Path)
     parser.add_argument("--object-root", action="append", type=Path, default=[])
     parser.add_argument("--texmf-root", action="append", type=Path, default=[])
@@ -497,7 +499,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     snapshot.add_argument("--package-database", type=Path)
     snapshot.add_argument("--without-package-database", action="store_true")
     snapshot.add_argument("--format-distribution", type=Path)
-    snapshot.add_argument("--format-distribution-sha256")
+    snapshot.add_argument("--format-distribution-ahash64")
     snapshot.add_argument("--output-dir", type=Path, default=Path("target/texlive-snapshot"))
     snapshot.add_argument("--objects-base-url", default="https://example.invalid/umber/texlive/objects/")
     snapshot.add_argument("--shard-bits", type=int, choices=range(17), default=8)
@@ -516,7 +518,7 @@ def main(arguments: list[str] | None = None) -> int:
         result = texlive.materialize_snapshot(
             args.output_dir,
             root_url=args.root_url,
-            root_sha256=args.root_sha256,
+            root_ahash64=args.root_ahash64,
             source_root_path=args.root_path,
             object_roots=tuple(args.object_root),
             texmf_roots=tuple(args.texmf_root),

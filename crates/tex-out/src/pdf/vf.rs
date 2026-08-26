@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
-use tex_content::{ContentDomain, ContentIdentity};
 use tex_fonts::{FontSourceIdentity, TfmFont, VfCommand, VfProgram};
 
 use crate::positioned::{
@@ -368,8 +367,7 @@ impl Lowerer<'_> {
             .local_tfms
             .get(name.as_bytes())
             .ok_or_else(|| PdfBuildError::MissingVirtualLocalTfm(name.clone()))?;
-        let actual_content_hash =
-            ContentIdentity::for_domain(ContentDomain::VirtualFile, &cached.bytes).bytes();
+        let actual_content_hash = tex_fonts::font_content_hash(&cached.bytes);
         if actual_content_hash != cached.content_hash {
             return Err(PdfBuildError::InvalidVirtualLocalTfm {
                 font: name,

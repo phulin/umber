@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
@@ -54,7 +53,7 @@ pub struct ResolvedPkFont {
     pub request: PdfPkFontRequest,
     pub virtual_path: String,
     pub bytes: Vec<u8>,
-    pub expected_sha256: Option<[u8; 32]>,
+    pub expected_ahash64: Option<[u8; 8]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -617,7 +616,7 @@ pub enum PdfFontClosureResourceOutcome {
     Resolved {
         virtual_path: String,
         bytes: usize,
-        sha256: [u8; 32],
+        ahash64: [u8; 8],
     },
     Unavailable,
 }
@@ -651,8 +650,8 @@ pub enum CompileError {
     ConflictingResolvedBinding(String),
     ConflictingHtmlFontBinding {
         name: String,
-        expected_tfm_identity: [u8; 32],
-        conflicting_tfm_identity: [u8; 32],
+        expected_tfm_identity: [u8; 8],
+        conflicting_tfm_identity: [u8; 8],
     },
     UnexpectedResourceResponse(String),
     FileProvision(ProvisionError),
@@ -716,8 +715,8 @@ impl fmt::Display for CompileError {
             } => write!(
                 f,
                 "HTML font {name} has conflicting TFM identities {} and {}",
-                hex_sha256(*expected_tfm_identity),
-                hex_sha256(*conflicting_tfm_identity),
+                hex_ahash64(*expected_tfm_identity),
+                hex_ahash64(*conflicting_tfm_identity),
             ),
             Self::UnexpectedResourceResponse(name) => {
                 write!(f, "resource response {name} was not requested")
@@ -776,7 +775,7 @@ enum NonFileResourceKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum NonFileAdmission {
     Font(FontResponseFingerprint),
-    PkFont { path: String, sha256: [u8; 32] },
+    PkFont { path: String, ahash64: [u8; 8] },
 }
 
 pub struct VirtualCompileSession<'store> {
@@ -1189,7 +1188,11 @@ impl<'store> VirtualCompileSession<'store> {
                         PdfFontClosureResourceOutcome::Resolved {
                             virtual_path: file.path().as_str().to_owned(),
                             bytes: file.bytes().len(),
-                            sha256: Sha256::digest(file.bytes()).into(),
+                            ahash64: umber_hash::AHash64::for_bytes(
+                                umber_hash::HashDomain::PdfFontClosure,
+                                file.bytes(),
+                            )
+                            .to_le_bytes(),
                         }
                     } else if self.workspace.is_unavailable(request) {
                         PdfFontClosureResourceOutcome::Unavailable
@@ -1209,7 +1212,11 @@ impl<'store> VirtualCompileSession<'store> {
                         PdfFontClosureResourceOutcome::Resolved {
                             virtual_path: font.virtual_path.clone(),
                             bytes: font.bytes.len(),
-                            sha256: Sha256::digest(&font.bytes).into(),
+                            ahash64: umber_hash::AHash64::for_bytes(
+                                umber_hash::HashDomain::PkProgram,
+                                &font.bytes,
+                            )
+                            .to_le_bytes(),
                         }
                     } else if self.unavailable_pk_font_keys().contains(request) {
                         PdfFontClosureResourceOutcome::Unavailable
@@ -1685,7 +1692,7 @@ impl<'store> VirtualCompileSession<'store> {
         let fingerprint = FontResponseFingerprint {
             container: response.container,
             object: tex_fonts::FontObjectIdentity::for_bytes(&response.bytes),
-            declared_object: response.declared_object_sha256,
+            declared_object: response.declared_object_ahash64,
             declared_program: response.declared_program_identity,
             provenance: response.provenance.clone(),
             legacy_mapping: response.legacy_mapping.clone(),
@@ -1816,9 +1823,11 @@ impl<'store> VirtualCompileSession<'store> {
             response.bytes.len(),
             self.limits.one_file_bytes,
         )?;
-        let digest: [u8; 32] = Sha256::digest(&response.bytes).into();
+        let digest =
+            umber_hash::AHash64::for_bytes(umber_hash::HashDomain::PkProgram, &response.bytes)
+                .to_le_bytes();
         if response
-            .expected_sha256
+            .expected_ahash64
             .is_some_and(|expected| expected != digest)
         {
             return Err(CompileError::Font(format!(
@@ -1864,7 +1873,7 @@ impl<'store> VirtualCompileSession<'store> {
                 NonFileResourceKey::PkFont(request.clone()),
                 NonFileAdmission::PkFont {
                     path: response.virtual_path.clone(),
-                    sha256: digest,
+                    ahash64: digest,
                 },
             )
             .map_err(|error| map_non_file_admission(error, &name))?;
@@ -2864,8 +2873,7 @@ impl<'a> SessionFontResolver<'a> {
                 .get(*key)
                 .and_then(|response| response.legacy_mapping.as_ref())
                 .is_some_and(|mapping| {
-                    key.logical_name() == font.name
-                        && mapping.tfm_sha256 == font.tfm_content_hash.bytes()
+                    key.logical_name() == font.name && mapping.tfm_ahash64 == font.tfm_content_hash
                 })
         })
     }
@@ -2899,7 +2907,7 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
             })?;
             let mapped_bundle = response.legacy_mapping.as_ref();
             let mut encoding = if let Some(bundle) = mapped_bundle {
-                if bundle.tfm_sha256 != font.tfm_content_hash.bytes() {
+                if bundle.tfm_ahash64 != font.tfm_content_hash {
                     return Err(format!(
                         "retained mapping for {} has the wrong TFM identity",
                         font.name
@@ -2932,7 +2940,11 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
             return Ok(HtmlFontAsset {
                 key: HtmlFontKey::from(font),
                 woff2: supplied.transport_bytes.to_vec(),
-                sha256: supplied.object_identity.bytes(),
+                ahash64: umber_hash::AHash64::for_bytes(
+                    umber_hash::HashDomain::HtmlResource,
+                    &supplied.transport_bytes,
+                )
+                .to_le_bytes(),
                 encoding,
                 provenance,
                 embeddable: mapped_bundle.is_none_or(|mapping| mapping.embeddable),
@@ -2943,15 +2955,14 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
             .iter()
             .find_map(|(key, supplied)| {
                 let mapping = self.responses.get(key)?.legacy_mapping.as_ref()?;
-                (key.logical_name() == font.name
-                    && mapping.tfm_sha256 == font.tfm_content_hash.bytes())
-                .then_some((key, supplied, mapping))
+                (key.logical_name() == font.name && mapping.tfm_ahash64 == font.tfm_content_hash)
+                    .then_some((key, supplied, mapping))
             })
             .ok_or_else(|| {
                 format!(
                     "unsupported HTML legacy mapping for classic TFM font {} ({})",
                     font.name,
-                    font.tfm_content_hash.hex()
+                    umber_hash::AHash64::new(u64::from_le_bytes(font.tfm_content_hash)).hex()
                 )
             })?;
         if supplied.container != tex_fonts::FontContainer::Woff2 {
@@ -2979,7 +2990,11 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
         Ok(HtmlFontAsset {
             key: HtmlFontKey::from(font),
             woff2: supplied.transport_bytes.to_vec(),
-            sha256: supplied.object_identity.bytes(),
+            ahash64: umber_hash::AHash64::for_bytes(
+                umber_hash::HashDomain::HtmlResource,
+                &supplied.transport_bytes,
+            )
+            .to_le_bytes(),
             encoding: mapping.encoding.clone(),
             provenance,
             embeddable: mapping.embeddable,
@@ -2997,7 +3012,7 @@ fn discover_html_paint_resources<'a>(
     unavailable: &BTreeSet<FontRequestKey>,
     accepted_containers: AcceptedFontContainers,
 ) -> Result<Vec<ResourceRequest>, CompileError> {
-    let mut classic_fonts = BTreeMap::<FontRequestKey, (String, [u8; 32])>::new();
+    let mut classic_fonts = BTreeMap::<FontRequestKey, (String, [u8; 8])>::new();
     for artifact in artifacts {
         let page = tex_out::PageArtifact::from_bytes(artifact.bytes()).map_err(|error| {
             CompileError::OutputCapability {
@@ -3026,12 +3041,12 @@ fn discover_html_paint_resources<'a>(
                 &mut classic_fonts,
                 key,
                 &font.name,
-                font.tfm_content_hash.bytes(),
+                font.tfm_content_hash,
             )?;
         }
     }
     let mut required = Vec::new();
-    for (key, (name, tfm_sha256)) in classic_fonts {
+    for (key, (name, tfm_ahash64)) in classic_fonts {
         if let Some(font) = resolved.get(&key) {
             let _ = font;
             continue;
@@ -3041,7 +3056,7 @@ fn discover_html_paint_resources<'a>(
                 capability: OutputCapability::Html,
                 message: format!(
                     "unsupported HTML legacy mapping for classic TFM font {name} ({})",
-                    hex_sha256(tfm_sha256)
+                    hex_ahash64(tfm_ahash64)
                 ),
             });
         }
@@ -3172,10 +3187,10 @@ fn lookup_pdf_raw_object_file(
 }
 
 fn register_classic_html_paint_font(
-    fonts: &mut BTreeMap<FontRequestKey, (String, [u8; 32])>,
+    fonts: &mut BTreeMap<FontRequestKey, (String, [u8; 8])>,
     key: FontRequestKey,
     name: &str,
-    identity: [u8; 32],
+    identity: [u8; 8],
 ) -> Result<(), CompileError> {
     match fonts.entry(key) {
         std::collections::btree_map::Entry::Vacant(entry) => {
@@ -3193,7 +3208,7 @@ fn register_classic_html_paint_font(
     }
 }
 
-fn hex_sha256(bytes: [u8; 32]) -> String {
+fn hex_ahash64(bytes: [u8; 8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

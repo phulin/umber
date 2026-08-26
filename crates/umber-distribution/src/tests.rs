@@ -49,12 +49,12 @@ fn strict_parser_rejects_unknown_duplicate_and_unsafe_fields() {
     let unknown =
         fixture()
             .manifest
-            .replacen("\"schema\": 1,", "\"schema\": 1, \"extra\": true,", 1);
+            .replacen("\"schema\": 2,", "\"schema\": 2, \"extra\": true,", 1);
     assert!(Manifest::parse(&unknown).is_err());
     let duplicate =
         fixture()
             .manifest
-            .replacen("\"schema\": 1,", "\"schema\": 1, \"schema\": 1,", 1);
+            .replacen("\"schema\": 2,", "\"schema\": 2, \"schema\": 2,", 1);
     assert!(Manifest::parse(&duplicate).is_err());
     let traversal =
         fixture()
@@ -134,7 +134,7 @@ fn complete_font_and_exact_legacy_keys_round_trip_without_aliases() {
     }
 
     let mapping =
-        LegacyMappingRequestKey::new("c".repeat(64), 1, "html-layout", Some("OT1".to_owned()))
+        LegacyMappingRequestKey::new("a".repeat(16), 1, "html-layout", Some("OT1".to_owned()))
             .expect("mapping key");
     assert_eq!(
         LegacyMappingRequestKey::from_manifest_key(mapping.manifest_key().as_str()),
@@ -161,8 +161,8 @@ fn html_font_shard_parses_selects_and_serializes_canonically() {
         .request
         .clone();
     let absent = FontRequestKey::new("absent").expect("absent font key");
-    assert_eq!(shard_index(&font.manifest_key(), 8), Ok(107));
-    assert_eq!(shard_index(&mapping.manifest_key(), 8), Ok(220));
+    assert_eq!(shard_index(&font.manifest_key(), 8), Ok(202));
+    assert_eq!(shard_index(&mapping.manifest_key(), 8), Ok(4));
     let selection = select_shard(
         &shard,
         &[
@@ -178,11 +178,11 @@ fn html_font_shard_parses_selects_and_serializes_canonically() {
 #[test]
 fn html_font_shard_rejects_identity_policy_mapping_and_license_failures() {
     let fixture = html_shard_fixture();
-    let digest = "c".repeat(64);
+    let digest = "c".repeat(16);
     let cases = [
         fixture.replacen(
-            &format!(r#""tfmSha256": "{digest}""#),
-            &format!(r#""tfmSha256": "{}""#, "a".repeat(64)),
+            &format!(r#""tfmAhash64": "{digest}""#),
+            &format!(r#""tfmAhash64": "{}""#, "b".repeat(16)),
             1,
         ),
         fixture.replacen(r#""mappingVersion": 1"#, r#""mappingVersion": 2"#, 1),
@@ -195,31 +195,34 @@ fn html_font_shard_rejects_identity_policy_mapping_and_license_failures() {
             1,
         ),
         fixture.replacen(
-            "\"schema\": 1,\n      \"object\"",
             "\"schema\": 2,\n      \"object\"",
+            "\"schema\": 3,\n      \"object\"",
             1,
         ),
     ];
-    for invalid in cases {
-        assert!(ManifestShard::parse(&invalid).is_err());
+    for (index, invalid) in cases.into_iter().enumerate() {
+        assert!(
+            ManifestShard::parse(&invalid).is_err(),
+            "invalid case {index} was accepted"
+        );
     }
 
     let conflict = fixture
         .replacen(
-            &format!("sha256-{}", "e".repeat(64)),
-            &format!("sha256-{}", "d".repeat(64)),
+            &format!("ahash64-v1-{}", "d".repeat(16)),
+            &format!("ahash64-v1-{}", "a".repeat(16)),
             1,
         )
         .replacen(
-            &format!(r#""sha256": "{}""#, "e".repeat(64)),
-            &format!(r#""sha256": "{}""#, "d".repeat(64)),
+            &format!(r#""ahash64": "{}""#, "b".repeat(16)),
+            &format!(r#""ahash64": "{}""#, "a".repeat(16)),
             1,
         );
     assert!(ManifestShard::parse(&conflict).is_err());
 }
 
 #[test]
-fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
+fn mixed_html_catalog_extensions_preserve_v2_identity_and_shared_objects() {
     let original = ManifestShard::parse(&html_shard_fixture()).expect("MVP shard");
     let mut extended = original.clone();
     let base_font = original.fonts.values().next().expect("base font").clone();
@@ -270,7 +273,7 @@ fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
         .expect("base mapping")
         .clone();
     let second_mapping_request =
-        LegacyMappingRequestKey::new("9".repeat(64), 1, "html-layout", Some("T1".to_owned()))
+        LegacyMappingRequestKey::new("b".repeat(16), 1, "html-layout", Some("T1".to_owned()))
             .expect("additional encoding mapping");
     let mut second_mapping = base_mapping.clone();
     second_mapping.request = second_mapping_request.clone();
@@ -298,12 +301,12 @@ fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
     let font_objects = reparsed
         .fonts
         .values()
-        .map(|record| (record.object.sha256.clone(), record.object.bytes))
+        .map(|record| (record.object.ahash64.clone(), record.object.bytes))
         .collect::<BTreeSet<_>>();
     let mapping_objects = reparsed
         .legacy_mappings
         .values()
-        .map(|record| (record.object.sha256.clone(), record.object.bytes))
+        .map(|record| (record.object.ahash64.clone(), record.object.bytes))
         .collect::<BTreeSet<_>>();
     assert_eq!(program_identities.len(), 1, "instances share one program");
     assert_eq!(font_objects.len(), 1, "font records share one WOFF2 object");
@@ -313,7 +316,7 @@ fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
     );
     assert_ne!(base_font.request, advanced_font_request);
     assert_ne!(base_mapping.request, second_mapping_request);
-    assert_eq!(second_mapping_request.tfm_sha256(), "9".repeat(64));
+    assert_eq!(second_mapping_request.tfm_ahash64(), "b".repeat(16));
     assert!(
         second_mapping_request
             .manifest_key()
@@ -322,7 +325,7 @@ fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
     );
 
     let basename_only =
-        LegacyMappingRequestKey::new("8".repeat(64), 1, "html-layout", Some("T1".to_owned()))
+        LegacyMappingRequestKey::new("c".repeat(16), 1, "html-layout", Some("T1".to_owned()))
             .expect("unmapped exact identity");
     let selection = select_shard(
         &reparsed,
@@ -340,18 +343,18 @@ fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
 }
 
 #[test]
-fn v1_reader_accepts_original_records_and_rejects_future_record_versions() {
+fn v2_reader_accepts_current_records_and_rejects_future_record_versions() {
     let original = html_shard_fixture();
     assert!(ManifestShard::parse(&original).is_ok());
     for unsupported in [
         original.replacen(
-            "\"schema\": 1,\n      \"object\"",
             "\"schema\": 2,\n      \"object\"",
+            "\"schema\": 3,\n      \"object\"",
             1,
         ),
         original.replacen(
-            "\"schema\": 1,\n      \"tfmSha256\"",
-            "\"schema\": 2,\n      \"tfmSha256\"",
+            "\"schema\": 2,\n      \"tfmAhash64\"",
+            "\"schema\": 3,\n      \"tfmAhash64\"",
             1,
         ),
     ] {
@@ -376,16 +379,13 @@ fn classic_resource_kinds_use_stable_distribution_keys() {
 #[test]
 fn parses_sharded_root_and_full_inline_dependency_metadata() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
-    assert_eq!(
-        root.shard_digest(0),
-        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
+    assert_eq!(root.shard_digest(0), Some("aaaaaaaaaaaaaaaa"));
 
     let shard = ManifestShard::parse(
-        r#"{"schema":1,"distribution":"test","index":0,"files":{"tex:plain.tex":{"virtualPath":"/texlive/tex/plain.tex","object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"dependencies":[{"key":"tfm:cmr10.tfm","virtualPath":"/texlive/fonts/cmr10.tfm","object":"sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","bytes":20}]}}}"#,
+        r#"{"schema":3,"distribution":"test","index":0,"files":{"tex:plain.tex":{"virtualPath":"/texlive/tex/plain.tex","object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"dependencies":[{"key":"tfm:cmr10.tfm","virtualPath":"/texlive/fonts/cmr10.tfm","object":"ahash64-v1-cccccccccccccccc","ahash64":"cccccccccccccccc","bytes":20}]}}}"#,
     )
     .expect("index shard");
     shard.validate_identity(&root, 0).expect("shard identity");
@@ -408,13 +408,13 @@ fn parses_sharded_root_and_full_inline_dependency_metadata() {
 #[test]
 fn root_serialization_and_sharding_are_canonical_catalog_operations() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
     assert_eq!(
         root.to_json(),
         concat!(
-            r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+            r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
             "\n"
         )
     );
@@ -437,11 +437,11 @@ fn root_serialization_and_sharding_are_canonical_catalog_operations() {
 #[test]
 fn assembled_catalog_rejects_cross_shard_and_stale_dependency_semantics() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
     let shard = ManifestShard::parse(
-        r#"{"schema":1,"distribution":"test","index":0,"files":{"tex:plain.tex":{"virtualPath":"/texlive/tex/plain.tex","object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"dependencies":[{"key":"tfm:absent.tfm","virtualPath":"/texlive/fonts/absent.tfm","object":"sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","bytes":20}]}}}"#,
+        r#"{"schema":3,"distribution":"test","index":0,"files":{"tex:plain.tex":{"virtualPath":"/texlive/tex/plain.tex","object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"dependencies":[{"key":"tfm:absent.tfm","virtualPath":"/texlive/fonts/absent.tfm","object":"ahash64-v1-cccccccccccccccc","ahash64":"cccccccccccccccc","bytes":20}]}}}"#,
     )
     .expect("structurally valid shard");
     let error = assemble_sharded_catalog(root, vec![shard]).expect_err("absent dependency");
@@ -450,13 +450,13 @@ fn assembled_catalog_rejects_cross_shard_and_stale_dependency_semantics() {
 
 #[test]
 fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
-    let inconsistent = r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":1,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#;
+    let inconsistent = r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":1,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#;
     assert!(ShardedManifestRoot::parse(inconsistent).is_err());
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+        r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"]}"#,
     )
     .expect("root manifest");
-    let shard = ManifestShard::parse(r#"{"schema":1,"distribution":"other","index":0,"files":{}}"#)
+    let shard = ManifestShard::parse(r#"{"schema":3,"distribution":"other","index":0,"files":{}}"#)
         .expect("structurally valid shard");
     assert!(shard.validate_identity(&root, 0).is_err());
 }
@@ -464,7 +464,7 @@ fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
 #[test]
 fn parses_versioned_bounded_format_input_closures() {
     let root = ShardedManifestRoot::parse(
-        r#"{"schema":3,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx","tfm:cmr10.tfm"]}}}}"#,
+        r#"{"schema":6,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx","tfm:cmr10.tfm"]}}}}"#,
     )
     .expect("root manifest with input closure");
     let closure = root.formats["latex"]
@@ -473,13 +473,13 @@ fn parses_versioned_bounded_format_input_closures() {
         .expect("format input closure");
     assert_eq!(closure.schema, FORMAT_INPUT_CLOSURE_SCHEMA);
     assert_eq!(closure.keys, ["tex:latex.ltx", "tfm:cmr10.tfm"]);
-    let schema_two = r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx"]}}}}"#;
+    let schema_two = r#"{"schema":5,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx"]}}}}"#;
     assert!(ShardedManifestRoot::parse(schema_two).is_err());
 }
 
 #[test]
 fn rejects_corrupt_duplicate_and_oversized_format_input_closures() {
-    let prefix = r#"{"schema":3,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["#;
+    let prefix = r#"{"schema":6,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"ahash64-v1-bbbbbbbbbbbbbbbb","ahash64":"bbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestAhash64":"cccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["#;
     let suffix = r#"]}}}}"#;
     for keys in [
         r#"tex:latex.ltx","tex:latex.ltx"#,
@@ -500,16 +500,16 @@ fn rejects_corrupt_duplicate_and_oversized_format_input_closures() {
 #[test]
 fn named_format_envelope_canonicalizes_closure_once() {
     let text = r#"{
-        "schema":2,
+        "schema":4,
         "name":"latex",
-        "object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "object":"ahash64-v1-bbbbbbbbbbbbbbbb",
+        "ahash64":"bbbbbbbbbbbbbbbb",
         "bytes":10,
         "engine":"umber",
         "engineVersion":"0.1.0",
         "formatSchema":11,
         "sourceDistribution":"test",
-        "sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sourceManifestAhash64":"cccccccccccccccc",
         "sourceDateEpoch":0,
         "inputClosure":{"schema":1,"keys":["tfm:cmr10.tfm","tex:latex.ltx"]}
     }"#;
@@ -527,7 +527,7 @@ fn named_format_envelope_canonicalizes_closure_once() {
 }
 
 #[test]
-fn authenticated_batch_owns_exact_shards_and_required_before_hint_order() {
+fn verified_batch_owns_exact_shards_and_required_before_hint_order() {
     let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
     let catalog = shard_manifest(&manifest, 2).expect("sharded catalogue");
     let requests = vec![
@@ -547,8 +547,7 @@ fn authenticated_batch_owns_exact_shards_and_required_before_hint_order() {
         .iter()
         .map(|(index, text)| (*index, text.as_str()))
         .collect::<Vec<_>>();
-    let plan = authenticate_batch(&catalog.root.to_json(), &borrowed, &requests)
-        .expect("authenticated plan");
+    let plan = verify_batch(&catalog.root.to_json(), &borrowed, &requests).expect("verified plan");
     assert_eq!(plan.selection.misses.len(), 1);
     assert_eq!(plan.selection.jobs[0].requirement, JobRequirement::Required);
     assert!(
@@ -563,5 +562,5 @@ fn authenticated_batch_owns_exact_shards_and_required_before_hint_order() {
         .iter()
         .map(|(index, text)| (*index, text.as_str()))
         .collect::<Vec<_>>();
-    assert!(authenticate_batch(&catalog.root.to_json(), &tampered, &requests).is_err());
+    assert!(verify_batch(&catalog.root.to_json(), &tampered, &requests).is_err());
 }

@@ -1,6 +1,5 @@
-use sha2::{Digest, Sha256};
-
 use crate::LegacyEncodingMap;
+use umber_hash::{AHash64, HashDomain};
 
 use super::*;
 
@@ -31,7 +30,7 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
         ResolvedFont {
             request: key(),
             container: FontContainer::Woff2,
-            declared_object_sha256: Some(FontObjectIdentity::for_bytes(&woff2)),
+            declared_object_ahash64: Some(FontObjectIdentity::for_bytes(&woff2)),
             declared_program_identity: None,
             provenance: Some("CMU Serif under the SIL OFL".to_owned()),
             legacy_mapping: None,
@@ -50,8 +49,8 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
         ResolvedFont {
             request: key(),
             container: FontContainer::TrueType,
-            declared_object_sha256: Some(FontObjectIdentity::from_bytes(
-                Sha256::digest(&ttf).into(),
+            declared_object_ahash64: Some(FontObjectIdentity::from_bytes(
+                AHash64::for_bytes(HashDomain::OpenTypeObject, &ttf).to_le_bytes(),
             )),
             declared_program_identity: Some(web.identity),
             provenance: None,
@@ -89,7 +88,7 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
     let loaded = crate::LoadedFont::new(
         "cmu-serif",
         "cmu-serif.tfm",
-        [0; 32],
+        [0; 8],
         0,
         size,
         size,
@@ -123,7 +122,7 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
             request: key(),
             container: FontContainer::Woff2,
             bytes: woff2,
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
             legacy_mapping: None,
@@ -142,7 +141,7 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
             request: key(),
             container: FontContainer::TrueType,
             bytes: ttf,
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: Some(web.identity),
             provenance: None,
             legacy_mapping: None,
@@ -203,7 +202,7 @@ fn stix_direct_math_metrics_cover_basic_layout_queries_and_classic_fallback() {
             request: request.key.clone(),
             container: FontContainer::Woff2,
             bytes: include_bytes!("../../tests/fixtures/stix-two-math.woff2").to_vec(),
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
             legacy_mapping: None,
@@ -248,7 +247,7 @@ fn stix_direct_math_metrics_cover_basic_layout_queries_and_classic_fallback() {
     let classic = crate::LoadedFont::new(
         "classic",
         "classic.tfm",
-        [0; 32],
+        [0; 8],
         0,
         size,
         size,
@@ -270,7 +269,7 @@ fn opentype_only_font_synthesizes_versioned_text_fontdimens() {
             request: request.key.clone(),
             container: FontContainer::Woff2,
             bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: None,
             legacy_mapping: None,
@@ -322,7 +321,7 @@ fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
             request: request.key.clone(),
             container: FontContainer::Woff2,
             bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: None,
             legacy_mapping: None,
@@ -340,7 +339,7 @@ fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
         crate::LoadedFont::new(
             "cmr10",
             "cmr10.tfm",
-            [7; 32],
+            [7; 8],
             0,
             size,
             size,
@@ -493,7 +492,7 @@ fn malformed_variation_programs_fail_without_partial_publication() {
 
 #[test]
 fn instance_identity_covers_feature_values_script_language_and_named_selection() {
-    let program = FontProgramIdentity::from_bytes([9; 32]);
+    let program = FontProgramIdentity::from_bytes([9; 8]);
     let language = FontLanguage::new("SR-Latn").expect("language");
     let base = FontInstanceIdentity::new_with_context(
         program,
@@ -555,7 +554,7 @@ fn sibling_instances_share_validated_program_storage() {
             request: first_request.key.clone(),
             container: FontContainer::Woff2,
             bytes: bytes.clone(),
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: None,
             legacy_mapping: None,
@@ -586,7 +585,7 @@ fn sibling_instances_share_validated_program_storage() {
             request: second_key,
             container: FontContainer::Woff2,
             bytes,
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: Some(first.identity),
             provenance: None,
             legacy_mapping: None,
@@ -624,7 +623,7 @@ fn collection_faces_are_selected_and_bounded() {
                 request: key,
                 container: FontContainer::Collection,
                 bytes: collection.clone(),
-                declared_object_sha256: None,
+                declared_object_ahash64: None,
                 declared_program_identity: None,
                 provenance: None,
                 legacy_mapping: None,
@@ -662,7 +661,7 @@ fn collection_faces_are_selected_and_bounded() {
                 request: key,
                 container: FontContainer::Collection,
                 bytes: collection,
-                declared_object_sha256: None,
+                declared_object_ahash64: None,
                 declared_program_identity: None,
                 provenance: None,
                 legacy_mapping: None,
@@ -755,11 +754,11 @@ fn canonical_request_and_binary_response_encodings_round_trip() {
         request: key(),
         container: FontContainer::Woff2,
         bytes: vec![0, 1, 2, 255],
-        declared_object_sha256: Some(FontObjectIdentity::from_bytes([3; 32])),
-        declared_program_identity: Some(FontProgramIdentity::from_bytes([4; 32])),
+        declared_object_ahash64: Some(FontObjectIdentity::from_bytes([3; 8])),
+        declared_program_identity: Some(FontProgramIdentity::from_bytes([4; 8])),
         provenance: Some("fixture".to_owned()),
         legacy_mapping: Some(LegacyFontMapping {
-            tfm_sha256: [5; 32],
+            tfm_ahash64: [5; 8],
             encoding: vec![None; 256],
             embeddable: true,
         }),
@@ -771,11 +770,11 @@ fn canonical_request_and_binary_response_encodings_round_trip() {
         request: key(),
         container: FontContainer::Woff2,
         bytes: vec![],
-        declared_object_sha256: None,
+        declared_object_ahash64: None,
         declared_program_identity: None,
         provenance: None,
         legacy_mapping: Some(LegacyFontMapping {
-            tfm_sha256: [0; 32],
+            tfm_ahash64: [0; 8],
             encoding: vec![None; 255],
             embeddable: true,
         }),
@@ -837,7 +836,7 @@ fn mismatches_and_malformed_containers_fail_before_publication() {
         request: key(),
         container: FontContainer::Woff2,
         bytes: b"wOF2".to_vec(),
-        declared_object_sha256: Some(FontObjectIdentity::from_bytes([7; 32])),
+        declared_object_ahash64: Some(FontObjectIdentity::from_bytes([7; 8])),
         declared_program_identity: None,
         provenance: None,
         legacy_mapping: None,

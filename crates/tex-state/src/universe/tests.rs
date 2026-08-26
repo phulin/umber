@@ -9,7 +9,6 @@ use crate::token::{Token, TokenWord};
 use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind};
 use std::path::PathBuf;
 use tex_arith::{GlueSetRatio, Scaled};
-use tex_content::ContentHash;
 use tex_fonts::{FontMetrics, LoadedFont};
 
 fn budget() -> InternerBudget {
@@ -20,7 +19,7 @@ fn test_font(name: &str) -> LoadedFont {
     LoadedFont::new(
         name,
         PathBuf::from(format!("/fonts/{name}.tfm")),
-        ContentHash::from_bytes(name.as_bytes()).bytes(),
+        tex_fonts::font_content_hash(name.as_bytes()),
         0x1234_5678,
         Scaled::from_raw(10 * Scaled::UNITY),
         Scaled::from_raw(10 * Scaled::UNITY),

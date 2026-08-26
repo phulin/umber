@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
+use umber_hash::{AHash64, HashDomain};
 
 const PRE: u8 = 247;
 const VF_ID: u8 = 202;
@@ -45,11 +45,11 @@ impl Default for VfLimits {
 
 /// Stable identity of the exact VF bytes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct VfProgramIdentity([u8; 32]);
+pub struct VfProgramIdentity([u8; 8]);
 
 impl VfProgramIdentity {
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 }
@@ -150,7 +150,9 @@ impl VfProgram {
         if bytes.len() > limits.max_input_bytes {
             return Err(VfParseError::InputTooLarge);
         }
-        let identity = VfProgramIdentity(Sha256::digest(bytes).into());
+        let identity = VfProgramIdentity(
+            AHash64::for_bytes(HashDomain::VirtualFontProgram, bytes).to_le_bytes(),
+        );
         let mut cursor = Cursor::new(bytes);
         if cursor.u8()? != PRE || cursor.u8()? != VF_ID {
             return Err(VfParseError::InvalidPreamble);

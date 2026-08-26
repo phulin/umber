@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+umber-hash = { path = "../umber-hash" }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

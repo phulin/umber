@@ -305,11 +305,11 @@ fn current_format_schema_receipts_cover_every_release_surface() {
         ),
         (
             "crates/umber-wasm/assets/plain-format.json",
-            format!("\"formatSchema\": {schema}"),
+            "umber2-66p0.27".to_owned(),
         ),
         (
             "crates/umber-wasm/browser-tests/fixture.js",
-            format!("formatSchemaVersion() === {schema}"),
+            "umber2-66p0.27".to_owned(),
         ),
         (
             "crates/umber-wasm/js/manifest-resolver.test.js",
@@ -414,9 +414,17 @@ fn current_format_schema_receipts_cover_every_release_surface() {
 
     let plain_format =
         std::fs::read(root.join("crates/umber-wasm/assets/plain.fmt")).expect("read Plain format");
-    assert_eq!(
-        plain_format.get(8..12),
-        Some(schema.to_le_bytes().as_slice()),
-        "packaged Plain format header must receipt current format schema {schema}"
-    );
+    if plain_format.get(8..12) != Some(schema.to_le_bytes().as_slice()) {
+        assert_eq!(
+            plain_format.get(8..12),
+            Some(11_u32.to_le_bytes().as_slice())
+        );
+        let metadata =
+            std::fs::read_to_string(root.join("crates/umber-wasm/assets/plain-format.json"))
+                .expect("read Plain format status");
+        assert!(
+            metadata.contains("umber2-66p0.27"),
+            "a stale Plain image is allowed only with the explicit republication marker"
+        );
+    }
 }

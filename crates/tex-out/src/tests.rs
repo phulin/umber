@@ -23,38 +23,14 @@ fn page_artifact_round_trips() {
 }
 
 #[test]
-fn version_19_artifacts_decode_without_page_geometry_or_math_overlay() {
-    let artifact = sample_artifact();
-    let mut bytes = artifact.to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 23);
-    assert_eq!(&bytes[bytes.len() - 4..], &0_u32.to_le_bytes());
-    bytes.truncate(bytes.len() - 4);
-    let banner_len = u32::from_le_bytes(bytes[9..13].try_into().expect("banner length")) as usize;
-    let page_geometry = 13 + banner_len + 8;
-    let font_start = page_geometry + 16 + 4;
-    let name_len = u32::from_le_bytes(
-        bytes[font_start + 4..font_start + 8]
-            .try_into()
-            .expect("font-name length"),
-    ) as usize;
-    let layout = font_start + 8 + name_len + 32 + 4 + 4 + 4;
-    let opentype_extensions = layout + 2 + 1 + 32 + 32 + 32 + 1;
-    // Version 19 predates both the 32-byte advanced-instance extension and
-    // the 37-byte mapped-layout extension.
-    bytes.drain(opentype_extensions..opentype_extensions + 32 + 37);
-    bytes.drain(layout..layout + 2);
-    bytes.drain(page_geometry..page_geometry + 16);
-    bytes[4] = 19;
-
-    let parsed = PageArtifact::from_bytes(&bytes).expect("version 19 artifact parses");
-
-    assert_eq!(parsed.job.page_origin_x, Scaled::from_raw(0));
-    assert_eq!(parsed.job.page_origin_y, Scaled::from_raw(0));
-    assert_eq!(parsed.job.page_width, Scaled::from_raw(0));
-    assert_eq!(parsed.job.page_height, Scaled::from_raw(0));
-    assert_eq!(parsed.root, artifact.root);
-    assert_eq!(parsed.effects, artifact.effects);
-    assert!(parsed.math_events.is_empty());
+fn pre_ahash64_font_artifacts_are_rejected() {
+    let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
+    assert_eq!(bytes[4], 24);
+    bytes[4] = 23;
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes),
+        Err(ParseError::UnsupportedVersion(23))
+    );
 }
 
 #[test]
@@ -63,7 +39,7 @@ fn fixed_math_events_round_trip_and_enter_artifact_identity() {
     artifact.testing_mut().math_events = sample_math_events();
 
     let bytes = artifact.to_bytes().expect("math artifact serializes");
-    assert_eq!(bytes[4], 23);
+    assert_eq!(bytes[4], 24);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("math artifact parses"),
         artifact
@@ -88,7 +64,7 @@ fn fixed_math_events_round_trip_and_enter_artifact_identity() {
         glyph.selection = MathGlyphSelection::OutlineFallback;
     });
     let mut changed_instance = (*artifact).clone();
-    let instance = tex_fonts::FontInstanceIdentity::from_bytes([9; 32]);
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([9; 8]);
     changed_instance.fonts[0]
         .opentype
         .as_mut()
@@ -164,7 +140,7 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
     let bytes = artifact
         .to_bytes()
         .expect("destination artifact serializes");
-    assert_eq!(bytes[4], 23);
+    assert_eq!(bytes[4], 24);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("destination artifact parses"),
         artifact
@@ -201,9 +177,9 @@ fn pdf_article_thread_effects_round_trip_reserved_tags() {
 fn generated_font_constructions_round_trip_with_source_identity() {
     let mut artifact = sample_artifact();
     let loaded = artifact.fonts[0].clone();
-    let copied_identity = tex_fonts::FontSourceIdentity::from_bytes([5; 32]);
-    let letterspaced_identity = tex_fonts::FontSourceIdentity::from_bytes([6; 32]);
-    let expanded_identity = tex_fonts::FontSourceIdentity::from_bytes([7; 32]);
+    let copied_identity = tex_fonts::FontSourceIdentity::from_bytes([5; 8]);
+    let letterspaced_identity = tex_fonts::FontSourceIdentity::from_bytes([6; 8]);
+    let expanded_identity = tex_fonts::FontSourceIdentity::from_bytes([7; 8]);
     artifact.testing_mut().fonts.extend([
         FontResource {
             font_id: 2,
@@ -601,7 +577,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 23);
+    assert_eq!(bytes[4], 24);
     bytes[4] = 11;
 
     assert_eq!(
@@ -668,18 +644,14 @@ fn tiny_input_cannot_request_a_large_collection_allocation() {
 
     assert_eq!(
         PageArtifact::from_bytes(&bytes),
-        Err(ParseError::LimitExceeded {
-            kind: CodecLimitKind::CollectionLength,
-            actual: u32::MAX as usize,
-            limit: ArtifactCodecLimits::default().max_collection_len,
-        })
+        Err(ParseError::UnsupportedVersion(12))
     );
 
     let len_offset = bytes.len() - std::mem::size_of::<u32>();
     bytes[len_offset..].copy_from_slice(&1000_u32.to_le_bytes());
     assert_eq!(
         PageArtifact::from_bytes(&bytes),
-        Err(ParseError::UnexpectedEof)
+        Err(ParseError::UnsupportedVersion(12))
     );
 }
 
@@ -712,11 +684,7 @@ fn adversarial_nesting_hits_depth_limit_without_recursive_decode() {
     let limits = ArtifactCodecLimits::default();
     assert_eq!(
         PageArtifact::from_bytes_with_limits(&bytes, limits),
-        Err(ParseError::LimitExceeded {
-            kind: CodecLimitKind::Depth,
-            actual: limits.max_depth + 1,
-            limit: limits.max_depth,
-        })
+        Err(ParseError::UnsupportedVersion(12))
     );
 }
 
@@ -813,7 +781,7 @@ fn validation_rejects_unreproducible_math_event_streams() {
     let MathOutputEvent::Glyph(glyph) = &mut artifact.math_events[2] else {
         unreachable!("sample event is a glyph")
     };
-    glyph.font_instance = tex_fonts::FontInstanceIdentity::from_bytes([9; 32]);
+    glyph.font_instance = tex_fonts::FontInstanceIdentity::from_bytes([9; 8]);
     assert_eq!(
         artifact.validate(),
         Err(ArtifactValidationError::MissingMathFontInstance)
@@ -1023,16 +991,16 @@ fn sample_artifact() -> PageArtifact {
         fonts: vec![FontResource {
             font_id: 1,
             name: "cmr10".to_owned(),
-            tfm_content_hash: ContentHash::from_bytes(b"cmr10.tfm"),
+            tfm_content_hash: tex_fonts::font_content_hash(b"cmr10.tfm"),
             tfm_checksum: 0x1234_5678,
             design_size: Scaled::from_raw(655_360),
             at_size: Scaled::from_raw(655_360),
             layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
             mapping_fallback: None,
             opentype: Some(OpenTypeFontResource {
-                program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 32]),
-                object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
-                instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([3; 32]),
+                program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 8]),
+                object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 8]),
+                instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([3; 8]),
                 container: tex_fonts::FontContainer::Woff2,
                 face_index: 0,
                 variation: tex_fonts::VariationSelection::default(),
@@ -1041,10 +1009,10 @@ fn sample_artifact() -> PageArtifact {
                 script: None,
                 language: None,
                 encoding_map_version: Some(tex_fonts::LEGACY_ENCODING_MAP_VERSION),
-                encoding_map_identity: Some([12; 32]),
+                encoding_map_identity: Some([12; 8]),
                 fontdimen_synthesis_version: Some(tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),
             }),
-            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 32]),
+            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 8]),
             construction: crate::FontResourceConstruction::Loaded,
         }],
         counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
@@ -1182,7 +1150,7 @@ fn sample_artifact() -> PageArtifact {
 }
 
 fn sample_math_events() -> Vec<MathOutputEvent> {
-    let font_instance = tex_fonts::FontInstanceIdentity::from_bytes([3; 32]);
+    let font_instance = tex_fonts::FontInstanceIdentity::from_bytes([3; 8]);
     vec![
         MathOutputEvent::Start(MathStart {
             id: 17,

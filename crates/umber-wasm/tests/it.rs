@@ -483,8 +483,8 @@ fn fixed_math_artifact_schema_round_trips_in_wasm() {
             layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
             mapping_fallback: None,
             opentype: Some(OpenTypeFontResource {
-                program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 32]),
-                object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
+                program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 8]),
+                object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 8]),
                 instance_identity: instance,
                 container: tex_fonts::FontContainer::Woff2,
                 face_index: 0,
@@ -578,7 +578,7 @@ fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm
                 request: key,
                 container: FontContainer::Woff2,
                 bytes: bytes.to_vec(),
-                declared_object_sha256: None,
+                declared_object_ahash64: None,
                 declared_program_identity: None,
                 provenance: Some("pinned browser fixture".to_owned()),
                 legacy_mapping: None,
@@ -1317,42 +1317,31 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
 }
 
 #[wasm_bindgen_test]
-fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
+fn schema_twelve_formats_load_and_legacy_plain_asset_is_explicitly_unavailable() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    const EXPECTED_FORMAT_SCHEMA: u32 = 11;
+    const EXPECTED_FORMAT_SCHEMA: u32 = 12;
     assert_eq!(format_schema_version(), EXPECTED_FORMAT_SCHEMA);
-    let format = include_bytes!("../assets/plain.fmt");
+    let legacy_format = include_bytes!("../assets/plain.fmt");
     assert_eq!(
-        u32::from_le_bytes(format[8..12].try_into().unwrap()),
-        EXPECTED_FORMAT_SCHEMA
+        u32::from_le_bytes(legacy_format[8..12].try_into().unwrap()),
+        11
     );
     assert!(
-        include_str!("../assets/plain-format.json")
-            .contains(&format!("\"formatSchema\": {EXPECTED_FORMAT_SCHEMA}")),
-        "published metadata must match the runtime schema"
+        include_str!("../assets/plain-format.json").contains("umber2-66p0.27"),
+        "legacy packaged format must carry an explicit republication marker"
     );
     assert!(
         include_str!("../assets/plain-source.lock")
             .contains(&format!("format_schema {EXPECTED_FORMAT_SCHEMA}")),
         "reproducible source lock must match the runtime schema"
     );
-    assert!(
-        include_str!("../browser-tests/fixture.js").contains(&format!(
-            "formatSchemaVersion() === {EXPECTED_FORMAT_SCHEMA}"
-        )),
-        "browser acceptance constant must match the runtime schema"
-    );
-    let source = b"\\shipout\\hbox{}\\end";
-    let mut plain = session_with_format("main.tex", format);
-    plain
-        .add_user_file("main.tex", &bytes(source))
-        .expect("add plain source");
-    let formatted = plain.compile_attempt().expect("plain attempt");
-    assert_eq!(string_field(formatted.as_ref(), "kind"), "complete");
+    assert!(include_str!("../browser-tests/fixture.js").contains("umber2-66p0.27"));
+    assert_format_error(legacy_format, "unsupported Umber format version 11");
 
+    let source = b"\\shipout\\hbox{}\\end";
     let mut initialized = Universe::with_world(World::memory());
     prepare_run_stores(&mut initialized);
-    let minimal_format = initialized.dump_format().expect("dump schema-11 format");
+    let minimal_format = initialized.dump_format().expect("dump schema-12 format");
     let mut format_initialized = session_with_format("main.tex", &minimal_format);
     format_initialized
         .add_user_file("main.tex", &bytes(source))
@@ -1374,12 +1363,12 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     let source_dvi = Uint8Array::new(&field(&field(source_result.as_ref(), "output"), "dvi"));
     assert_eq!(formatted_dvi.to_vec(), source_dvi.to_vec());
 
-    let mut wrong_magic = format.to_vec();
+    let mut wrong_magic = minimal_format.clone();
     wrong_magic[..8].copy_from_slice(b"plaintex");
     assert_format_error(&wrong_magic, "not an Umber format file");
 
-    for incompatible in [8_u32, 9, 10, 12] {
-        let mut wrong_schema = format.to_vec();
+    for incompatible in [8_u32, 9, 10, 11, 13] {
+        let mut wrong_schema = minimal_format.clone();
         wrong_schema[8..12].copy_from_slice(&incompatible.to_le_bytes());
         assert_format_error(
             &wrong_schema,
@@ -1387,7 +1376,7 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
         );
     }
 
-    let mut corrupt = format.to_vec();
+    let mut corrupt = minimal_format;
     let last = corrupt.last_mut().expect("format payload");
     *last ^= 1;
     assert_format_error(&corrupt, "Umber format checksum mismatch");
@@ -1395,7 +1384,10 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
 
 #[wasm_bindgen_test]
 fn formatted_session_survives_multiple_resource_retries() {
-    let mut session = session_with_format("main.tex", include_bytes!("../assets/plain.fmt"));
+    let mut initialized = Universe::with_world(World::memory());
+    prepare_run_stores(&mut initialized);
+    let format = initialized.dump_format().expect("dump schema-12 format");
+    let mut session = session_with_format("main.tex", &format);
     session
         .add_user_file("main.tex", &bytes(b"\\input first \\end"))
         .expect("add formatted source");
@@ -1918,7 +1910,7 @@ fn legacy_font_mapping() -> Object {
     let mapping = Object::new();
     set(
         &mapping,
-        "tfmSha256",
+        "tfmAhash64",
         &JsValue::from_str(&tex_state::ContentHash::from_bytes(tfm).hex()),
     );
     let encoding = Array::new_with_length(256);

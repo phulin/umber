@@ -1131,7 +1131,7 @@ mod tests {
         tex_fonts::LoadedFont::new(
             "batchfont",
             "batchfont.tfm",
-            tex_out::ContentHash::from_bytes(b"batchfont").bytes(),
+            tex_fonts::font_content_hash(b"batchfont"),
             0x64b2_0012,
             tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),
             tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),

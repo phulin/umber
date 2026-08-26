@@ -12,10 +12,10 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
 use umber_distribution::{
     ManifestShard, ObjectEntry, ShardedManifestRoot, assemble_sharded_catalog,
 };
+use umber_hash::{AHash64, AHash64Hasher, HashDomain};
 
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -62,16 +62,16 @@ impl Error for DistributionVerificationError {}
 /// complete immutable-graph audit and never populates or rewrites a cache.
 pub fn verify_distribution(
     source: &Path,
-    expected_root_sha256: &str,
+    expected_root_ahash64: &str,
 ) -> Result<DistributionVerificationReport, DistributionVerificationError> {
-    if !is_digest(expected_root_sha256) {
+    if !is_digest(expected_root_ahash64) {
         return Err(DistributionVerificationError::new(
-            "distribution root pin must be a lowercase SHA-256 digest",
+            "distribution root pin must be a lowercase aHash64 digest",
         ));
     }
     let root_path = select_root_path(source);
     let root_bytes = read_bounded(&root_path, MAX_MANIFEST_BYTES, "root manifest")?;
-    authenticate_bytes(&root_bytes, expected_root_sha256, "root manifest")?;
+    verify_identity(&root_bytes, expected_root_ahash64, "root manifest")?;
     let root_text = std::str::from_utf8(&root_bytes)
         .map_err(|error| DistributionVerificationError::at(&root_path, "decode", error))?;
     let root = ShardedManifestRoot::parse(root_text)
@@ -93,9 +93,9 @@ pub fn verify_distribution(
     };
     let mut shards = Vec::with_capacity(root.shards.len());
     for (index, digest) in root.shards.iter().enumerate() {
-        let path = local_object_path(distribution_root, &format!("sha256-{digest}"));
+        let path = local_object_path(distribution_root, &format!("ahash64-v1-{digest}"));
         let bytes = read_bounded(&path, MAX_MANIFEST_BYTES, "index shard")?;
-        authenticate_bytes(&bytes, digest, &format!("index shard {index}"))?;
+        verify_identity(&bytes, digest, &format!("index shard {index}"))?;
         let text = std::str::from_utf8(&bytes)
             .map_err(|error| DistributionVerificationError::at(&path, "decode", error))?;
         let shard = ManifestShard::parse(text)
@@ -141,7 +141,7 @@ pub fn verify_distribution(
         )?;
     }
     for (name, (entry, label)) in objects {
-        if name != format!("sha256-{}", entry.sha256) {
+        if name != format!("ahash64-v1-{}", entry.ahash64) {
             return Err(DistributionVerificationError::new(format!(
                 "object name for {label} does not match its declared digest"
             )));
@@ -187,7 +187,7 @@ fn verify_object(
     }
     let mut file =
         File::open(path).map_err(|error| DistributionVerificationError::at(path, "open", error))?;
-    let mut digest = Sha256::new();
+    let mut digest = AHash64Hasher::new(HashDomain::DistributionContent);
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let length = file
@@ -196,9 +196,9 @@ fn verify_object(
         if length == 0 {
             break;
         }
-        digest.update(&buffer[..length]);
+        digest.write(&buffer[..length]);
     }
-    if hex_bytes(&digest.finalize()) != entry.sha256 {
+    if digest.finish().hex() != entry.ahash64 {
         return Err(DistributionVerificationError::at(
             path,
             "verify",
@@ -237,12 +237,12 @@ fn regular_file_metadata(path: &Path) -> Result<fs::Metadata, DistributionVerifi
     Ok(metadata)
 }
 
-fn authenticate_bytes(
+fn verify_identity(
     bytes: &[u8],
     expected: &str,
     label: &str,
 ) -> Result<(), DistributionVerificationError> {
-    let actual = hex_bytes(&Sha256::digest(bytes));
+    let actual = AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex();
     if actual == expected {
         Ok(())
     } else {
@@ -256,7 +256,7 @@ fn select_root_path(source: &Path) -> PathBuf {
     if !source.is_dir() {
         return source.to_owned();
     }
-    for name in ["manifest-v4.json", "manifest-v3.json", "manifest-v2.json"] {
+    for name in ["manifest-v7.json", "manifest-v6.json", "manifest-v5.json"] {
         let candidate = source.join(name);
         if candidate.exists() {
             return candidate;
@@ -275,20 +275,10 @@ fn local_object_path(root: &Path, object: &str) -> PathBuf {
 }
 
 fn is_digest(value: &str) -> bool {
-    value.len() == 64
+    value.len() == 16
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    use fmt::Write as _;
-
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(output, "{byte:02x}").expect("writing to a string cannot fail");
-    }
-    output
 }
 
 #[cfg(test)]

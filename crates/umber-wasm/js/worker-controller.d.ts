@@ -29,7 +29,7 @@ export function compileInWorker(
 	resolver: Pick<
 		HttpManifestResolverOptions,
 		| "manifestUrl"
-		| "manifestSha256"
+		| "manifestAHash64"
 		| "persistentCache"
 		| "offline"
 		| "concurrency"
@@ -98,7 +98,7 @@ export function createEditorSessionInWorker(
 	resolver: Pick<
 		HttpManifestResolverOptions,
 		| "manifestUrl"
-		| "manifestSha256"
+		| "manifestAHash64"
 		| "persistentCache"
 		| "offline"
 		| "concurrency"

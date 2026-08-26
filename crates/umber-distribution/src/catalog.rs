@@ -7,10 +7,10 @@ use crate::{
     select_shards, shard_index_for_key,
 };
 
-/// A complete browser acquisition plan whose shard bytes were authenticated
+/// A complete browser acquisition plan whose shard bytes were verified
 /// against the supplied root before any record became selectable.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AuthenticatedBatchPlan {
+pub struct VerifiedBatchPlan {
     pub root: ShardedManifestRoot,
     pub shards: BTreeMap<u32, ManifestShard>,
     pub selection: crate::Selection,
@@ -34,11 +34,11 @@ pub fn prepare_batch(
 
 /// Authenticates the exact selected shard bytes and produces the shared
 /// required-before-hint acquisition plan.
-pub fn authenticate_batch(
+pub fn verify_batch(
     root_text: &str,
     raw_shards: &[(u32, &str)],
     requests: &[crate::ManifestRequest],
-) -> Result<AuthenticatedBatchPlan, SelectionError> {
+) -> Result<VerifiedBatchPlan, SelectionError> {
     let (root, expected_indexes) = prepare_batch(root_text, requests)?;
     let mut shards = BTreeMap::new();
     for &(index, text) in raw_shards {
@@ -50,9 +50,9 @@ pub fn authenticate_batch(
         let expected_digest = root
             .shard_digest(index)
             .ok_or_else(|| SelectionError::new(format!("invalid index shard {index}")))?;
-        if sha256_hex(text.as_bytes()) != expected_digest {
+        if ahash64_hex(text.as_bytes()) != expected_digest {
             return Err(SelectionError::new(format!(
-                "index shard {index} does not match its authenticated root digest"
+                "index shard {index} does not match its verified root digest"
             )));
         }
         let shard = ManifestShard::parse(text).map_err(SelectionError::from_manifest)?;
@@ -83,16 +83,16 @@ pub fn authenticate_batch(
         ));
     }
     let selection = select_shards(&shards, root.shard_bits, requests);
-    Ok(AuthenticatedBatchPlan {
+    Ok(VerifiedBatchPlan {
         root,
         shards,
         selection,
     })
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+fn ahash64_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    crate::sha256::digest(bytes)
+    crate::ahash64::digest(bytes)
         .iter()
         .flat_map(|byte| {
             [
@@ -157,7 +157,7 @@ pub fn shard_manifest_with_records(
                     key: dependency.clone(),
                     virtual_path: target.virtual_path.clone(),
                     object: target.object.clone(),
-                    sha256: target.sha256.clone(),
+                    ahash64: target.ahash64.clone(),
                     bytes: target.bytes,
                 }
             })
@@ -168,7 +168,7 @@ pub fn shard_manifest_with_records(
             ShardFile {
                 virtual_path: file.virtual_path.clone(),
                 object: file.object.clone(),
-                sha256: file.sha256.clone(),
+                ahash64: file.ahash64.clone(),
                 bytes: file.bytes,
                 dependencies,
             },
@@ -205,7 +205,7 @@ pub fn shard_manifest_with_records(
         .collect::<Vec<_>>();
     let shard_digests = shards
         .iter()
-        .map(|shard| sha256_hex(shard.to_json().as_bytes()))
+        .map(|shard| ahash64_hex(shard.to_json().as_bytes()))
         .collect();
     Ok(ShardedCatalog {
         root: ShardedManifestRoot {
@@ -225,7 +225,7 @@ pub fn shard_manifest_with_records(
     })
 }
 
-/// Validates and assembles independently authenticated root and shard values.
+/// Validates and assembles independently verified root and shard values.
 pub fn assemble_sharded_catalog(
     root: ShardedManifestRoot,
     shards: Vec<ManifestShard>,
@@ -291,7 +291,7 @@ pub fn assemble_sharded_catalog(
             };
             if dependency.virtual_path != target.virtual_path
                 || dependency.object != target.object
-                || dependency.sha256 != target.sha256
+                || dependency.ahash64 != target.ahash64
                 || dependency.bytes != target.bytes
             {
                 return Err(SelectionError::new(format!(
@@ -343,7 +343,7 @@ pub fn assemble_sharded_catalog(
                     ManifestFile {
                         virtual_path: file.virtual_path,
                         object: file.object,
-                        sha256: file.sha256,
+                        ahash64: file.ahash64,
                         bytes: file.bytes,
                         dependencies,
                     },

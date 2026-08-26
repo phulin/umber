@@ -65,7 +65,7 @@ impl TestState {
         let null = LoadedFont::new(
             "nullfont",
             "nullfont",
-            [0; 32],
+            [0; 8],
             0,
             Scaled::from_raw(0),
             Scaled::from_raw(0),

@@ -793,7 +793,7 @@ impl VirtualFontResolver<'_> {
                     "OpenType response for {logical_name} omitted its typed legacy mapping"
                 ));
             };
-            if bundle.tfm_sha256 != metrics.hash().bytes() {
+            if bundle.tfm_ahash64 != tex_fonts::font_content_hash(metrics.bytes()) {
                 return Err(format!(
                     "OpenType response for {logical_name} has the wrong TFM mapping identity"
                 ));

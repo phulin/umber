@@ -15,7 +15,7 @@ printf 'format fixture\n' > "${fixture_repo}/pdflatex.fmt"
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<'EOF'
 distribution fixture
-distribution_sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+distribution_ahash64 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 format_schema 11
 source_date_epoch 1
 source tex/base.tex 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -52,7 +52,7 @@ receipt="${tmp_root}/receipt.txt"
 UMBER_TEST_INVOCATIONS="$invocations" \
   "${fixture_repo}/scripts/check-latex-representative-resources.sh" \
     --distribution "${fixture_repo}/distribution" \
-    --distribution-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --distribution-ahash64 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --format "${fixture_repo}/pdflatex.fmt" \
     --umber "${fixture_repo}/bin/umber" \
     --receipt "$receipt" >/dev/null

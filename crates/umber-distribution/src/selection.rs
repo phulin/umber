@@ -333,7 +333,7 @@ pub enum WritingDirection {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct LegacyMappingRequestKey {
     mapping_schema: u32,
-    tfm_sha256: String,
+    tfm_ahash64: String,
     layout_policy_version: u32,
     purpose: String,
     encoding_catalog: Option<String>,
@@ -341,19 +341,19 @@ pub struct LegacyMappingRequestKey {
 
 impl LegacyMappingRequestKey {
     pub fn new(
-        tfm_sha256: impl Into<String>,
+        tfm_ahash64: impl Into<String>,
         layout_policy_version: u32,
         purpose: impl Into<String>,
         encoding_catalog: Option<String>,
     ) -> Result<Self, SelectionError> {
-        let tfm_sha256 = tfm_sha256.into();
-        if tfm_sha256.len() != 64
-            || !tfm_sha256
+        let tfm_ahash64 = tfm_ahash64.into();
+        if tfm_ahash64.len() != 16
+            || !tfm_ahash64
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
         {
             return Err(SelectionError::new(
-                "legacy mapping TFM digest must be lowercase SHA-256",
+                "legacy mapping TFM digest must be lowercase aHash64",
             ));
         }
         if layout_policy_version != 1 {
@@ -369,8 +369,8 @@ impl LegacyMappingRequestKey {
             return Err(SelectionError::new("invalid encoding catalog identifier"));
         }
         Ok(Self {
-            mapping_schema: 1,
-            tfm_sha256,
+            mapping_schema: 2,
+            tfm_ahash64,
             layout_policy_version,
             purpose,
             encoding_catalog,
@@ -378,8 +378,8 @@ impl LegacyMappingRequestKey {
     }
 
     #[must_use]
-    pub fn tfm_sha256(&self) -> &str {
-        &self.tfm_sha256
+    pub fn tfm_ahash64(&self) -> &str {
+        &self.tfm_ahash64
     }
 
     #[must_use]
@@ -387,7 +387,7 @@ impl LegacyMappingRequestKey {
         ManifestLogicalKey(format!(
             "legacy-mapping:{}:{}:{}:{}:{}",
             self.mapping_schema,
-            self.tfm_sha256,
+            self.tfm_ahash64,
             self.layout_policy_version,
             self.purpose,
             self.encoding_catalog
@@ -409,7 +409,7 @@ impl LegacyMappingRequestKey {
                 "invalid canonical legacy mapping request key",
             ));
         };
-        if *schema != "1" {
+        if *schema != "2" {
             return Err(SelectionError::new(format!(
                 "unsupported legacy mapping request schema {schema}"
             )));
@@ -459,7 +459,7 @@ pub fn shard_index(key: &ManifestLogicalKey, shard_bits: u8) -> Result<u32, Sele
     if shard_bits == 0 {
         return Ok(0);
     }
-    let digest = crate::sha256::digest(key.as_str().as_bytes());
+    let digest = crate::ahash64::digest(key.as_str().as_bytes());
     let prefix = u16::from_be_bytes([digest[0], digest[1]]);
     Ok(u32::from(prefix >> (16 - shard_bits)))
 }
@@ -560,7 +560,7 @@ impl fmt::Display for SelectionError {
 
 impl Error for SelectionError {}
 
-/// Selects typed records from one already-authenticated canonical shard.
+/// Selects typed records from one already-verified canonical shard.
 #[must_use]
 pub fn select_shard(shard: &ManifestShard, requests: &[ManifestRequest]) -> Selection {
     select_from_shards(requests, |_| shard)
@@ -629,7 +629,7 @@ fn select_from_shards<'a>(
     selection
 }
 
-/// Selects one ordered request batch from its authenticated canonical shards.
+/// Selects one ordered request batch from its verified canonical shards.
 /// Required jobs retain first-request order; their inline dependency hints
 /// follow in discovery order after every required job.
 #[must_use]
@@ -642,7 +642,7 @@ pub fn select_shards(
         let index = shard_index(key, shard_bits).expect("validated request key has a shard index");
         shards
             .get(&index)
-            .expect("authenticated batch contains every requested shard")
+            .expect("verified batch contains every requested shard")
     })
 }
 

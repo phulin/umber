@@ -240,7 +240,7 @@ longer carry a second evidence codec.
 
 `umber run INPUT --format-out NAME.fmt` writes a format when INPUT terminates
 with `\dump`; `umber run INPUT --format NAME.fmt` starts from that image. The
-schema-11 format has an explicit fixed-width little-endian header and section
+schema-12 format has an explicit fixed-width little-endian header and section
 directory, compatibility fingerprints, deterministic alignment, and a
 whole-image checksum. Its deterministic fixed sections contain semantic
 engine state only: control-sequence namespaces and meanings, immutable
@@ -250,7 +250,7 @@ bases plus mutable job overlays; it never restores host pointers, hash-table
 layout, allocation capacities, journals, checkpoints, input cursors,
 provenance caches, or `World` effects. The official two-phase TRIP workload
 exercises this format path before DVI comparison. State tests exercise the
-same schema-11 encoder and decoder directly, including malformed-section
+same schema-12 encoder and decoder directly, including malformed-section
 rejection, rollback, and byte-identical canonical redumps. Schema 9 images are
 rejected and regenerated from source; the durable container and frozen-store migration are specified in
 [frozen_format.md](frozen_format.md).

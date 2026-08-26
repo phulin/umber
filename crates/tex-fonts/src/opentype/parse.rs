@@ -3,9 +3,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use self_cell::self_cell;
-use sha2::{Digest, Sha256};
 use tex_arith::{Scaled, font_units_to_scaled};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, RawFace, Tag};
+use umber_hash::{AHash64Hasher, HashDomain};
 
 use super::contract::{
     FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontInstanceContext, FontInstanceIdentity,
@@ -295,7 +295,7 @@ impl OpenTypeFont {
         validate_container_magic(response.container, &response.bytes)?;
         let object_identity = FontObjectIdentity::for_bytes(&response.bytes);
         if response
-            .declared_object_sha256
+            .declared_object_ahash64
             .is_some_and(|declared| declared != object_identity)
         {
             return Err(FontParseError::ObjectIdentityMismatch);
@@ -515,10 +515,10 @@ fn canonical_identity(
     raw: &RawFace<'_>,
     face_index: u32,
 ) -> Result<FontProgramIdentity, FontParseError> {
-    let mut hash = Sha256::new();
-    hash.update(b"umber.font-program");
-    hash.update([FONT_PROGRAM_IDENTITY_VERSION]);
-    hash.update(face_index.to_be_bytes());
+    let mut hash = AHash64Hasher::new(HashDomain::OpenTypeProgram);
+    hash.write(b"umber.font-program");
+    hash.write([FONT_PROGRAM_IDENTITY_VERSION]);
+    hash.write(face_index.to_be_bytes());
     for tag in IDENTITY_TABLES {
         if let Some(data) = raw.table(Tag::from_bytes(&tag.bytes())) {
             let normalized;
@@ -532,16 +532,16 @@ fn canonical_identity(
             } else {
                 data
             };
-            hash.update(tag.bytes());
-            hash.update(
+            hash.write(tag.bytes());
+            hash.write(
                 u32::try_from(data.len())
                     .map_err(|_| FontParseError::ArithmeticOverflow)?
                     .to_be_bytes(),
             );
-            hash.update(data);
+            hash.write(data);
         }
     }
-    Ok(FontProgramIdentity::from_bytes(hash.finalize().into()))
+    Ok(FontProgramIdentity::from_bytes(hash.finish().to_le_bytes()))
 }
 
 fn project_cmap(face: &Face<'_>, limit: usize) -> Result<CharacterMap, FontParseError> {

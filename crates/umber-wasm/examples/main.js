@@ -1,5 +1,5 @@
 import {
-	TEXLIVE_2026_MANIFEST_SHA256,
+	TEXLIVE_2026_MANIFEST_AHASH64,
 	TEXLIVE_2026_MANIFEST_URL,
 } from "../manifest-resolver.js";
 import { compileInWorker } from "../worker-controller.js";
@@ -10,7 +10,7 @@ const output = await compileInWorker(
 	new Map([["main.tex", source]]),
 	{
 		manifestUrl: TEXLIVE_2026_MANIFEST_URL,
-		manifestSha256: TEXLIVE_2026_MANIFEST_SHA256,
+		manifestAhash64: TEXLIVE_2026_MANIFEST_AHASH64,
 		format: "plain",
 		persistentCache: "indexeddb",
 	},

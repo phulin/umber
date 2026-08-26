@@ -444,7 +444,7 @@ fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
 #[allow(clippy::disallowed_methods)]
 fn check_embedded_font_case(case: &str) {
     let temp = tempfile::tempdir().expect("create embedded-font parity directory");
-    let distribution = write_empty_distribution(temp.path());
+    let (distribution, distribution_ahash64) = write_empty_distribution(temp.path());
     let source_name = format!("{case}.tex");
     fs::copy(
         corpus_root().join("pdf").join(case).join("source.tex"),
@@ -519,6 +519,7 @@ fn check_embedded_font_case(case: &str) {
         .args(["run", "--pdftex"])
         .arg("--distribution")
         .arg(&distribution)
+        .args(["--distribution-ahash64", &distribution_ahash64])
         .arg("--pdf")
         .arg(&actual_path)
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -607,19 +608,24 @@ fn check_embedded_font_case(case: &str) {
 }
 
 #[allow(clippy::disallowed_methods)] // Hermetic host-side distribution fixture.
-fn write_empty_distribution(root: &std::path::Path) -> std::path::PathBuf {
+fn write_empty_distribution(root: &std::path::Path) -> (std::path::PathBuf, String) {
     let distribution = root.join("distribution");
     let objects = distribution.join("objects");
     fs::create_dir_all(&objects).expect("create empty distribution");
-    let shard = b"{\"schema\":1,\"distribution\":\"pdf-fixture\",\"index\":0,\"files\":{}}\n";
-    let shard_digest = digest(shard);
-    fs::write(objects.join(format!("sha256-{shard_digest}")), shard)
+    let shard = b"{\"schema\":3,\"distribution\":\"pdf-fixture\",\"index\":0,\"files\":{}}\n";
+    let shard_digest = distribution_digest(shard);
+    fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard)
         .expect("write empty distribution shard");
     let root = format!(
-        "{{\"schema\":2,\"distribution\":\"pdf-fixture\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+        "{{\"schema\":6,\"distribution\":\"pdf-fixture\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
     );
-    fs::write(distribution.join("manifest-v2.json"), root).expect("write empty distribution root");
-    distribution
+    let root_digest = distribution_digest(root.as_bytes());
+    fs::write(distribution.join("manifest-v6.json"), root).expect("write empty distribution root");
+    (distribution, root_digest)
+}
+
+fn distribution_digest(bytes: &[u8]) -> String {
+    umber_hash::AHash64::for_bytes(umber_hash::HashDomain::DistributionContent, bytes).hex()
 }
 
 fn digest(bytes: &[u8]) -> String {

@@ -107,8 +107,11 @@ build_one() {
 
 cd "$repo_root"
 cargo build -p umber
+cargo build --manifest-path tools/texlive-wasm-publish/Cargo.toml
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/umber"
+publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/debug/texlive-wasm-publish"
 [[ -x "$umber_bin" ]] || fail "Umber binary was not built at $umber_bin"
+[[ -x "$publisher" ]] || fail "publisher was not built at $publisher"
 [[ -x "$guard" ]] || fail "missing shared Umber watchdog: $guard"
 
 run_umber() {
@@ -144,24 +147,24 @@ printf '\\input plain \\input document\n' > "${tmp_root}/first/source-run.tex"
 cmp "${tmp_root}/first/source.dvi" "${tmp_root}/first/loaded.dvi" || \
   fail "source-initialized and format-loaded Plain DVI differ"
 
-format_sha256="$(sha256 "$format_file")"
+format_ahash64="$($publisher --file-ahash64 "$format_file")"
 format_bytes="$(wc -c < "$format_file" | tr -d ' ')"
-source_manifest_sha256="$(sha256 "$lock_file")"
+source_manifest_ahash64="$($publisher --file-ahash64 "$lock_file")"
 package_id="$(cargo pkgid -p umber)"
 engine_version="${package_id##*#}"
 
 cat > "${tmp_root}/plain-format.json" <<EOF
 {
-  "schema": 1,
+  "schema": 3,
   "name": "plain",
-  "object": "sha256-${format_sha256}",
-  "sha256": "${format_sha256}",
+  "object": "ahash64-v1-${format_ahash64}",
+  "ahash64": "${format_ahash64}",
   "bytes": ${format_bytes},
   "engine": "umber",
   "engineVersion": "${engine_version}",
   "formatSchema": ${format_schema},
   "sourceDistribution": "${distribution}",
-  "sourceManifestSha256": "${source_manifest_sha256}",
+  "sourceManifestAhash64": "${source_manifest_ahash64}",
   "sourceDateEpoch": ${source_date_epoch}
 }
 EOF
@@ -176,5 +179,5 @@ else
   cp "${tmp_root}/plain-format.json" "${output_dir}/plain-format.json"
 fi
 
-printf 'Umber Plain format: sha256=%s bytes=%s schema=%s source=%s\n' \
-  "$format_sha256" "$format_bytes" "$format_schema" "$distribution"
+printf 'Umber Plain format: ahash64-v1=%s bytes=%s schema=%s source=%s\n' \
+  "$format_ahash64" "$format_bytes" "$format_schema" "$distribution"

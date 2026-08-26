@@ -15,6 +15,7 @@ tex-fonts = { path = "../tex-fonts" }
 tex-out = { path = "../tex-out" }
 tex-state = { path = "../tex-state" }
 tex-typeset = { path = "../tex-typeset" }
+umber-hash = { path = "../umber-hash" }
 
 [dev-dependencies]
 tempfile.workspace = true

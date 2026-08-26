@@ -10,16 +10,16 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
+use umber_hash::{AHash64, HashDomain};
 
 use crate::positioned::{BoxKind, PositionedError, PositionedPage, TextUnit};
-use crate::{ContentHash, FontResource, PageArtifact};
+use crate::{FontResource, PageArtifact};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct HtmlFontKey {
     pub name: String,
-    pub tfm_content_hash: ContentHash,
+    pub tfm_content_hash: tex_fonts::FontContentHash,
     pub tfm_checksum: u32,
     pub design_size_raw: i32,
     pub at_size_raw: i32,
@@ -46,7 +46,7 @@ impl From<&FontResource> for HtmlFontKey {
 pub struct HtmlFontAsset {
     pub key: HtmlFontKey,
     pub woff2: Vec<u8>,
-    pub sha256: [u8; 32],
+    pub ahash64: [u8; 8],
     /// Exactly 256 entries. Every used code must have a mapping.
     pub encoding: Vec<Option<String>>,
     pub provenance: String,
@@ -170,7 +170,7 @@ impl Default for HtmlOptions {
 pub struct HtmlAsset {
     pub path: String,
     pub bytes: Vec<u8>,
-    pub sha256: [u8; 32],
+    pub ahash64: [u8; 8],
     pub provenance: String,
 }
 
@@ -272,7 +272,10 @@ impl std::fmt::Display for HtmlError {
             }
             Self::EmptyFontAsset { font } => write!(f, "HTML font asset {font} has no WOFF2 bytes"),
             Self::CorruptFontAsset { font } => {
-                write!(f, "HTML font asset {font} does not match its SHA-256")
+                write!(
+                    f,
+                    "HTML font asset {font} does not match its aHash64 identity"
+                )
             }
             Self::UnlicensedFont { font } => {
                 write!(f, "HTML font asset {font} is not licensed for embedding")
@@ -435,7 +438,7 @@ pub fn write_render_document(
 
 fn build_render_assets(
     document: &incremental::RenderDocument,
-    resources: &BTreeMap<[u8; 32], &incremental::RenderResource>,
+    resources: &BTreeMap<[u8; 8], &incremental::RenderResource>,
     options: &HtmlOptions,
 ) -> Result<Vec<HtmlAsset>, HtmlError> {
     let mut by_digest = BTreeMap::new();
@@ -463,9 +466,9 @@ fn build_render_assets(
             by_digest.insert(
                 font.digest_hex.clone(),
                 HtmlAsset {
-                    path: format!("sha256-{}.woff2", font.digest_hex),
+                    path: format!("ahash64-v1-{}.woff2", font.digest_hex),
                     bytes: resource.bytes.clone(),
-                    sha256: resource.identity,
+                    ahash64: resource.identity,
                     provenance: resource.provenance.clone(),
                 },
             );
@@ -477,7 +480,7 @@ fn build_render_assets(
 fn write_render_font_css(
     out: &mut String,
     document: &incremental::RenderDocument,
-    resources: &BTreeMap<[u8; 32], &incremental::RenderResource>,
+    resources: &BTreeMap<[u8; 8], &incremental::RenderResource>,
     options: &HtmlOptions,
 ) -> Result<(), HtmlError> {
     for font in &document.fonts {
@@ -519,7 +522,7 @@ fn write_render_font_css(
                 if !relative_directory.ends_with('/') {
                     out.push('/');
                 }
-                out.push_str("sha256-");
+                out.push_str("ahash64-v1-");
                 out.push_str(&font.digest_hex);
                 out.push_str(".woff2");
             }
@@ -932,15 +935,16 @@ fn validate_font(
             font: font.name.clone(),
         });
     }
-    let digest: [u8; 32] = Sha256::digest(&web.woff2).into();
-    if digest != web.sha256 {
+    let digest = AHash64::for_bytes(HashDomain::HtmlResource, &web.woff2).to_le_bytes();
+    let object_identity = tex_fonts::FontObjectIdentity::for_bytes(&web.woff2);
+    if digest != web.ahash64 {
         return Err(HtmlError::CorruptFontAsset {
             font: font.name.clone(),
         });
     }
     if let Some(opentype) = &font.opentype
         && (opentype.container != tex_fonts::FontContainer::Woff2
-            || opentype.object_identity.bytes() != digest)
+            || opentype.object_identity != object_identity)
     {
         return Err(HtmlError::CorruptFontAsset {
             font: font.name.clone(),
@@ -981,7 +985,7 @@ fn validate_font(
                     request: key,
                     container: tex_fonts::FontContainer::Woff2,
                     bytes: web.woff2.clone(),
-                    declared_object_sha256: Some(opentype.object_identity),
+                    declared_object_ahash64: Some(opentype.object_identity),
                     declared_program_identity: Some(opentype.program_identity),
                     provenance: None,
                     legacy_mapping: None,
@@ -995,7 +999,7 @@ fn validate_font(
         }
     } else if let Some(realized) = realized {
         if realized.container != tex_fonts::FontContainer::Woff2
-            || realized.object_identity.bytes() != digest
+            || realized.object_identity != object_identity
             || realized.transport_bytes.as_ref() != web.woff2.as_slice()
         {
             return Err(HtmlError::CorruptFontAsset {
@@ -1038,7 +1042,7 @@ fn validate_font(
         .as_ref()
         .map_or(digest, |font| font.program_identity.bytes());
     let family_hex = hex(&family_identity);
-    let family = format!("umber-font-{}", &family_hex[..24]);
+    let family = format!("umber-font-{family_hex}");
     Ok(ResolvedFont {
         web,
         digest_hex,

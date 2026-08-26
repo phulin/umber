@@ -49,7 +49,7 @@ fn classic_math_parameters_observe_live_fontdimen_assignments() {
     let font = universe.intern_font(LoadedFont::new(
         "math",
         "math.tfm",
-        [0; 32],
+        [0; 8],
         0,
         size,
         size,
@@ -196,7 +196,7 @@ fn parse_stix_math(container: FontContainer, bytes: Vec<u8>) -> OpenTypeFont {
             request: key,
             container,
             bytes,
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
             legacy_mapping: None,
@@ -2512,7 +2512,7 @@ fn test_font(name: &str, scale: i32) -> LoadedFont {
     LoadedFont::new(
         name,
         name,
-        [0; 32],
+        [0; 8],
         0,
         sc(10),
         sc(scale),
@@ -2547,7 +2547,7 @@ fn delimiter_font(name: &str) -> LoadedFont {
     LoadedFont::new(
         name,
         name,
-        [2; 32],
+        [2; 8],
         0,
         sc(10),
         sc(10),
@@ -2579,7 +2579,7 @@ fn param_font(name: &str, params: Vec<Scaled>) -> LoadedFont {
     LoadedFont::new(
         name,
         name,
-        [1; 32],
+        [1; 8],
         0,
         sc(10),
         sc(10),

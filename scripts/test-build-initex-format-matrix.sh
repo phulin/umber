@@ -6,7 +6,7 @@ tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
 
 mkdir -p "${tmp_root}/plain-root" "${tmp_root}/latex-root" "${tmp_root}/distribution"
-distribution_sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+distribution_ahash64=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 cat > "${tmp_root}/plain-builder" <<'EOF'
 #!/usr/bin/env bash
@@ -38,7 +38,7 @@ UMBER_LATEX_FORMAT_BUILDER="${tmp_root}/latex-builder" \
     --plain-texmf-dist "${tmp_root}/plain-root" \
     --latex-texmf-dist "${tmp_root}/latex-root" \
     --latex-distribution "${tmp_root}/distribution" \
-    --latex-distribution-sha256 "$distribution_sha256" \
+    --latex-distribution-ahash64 "$distribution_ahash64" \
     --output-root "${tmp_root}/output"
 
 [[ -f "${tmp_root}/plain.called" ]]
@@ -49,12 +49,12 @@ cmp -s "${tmp_root}/plain.args" <(printf '%s\n' \
 cmp -s "${tmp_root}/latex.args" <(printf '%s\n' \
   --engine latex --texmf-dist "${tmp_root}/latex-root" \
   --distribution "${tmp_root}/distribution" \
-  --distribution-sha256 "$distribution_sha256" \
+  --distribution-ahash64 "$distribution_ahash64" \
   --output-dir "${tmp_root}/output/latex" --force)
 cmp -s "${tmp_root}/pdflatex.args" <(printf '%s\n' \
   --engine pdflatex --texmf-dist "${tmp_root}/latex-root" \
   --distribution "${tmp_root}/distribution" \
-  --distribution-sha256 "$distribution_sha256" \
+  --distribution-ahash64 "$distribution_ahash64" \
   --output-dir "${tmp_root}/output/pdflatex" --force)
 
 printf '%s\n' 'build-initex-format-matrix tests: PASS'

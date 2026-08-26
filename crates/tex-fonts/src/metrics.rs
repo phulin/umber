@@ -1,10 +1,10 @@
 //! Immutable loaded font records and backend-neutral metric queries.
 
 use crate::opentype::{FontInstanceIdentity, FontProgramIdentity, MathConstant, OpenTypeFont};
-use sha2::{Digest, Sha256};
 use std::hash::Hash;
 use std::path::PathBuf;
 use tex_arith::Scaled;
+use umber_hash::{AHash64Hasher, HashDomain};
 
 /// TeX82 guarantees `fontdimen1` through `fontdimen7` for every loaded font.
 pub const MIN_TEX_FONT_PARAMETERS: usize = 7;
@@ -48,7 +48,7 @@ pub enum FontMappingFallbackPolicy {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct LegacyEncodingMap {
     version: u8,
-    identity: [u8; 32],
+    identity: [u8; 8],
     entries: Box<[Option<String>]>,
 }
 
@@ -79,21 +79,21 @@ impl LegacyEncodingMap {
         if total_bytes > MAX_LEGACY_ENCODING_BYTES {
             return Err("legacy encoding map exceeds 65536 UTF-8 bytes");
         }
-        let mut hasher = Sha256::new();
-        hasher.update(b"umber-legacy-encoding-map-v1");
+        let mut hasher = AHash64Hasher::new(HashDomain::FontEncodingMap);
+        hasher.write(b"umber-legacy-encoding-map-v1");
         for entry in &entries {
             match entry {
-                None => hasher.update([0]),
+                None => hasher.write([0]),
                 Some(entry) => {
-                    hasher.update([1]);
-                    hasher.update((entry.len() as u64).to_le_bytes());
-                    hasher.update(entry.as_bytes());
+                    hasher.write([1]);
+                    hasher.write((entry.len() as u64).to_le_bytes());
+                    hasher.write(entry.as_bytes());
                 }
             }
         }
         Ok(Self {
             version: LEGACY_ENCODING_MAP_VERSION,
-            identity: hasher.finalize().into(),
+            identity: hasher.finish().to_le_bytes(),
             entries: entries.into_boxed_slice(),
         })
     }
@@ -104,7 +104,7 @@ impl LegacyEncodingMap {
     }
 
     #[must_use]
-    pub const fn identity(&self) -> [u8; 32] {
+    pub const fn identity(&self) -> [u8; 8] {
         self.identity
     }
 
@@ -127,7 +127,13 @@ impl LegacyEncodingMap {
 pub const MAX_LIG_KERN_PROGRAM_LEN: usize = u16::MAX as usize + 1;
 
 /// Stable content identity for loaded font bytes.
-pub type FontContentHash = [u8; 32];
+pub type FontContentHash = [u8; 8];
+
+/// Stable aHash64 identity of exact font-metric transport bytes.
+#[must_use]
+pub fn font_content_hash(bytes: &[u8]) -> FontContentHash {
+    umber_hash::AHash64::for_bytes(HashDomain::DistributionContent, bytes).to_le_bytes()
+}
 
 /// Immutable data captured when a TFM font is loaded.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -158,16 +164,16 @@ pub struct LoadedFont {
 /// and semantic hashing from accidentally folding generated instances back
 /// into an ordinary file load.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RealizedFontIdentity([u8; 32]);
+pub struct RealizedFontIdentity([u8; 8]);
 
 impl RealizedFontIdentity {
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
         Self(bytes)
     }
 
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 }
@@ -866,66 +872,66 @@ impl LoadedFont {
     /// Deterministic, host-neutral identity for generated-font ancestry.
     #[must_use]
     pub fn realized_identity(&self) -> RealizedFontIdentity {
-        let mut hasher = Sha256::new();
-        hasher.update(b"umber-font-source-v2");
-        hasher.update((self.name.len() as u64).to_le_bytes());
-        hasher.update(self.name.as_bytes());
-        hasher.update(self.content_hash);
-        hasher.update(self.checksum.to_le_bytes());
-        hasher.update(self.design_size.raw().to_le_bytes());
-        hasher.update(self.size.raw().to_le_bytes());
-        hasher.update((self.parameters.len() as u64).to_le_bytes());
+        let mut hasher = AHash64Hasher::new(HashDomain::RealizedFont);
+        hasher.write(b"umber-font-source-v2");
+        hasher.write((self.name.len() as u64).to_le_bytes());
+        hasher.write(self.name.as_bytes());
+        hasher.write(self.content_hash);
+        hasher.write(self.checksum.to_le_bytes());
+        hasher.write(self.design_size.raw().to_le_bytes());
+        hasher.write(self.size.raw().to_le_bytes());
+        hasher.write((self.parameters.len() as u64).to_le_bytes());
         for parameter in &self.parameters {
-            hasher.update(parameter.raw().to_le_bytes());
+            hasher.write(parameter.raw().to_le_bytes());
         }
-        hasher.update([FONT_LAYOUT_POLICY_VERSION]);
-        hasher.update([match self.layout_policy {
+        hasher.write([FONT_LAYOUT_POLICY_VERSION]);
+        hasher.write([match self.layout_policy {
             FontLayoutPolicy::OpenTypePreferred => 1,
             FontLayoutPolicy::ClassicTfmExact => 2,
         }]);
-        hasher.update([match self.fallback {
+        hasher.write([match self.fallback {
             None => 0,
             Some(FontMappingFallbackPolicy::Error) => 1,
             Some(FontMappingFallbackPolicy::ClassicTfmExact) => 2,
         }]);
         if let Some(map) = &self.encoding_map {
-            hasher.update([map.version()]);
-            hasher.update(map.identity());
-            hasher.update([OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION]);
+            hasher.write([map.version()]);
+            hasher.write(map.identity());
+            hasher.write([OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION]);
         } else {
-            hasher.update([0, 0]);
+            hasher.write([0, 0]);
         }
         if let Some(opentype) = self.opentype() {
-            hasher.update(opentype.identity.bytes());
-            hasher.update(
+            hasher.write(opentype.identity.bytes());
+            hasher.write(
                 self.opentype_instance_identity()
                     .expect("OpenType font has an instance identity")
                     .bytes(),
             );
         }
         match self.construction {
-            FontConstruction::Loaded => hasher.update([0]),
+            FontConstruction::Loaded => hasher.write([0]),
             FontConstruction::Copied { source } => {
-                hasher.update([1]);
-                hasher.update(source.bytes());
+                hasher.write([1]);
+                hasher.write(source.bytes());
             }
             FontConstruction::Letterspaced {
                 source,
                 amount,
                 no_ligatures,
             } => {
-                hasher.update([2]);
-                hasher.update(source.bytes());
-                hasher.update(amount.to_le_bytes());
-                hasher.update([u8::from(no_ligatures)]);
+                hasher.write([2]);
+                hasher.write(source.bytes());
+                hasher.write(amount.to_le_bytes());
+                hasher.write([u8::from(no_ligatures)]);
             }
             FontConstruction::Expanded { source, ratio } => {
-                hasher.update([3]);
-                hasher.update(source.bytes());
-                hasher.update(ratio.to_le_bytes());
+                hasher.write([3]);
+                hasher.write(source.bytes());
+                hasher.write(ratio.to_le_bytes());
             }
         }
-        RealizedFontIdentity(hasher.finalize().into())
+        RealizedFontIdentity(hasher.finish().to_le_bytes())
     }
 
     /// Compatibility spelling retained for existing state and artifact APIs.

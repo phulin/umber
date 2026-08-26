@@ -111,7 +111,7 @@ class FakeDocument {
 }
 
 const key = (digit) => digit.repeat(32);
-const digest = (digit) => digit.repeat(64);
+const digest = (digit) => digit.repeat(16);
 
 function page(pageKey, ordinal, nodeKey, text) {
 	return {

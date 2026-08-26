@@ -5,7 +5,6 @@ use crate::ids::FontId;
 use crate::interner::{ControlSequenceKind, SymbolId};
 use crate::scaled::Scaled;
 use crate::state_hash::StateHashFragment;
-use crate::world::ContentHash;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 pub use tex_fonts::metrics::{
@@ -75,7 +74,7 @@ pub struct OpenTypeArtifactRecipe {
     pub script: Option<tex_fonts::OpenTypeTag>,
     pub language: Option<tex_fonts::FontLanguage>,
     pub encoding_map_version: Option<u8>,
-    pub encoding_map_identity: Option<[u8; 32]>,
+    pub encoding_map_identity: Option<[u8; 8]>,
     pub fontdimen_synthesis_version: Option<u8>,
 }
 
@@ -233,7 +232,7 @@ impl FontStore {
         let null = LoadedFont::new(
             "nullfont",
             PathBuf::from("nullfont"),
-            ContentHash::from_bytes(&[]).bytes(),
+            tex_fonts::font_content_hash(&[]),
             0,
             Scaled::from_raw(0),
             Scaled::from_raw(0),
@@ -986,7 +985,7 @@ mod tests {
         let second_font = LoadedFont::new(
             "second",
             PathBuf::from("second"),
-            ContentHash::from_bytes(b"second").bytes(),
+            tex_fonts::font_content_hash(b"second"),
             0x8765_4321,
             first_font.design_size(),
             first_font.size(),
@@ -1011,7 +1010,7 @@ mod tests {
         let third = LoadedFont::new(
             "third",
             PathBuf::from("third"),
-            ContentHash::from_bytes(b"third").bytes(),
+            tex_fonts::font_content_hash(b"third"),
             0x1020_3040,
             Scaled::from_raw(10 * Scaled::UNITY),
             Scaled::from_raw(12 * Scaled::UNITY),
@@ -1033,7 +1032,7 @@ mod tests {
         LoadedFont::new(
             "cmr10",
             "/fonts/cmr10.tfm",
-            ContentHash::from_bytes(b"cmr10 metrics").bytes(),
+            tex_fonts::font_content_hash(b"cmr10 metrics"),
             0x1234_5678,
             Scaled::from_raw(10 * Scaled::UNITY),
             Scaled::from_raw(12 * Scaled::UNITY),

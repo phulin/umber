@@ -272,7 +272,7 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
             key,
             container,
             bytes,
-            object_sha256,
+            object_ahash64,
             program_identity,
             provenance,
             legacy_mapping,
@@ -282,7 +282,7 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
                 wire::FontContainerDto::Woff2 => FontContainer::Woff2,
             },
             bytes,
-            declared_object_sha256: object_sha256
+            declared_object_ahash64: object_ahash64
                 .map(|digest| parse_digest(&digest).map(FontObjectIdentity::from_bytes))
                 .transpose()?,
             declared_program_identity: program_identity
@@ -297,7 +297,7 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
                         ));
                     }
                     Ok(LegacyFontMapping {
-                        tfm_sha256: parse_digest(&mapping.tfm_sha256)?,
+                        tfm_ahash64: parse_digest(&mapping.tfm_ahash64)?,
                         encoding: mapping.encoding,
                         embeddable: mapping.embeddable,
                     })
@@ -311,12 +311,12 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
             key,
             virtual_path,
             bytes,
-            expected_sha256,
+            expected_ahash64,
         } => Ok(ResourceResponse::PkFont(ResolvedPkFont {
             request: pk_font_request(key),
             virtual_path,
             bytes,
-            expected_sha256: expected_sha256
+            expected_ahash64: expected_ahash64
                 .map(|digest| parse_digest(&digest))
                 .transpose()?,
         })),
@@ -477,14 +477,14 @@ fn exact_unsigned_integer(value: f64, name: &str) -> Result<u32, JsValue> {
 
 fn parse_digest(value: &str) -> Result<[u8; 32], JsValue> {
     if value.len() != 64 {
-        return Err(js_error("sha256 must contain 64 lowercase hex digits"));
+        return Err(js_error("ahash64 must contain 64 lowercase hex digits"));
     }
     let mut digest = [0u8; 32];
     for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
         let nibble = |byte| match byte {
             b'0'..=b'9' => Ok(byte - b'0'),
             b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(js_error("sha256 must use lowercase hex")),
+            _ => Err(js_error("ahash64 must use lowercase hex")),
         };
         digest[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }

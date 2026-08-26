@@ -1155,7 +1155,7 @@ pub(in crate::main_control) fn load_font(
         let mut font = tfm.into_loaded_font(
             display_name,
             metrics.path().to_owned(),
-            metrics.hash().bytes(),
+            tex_fonts::font_content_hash(metrics.bytes()),
         );
         if let Some((selection, encoding_map)) = mapped {
             font = font.with_mapped_opentype(selection, encoding_map);

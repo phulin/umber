@@ -7,14 +7,14 @@ latex_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-fo
 plain_texmf_dist="${UMBER_PLAIN_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 latex_texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/target/texlive-snapshot/texmf-dist}"
 latex_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-latex_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+latex_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 output_root="${repo_root}/target/initex-format-matrix"
 
 usage() {
   cat <<'EOF'
 usage: scripts/build-initex-format-matrix.sh
        [--plain-texmf-dist PATH] [--latex-texmf-dist PATH]
-       [--latex-distribution PATH] [--latex-distribution-sha256 SHA256]
+       [--latex-distribution PATH] [--latex-distribution-ahash64 AHASH64]
        [--output-root PATH]
 
 Builds and verifies the supported INITEX format matrix serially. Plain is
@@ -41,9 +41,9 @@ while [[ $# -gt 0 ]]; do
       latex_distribution="$2"
       shift 2
       ;;
-    --latex-distribution-sha256)
-      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --latex-distribution-sha256' >&2; exit 2; }
-      latex_distribution_sha256="$2"
+    --latex-distribution-ahash64)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --latex-distribution-ahash64' >&2; exit 2; }
+      latex_distribution_ahash64="$2"
       shift 2
       ;;
     --output-root)
@@ -79,14 +79,14 @@ mkdir -p "$output_root"
   --engine latex \
   --texmf-dist "$latex_texmf_dist" \
   --distribution "$latex_distribution" \
-  --distribution-sha256 "$latex_distribution_sha256" \
+  --distribution-ahash64 "$latex_distribution_ahash64" \
   --output-dir "${output_root}/latex" \
   --force
 "$latex_builder" \
   --engine pdflatex \
   --texmf-dist "$latex_texmf_dist" \
   --distribution "$latex_distribution" \
-  --distribution-sha256 "$latex_distribution_sha256" \
+  --distribution-ahash64 "$latex_distribution_ahash64" \
   --output-dir "${output_root}/pdflatex" \
   --force
 

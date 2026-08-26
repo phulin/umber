@@ -405,7 +405,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
                 })
                 .transpose()?,
             distribution: opts.distribution.clone(),
-            distribution_sha256: opts.distribution_sha256.clone(),
+            distribution_ahash64: opts.distribution_ahash64.clone(),
             offline: opts.offline,
             expansion_fuel: opts.expansion_fuel,
         })?;
@@ -471,7 +471,7 @@ fn finalize_run(
             .saturating_add(host.resolver.content_hash_time)
             .saturating_add(host.resolver.response_build_time);
         eprintln!(
-            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} savepoint_capture_ns={} savepoint_restore_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} authenticated_manifest_hits={} manifest_reads={} manifest_parses={} manifest_authentications={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_records={} retained_manifest_misses={} retained_manifest_requested_bytes={} object_requests={} object_cache_hits={} object_hashes={}",
+            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} savepoint_capture_ns={} savepoint_restore_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} verified_manifest_hits={} manifest_reads={} manifest_parses={} manifest_validations={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_records={} retained_manifest_misses={} retained_manifest_requested_bytes={} object_requests={} object_cache_hits={} object_hashes={}",
             host.startup_time.as_nanos(),
             engine_core.as_nanos(),
             telemetry.execution.savepoint_capture_time.as_nanos(),
@@ -499,10 +499,10 @@ fn finalize_run(
             host.resolver.local_hits,
             host.resolver.manifest_lookups,
             host.resolver.manifest_cache_hits,
-            host.resolver.authenticated_manifest_hits,
+            host.resolver.verified_manifest_hits,
             host.resolver.manifest_reads,
             host.resolver.manifest_parses,
-            host.resolver.manifest_authentications,
+            host.resolver.manifest_validations,
             host.resolver.shard_loads,
             host.resolver.manifest_parse_peak_bytes,
             host.resolver.retained_manifest_records,
@@ -684,7 +684,7 @@ struct RunCliOptions {
     initial_prefetch_keys: Vec<String>,
     engine: RunEngine,
     distribution: Option<String>,
-    distribution_sha256: Option<String>,
+    distribution_ahash64: Option<String>,
     offline: bool,
     expansion_fuel: Option<u64>,
     #[cfg(feature = "profiling")]
@@ -706,7 +706,7 @@ impl RunCliOptions {
         let mut initial_prefetch_keys = Vec::new();
         let mut engine = RunEngine::Tex82;
         let mut distribution = None;
-        let mut distribution_sha256 = None;
+        let mut distribution_ahash64 = None;
         let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
         let mut expansion_fuel = None;
         #[cfg(feature = "profiling")]
@@ -739,15 +739,15 @@ impl RunCliOptions {
                             .ok_or(CliError::Usage("missing URL or path for --distribution"))?,
                     );
                 }
-                "--distribution-sha256" => {
-                    if distribution_sha256.is_some() {
+                "--distribution-ahash64" => {
+                    if distribution_ahash64.is_some() {
                         return Err(CliError::Usage(
-                            "run accepts at most one --distribution-sha256",
+                            "run accepts at most one --distribution-ahash64",
                         ));
                     }
-                    distribution_sha256 = Some(
+                    distribution_ahash64 = Some(
                         args.next()
-                            .ok_or(CliError::Usage("missing digest for --distribution-sha256"))?,
+                            .ok_or(CliError::Usage("missing digest for --distribution-ahash64"))?,
                     );
                 }
                 "--etex" => {
@@ -809,7 +809,7 @@ impl RunCliOptions {
                 }
                 "--html-font-dir" => {
                     return Err(CliError::Usage(
-                        "--html-font-dir was removed; configure the authenticated HTML root with --distribution and --distribution-sha256, or provide application/private fonts through the typed resource resolver API",
+                        "--html-font-dir was removed; configure the authenticated HTML root with --distribution and --distribution-ahash64, or provide application/private fonts through the typed resource resolver API",
                     ));
                 }
                 "--html-assets" => {
@@ -886,8 +886,8 @@ impl RunCliOptions {
             }
         }
         let input = input.ok_or(CliError::Usage("missing input path for run"))?;
-        if distribution_sha256.is_none() {
-            distribution_sha256 = env::var("UMBER_DISTRIBUTION_SHA256").ok();
+        if distribution_ahash64.is_none() {
+            distribution_ahash64 = env::var("UMBER_DISTRIBUTION_AHASH64").ok();
         }
         if pdf.is_some() && !engine.supports_pdf_output() {
             return Err(CliError::Usage("--pdf requires --pdftex or --pdflatex"));
@@ -939,7 +939,7 @@ impl RunCliOptions {
             initial_prefetch_keys,
             engine,
             distribution,
-            distribution_sha256,
+            distribution_ahash64,
             offline,
             expansion_fuel,
             #[cfg(feature = "profiling")]

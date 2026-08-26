@@ -1,10 +1,10 @@
 # Exact opened inputs for the Umber TeX Live 2026 LaTeX format.
-# The distribution SHA-256 pins the schema-3 root used by every engine run.
+# The distribution pin is installed by the schema-6 republication in umber2-66p0.27.
 # Common fields: source|local <path> <bytes> <sha256>.
 # pdfLaTeX-only fields: pdflatex-source|pdflatex-local <path> <bytes> <sha256>.
 distribution texlive-20260301-texmf
-distribution_sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
-format_schema 11
+distribution_ahash64 unpublished-umber2-66p0.27
+format_schema 12
 source_date_epoch 1772323200
 source fonts/tfm/public/cm/cmex10.tfm 992 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92
 source fonts/tfm/public/cm/cmmi10.tfm 1528 e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645

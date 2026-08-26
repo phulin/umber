@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
+use umber_hash::{AHash64, AHash64Hasher, HashDomain};
 
 use crate::RootConfig;
 
@@ -13,7 +13,7 @@ pub(crate) struct Candidate {
     pub(crate) kind: &'static str,
     pub(crate) relative: String,
     pub(crate) source: PathBuf,
-    pub(crate) sha256: String,
+    pub(crate) ahash64: String,
     pub(crate) bytes: u64,
 }
 
@@ -32,14 +32,14 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
     let mut all = Vec::new();
     let mut physical_casefold = BTreeMap::<String, String>::new();
     for root in roots {
-        validate_digest(&root.tree_sha256)?;
+        validate_digest(&root.tree_ahash64)?;
         let entries = supported_files(&root.path)?;
         let actual = digest_entries(&entries)?;
-        if actual != root.tree_sha256 {
+        if actual != root.tree_ahash64 {
             bail!(
                 "TEXMF root {:?} digest mismatch: expected {}, got {}",
                 root.name,
-                root.tree_sha256,
+                root.tree_ahash64,
                 actual
             );
         }
@@ -58,7 +58,7 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
                 kind,
                 relative,
                 source,
-                sha256: hex_sha256(&bytes),
+                ahash64: hex_ahash64(&bytes),
                 bytes: u64::try_from(bytes.len()).context("source object length exceeds u64")?,
             });
         }
@@ -66,7 +66,7 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
     Ok(all)
 }
 
-pub fn tree_sha256(root: &Path) -> Result<String> {
+pub fn tree_ahash64(root: &Path) -> Result<String> {
     digest_entries(&supported_files(root)?)
 }
 
@@ -126,15 +126,15 @@ fn normalize_relative(path: &Path) -> Result<String> {
 }
 
 fn digest_entries(entries: &[(String, PathBuf)]) -> Result<String> {
-    let mut digest = Sha256::new();
+    let mut digest = AHash64Hasher::new(HashDomain::DistributionTree);
     for (relative, source) in entries {
         let bytes = fs::read(source).with_context(|| format!("read {}", source.display()))?;
-        digest.update(relative.as_bytes());
-        digest.update([0]);
-        digest.update((bytes.len() as u64).to_be_bytes());
-        digest.update(Sha256::digest(&bytes));
+        digest.write(relative.as_bytes());
+        digest.write(&[0]);
+        digest.write(&(bytes.len() as u64).to_be_bytes());
+        digest.write(&AHash64::for_bytes(HashDomain::DistributionContent, &bytes).to_le_bytes());
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(digest.finish().hex())
 }
 
 fn kind_for(path: &Path) -> Option<&'static str> {
@@ -166,15 +166,15 @@ fn kind_for(path: &Path) -> Option<&'static str> {
 }
 
 fn validate_digest(value: &str) -> Result<()> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("treeSha256 must contain exactly 64 hexadecimal characters");
+    if value.len() != 16 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("treeAHash64 must contain exactly 16 hexadecimal characters");
     }
     if value.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        bail!("treeSha256 must use lowercase hexadecimal");
+        bail!("treeAHash64 must use lowercase hexadecimal");
     }
     Ok(())
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+fn hex_ahash64(bytes: &[u8]) -> String {
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }

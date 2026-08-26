@@ -271,7 +271,7 @@ Host/configuration/resource-boundary failures and bibliography diagnostics
 without their own source provenance remain locationless; adapters do not infer
 ranges from rendered messages or current cursors.
 
-When the session is configured with a schema-11 format, initial startup first
+When the session is configured with a schema-12 format, initial startup first
 loads its validated frozen stores into a fresh `World` carrying the requested
 job clock, then reconstructs only the selected driver's process-local
 primitive registry. Command, page and mode roots, retained checkpoint/hash

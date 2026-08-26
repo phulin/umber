@@ -1,14 +1,14 @@
 //! Validated, PDF-ready TrueType font programs.
 
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use umber_hash::{AHash64, HashDomain};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct PdfTrueTypeProgramIdentity([u8; 32]);
+pub struct PdfTrueTypeProgramIdentity([u8; 8]);
 
 impl PdfTrueTypeProgramIdentity {
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 }
@@ -49,7 +49,9 @@ impl PdfTrueTypeProgram {
                     .or_else(|| name.name.is_ascii().then(|| name.name.to_vec()))
             });
         Ok(Self {
-            identity: PdfTrueTypeProgramIdentity(Sha256::digest(bytes).into()),
+            identity: PdfTrueTypeProgramIdentity(
+                AHash64::for_bytes(HashDomain::TrueTypeProgram, bytes).to_le_bytes(),
+            ),
             bytes: bytes.to_vec(),
             bbox: [
                 scale(bbox.x_min),

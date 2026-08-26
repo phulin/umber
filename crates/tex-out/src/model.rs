@@ -229,7 +229,7 @@ pub const DEFAULT_BANNER: &str = "  Umber DVI 1970.01.01:0000";
 pub struct FontResource {
     pub font_id: u32,
     pub name: String,
-    pub tfm_content_hash: ContentHash,
+    pub tfm_content_hash: tex_fonts::FontContentHash,
     pub tfm_checksum: u32,
     pub design_size: Scaled,
     pub at_size: Scaled,
@@ -273,7 +273,7 @@ pub struct OpenTypeFontResource {
     pub script: Option<tex_fonts::OpenTypeTag>,
     pub language: Option<tex_fonts::FontLanguage>,
     pub encoding_map_version: Option<u8>,
-    pub encoding_map_identity: Option<[u8; 32]>,
+    pub encoding_map_identity: Option<[u8; 8]>,
     pub fontdimen_synthesis_version: Option<u8>,
 }
 

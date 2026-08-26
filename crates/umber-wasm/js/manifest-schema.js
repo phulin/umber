@@ -1,5 +1,5 @@
 const KEY_PATTERN = /^(tex|tfm|bib-aux|classic-bib|bst):(.+)$/;
-const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
 
 export class ManifestResolverError extends Error {
 	constructor(code, message, options) {
@@ -128,7 +128,7 @@ export function fontRequestIdentity(request) {
 export function legacyMappingRequestIdentity(request) {
 	if (
 		!isRecord(request) ||
-		!DIGEST_PATTERN.test(request.tfmSha256) ||
+		!DIGEST_PATTERN.test(request.tfmAhash64) ||
 		request.layoutPolicyVersion !== 1 ||
 		!["html-layout", "html-paint"].includes(request.purpose)
 	)
@@ -145,7 +145,7 @@ export function legacyMappingRequestIdentity(request) {
 						),
 					),
 				);
-	return `legacy-mapping:1:${request.tfmSha256}:1:${request.purpose}:${encoding}`;
+	return `legacy-mapping:2:${request.tfmAhash64}:1:${request.purpose}:${encoding}`;
 }
 
 function validateKey(key) {

@@ -10,20 +10,12 @@ fail() {
   exit 1
 }
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
 bundle="$tmp_root/bundle"
 mkdir -p "$bundle/objects" "$tmp_root/bin"
-printf 'alpha' > "$bundle/objects/sha256-8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
-printf 'omega!' > "$bundle/objects/sha256-780a5fdbf446d1be41aa2c6fb8e9be3f1d65ec3b42f3e1ae833867e34fb7e5e8"
+printf 'alpha' > "$bundle/objects/ahash64-v1-aaaaaaaaaaaaaaaa"
+printf 'omega!' > "$bundle/objects/ahash64-v1-bbbbbbbbbbbbbbbb"
 printf '{"schema":1}\n' > "$bundle/manifest.json"
-manifest_sha256="$(sha256 "$bundle/manifest.json")"
+manifest_ahash64="cccccccccccccccc"
 
 env_file="$tmp_root/.env"
 cat > "$env_file" <<'EOF'
@@ -50,7 +42,7 @@ case "$command" in
     cp "$1"/* "$MOCK_REMOTE/objects/"
     ;;
   check)
-    [[ -f "$MOCK_REMOTE/objects/sha256-8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8" ]]
+    [[ -f "$MOCK_REMOTE/objects/ahash64-v1-aaaaaaaaaaaaaaaa" ]]
     ;;
   lsf)
     number=0
@@ -83,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 printf 'HTTP/2 200\r\nAccess-Control-Allow-Origin: *\r\n\r\n' > "$headers"
-if [[ "$url" == */manifest-v3*.json || "$url" == */manifest-v4.json ]]; then
+if [[ "$url" == */manifest-v6*.json || "$url" == */manifest-v7.json ]]; then
   cp "$MOCK_REMOTE/manifest.json" "$output"
 else
   cp "$MOCK_REMOTE/objects/${url##*/}" "$output"
@@ -97,7 +89,14 @@ set -euo pipefail
 if [[ "$1" == --verify-sharded ]]; then
   [[ -d "$2/objects" && -f "$2/manifest.json" ]]
 elif [[ "$1" == --verify-successor ]]; then
-  [[ -d "$2/objects" && -f "$2/manifest.json" && "$3" == --base-sha256 && "$4" =~ ^[0-9a-f]{64}$ && -d "$5/objects" && -f "$5/manifest.json" ]]
+  [[ -d "$2/objects" && -f "$2/manifest.json" && "$3" == --base-ahash64 && "$4" =~ ^[0-9a-f]{16}$ && -d "$5/objects" && -f "$5/manifest.json" ]]
+elif [[ "$1" == --file-ahash64 ]]; then
+  case "${2##*/}" in
+    manifest.json) printf '%s\n' cccccccccccccccc ;;
+    ahash64-v1-aaaaaaaaaaaaaaaa) printf '%s\n' aaaaaaaaaaaaaaaa ;;
+    ahash64-v1-bbbbbbbbbbbbbbbb) printf '%s\n' bbbbbbbbbbbbbbbb ;;
+    *) exit 2 ;;
+  esac
 else
   exit 2
 fi
@@ -112,7 +111,7 @@ common=(
   --env-file "$env_file"
   --expected-objects 2
   --expected-bytes 11
-  --expected-manifest-sha256 "$manifest_sha256"
+  --expected-manifest-ahash64 "$manifest_ahash64"
   --transfers 3
   --checkers 4
   --retries 2
@@ -162,7 +161,7 @@ grep -q -- '--s3-no-check-bucket' "$log" || fail "bucket creation checks were no
 : > "$log"
 "$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" \
   --profile html --snapshot html/test-v1 > "$tmp_root/html-output" 2>&1
-grep -q 'html/test-v1/manifest-v4.json' "$log" || fail "HTML profile did not use its distinct manifest key"
+grep -q 'html/test-v1/manifest-v7.json' "$log" || fail "HTML profile did not use its distinct manifest key"
 
 successor_base="$tmp_root/successor-base"
 mkdir -p "$successor_base/objects"
@@ -171,9 +170,9 @@ printf 'remote-extra' > "$remote/objects/extra"
 : > "$log"
 "$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" \
   --successor-base "$successor_base" \
-  --successor-base-sha256 "$manifest_sha256" \
-  --manifest-name manifest-v3-latex-dev-test.json > "$tmp_root/successor-output" 2>&1
-grep -q 'manifest-v3-latex-dev-test.json' "$log" || fail "successor did not use its unique root key"
+  --successor-base-ahash64 "$manifest_ahash64" \
+  --manifest-name manifest-v6-latex-dev-test.json > "$tmp_root/successor-output" 2>&1
+grep -q 'manifest-v6-latex-dev-test.json' "$log" || fail "successor did not use its unique root key"
 
 if "$repo_root/scripts/publish-texlive-r2.sh" \
   --staging "$bundle" --profile html --snapshot html/unpinned \
@@ -182,6 +181,6 @@ if "$repo_root/scripts/publish-texlive-r2.sh" \
   --publisher "$tmp_root/bin/publisher" > "$tmp_root/unpinned-output" 2>&1; then
   fail "HTML publication without an explicit root pin unexpectedly succeeded"
 fi
-grep -q 'explicit --root-sha256 pin' "$tmp_root/unpinned-output" || fail "missing HTML root pin was not diagnosed"
+grep -q 'explicit --root-ahash64 pin' "$tmp_root/unpinned-output" || fail "missing HTML root pin was not diagnosed"
 
 printf 'publish-texlive-r2 shell contract tests passed\n'

@@ -21,6 +21,7 @@ pub use metrics::{
     MathVariantDirection, OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontShaped,
     OpenTypeMathAssembly, OpenTypeMathAssemblyPart, OpenTypeMathConstruction, OpenTypeMathGlyph,
     OpenTypeMathMetrics, OpenTypeMathVariant, PdfFontResourceIdentity, RealizedFontIdentity,
+    font_content_hash,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FONT_FEATURE_POLICY_VERSION, FeatureSetting,

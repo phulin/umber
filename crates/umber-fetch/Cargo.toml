@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-sha2.workspace = true
 umber-distribution = { path = "../umber-distribution" }
+umber-hash = { path = "../umber-hash" }
 ureq = { version = "3.3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]

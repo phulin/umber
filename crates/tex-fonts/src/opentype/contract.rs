@@ -1,6 +1,6 @@
 use std::fmt;
 
-use sha2::{Digest, Sha256};
+use umber_hash::{AHash64, AHash64Hasher, HashDomain};
 
 /// Version of the canonical decoded-table identity policy.
 pub const FONT_PROGRAM_IDENTITY_VERSION: u8 = 1;
@@ -382,42 +382,42 @@ impl FontRequest {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FontObjectIdentity([u8; 32]);
+pub struct FontObjectIdentity([u8; 8]);
 
 impl FontObjectIdentity {
     #[must_use]
     pub fn for_bytes(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
+        Self(AHash64::for_bytes(HashDomain::OpenTypeObject, bytes).to_le_bytes())
     }
 
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
         Self(bytes)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FontProgramIdentity([u8; 32]);
+pub struct FontProgramIdentity([u8; 8]);
 
 impl FontProgramIdentity {
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
         Self(bytes)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FontInstanceIdentity([u8; 32]);
+pub struct FontInstanceIdentity([u8; 8]);
 
 #[derive(Clone, Copy, Debug)]
 pub struct FontInstanceContext<'a> {
@@ -430,7 +430,7 @@ pub struct FontInstanceContext<'a> {
 
 impl FontInstanceIdentity {
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
         Self(bytes)
     }
 
@@ -471,49 +471,49 @@ impl FontInstanceIdentity {
             script,
             language,
         } = context;
-        let mut hash = Sha256::new();
-        hash.update(b"umber.font-instance");
-        hash.update([FONT_INSTANCE_IDENTITY_VERSION]);
-        hash.update(program.bytes());
-        hash.update(face_index.to_be_bytes());
-        hash.update(size_sp.to_be_bytes());
-        hash.update([direction as u8, 0, 0]); // synthetic styles and optical sizing are prohibited
-        hash.update([match variation.instance() {
+        let mut hash = AHash64Hasher::new(HashDomain::OpenTypeInstance);
+        hash.write(b"umber.font-instance");
+        hash.write([FONT_INSTANCE_IDENTITY_VERSION]);
+        hash.write(program.bytes());
+        hash.write(face_index.to_be_bytes());
+        hash.write(size_sp.to_be_bytes());
+        hash.write([direction as u8, 0, 0]); // synthetic styles and optical sizing are prohibited
+        hash.write([match variation.instance() {
             VariationInstance::Default => 0,
             VariationInstance::Named(_) => 1,
             VariationInstance::Coordinates => 2,
         }]);
         if let VariationInstance::Named(name_id) = variation.instance() {
-            hash.update(name_id.to_be_bytes());
+            hash.write(name_id.to_be_bytes());
         }
-        hash.update((variation.coordinates().len() as u32).to_be_bytes());
+        hash.write((variation.coordinates().len() as u32).to_be_bytes());
         for coordinate in variation.coordinates() {
-            hash.update(coordinate.tag.bytes());
-            hash.update(coordinate.value.to_be_bytes());
+            hash.write(coordinate.tag.bytes());
+            hash.write(coordinate.value.to_be_bytes());
         }
-        hash.update([FONT_FEATURE_POLICY_VERSION]);
-        hash.update((features.settings().len() as u32).to_be_bytes());
+        hash.write([FONT_FEATURE_POLICY_VERSION]);
+        hash.write((features.settings().len() as u32).to_be_bytes());
         for feature in features.settings() {
-            hash.update(feature.tag.bytes());
-            hash.update(feature.value.to_be_bytes());
+            hash.write(feature.tag.bytes());
+            hash.write(feature.value.to_be_bytes());
         }
-        hash.update(script.map_or([0; 4], OpenTypeTag::bytes));
+        hash.write(script.map_or([0; 4], OpenTypeTag::bytes));
         let language = language.map_or("", FontLanguage::as_str).as_bytes();
-        hash.update((language.len() as u32).to_be_bytes());
-        hash.update(language);
-        Self(hash.finalize().into())
+        hash.write((language.len() as u32).to_be_bytes());
+        hash.write(language);
+        Self(hash.finish().to_le_bytes())
     }
 
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LegacyFontMapping {
-    /// SHA-256 identity of the exact TFM object whose byte codes are mapped.
-    pub tfm_sha256: [u8; 32],
+    /// Deterministic aHash64 identity of the exact TFM object whose byte codes are mapped.
+    pub tfm_ahash64: [u8; 8],
     /// Exactly 256 entries; absent entries are not renderable through this mapping.
     pub encoding: Vec<Option<String>>,
     /// The client has affirmatively authorized embedding the supplied font object.
@@ -525,7 +525,7 @@ pub struct ResolvedFont {
     pub request: FontRequestKey,
     pub container: FontContainer,
     pub bytes: Vec<u8>,
-    pub declared_object_sha256: Option<FontObjectIdentity>,
+    pub declared_object_ahash64: Option<FontObjectIdentity>,
     pub declared_program_identity: Option<FontProgramIdentity>,
     pub provenance: Option<String>,
     /// Optional exact legacy-code mapping carried by the same typed response.
@@ -540,7 +540,7 @@ impl ResolvedFont {
         encode_key(&self.request, &mut out);
         out.push(self.container as u8);
         encode_optional_identity(
-            self.declared_object_sha256.map(FontObjectIdentity::bytes),
+            self.declared_object_ahash64.map(FontObjectIdentity::bytes),
             &mut out,
         );
         encode_optional_identity(
@@ -553,7 +553,7 @@ impl ResolvedFont {
             None => out.push(0),
             Some(mapping) => {
                 out.push(1);
-                out.extend_from_slice(&mapping.tfm_sha256);
+                out.extend_from_slice(&mapping.tfm_ahash64);
                 out.push(u8::from(mapping.embeddable));
                 out.extend_from_slice(&(mapping.encoding.len() as u32).to_be_bytes());
                 for entry in &mapping.encoding {
@@ -575,7 +575,7 @@ impl ResolvedFont {
             4 => FontContainer::Woff2,
             value => return Err(FontWireError::InvalidContainer(value)),
         };
-        let declared_object_sha256 =
+        let declared_object_ahash64 =
             decode_optional_identity(&mut input)?.map(FontObjectIdentity::from_bytes);
         let declared_program_identity =
             decode_optional_identity(&mut input)?.map(FontProgramIdentity::from_bytes);
@@ -583,7 +583,7 @@ impl ResolvedFont {
         let legacy_mapping = match input.byte()? {
             0 => None,
             1 => {
-                let tfm_sha256 = input.array()?;
+                let tfm_ahash64 = input.array()?;
                 let embeddable = match input.byte()? {
                     0 => false,
                     1 => true,
@@ -598,7 +598,7 @@ impl ResolvedFont {
                     encoding.push(decode_optional_string(&mut input)?);
                 }
                 Some(LegacyFontMapping {
-                    tfm_sha256,
+                    tfm_ahash64,
                     encoding,
                     embeddable,
                 })
@@ -611,7 +611,7 @@ impl ResolvedFont {
             request,
             container,
             bytes,
-            declared_object_sha256,
+            declared_object_ahash64,
             declared_program_identity,
             provenance,
             legacy_mapping,
@@ -809,14 +809,14 @@ fn decode_optional_tag(input: &mut WireReader<'_>) -> Result<Option<OpenTypeTag>
     }
 }
 
-fn encode_optional_identity(identity: Option<[u8; 32]>, out: &mut Vec<u8>) {
+fn encode_optional_identity(identity: Option<[u8; 8]>, out: &mut Vec<u8>) {
     out.push(u8::from(identity.is_some()));
     if let Some(identity) = identity {
         out.extend_from_slice(&identity);
     }
 }
 
-fn decode_optional_identity(input: &mut WireReader<'_>) -> Result<Option<[u8; 32]>, FontWireError> {
+fn decode_optional_identity(input: &mut WireReader<'_>) -> Result<Option<[u8; 8]>, FontWireError> {
     match input.byte()? {
         0 => Ok(None),
         1 => Ok(Some(input.array()?)),

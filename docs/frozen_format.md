@@ -1,6 +1,6 @@
 # Portable Frozen Format Images
 
-Status: schema-11 container, authoritative core-store sections, portable
+Status: schema-12 container, authoritative core-store sections, portable
 precomputed lookup indexes, runtime-ready frozen node arena, and groupable
 environment base/overlay.
 
@@ -43,7 +43,7 @@ The header is exactly 80 bytes:
 |     40 |     8 | container ABI fingerprint        |
 |     48 |     8 | lookup-configuration fingerprint |
 |     56 |     8 | image checksum                   |
-|     64 |     4 | flags, zero in schema 11         |
+|     64 |     4 | flags, zero in schema 12         |
 |     68 |    12 | reserved, all zero               |
 
 Every integer is little-endian. The ABI fingerprint is FNV-1a-64 of the
@@ -83,7 +83,7 @@ fingerprints, the directory, alignment padding, and every payload byte. It is
 an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
-`TransitionalSemanticV9`, but its schema-11 payload is restricted to
+`TransitionalSemanticV9`, but its schema-12 payload is restricted to
 Universe-level interaction mode, TeX82 allocation-reporting metadata, and a
 versioned pdfTeX INITEX resource DTO. The reporting record carries
 `str_ptr`/`pool_ptr`, the format-relative `init_str_ptr`/`init_pool_ptr`, the
@@ -99,7 +99,7 @@ rejects invented or mixed pairs and requires `str_ptr <= max_strings` and
 baseline. Executable framing may then select the same or a larger supported
 process profile without counting that selection as string usage. Runtime
 rollback restores the selected pair, pool coordinates, and recycled-name
-membership together. These are validations of the existing schema-11 fields,
+membership together. These are validations of the existing schema-12 fields,
 not an alternate codec or compatibility fallback, so the schema and ABI
 fingerprints do not change.
 The admitted pair identifies one complete typed producer profile, not merely
@@ -144,7 +144,7 @@ state, and its next-object coordinate is bounded by pdfTeX 1.40.29's fixed
 object-table limit. Destination names, color stacks, pages, and other
 job-local PDF tables are excluded rather than assigned invented format
 coordinates.
-The schema-11 runtime requires
+The schema-12 runtime requires
 exactly kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, 512, and 528. The
 following kinds are allocated for the complete rollout:
 
@@ -222,7 +222,7 @@ Unused payload bits are zero. Character, catcode, name-index, and sentinel
 domains are validated. The semantic identity is recomputed from the decoded
 tokens and name semantic atoms before the arena is published. The decoder
 also accepts the previous version-1, 24-byte-record, `u64`-word token section
-when loading an older schema-11 image; new dumps never emit it.
+when loading an older schema-12 image; new dumps never emit it.
 
 ### Macros (kind 288)
 
@@ -271,7 +271,7 @@ their semantic interning APIs.
 
 The 32-byte header contains version, font count, payload offset and length,
 an optional-prepared-`mag` tag and signed value, the last-loaded font index,
-and a reserved `u32`. The payload is the canonical fixed-integer schema-11
+and a reserved `u32`. The payload is the canonical fixed-integer schema-12
 encoding of detached font records: names and content hashes, immutable and
 source parameters, TeX82's logical `font_info` word extent, character metrics,
 lig/kern instructions, extensible recipes, derivation identity,
@@ -310,7 +310,7 @@ and no assignment or group history.
 ### Hyphenation (kind 352)
 
 The 16-byte header contains version, payload offset and length, and a reserved
-`u32`. Its canonical fixed-integer schema-11 payload stores language-indexed
+`u32`. Its canonical fixed-integer schema-12 payload stores language-indexed
 runtime tries, exception maps, and saved hyphen-code maps. Validation requires
 one root per language, strictly sorted unique edges, live edge targets, exactly
 one incoming edge for every non-root node, and nonempty exception words whose
@@ -393,7 +393,7 @@ For token-parameter banks, record presence is semantic: an omitted cell is
 null, while a present record whose payload is token-list record 0 is an
 explicitly assigned empty token list. This distinction is required by e-TeX's
 `\everyeof` test and is the environment-vocabulary change that introduced
-schema 11.
+schema 12.
 
 The ordinary environment banks are the mutable job overlay seeded from that
 base. Their existing write barrier owns all later local/global assignment,
@@ -401,7 +401,7 @@ save-stack journaling, grouping, snapshot, and rollback behavior. The retained
 base cells are immutable and shared across environment clones; job mutation
 changes only overlay storage.
 
-The schema-11 frozen encoder and decoder are the only store format path.
+The schema-12 frozen encoder and decoder are the only store format path.
 Store-level round-trip tests call `encode_frozen_format` and
 `decode_frozen_format` directly. Universe-level tests exercise `dump_format`
 and `Universe::from_format`, including malformed-section rejection, immutable
@@ -537,7 +537,7 @@ sectioned frozen-store representation, but it could not distinguish an absent
 token-parameter cell from a present cell containing token-list record 0.
 Schema 11 is therefore a clean boundary: the loader rejects schemas 9 and 10
 with `UnsupportedVersion(9)` and `UnsupportedVersion(10)`. Users regenerate
-format images from source under the schema-11 engine; Umber does not
+format images from source under the schema-12 engine; Umber does not
 reinterpret an old image heuristically.
 
 Schema 11 writes environment cells only to kind 528 and node graphs only to
@@ -558,13 +558,13 @@ Failures are deterministic and identify the rejected boundary:
 - any schema other than 11, including schemas 9 and 10, reports the unsupported
   version and must be regenerated rather than upgraded in place;
 - ABI or lookup fingerprint mismatch means the image and runtime implement
-  different schema-11 contracts;
+  different schema-12 contracts;
 - checksum mismatch means the bytes changed after publication; and
 - directory, section, canonical-order, or cross-reference errors identify a
   structurally invalid image even when its checksum was recomputed.
 
 Browser manifests reject an incompatible `engineVersion` or `formatSchema`
 before downloading the object. Length and SHA-256 validate transport, then the
-Rust decoder applies the complete schema-11 validation above. There is no
+Rust decoder applies the complete schema-12 validation above. There is no
 compatibility flag or fallback loader for TeX Live-native `.fmt`, schema 9,
 schema 10, or partially migrated images.

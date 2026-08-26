@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
 format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-format_distribution_sha256="${UMBER_LATEX_FORMAT_DISTRIBUTION_SHA256:-$(awk '$1 == "distribution_sha256" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
 output_dir="${repo_root}/target/latex-wasm"
 format_output=""
@@ -14,7 +14,7 @@ usage() {
   cat <<'EOF'
 usage: scripts/build-wasm-latex-bundle.sh [--texmf-dist PATH] [--output-dir PATH]
                                           [--distribution PATH]
-                                          [--distribution-sha256 SHA256]
+                                          [--distribution-ahash64 AHASH64]
                                           [--format-output PATH] [--objects-base-url URL]
 
 Builds the deterministic Umber-native LaTeX format, stages the exact pinned
@@ -38,9 +38,9 @@ while [[ $# -gt 0 ]]; do
       format_distribution="$2"
       shift 2
       ;;
-    --distribution-sha256)
-      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --distribution-sha256' >&2; exit 2; }
-      format_distribution_sha256="$2"
+    --distribution-ahash64)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing digest after --distribution-ahash64' >&2; exit 2; }
+      format_distribution_ahash64="$2"
       shift 2
       ;;
     --output-dir)
@@ -104,7 +104,7 @@ mkdir -p "$runtime_root"
 "${repo_root}/scripts/build-latex-format.sh" --publish-input-closure \
   --texmf-dist "$texmf_dist" \
   --distribution "$format_distribution" \
-  --distribution-sha256 "$format_distribution_sha256" \
+  --distribution-ahash64 "$format_distribution_ahash64" \
   --output-dir "$format_dir"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$runtime_lock")"
@@ -136,7 +136,7 @@ done < "$runtime_lock"
 cd "$repo_root"
 cargo build --manifest-path tools/texlive-wasm-publish/Cargo.toml
 publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/debug/texlive-wasm-publish"
-tree_hash="$($publisher --tree-sha256 "$runtime_root")"
+tree_hash="$($publisher --tree-ahash64 "$runtime_root")"
 
 config="${tmp_root}/publish.json"
 "${repo_root}/scripts/write-latex-wasm-publish-config.sh" \
@@ -157,6 +157,6 @@ if [[ -n "$format_output" ]]; then
 fi
 
 printf 'Umber LaTeX WASM bundle: format=%s files=%s output=%s\n' \
-  "$(sha256 "${format_dir}/latex.fmt")" \
+  "$($publisher --file-ahash64 "${format_dir}/latex.fmt")" \
   "$(find "${runtime_root}" -type f | wc -l | tr -d ' ')" \
   "$output_dir"

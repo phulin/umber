@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { createHash, webcrypto } from "node:crypto";
+import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+	deterministicAhash64Hex,
 	HttpManifestResolver,
 	ManifestResolverError,
 } from "./manifest-resolver.js";
@@ -11,14 +12,15 @@ import { MemoryObjectCache } from "./persistent-cache.js";
 const encoder = new TextEncoder();
 const shardIndex = (key, bits) => {
 	if (bits === 0) return 0;
-	const bytes = createHash("sha256").update(key).digest();
-	return ((bytes[0] << 8) | bytes[1]) >>> (16 - bits);
+	const value = BigInt(`0x${deterministicAhash64Hex(encoder.encode(key), 2)}`);
+	const prefix = Number(((value & 0xffn) << 8n) | ((value >> 8n) & 0xffn));
+	return prefix >>> (16 - bits);
 };
 const catalog = {
 	catalogPrepareBatch(text, keys) {
 		const root = JSON.parse(text);
 		if (
-			![2, 3, 4].includes(root.schema) ||
+			![5, 6, 7].includes(root.schema) ||
 			!Number.isInteger(root.shardBits) ||
 			root.shardBits < 0 ||
 			root.shardBits > 16 ||
@@ -33,8 +35,8 @@ const catalog = {
 			root: `${JSON.stringify(root)}\n`,
 			shards: indexes.map((index) => ({
 				index,
-				object: `sha256-${root.shards[index]}`,
-				sha256: root.shards[index],
+				object: `ahash64-v1-${root.shards[index]}`,
+				ahash64: root.shards[index],
 			})),
 		};
 	},
@@ -48,7 +50,7 @@ const catalog = {
 			if (
 				shard.distribution !== root.distribution ||
 				shard.index !== raw.index ||
-				shard.schema !== (root.schema === 4 ? 2 : 1)
+				shard.schema !== (root.schema === 7 ? 4 : 3)
 			)
 				throw new Error(`index shard ${raw.index} identity mismatch`);
 			for (const key of [
@@ -114,30 +116,30 @@ const catalog = {
 		return { name, ...entry };
 	},
 };
-const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const digest = (bytes) => deterministicAhash64Hex(bytes);
 const jsonBytes = (value) => encoder.encode(`${JSON.stringify(value)}\n`);
 
 function fileEntry(path, bytes) {
-	const sha256 = digest(bytes);
+	const ahash64 = digest(bytes);
 	return {
 		virtualPath: `/texlive/${path}`,
-		object: `sha256-${sha256}`,
-		sha256,
+		object: `ahash64-v1-${ahash64}`,
+		ahash64,
 		bytes: bytes.byteLength,
 	};
 }
 
 function formatEntry(bytes) {
-	const sha256 = digest(bytes);
+	const ahash64 = digest(bytes);
 	return {
-		object: `sha256-${sha256}`,
-		sha256,
+		object: `ahash64-v1-${ahash64}`,
+		ahash64,
 		bytes: bytes.byteLength,
 		engine: "umber",
 		engineVersion: "0.1.0",
 		formatSchema: 11,
 		sourceDistribution: "fixture",
-		sourceManifestSha256: "1".repeat(64),
+		sourceManifestAhash64: "1".repeat(16),
 		sourceDateEpoch: 0,
 	};
 }
@@ -185,19 +187,19 @@ async function fixture() {
 		);
 	const shards = shardFiles.map((shardFilesAtIndex, index) => {
 		const bytes = jsonBytes({
-			schema: 1,
+			schema: 3,
 			distribution: "texlive-fixture",
 			index,
 			files: shardFilesAtIndex,
 		});
-		const sha256 = digest(bytes);
-		objectBytes.set(`sha256-${sha256}`, bytes);
-		return sha256;
+		const ahash64 = digest(bytes);
+		objectBytes.set(`ahash64-v1-${ahash64}`, bytes);
+		return ahash64;
 	});
 	const format = formatEntry(payloads.format);
 	objectBytes.set(format.object, payloads.format);
 	const root = {
-		schema: 2,
+		schema: 5,
 		distribution: "texlive-fixture",
 		objectsBaseUrl: "https://cdn.example.test/objects/",
 		shardBits,
@@ -236,15 +238,15 @@ async function htmlFontFixture() {
 		...Object.values(shard.fonts),
 		...Object.values(shard.legacyMappings),
 	]) {
-		entry.object = `sha256-${fontDigest}`;
-		entry.sha256 = fontDigest;
+		entry.object = `ahash64-v1-${fontDigest}`;
+		entry.ahash64 = fontDigest;
 		entry.bytes = fontBytes.byteLength;
 	}
 	const shardBytes = jsonBytes(shard);
 	const shardDigest = digest(shardBytes);
 	return {
 		root: {
-			schema: 4,
+			schema: 7,
 			distribution: "html-font-fixture",
 			objectsBaseUrl: "https://cdn.example.test/objects/",
 			shardBits: 0,
@@ -253,8 +255,8 @@ async function htmlFontFixture() {
 			formats: {},
 		},
 		objectBytes: new Map([
-			[`sha256-${shardDigest}`, shardBytes],
-			[`sha256-${fontDigest}`, fontBytes],
+			[`ahash64-v1-${shardDigest}`, shardBytes],
+			[`ahash64-v1-${fontDigest}`, fontBytes],
 		]),
 		fontRequest: Object.values(shard.fonts)[0],
 		fontKey: Object.keys(shard.fonts)[0],
@@ -299,16 +301,16 @@ test("create verifies the pinned root before accepting its selection metadata", 
 	const data = await fixture();
 	const resolver = await HttpManifestResolver.create({
 		manifestUrl: "https://cdn.example.test/manifest-v2.json",
-		manifestSha256: data.rootDigest,
+		manifestAHash64: data.rootDigest,
 		fetch: async () => response(data.rootBytes),
 		crypto: webcrypto,
 		catalog,
 	});
-	assert.equal(resolver.manifest.schema, 2);
+	assert.equal(resolver.manifest.schema, 5);
 	await assert.rejects(
 		HttpManifestResolver.create({
 			manifestUrl: "https://cdn.example.test/manifest-v2.json",
-			manifestSha256: "0".repeat(64),
+			manifestAHash64: "0".repeat(16),
 			fetch: async () => response(data.rootBytes),
 			crypto: webcrypto,
 			catalog,
@@ -331,7 +333,7 @@ test("pinned root and objects support zero-network warm and offline resolvers", 
 	};
 	const options = {
 		manifestUrl: "https://cdn.example.test/manifest-v2.json",
-		manifestSha256: data.rootDigest,
+		manifestAHash64: data.rootDigest,
 		persistentCache: "indexeddb",
 		cacheStore,
 		fetch,
@@ -386,8 +388,12 @@ test("fetches canonical shards, deduplicates payloads, and uses inline hints wit
 		webcrypto,
 	);
 	const requestedObjects = calls.map(({ url }) => url.split("/").at(-1));
-	assert(requestedObjects.includes(`sha256-${data.root.shards[plainShard]}`));
-	assert(requestedObjects.includes(`sha256-${data.root.shards[aliasShard]}`));
+	assert(
+		requestedObjects.includes(`ahash64-v1-${data.root.shards[plainShard]}`),
+	);
+	assert(
+		requestedObjects.includes(`ahash64-v1-${data.root.shards[aliasShard]}`),
+	);
 	const dependencyShard = await shardIndex(
 		"tfm:cmr10.tfm",
 		data.root.shardBits,
@@ -395,7 +401,9 @@ test("fetches canonical shards, deduplicates payloads, and uses inline hints wit
 	);
 	if (dependencyShard !== plainShard && dependencyShard !== aliasShard) {
 		assert(
-			!requestedObjects.includes(`sha256-${data.root.shards[dependencyShard]}`),
+			!requestedObjects.includes(
+				`ahash64-v1-${data.root.shards[dependencyShard]}`,
+			),
 		);
 	}
 	assert.equal(
@@ -444,7 +452,7 @@ test("HTML profile resolves exact font and mapping records while preserving auth
 	assert.equal(parsedFont[0], "font");
 	const mappingRequest = {
 		type: "legacy-font-mapping",
-		tfmSha256: "c".repeat(64),
+		tfmAhash64: "c".repeat(16),
 		layoutPolicyVersion: 1,
 		purpose: "html-layout",
 		encodingCatalog: "OT1",
@@ -505,7 +513,7 @@ test("rejects tampered and mispartitioned shards", async () => {
 		data.root.shardBits,
 		webcrypto,
 	);
-	const shardObject = `sha256-${data.root.shards[plainIndex]}`;
+	const shardObject = `ahash64-v1-${data.root.shards[plainIndex]}`;
 	const tampered = new Map(data.objectBytes);
 	const changed = tampered.get(shardObject).slice();
 	changed[0] ^= 1;
@@ -517,10 +525,14 @@ test("rejects tampered and mispartitioned shards", async () => {
 		(error) => error.code === "object-digest",
 	);
 
-	const wrongIndex = (plainIndex + 1) % data.root.shardCount;
+	const wrongKey = Object.keys(data.files).find(
+		(key) => shardIndex(key, data.root.shardBits) !== plainIndex,
+	);
+	assert.notEqual(wrongKey, undefined);
+	const wrongIndex = shardIndex(wrongKey, data.root.shardBits);
 	const wrongShard = JSON.parse(
 		new TextDecoder().decode(
-			data.objectBytes.get(`sha256-${data.root.shards[wrongIndex]}`),
+			data.objectBytes.get(`ahash64-v1-${data.root.shards[wrongIndex]}`),
 		),
 	);
 	wrongShard.files["tex:plain.tex"] = data.files["tex:plain.tex"];
@@ -529,7 +541,7 @@ test("rejects tampered and mispartitioned shards", async () => {
 	const wrongRoot = { ...data.root, shards: [...data.root.shards] };
 	wrongRoot.shards[wrongIndex] = wrongDigest;
 	const wrongObjects = new Map(data.objectBytes).set(
-		`sha256-${wrongDigest}`,
+		`ahash64-v1-${wrongDigest}`,
 		wrongBytes,
 	);
 	await assert.rejects(
@@ -539,7 +551,7 @@ test("rejects tampered and mispartitioned shards", async () => {
 			objectBytes: wrongObjects,
 		}).resolver.resolve([
 			{ kind: "tex", name: "plain.tex" },
-			{ kind: "tex", name: Object.keys(wrongShard.files)[0].slice(4) },
+			{ kind: "tex", name: wrongKey.slice(4) },
 		]),
 		/canonical shard/,
 	);
@@ -592,7 +604,7 @@ test("schema three format closures return validated positive responses", async (
 	const data = await fixture();
 	data.root = {
 		...data.root,
-		schema: 3,
+		schema: 6,
 		formats: {
 			plain: {
 				...data.root.formats.plain,
@@ -728,7 +740,7 @@ test("cancellation and oversized streamed objects remain bounded", async () => {
 		data.root.shardBits,
 		webcrypto,
 	);
-	const shardObject = `sha256-${data.root.shards[plainIndex]}`;
+	const shardObject = `ahash64-v1-${data.root.shards[plainIndex]}`;
 	let cancelled = false;
 	const { resolver } = resolverFor(data, {
 		fetch: async (url) => {
@@ -779,7 +791,7 @@ test("invalid root pin and malformed shard options are typed", async () => {
 	await assert.rejects(
 		HttpManifestResolver.create({
 			manifestUrl: "unused",
-			manifestSha256: "bad",
+			manifestAHash64: "bad",
 			fetch: async () => response(data.rootBytes),
 			crypto: webcrypto,
 			catalog,

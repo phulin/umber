@@ -1,34 +1,34 @@
 {
-  "schema": 1,
+  "schema": 2,
   "distribution": "texlive-parity-2026",
   "objectsBaseUrl": "https://cdn.example.test/objects/",
   "files": {
     "tex:article.cls": {
       "virtualPath": "/texlive/tex/latex/base/article.cls",
-      "object": "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "object": "ahash64-v1-aaaaaaaaaaaaaaaa",
+      "ahash64": "aaaaaaaaaaaaaaaa",
       "bytes": 101,
       "dependencies": ["tex:latex.ltx"]
     },
     "tex:latex.ltx": {
       "virtualPath": "/texlive/tex/latex/base/latex.ltx",
-      "object": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "object": "ahash64-v1-bbbbbbbbbbbbbbbb",
+      "ahash64": "bbbbbbbbbbbbbbbb",
       "bytes": 202,
       "dependencies": ["tfm:cmr10.tfm"]
     },
     "tfm:cmr10.tfm": {
       "virtualPath": "/texlive/fonts/tfm/public/cm/cmr10.tfm",
-      "object": "sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "object": "ahash64-v1-cccccccccccccccc",
+      "ahash64": "cccccccccccccccc",
       "bytes": 303,
       "dependencies": ["tex:article.cls"]
     }
   },
   "fonts": {
     "cmu-serif": {
-      "object": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "object": "ahash64-v1-dddddddddddddddd",
+      "ahash64": "dddddddddddddddd",
       "bytes": 404,
       "container": "woff2",
       "provenance": "SIL Open Font License"
@@ -36,14 +36,14 @@
   },
   "formats": {
     "plain": {
-      "object": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "object": "ahash64-v1-eeeeeeeeeeeeeeee",
+      "ahash64": "eeeeeeeeeeeeeeee",
       "bytes": 505,
       "engine": "umber",
       "engineVersion": "0.1.0",
       "formatSchema": 6,
       "sourceDistribution": "texlive-parity-2026",
-      "sourceManifestSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "sourceManifestAhash64": "ffffffffffffffff",
       "sourceDateEpoch": 0
     }
   }

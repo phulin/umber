@@ -38,22 +38,22 @@ impl Error for ManifestFetchError {}
 /// Downloads one bounded HTTPS manifest and verifies the caller's trust pin.
 pub fn fetch_manifest(
     url: &str,
-    expected_sha256: &str,
+    expected_ahash64: &str,
     timeout: Duration,
 ) -> Result<Vec<u8>, ManifestFetchError> {
-    fetch_manifest_cancellable(url, expected_sha256, timeout, &FetchCancellation::new())
+    fetch_manifest_cancellable(url, expected_ahash64, timeout, &FetchCancellation::new())
 }
 
 /// Downloads and verifies a manifest while observing cooperative cancellation.
 pub fn fetch_manifest_cancellable(
     url: &str,
-    expected_sha256: &str,
+    expected_ahash64: &str,
     timeout: Duration,
     cancellation: &FetchCancellation,
 ) -> Result<Vec<u8>, ManifestFetchError> {
     fetch_manifest_with_downloader(
         url,
-        expected_sha256,
+        expected_ahash64,
         cancellation,
         &VerifiedDownloader::new(timeout),
     )
@@ -61,7 +61,7 @@ pub fn fetch_manifest_cancellable(
 
 pub(crate) fn fetch_manifest_with_downloader(
     url: &str,
-    expected_sha256: &str,
+    expected_ahash64: &str,
     cancellation: &FetchCancellation,
     downloader: &VerifiedDownloader,
 ) -> Result<Vec<u8>, ManifestFetchError> {
@@ -71,30 +71,30 @@ pub(crate) fn fetch_manifest_with_downloader(
             &DownloadPolicy {
                 subject: "manifests",
                 length: LengthPolicy::AtMost(MAX_MANIFEST_BYTES),
-                expected_sha256,
+                expected_ahash64,
                 retries: 0,
             },
             cancellation,
         )
-        .map_err(|failure| map_download_failure(failure, expected_sha256))
+        .map_err(|failure| map_download_failure(failure, expected_ahash64))
 }
 
 #[cfg(test)]
 pub(crate) fn fetch_manifest_with_test_agent(
     url: &str,
-    expected_sha256: &str,
+    expected_ahash64: &str,
     cancellation: &FetchCancellation,
     agent: &ureq::Agent,
 ) -> Result<Vec<u8>, ManifestFetchError> {
     fetch_manifest_with_downloader(
         url,
-        expected_sha256,
+        expected_ahash64,
         cancellation,
         &VerifiedDownloader::with_agent(agent.clone()),
     )
 }
 
-fn map_download_failure(failure: DownloadFailure, expected_sha256: &str) -> ManifestFetchError {
+fn map_download_failure(failure: DownloadFailure, expected_ahash64: &str) -> ManifestFetchError {
     match failure {
         DownloadFailure::InvalidUrl(message) => ManifestFetchError::InvalidUrl(message),
         DownloadFailure::HttpStatus(status) => ManifestFetchError::HttpStatus(status),
@@ -105,7 +105,7 @@ fn map_download_failure(failure: DownloadFailure, expected_sha256: &str) -> Mani
             ManifestFetchError::TooLarge { limit: expected }
         }
         DownloadFailure::DigestMismatch { actual } => ManifestFetchError::DigestMismatch {
-            expected: expected_sha256.to_owned(),
+            expected: expected_ahash64.to_owned(),
             actual,
         },
         DownloadFailure::Cancelled => ManifestFetchError::Cancelled,

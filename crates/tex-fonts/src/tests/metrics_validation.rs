@@ -17,7 +17,7 @@ fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
     let source = LoadedFont::new(
         "test",
         "/host/path/test.tfm",
-        [7; 32],
+        [7; 8],
         42,
         Scaled::from_raw(10 * Scaled::UNITY),
         Scaled::from_raw(12 * Scaled::UNITY),

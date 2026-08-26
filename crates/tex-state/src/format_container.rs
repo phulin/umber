@@ -8,7 +8,7 @@ use std::fmt;
 use std::io::{Read, Write};
 
 pub(crate) const MAGIC: [u8; 8] = *b"UMBRFMT\0";
-pub(crate) const SCHEMA_VERSION: u32 = 11;
+pub(crate) const SCHEMA_VERSION: u32 = 12;
 pub(crate) const HEADER_LEN: usize = 80;
 const DIRECTORY_ENTRY_LEN: usize = 40;
 const CHECKSUM_OFFSET: usize = 56;
@@ -22,7 +22,7 @@ const DEFLATE_FLAG: u32 = 1;
 pub(crate) const TRANSITIONAL_SEMANTIC_SECTION: u32 = 1;
 
 pub(crate) const ABI_FINGERPRINT: u64 = fingerprint(
-    b"umber.format.container.v7;le;header=80;directory=40;refs=relative-or-index;sections=deflate;font-info-words=u32;names-hash-occupied=u8;string-pool=v2;pool-accounting=canonical-v4;main-memory=aggregate-live-extents;checksum=fnv1a64-zero-field",
+    b"umber.format.container.v8;le;header=80;directory=40;refs=relative-or-index;sections=deflate;font-identities=ahash64-v1;font-info-words=u32;names-hash-occupied=u8;string-pool=v2;pool-accounting=canonical-v4;main-memory=aggregate-live-extents;checksum=fnv1a64-zero-field",
 );
 pub(crate) const LOOKUP_CONFIGURATION_FINGERPRINT: u64 = fingerprint(
     b"umber.format.lookup.v2;fnv1a64;seed=cbf29ce484222325;capacity=pow2-lte-3/4;probe=linear;empty=ffffffff;tokens=direct-target-u32",

@@ -9,12 +9,19 @@ batched file/OpenType resource acquisition and its shared native/WASM retry
 state are implemented by the persistent compile session; the remaining
 OpenType rollout is tracked by `umber2-y2ei`.
 
+The browser resolver and HTML resource registry use the same portable
+`ahash64-v1` algorithm and domain tags as Rust; Web Crypto and runtime-random
+hash state are not part of this identity. Root, shard, payload, persistent
+cache, and rendered font-resource identities are non-cryptographic corruption
+checks. With no republished schema-6/schema-7 root pin, constructing the
+default resolver fails explicitly with `default-distribution-unpublished`.
+
 ## Goals
 
 The browser frontend must acquire resources only when a session requires them,
 without turning dynamic discovery into a serialized network waterfall. Rust
 remains synchronous and host-neutral. JavaScript or another host owns
-asynchronous I/O, concurrency, persistent caching, cancellation, authentication,
+asynchronous I/O, concurrency, persistent caching, cancellation, validation,
 and deployment policy.
 
 The WASM `SessionOptions.outputs` array is the representation adapter for the
@@ -206,7 +213,7 @@ The facade therefore has no file-kind table, path canonicalizer, duplicate
 map, or resource-byte counter that could drift from native behavior.
 
 The application or its resolver decides whether to use memory caches,
-in-flight joining, HTTP caching, IndexedDB, a service worker, authenticated
+in-flight joining, HTTP caching, IndexedDB, a service worker, verified
 fetches, local user files, or another transport. Reusable helper modules may
 implement these policies, but the core package does not require one catalog or
 deployment model.
@@ -217,7 +224,7 @@ local/client, and hosted providers in caller-declared precedence, treats typed
 unavailability as provider-scoped, and emits an authoritative unavailable
 response only after all providers miss. Transport, validation, and corruption
 errors remain actionable failures. The worker uses this facade for explicit
-session font resources ahead of the authenticated manifest provider; it no
+session font resources ahead of the verified manifest provider; it no
 longer rewrites hosted results after resolution.
 
 Cancellation aborts work owned only by the cancelled session. A client may
@@ -280,7 +287,7 @@ The packaged HTTP manifest resolver consumes the schema-2, schema-3, or
 schema-4 sharded catalog through required `umber-wasm` catalog bindings backed
 by `umber-distribution`. JavaScript performs no root/shard validation,
 partition hashing, or required/hint/miss selection. Construction from HTTP
-requires an explicit root SHA-256 pin. Selected
+requires an explicit root aHash64 pin. Selected
 shards are digest-addressed immutable objects and use the resolver's existing
 HTTP or IndexedDB cache, while complete inline dependency records prefetch
 payloads without a second index lookup. Only verified absence in the canonical
@@ -289,7 +296,7 @@ remain actionable resolver errors.
 
 PDF virtual-font discovery uses the ordinary file-response loop after engine
 execution reaches a retained candidate. Its `vf`, `font-map`, `font-encoding`,
-and `font-program` wire kinds resolve through authenticated `tex:<name>` shard
+and `font-program` wire kinds resolve through verified `tex:<name>` shard
 entries, but the resolver returns the original semantic kind rather than the
 manifest transport kind. Recursive local metrics remain `tfm` requests. This
 keeps native and WASM retry identity identical while preserving the manifest
@@ -298,7 +305,7 @@ schema.
 Unmapped real PDF leaves use the distinct `pk-font` request rather than a
 generic file request. Its identity retains the TeX name bytes, resolved DPI,
 and frozen mode; the response carries the canonical client/distribution path,
-exact bytes, and optional SHA-256 assertion. Rust validates and retains the PK
+exact bytes, and optional aHash64 assertion. Rust validates and retains the PK
 program before accepting the output transaction. Native directories and WASM
 client VFS providers therefore produce the same request and program identity,
 while HTML-only and DVI-only sessions never issue the request.
@@ -334,7 +341,7 @@ The client maps logical requests to resources. Valid implementations include:
 - a CDN keyed by content digest;
 - a separate Computer Modern asset package;
 - local user-selected fonts;
-- private authenticated storage; and
+- private verified storage; and
 - a service-worker-managed offline distribution.
 
 The core API neither specifies nor consumes those catalog formats. It does not
@@ -359,12 +366,12 @@ system font directories or infer a file path from a logical font name.
 The client-selected resource source is the trust root for selection and
 licensing. HTTPS, signed manifests, application bundling, or deployment policy
 may establish authenticity. Content digests detect corruption but do not
-authenticate a malicious catalog.
+verify a malicious catalog.
 
 Required typed failures include:
 
 - unexpected resource responses and conflicting availability bindings;
-- HTTP, CORS, authentication, and abort failures reported by the client;
+- HTTP, CORS, validation, and abort failures reported by the client;
 - declared-length or object-digest mismatch;
 - resource and aggregate limit violations;
 - invalid file, format, OTF, TTF, collection, or WOFF2 structure;

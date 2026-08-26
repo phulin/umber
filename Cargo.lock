@@ -1297,6 +1297,7 @@ dependencies = [
  "tex-out",
  "tex-state",
  "tex-typeset",
+ "umber-hash",
 ]
 
 [[package]]
@@ -1307,10 +1308,10 @@ dependencies = [
  "rustybuzz",
  "self_cell",
  "serde",
- "sha2",
  "subsetter",
  "tex-arith",
  "ttf-parser",
+ "umber-hash",
  "unicode-bidi",
  "unicode-script",
  "woff2-patched",
@@ -1368,6 +1369,7 @@ dependencies = [
  "tex-content",
  "tex-fonts",
  "ttf-parser",
+ "umber-hash",
  "woff2-patched",
 ]
 
@@ -1535,6 +1537,7 @@ dependencies = [
  "ttf-parser",
  "umber-distribution",
  "umber-fetch",
+ "umber-hash",
  "umber-interrupt",
  "umber-vfs",
  "zeroize",
@@ -1545,6 +1548,7 @@ name = "umber-distribution"
 version = "0.1.0"
 dependencies = [
  "test-support",
+ "umber-hash",
 ]
 
 [[package]]
@@ -1552,11 +1556,15 @@ name = "umber-fetch"
 version = "0.1.0"
 dependencies = [
  "rustix",
- "sha2",
  "tempfile",
  "umber-distribution",
+ "umber-hash",
  "ureq",
 ]
+
+[[package]]
+name = "umber-hash"
+version = "0.1.0"
 
 [[package]]
 name = "umber-hot-core-allocator"

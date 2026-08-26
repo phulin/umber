@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use sha2::{Digest, Sha256};
+use umber_hash::{AHash64, HashDomain};
 
 const PK_PRE: u8 = 247;
 const PK_ID: u8 = 89;
@@ -58,11 +58,11 @@ impl PdfPkFontRequest {
 
 /// Stable identity of the exact acquired PK program.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct PdfPkFontIdentity([u8; 32]);
+pub struct PdfPkFontIdentity([u8; 8]);
 
 impl PdfPkFontIdentity {
     #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 }
@@ -97,7 +97,8 @@ impl PdfPkFont {
         if bytes.len() > MAX_PK_BYTES {
             return Err(PdfPkFontError::InputTooLarge);
         }
-        let identity = PdfPkFontIdentity(Sha256::digest(bytes).into());
+        let identity =
+            PdfPkFontIdentity(AHash64::for_bytes(HashDomain::PkProgram, bytes).to_le_bytes());
         let mut cursor = Cursor::new(bytes);
         if cursor.u8()? != PK_PRE || cursor.u8()? != PK_ID {
             return Err(PdfPkFontError::InvalidPreamble);

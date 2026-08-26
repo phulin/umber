@@ -1,9 +1,8 @@
 use tex_arith::Scaled;
 
 use crate::{
-    BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
-    JobInfo, KernKind, LeaderPayload, PageEffect, PageNode, PdfAccessibilityEffect,
-    UnvalidatedPageArtifact,
+    BoxNode, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
+    KernKind, LeaderPayload, PageEffect, PageNode, PdfAccessibilityEffect, UnvalidatedPageArtifact,
 };
 
 use super::{PositionedEvent, TextUnit, lower_page};
@@ -524,7 +523,7 @@ fn nested_leader_geometry_preserves_depth_first_order() {
 }
 
 #[test]
-fn nested_leader_validation_preserves_depth_first_error_order() {
+fn malformed_nested_leader_font_ids_fail_closed() {
     let first = PageNode::Char {
         font_id: 1,
         ch: b'A' as u32,
@@ -553,13 +552,13 @@ fn nested_leader_validation_preserves_depth_first_error_order() {
         let offset = bytes
             .windows(needle.len())
             .position(|window| window == needle)
-            .expect("unique character encoding");
+            .expect("character scalar encoding");
         bytes[offset + 1..offset + 5].copy_from_slice(&invalid_font.to_le_bytes());
     }
     assert_eq!(
         crate::dvi::DviPagePlan::compile_v10(&bytes),
         Err(crate::dvi::DviError::Artifact {
-            message: crate::ArtifactValidationError::MissingFont { font_id: 99 }.to_string(),
+            message: "truncated page artifact".to_owned(),
         })
     );
 }
@@ -606,14 +605,14 @@ fn page(root: PageNode) -> crate::PageArtifact {
             .map(|font_id| FontResource {
                 font_id: u32::from(font_id),
                 name: format!("cmr{font_id}0"),
-                tfm_content_hash: ContentHash::from_bytes(&[font_id]),
+                tfm_content_hash: tex_fonts::font_content_hash(&[font_id]),
                 tfm_checksum: 0,
                 design_size: sp(655_360),
                 at_size: sp(655_360),
                 layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
                 mapping_fallback: None,
                 opentype: None,
-                semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id; 32]),
+                semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id; 8]),
                 construction: crate::FontResourceConstruction::Loaded,
             })
             .collect(),

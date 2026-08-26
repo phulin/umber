@@ -469,7 +469,7 @@ fn short_display_renders_byte_zero_in_a_font_identifier_through_print() {
     let loaded = LoadedFont::new(
         "bigtr\0p",
         "fixture.tfm",
-        [0; 32],
+        [0; 8],
         0,
         size,
         size,

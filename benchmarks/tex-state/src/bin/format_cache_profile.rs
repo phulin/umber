@@ -77,7 +77,7 @@ struct Observation {
 }
 
 fn main() {
-    assert_eq!(FORMAT_SCHEMA_VERSION, 11, "profile input must be schema-11");
+    assert_eq!(FORMAT_SCHEMA_VERSION, 12, "profile input must be schema-12");
     let format_path = std::env::args_os().nth(1).map_or_else(
         || PathBuf::from("crates/umber-wasm/assets/plain.fmt"),
         PathBuf::from,

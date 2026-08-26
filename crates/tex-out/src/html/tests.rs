@@ -1,10 +1,10 @@
 use std::cell::Cell;
 
-use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
+use umber_hash::{AHash64, HashDomain};
 
 use crate::{
-    BoxNode, ContentHash, FontResource, GlueOrder, GlueSetRatio, GlueSign, JobInfo, MathGlyph,
+    BoxNode, FontResource, GlueOrder, GlueSetRatio, GlueSign, JobInfo, MathGlyph,
     MathGlyphSelection, MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageEffect,
     PageNode, UnvalidatedPageArtifact,
 };
@@ -46,7 +46,7 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
     page.testing_mut().fonts[0].opentype = Some(OpenTypeFontResource {
         program_identity: program,
         object_identity: tex_fonts::FontObjectIdentity::for_bytes(bytes),
-        instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([8; 32]),
+        instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([8; 8]),
         container: tex_fonts::FontContainer::Woff2,
         face_index: 0,
         variation: tex_fonts::VariationSelection::new(vec![tex_fonts::VariationCoordinate {
@@ -75,13 +75,10 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
     let resolver = Resolver { missing_b: false };
     let output = write_html(&[page.clone(), page], &resolver, &options).expect("manifest HTML");
     assert_eq!(output.assets.len(), 1);
-    assert!(output.assets[0].path.starts_with("sha256-"));
+    assert!(output.assets[0].path.starts_with("ahash64-v1-"));
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
-    assert!(html.contains(&format!(
-        "umber-font-{}",
-        &super::hex(&program.bytes())[..24]
-    )));
-    assert!(html.contains("fonts/sha256-"));
+    assert!(html.contains(&format!("umber-font-{}", super::hex(&program.bytes()))));
+    assert!(html.contains("fonts/ahash64-v1-"));
     assert!(html.contains("font-variation-settings:'wght' 700"));
     assert!(html.contains("font-feature-settings:'salt' 2"));
     assert!(html.contains("direction=\"rtl\" lang=\"ar\""));
@@ -107,7 +104,7 @@ fn parsed_font(name: &str, bytes: &[u8]) -> tex_fonts::OpenTypeFont {
             request: key,
             container: tex_fonts::FontContainer::Woff2,
             bytes: bytes.to_vec(),
-            declared_object_sha256: None,
+            declared_object_ahash64: None,
             declared_program_identity: None,
             provenance: None,
             legacy_mapping: None,
@@ -194,7 +191,7 @@ impl HtmlFontAssets for BrokenFont {
             Self::Container => web.woff2 = b"wOF2not-a-font".to_vec(),
             Self::Cmap => web.encoding[usize::from(b'A')] = Some("\u{10ffff}".to_owned()),
         }
-        web.sha256 = Sha256::digest(&web.woff2).into();
+        web.ahash64 = AHash64::for_bytes(HashDomain::HtmlResource, &web.woff2).to_le_bytes();
         Ok(web)
     }
 }
@@ -209,7 +206,7 @@ impl HtmlFontAssets for Resolver {
         }
         Ok(HtmlFontAsset {
             key: HtmlFontKey::from(font),
-            sha256: Sha256::digest(&bytes).into(),
+            ahash64: AHash64::for_bytes(HashDomain::HtmlResource, &bytes).to_le_bytes(),
             woff2: bytes,
             encoding,
             provenance: "test fixture".to_owned(),
@@ -242,7 +239,7 @@ impl HtmlFontAssets for OrderedResolver {
         encoding[usize::from(b'B')] = Some("B".to_owned());
         Ok(HtmlFontAsset {
             key: HtmlFontKey::from(font),
-            sha256: Sha256::digest(&bytes).into(),
+            ahash64: AHash64::for_bytes(HashDomain::HtmlResource, &bytes).to_le_bytes(),
             woff2: bytes,
             encoding,
             provenance: font.name.clone(),
@@ -270,7 +267,7 @@ impl HtmlFontAssets for MathResolver {
             include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2").to_vec();
         Ok(HtmlFontAsset {
             key: HtmlFontKey::from(font),
-            sha256: Sha256::digest(&bytes).into(),
+            ahash64: AHash64::for_bytes(HashDomain::HtmlResource, &bytes).to_le_bytes(),
             woff2: bytes,
             encoding: vec![None; 256],
             provenance: "STIX Two Math under the SIL OFL".to_owned(),
@@ -283,7 +280,7 @@ impl HtmlFontAssets for MathResolver {
 fn positioned_math_uses_ssty_text_rules_and_validated_outline_paths() {
     let bytes = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
     let parsed = parsed_font("stix-two-math", bytes);
-    let instance = tex_fonts::FontInstanceIdentity::from_bytes([0x5a; 32]);
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([0x5a; 8]);
     let mut page = page();
     let PageNode::HList(root) = &mut page.testing_mut().root else {
         unreachable!()
@@ -397,7 +394,7 @@ fn positioned_math_uses_ssty_text_rules_and_validated_outline_paths() {
 fn positioned_math_rejects_unpublished_programs_and_unreproducible_cmap_glyphs() {
     let bytes = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
     let parsed = parsed_font("stix-two-math", bytes);
-    let instance = tex_fonts::FontInstanceIdentity::from_bytes([0x33; 32]);
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([0x33; 8]);
     let mut page = page();
     let PageNode::HList(root) = &mut page.testing_mut().root else {
         unreachable!()
@@ -405,7 +402,7 @@ fn positioned_math_rejects_unpublished_programs_and_unreproducible_cmap_glyphs()
     root.children.clear();
     page.testing_mut().fonts[0].name = "stix-two-math".to_owned();
     page.testing_mut().fonts[0].opentype = Some(OpenTypeFontResource {
-        program_identity: tex_fonts::FontProgramIdentity::from_bytes([0xff; 32]),
+        program_identity: tex_fonts::FontProgramIdentity::from_bytes([0xff; 8]),
         object_identity: parsed.object_identity,
         instance_identity: instance,
         container: tex_fonts::FontContainer::Woff2,
@@ -860,7 +857,7 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
         detached
             .assets
             .iter()
-            .map(|asset| asset.sha256)
+            .map(|asset| asset.ahash64)
             .collect::<Vec<_>>(),
         document
             .revision
@@ -1246,14 +1243,14 @@ fn page() -> crate::PageArtifact {
     let font = FontResource {
         font_id: 7,
         name: "cmr10".to_owned(),
-        tfm_content_hash: ContentHash::from_bytes(b"cmr10"),
+        tfm_content_hash: tex_fonts::font_content_hash(b"cmr10"),
         tfm_checksum: 123,
         design_size: sp(655_360),
         at_size: sp(655_360),
         layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         mapping_fallback: None,
         opentype: None,
-        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
+        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
         construction: crate::FontResourceConstruction::Loaded,
     };
     UnvalidatedPageArtifact {

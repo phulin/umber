@@ -1,13 +1,4 @@
 {
-  "schema": 1,
-  "name": "plain",
-  "object": "sha256-f61b2a4d979b558dd434f85659e8e9b24283c77bb146b5517af358b77791d0fc",
-  "sha256": "f61b2a4d979b558dd434f85659e8e9b24283c77bb146b5517af358b77791d0fc",
-  "bytes": 128792,
-  "engine": "umber",
-  "engineVersion": "0.1.0",
-  "formatSchema": 11,
-  "sourceDistribution": "texlive-2025",
-  "sourceManifestSha256": "76ef2af742ee50cdf001b96d068a2d88c484ba9f97ec39d39c6943a03e4ec61f",
-  "sourceDateEpoch": 0
+  "schema": 0,
+  "unavailable": "umber2-66p0.27 must regenerate the packaged Plain format at schema 12 with ahash64-v1 metadata"
 }

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use umber_distribution::ShardFile;
+use umber_hash::{AHash64, HashDomain};
 
 use super::*;
 
@@ -26,7 +26,7 @@ fn explicit_distribution_verifier_hashes_the_complete_graph() {
 #[test]
 fn explicit_distribution_verifier_rejects_root_and_unrequested_object_mutation() {
     let fixture = complete_fixture();
-    let root_path = fixture.root.path().join("manifest-v2.json");
+    let root_path = fixture.root.path().join("manifest-v5.json");
     let root_bytes = fs::read(&root_path).expect("root bytes");
     fs::write(&root_path, b"mutated root").expect("mutate root");
     let root_error = verify_distribution(fixture.root.path(), &fixture.root_digest)
@@ -59,8 +59,8 @@ fn complete_fixture() -> Fixture {
     let unrequested = b"unrequested";
     let requested_digest = digest(requested);
     let unrequested_digest = digest(unrequested);
-    let requested_name = format!("sha256-{requested_digest}");
-    let unrequested_name = format!("sha256-{unrequested_digest}");
+    let requested_name = format!("ahash64-v1-{requested_digest}");
+    let unrequested_name = format!("ahash64-v1-{unrequested_digest}");
     fs::write(objects.join(&requested_name), requested).expect("requested object");
     let unrequested_object = objects.join(&unrequested_name);
     fs::write(&unrequested_object, unrequested).expect("unrequested object");
@@ -74,7 +74,7 @@ fn complete_fixture() -> Fixture {
                 ShardFile {
                     virtual_path: "/texlive/requested.tex".to_owned(),
                     object: requested_name,
-                    sha256: requested_digest,
+                    ahash64: requested_digest,
                     bytes: requested.len() as u64,
                     dependencies: Vec::new(),
                 },
@@ -84,7 +84,7 @@ fn complete_fixture() -> Fixture {
                 ShardFile {
                     virtual_path: "/texlive/unrequested.tex".to_owned(),
                     object: unrequested_name,
-                    sha256: unrequested_digest,
+                    ahash64: unrequested_digest,
                     bytes: unrequested.len() as u64,
                     dependencies: Vec::new(),
                 },
@@ -95,7 +95,7 @@ fn complete_fixture() -> Fixture {
     }
     .to_json();
     let shard_digest = digest(shard.as_bytes());
-    fs::write(objects.join(format!("sha256-{shard_digest}")), &shard).expect("shard object");
+    fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), &shard).expect("shard object");
     let root_bytes = ShardedManifestRoot {
         schema: umber_distribution::SHARDED_ROOT_SCHEMA,
         distribution: "verify".to_owned(),
@@ -107,7 +107,7 @@ fn complete_fixture() -> Fixture {
     }
     .to_json();
     let root_digest = digest(root_bytes.as_bytes());
-    fs::write(root.path().join("manifest-v2.json"), &root_bytes).expect("root manifest");
+    fs::write(root.path().join("manifest-v5.json"), &root_bytes).expect("root manifest");
     Fixture {
         root,
         root_digest,
@@ -117,5 +117,5 @@ fn complete_fixture() -> Fixture {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }

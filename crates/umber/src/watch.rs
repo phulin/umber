@@ -21,7 +21,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
     let mut poll = Duration::from_millis(100);
     let mut format = None;
     let mut distribution = None;
-    let mut distribution_sha256 = None;
+    let mut distribution_ahash64 = None;
     let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -54,15 +54,15 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         .ok_or(WatchError::Usage("missing URL or path for --distribution"))?,
                 );
             }
-            "--distribution-sha256" => {
-                distribution_sha256 = Some(args.next().ok_or(WatchError::Usage(
-                    "missing digest for --distribution-sha256",
+            "--distribution-ahash64" => {
+                distribution_ahash64 = Some(args.next().ok_or(WatchError::Usage(
+                    "missing digest for --distribution-ahash64",
                 ))?);
             }
             "--offline" => offline = true,
             _ => {
                 return Err(WatchError::Usage(
-                    "watch accepts --dvi, --format, --poll-ms, --distribution, --distribution-sha256, and --offline",
+                    "watch accepts --dvi, --format, --poll-ms, --distribution, --distribution-ahash64, and --offline",
                 ));
             }
         }
@@ -76,7 +76,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         outputs: umber::OutputCapabilitySet::DVI,
         html_asset_directory: None,
         distribution,
-        distribution_sha256,
+        distribution_ahash64,
         offline,
         expansion_fuel: None,
     };

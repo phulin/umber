@@ -15,6 +15,7 @@ use umber::cli_resource::{
 };
 use umber::{EngineMode, OutputCapabilitySet};
 use umber_fetch::{FetchCancellation, ObjectCache};
+use umber_hash::{AHash64, HashDomain};
 
 const SAMPLES: usize = 5;
 
@@ -22,8 +23,8 @@ const SAMPLES: usize = 5;
 struct Work {
     manifest_reads: u64,
     manifest_parses: u64,
-    manifest_authentications: u64,
-    authenticated_manifest_hits: u64,
+    manifest_validations: u64,
+    verified_manifest_hits: u64,
     shard_loads: u64,
     object_hashes: u64,
     object_cache_hits: u64,
@@ -35,12 +36,12 @@ impl Work {
         self.manifest_parses = self
             .manifest_parses
             .saturating_add(telemetry.manifest_parses);
-        self.manifest_authentications = self
-            .manifest_authentications
-            .saturating_add(telemetry.manifest_authentications);
-        self.authenticated_manifest_hits = self
-            .authenticated_manifest_hits
-            .saturating_add(telemetry.authenticated_manifest_hits);
+        self.manifest_validations = self
+            .manifest_validations
+            .saturating_add(telemetry.manifest_validations);
+        self.verified_manifest_hits = self
+            .verified_manifest_hits
+            .saturating_add(telemetry.verified_manifest_hits);
         self.shard_loads = self.shard_loads.saturating_add(telemetry.shard_loads);
         self.object_hashes = self.object_hashes.saturating_add(telemetry.object_hashes);
         self.object_cache_hits = self
@@ -51,12 +52,12 @@ impl Work {
     fn add_work(&mut self, other: Self) {
         self.manifest_reads = self.manifest_reads.saturating_add(other.manifest_reads);
         self.manifest_parses = self.manifest_parses.saturating_add(other.manifest_parses);
-        self.manifest_authentications = self
-            .manifest_authentications
-            .saturating_add(other.manifest_authentications);
-        self.authenticated_manifest_hits = self
-            .authenticated_manifest_hits
-            .saturating_add(other.authenticated_manifest_hits);
+        self.manifest_validations = self
+            .manifest_validations
+            .saturating_add(other.manifest_validations);
+        self.verified_manifest_hits = self
+            .verified_manifest_hits
+            .saturating_add(other.verified_manifest_hits);
         self.shard_loads = self.shard_loads.saturating_add(other.shard_loads);
         self.object_hashes = self.object_hashes.saturating_add(other.object_hashes);
         self.object_cache_hits = self
@@ -87,8 +88,8 @@ impl Work {
         Ok(Self {
             manifest_reads: get("manifest_reads")?,
             manifest_parses: get("manifest_parses")?,
-            manifest_authentications: get("manifest_authentications")?,
-            authenticated_manifest_hits: get("authenticated_manifest_hits")?,
+            manifest_validations: get("manifest_validations")?,
+            verified_manifest_hits: get("verified_manifest_hits")?,
             shard_loads: get("shard_loads")?,
             object_hashes: get("object_hashes")?,
             object_cache_hits: get("object_cache_hits")?,
@@ -176,10 +177,10 @@ fn parent() -> Result<(), String> {
     }
     if shared_work.manifest_reads >= cold_work.manifest_reads
         || shared_work.manifest_parses >= cold_work.manifest_parses
-        || shared_work.manifest_authentications >= cold_work.manifest_authentications
+        || shared_work.manifest_validations >= cold_work.manifest_validations
         || shared_work.shard_loads >= cold_work.shard_loads
     {
-        return Err("shared owner did not reduce authenticated manifest startup work".to_owned());
+        return Err("shared owner did not reduce verified manifest startup work".to_owned());
     }
     if cold_work.object_hashes != SAMPLES as u64 || shared_work.object_hashes != SAMPLES as u64 {
         return Err(
@@ -198,10 +199,10 @@ fn parent() -> Result<(), String> {
     print_result("cold_process", cold_elapsed, cold_work);
     print_result("same_process_shared_owner", shared_elapsed, shared_work);
     println!(
-        "zero_loss=true cache_bytes_unchanged=true object_hashes_proportional=true manifest_read_reduction={} manifest_parse_reduction={} manifest_authentication_reduction={} shard_load_reduction={}",
+        "zero_loss=true cache_bytes_unchanged=true object_hashes_proportional=true manifest_read_reduction={} manifest_parse_reduction={} manifest_validation_reduction={} shard_load_reduction={}",
         cold_work.manifest_reads - shared_work.manifest_reads,
         cold_work.manifest_parses - shared_work.manifest_parses,
-        cold_work.manifest_authentications - shared_work.manifest_authentications,
+        cold_work.manifest_validations - shared_work.manifest_validations,
         cold_work.shard_loads - shared_work.shard_loads,
     );
 
@@ -211,7 +212,7 @@ fn parent() -> Result<(), String> {
 
 fn child(args: &[std::ffi::OsString]) -> Result<(), String> {
     let [input, distribution, manifest_digest, cache] = args else {
-        return Err("child requires INPUT DISTRIBUTION MANIFEST_SHA256 CACHE".to_owned());
+        return Err("child requires INPUT DISTRIBUTION MANIFEST_AHASH64 CACHE".to_owned());
     };
     let options = options(
         PathBuf::from(input),
@@ -262,11 +263,11 @@ fn print_result(label: &str, elapsed: Duration, work: Work) {
 
 fn print_work(work: Work) {
     print!(
-        "manifest_reads={} manifest_parses={} manifest_authentications={} authenticated_manifest_hits={} shard_loads={} object_hashes={} object_cache_hits={}",
+        "manifest_reads={} manifest_parses={} manifest_validations={} verified_manifest_hits={} shard_loads={} object_hashes={} object_cache_hits={}",
         work.manifest_reads,
         work.manifest_parses,
-        work.manifest_authentications,
-        work.authenticated_manifest_hits,
+        work.manifest_validations,
+        work.verified_manifest_hits,
         work.shard_loads,
         work.object_hashes,
         work.object_cache_hits,
@@ -287,32 +288,35 @@ impl Fixture {
         let cache = root.join("cache");
         fs::create_dir_all(&objects).map_err(|error| error.to_string())?;
         let package = b"\\def\\benchmarkheight{1pt}";
-        let package_digest = hex_digest(package);
-        fs::write(objects.join(format!("sha256-{package_digest}")), package)
-            .map_err(|error| error.to_string())?;
-        let unrequested = b"unrequested valid distribution object";
-        let unrequested_digest = hex_digest(unrequested);
+        let package_digest = distribution_digest(package);
         fs::write(
-            objects.join(format!("sha256-{unrequested_digest}")),
+            objects.join(format!("ahash64-v1-{package_digest}")),
+            package,
+        )
+        .map_err(|error| error.to_string())?;
+        let unrequested = b"unrequested valid distribution object";
+        let unrequested_digest = distribution_digest(unrequested);
+        fs::write(
+            objects.join(format!("ahash64-v1-{unrequested_digest}")),
             unrequested,
         )
         .map_err(|error| error.to_string())?;
         let shard = concat!(
-            r#"{"schema":1,"distribution":"startup-benchmark","index":0,"files":{"tex:benchmark.sty":{"virtualPath":"/texlive/tex/benchmark.sty","object":"sha256-$DIGEST","sha256":"$DIGEST","bytes":$BYTES,"dependencies":[{"key":"tex:unrequested.sty","virtualPath":"/texlive/tex/unrequested.sty","object":"sha256-$UNREQUESTED_DIGEST","sha256":"$UNREQUESTED_DIGEST","bytes":$UNREQUESTED_BYTES}]},"tex:unrequested.sty":{"virtualPath":"/texlive/tex/unrequested.sty","object":"sha256-$UNREQUESTED_DIGEST","sha256":"$UNREQUESTED_DIGEST","bytes":$UNREQUESTED_BYTES}}}"#,
+            r#"{"schema":3,"distribution":"startup-benchmark","index":0,"files":{"tex:benchmark.sty":{"virtualPath":"/texlive/tex/benchmark.sty","object":"ahash64-v1-$DIGEST","ahash64":"$DIGEST","bytes":$BYTES,"dependencies":[{"key":"tex:unrequested.sty","virtualPath":"/texlive/tex/unrequested.sty","object":"ahash64-v1-$UNREQUESTED_DIGEST","ahash64":"$UNREQUESTED_DIGEST","bytes":$UNREQUESTED_BYTES}]},"tex:unrequested.sty":{"virtualPath":"/texlive/tex/unrequested.sty","object":"ahash64-v1-$UNREQUESTED_DIGEST","ahash64":"$UNREQUESTED_DIGEST","bytes":$UNREQUESTED_BYTES}}}"#,
             "\n"
         )
         .replace("$DIGEST", &package_digest)
         .replace("$BYTES", &package.len().to_string())
         .replace("$UNREQUESTED_DIGEST", &unrequested_digest)
         .replace("$UNREQUESTED_BYTES", &unrequested.len().to_string());
-        let shard_digest = hex_digest(shard.as_bytes());
-        fs::write(objects.join(format!("sha256-{shard_digest}")), shard)
+        let shard_digest = distribution_digest(shard.as_bytes());
+        fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard)
             .map_err(|error| error.to_string())?;
         let manifest = format!(
-            "{{\"schema\":2,\"distribution\":\"startup-benchmark\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+            "{{\"schema\":5,\"distribution\":\"startup-benchmark\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
         );
-        let manifest_digest = hex_digest(manifest.as_bytes());
-        fs::write(distribution.join("manifest-v2.json"), manifest)
+        let manifest_digest = distribution_digest(manifest.as_bytes());
+        fs::write(distribution.join("manifest-v5.json"), manifest)
             .map_err(|error| error.to_string())?;
         let input = root.join("main.tex");
         fs::write(
@@ -352,7 +356,7 @@ fn options(input: PathBuf, distribution: PathBuf, manifest_digest: String) -> Na
         outputs: OutputCapabilitySet::DVI,
         html_asset_directory: None,
         distribution: Some(distribution.to_string_lossy().into_owned()),
-        distribution_sha256: Some(manifest_digest),
+        distribution_ahash64: Some(manifest_digest),
         offline: true,
         expansion_fuel: None,
     }
@@ -415,6 +419,10 @@ fn inventory(root: &Path) -> Result<Inventory, String> {
 
 fn hex_digest(bytes: &[u8]) -> String {
     hex_bytes(&Sha256::digest(bytes))
+}
+
+fn distribution_digest(bytes: &[u8]) -> String {
+    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {

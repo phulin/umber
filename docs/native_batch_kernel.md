@@ -207,7 +207,7 @@ stops after an already committed atomic action are typed coverage boundaries,
 not permission to execute that action twice. Required barriers return as
 barriers, never as coverage fallback. Focused perturbation tests cover each
 class, exact resource/fuel rollback, observer and dependency admission,
-diagnostic/effect/format publication, schema-11 fresh/load/redump equality, and
+diagnostic/effect/format publication, schema-12 fresh/load/redump equality, and
 the canonical state/artifact/DVI/channel differential.
 
 The protocol retained the no-barrier ceiling. Three fresh isolated samples per

@@ -31,7 +31,7 @@ pub(crate) struct FormatGlue {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct FormatFont {
     pub name: String,
-    pub content_hash: [u8; 32],
+    pub content_hash: [u8; 8],
     pub checksum: u32,
     pub design_size: i32,
     pub size: i32,
@@ -62,15 +62,15 @@ pub(crate) struct FormatFontRuntime {
 pub(crate) enum FormatFontConstruction {
     Loaded,
     Copied {
-        source: [u8; 32],
+        source: [u8; 8],
     },
     Letterspaced {
-        source: [u8; 32],
+        source: [u8; 8],
         amount: i16,
         no_ligatures: bool,
     },
     Expanded {
-        source: [u8; 32],
+        source: [u8; 8],
         ratio: i16,
     },
 }

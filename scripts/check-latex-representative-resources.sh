@@ -7,7 +7,7 @@ runtime_lock="${repo_root}/tests/latex/pdflatex-representative.lock"
 guard="${repo_root}/scripts/run-umber-guarded.py"
 umber_bin="${repo_root}/target/release/umber"
 distribution=""
-distribution_sha256=""
+distribution_ahash64=""
 format=""
 receipt=""
 
@@ -18,16 +18,16 @@ fail() {
 
 usage() {
   printf '%s\n' \
-    'usage: scripts/check-latex-representative-resources.sh --distribution PATH --distribution-sha256 SHA256 --format PATH [--umber PATH] [--receipt PATH]'
+    'usage: scripts/check-latex-representative-resources.sh --distribution PATH --distribution-ahash64 AHASH64 --format PATH [--umber PATH] [--receipt PATH]'
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --distribution | --distribution-sha256 | --format | --umber | --receipt)
+    --distribution | --distribution-ahash64 | --format | --umber | --receipt)
       [[ $# -ge 2 ]] || fail "missing value for $1"
       case "$1" in
         --distribution) distribution="$2" ;;
-        --distribution-sha256) distribution_sha256="$2" ;;
+        --distribution-ahash64) distribution_ahash64="$2" ;;
         --format) format="$2" ;;
         --umber) umber_bin="$2" ;;
         --receipt) receipt="$2" ;;
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$distribution" && -d "$distribution" ]] || fail 'missing --distribution directory'
-[[ "$distribution_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'invalid --distribution-sha256'
+[[ "$distribution_ahash64" =~ ^[0-9a-f]{64}$ ]] || fail 'invalid --distribution-ahash64'
 [[ -n "$format" && -f "$format" ]] || fail 'missing --format file'
 [[ -x "$umber_bin" ]] || fail "missing Umber executable: $umber_bin"
 [[ -x "$guard" ]] || fail "missing Umber guard: $guard"
@@ -127,7 +127,7 @@ run_smoke() {
         SOURCE_DATE_EPOCH="$source_date_epoch" \
         "$umber_bin" run --pdflatex \
           --distribution "$distribution" \
-          --distribution-sha256 "$distribution_sha256" \
+          --distribution-ahash64 "$distribution_ahash64" \
           --offline \
           smoke.tex "$@"
   )
@@ -153,7 +153,7 @@ format_bytes="$(wc -c < "$format" | tr -d ' ')"
 if [[ -n "$receipt" ]]; then
   {
     printf 'schema=1\n'
-    printf 'distribution_root_sha256=%s\n' "$distribution_sha256"
+    printf 'distribution_root_sha256=%s\n' "$distribution_ahash64"
     printf 'source_lock_sha256=%s\n' "$source_lock_sha256"
     printf 'runtime_lock_sha256=%s\n' "$runtime_lock_sha256"
     printf 'format_sha256=%s\n' "$format_sha256"
@@ -165,4 +165,4 @@ if [[ -n "$receipt" ]]; then
   } > "$receipt"
 fi
 printf 'pdfLaTeX representative resource smoke: PASS source_keys=%s loaded_keys=%s root_sha256=%s\n' \
-  "$((${#source_keys[@]} + ${#runtime_keys[@]}))" "${#runtime_keys[@]}" "$distribution_sha256"
+  "$((${#source_keys[@]} + ${#runtime_keys[@]}))" "${#runtime_keys[@]}" "$distribution_ahash64"

@@ -231,7 +231,7 @@ pub enum ResourceRequestDto {
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "LegacyFontMapping")]
 pub struct LegacyFontMappingDto {
-    pub tfm_sha256: String,
+    pub tfm_ahash64: String,
     pub encoding: Vec<Option<String>>,
     pub embeddable: bool,
 }
@@ -268,7 +268,7 @@ pub enum ResourceResponseDto {
         bytes: Vec<u8>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
-        object_sha256: Option<String>,
+        object_ahash64: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         program_identity: Option<String>,
@@ -292,7 +292,7 @@ pub enum ResourceResponseDto {
         bytes: Vec<u8>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
-        expected_sha256: Option<String>,
+        expected_ahash64: Option<String>,
     },
     PkFontUnavailable {
         #[serde(flatten)]
@@ -933,7 +933,7 @@ pub enum HostErrorCodeDto {
 pub struct CatalogShardDto {
     pub index: u32,
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
@@ -974,7 +974,7 @@ pub enum CatalogJobKindDto {
 #[ts(rename = "CatalogJobEntry", optional_fields)]
 pub struct CatalogJobEntryDto {
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     #[ts(type = "number")]
     pub bytes: SafeInteger,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1026,14 +1026,14 @@ pub struct FormatInputClosureDto {
 pub struct NamedFormatDto {
     pub name: String,
     pub object: String,
-    pub sha256: String,
+    pub ahash64: String,
     #[ts(type = "number")]
     pub bytes: SafeInteger,
     pub engine: String,
     pub engine_version: String,
     pub format_schema: u32,
     pub source_distribution: String,
-    pub source_manifest_sha256: String,
+    pub source_manifest_ahash64: String,
     #[ts(type = "number")]
     pub source_date_epoch: SafeInteger,
     #[serde(skip_serializing_if = "Option::is_none")]
