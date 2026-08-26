@@ -14,6 +14,48 @@ fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
 }
 
+#[test]
+fn active_candidate_reuses_break_site_metrics_compactly() {
+    assert_eq!(std::mem::size_of::<Candidate>(), 80);
+
+    let mut next_width = Widths::zero();
+    next_width.natural = tex_arith::WideScaled::from_scaled(sp(37));
+    let sites = [BreakSite {
+        breakpoint: Breakpoint {
+            position: 5,
+            penalty: 0,
+            hyphenated: false,
+            add_width: Widths::zero(),
+            line_width: Widths::zero(),
+            next_position: 8,
+            next_width,
+        },
+        trace: TraceSpan {
+            display_end: 5,
+            next_start: 8,
+            display_suffix: None,
+            breakpoint: TraceBreakpoint::Glue,
+        },
+    }];
+    let candidate = Candidate {
+        serial: 1,
+        position: 5,
+        break_site: 0,
+        penalty: 0,
+        line: 1,
+        fitness: Fitness::Decent,
+        path_demerits: 0,
+        passive: None,
+        previous: None,
+        hyphenated: false,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
+    };
+
+    assert_eq!(candidate.width_position(&sites), 8);
+    assert_eq!(candidate.start_width(&sites), next_width);
+}
+
 fn ordinary_widow_penalties(fallback: i32, values: Vec<i32>) -> WidowPenalties {
     WidowPenalties {
         selector: WidowPenaltySelector::Ordinary,
@@ -935,8 +977,7 @@ fn etex_last_line_fit_adjustment_and_disable_state_boundaries() {
     let previous = |line_shortfall, line_glue| Candidate {
         serial: 1,
         position: 1,
-        width_position: 1,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line: 1,
         fitness: Fitness::Decent,
@@ -1035,8 +1076,7 @@ fn etex_last_line_fit_preserves_ordinary_badness_for_long_terminal_line() {
     let previous = Candidate {
         serial: 1,
         position: 1,
-        width_position: 1,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line: 1,
         fitness: Fitness::Decent,
@@ -1544,8 +1584,7 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
     let candidate = |position, fitness| Candidate {
         serial: position,
         position,
-        width_position: position,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line: 2,
         fitness,
@@ -1582,8 +1621,7 @@ fn winner_lookup_replaces_only_the_latest_line_class_champion() {
     let candidate = |position, line, fitness, path_demerits| Candidate {
         serial: position,
         position,
-        width_position: position,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line,
         fitness,
@@ -1627,8 +1665,7 @@ fn equivalent_line_classes_discard_noncompetitive_fitness_routes() {
     let candidate = |serial, line, fitness, path_demerits| Candidate {
         serial,
         position: serial,
-        width_position: serial,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line,
         fitness,
@@ -1726,8 +1763,7 @@ fn easy_line_active_nodes_accumulate_in_source_order() {
     let candidate = |position| Candidate {
         serial: position,
         position,
-        width_position: position,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line: 9,
         fitness: Fitness::Decent,
@@ -1758,8 +1794,7 @@ fn incremental_active_merge_matches_full_total_order() {
     let candidate = |serial, line, position| Candidate {
         serial,
         position,
-        width_position: position,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line,
         fitness: Fitness::Decent,
@@ -2446,8 +2481,7 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
     let active = |path_demerits, hyphenated| Candidate {
         serial: 0,
         position: 0,
-        width_position: 0,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line: 9,
         fitness: Fitness::Decent,

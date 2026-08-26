@@ -31,7 +31,10 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.
 - `src/vertical_break.rs`: pure TeX.web `vert_break` page/split breakpoint costing over immutable vertical lists.
 - `src/vertical_break/tests/planned.rs`: direct TeX82 vertical-break depth, cost, forced-end, and tie-policy tests.
-- `src/linebreak/mod.rs`: line-breaking API, line-shape types, pass orchestration, breakpoint search, and demerit scoring.
+- `src/linebreak/mod.rs`: line-breaking API, line-shape types, pass orchestration,
+  breakpoint search, and demerit scoring. Active routes keep a compact stable
+  break-site index and reuse the immutable tape's successor position and width
+  metrics; do not duplicate those large metrics in every route.
 - `src/linebreak/post.rs`: post-line-break list surgery for broken lines, skips, migrated disc material, and penalties.
 - `src/linebreak/tests.rs`: unit tests for line dimensions, break selection, hyphenation hooks, penalties, and post-break output.
 - `src/linebreak/widths.rs`: line width accumulation, prefix width tables, glue stretch/shrink accounting, and line badness.

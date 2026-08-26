@@ -854,6 +854,31 @@ reference perf walls were 13.20 and 14.21 seconds, but the candidate includes
 two post-c167 integration fixes, so the symbol reductions and focused controls,
 not that whole-run wall delta, are the issue-local CPU evidence.
 
+## Compact line-breaking routes
+
+Issue `umber2-7asg` followed the exact ffbdb9861 20M profile's 1.691B weighted
+cycles (7.82% self) in libc `memmove` with an absolute out-of-line call and byte
+census. The 67,973 calls and 7,902,964 bytes were heterogeneous: format
+logical-row validation, distribution selection and parsing, control-sequence
+string tables, line-breaking routes, and font-store maps were the material
+owners. The complete thresholded ownership table and the rounded weighted-cycle
+ancestry are recorded in `docs/writeback/umber2-7asg.md`; unrelated owners
+remain separate work rather than being hidden by a container substitution.
+
+Line-breaking was the largest coherent runtime-owned value-copy family. Active
+routes now hold a stable compact index into the immutable paragraph tape and
+reuse its successor position and width metrics, instead of duplicating both in
+every candidate. This shrank each route from 144 to 80 bytes without adding an
+allocation or changing candidate ordering, passive routes, generations,
+checkpoints, or replay.
+
+On the same exact 20M interceptor boundary, out-of-line `memmove` calls fell to
+62,680 (-7.79%) and bytes to 7,032,884 (-11.01%). A zero-loss candidate capture
+reported approximately 1.461B weighted cycles (6.20%) self in `memmove`, down
+230M cycles (-13.6%) and 1.62 profile points from the authority. Single-run
+control wall time was noisy and did not improve, so the structural byte census
+and sampled symbol delta, not wall time, are the performance claim.
+
 ## Structural provenance lifecycle
 
 A profiling-feature CLI run with `--profiling-stats` emits one

@@ -624,8 +624,7 @@ enum Fitness {
 struct Candidate {
     serial: usize,
     position: usize,
-    width_position: usize,
-    start_width: Widths,
+    break_site: u32,
     penalty: i32,
     line: usize,
     fitness: Fitness,
@@ -635,6 +634,27 @@ struct Candidate {
     hyphenated: bool,
     line_shortfall: Scaled,
     line_glue: Scaled,
+}
+
+const INITIAL_BREAK_SITE: u32 = u32::MAX;
+
+impl Candidate {
+    fn breakpoint<'a>(&self, break_sites: &'a [BreakSite]) -> Option<&'a Breakpoint> {
+        (self.break_site != INITIAL_BREAK_SITE).then(|| {
+            &break_sites[usize::try_from(self.break_site).expect("break-site index fits usize")]
+                .breakpoint
+        })
+    }
+
+    fn width_position(&self, break_sites: &[BreakSite]) -> usize {
+        self.breakpoint(break_sites)
+            .map_or(0, |bp| bp.next_position)
+    }
+
+    fn start_width(&self, break_sites: &[BreakSite]) -> Widths {
+        self.breakpoint(break_sites)
+            .map_or_else(Widths::zero, |bp| bp.next_width)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -676,8 +696,7 @@ fn run_pass<S: TypesetState>(
     let mut active = vec![Candidate {
         serial: 0,
         position: 0,
-        width_position: 0,
-        start_width: Widths::zero(),
+        break_site: INITIAL_BREAK_SITE,
         penalty: 0,
         line: 0,
         fitness: Fitness::Decent,
@@ -698,7 +717,8 @@ fn run_pass<S: TypesetState>(
         .flatten();
     let mut displayed_through = 0;
 
-    for site in &tape.break_sites {
+    for (break_site, site) in tape.break_sites.iter().enumerate() {
+        let break_site = u32::try_from(break_site).expect("paragraph break-site count exceeds u32");
         let bp = site.breakpoint;
         let trace_span = &site.trace;
         // Background and discretionary material depend only on this
@@ -725,7 +745,7 @@ fn run_pass<S: TypesetState>(
                 survivor_count += 1;
                 continue;
             }
-            let mut widths = breakpoint_width.sub(active_candidate.start_width);
+            let mut widths = breakpoint_width.sub(active_candidate.start_width(&tape.break_sites));
             let target = params.shape.dimensions(active_candidate.line + 1).width;
             let extra = if emergency {
                 params.emergency_stretch
@@ -738,7 +758,9 @@ fn run_pass<S: TypesetState>(
             widths.add_normal_stretch(extra);
             let terminal = forced && bp.position >= nodes.len();
             let scoring_target = if params.pdf_protrude_chars > 1 {
-                let start = active_candidate.width_position.min(nodes.len());
+                let start = active_candidate
+                    .width_position(&tape.break_sites)
+                    .min(nodes.len());
                 let end = bp.position.min(nodes.len()).max(start);
                 let protrusion = crate::protrusion::line_protrusion(state, &nodes[start..end]);
                 target
@@ -794,8 +816,7 @@ fn run_pass<S: TypesetState>(
                         next_serial
                     },
                     position: bp.position,
-                    width_position: bp.next_position,
-                    start_width: bp.next_width,
+                    break_site,
                     penalty: bp.penalty,
                     line: active_candidate.line + 1,
                     fitness,
