@@ -36,6 +36,13 @@ standalone packed-cutover invocations pass under
 `flock /tmp/umber-perf-host.lock`; ordinary delivery, packed replay, mixed
 stored spans, stored control-sequence delivery, macro replay/expansion,
 keyword mismatch, and the destination-directed row all report zero warmed
-allocations and zero requested bytes. The authenticated 20M workload remains
-owned by the serial integration/profile issue; this slice changes no packed
-input, distribution, format, corpus, or measurement artifact.
+allocations and zero requested bytes.
+
+One issue-private authenticated control reused the immutable source,
+distribution, schema-12 format, 124-resource offline closure, fixed clock, and
+20M fuel boundary under the same host lock. The candidate binary has SHA-256
+`34a633893d6a91e75a2a9d0ecdbb88e1e8221d933ce2c530474c50ec75cf051b`.
+It intentionally exited 1 at exact fuel exhaustion and reproduced
+`(20000000,19913119,2218327,6020965,16785710,4011)`. The serial integration
+issue remains the owner of comparative profiling; this slice changes no packed
+input, distribution, format, corpus, or shared measurement artifact.
