@@ -32,7 +32,7 @@ use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
     AlignmentCellTemplates, AlignmentIdentity, AlignmentPreamble, CommandError, CommandProcessor,
-    CommandReplayDelivery, CurrentCommand, InternalValue,
+    CurrentCommand, InternalValue,
     processor::{
         DeliveryStatus, print_cs_text, render_the_value, selector_meaning_text, string_text,
     },
@@ -1987,18 +1987,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             .arena_mut()
             .allocate_token_buffer()
             .map_err(|_| CommandError::input_invariant())?;
+        let mut destination = None;
         loop {
-            match self.get_x_or_protected_with_replay_completion()? {
-                Some(CommandReplayDelivery::Command(command)) => {
+            match self.get_x_or_protected_with_replay_completion_into(&mut destination)? {
+                DeliveryStatus::Command => {
+                    let command = destination.take().ok_or(CommandError::input_invariant())?;
                     self.command
                         .attempt
                         .arena_mut()
                         .push_buffer_token(expanded, command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
                 }
-                Some(CommandReplayDelivery::Completed(completed)) if completed == episode => break,
-                Some(CommandReplayDelivery::Completed(_)) => continue,
-                None => return Err(CommandError::input_invariant()),
+                DeliveryStatus::ReplayCompleted(completed) if completed == episode => break,
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                _ => return Err(CommandError::input_invariant()),
             }
         }
         self.command
