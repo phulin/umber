@@ -259,12 +259,7 @@ impl<G> CurrentCommand<G> {
         debug_assert!(destination.is_none());
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
-            Token::Cs(symbol) => (
-                Some(symbol),
-                state
-                    .compact_control_sequence_meaning_word(symbol)
-                    .resolve(),
-            ),
+            Token::Cs(symbol) => (Some(symbol), state.compact_control_sequence_meaning(symbol)),
             Token::Char {
                 ch,
                 cat: Catcode::Active,
@@ -273,11 +268,7 @@ impl<G> CurrentCommand<G> {
                 (
                     symbol,
                     symbol
-                        .map(|symbol| {
-                            state
-                                .compact_control_sequence_meaning_word(symbol)
-                                .resolve()
-                        })
+                        .map(|symbol| state.compact_control_sequence_meaning(symbol))
                         .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
                 )
             }
