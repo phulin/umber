@@ -139,8 +139,7 @@ impl<G> CommandGenerationOwner<G> {
         &self,
         cursor: CommandSnapshotCursor,
     ) -> Option<(Rc<CommandStateRoots<G>>, AttemptMark)> {
-        (cursor.command_journal() == self.serial)
-            .then(|| (Rc::clone(&self.roots), self.attempt))
+        (cursor.command_journal() == self.serial).then(|| (Rc::clone(&self.roots), self.attempt))
     }
 }
 
