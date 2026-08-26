@@ -319,6 +319,14 @@ impl<F: FnMut(CharacterCode) -> Catcode> SourceStepQueries for CatcodeQueries<F>
     }
 }
 
+#[derive(Clone, Copy)]
+struct SourceStepControls {
+    endlinechar: i32,
+    force_eof: bool,
+    mode: CharacterMode,
+    superscript: SuperscriptPolicy,
+}
+
 impl SourceCursor {
     /// Delivers one exact-byte tokenization step.
     pub(crate) fn next_exact_byte_step(
@@ -329,10 +337,12 @@ impl SourceCursor {
         lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         match self.next_source_step(
-            endlinechar,
-            force_eof,
-            CharacterMode::EightBitExact,
-            SuperscriptPolicy::ExactByte,
+            SourceStepControls {
+                endlinechar,
+                force_eof,
+                mode: CharacterMode::EightBitExact,
+                superscript: SuperscriptPolicy::ExactByte,
+            },
             queries,
             lines,
             &mut |_, token| token,
@@ -354,10 +364,12 @@ impl SourceCursor {
         lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         match self.next_source_step(
-            endlinechar,
-            force_eof,
-            CharacterMode::UnicodeExtended,
-            SuperscriptPolicy::UnicodeExtended,
+            SourceStepControls {
+                endlinechar,
+                force_eof,
+                mode: CharacterMode::UnicodeExtended,
+                superscript: SuperscriptPolicy::UnicodeExtended,
+            },
             queries,
             lines,
             &mut |_, token| token,
@@ -378,10 +390,12 @@ impl SourceCursor {
         lines: &mut LineBackingRegistry<'_>,
     ) -> CompactSourceTokenizationStep {
         match self.next_source_step(
-            endlinechar,
-            force_eof,
-            CharacterMode::EightBitExact,
-            SuperscriptPolicy::ExactByte,
+            SourceStepControls {
+                endlinechar,
+                force_eof,
+                mode: CharacterMode::EightBitExact,
+                superscript: SuperscriptPolicy::ExactByte,
+            },
             queries,
             lines,
             &mut |queries, token| CompactSourceToken {
@@ -403,10 +417,12 @@ impl SourceCursor {
         lines: &mut LineBackingRegistry<'_>,
     ) -> CompactSourceTokenizationStep {
         match self.next_source_step(
-            endlinechar,
-            force_eof,
-            CharacterMode::UnicodeExtended,
-            SuperscriptPolicy::UnicodeExtended,
+            SourceStepControls {
+                endlinechar,
+                force_eof,
+                mode: CharacterMode::UnicodeExtended,
+                superscript: SuperscriptPolicy::UnicodeExtended,
+            },
             queries,
             lines,
             &mut |queries, token| CompactSourceToken {
@@ -422,14 +438,17 @@ impl SourceCursor {
 
     fn next_source_step<T, Q: SourceStepQueries + ?Sized>(
         &mut self,
-        endlinechar: i32,
-        force_eof: bool,
-        mode: CharacterMode,
-        superscript: SuperscriptPolicy,
+        controls: SourceStepControls,
         queries: &mut Q,
         lines: &mut LineBackingRegistry<'_>,
         emit: &mut impl FnMut(&mut Q, SourceToken) -> T,
     ) -> SourceStep<T> {
+        let SourceStepControls {
+            endlinechar,
+            force_eof,
+            mode,
+            superscript,
+        } = controls;
         debug_assert_eq!(self.backing.mode, mode);
 
         loop {
