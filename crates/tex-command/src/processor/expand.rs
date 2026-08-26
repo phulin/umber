@@ -885,7 +885,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let depth = self.command.transient.active_expansion_depth;
                 self.command.transient.active_expansion_depth = depth
                     .checked_add(1)
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(|| CommandError::input_invariant())?;
                 let result =
                     self.expanded_delivery_driver(policy, expanded, resumed_pending, destination);
                 assert_eq!(

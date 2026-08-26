@@ -4,7 +4,11 @@
 pub const DEFAULT_COMMAND_FUEL_LIMIT: u64 = 100_000_000;
 
 /// Largest command-work budget admitted by the canonical engine.
-pub const MAX_COMMAND_FUEL_LIMIT: u64 = 1_000_000_000;
+///
+/// Full INITEX format construction legitimately performs billions of charged
+/// transitions while building Unicode and macro tables. Hosts still select a
+/// smaller per-run budget and retain their independent time and memory guards.
+pub const MAX_COMMAND_FUEL_LIMIT: u64 = 100_000_000_000;
 
 /// Monotonic scalar-work accounting for one canonical command session.
 ///

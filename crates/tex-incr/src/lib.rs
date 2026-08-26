@@ -952,7 +952,13 @@ fn execute_plan<G>(
                     CanonicalStepRunner::new(control, universe, ledger)
                         .publish_terminal_boundary_suffix(&mut sink)
                         .map_err(map_step_failure)?;
-                    let terminal = ledger.terminal_receipt(control, step)?;
+                    let terminal = ledger.terminal_receipt(control, step).map_err(|error| {
+                        map_terminal_completion_error(
+                            error,
+                            control.fuel_burned(),
+                            control.fuel_limit(),
+                        )
+                    })?;
                     let completion = ledger.close_revision(
                         control,
                         universe,
@@ -1000,6 +1006,25 @@ fn execute_plan<G>(
             }
             CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
         }
+    }
+}
+
+fn map_terminal_completion_error(
+    error: tex_exec::EngineCompletionError,
+    burned: u64,
+    limit: u64,
+) -> SessionError {
+    if matches!(
+        error,
+        tex_exec::EngineCompletionError::TerminalRevisionUnavailable
+    ) && burned >= limit
+    {
+        SessionError::Execute(tex_exec::ExecError::CumulativeFuelExceeded {
+            limit,
+            attempted: burned.saturating_add(1),
+        })
+    } else {
+        SessionError::EngineCompletion(error)
     }
 }
 

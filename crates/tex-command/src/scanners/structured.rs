@@ -4648,12 +4648,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             provenance,
                             MathFieldRestrictedKind::MathCharacter,
                         )?
-                        .ok_or_else(CommandError::input_invariant);
+                        .ok_or_else(|| CommandError::input_invariant());
                 }
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
                     return self
                         .scan_math_field_restricted(provenance, MathFieldRestrictedKind::Delimiter)?
-                        .ok_or_else(CommandError::input_invariant);
+                        .ok_or_else(|| CommandError::input_invariant());
                 }
                 // §1153's `othercases`, verbatim: `back_input;
                 // scan_left_brace; ... push_math(math_group); return`. The
@@ -6374,7 +6374,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.write_expansion_depth = self
             .write_expansion_depth
             .checked_add(1)
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let result = self.expand_write_text_inner(tokens);
         self.write_expansion_depth -= 1;
         result
@@ -8580,7 +8580,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
                 self.command
                     .prepare_started_input(endlinechar)
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(|| CommandError::input_invariant())?;
                 self.host.initialize_job_name(&attempted_name);
                 // TeX82 §537 retains `a_make_name_string` for the opened
                 // request; Web2C additionally retains its full resolved name.

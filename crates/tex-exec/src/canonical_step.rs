@@ -312,6 +312,8 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         let result = self.step_inner(sink, cancellation, None);
         if let Some(error) = self.control.captured_fatal_error() {
             CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
+        } else if let Some(fatal) = self.control.fatal_error() {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(ExecError::Fatal(fatal)))
         } else {
             result
         }

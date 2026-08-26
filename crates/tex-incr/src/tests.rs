@@ -125,6 +125,27 @@ fn unavailable_input_fatal_does_not_accept_the_revision() {
 }
 
 #[test]
+fn too_many_errors_reports_the_fatal_instead_of_terminal_completion_failure() {
+    let mut source = "\\nonstopmode\n".to_owned();
+    for _ in 0..100 {
+        source.push_str("\\badness ");
+    }
+    source.push_str("\\end");
+    let mut session = session(RevisionId::new(1), &source);
+
+    let error = session
+        .cold()
+        .expect_err("the hundredth recoverable error must reject the candidate");
+    let SessionError::Execute(error) = error else {
+        panic!("too many errors returned the wrong error family: {error:?}");
+    };
+    assert_eq!(
+        error.as_fatal(),
+        Some(tex_command::FatalError::TooManyErrors)
+    );
+}
+
+#[test]
 fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
     let mut session = session(RevisionId::new(1), "\\end");
     let mut candidate = session.start_cold_candidate().expect("candidate");
@@ -143,6 +164,22 @@ fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
         ))
     ));
     assert_eq!(candidate.execution_telemetry().cumulative_fuel, 1);
+}
+
+#[test]
+fn exhausted_fuel_is_not_reported_as_an_invalid_terminal_revision() {
+    let error = super::map_terminal_completion_error(
+        tex_exec::EngineCompletionError::TerminalRevisionUnavailable,
+        17,
+        17,
+    );
+    assert!(matches!(
+        error,
+        SessionError::Execute(tex_exec::ExecError::CumulativeFuelExceeded {
+            limit: 17,
+            attempted: 18,
+        })
+    ));
 }
 
 #[test]

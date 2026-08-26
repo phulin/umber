@@ -14627,7 +14627,7 @@ fn executable_profile_selects_the_process_string_pool_capacity() {
             assert_eq!(
                 (usage.capacity_profile, usage.memory_word_capacity),
                 if pdftex {
-                    (tex_state::EngineCapacityProfile::Pdftex14029, 5_000_000)
+                    (tex_state::EngineCapacityProfile::Texlive2026, 5_000_000)
                 } else {
                     (tex_state::EngineCapacityProfile::Tex82Etex, 250_000)
                 }

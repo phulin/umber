@@ -458,7 +458,7 @@ fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
 #[test]
 fn pdftex_usage_report_renders_the_selected_process_capacity_profile() {
     crate::test_harness::with_nonstop_universe(|universe| {
-        universe.set_engine_capacity_profile(tex_state::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(tex_state::EngineCapacityProfile::Texlive2026);
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
         finish_test_job(
             universe,

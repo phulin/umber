@@ -353,14 +353,14 @@ fn runtime_checkpoint_restores_string_pool_accounting() {
             .expect("initial context")
             .detach_engine_usage_statistics();
         let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         let expanded = universe
             .command_context()
             .expect("expanded context")
             .detach_engine_usage_statistics();
         assert_eq!(
             (expanded.capacity_profile, expanded.memory_word_capacity),
-            (crate::EngineCapacityProfile::Pdftex14029, 5_000_000)
+            (crate::EngineCapacityProfile::Texlive2026, 5_000_000)
         );
         universe
             .command_context()

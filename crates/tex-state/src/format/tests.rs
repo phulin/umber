@@ -130,7 +130,7 @@ fn pdftex_string_pool_capacity_captures_roundtrips_and_becomes_the_loaded_baseli
             .expect("initial capacity")
             .detach_engine_usage_statistics()
             .string_character_capacity;
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         let pdftex_capacity = universe
             .command_context()
             .expect("pdfTeX capacity")
@@ -408,14 +408,14 @@ fn loaded_tex_format_can_expand_to_pdftex_capacity_and_recapture_that_profile() 
             loaded.capacity_profile,
             crate::EngineCapacityProfile::Tex82Etex
         );
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         let expanded = universe
             .command_context()
             .expect("expanded context")
             .detach_engine_usage_statistics();
         assert_eq!(
             (expanded.capacity_profile, expanded.memory_word_capacity),
-            (crate::EngineCapacityProfile::Pdftex14029, 5_000_000)
+            (crate::EngineCapacityProfile::Texlive2026, 5_000_000)
         );
         let recaptured = universe.capture_format_image().expect("recapture");
         assert_eq!(
@@ -433,7 +433,7 @@ fn hash_font_trie_and_pdf_coordinates_use_the_same_recorded_profile() {
     let hash_image = with_universe(
         InternerBudget::new(16_000, 16_000, 256_000).expect("large hash budget"),
         |universe| {
-            universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+            universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
             for index in 0..15_001 {
                 universe
                     .intern(&format!("capacity{index}"))
@@ -454,7 +454,7 @@ fn hash_font_trie_and_pdf_coordinates_use_the_same_recorded_profile() {
     );
 
     let font_image = with_universe(budget(), |universe| {
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         universe
             .command_context()
             .expect("font context")
@@ -473,7 +473,7 @@ fn hash_font_trie_and_pdf_coordinates_use_the_same_recorded_profile() {
     );
 
     let trie_image = with_universe(budget(), |universe| {
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         universe
             .command_context()
             .expect("trie context")
@@ -498,7 +498,7 @@ fn hash_font_trie_and_pdf_coordinates_use_the_same_recorded_profile() {
     );
 
     let pdf_image = with_universe(budget(), |universe| {
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         universe.enable_pdf_output();
         universe.capture_format_image().expect("pdfTeX PDF format")
     })
@@ -524,7 +524,7 @@ fn select_tex82_metadata_profile(metadata: &mut TestFormatMetadata) {
 #[test]
 fn malformed_pdf_object_coordinate_reports_actual_profile_capacity() {
     let image = with_universe(budget(), |universe| {
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         universe.capture_format_image().expect("pdfTeX format")
     })
     .expect("PDF source");
@@ -915,7 +915,7 @@ fn configured_hyphenation_exception_capacity_roundtrips_with_format_usage() {
 #[test]
 fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
     let (image, raw_object, form_object) = with_universe(budget(), |universe| {
-        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
         let selector = universe.intern("formatfont").expect("font selector");
         let font = universe
             .command_context()

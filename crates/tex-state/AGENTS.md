@@ -13,7 +13,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `AGENTS.md`: Local guidance for agents working in the `tex-state` crate.
 - `Cargo.toml`: Crate manifest, dependencies, features, library target, and integration test wiring.
 - `src/cell.rs`: Packed environment cell identifiers and bank tags shared by journals, raw storage, dependency tracking, and semantic hashing; assignment scope is stripped through the canonical `CellId` helper.
-- `src/capacity.rs`: Typed TeX82/e-TeX and pdfTeX executable-process capacity profiles used by format validation, runtime selection, and terminal accounting.
+- `src/capacity.rs`: Typed compact-conformance and pinned TeX Live 2026 executable-process capacity profiles used by format validation, runtime selection, and terminal accounting.
 - `src/cell/tests.rs`: Unit tests for cell id packing, bank decoding, and global-bit handling.
 - `src/code_tables.rs`: Storage-independent code-table value vocabulary; the
   live cat/lc/uc/sf/math/delcode banks and INITEX virtual defaults are owned by

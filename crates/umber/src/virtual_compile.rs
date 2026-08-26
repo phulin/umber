@@ -112,7 +112,7 @@ impl SessionLimits {
         cached_file_bytes: VfsLimits::HARD_MAX.resolved_bytes,
         user_source_bytes: VfsLimits::HARD_MAX.user_bytes,
         output_bytes: 256 * 1024 * 1024,
-        engine_fuel: 1_000_000_000,
+        engine_fuel: tex_command::MAX_COMMAND_FUEL_LIMIT,
         engine_steps: 100_000_000,
         input_frames: 1_000_000,
         journal_bytes: 1024 * 1024 * 1024,

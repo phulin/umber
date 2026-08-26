@@ -43,13 +43,14 @@ impl EngineCapacityConfiguration {
 
 /// Pinned executable profile that produced or executes a format image.
 ///
-/// TeX82 and e-TeX use the compact canonical-conformance process limits. The
-/// pdfTeX profile uses the repository's pinned TeX Live 2026 configuration
-/// and pdfTeX 1.40.29's fixed supplementary bounds.
+/// The compact profile reproduces the canonical TeX/e-TeX conformance
+/// executables. The TeX Live profile reproduces the repository's pinned 2026
+/// `texmf.cnf` limits for both the e-TeX and pdfTeX binaries; its supplementary
+/// PDF bounds are simply unused by an engine without the PDF command family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineCapacityProfile {
     Tex82Etex,
-    Pdftex14029,
+    Texlive2026,
 }
 
 impl EngineCapacityProfile {
@@ -73,7 +74,7 @@ impl EngineCapacityProfile {
                 max_input_files: 6,
                 pdf: None,
             },
-            Self::Pdftex14029 => EngineCapacityConfiguration {
+            Self::Texlive2026 => EngineCapacityConfiguration {
                 main_memory_words: 5_000_000,
                 hash_size: 15_000,
                 hash_extra: 600_000,
@@ -101,7 +102,7 @@ impl EngineCapacityProfile {
         max_strings: usize,
         pool_size: usize,
     ) -> Option<Self> {
-        [Self::Tex82Etex, Self::Pdftex14029]
+        [Self::Tex82Etex, Self::Texlive2026]
             .into_iter()
             .find(|profile| {
                 let capacities = profile.configuration();
@@ -143,16 +144,16 @@ mod tests {
         );
         assert_eq!(tex.pdf, None);
 
-        let pdftex = EngineCapacityProfile::Pdftex14029.configuration();
+        let texlive = EngineCapacityProfile::Texlive2026.configuration();
         assert_eq!(
             (
-                pdftex.main_memory_words,
-                pdftex.hash_entries(),
-                pdftex.max_strings,
-                pdftex.pool_size,
-                pdftex.font_info_words,
-                pdftex.fonts,
-                pdftex.trie_nodes,
+                texlive.main_memory_words,
+                texlive.hash_entries(),
+                texlive.max_strings,
+                texlive.pool_size,
+                texlive.font_info_words,
+                texlive.fonts,
+                texlive.trie_nodes,
             ),
             (
                 5_000_000, 615_000, 500_000, 6_250_000, 8_000_000, 9_000, 1_100_000
@@ -160,17 +161,17 @@ mod tests {
         );
         assert_eq!(
             (
-                pdftex.input_stack,
-                pdftex.nest_stack,
-                pdftex.parameter_stack,
-                pdftex.buffer_stack,
-                pdftex.save_stack,
-                pdftex.max_input_files,
+                texlive.input_stack,
+                texlive.nest_stack,
+                texlive.parameter_stack,
+                texlive.buffer_stack,
+                texlive.save_stack,
+                texlive.max_input_files,
             ),
             (10_000, 1_000, 20_000, 200_000, 200_000, 15)
         );
         assert_eq!(
-            pdftex.pdf,
+            texlive.pdf,
             Some(PdfEngineCapacities {
                 pdf_memory_words: 10_000_000,
                 object_table_entries: 8_388_607,

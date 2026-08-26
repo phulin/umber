@@ -26,7 +26,7 @@ const HARD_LIMITS = Object.freeze({
 	cachedFileBytes: 256 * 1024 * 1024,
 	userSourceBytes: 64 * 1024 * 1024,
 	outputBytes: 256 * 1024 * 1024,
-	engineFuel: 1_000_000_000,
+	engineFuel: 100_000_000_000,
 	engineSteps: 100_000_000,
 	inputFrames: 1_000_000,
 	journalBytes: 1024 * 1024 * 1024,

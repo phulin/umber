@@ -97,8 +97,8 @@ impl EngineBinaryIdentity {
     /// Returns every process capacity selected by this pinned executable.
     pub(crate) const fn capacity_profile(self) -> tex_state::EngineCapacityProfile {
         match self {
-            Self::Tex82 | Self::Etex26 => tex_state::EngineCapacityProfile::Tex82Etex,
-            Self::Pdftex14029 => tex_state::EngineCapacityProfile::Pdftex14029,
+            Self::Tex82 => tex_state::EngineCapacityProfile::Tex82Etex,
+            Self::Etex26 | Self::Pdftex14029 => tex_state::EngineCapacityProfile::Texlive2026,
         }
     }
 }

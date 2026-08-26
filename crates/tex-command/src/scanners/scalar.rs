@@ -905,7 +905,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<T, CommandError> {
         match result {
             Err(error) if error.is_resource_suspension() => {
-                self.retain_scalar_frame(suspended.ok_or_else(CommandError::input_invariant)?)?;
+                self.retain_scalar_frame(
+                    suspended.ok_or_else(|| CommandError::input_invariant())?,
+                )?;
                 Err(error)
             }
             Err(error) => {
@@ -2983,7 +2985,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn expect_infinite_unit_character(&mut self, expected: char) -> Result<(), CommandError> {
         let command = self
             .get_x_token()?
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         if matches!(
             scalar_meaning(command.meaning()),
             Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)

@@ -384,7 +384,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let command = self
             .next_non_blank_non_relax_x_token()?
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let collected = match static_meaning(command.meaning()) {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside

@@ -1247,12 +1247,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                 };
-                let mut command =
-                    command
-                        .ok_or_else(CommandError::input_invariant)
-                        .map_err(|error| {
-                            replacement_failure(error, output, depth, &mut pending_parameter, None)
-                        })?;
+                let mut command = command
+                    .ok_or_else(|| CommandError::input_invariant())
+                    .map_err(|error| {
+                        replacement_failure(error, output, depth, &mut pending_parameter, None)
+                    })?;
                 if expansion.is_expanded() && is_expandable_command(&command) {
                     let route = resumed_route.unwrap_or_else(|| match command.meaning() {
                         ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
@@ -2219,7 +2218,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let line = self
             .state
             .input_ln(CommandLineSource::Terminal { prompt: &prompt })
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         Ok((line, false, crate::input::SourceNameClass::Terminal))
     }
 }

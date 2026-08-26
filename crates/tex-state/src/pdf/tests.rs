@@ -818,7 +818,7 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
             .expect("format-compatible PDF state detaches");
         let restored = PdfState::restore_format_bytes(
             &bytes,
-            crate::EngineCapacityProfile::Pdftex14029
+            crate::EngineCapacityProfile::Texlive2026
                 .configuration()
                 .pdf,
             |recipe| {
@@ -842,7 +842,7 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
         assert!(
             PdfState::<()>::restore_format_bytes(
                 b"not a format",
-                crate::EngineCapacityProfile::Pdftex14029
+                crate::EngineCapacityProfile::Texlive2026
                     .configuration()
                     .pdf,
                 |_| unreachable!(),
