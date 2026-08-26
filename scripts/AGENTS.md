@@ -32,10 +32,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `select-recent-arxiv.py`: first-submission date filtering and reproducibly random, hash-shuffled candidate selection from the arXiv OAI metadata snapshot ZIP.
 - `materialize-recent-arxiv-sample.sh`: parallel source acquisition followed by random-order live-LaTeX filtering and optional durable exclusions for a recent candidate TSV.
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
-- `publish-texlive-r2.sh`: verified staged full, sparse schema-3 successor, or
-  HTML-profile publication to Cloudflare R2. Sparse successors reuse an
-  authenticated content-addressed base and require a unique root key; HTML
-  requires an explicit root pin and publishes `manifest-v4.json`. Browser CORS
+- `publish-texlive-r2.sh`: verified staged full, sparse schema-8 successor, or
+  schema-9 HTML-profile publication to Cloudflare R2. Sparse successors reuse
+  an authenticated content-addressed base and require a unique root key; HTML
+  requires an explicit root pin and publishes `manifest-v9.json`. Browser CORS
   policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for
   resumable, manifest-last full and sparse-successor R2 publication.

@@ -196,24 +196,23 @@ cache/session publication. A batch is returned only if every request succeeds.
 Verified peer downloads may still warm the cache when a batch fails, but no
 partial response is exposed to the compile session.
 
-The native resolver treats schema-v2 index shards as digest-keyed manifest
-cache entries. It loads only the canonical shard for each unresolved file key,
-validates shard distribution/index identity and partition membership, and
-treats a missing key in that verified shard as `FileUnavailable`. Schema v2
-does not publish logical OpenType font entries, so a verified root answers
-those requests as `FontUnavailable`. Complete inline dependency metadata is
-sent straight to the object fetch batch without consulting the dependency's
-own shard. A batch is still published to the VFS only after every required
-object succeeds; failed speculative objects are omitted.
+The native resolver treats packed schema-1 index shards as digest-keyed
+manifest cache entries. It hashes each canonical request once, selects its one
+physical shard from the high bits, validates that shard's complete immutable
+layout, and uses collision-checked open addressing against exact key bytes. A
+verified empty probe-chain slot is `FileUnavailable`; transport, digest,
+schema, identity, partition, or table failure is corruption instead. Complete
+inline dependency spans go straight to the object fetch batch without loading
+the dependency's shard. A batch is still published to the VFS only after every
+required object succeeds; failed speculative objects are omitted.
 
-The native verified owner does not keep those complete parsed shards.
-After a full shard has passed digest, strict-schema, identity, and complete file
-partition validation, it keeps only selected file verification records and
-authoritative selected-key misses. Unselected maps and inline hints drop with
-the parse allocation. A later unseen key replays the complete validation from
-the digest-keyed manifest cache or immutable source; already selected evidence
-is reused without parsing. This changes only host memory ownership, not
-selection, prefetch, cache, offline, or resource-admission semantics.
+The native verified owner retains every touched
+`Arc<ValidatedPackedShard>` for its session. It validates those bytes once and
+borrows later key, path, object, and dependency views directly. It does not
+decode shard JSON, construct per-shard trees, retain a selected-record/miss
+cache, or replay validation for a later unseen key in the same shard. This
+changes representation and ownership only: selection, prefetch, cache,
+offline, corruption, and resource-admission semantics remain exact.
 
 Schema-3 roots add format input closures without changing schema-2 behavior.
 After the selected pinned format reaches its first actual input miss, the

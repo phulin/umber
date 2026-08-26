@@ -28,7 +28,9 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `source-map.js` / `source-map.d.ts`: DOM point to revision-checked rendered-source query helper.
 - `manifest-resolver.js`: immutable-manifest HTTP/cache adapter over the
   required typed `umber-wasm` catalogue plans; it owns transport policy but no
-  catalogue schema, JSON bridge, or selection policy.
+  catalogue schema, packed-byte decoder, JSON shard bridge, or selection
+  policy. It transports and caches shard `Uint8Array` bytes and supplies each
+  touched shard once to the retained Rust catalogue session.
 - `manifest-schema.js`: request/response wire identity adapters only; catalogue
   parsing, duplicate rejection, authentication, partitioning, serialization,
   format lookup, and batch selection remain in `umber-distribution` behind the

@@ -26,21 +26,23 @@ Non-TFM runtime files use the manifest's `tex:` request kind because that is
 the current remote resolver vocabulary; Umber-native formats remain separate
 manifest format objects.
 
-The separate `html` publication profile emits root schema 4 and shard schema
-2. It verifies the complete configured roots but selects only explicit runtime
-keys plus every selected format's verified closure. Its TEXMF inputs are
-limited to `tex/` and TFM; WOFF2 and license objects come from an exact
-schema-2 catalog/object-source set. Never weaken this allow-list to admit VF,
-AFM, ENC, maps, PK, Type 1, or SFNT transport objects. HTML inventory ceilings
-are independent of the full snapshot.
+The separate `html` publication profile emits root schema 9 and packed shard
+schema 1 containing schema-2 catalogue records. It verifies the complete
+configured roots but selects only explicit runtime keys plus every selected
+format's verified closure. Its TEXMF inputs are limited to `tex/` and TFM;
+WOFF2 and license objects come from an exact schema-2
+catalogue/object-source set. Never weaken this allow-list to admit VF, AFM,
+ENC, maps, PK, Type 1, or SFNT transport objects. HTML inventory ceilings are
+independent of the full snapshot.
 
 ## File map
 
 - `src/lib.rs`: one prepared-object publication pipeline plus public configuration;
   full and HTML profiles differ only while selecting their prepared inputs.
-- `src/sharded.rs`: filesystem writing, object hashing, and staged byte
-  verification around canonical `umber-distribution` root/shard/catalog
-  values; it owns no parallel wire schema or graph validator.
+- `src/sharded.rs`: filesystem writing, deterministic packed-shard encoding,
+  object hashing, and staged byte verification around canonical
+  `umber-distribution` values; it owns no parallel wire schema or graph
+  validator.
 - `src/scan.rs`: deterministic root scanning, pin verification, and precedence.
 - `src/tlpdb.rs`: TeX Live runfile ownership and bounded package dependency-hint derivation.
 - `src/tests.rs`: fixture publication, collision, path, and precedence tests.

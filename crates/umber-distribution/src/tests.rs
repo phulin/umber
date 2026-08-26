@@ -4,6 +4,10 @@ use std::sync::OnceLock;
 
 use test_support::closed_case::FixtureCase;
 
+#[global_allocator]
+static ALLOCATOR: tex_state_profiling_allocator::HotCoreAllocator =
+    tex_state_profiling_allocator::HotCoreAllocator;
+
 const CASE_PATH: &str = "tests/corpus/distribution/cross-frontend-v1";
 
 struct Fixture {
@@ -161,8 +165,8 @@ fn html_font_shard_parses_selects_and_serializes_canonically() {
         .request
         .clone();
     let absent = FontRequestKey::new("absent").expect("absent font key");
-    assert_eq!(shard_index(&font.manifest_key(), 8), Ok(202));
-    assert_eq!(shard_index(&mapping.manifest_key(), 8), Ok(4));
+    assert_eq!(shard_index(&font.manifest_key(), 8), Ok(251));
+    assert_eq!(shard_index(&mapping.manifest_key(), 8), Ok(204));
     let selection = select_shard(
         &shard,
         &[
@@ -595,6 +599,33 @@ fn packed_shards_are_deterministic_roundtrip_and_probe_exact_keys() {
 }
 
 #[test]
+fn warmed_packed_lookup_allocates_zero_bytes() {
+    let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
+    let catalog = shard_manifest(&manifest, 0).expect("one packed shard");
+    let packed = pack_shard(&catalog.shards[0]).expect("packed shard");
+    let validated =
+        ValidatedPackedShard::new(packed, &catalog.root, 0).expect("validated packed shard");
+    let key = catalog.shards[0].files.keys().next().expect("file key");
+    assert!(validated.lookup(key).is_some());
+    assert!(validated.lookup("tex:authoritative-absence.sty").is_none());
+
+    const OWNER: usize = 0;
+    let before = tex_state_profiling_allocator::thread_measurement(OWNER);
+    {
+        let _scope = tex_state_profiling_allocator::scope(OWNER);
+        for _ in 0..10_000 {
+            std::hint::black_box(validated.lookup(std::hint::black_box(key)));
+            std::hint::black_box(
+                validated.lookup(std::hint::black_box("tex:authoritative-absence.sty")),
+            );
+        }
+    }
+    let after = tex_state_profiling_allocator::thread_measurement(OWNER);
+    assert_eq!(after.calls, before.calls);
+    assert_eq!(after.requested_bytes, before.requested_bytes);
+}
+
+#[test]
 fn packed_validator_rejects_offsets_tables_duplicates_and_wrong_identity() {
     let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
     let catalog = shard_manifest(&manifest, 0).expect("one packed shard");
@@ -603,6 +634,12 @@ fn packed_validator_rejects_offsets_tables_duplicates_and_wrong_identity() {
     let mut bad_offset = bytes.clone();
     bad_offset[52..56].copy_from_slice(&0_u32.to_le_bytes());
     assert!(ValidatedPackedShard::new(bad_offset, &catalog.root, 0).is_err());
+
+    let records_offset = u32::from_le_bytes(bytes[52..56].try_into().expect("record offset"));
+    let mut bad_record_span = bytes.clone();
+    bad_record_span[records_offset as usize + 24..records_offset as usize + 28]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(ValidatedPackedShard::new(bad_record_span, &catalog.root, 0).is_err());
 
     let bucket_count = u32::from_le_bytes(bytes[28..32].try_into().expect("bucket count"));
     let bucket_offset = u32::from_le_bytes(bytes[48..52].try_into().expect("bucket offset"));

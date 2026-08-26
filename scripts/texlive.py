@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import urllib.error
@@ -18,7 +19,7 @@ from urllib.parse import urljoin
 SOURCE_LOCK = Path("tests/texlive-source.lock")
 DEFAULT_SOURCE_CACHE = Path("third_party/texlive-source")
 DEFAULT_ROOT_URL = (
-    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v6.json"
+    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v8.json"
 )
 # Installed by the external republication tracked in umber2-66p0.27.
 DEFAULT_ROOT_AHASH64 = ""
@@ -555,6 +556,228 @@ def _shard_index(key: str, bits: int) -> int:
     return value >> (64 - bits) if bits else 0
 
 
+def _packed_shard_files(
+    data: bytes, *, distribution: str, index: int, shard_bits: int
+) -> dict[str, dict[str, object]]:
+    """Read publisher-authenticated packed file records for provisioning.
+
+    Native and browser lookup authority remains the shared safe Rust view. This
+    host-only mirror builder independently checks the complete fixed-width
+    layout before copying already content-addressed payloads.
+    """
+    if len(data) < 80 or data[:8] != b"UMBRPKS1":
+        raise TexliveError(f"packed shard {index} has an invalid header")
+    schema, reserved = struct.unpack_from("<HH", data, 8)
+    if schema != 1 or reserved != 0:
+        raise TexliveError(f"packed shard {index} has an unsupported schema")
+    (
+        manifest_schema,
+        actual_index,
+        distribution_offset,
+        distribution_len,
+        bucket_count,
+        record_count,
+        object_count,
+        path_count,
+        dependency_count,
+        buckets_offset,
+        records_offset,
+        objects_offset,
+        paths_offset,
+        dependencies_offset,
+        keys_offset,
+        strings_offset,
+        total_len,
+    ) = struct.unpack_from("<17I", data, 12)
+    if manifest_schema != 3 or actual_index != index or total_len != len(data):
+        raise TexliveError(f"packed shard {index} identity mismatch")
+    expected = 80
+    for actual, count, width in (
+        (buckets_offset, bucket_count, 16),
+        (records_offset, record_count, 32),
+        (objects_offset, object_count, 16),
+        (paths_offset, path_count, 8),
+        (dependencies_offset, dependency_count, 16),
+    ):
+        if actual != expected:
+            raise TexliveError(f"packed shard {index} section layout mismatch")
+        expected += count * width
+    if expected != keys_offset or not keys_offset <= strings_offset <= total_len:
+        raise TexliveError(f"packed shard {index} variable layout mismatch")
+    if (
+        bucket_count < 2
+        or bucket_count & (bucket_count - 1)
+        or record_count * 5 > bucket_count * 4
+    ):
+        raise TexliveError(f"packed shard {index} table size is invalid")
+
+    def span(base: int, offset: int, length: int, end: int) -> bytes:
+        start = base + offset
+        stop = start + length
+        if start < base or stop < start or stop > end:
+            raise TexliveError(f"packed shard {index} span is out of bounds")
+        return data[start:stop]
+
+    try:
+        actual_distribution = span(
+            strings_offset,
+            distribution_offset,
+            distribution_len,
+            total_len,
+        ).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise TexliveError(f"packed shard {index} distribution is not UTF-8") from error
+    if actual_distribution != distribution:
+        raise TexliveError(f"packed shard {index} distribution mismatch")
+
+    objects: list[tuple[str, int]] = []
+    seen_digests: dict[str, int] = {}
+    for object_index in range(object_count):
+        digest, length = struct.unpack_from(
+            "<QQ", data, objects_offset + object_index * 16
+        )
+        digest_text = f"{digest:016x}"
+        if length > 128 * 1024 * 1024:
+            raise TexliveError(f"packed shard {index} object length is invalid")
+        if digest_text in seen_digests:
+            raise TexliveError(f"packed shard {index} object table is not deduplicated")
+        seen_digests[digest_text] = length
+        objects.append((digest_text, length))
+
+    paths: list[str] = []
+    for path_index in range(path_count):
+        offset, length = struct.unpack_from(
+            "<II", data, paths_offset + path_index * 8
+        )
+        try:
+            path = span(strings_offset, offset, length, total_len).decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise TexliveError(f"packed shard {index} path is not UTF-8") from error
+        if path in paths or not path.startswith("/texlive/"):
+            raise TexliveError(f"packed shard {index} path table is invalid")
+        _safe_relative(path.removeprefix("/texlive/"), label="packed virtual path")
+        paths.append(path)
+
+    records: list[tuple[str, int, int, int, int, int]] = []
+    files: dict[str, dict[str, object]] = {}
+    for record_index in range(record_count):
+        offset = records_offset + record_index * 32
+        (
+            key_offset,
+            key_len,
+            kind,
+            flags,
+            object_index,
+            path_index,
+            dependency_start,
+            dependency_len,
+            record_reserved,
+            extra_offset,
+            extra_len,
+        ) = struct.unpack_from("<IHBBIIIHHII", data, offset)
+        try:
+            key = span(keys_offset, key_offset, key_len, strings_offset).decode("utf-8")
+            extra = span(strings_offset, extra_offset, extra_len, total_len)
+        except UnicodeDecodeError as error:
+            raise TexliveError(f"packed shard {index} key is not UTF-8") from error
+        if (
+            kind != 1
+            or flags != 0
+            or record_reserved != 0
+            or extra
+            or object_index >= object_count
+            or path_index >= path_count
+            or dependency_start + dependency_len > dependency_count
+            or not key.startswith(("tex:", "tfm:"))
+            or _shard_index(key, shard_bits) != index
+            or key in files
+        ):
+            raise TexliveError(f"packed shard {index} file record is invalid")
+        digest, length = objects[object_index]
+        files[key] = {
+            "virtualPath": paths[path_index],
+            "object": f"ahash64-v1-{digest}",
+            "ahash64": digest,
+            "bytes": length,
+        }
+        records.append(
+            (
+                key,
+                kind,
+                object_index,
+                path_index,
+                dependency_start,
+                dependency_len,
+            )
+        )
+
+    for record in records:
+        previous_key: str | None = None
+        for dependency_index in range(record[4], record[4] + record[5]):
+            key_offset, key_len, reserved, object_index, path_index = struct.unpack_from(
+                "<IHHII", data, dependencies_offset + dependency_index * 16
+            )
+            try:
+                key = span(keys_offset, key_offset, key_len, strings_offset).decode(
+                    "utf-8"
+                )
+            except UnicodeDecodeError as error:
+                raise TexliveError(
+                    f"packed shard {index} dependency key is not UTF-8"
+                ) from error
+            if (
+                reserved != 0
+                or object_index >= object_count
+                or path_index >= path_count
+                or not key.startswith(("tex:", "tfm:"))
+                or (previous_key is not None and previous_key >= key)
+            ):
+                raise TexliveError(
+                    f"packed shard {index} dependency record is invalid"
+                )
+            previous_key = key
+
+    seen_records: set[int] = set()
+    for bucket in range(bucket_count):
+        key_hash, record_index, bucket_reserved = struct.unpack_from(
+            "<QII", data, buckets_offset + bucket * 16
+        )
+        if bucket_reserved != 0:
+            raise TexliveError(f"packed shard {index} bucket is invalid")
+        if record_index == 0xFFFFFFFF:
+            if key_hash != 0:
+                raise TexliveError(f"packed shard {index} empty bucket has a hash")
+            continue
+        if record_index >= record_count or record_index in seen_records:
+            raise TexliveError(f"packed shard {index} bucket record is invalid")
+        key = records[record_index][0]
+        if int(ahash64_bytes(key.encode(), 2), 16) != key_hash:
+            raise TexliveError(f"packed shard {index} bucket hash mismatch")
+        seen_records.add(record_index)
+    if len(seen_records) != record_count:
+        raise TexliveError(f"packed shard {index} table is incomplete")
+    for expected_index, record in enumerate(records):
+        key = record[0]
+        key_hash = int(ahash64_bytes(key.encode(), 2), 16)
+        bucket = key_hash & (bucket_count - 1)
+        for _ in range(bucket_count):
+            stored_hash, record_index, _ = struct.unpack_from(
+                "<QII", data, buckets_offset + bucket * 16
+            )
+            if record_index == 0xFFFFFFFF:
+                raise TexliveError(f"packed shard {index} probe chain is invalid")
+            if stored_hash == key_hash and records[record_index][0] == key:
+                if record_index != expected_index:
+                    raise TexliveError(
+                        f"packed shard {index} lookup key is duplicated"
+                    )
+                break
+            bucket = (bucket + 1) & (bucket_count - 1)
+        else:
+            raise TexliveError(f"packed shard {index} probe chain is invalid")
+    return files
+
+
 def materialize_snapshot(
     output: Path,
     *,
@@ -591,7 +814,7 @@ def materialize_snapshot(
             or ahash64_bytes(source_root_data) != root_ahash64
         ):
             raise TexliveError(f"root manifest identity mismatch for {source_root_path}")
-    root_path = output / "manifest-v6.json"
+    root_path = output / "manifest-v8.json"
     if root_path.exists():
         data = root_path.read_bytes()
         if len(data) > MAX_MANIFEST_BYTES or ahash64_bytes(data) != root_ahash64:
@@ -656,7 +879,7 @@ def materialize_snapshot(
     selected_shard_indices = {
         _shard_index(key, bits) for key in requested.union(unavailable)
     }
-    shard_documents: dict[int, dict] = {}
+    shard_documents: dict[int, dict[str, dict[str, object]]] = {}
     for index, digest in enumerate(shards):
         identity = Identity(MAX_MANIFEST_BYTES, digest)
         name = f"ahash64-v1-{digest}"
@@ -676,25 +899,22 @@ def materialize_snapshot(
                 if len(data) > MAX_MANIFEST_BYTES or ahash64_bytes(data) != digest:
                     raise TexliveError(f"shard identity mismatch: {name}")
                 _write_atomic(path, data)
-        shard = _json_document(data, f"shard {index}")
-        if shard.get("schema") != 3 or shard.get("distribution") != root.get("distribution") or shard.get("index") != index:
-            raise TexliveError(f"shard {index} identity mismatch")
-        files = shard.get("files")
-        if not isinstance(files, dict) or any(
-            not isinstance(key, str) or _shard_index(key, bits) != index
-            for key in files
-        ):
-            raise TexliveError(f"shard {index} contains a noncanonical lookup key")
+        files = _packed_shard_files(
+            data,
+            distribution=root["distribution"],
+            index=index,
+            shard_bits=bits,
+        )
         if index in selected_shard_indices:
-            shard_documents[index] = shard
+            shard_documents[index] = files
     for key in sorted(unavailable):
         shard = shard_documents[_shard_index(key, bits)]
-        if key in shard["files"]:
+        if key in shard:
             raise TexliveError(
                 f"receipt declares a key unavailable but its canonical shard contains it: {key}"
             )
     for key in sorted(requested):
-        record = shard_documents[_shard_index(key, bits)].get("files", {}).get(key)
+        record = shard_documents[_shard_index(key, bits)].get(key)
         if not isinstance(record, dict):
             raise TexliveError(f"requested key is absent from its canonical shard: {key}")
         identity = Identity(record.get("bytes"), record.get("ahash64"))

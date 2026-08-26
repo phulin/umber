@@ -459,24 +459,36 @@ pub fn shard_index(key: &ManifestLogicalKey, shard_bits: u8) -> Result<u32, Sele
     if shard_bits == 0 {
         return Ok(0);
     }
-    let digest = crate::ahash64::digest(key.as_str().as_bytes());
-    let prefix = u16::from_be_bytes([digest[0], digest[1]]);
-    Ok(u32::from(prefix >> (16 - shard_bits)))
+    let hash = crate::ahash64::shard_key(key.as_str().as_bytes());
+    Ok((hash >> (64 - shard_bits)) as u32)
 }
 
 /// Validates any canonical catalog request key and returns its shard index.
 pub fn shard_index_for_key(value: &str, shard_bits: u8) -> Result<u32, SelectionError> {
-    let canonical = if value.starts_with("font:") {
-        FontRequestKey::from_manifest_key(value)?.manifest_key()
+    if value.starts_with("font:") {
+        let canonical = FontRequestKey::from_manifest_key(value)?.manifest_key();
+        if canonical.as_str() != value {
+            return Err(SelectionError::new("noncanonical distribution request key"));
+        }
     } else if value.starts_with("legacy-mapping:") {
-        LegacyMappingRequestKey::from_manifest_key(value)?.manifest_key()
+        let canonical = LegacyMappingRequestKey::from_manifest_key(value)?.manifest_key();
+        if canonical.as_str() != value {
+            return Err(SelectionError::new("noncanonical distribution request key"));
+        }
     } else {
-        FileRequestKey::from_manifest_key(value)?.manifest_key()
-    };
-    if canonical.as_str() != value {
-        return Err(SelectionError::new("noncanonical distribution request key"));
+        validate_file_key(value).map_err(SelectionError::from_manifest)?;
     }
-    shard_index(&canonical, shard_bits)
+    if shard_bits > crate::MAX_SHARD_BITS {
+        return Err(SelectionError::new(format!(
+            "shard bits must not exceed {}",
+            crate::MAX_SHARD_BITS
+        )));
+    }
+    if shard_bits == 0 {
+        return Ok(0);
+    }
+    let hash = crate::ahash64::shard_key(value.as_bytes());
+    Ok((hash >> (64 - shard_bits)) as u32)
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

@@ -1,4 +1,4 @@
-# Sharded Distribution Manifest
+# Packed Distribution Shards
 
 This document is the current distribution catalogue, publication, cache, and
 trust-boundary contract. Canonical request semantics are defined by
@@ -10,19 +10,18 @@ Repository-owned distribution content uses `ahash64-v1`: 16 lowercase
 hexadecimal digits produced by `umber-hash` with fixed seeds, algorithm version
 1, and explicit domains. The implementation is portable Rust rather than
 `RandomState` or upstream `AHasher`, whose output is not a persisted-format
-contract. Authored JavaScript implements the same operations and stable test
-vectors.
+contract.
 
 An aHash64 identity is a deterministic content selector and accidental
-corruption check. It is not collision resistant, does not authenticate a
-hostile publisher, and must not be described as a cryptographic trust root.
-HTTPS and the release channel establish publisher provenance.
+corruption check. It is not collision resistant and does not authenticate a
+hostile publisher. HTTPS and the release channel establish publisher
+provenance. Exact key bytes, lengths, paths, and object metadata are still
+validated after every digest check.
 
 The SHA-era hosted distribution is deliberately incompatible. Native and
 browser defaults report `default-distribution-unpublished` until
-`umber2-66p0.27` republishes the payloads, shards, roots, formats, HTML catalog,
-and root pins. There is no SHA fallback. An explicit migrated root remains
-usable with `--distribution` and `--distribution-ahash64`.
+`umber2-66p0.27` republishes the objects, packed shards, roots, formats, HTML
+catalogue, and root pins. There is no SHA or JSON-shard fallback.
 
 SHA-256 remains only at external compatibility boundaries: licensed source and
 archive locks, reference-oracle and corpus evidence, and output parity receipts.
@@ -30,99 +29,143 @@ Those values are not distribution object identities or cache keys.
 
 ## Persisted schemas
 
-- Monolithic manifest schema 2 uses aHash64 object entries.
-- Full sharded root schema 6 pairs only with index shard schema 3.
-- HTML sharded root schema 7 pairs only with index shard schema 4.
-- Font and legacy-mapping records are schema 2.
+- Monolithic publisher input schema 2 uses aHash64 object entries.
+- Full root schema 8 and HTML root schema 9 name packed shard payloads.
+- Every production shard is packed schema 1 with magic `UMBRPKS1`.
+- Font and legacy-mapping records are schema 2 inside the packed payload.
 - Producer format metadata is schema 3 without an input closure and schema 4
   with a schema-1 input closure.
 - Umber format images are schema 12 and page artifacts are schema 24.
 - Native cache envelopes are schema 2 under `blobs-v2`.
 
-Old schemas and digest widths are rejected rather than upgraded implicitly.
-Objects are named `ahash64-v1-<16 lowercase hex digits>`. Root and shard JSON
-are canonical, maps are sorted by raw UTF-8 key order, and documents end in one
-newline.
+The small root remains canonical JSON because it is fetched and parsed once.
+It contains `distribution`, `objectsBaseUrl`, `shardBits`, `shardCount`, the
+ordered bare-digest `shards` array, and optional inline formats. `shardCount`
+equals both `2^shardBits` and the array length. Old root schemas and JSON shard
+payloads are rejected rather than upgraded implicitly.
 
-## Root and shard selection
+Objects are named `ahash64-v1-<16 lowercase hex digits>`. Root JSON maps are
+sorted by raw UTF-8 key order and the document ends in one newline. Shard bytes
+are canonical little-endian binary and contain no host `usize`, enum layout, or
+pointer representation.
 
-A sharded root contains `distribution`, `objectsBaseUrl`, `shardBits`,
-`shardCount`, the ordered bare-digest `shards` array, and optional inline
-formats. `shardCount` equals both `2^shardBits` and the array length. Full roots
-may carry format input closures; HTML roots additionally select font and legacy
-mapping records.
+## Shard selection and lookup
 
-The canonical request key is hashed in `DistributionShardKey` domain 2. The
-leading `shardBits` of the numeric 64-bit result select exactly one shard. A
-verified miss in that shard is authoritative. Root, shard, partition, schema,
-length, or digest failures remain errors and never become resource absence.
+Publisher scan order remains configured root order followed by normalized path
+order. The first canonical request winner is frozen before packing, so runtime
+lookup never reconstructs publisher precedence or walks candidates.
 
-Within each shard, file records are sorted by request key and bind canonical
-virtual path, object, digest, byte length, and dependencies. Publisher winner
-precedence is unchanged: roots are scanned in configuration order, the first
-canonical request winner is retained, and dependencies preserve their declared
-order. Replacing the JSON tree walk with a direct table may preserve semantics
-only if it stores that already-resolved winner map and the same canonical
-request-key encoding.
+The canonical request key is hashed once in `DistributionShardKey` domain 2.
+Its leading `shardBits` select exactly one physical shard; the low bits seed
+that shard's open-addressed table. Buckets use linear probing. A matching
+64-bit hash is only a candidate: lookup compares the stored key length and
+exact UTF-8 key bytes before returning a record. A verified empty probe-chain
+slot is authoritative absence. Root, digest, schema, identity, partition,
+offset, or table failure remains corruption and never becomes absence.
 
-## HTML records
+The table size is a power of two and the validator rejects load above 80%.
+Each fixed 80-byte header records the distribution and shard identity, counts,
+and exact section offsets. Sections are contiguous in this order:
 
-Index shard schema 4 adds independent `fonts` and `legacyMappings` maps. Font
-record schema 2 binds a WOFF2 object, optional program identity, feature-policy
-version, bounded provenance, and a content-addressed redistributable license.
-Legacy mapping schema 2 additionally binds the exact TFM aHash64, a complete
-font request key, a 256-entry Unicode map, mapping/fontdimen policy versions,
-and explicit fallback policy. TFM, font-object, program, license, and rendered
-resource identities use separate domains where their semantics differ.
+| Section      | Row bytes | Contents                                                            |
+| ------------ | --------: | ------------------------------------------------------------------- |
+| buckets      |        16 | aHash64, record index or `u32::MAX`, reserved zero                  |
+| records      |        32 | key span, kind, object/path indexes, dependency span, metadata span |
+| objects      |        16 | numeric aHash64 and declared byte length                            |
+| paths        |         8 | offset/length into the shared string blob                           |
+| dependencies |        16 | key span plus object and path indexes                               |
+| keys         |  variable | deduplicated canonical request-key bytes                            |
+| strings      |  variable | distribution name, deduplicated paths, and catalogue metadata       |
+
+Object, path, and dependency records are referenced by compact indexes. File
+dependencies are strictly key-sorted spans and carry their already-resolved
+object/path hint, so prefetch never loads another index shard. Font and legacy
+mapping metadata use bounded explicit encodings in the same string section.
+
+`ValidatedPackedShard` owns the authenticated bytes and checks the complete
+layout, UTF-8 spans, canonical keys, shard membership, duplicate objects and
+paths, exact table coverage, hashes, probe chains, record policy, and metadata
+once. Successful lookup thereafter borrows the key, path, and dependency spans
+directly. It does not parse JSON, build a `BTreeMap`, materialize every record,
+or allocate while probing.
 
 ## Native and browser acquisition
 
-Native `DistributionResolver` and JavaScript `HttpManifestResolver` verify the
-same root, shard, object, format, and dependency graph. Both deduplicate object
-work by aHash64 and preserve request order at admission. The native cache hashes
-its envelope in domain 3 and its path key separately; browser IndexedDB uses a
-versioned aHash64 database name. Neither frontend uses runtime-random hashing or
-Web Crypto for repository-owned resource identity.
+Native and WebAssembly use the same `umber-distribution` packed validator and
+lookup view. Native `DistributionResolver` retains each touched
+`Arc<ValidatedPackedShard>` for the resolver session. There is no selected-hit
+vector, selected-miss cache, or reparsing path: later keys in a touched shard
+reuse its validated bytes, and an exact packed miss remains authoritative.
 
-The explicit native verifier walks every `blobs-v2` entry, validates the cache
-envelope and caller-owned payload identity, and reports object/manifest counts.
-Ordinary loads validate only entries they touch.
+The WebAssembly catalogue boundary owns a persistent `CatalogSession`. Authored
+JavaScript parses only the small root response shape needed for transport,
+fetches the requested digest-addressed shard as `Uint8Array`, and supplies those
+bytes to Rust once. It stores immutable bytes in HTTP/IndexedDB caches and does
+not use `TextDecoder` or materialize catalogue objects. `prepareBatch`,
+`provideShard`, `planBatch`, and `selectFormat` all operate on the retained Rust
+session.
+
+Both frontends preserve required request order, first-key deduplication,
+dependency-hint order, typed misses, corruption errors, bounded acquisition,
+and offline object behavior. JavaScript owns asynchronous transport and native
+Rust owns blocking transport; neither owns a second catalogue schema.
+
+The explicit native verifier exhaustively authenticates all packed shards and
+referenced objects. Ordinary sessions validate only root/shards/cache entries
+they touch.
 
 ## Publication and provisioning
 
 `tools/texlive-wasm-publish` owns scanning, winner selection, tree identity,
-object emission, sharding, canonical JSON, successor verification, and a
-`--file-ahash64` release-tool boundary. Configuration schemas are 6 for full
-and 7 for HTML publication, with `treeAhash64` roots.
+object emission, deterministic packing, successor verification, and the
+`--file-ahash64` release-tool boundary. Publisher configuration schemas are 8
+for full and 9 for HTML publication, with `treeAhash64` roots. The typed
+`ManifestShard` and its JSON parser remain publisher/test construction APIs;
+production shard payloads and runtime selection are packed only.
 
-`scripts/publish-texlive-r2.sh` validates all staged data first, uploads objects
-immutably, verifies remote inventory, and publishes the manifest last. It
-requires an explicit 16-digit root aHash64 while the default pin is
-unpublished. Python provisioning contains a byte-identical implementation of
-algorithm version 1 and fails explicitly when no migrated root pin is supplied.
+`scripts/publish-texlive-r2.sh` validates all staged bytes first, uploads
+objects immutably, verifies remote inventory, and publishes `manifest-v8.json`
+or `manifest-v9.json` last. Python provisioning validates the complete packed
+layout when it materializes a local execution mirror, but native and browser
+runtime authority remains the shared safe Rust view.
+
 External source files continue to be checked against their licensed SHA-256
-locks before their aHash64 distribution identity is accepted.
+locks before their aHash64 distribution identity is accepted. Format images
+remain independent schema-12 objects: repacking the catalogue changes their
+root reference, not their engine contents.
 
-## Inventory and table sizing evidence
+## Exact production inventory
 
-The retained production manifest contains 322,537 canonical request entries:
-164,643 TeX keys and 157,894 TFM keys. Their raw canonical keys occupy
-12,614,820 bytes. They reference 152,302 unique objects, with 170,235 duplicate
-mappings, and the sharded JSON occupies 93,525,476 bytes.
+The 2026-03-01 full inventory contains 322,537 canonical requests: 164,643 TeX
+keys and 157,894 TFM keys. The former 256 JSON shards occupied 93,525,476
+bytes. Repartitioning and packing the same publisher-resolved inventory with
+schema 1 produces 73,283,781 bytes, a reduction of 20,241,695 bytes (21.64%).
 
-For a future flat lookup table, 80% load requires 403,172 buckets: 9,676,128
-bytes with 24-byte rows or 12,901,504 bytes with 32-byte rows. At 85% load,
-379,456 buckets require 9,106,944 or 12,142,592 bytes respectively. Adding the
-12,614,820-byte key blob and a 16-byte-per-object table (2,436,832 bytes) gives
-totals of about 23.58/26.66 MiB at 80% or 23.04/25.93 MiB at 85%. This is sizing
-evidence only; the current runtime still walks root to selected shard to its
-typed sorted map.
+The packed total contains 579,584 buckets, 322,537 primary records, 212,109
+dependency rows, 450,131 shard-local deduplicated object rows, and 452,941
+shard-local deduplicated path rows. Key sections total 15,107,186 bytes and
+string sections total 24,342,219 bytes. Counts for objects and paths are summed
+across independent physical shards; cross-shard duplication is intentional so
+one selected shard remains self-contained.
+
+The issue-namespaced repack root is schema 8 with aHash64
+`721e833071d92bba`. It is measurement evidence, not a hosted default pin.
 
 ## Performance evidence
 
-`distribution-startup-benchmark` measures the exact cold/shared resolver work
-without mutating the shared production cache. The aHash64 migration removes SHA
-compression from root, shard, and payload verification. Until the external
-republication makes the 20M workload runnable, the issue-namespaced focused
-measurement records the cold and shared startup cost and validation counts; the
-blocking asset inventory is tracked in `umber2-66p0.27`.
+The exact offline arXiv `2606.12566` 20M control against the materialized packed
+root uses the same 123-key closure (SHA-256
+`e4f4113c9057af88c239d40d3041f598871a0a7a895f8bd63f89d7c77682ab7e`) and
+preserves the authoritative work vector
+`(20000000,19913119,2218327,6020965,16785710,4011)`. The fresh zero-loss
+profile records 2,021 samples and about 26.9 billion weighted cycles. Packed
+distribution resolution is 4.77% inclusive, complete first-touch shard
+validation is 3.70%, and exact lookup is 0.41% inclusive/0.13% self. The former
+full JSON authority recorded distribution resolution at 18.07% and
+`ManifestShard::parse` at 9.03%; current ancestry contains no
+`ManifestShard::parse`, JSON shard parser, selected-record movement, or
+distribution-owned `BTreeMap` construction. This comparison demonstrates the
+removed work but does not attribute unrelated intervening engine changes to
+the packed representation. Warmed lookup borrows the retained bytes and the
+allocator-instrumented 20,000-probe gate records zero calls and zero requested
+bytes.

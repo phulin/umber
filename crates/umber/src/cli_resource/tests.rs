@@ -1139,17 +1139,17 @@ fn live_lookup_does_not_hash_an_unrequested_inline_hint() {
     let dependency_digest = hex_digest(dependency_bytes);
     let required_object = format!("ahash64-v1-{required_digest}");
     let dependency_object = format!("ahash64-v1-{dependency_digest}");
-    let shard_zero = format!(
-        "{{\"schema\":3,\"distribution\":\"hints\",\"index\":0,\"files\":{{\"tex:article.cls\":{{\"virtualPath\":\"/texlive/tex/article.cls\",\"object\":\"{required_object}\",\"ahash64\":\"{required_digest}\",\"bytes\":{},\"dependencies\":[{{\"key\":\"tfm:cmr10.tfm\",\"virtualPath\":\"/texlive/fonts/cmr10.tfm\",\"object\":\"{dependency_object}\",\"ahash64\":\"{dependency_digest}\",\"bytes\":{}}}]}}}}}}\n",
+    let shard_zero = "{\"schema\":3,\"distribution\":\"hints\",\"index\":0,\"files\":{}}\n";
+    let shard_one = format!(
+        "{{\"schema\":3,\"distribution\":\"hints\",\"index\":1,\"files\":{{\"tex:article.cls\":{{\"virtualPath\":\"/texlive/tex/article.cls\",\"object\":\"{required_object}\",\"ahash64\":\"{required_digest}\",\"bytes\":{},\"dependencies\":[{{\"key\":\"tfm:cmr10.tfm\",\"virtualPath\":\"/texlive/fonts/cmr10.tfm\",\"object\":\"{dependency_object}\",\"ahash64\":\"{dependency_digest}\",\"bytes\":{}}}]}}}}}}\n",
         required_bytes.len(),
         dependency_bytes.len()
     );
-    let shard_one = "{\"schema\":3,\"distribution\":\"hints\",\"index\":1,\"files\":{}}\n";
     write_sharded_root(
         directory.path(),
         "hints",
         1,
-        &[(&shard_zero, true), (shard_one, false)],
+        &[(shard_zero, false), (&shard_one, true)],
     );
     let objects = directory.path().join("objects");
     std::fs::write(objects.join(required_object), required_bytes).expect("required object");
@@ -1632,7 +1632,7 @@ fn rejects_tampered_shard_and_observes_cancellation() {
 
 #[test]
 fn shard_partition_uses_ahash64_network_prefix_bits() {
-    assert_eq!(shard_index_for_key("tex:article.cls", 8), Ok(0x71));
-    assert_eq!(shard_index_for_key("tfm:cmr10.tfm", 8), Ok(0x3f));
+    assert_eq!(shard_index_for_key("tex:article.cls", 8), Ok(0xfa));
+    assert_eq!(shard_index_for_key("tfm:cmr10.tfm", 8), Ok(0xcf));
     assert_eq!(shard_index_for_key("tex:plain.tex", 0), Ok(0));
 }

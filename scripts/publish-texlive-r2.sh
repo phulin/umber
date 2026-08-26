@@ -20,7 +20,7 @@ expected_bytes=3520195192
 expected_manifest_ahash64=""
 successor_base=""
 successor_base_ahash64=""
-manifest_name="manifest-v6.json"
+manifest_name="manifest-v8.json"
 dry_run=0
 profile="full"
 root_pin_explicit=0
@@ -49,7 +49,7 @@ options:
   --expected-manifest-ahash64 H  exact manifest digest
   --successor-base PATH         authenticated root/shards reused by a sparse successor
   --successor-base-ahash64 H     exact immutable base root digest
-  --manifest-name NAME          unique schema-6 root key for a sparse successor
+  --manifest-name NAME          unique schema-8 root key for a sparse successor
   --root-ahash64 H               alias for --expected-manifest-ahash64; required for HTML
   --rclone PATH                 rclone executable
   --rclone-remote NAME          existing configured rclone remote
@@ -124,17 +124,17 @@ done
 [[ "$profile" == full || "$profile" == html ]] || fail "--profile must be full or html"
 if [[ "$profile" == html ]]; then
   [[ -z "$successor_base" ]] || fail "HTML publication does not support sparse successors"
-  [[ "$manifest_name" == manifest-v6.json ]] || fail "HTML publication does not accept --manifest-name"
+  [[ "$manifest_name" == manifest-v8.json ]] || fail "HTML publication does not accept --manifest-name"
   (( root_pin_explicit == 1 )) || fail "HTML publication requires an explicit --root-ahash64 pin"
   [[ "$snapshot" == html/* ]] || fail "HTML publication requires a distinct html/ immutable prefix"
-  manifest_name="manifest-v7.json"
+  manifest_name="manifest-v9.json"
 fi
 if [[ -n "$successor_base" ]]; then
   [[ "$profile" == full ]] || fail "sparse successor requires the full profile"
   [[ -d "$successor_base/objects" && -f "$successor_base/manifest.json" ]] || fail "invalid successor base: $successor_base"
   [[ "$successor_base_ahash64" =~ ^[0-9a-f]{16}$ ]] || fail "sparse successor requires --successor-base-ahash64"
-  [[ "$manifest_name" =~ ^manifest-v6-[a-z0-9][a-z0-9.-]*\.json$ ]] || fail "sparse successor requires a unique manifest-v6-NAME.json key"
-elif [[ "$manifest_name" != manifest-v6.json && "$profile" == full ]]; then
+  [[ "$manifest_name" =~ ^manifest-v8-[a-z0-9][a-z0-9.-]*\.json$ ]] || fail "sparse successor requires a unique manifest-v8-NAME.json key"
+elif [[ "$manifest_name" != manifest-v8.json && "$profile" == full ]]; then
   fail "--manifest-name requires --successor-base"
 elif [[ -n "$successor_base_ahash64" ]]; then
   fail "--successor-base-ahash64 requires --successor-base"

@@ -7,6 +7,7 @@ import hashlib
 import http.server
 import importlib.util
 import json
+import struct
 import subprocess
 import tarfile
 import tempfile
@@ -18,6 +19,103 @@ SPEC = importlib.util.spec_from_file_location("provision", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 provision = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(provision)
+
+
+def packed_fixture_shard(distribution: str, files: dict[str, dict[str, object]]) -> bytes:
+    records = sorted(files.items())
+    objects: list[tuple[int, int]] = []
+    object_indexes: dict[tuple[str, int], int] = {}
+    paths: list[str] = []
+    path_indexes: dict[str, int] = {}
+    key_blob = bytearray()
+    encoded_records: list[tuple[int, int, int, int]] = []
+    for key, record in records:
+        key_offset = len(key_blob)
+        key_blob.extend(key.encode())
+        object_key = (str(record["ahash64"]), int(record["bytes"]))
+        object_index = object_indexes.setdefault(object_key, len(objects))
+        if object_index == len(objects):
+            objects.append((int(object_key[0], 16), object_key[1]))
+        path = str(record["virtualPath"])
+        path_index = path_indexes.setdefault(path, len(paths))
+        if path_index == len(paths):
+            paths.append(path)
+        encoded_records.append((key_offset, len(key), object_index, path_index))
+    bucket_count = 2
+    while len(records) * 5 > bucket_count * 4:
+        bucket_count *= 2
+    buckets_offset = 80
+    records_offset = buckets_offset + bucket_count * 16
+    objects_offset = records_offset + len(records) * 32
+    paths_offset = objects_offset + len(objects) * 16
+    dependencies_offset = paths_offset + len(paths) * 8
+    keys_offset = dependencies_offset
+    strings_offset = keys_offset + len(key_blob)
+    strings = bytearray(distribution.encode())
+    path_spans = []
+    for path in paths:
+        path_spans.append((len(strings), len(path)))
+        strings.extend(path.encode())
+    total_len = strings_offset + len(strings)
+    output = bytearray(total_len)
+    output[:8] = b"UMBRPKS1"
+    struct.pack_into(
+        "<HH17I",
+        output,
+        8,
+        1,
+        0,
+        3,
+        0,
+        0,
+        len(distribution),
+        bucket_count,
+        len(records),
+        len(objects),
+        len(paths),
+        0,
+        buckets_offset,
+        records_offset,
+        objects_offset,
+        paths_offset,
+        dependencies_offset,
+        keys_offset,
+        strings_offset,
+        total_len,
+    )
+    for bucket in range(bucket_count):
+        struct.pack_into("<QII", output, buckets_offset + bucket * 16, 0, 0xFFFFFFFF, 0)
+    for index, ((key, _), (key_offset, key_len, object_index, path_index)) in enumerate(
+        zip(records, encoded_records, strict=True)
+    ):
+        struct.pack_into(
+            "<IHBBIIIHHII",
+            output,
+            records_offset + index * 32,
+            key_offset,
+            key_len,
+            1,
+            0,
+            object_index,
+            path_index,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        key_hash = int(provision.texlive.ahash64_bytes(key.encode(), 2), 16)
+        bucket = key_hash & (bucket_count - 1)
+        while struct.unpack_from("<I", output, buckets_offset + bucket * 16 + 8)[0] != 0xFFFFFFFF:
+            bucket = (bucket + 1) & (bucket_count - 1)
+        struct.pack_into("<QII", output, buckets_offset + bucket * 16, key_hash, index, 0)
+    for index, (digest, length) in enumerate(objects):
+        struct.pack_into("<QQ", output, objects_offset + index * 16, digest, length)
+    for index, span in enumerate(path_spans):
+        struct.pack_into("<II", output, paths_offset + index * 8, *span)
+    output[keys_offset:strings_offset] = key_blob
+    output[strings_offset:] = strings
+    return bytes(output)
 
 
 def expect_error(action, fragment: str) -> None:
@@ -228,13 +326,9 @@ def main() -> None:
         texmf_digest = provision.texlive.ahash64_bytes(from_texmf)
         (seed_objects / f"ahash64-v1-{object_digest}").write_bytes(from_object)
         (seed_texmf / "tex/from-texmf.tex").write_bytes(from_texmf)
-        shard = (
-            json.dumps(
-                {
-                    "schema": 3,
-                    "distribution": "fixture-snapshot",
-                    "index": 0,
-                    "files": {
+        shard = packed_fixture_shard(
+            "fixture-snapshot",
+            {
                         "tex:from-object.tex": {
                             "virtualPath": "/texlive/tex/from-object.tex",
                             "object": f"ahash64-v1-{object_digest}",
@@ -247,12 +341,8 @@ def main() -> None:
                             "ahash64": texmf_digest,
                             "bytes": len(from_texmf),
                         },
-                    },
-                },
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode()
+            },
+        )
         shard_digest = provision.texlive.ahash64_bytes(shard)
         (seed_objects / f"ahash64-v1-{shard_digest}").write_bytes(shard)
         root_manifest = (
@@ -271,7 +361,7 @@ def main() -> None:
             + "\n"
         ).encode()
         root_digest = provision.texlive.ahash64_bytes(root_manifest)
-        source_root = seed / "manifest-v6.json"
+        source_root = seed / "manifest-v8.json"
         source_root.write_bytes(root_manifest)
         mirror = root / "mirror"
         result = provision.texlive.materialize_snapshot(

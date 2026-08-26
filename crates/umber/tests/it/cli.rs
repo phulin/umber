@@ -9,6 +9,7 @@ use test_support::{
     CorpusCase, assert_matches_fixture, closed_case::FixtureCase, corpus_cases, dvi, normalize,
     read_binary_fixture,
 };
+use umber_distribution::{ManifestShard, pack_shard};
 use umber_hash::{AHash64, HashDomain};
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
@@ -2219,8 +2220,12 @@ fn run_cold_offline_local_mirror_resolves_positive_and_negative_file_requests() 
     );
     let second_shard =
         "{\"schema\":3,\"distribution\":\"test-snapshot\",\"index\":1,\"files\":{}}\n";
-    let first_shard_digest = hex_ahash64(first_shard.as_bytes());
-    let second_shard_digest = hex_ahash64(second_shard.as_bytes());
+    let first_shard = pack_shard(&ManifestShard::parse(&first_shard).expect("first shard"))
+        .expect("packed first shard");
+    let second_shard = pack_shard(&ManifestShard::parse(second_shard).expect("second shard"))
+        .expect("packed second shard");
+    let first_shard_digest = hex_ahash64(&first_shard);
+    let second_shard_digest = hex_ahash64(&second_shard);
     fs::write(
         objects.join(format!("ahash64-v1-{first_shard_digest}")),
         first_shard,
@@ -2232,9 +2237,9 @@ fn run_cold_offline_local_mirror_resolves_positive_and_negative_file_requests() 
     )
     .expect("write second shard");
     let manifest = format!(
-        "{{\"schema\":6,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":1,\"shardCount\":2,\"shards\":[\"{first_shard_digest}\",\"{second_shard_digest}\"]}}\n"
+        "{{\"schema\":8,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":1,\"shardCount\":2,\"shards\":[\"{first_shard_digest}\",\"{second_shard_digest}\"]}}\n"
     );
-    fs::write(distribution.join("manifest-v6.json"), &manifest).expect("write manifest");
+    fs::write(distribution.join("manifest-v8.json"), &manifest).expect("write manifest");
     let manifest_digest = hex_ahash64(manifest.as_bytes());
 
     let first = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -2327,16 +2332,18 @@ fn run_offline_local_mirror_miss_names_the_exact_object_digest() {
     );
     let shard =
         format!("{{\"schema\":3,\"distribution\":\"test\",\"index\":0,\"files\":{{{entry}}}}}\n");
-    let shard_digest = hex_ahash64(shard.as_bytes());
+    let shard =
+        pack_shard(&ManifestShard::parse(&shard).expect("typed shard")).expect("packed shard");
+    let shard_digest = hex_ahash64(&shard);
     fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard).expect("write shard");
     fs::write(
-        distribution.join("manifest-v6.json"),
+        distribution.join("manifest-v8.json"),
         format!(
-            "{{\"schema\":6,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+            "{{\"schema\":8,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
         ),
     )
     .expect("write manifest");
-    let root = fs::read(distribution.join("manifest-v6.json")).expect("read manifest");
+    let root = fs::read(distribution.join("manifest-v8.json")).expect("read manifest");
     let root_digest = hex_ahash64(&root);
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("XDG_CACHE_HOME", temp_dir.path().join("empty-cache"))

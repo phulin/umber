@@ -281,10 +281,10 @@ authenticated closure and do not authorize more font catalog entries.
 The implemented publisher represents this boundary as configuration profile
 `html`: schema-2 format closures plus explicit runtime keys select the only
 TEXMF inputs, while a file-free schema-2 catalog and exact digest-to-source
-map supply the WOFF2, mapping, provenance, and license records. Root schema 4
+map supply the WOFF2, mapping, provenance, and license records. Root schema 9
 and shard schema 2 are emitted under a new distribution identity. Independent
 inventory ceilings and staged object verification apply before the R2 script
-may publish the manifest-last `manifest-v4.json` root.
+may publish the manifest-last `manifest-v9.json` root.
 
 MVP non-goals are: additional Computer Modern faces or sizes as distinct TFM
 mapping keys; arbitrary TeX Live families; general OT1/T1/TS1/OML/OMS/OMX or

@@ -8,6 +8,7 @@ umber-hash = { path = "../umber-hash" }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }
+tex-state-profiling-allocator = { package = "umber-hot-core-allocator", path = "../tex-state/profiling-allocator" }
 
 [lints]
 workspace = true

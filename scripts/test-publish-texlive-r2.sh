@@ -75,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 printf 'HTTP/2 200\r\nAccess-Control-Allow-Origin: *\r\n\r\n' > "$headers"
-if [[ "$url" == */manifest-v6*.json || "$url" == */manifest-v7.json ]]; then
+if [[ "$url" == */manifest-v8*.json || "$url" == */manifest-v9.json ]]; then
   cp "$MOCK_REMOTE/manifest.json" "$output"
 else
   cp "$MOCK_REMOTE/objects/${url##*/}" "$output"
@@ -161,7 +161,7 @@ grep -q -- '--s3-no-check-bucket' "$log" || fail "bucket creation checks were no
 : > "$log"
 "$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" \
   --profile html --snapshot html/test-v1 > "$tmp_root/html-output" 2>&1
-grep -q 'html/test-v1/manifest-v7.json' "$log" || fail "HTML profile did not use its distinct manifest key"
+grep -q 'html/test-v1/manifest-v9.json' "$log" || fail "HTML profile did not use its distinct manifest key"
 
 successor_base="$tmp_root/successor-base"
 mkdir -p "$successor_base/objects"
@@ -171,8 +171,8 @@ printf 'remote-extra' > "$remote/objects/extra"
 "$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" \
   --successor-base "$successor_base" \
   --successor-base-ahash64 "$manifest_ahash64" \
-  --manifest-name manifest-v6-latex-dev-test.json > "$tmp_root/successor-output" 2>&1
-grep -q 'manifest-v6-latex-dev-test.json' "$log" || fail "successor did not use its unique root key"
+  --manifest-name manifest-v8-latex-dev-test.json > "$tmp_root/successor-output" 2>&1
+grep -q 'manifest-v8-latex-dev-test.json' "$log" || fail "successor did not use its unique root key"
 
 if "$repo_root/scripts/publish-texlive-r2.sh" \
   --staging "$bundle" --profile html --snapshot html/unpinned \

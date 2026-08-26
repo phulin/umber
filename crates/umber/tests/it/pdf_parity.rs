@@ -10,6 +10,7 @@ use test_support::{
     read_binary_fixture, read_fixture,
 };
 use tex_state::{DetachedPdfCompletion, Universe};
+use umber_distribution::{ManifestShard, pack_shard};
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
 const PDF_PARITY_CASES: &[PdfParityCase] = &[
@@ -612,15 +613,21 @@ fn write_empty_distribution(root: &std::path::Path) -> (std::path::PathBuf, Stri
     let distribution = root.join("distribution");
     let objects = distribution.join("objects");
     fs::create_dir_all(&objects).expect("create empty distribution");
-    let shard = b"{\"schema\":3,\"distribution\":\"pdf-fixture\",\"index\":0,\"files\":{}}\n";
-    let shard_digest = distribution_digest(shard);
+    let shard = pack_shard(
+        &ManifestShard::parse(
+            "{\"schema\":3,\"distribution\":\"pdf-fixture\",\"index\":0,\"files\":{}}\n",
+        )
+        .expect("typed empty shard"),
+    )
+    .expect("packed empty shard");
+    let shard_digest = distribution_digest(&shard);
     fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard)
         .expect("write empty distribution shard");
     let root = format!(
-        "{{\"schema\":6,\"distribution\":\"pdf-fixture\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+        "{{\"schema\":8,\"distribution\":\"pdf-fixture\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
     );
     let root_digest = distribution_digest(root.as_bytes());
-    fs::write(distribution.join("manifest-v6.json"), root).expect("write empty distribution root");
+    fs::write(distribution.join("manifest-v8.json"), root).expect("write empty distribution root");
     (distribution, root_digest)
 }
 

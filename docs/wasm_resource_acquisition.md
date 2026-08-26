@@ -11,10 +11,11 @@ OpenType rollout is tracked by `umber2-y2ei`.
 
 The browser resolver and HTML resource registry use the same portable
 `ahash64-v1` algorithm and domain tags as Rust; Web Crypto and runtime-random
-hash state are not part of this identity. Root, shard, payload, persistent
-cache, and rendered font-resource identities are non-cryptographic corruption
-checks. With no republished schema-6/schema-7 root pin, constructing the
-default resolver fails explicitly with `default-distribution-unpublished`.
+hash state are not part of this identity. Root, packed shard, payload,
+persistent cache, and rendered font-resource identities are non-cryptographic
+corruption checks. Until the schema-8/schema-9 roots are republished and pinned,
+constructing the default resolver fails explicitly with
+`default-distribution-unpublished`.
 
 ## Goals
 
@@ -283,16 +284,17 @@ Persistent eviction policy belongs to the application. It must not delete an
 object still referenced by a live session. Rust independently enforces hard
 per-resource, decoded-font, session-cache, and aggregate-output limits.
 
-The packaged HTTP manifest resolver consumes the schema-2, schema-3, or
-schema-4 sharded catalog through required `umber-wasm` catalog bindings backed
-by `umber-distribution`. JavaScript performs no root/shard validation,
-partition hashing, or required/hint/miss selection. Construction from HTTP
-requires an explicit root aHash64 pin. Selected
-shards are digest-addressed immutable objects and use the resolver's existing
-HTTP or IndexedDB cache, while complete inline dependency records prefetch
-payloads without a second index lookup. Only verified absence in the canonical
-shard produces `file-unavailable`; shard transport and verification failures
-remain actionable resolver errors.
+The packaged HTTP manifest resolver consumes schema-8 or schema-9 roots through
+a persistent `umber-wasm` `CatalogSession` backed by `umber-distribution`.
+JavaScript performs no packed-shard parsing, partition hashing, or
+required/hint/miss selection. Construction from HTTP requires an explicit root
+aHash64 pin. JavaScript transports and caches each selected digest-addressed
+shard as immutable `Uint8Array` bytes; it never decodes those bytes into a
+catalogue object. Rust validates and retains each touched shard once, then
+performs exact-byte open-addressed lookup and follows compact dependency spans
+without a second index fetch. Only verified absence in that canonical shard
+produces `file-unavailable`; shard transport and verification failures remain
+actionable resolver errors.
 
 PDF virtual-font discovery uses the ordinary file-response loop after engine
 execution reaches a retained candidate. Its `vf`, `font-map`, `font-encoding`,

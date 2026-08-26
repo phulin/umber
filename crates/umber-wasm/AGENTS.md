@@ -14,9 +14,10 @@ the manifest's validated content-addressed object name.
 ## Directory map
 
 - `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
-- `src/catalog_boundary.rs`: synchronous WebAssembly exports for canonical
-  distribution root/shard validation, request partitioning, and ordered
-  selection plans owned by `umber-distribution`.
+- `src/catalog_boundary.rs`: persistent synchronous `CatalogSession` exports
+  for canonical root validation, packed shard-byte admission and retention,
+  request partitioning, exact lookup, and ordered selection plans owned by
+  `umber-distribution`.
 - `src/options.rs`: schema-1 DTO conversion into private session options, patches, and shared-VFS resource responses.
 - `src/result.rs`: private engine result conversion into schema-1 attempt, output, diagnostic, and resource DTOs.
 - `src/wire.rs`: schema-versioned host-neutral DTO authority, safe JavaScript

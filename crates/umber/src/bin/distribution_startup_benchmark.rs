@@ -14,6 +14,7 @@ use umber::cli_resource::{
     NativeCompileSession, NativeDistributionOwner, NativeRunOptions, ResolverTelemetry,
 };
 use umber::{EngineMode, OutputCapabilitySet};
+use umber_distribution::{ManifestShard, pack_shard};
 use umber_fetch::{FetchCancellation, ObjectCache};
 use umber_hash::{AHash64, HashDomain};
 
@@ -309,14 +310,16 @@ impl Fixture {
         .replace("$BYTES", &package.len().to_string())
         .replace("$UNREQUESTED_DIGEST", &unrequested_digest)
         .replace("$UNREQUESTED_BYTES", &unrequested.len().to_string());
-        let shard_digest = distribution_digest(shard.as_bytes());
+        let shard = pack_shard(&ManifestShard::parse(&shard).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+        let shard_digest = distribution_digest(&shard);
         fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), shard)
             .map_err(|error| error.to_string())?;
         let manifest = format!(
-            "{{\"schema\":5,\"distribution\":\"startup-benchmark\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+            "{{\"schema\":8,\"distribution\":\"startup-benchmark\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
         );
         let manifest_digest = distribution_digest(manifest.as_bytes());
-        fs::write(distribution.join("manifest-v5.json"), manifest)
+        fs::write(distribution.join("manifest-v8.json"), manifest)
             .map_err(|error| error.to_string())?;
         let input = root.join("main.tex");
         fs::write(

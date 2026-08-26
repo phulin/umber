@@ -6,8 +6,8 @@ use std::fmt;
 
 use crate::{
     DependencyHint, FontManifestRecord, LegacyMappingManifestRecord, LicenseRecord,
-    ManifestParseError, ManifestRequest, ObjectEntry, ProvenanceRecord, SelectionError, ShardFile,
-    ShardedManifestRoot, shard_index_for_key,
+    ManifestParseError, ObjectEntry, ProvenanceRecord, SelectionError, ShardFile,
+    ShardedManifestRoot,
 };
 
 pub const PACKED_SHARD_SCHEMA: u16 = 1;
@@ -163,27 +163,29 @@ impl ValidatedPackedShard {
     }
 
     fn validate_records(&self, shard_bits: u8) -> Result<(), PackedShardError> {
-        let mut object_lengths = BTreeMap::new();
+        let mut object_values = Vec::with_capacity(self.header.object_count as usize);
         for index in 0..self.header.object_count {
-            let object = self.object(index)?;
-            if let Some(previous) = object_lengths.insert(object.ahash64.clone(), object.bytes) {
-                if previous != object.bytes {
-                    return Err(PackedShardError::new(
-                        "packed object digest has conflicting lengths",
-                    ));
-                }
-                return Err(PackedShardError::new(
-                    "packed object table contains a duplicate",
-                ));
+            object_values.push(self.raw_object(index)?);
+        }
+        object_values.sort_unstable();
+        for pair in object_values.windows(2) {
+            if pair[0].0 == pair[1].0 {
+                return Err(PackedShardError::new(if pair[0].1 == pair[1].1 {
+                    "packed object table contains a duplicate"
+                } else {
+                    "packed object digest has conflicting lengths"
+                }));
             }
         }
-        let mut path_values = std::collections::BTreeSet::new();
+        let mut path_values = Vec::with_capacity(self.header.path_count as usize);
         for index in 0..self.header.path_count {
-            if !path_values.insert(self.path(index)?) {
-                return Err(PackedShardError::new(
-                    "packed path table contains a duplicate",
-                ));
-            }
+            path_values.push(self.path(index)?);
+        }
+        path_values.sort_unstable();
+        if path_values.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(PackedShardError::new(
+                "packed path table contains a duplicate",
+            ));
         }
         let mut occupied = 0_u32;
         let mut seen = vec![false; self.header.record_count as usize];
@@ -222,10 +224,12 @@ impl ValidatedPackedShard {
                     "packed shard bucket hash does not match its key",
                 ));
             }
-            if shard_index_for_key(key, shard_bits)
-                .map_err(|error| PackedShardError::new(error.to_string()))?
-                != self.header.index
-            {
+            let shard_index = if shard_bits == 0 {
+                0
+            } else {
+                (hash >> (64 - shard_bits)) as u32
+            };
+            if shard_index != self.header.index {
                 return Err(PackedShardError::new(format!(
                     "lookup key {key} is not in canonical shard {}",
                     self.header.index
@@ -248,23 +252,19 @@ impl ValidatedPackedShard {
 
     fn validate_record(&self, record: Record) -> Result<(), PackedShardError> {
         let key = self.key(record)?;
+        let extra = self.extra(record)?;
         if key.is_empty()
             || key.len() > crate::MAX_REQUEST_KEY_BYTES
             || key.chars().any(char::is_control)
         {
             return Err(PackedShardError::new("invalid packed shard request key"));
         }
-        let request = ManifestRequest::from_manifest_key(key)
-            .map_err(|error| PackedShardError::new(error.to_string()))?;
-        self.object(record.object)?;
         match record.kind {
             FILE => {
-                if !matches!(request, ManifestRequest::File(_)) {
-                    return Err(PackedShardError::new(
-                        "packed file record has a non-file key",
-                    ));
-                }
-                if record.flags != 0 || record.path == EMPTY || record.extra_len != 0 {
+                crate::manifest::validate_file_key(key)
+                    .map_err(|error| PackedShardError::new(error.to_string()))?;
+                self.raw_object(record.object)?;
+                if record.flags != 0 || record.path == EMPTY || !extra.is_empty() {
                     return Err(PackedShardError::new("invalid packed file record"));
                 }
                 self.path(record.path)?;
@@ -285,14 +285,14 @@ impl ValidatedPackedShard {
                         dependency.0,
                         dependency.1,
                     )?;
-                    ManifestRequest::from_manifest_key(dependency_key)
+                    crate::manifest::validate_file_key(dependency_key)
                         .map_err(|error| PackedShardError::new(error.to_string()))?;
                     if previous.is_some_and(|value: &str| value >= dependency_key) {
                         return Err(PackedShardError::new(
                             "packed dependency keys are not strictly sorted",
                         ));
                     }
-                    self.object(dependency.2)?;
+                    self.raw_object(dependency.2)?;
                     self.path(dependency.3)?;
                     previous = Some(dependency_key);
                 }
@@ -301,20 +301,9 @@ impl ValidatedPackedShard {
                 if record.path != EMPTY || record.dependency_len != 0 || record.flags != 0 {
                     return Err(PackedShardError::new("invalid packed catalogue record"));
                 }
-                let extra = self.extra(record)?;
                 if record.kind == FONT {
-                    if !matches!(request, ManifestRequest::Font(_)) {
-                        return Err(PackedShardError::new(
-                            "packed font record has a non-font key",
-                        ));
-                    }
                     decode_font_extra(key, self.object(record.object)?, extra)?;
                 } else {
-                    if !matches!(request, ManifestRequest::LegacyMapping(_)) {
-                        return Err(PackedShardError::new(
-                            "packed legacy mapping has a non-mapping key",
-                        ));
-                    }
                     decode_mapping_extra(key, self.object(record.object)?, extra)?;
                 }
             }
@@ -355,6 +344,16 @@ impl ValidatedPackedShard {
     }
 
     fn object(&self, index: u32) -> Result<ObjectEntry, PackedShardError> {
+        let (digest, bytes) = self.raw_object(index)?;
+        let ahash64 = format!("{digest:016x}");
+        Ok(ObjectEntry {
+            object: format!("ahash64-v1-{ahash64}"),
+            ahash64,
+            bytes,
+        })
+    }
+
+    fn raw_object(&self, index: u32) -> Result<(u64, u64), PackedShardError> {
         if index >= self.header.object_count {
             return Err(PackedShardError::new(
                 "packed object index is out of bounds",
@@ -363,15 +362,10 @@ impl ValidatedPackedShard {
         let offset = self.header.objects_offset as usize + index as usize * OBJECT_BYTES;
         let digest = read_u64(&self.bytes, offset)?;
         let bytes = read_u64(&self.bytes, offset + 8)?;
-        if bytes == 0 || bytes > 128 * 1024 * 1024 {
+        if bytes > 128 * 1024 * 1024 {
             return Err(PackedShardError::new("packed object length is invalid"));
         }
-        let ahash64 = format!("{digest:016x}");
-        Ok(ObjectEntry {
-            object: format!("ahash64-v1-{ahash64}"),
-            ahash64,
-            bytes,
-        })
+        Ok((digest, bytes))
     }
 
     fn path(&self, index: u32) -> Result<&str, PackedShardError> {

@@ -22,7 +22,7 @@ printf '\\end\n' > "${fixture_repo}/tests/latex/format-equivalence.tex"
 printf '\\end\n' > "${fixture_repo}/tests/latex/pdflatex-smoke.tex"
 printf 'pdf configuration\n' > "${fixture_repo}/tests/latex/pdftexconfig.tex"
 printf '\\input latex.ltx\n' > "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini"
-printf '{"schema":6}\n' > "${fixture_repo}/distribution/manifest-v6.json"
+printf '{"schema":8}\n' > "${fixture_repo}/distribution/manifest-v8.json"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -119,7 +119,7 @@ cat > "${fixture_repo}/tools/texlive-wasm-publish/target/release/texlive-wasm-pu
 set -euo pipefail
 [[ "$1" == --file-ahash64 && -f "$2" ]]
 case "${2##*/}" in
-  manifest-v6.json) printf '%s\n' dddddddddddddddd ;;
+  manifest-v8.json) printf '%s\n' dddddddddddddddd ;;
   *.fmt) printf '%s\n' eeeeeeeeeeeeeeee ;;
   *) printf '%s\n' ffffffffffffffff ;;
 esac

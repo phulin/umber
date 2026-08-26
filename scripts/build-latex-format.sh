@@ -146,16 +146,14 @@ source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$lock_file")"
 
 if [[ -d "$distribution_path" ]]; then
   distribution_path="$(cd "$distribution_path" && pwd -P)"
-  if [[ -f "$distribution_path/manifest-v7.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v7.json"
-  elif [[ -f "$distribution_path/manifest-v6.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v6.json"
-  elif [[ -f "$distribution_path/manifest-v5.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v5.json"
+  if [[ -f "$distribution_path/manifest-v9.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v9.json"
+  elif [[ -f "$distribution_path/manifest-v8.json" ]]; then
+    distribution_manifest="$distribution_path/manifest-v8.json"
   elif [[ -f "$distribution_path/manifest.json" ]]; then
     distribution_manifest="$distribution_path/manifest.json"
   else
-    fail "distribution directory has no manifest-v7.json, manifest-v6.json, manifest-v5.json, or manifest.json: $distribution_path"
+    fail "distribution directory has no manifest-v9.json, manifest-v8.json, or manifest.json: $distribution_path"
   fi
 elif [[ -f "$distribution_path" ]]; then
   distribution_directory="$(cd "$(dirname "$distribution_path")" && pwd -P)"

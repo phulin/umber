@@ -13,11 +13,16 @@ strict, host-neutral contract for immutable distribution manifests.
   hosts and the authored JavaScript can share fixtures without sharing I/O.
 - `src/json.rs` is only the private strict JSON substrate; schema policy belongs
   in `src/manifest.rs` and the focused HTML record module below.
-- `src/html.rs` owns the schema-4/schema-2 HTML font and exact legacy-mapping
-  records; `src/ahash64.rs` is the dependency-free canonical shard-index hash.
+- `src/html.rs` owns the schema-9/schema-2 HTML font and exact legacy-mapping
+  records; `src/ahash64.rs` is the dependency-free canonical shard-index and
+  packed-table hash.
 - `src/catalog.rs` owns canonical publication partitioning and complete
   root/shard graph assembly. Publisher and host adapters must not reconstruct
   these invariants.
+- `src/packed.rs` owns canonical packed-shard encoding plus the safe validated
+  byte view. Native and WebAssembly runtime selection must use this view and
+  must not restore a JSON shard, per-record materialization, or `BTreeMap` hot
+  path. `ManifestShard` remains a publisher/test construction model only.
 
 ## Validation
 
