@@ -360,9 +360,27 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn get_x_or_protected_with_replay_completion(
         &mut self,
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
+        let mut destination = None;
+        let result = self.get_x_or_protected_with_replay_completion_into(&mut destination)?;
+        Ok(match result {
+            DeliveryStatus::End => None,
+            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
+                destination.expect("command status initializes destination"),
+            )),
+            DeliveryStatus::ReplayCompleted(episode) => {
+                Some(CommandReplayDelivery::Completed(episode))
+            }
+            _ => unreachable!("protected delivery policy cannot produce this event"),
+        })
+    }
+
+    /// Delivers protected replay-aware expansion into caller-provided storage.
+    pub(crate) fn get_x_or_protected_with_replay_completion_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.apply_error_stop_recovery()?;
         let preserve = self.command.profile().capabilities().supports_etex();
-        let mut destination = None;
         let result = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
@@ -383,18 +401,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 replay_completion: ReplayCompletionPolicy::Surface,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
-            &mut destination,
+            destination,
         )?;
-        Ok(match result {
-            DeliveryStatus::End => None,
-            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            DeliveryStatus::ReplayCompleted(episode) => {
-                Some(CommandReplayDelivery::Completed(episode))
-            }
-            _ => unreachable!("protected delivery policy cannot produce this event"),
-        })
+        debug_assert!(matches!(
+            result,
+            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
+        ));
+        Ok(result)
     }
 
     /// Delivers one expanded command to a diagnostic host while preserving
@@ -432,19 +445,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// leaves nothing, which is [`Self::get_x_token`]; §1152 loads an active
     /// character's meaning directly and passes it here, so that meaning is
     /// expanded without ever having been delivered raw.
-    fn get_x_token_from(
-        &mut self,
-        mut pending: Option<CurrentCommand<G>>,
-        fetch: ExpandedFetch,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        match self.get_x_token_from_into(pending.take(), fetch, &mut destination)? {
-            DeliveryStatus::End => Ok(None),
-            DeliveryStatus::Command => Ok(destination),
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
-    }
-
     fn get_x_token_from_into(
         &mut self,
         pending: Option<CurrentCommand<G>>,
@@ -512,8 +512,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, &self.state);
-        let Some(settled) = self.get_x_token_from(Some(command), ExpandedFetch::XToken)? else {
-            return Ok(());
+        let mut destination = None;
+        let status =
+            self.get_x_token_from_into(Some(command), ExpandedFetch::XToken, &mut destination)?;
+        let settled = match status {
+            DeliveryStatus::End => return Ok(()),
+            DeliveryStatus::Command => destination
+                .take()
+                .expect("command status initializes destination"),
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
         };
         // §325 needs only `cur_tok`; the settled token is `x_token`'s result
         // rather than a delivery this call is undoing, exactly as in §326.
@@ -534,10 +541,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn next_non_blank_non_relax_x_token(
         &mut self,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
         loop {
-            let Some(command) = self.get_x_token()? else {
-                return Ok(None);
-            };
+            match self.get_x_token_into(&mut destination)? {
+                DeliveryStatus::End => return Ok(None),
+                DeliveryStatus::Command => {}
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
+            }
+            let command = destination
+                .as_ref()
+                .expect("command status initializes destination");
             if !matches!(
                 static_meaning(command.meaning()),
                 Some(
@@ -547,8 +560,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     } | Meaning::Relax
                 )
             ) {
-                return Ok(Some(command));
+                return Ok(destination);
             }
+            destination = None;
         }
     }
 
@@ -560,10 +574,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// loop: callers such as §1045's `\ignorespaces` dispatch it in place
     /// without backing it up or rebuilding its provenance.
     pub fn next_non_blank_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        let mut destination = None;
         loop {
-            let Some(command) = self.get_x_token()? else {
-                return Ok(None);
-            };
+            match self.get_x_token_into(&mut destination)? {
+                DeliveryStatus::End => return Ok(None),
+                DeliveryStatus::Command => {}
+                _ => unreachable!("ordinary expanded delivery returns only commands"),
+            }
+            let command = destination
+                .as_ref()
+                .expect("command status initializes destination");
             if !matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::CharToken {
@@ -571,8 +591,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ..
                 })
             ) {
-                return Ok(Some(command));
+                return Ok(destination);
             }
+            destination = None;
         }
     }
 
@@ -1504,9 +1525,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // The ordinary expanded loop then dispatches that original
                 // meaning without consulting the shadowable live cell.
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
-                    let Some(target) = self.get_next()? else {
-                        return Err(CommandError::input_invariant());
-                    };
+                    let mut destination = None;
+                    match self.get_next_into(&mut destination)? {
+                        DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                        DeliveryStatus::Command => {}
+                        _ => unreachable!("ordinary raw delivery returns only commands"),
+                    }
+                    let target = destination
+                        .take()
+                        .expect("command status initializes destination");
                     let Some(symbol) = target.control_sequence() else {
                         return Ok(());
                     };
@@ -1932,9 +1959,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
     /// from a backed-up level carrying the non-sticky suppression treatment.
     fn expand_noexpand(&mut self) -> Result<(), CommandError> {
-        let target = self
-            .get_token_with_normal_scanner_status()?
-            .ok_or(CommandError::input_invariant())?;
+        let mut destination = None;
+        match self.get_token_with_normal_scanner_status_into(&mut destination)? {
+            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+        let target = destination
+            .take()
+            .expect("command status initializes destination");
         self.back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
     }
 
@@ -1944,18 +1977,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Both `\noexpand` (§25) and `conv_toks`'s `\string`/`\meaning` cases
     /// (§27) need this scope: their operand is delivered normally even while
     /// an enclosing `\edef` is collecting replacement text.
-    fn get_token_with_normal_scanner_status(
+    fn get_token_with_normal_scanner_status_into(
         &mut self,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
-            return self.get_token();
+            return self.get_token_into(destination);
         }
 
         let episode =
             self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
-        let target = self.get_token();
+        let delivery = self.get_token_into(destination);
         self.finish_scanner_episode(episode);
-        target
+        delivery
     }
 
     /// TeX.web's `\expandafter`: preserve the first token, expand (or back
@@ -1992,10 +2026,25 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             (pending.first, pending.second)
         } else {
-            (
-                self.get_token()?.ok_or(CommandError::input_invariant())?,
-                self.get_token()?.ok_or(CommandError::input_invariant())?,
-            )
+            let mut first = None;
+            match self.get_token_into(&mut first)? {
+                DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                DeliveryStatus::Command => {}
+                _ => unreachable!("ordinary token delivery returns only commands"),
+            }
+            let first = first
+                .take()
+                .expect("command status initializes destination");
+            let mut second = None;
+            match self.get_token_into(&mut second)? {
+                DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                DeliveryStatus::Command => {}
+                _ => unreachable!("ordinary token delivery returns only commands"),
+            }
+            let second = second
+                .take()
+                .expect("command status initializes destination");
+            (first, second)
         };
         if is_expandable_command(&second) {
             if let Err(error) = self.expand(&second) {
@@ -2070,10 +2119,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // scans remain true to ifincsname and unwind to their caller.
         let previous = std::mem::replace(&mut self.is_in_csname, true);
         let result = (|| {
+            let mut destination = None;
             loop {
-                let command = match self.get_x_token() {
-                    Ok(Some(command)) => command,
-                    Ok(None) => return Err(CommandError::input_invariant()),
+                let status = match self.get_x_token_into(&mut destination) {
+                    Ok(status) => status,
                     Err(error) => {
                         if error.is_resource_suspension() {
                             *suspended = Some(name);
@@ -2081,6 +2130,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Err(error);
                     }
                 };
+                match status {
+                    DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                    DeliveryStatus::Command => {}
+                    _ => unreachable!("ordinary expanded delivery returns only commands"),
+                }
+                let command = destination
+                    .take()
+                    .expect("command status initializes destination");
                 match command.meaning() {
                     ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                         ExpandablePrimitive::EndCsName,
@@ -2113,9 +2170,15 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.
     fn expand_string(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
-        let target = self
-            .get_token_with_normal_scanner_status()?
-            .ok_or(CommandError::input_invariant())?;
+        let mut destination = None;
+        match self.get_token_with_normal_scanner_status_into(&mut destination)? {
+            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+        let target = destination
+            .take()
+            .expect("command status initializes destination");
         self.push_rendered_text(
             &string_text(&self.state, target.spelling().semantic_token()),
             opener.origin(),
@@ -2124,9 +2187,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn expand_meaning(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
-        let target = self
-            .get_token_with_normal_scanner_status()?
-            .ok_or(CommandError::input_invariant())?;
+        let mut destination = None;
+        match self.get_token_with_normal_scanner_status_into(&mut destination)? {
+            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+        let target = destination
+            .take()
+            .expect("command status initializes destination");
         let text = meaning_text(&mut self.state, &target);
         self.push_rendered_text(&text, opener.origin());
         Ok(())

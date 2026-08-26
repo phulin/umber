@@ -2,7 +2,7 @@ use tex_state::env::AssignmentScope;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
 use tex_state::token::{Catcode, Token, TokenWord};
 
-use crate::{CommandHostCapabilities, CommandState};
+use crate::{CommandHostCapabilities, CommandProfile, CommandState};
 
 fn install_static<G>(universe: &mut tex_state::Universe<G>, name: &str, meaning: Meaning) -> Token {
     let symbol = universe.intern(name).expect("intern primitive");
@@ -112,6 +112,53 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
                 .semantic_token(),
             replacement
         );
+    });
+}
+
+#[test]
+fn protected_replay_delivery_writes_the_terminal_macro_into_its_caller_slot() {
+    crate::test_harness::with_universe(|universe| {
+        let replacement = Token::Char {
+            ch: 'P',
+            cat: Catcode::Letter,
+        };
+        let definition = universe
+            .allocate_definition(&[], &[TokenWord::pack(replacement)])
+            .expect("definition");
+        let symbol = universe.intern("protected").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::PROTECTED, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let macro_token = Token::Cs(symbol.symbol());
+        let mut command = CommandState::new(CommandProfile::ETEX26);
+        crate::test_harness::push(&mut command, [macro_token]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_x_or_protected_with_replay_completion_into(&mut destination)
+                .expect("protected delivery"),
+            super::DeliveryStatus::Command
+        );
+        let delivered = destination.expect("caller destination");
+        assert_eq!(delivered.spelling().semantic_token(), macro_token);
+        assert!(matches!(
+            delivered.meaning(),
+            tex_state::meaning::ResolvedMeaning::Macro { flags, .. }
+                if flags.contains(MeaningFlags::PROTECTED)
+        ));
     });
 }
 
