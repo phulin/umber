@@ -73,6 +73,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         1,
         "the command core must have exactly one destination-directed input delivery loop"
     );
+    assert_eq!(
+        next.matches("fn get_next_canonical(").count(),
+        1,
+        "the command core must have exactly one canonical raw-command loop"
+    );
     for retired in ["fn take_input_token(", "ActiveInput", "DeliveredToken"] {
         assert!(
             !next.contains(retired),
@@ -117,6 +122,77 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     }
     assert!(levels.contains("This value is diagnostic/provenance state."));
     assert!(levels.contains("cannot select expansion"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn migrated_production_delivery_callers_own_their_command_destinations() {
+    let repository = test_support::repository_root();
+    let roots = [
+        repository.join("crates/tex-command/src"),
+        repository.join("crates/tex-exec/src"),
+    ];
+    let value_returning_calls = [
+        ".get_next()",
+        ".get_token()",
+        ".get_x_token()",
+        ".get_x_or_protected()",
+        ".get_next_with_replay_completion(",
+        ".get_x_token_with_replay_completion(",
+        ".get_x_or_protected_with_replay_completion(",
+        ".get_x_alignment_delivery(",
+        ".next_non_blank_x_token()",
+        ".next_non_blank_non_relax_x_token()",
+        ".settle_current_command(",
+    ];
+    let inferred_or_redispatched = [
+        "infer_command_destination",
+        "search_command_destination",
+        "redispatch_command",
+    ];
+
+    for root in roots {
+        for path in production_rust_sources(&root) {
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let relative = path
+                .strip_prefix(&repository)
+                .expect("production source is below repository root");
+            for forbidden in value_returning_calls {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must write command delivery directly into its caller-owned destination; found {forbidden}",
+                    relative.display()
+                );
+            }
+            for forbidden in inferred_or_redispatched {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not infer a destination or redispatch a delivered command through {forbidden}",
+                    relative.display()
+                );
+            }
+        }
+    }
+
+    // The diagnostic-only undefined-preserving convenience remains a distinct
+    // cold host boundary. It is not part of ordinary command delivery and may
+    // not spread into another production caller.
+    let main_control = fs::read_to_string(repository.join("crates/tex-exec/src/main_control.rs"))
+        .expect("read main-control implementation");
+    assert_eq!(
+        main_control
+            .matches(".get_x_token_preserving_undefined()")
+            .count(),
+        1,
+        "only diagnostic_expand_step may retain the undefined-preserving convenience"
+    );
+    let diagnostic = main_control
+        .split("pub fn diagnostic_expand_step(")
+        .nth(1)
+        .and_then(|tail| tail.split("pub fn ").next())
+        .expect("locate diagnostic-only expansion entry point");
+    assert!(diagnostic.contains(".get_x_token_preserving_undefined()"));
 }
 
 #[test]
@@ -537,6 +613,30 @@ fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     }
 
     names
+}
+
+#[allow(clippy::disallowed_methods)] // host-side architecture test helper
+fn production_rust_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut sources = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", directory.display()))
+        {
+            let path = entry.expect("read production source entry").path();
+            if path.is_dir() {
+                if path.file_name().is_none_or(|name| name != "tests") {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_none_or(|name| name != "tests.rs")
+            {
+                sources.push(path);
+            }
+        }
+    }
+    sources.sort();
+    sources
 }
 
 #[test]

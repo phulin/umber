@@ -59,6 +59,9 @@ macro argument, attempt, and durable owners; and five million indexed reads
 across one sealed 16,385-word macro argument. These rows separate source decode,
 lookup/probe, TeX-visible creation, packed meaning delivery, backed-up raw
 delivery, mixed packed-cursor traversal, and long segmented argument access.
+The destination-directed row warms and then measures 8,192 calls apiece to raw
+non-creating, raw creating, and expanded delivery, reusing one caller-owned
+command slot throughout. All three policies must remain allocation-free.
 The macro-matching row also asserts that its successful first-token expansion
 does not increase the matched-word read counter: paragraph and removable-
 outer-group decisions must consume first-scan metadata rather than reread the

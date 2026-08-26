@@ -469,13 +469,16 @@ fn warmed_keyword_mismatch_throughput() {
 }
 
 fn destination_directed_warm_delivery() {
+    const WARMUPS_PER_POLICY: usize = 64;
+    const DELIVERIES_PER_POLICY: usize = 8_192;
+    const POLICY_COUNT: usize = 3;
     with_universe(|universe| {
         let words = vec![
             TokenWord::pack(Token::Char {
                 ch: 'd',
                 cat: Catcode::Letter,
             });
-            8_256
+            (WARMUPS_PER_POLICY + DELIVERIES_PER_POLICY) * POLICY_COUNT
         ];
         let stored = universe.allocate_token_list(&words).expect("stored tokens");
         let mut command = CommandState::default();
@@ -492,21 +495,59 @@ fn destination_directed_warm_delivery() {
             &mut diagnostic_effects,
         );
         let mut destination = None;
-        for _ in 0..64 {
+        for _ in 0..WARMUPS_PER_POLICY {
+            assert_eq!(
+                processor.get_next_into(&mut destination).unwrap(),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(destination.as_ref().expect("direct raw command"), 'd');
+            destination = None;
+        }
+        for _ in 0..WARMUPS_PER_POLICY {
             assert_eq!(
                 processor.get_token_into(&mut destination).unwrap(),
                 DeliveryStatus::Command
             );
-            assert_char_ref(destination.as_ref().expect("direct command"), 'd');
+            assert_char_ref(destination.as_ref().expect("direct token command"), 'd');
             destination = None;
         }
-        measure_zero("destination_directed_8192_delivery", || {
-            for _ in 0..8_192 {
+        for _ in 0..WARMUPS_PER_POLICY {
+            assert_eq!(
+                processor.get_x_token_into(&mut destination).unwrap(),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(
+                destination.as_ref().expect("direct expanded command"),
+                'd',
+            );
+            destination = None;
+        }
+        measure_zero("destination_directed_24576_delivery", || {
+            for _ in 0..DELIVERIES_PER_POLICY {
+                assert_eq!(
+                    processor.get_next_into(&mut destination).unwrap(),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("direct raw command"), 'd');
+                destination = None;
+            }
+            for _ in 0..DELIVERIES_PER_POLICY {
                 assert_eq!(
                     processor.get_token_into(&mut destination).unwrap(),
                     DeliveryStatus::Command
                 );
-                assert_char_ref(destination.as_ref().expect("direct command"), 'd');
+                assert_char_ref(destination.as_ref().expect("direct token command"), 'd');
+                destination = None;
+            }
+            for _ in 0..DELIVERIES_PER_POLICY {
+                assert_eq!(
+                    processor.get_x_token_into(&mut destination).unwrap(),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(
+                    destination.as_ref().expect("direct expanded command"),
+                    'd',
+                );
                 destination = None;
             }
         });
