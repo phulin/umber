@@ -497,7 +497,7 @@ fn fixed_math_artifact_schema_round_trips_in_wasm() {
                 encoding_map_identity: None,
                 fontdimen_synthesis_version: None,
             }),
-            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 32]),
+            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 8]),
             construction: FontResourceConstruction::Loaded,
         }],
         counts: [0; 10],

@@ -4211,10 +4211,10 @@ pub fn profile_pdf_fork_family(
                 .font_resources
                 .extend((0..rows).map(|row| PdfFontResourceRecord {
                     font: FontId::testing_new(row as u32),
-                    source_identity: tex_fonts::FontSourceIdentity::from_bytes([row as u8; 32]),
+                    source_identity: tex_fonts::FontSourceIdentity::from_bytes([row as u8; 8]),
                     resource_number: row as u32,
                     object_number: row as u32 + 1,
-                    identity: tex_fonts::PdfFontResourceIdentity::new([row as u8; 32], None),
+                    identity: tex_fonts::PdfFontResourceIdentity::new([row as u8; 8], None),
                 }));
         }
         PdfForkProfileFamily::ExternalImageMetadata => {
