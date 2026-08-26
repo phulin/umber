@@ -51,7 +51,8 @@ interning; only an already-spilled pathological name constructs a temporary
 
 `packed_cutover_gate` additionally times one million warmed single-token
 backup/replay cycles, one million direct-source and stored-token
-control-sequence deliveries, and 16,384 warmed failed-keyword scans. Stored
+control-sequence deliveries, one million name-based and packed immutable
+primitive resolutions, and 16,384 warmed failed-keyword scans. Stored
 replay loops assert zero allocation calls and requested bytes after their input
 storage has reached high water. Direct-source delivery retains its real
 append-only provenance rows, so its timing loop relies on the separate

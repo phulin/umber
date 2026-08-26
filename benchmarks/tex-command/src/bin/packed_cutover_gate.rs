@@ -22,6 +22,7 @@ static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 fn main() {
     assert!(std::mem::size_of::<tex_state::DefinitionId<()>>() <= 8);
     assert!(std::mem::size_of::<tex_state::ResolvedMeaning<()>>() <= 24);
+    assert!(std::mem::size_of::<tex_state::PrimitiveHandle<()>>() <= 16);
     assert!(std::mem::size_of::<tex_command::CurrentCommand<()>>() <= 144);
     assert!(std::mem::size_of::<DeliveryStatus>() <= 16);
     ordinary_source_delivery();
@@ -29,11 +30,53 @@ fn main() {
     warmed_backup_push_pop_throughput();
     stored_token_replay();
     warmed_short_interner_lookup();
+    warmed_primitive_resolution();
     warmed_control_sequence_delivery();
     macro_argument_matching();
     warmed_keyword_mismatch_throughput();
     destination_directed_warm_delivery();
     println!("packed token/macro cutover gate: PASS");
+}
+
+fn warmed_primitive_resolution() {
+    const OPERATIONS: usize = 1_000_000;
+    with_universe(|universe| {
+        tex_command::install_tex82_expandable_primitives(universe);
+        tex_command::install_tex82_unexpandable_primitives(universe);
+        tex_command::install_etex_expandable_primitives(universe);
+        tex_command::install_etex_unexpandable_primitives(universe);
+        tex_command::install_pdftex_expandable_primitives(universe);
+        tex_command::install_pdftex_unexpandable_primitives(universe);
+        let handle = universe
+            .primitive_handle("pdfignoreddimen")
+            .expect("pdfTeX ignored-depth primitive handle");
+        let context = universe.command_context().expect("command context");
+
+        let mut named = Duration::ZERO;
+        measure_zero("name_primitive_resolution_1m", || {
+            let start = Instant::now();
+            for _ in 0..OPERATIONS {
+                black_box(context.primitive_resolved(black_box("pdfignoreddimen")))
+                    .expect("name-based primitive resolution");
+            }
+            named = start.elapsed();
+        });
+
+        let mut packed = Duration::ZERO;
+        measure_zero("packed_primitive_resolution_1m", || {
+            let start = Instant::now();
+            for _ in 0..OPERATIONS {
+                black_box(context.resolve_primitive_handle(black_box(handle)))
+                    .expect("packed primitive resolution");
+            }
+            packed = start.elapsed();
+        });
+        println!(
+            "primitive_resolution name_ns_per_op={:.2} packed_ns_per_op={:.2}",
+            named.as_nanos() as f64 / OPERATIONS as f64,
+            packed.as_nanos() as f64 / OPERATIONS as f64,
+        );
+    });
 }
 
 fn warmed_control_sequence_delivery() {
