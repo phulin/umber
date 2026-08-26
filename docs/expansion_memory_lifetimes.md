@@ -251,6 +251,14 @@ deepest-first so younger scanner episodes and attempt scopes close before
 their parents. There is no global pending-scan or pending-expansion scheduler,
 configuration search, or coordinate repair.
 
+Scalar, expression, font, hyphenation, and token-list assignment scanners
+deliver each raw or expanded command into their own call-local command slot.
+If expansion suspends, its frame retains that exact command while the enclosing
+scalar or structured frame retains the typed child destination; retry recreates
+the same local slot at that phase and restores the child deepest-first. The
+slot ends with the scanner call and never becomes command-state storage,
+rollback state, or a searchable result channel.
+
 Multi-child primitives require a caller frame of their own. For example,
 `\pdfstrcmp` stores whether its left or right expanded scan owns the child; the
 right phase also retains the completed left attempt-list coordinate. A retry
