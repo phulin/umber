@@ -33,7 +33,9 @@ use crate::scanners::RestrictedIntegerClass;
 use crate::{
     AlignmentCellTemplates, AlignmentIdentity, AlignmentPreamble, CommandError, CommandProcessor,
     CommandReplayDelivery, CurrentCommand, InternalValue,
-    processor::{print_cs_text, render_the_value, selector_meaning_text, string_text},
+    processor::{
+        DeliveryStatus, print_cs_text, render_the_value, selector_meaning_text, string_text,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2025,12 +2027,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn scan_definition_target(&mut self) -> Result<tex_state::interner::Symbol, CommandError> {
+        let mut destination = None;
         loop {
-            let command = match self.next_non_space_raw()? {
-                Some(command) => command,
-                None => self
-                    .next_non_space_raw()?
-                    .ok_or(CommandError::input_invariant())?,
+            let command = match self.next_non_space_raw_into(&mut destination)? {
+                DeliveryStatus::Command => {
+                    destination.take().ok_or(CommandError::input_invariant())?
+                }
+                DeliveryStatus::End => {
+                    if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
+                        return Err(CommandError::input_invariant());
+                    }
+                    destination.take().ok_or(CommandError::input_invariant())?
+                }
+                _ => return Err(CommandError::input_invariant()),
             };
             if let Some(target) = self.delivered_definition_target(&command) {
                 return Ok(target);
@@ -4592,17 +4601,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(field);
             }
         }
+        let mut destination = None;
         loop {
             // §1151's `restart` label: §404's shared "next non-blank
             // non-relax non-call token", the same fetch §403 opens with.
-            let Some(command) = self.next_non_blank_non_relax_x_token()? else {
-                return Ok(MathFieldEpisode {
-                    body: MathFieldBody::Missing,
-                    provenance: StructuredProvenance {
-                        primary: OriginId::UNKNOWN,
-                    },
-                });
+            match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
+                DeliveryStatus::End => {
+                    return Ok(MathFieldEpisode {
+                        body: MathFieldBody::Missing,
+                        provenance: StructuredProvenance {
+                            primary: OriginId::UNKNOWN,
+                        },
+                    });
+                }
+                DeliveryStatus::Command => {}
+                _ => return Err(CommandError::input_invariant()),
             };
+            let command = destination.take().ok_or(CommandError::input_invariant())?;
             let provenance = StructuredProvenance {
                 primary: command.origin(),
             };
@@ -4792,16 +4807,22 @@ impl<G> CommandProcessor<'_, '_, G> {
         if radical {
             return self.scan_delimiter_number();
         }
-        let Some(command) = self.next_non_blank_non_relax_x_token()? else {
-            return Ok(ScannedMathDelimiter {
-                code: 0,
-                recovered: true,
-                missing_delimiter: true,
-                provenance: StructuredProvenance {
-                    primary: OriginId::UNKNOWN,
-                },
-            });
+        let mut destination = None;
+        match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
+            DeliveryStatus::End => {
+                return Ok(ScannedMathDelimiter {
+                    code: 0,
+                    recovered: true,
+                    missing_delimiter: true,
+                    provenance: StructuredProvenance {
+                        primary: OriginId::UNKNOWN,
+                    },
+                });
+            }
+            DeliveryStatus::Command => {}
+            _ => return Err(CommandError::input_invariant()),
         };
+        let command = destination.take().ok_or(CommandError::input_invariant())?;
         let primary = command.origin();
         let code = match static_meaning(command.meaning()) {
             Some(Meaning::CharToken {
@@ -5373,9 +5394,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
             None => {
-                let command = self
-                    .next_non_space_raw()?
-                    .ok_or(CommandError::input_invariant())?;
+                let mut destination = None;
+                if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
+                    return Err(CommandError::input_invariant());
+                }
+                let command = destination.take().ok_or(CommandError::input_invariant())?;
                 let target = self
                     .delivered_definition_target(&command)
                     .ok_or(CommandError::input_invariant())?;
@@ -5992,9 +6015,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             };
         }
-        let Some(command) = self.next_non_blank_non_relax_x_token()? else {
-            return Ok(ScannedAccentBase::Missing);
+        let mut destination = None;
+        match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
+            DeliveryStatus::End => return Ok(ScannedAccentBase::Missing),
+            DeliveryStatus::Command => {}
+            _ => return Err(CommandError::input_invariant()),
         };
+        let command = destination.take().ok_or(CommandError::input_invariant())?;
         let provenance = StructuredProvenance {
             primary: command.origin(),
         };
@@ -6050,7 +6077,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn next_do_assignments_command(
         &mut self,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        self.next_non_blank_non_relax_x_token()
+        let mut destination = None;
+        match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
+            DeliveryStatus::End => Ok(None),
+            DeliveryStatus::Command => Ok(destination),
+            _ => Err(CommandError::input_invariant()),
+        }
     }
 
     /// Consumes only §1117/§1120's opening brace. The body remains on the
@@ -6172,8 +6204,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             return Err(CommandError::input_invariant());
         }
+        let mut destination = None;
         let command = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            if self.get_x_token_into(&mut destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = destination.take().ok_or(CommandError::input_invariant())?;
             if !matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::CharToken {
@@ -6525,7 +6561,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .saturating_add(transient_words)
                 .saturating_add(4),
         );
-        let mut stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let mut destination = None;
+        if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let mut stopper = destination.take().ok_or(CommandError::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;
         self.outer_recovered_while_absorbing = false;
@@ -6534,7 +6574,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // levels are gone by the time shipout can render the queued report.
         let error_context = unbalanced.then(|| self.command.output_open_context(&self.state));
         while stopper.spelling().semantic_token() != endwrite {
-            stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
+            if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            stopper = destination.take().ok_or(CommandError::input_invariant())?;
         }
         self.retire_last_delivery_level()?;
         if unbalanced {
@@ -6767,7 +6810,11 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX82 §46's raw `\\show` operand scan.
     pub fn scan_show(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
-        let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let mut destination = None;
+        if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let command = destination.take().ok_or(CommandError::input_invariant())?;
         let token = command.spelling().semantic_token();
         let content = match token {
             Token::Cs(_)
@@ -6896,9 +6943,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             )?;
             return Ok(ScannedLeaderPayload::BoxRegister { index, copy });
         }
-        let Some(command) = self.get_x_token()? else {
-            return Ok(ScannedLeaderPayload::Missing);
+        let mut destination = None;
+        match self.get_x_token_into(&mut destination)? {
+            DeliveryStatus::End => return Ok(ScannedLeaderPayload::Missing),
+            DeliveryStatus::Command => {}
+            _ => return Err(CommandError::input_invariant()),
         };
+        let command = destination.take().ok_or(CommandError::input_invariant())?;
         match static_meaning(command.meaning()) {
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
                 let result = self.scan_eight_bit_register_index_retained();
@@ -7414,10 +7465,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// (`back_error`) for ordinary replay, and replay alone reports the
     /// diagnostic since it needs a `Universe` sink.
     fn scan_box_payload(&mut self) -> Result<ScannedBoxShiftPayload, CommandError> {
+        let mut destination = None;
         loop {
-            let Some(command) = self.get_x_token()? else {
-                return Ok(ScannedBoxShiftPayload::Missing);
+            match self.get_x_token_into(&mut destination)? {
+                DeliveryStatus::End => return Ok(ScannedBoxShiftPayload::Missing),
+                DeliveryStatus::Command => {}
+                _ => return Err(CommandError::input_invariant()),
             };
+            let command = destination.take().ok_or(CommandError::input_invariant())?;
             match static_meaning(command.meaning()) {
                 Some(Meaning::CharToken {
                     cat: Catcode::Space,
@@ -7489,8 +7544,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// instead remains consumed and selects the typed template-free path.
     /// TeX82 §765 does not require the backed-up lookahead to be a left brace.
     pub fn scan_alignment_cell_opening(&mut self) -> Result<AlignmentCellOpening, CommandError> {
+        let mut destination = None;
         loop {
-            let opening = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            if self.get_x_token_into(&mut destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let opening = destination.take().ok_or(CommandError::input_invariant())?;
             match static_meaning(opening.meaning()) {
                 Some(Meaning::CharToken {
                     cat: Catcode::Space,
@@ -7727,28 +7786,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                 }
             }
-            let command = match self.get_preamble_token(&mut pending.span_expansion) {
-                Ok(Some(command)) => command,
-                Ok(None) => {
-                    self.abort_alignment_preamble(pending)?;
-                    return Err(CommandError::input_invariant());
-                }
-                Err(error) if error.is_resource_suspension() => {
-                    let key = self
-                        .command
-                        .scratch
-                        .store_alignment_preamble_frame(pending)
-                        .map_err(crate::scan_toks::scratch_command_error)?;
-                    if self.scanner_resume.replace(key).is_some() {
+            let mut destination = None;
+            let command =
+                match self.get_preamble_token(&mut pending.span_expansion, &mut destination) {
+                    Ok(DeliveryStatus::Command) => {
+                        destination.take().ok_or(CommandError::input_invariant())?
+                    }
+                    Ok(DeliveryStatus::End) => {
+                        self.abort_alignment_preamble(pending)?;
                         return Err(CommandError::input_invariant());
                     }
-                    return Err(error);
-                }
-                Err(error) => {
-                    self.abort_alignment_preamble(pending)?;
-                    return Err(error);
-                }
-            };
+                    Ok(_) => {
+                        self.abort_alignment_preamble(pending)?;
+                        return Err(CommandError::input_invariant());
+                    }
+                    Err(error) if error.is_resource_suspension() => {
+                        let key = self
+                            .command
+                            .scratch
+                            .store_alignment_preamble_frame(pending)
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        if self.scanner_resume.replace(key).is_some() {
+                            return Err(CommandError::input_invariant());
+                        }
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        self.abort_alignment_preamble(pending)?;
+                        return Err(error);
+                    }
+                };
             if matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
@@ -7956,8 +8023,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn get_preamble_token(
         &mut self,
         pending: &mut Option<PendingPreambleSpanExpansion<G>>,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut command = if let Some(mut resumed) = pending.take() {
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let delivery = if let Some(mut resumed) = pending.take() {
             self.resume_current_command(&resumed.command);
             if let Some(child) = resumed.child.take() {
                 let (key, destination) = child.restore();
@@ -7981,19 +8049,29 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.scanner_resume.is_some() {
                 return Err(CommandError::input_invariant());
             }
-            self.get_token()?
+            self.get_token_into(destination)?
         } else {
-            self.get_token()?
+            self.get_token_into(destination)?
         };
-        while command.as_ref().is_some_and(|command| {
+        if delivery == DeliveryStatus::End {
+            return Ok(DeliveryStatus::End);
+        }
+        if delivery != DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        while destination.as_ref().is_some_and(|command| {
             matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span))
             )
         }) {
-            let Some(next) = self.get_token()? else {
-                return Ok(None);
-            };
+            destination.take();
+            match self.get_token_into(destination)? {
+                DeliveryStatus::End => return Ok(DeliveryStatus::End),
+                DeliveryStatus::Command => {}
+                _ => return Err(CommandError::input_invariant()),
+            }
+            let next = destination.take().ok_or(CommandError::input_invariant())?;
             if crate::processor::expand::is_expandable_command(&next) {
                 if let Err(error) = self.expand(&next) {
                     if error.is_resource_suspension() {
@@ -8010,12 +8088,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if self.scanner_resume.is_some() {
                     return Err(CommandError::input_invariant());
                 }
-                command = self.get_token()?;
+                match self.get_token_into(destination)? {
+                    DeliveryStatus::End => return Ok(DeliveryStatus::End),
+                    DeliveryStatus::Command => {}
+                    _ => return Err(CommandError::input_invariant()),
+                }
             } else {
-                command = Some(next);
+                *destination = Some(next);
             }
         }
-        if command.as_ref().is_some_and(|command| {
+        if destination.as_ref().is_some_and(|command| {
             matches!(
                 command.spelling().semantic_token(),
                 Token::Char {
@@ -8046,7 +8128,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ReplayTrace::Inserted,
             );
         }
-        Ok(command)
+        Ok(DeliveryStatus::Command)
     }
 
     /// Scans TeX's balanced general text through the canonical `scan_toks`
@@ -8252,9 +8334,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             target
         } else {
-            let command = self
-                .next_non_space_raw()?
-                .ok_or(CommandError::input_invariant())?;
+            let mut destination = None;
+            if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let command = destination.take().ok_or(CommandError::input_invariant())?;
             if let Some(target) = self.delivered_definition_target(&command) {
                 target
             } else {
@@ -8295,27 +8379,47 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         future: bool,
     ) -> Result<ScannedLetAssignment<G>, CommandError> {
-        let command = self
-            .next_non_space_raw()?
-            .ok_or(CommandError::input_invariant())?;
+        let mut destination = None;
+        if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let command = destination.take().ok_or(CommandError::input_invariant())?;
         let target = self
             .delivered_definition_target(&command)
             .ok_or(CommandError::input_invariant())?;
         let (source, meaning) = if future {
-            let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
-            let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
+            let mut first_destination = None;
+            if self.get_token_into(&mut first_destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let mut second_destination = None;
+            if self.get_token_into(&mut second_destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let second = second_destination
+                .take()
+                .ok_or(CommandError::input_invariant())?;
             let source = second.control_sequence();
             let meaning = second.meaning();
             self.back_input(second)?;
+            let first = first_destination
+                .take()
+                .ok_or(CommandError::input_invariant())?;
             self.back_input_saved(first)?;
             (source, meaning)
         } else {
-            let mut source = self.get_token()?.ok_or(CommandError::input_invariant())?;
+            if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            let mut source = destination.take().ok_or(CommandError::input_invariant())?;
             if matches!(
                 static_meaning(source.meaning()),
                 Some(Meaning::CharToken { ch: '=', .. })
             ) {
-                source = self.get_token()?.ok_or(CommandError::input_invariant())?;
+                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                    return Err(CommandError::input_invariant());
+                }
+                source = destination.take().ok_or(CommandError::input_invariant())?;
                 if matches!(
                     static_meaning(source.meaning()),
                     Some(Meaning::CharToken {
@@ -8323,7 +8427,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ..
                     })
                 ) {
-                    source = self.get_token()?.ok_or(CommandError::input_invariant())?;
+                    if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                        return Err(CommandError::input_invariant());
+                    }
+                    source = destination.take().ok_or(CommandError::input_invariant())?;
                 }
             }
             (source.control_sequence(), source.meaning())
@@ -8396,10 +8503,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         suspended: &mut Option<crate::scanners::PendingScalarFrame<G>>,
     ) -> Result<ScannedFileName, CommandError> {
+        let mut destination = None;
         let first = loop {
-            let command = match self.get_x_token() {
-                Ok(Some(command)) => command,
-                Ok(None) => return Err(CommandError::input_invariant()),
+            let command = match self.get_x_token_into(&mut destination) {
+                Ok(DeliveryStatus::Command) => {
+                    destination.take().ok_or(CommandError::input_invariant())?
+                }
+                Ok(DeliveryStatus::End) | Ok(_) => {
+                    return Err(CommandError::input_invariant());
+                }
                 Err(error) => {
                     *suspended =
                         Some(crate::scanners::PendingScalarFrame::FileNameLeading { child: None });
@@ -8449,10 +8561,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         provenance: OriginId,
         suspended: &mut Option<crate::scanners::PendingScalarFrame<G>>,
     ) -> Result<ScannedFileName, CommandError> {
+        let mut destination = None;
         loop {
-            let command = match self.get_x_token() {
-                Ok(Some(command)) => command,
-                Ok(None) => break,
+            let command = match self.get_x_token_into(&mut destination) {
+                Ok(DeliveryStatus::Command) => {
+                    destination.take().ok_or(CommandError::input_invariant())?
+                }
+                Ok(DeliveryStatus::End) => break,
+                Ok(_) => return Err(CommandError::input_invariant()),
                 Err(error) => {
                     *suspended = Some(crate::scanners::PendingScalarFrame::FileNameCharacters {
                         components,
@@ -8688,20 +8804,67 @@ impl<G> CommandProcessor<'_, '_, G> {
     ///
     /// This tests the raw spelling, not `cur_cmd`: a control sequence whose
     /// current meaning is a space remains a legal definition target.
-    fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand<G>>, CommandError> {
+    fn next_non_space_raw_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let Some(command) = self.get_token()? else {
-                return Ok(None);
-            };
+            let delivery = self.get_token_into(destination)?;
+            if delivery == DeliveryStatus::End {
+                return Ok(DeliveryStatus::End);
+            }
+            if delivery != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
             if !matches!(
-                command.spelling().semantic_token(),
+                destination
+                    .as_ref()
+                    .ok_or(CommandError::input_invariant())?
+                    .spelling()
+                    .semantic_token(),
                 Token::Char {
                     cat: Catcode::Space,
                     ..
                 }
             ) {
-                return Ok(Some(command));
+                return Ok(DeliveryStatus::Command);
             }
+            destination.take();
+        }
+    }
+
+    /// TeX82 §404's expanded nonblank/non-relax fetch, delivered directly
+    /// into the structured scanner operation that will classify or hand off
+    /// the command.
+    fn next_non_blank_non_relax_x_token_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            let delivery = self.get_x_token_into(destination)?;
+            if delivery == DeliveryStatus::End {
+                return Ok(DeliveryStatus::End);
+            }
+            if delivery != DeliveryStatus::Command {
+                return Err(CommandError::input_invariant());
+            }
+            if !matches!(
+                static_meaning(
+                    destination
+                        .as_ref()
+                        .ok_or(CommandError::input_invariant())?
+                        .meaning()
+                ),
+                Some(
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    } | Meaning::Relax
+                )
+            ) {
+                return Ok(DeliveryStatus::Command);
+            }
+            destination.take();
         }
     }
 }
