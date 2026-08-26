@@ -296,11 +296,13 @@ collector (see `src/conditionals.rs`).
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
   snapshots and named summaries backed by the command-root timeline and
   containing one coarse generation owner plus fixed scalar journal, arena,
-  stack, source-anchor, and profile coordinates; capture never clones a live
-  command graph, the coarse roots use a private non-atomic owner because they
-  never cross threads, validation never mutates the runtime, and capture
-  requires quiescent execution scratch. Restore installs roots before resetting
-  scratch lanes and truncating unpublished storage suffixes.
+  stack, source-anchor, and profile coordinates; capture explicitly clones the
+  aggregate root once without traversing its immutable payload graphs, the
+  retained coarse root uses a private non-atomic owner because it never crosses
+  threads, validation never mutates the runtime, and capture requires quiescent
+  execution scratch. Restore clones the retained root into exclusive live
+  ownership before resetting scratch lanes and truncating unpublished storage
+  suffixes.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   and suspended-execution recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped
