@@ -1932,7 +1932,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let next = {
                         let attempt = self.command.attempt.arena();
                         let scratch = &self.command.scratch;
-                        let roots = std::sync::Arc::make_mut(&mut self.command.roots);
+                        let roots = std::rc::Rc::make_mut(&mut self.command.roots);
                         let replay_lane = &roots.input.replay;
                         let Some(InputLevel::Tokens(cursor)) = roots.input.levels.last_mut() else {
                             unreachable!("inspected token level remains a token level")
