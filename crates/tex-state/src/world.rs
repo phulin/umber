@@ -5322,7 +5322,9 @@ impl World {
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
         self.next_terminal_publication_identity = snapshot.next_terminal_publication_identity;
         self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
-        self.provisional_page_output_receipts = Arc::new(BTreeMap::new());
+        if !self.provisional_page_output_receipts.is_empty() {
+            Arc::make_mut(&mut self.provisional_page_output_receipts).clear();
+        }
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
         Arc::make_mut(&mut self.stream_open_contexts)
