@@ -81,13 +81,20 @@ Object, path, and dependency records are referenced by compact indexes. File
 dependencies are strictly key-sorted spans and carry their already-resolved
 object/path hint, so prefetch never loads another index shard. Font and legacy
 mapping metadata use bounded explicit encodings in the same string section.
+Primary records are strictly sorted by raw UTF-8 key bytes. The packed key
+blob is valid UTF-8 as a whole, so validation scans those bytes once and then
+checks record and dependency spans at character boundaries without decoding
+the same key again.
 
 `ValidatedPackedShard` owns the authenticated bytes and checks the complete
-layout, UTF-8 spans, canonical keys, shard membership, duplicate objects and
-paths, exact table coverage, hashes, probe chains, record policy, and metadata
-once. Successful lookup thereafter borrows the key, path, and dependency spans
-directly. It does not parse JSON, build a `BTreeMap`, materialize every record,
-or allocate while probing.
+layout in owning table passes: object and path identity, dependency rows,
+strict record order and policy, and bucket coverage and probe reachability.
+The probe proof unwraps the circular table after one guaranteed empty bucket
+and scans every bucket once; it does not replay a live lookup for every record.
+Successful lookup thereafter borrows already validated key, path, object, and
+dependency spans directly without repeating path or reserved-field policy. It
+does not parse JSON, build a `BTreeMap`, materialize every record, or allocate
+while probing.
 
 ## Native and browser acquisition
 
@@ -96,6 +103,8 @@ lookup view. Native `DistributionResolver` retains each touched
 `Arc<ValidatedPackedShard>` for the resolver session. There is no selected-hit
 vector, selected-miss cache, or reparsing path: later keys in a touched shard
 reuse its validated bytes, and an exact packed miss remains authoritative.
+Resolver telemetry separately attributes serialized manifest reads, packed
+selection calls/keys/shard bytes, and packed structural-validation calls/bytes.
 
 The WebAssembly catalogue boundary owns a persistent `CatalogSession`. Authored
 JavaScript parses only the small root response shape needed for transport,
