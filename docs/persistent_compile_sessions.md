@@ -114,10 +114,14 @@ published nor recomputed.
 
 The initial candidate also transfers the workspace's immutable user and
 resolved-resource files into the incremental session's registered-input
-overlay. The edited root buffer remains separately owned. This transfer is
-refreshed when an initial candidate accepts another resource batch, so every
-later checkpoint fork sees the exact accepted bindings without permitting a
-path to be rebound to different bytes.
+overlay. The VFS, session overlay, revision candidate, and memory-backed World
+share each immutable file-body allocation; only the canonical path and shared
+owner are transferred. The initial workspace is enumerated once, and a
+successful resource response registers only its newly admitted binding after
+the whole response batch validates. Candidate workspace refresh therefore
+does not rebuild the overlay. The edited root buffer remains separately owned,
+and every later checkpoint fork still sees the exact accepted bindings without
+permitting a path to be rebound to different bytes.
 When an edited candidate converges and adopts an accepted artifact suffix, the
 artifact-publication sidecar is spliced at the identical prefix and suffix
 boundaries; retained artifacts and their publication identities therefore
