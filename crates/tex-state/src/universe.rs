@@ -793,7 +793,12 @@ impl<G> Universe<G> {
         let mut page = std::mem::take(&mut self.page);
         page.begin_checkpoint_fork(checkpoint.page);
         page.push_contribution(crate::node::Node::Penalty(19));
-        let contribution = u64::from(page.pop_contribution_front().is_some());
+        let contribution = if let Some(carrier) = page.pop_contribution_front() {
+            page.discard_carrier(carrier);
+            1
+        } else {
+            0
+        };
         let current = u64::from(page.pop_current_page().is_some());
         page.clear_page_discards();
         page.clear_split_discards();

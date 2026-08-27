@@ -171,7 +171,9 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
 
     page.push_contribution(kern(10));
     page.prepend_contribution(kern(11));
-    page.pop_contribution_front();
+    if let Some(carrier) = page.pop_contribution_front() {
+        page.discard_carrier(carrier);
+    }
     page.push_current_page(kern(12));
     page.push_page_discard(kern(13));
     page.set_split_discards(vec![kern(14), kern(15)]);
@@ -232,7 +234,9 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     );
     assert_eq!(page.mark_class_value(PageMark::Bot, 7), Some(&rooted_mark));
 
-    assert_eq!(page.pop_contribution_front(), Some(kern(-1)));
+    let carrier = page.pop_contribution_front().expect("root contribution");
+    assert_eq!(carrier.node(), &kern(-1));
+    page.discard_carrier(carrier);
     assert_eq!(page.pop_current_page(), Some(kern(-2)));
     page.clear_page_discards();
     page.clear_split_discards();
@@ -260,7 +264,9 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
 
     let tail = page.begin_checkpoint_candidate(checkpoint);
     let shipout = page.checkpoint_mark();
-    assert_eq!(page.pop_contribution_front(), Some(kern(-1)));
+    let carrier = page.pop_contribution_front().expect("root contribution");
+    assert_eq!(carrier.node(), &kern(-1));
+    page.discard_carrier(carrier);
     assert_eq!(page.pop_current_page(), Some(kern(-2)));
     page.clear_page_discards();
     page.clear_split_discards();
@@ -401,6 +407,8 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
         .expect("accepted future root");
 
     let rejected_tail = page.begin_checkpoint_candidate(early);
+    let after_rewind = page.accepted_replay_work();
+    assert_eq!(after_rewind[2..], [1, 0]);
     page.push_contribution(kern(3));
     let rejected_candidate = page
         .checkpoint_mark()
@@ -408,18 +416,26 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
         .expect("rejected candidate root");
     assert_ne!(rejected_candidate, accepted_future);
     page.reject_checkpoint_candidate(rejected_tail);
+    let after_reject = page.accepted_replay_work();
+    assert_eq!(after_reject[0], after_reject[1]);
+    assert_eq!(after_reject[2..], [1, 1]);
     assert_eq!(
         page.checkpoint_mark().reachable_state_identity_root(),
         Some(accepted_future),
     );
 
     let accepted_tail = page.begin_checkpoint_candidate(early);
+    let before_accept = page.accepted_replay_work();
     page.push_contribution(kern(4));
     let committed_candidate = page
         .checkpoint_mark()
         .reachable_state_identity_root()
         .expect("committed candidate root");
     page.accept_checkpoint_candidate(accepted_tail);
+    let after_accept = page.accepted_replay_work();
+    assert_eq!(after_accept[2], before_accept[2]);
+    assert_eq!(after_accept[3], before_accept[3]);
+    assert_eq!(after_accept[1], before_accept[1]);
     assert_eq!(
         page.checkpoint_mark().reachable_state_identity_root(),
         Some(committed_candidate),

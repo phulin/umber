@@ -830,26 +830,28 @@ fn page_badness<G>(stores: &CommandContext<'_, G>) -> Result<i32, ExecError> {
 
 fn contribute_front<G>(stores: &mut CommandContext<'_, G>) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
-    if let Some(node) = stores.pop_page_contribution_front() {
-        stores.push_current_page_node(node);
+    if let Some(carrier) = stores.pop_page_contribution_front() {
+        stores.push_current_page_carrier(carrier);
     }
     Ok(())
 }
 
 fn contribute_front_as<G>(stores: &mut CommandContext<'_, G>, node: Node) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
-    if stores.pop_page_contribution_front().is_some() {
+    if let Some(carrier) = stores.pop_page_contribution_front() {
         stores.update_page_last_from_node(&node);
-        stores.push_current_page_node(node);
+        stores.push_current_page_replacement(carrier, node);
     }
     Ok(())
 }
 
 fn discard_front<G>(stores: &mut CommandContext<'_, G>) {
-    if let Some(node) = stores.pop_page_contribution_front()
-        && stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0
-    {
-        stores.push_page_discard(node);
+    if let Some(carrier) = stores.pop_page_contribution_front() {
+        if stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0 {
+            stores.push_page_discard_carrier(carrier);
+        } else {
+            stores.discard_page_node(carrier);
+        }
     }
 }
 

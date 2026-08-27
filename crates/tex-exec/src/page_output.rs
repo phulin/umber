@@ -502,7 +502,9 @@ pub(crate) fn prepend_output_heldover<G>(
         if heldover_is_rewritten_break {
             heldover.clear();
         } else if contribution_is_rewritten_break {
-            let _ = stores.pop_page_contribution_front();
+            if let Some(carrier) = stores.pop_page_contribution_front() {
+                stores.discard_page_node(carrier);
+            }
         }
     }
     heldover.extend(output_nodes);
@@ -525,7 +527,9 @@ fn output_penalty_and_rewrite_break<G>(
     if fire_up.trigger() == fire_up.best_break()
         && let Some(Node::Penalty(penalty)) = stores.page_contribution_front().cloned()
     {
-        let _ = stores.pop_page_contribution_front();
+        if let Some(carrier) = stores.pop_page_contribution_front() {
+            stores.discard_page_node(carrier);
+        }
         after_break.push(Node::Penalty(INF_PENALTY));
         return penalty;
     }

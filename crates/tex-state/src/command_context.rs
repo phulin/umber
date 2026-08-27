@@ -3641,8 +3641,12 @@ impl<'a, G> CommandContext<'a, G> {
         self.page.contribution_second()
     }
 
-    pub fn pop_page_contribution_front(&mut self) -> Option<crate::node::Node> {
+    pub fn pop_page_contribution_front(&mut self) -> Option<crate::page::PageNodeCarrier> {
         self.page.pop_contribution_front()
+    }
+
+    pub fn discard_page_node(&mut self, carrier: crate::page::PageNodeCarrier) {
+        self.page.discard_carrier(carrier);
     }
 
     #[must_use]
@@ -3658,6 +3662,21 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn push_current_page_node(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
         self.page.push_current_page(node);
+    }
+
+    pub fn push_current_page_carrier(&mut self, carrier: crate::page::PageNodeCarrier) {
+        self.assert_live_node_font_roots(carrier.node());
+        self.page.push_current_page_carrier(carrier);
+    }
+
+    pub fn push_current_page_replacement(
+        &mut self,
+        carrier: crate::page::PageNodeCarrier,
+        replacement: crate::node::Node,
+    ) {
+        self.assert_live_node_font_roots(&replacement);
+        self.page
+            .push_current_page_replacement(carrier, replacement);
     }
 
     pub fn take_current_page_prefix(
@@ -3699,6 +3718,11 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn push_page_discard(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
         self.page.push_page_discard(node);
+    }
+
+    pub fn push_page_discard_carrier(&mut self, carrier: crate::page::PageNodeCarrier) {
+        self.assert_live_node_font_roots(carrier.node());
+        self.page.push_page_discard_carrier(carrier);
     }
 
     pub fn take_page_discards(&mut self) -> Vec<crate::node::Node> {

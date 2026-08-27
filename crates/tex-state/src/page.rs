@@ -598,7 +598,92 @@ pub(crate) struct PageBuilderState {
     page_node_root_count: usize,
     identity_enabled: bool,
     semantic_roots: PageSemanticRoots,
+    node_stream: PageNodeStream,
     checkpoint_journal: PageCheckpointJournal,
+}
+
+/// Generation-owned immutable storage for node ranges displaced by the page
+/// timeline.  Journal entries carry only coordinates into this stream; node
+/// payload is appended once and is never cloned merely to make an inverse.
+#[derive(Clone, Default)]
+struct PageNodeStream {
+    nodes: Vec<Option<Node>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PageNodeRange {
+    start: usize,
+    end: usize,
+}
+
+impl PageNodeStream {
+    fn reserve_one(&mut self) -> PageNodeRange {
+        let start = self.nodes.len();
+        self.nodes.push(None);
+        PageNodeRange {
+            start,
+            end: start + 1,
+        }
+    }
+
+    fn store(&mut self, nodes: impl IntoIterator<Item = Node>) -> PageNodeRange {
+        let start = self.nodes.len();
+        self.nodes.extend(nodes.into_iter().map(Some));
+        PageNodeRange {
+            start,
+            end: self.nodes.len(),
+        }
+    }
+
+    fn take(&mut self, range: PageNodeRange) -> Vec<Node> {
+        assert!(range.start <= range.end && range.end <= self.nodes.len());
+        self.nodes[range.start..range.end]
+            .iter_mut()
+            .map(|node| node.take().expect("page move range is occupied"))
+            .collect()
+    }
+
+    fn store_one(&mut self, node: Node) -> PageNodeRange {
+        self.store(std::iter::once(node))
+    }
+
+    fn take_one(&mut self, range: PageNodeRange) -> Node {
+        assert_eq!(range.end, range.start + 1);
+        self.nodes[range.start]
+            .take()
+            .expect("page move coordinate is occupied")
+    }
+
+    fn put_one(&mut self, range: PageNodeRange, node: Node) {
+        assert_eq!(range.end, range.start + 1);
+        assert!(
+            self.nodes[range.start].replace(node).is_none(),
+            "page move coordinate is vacant"
+        );
+    }
+}
+
+/// One node detached from a page lane together with its coarse journal move
+/// coordinate. The coordinate is meaningful only to the page generation that
+/// produced it; callers may inspect the node but must return the carrier to a
+/// page destination or explicitly discard it through [`CommandContext`].
+#[derive(Debug)]
+pub struct PageNodeCarrier {
+    node: Node,
+    range: Option<PageNodeRange>,
+}
+
+impl PageNodeCarrier {
+    #[must_use]
+    pub const fn node(&self) -> &Node {
+        &self.node
+    }
+}
+
+impl PartialEq<Node> for PageNodeCarrier {
+    fn eq(&self, other: &Node) -> bool {
+        self.node == *other
+    }
 }
 
 /// Bounded root of one page-builder state on its generation timeline.
@@ -639,11 +724,17 @@ struct PageCheckpointJournal {
     applied: usize,
     candidate_root_frame: Option<u64>,
     replay_work: u64,
+    accepted_rewind_work: u64,
+    accepted_redo_work: u64,
+    accepted_rewind_transitions: u64,
+    accepted_redo_transitions: u64,
 }
 
 pub(crate) struct AcceptedPageTail {
     origin_timeline: u64,
     origin: usize,
+    selected: usize,
+    accepted_rewind_work: u64,
     future: Vec<PageInverse>,
     future_frames: Vec<PageCheckpointFrame>,
     origin_scalars: PageScalars,
@@ -681,23 +772,32 @@ struct PagePayload {
 enum PageInverse {
     Noop,
     Scalars(PageScalars),
-    ContributionPushBack(Option<Node>),
-    ContributionPushFront(Option<Node>),
+    ContributionPushBack(Option<PageNodeRange>),
+    ContributionPushFront(Option<PageNodeRange>),
     ContributionRemoved {
         start: usize,
         count: usize,
-        nodes: Option<Vec<Node>>,
+        nodes: Option<PageNodeRange>,
     },
-    ContributionPoppedFront(Option<Node>),
+    ContributionPoppedFront {
+        range: Option<PageNodeRange>,
+        live: bool,
+    },
     ContributionPrepended {
         count: usize,
-        nodes: Option<Vec<Node>>,
+        nodes: Option<PageNodeRange>,
     },
-    CurrentPagePush(Option<Node>),
-    CurrentPageReplace(PageNodeSequence),
-    PageDiscardsPush(Option<Node>),
-    PageDiscardsReplace(Vec<Node>),
-    SplitDiscardsReplace(Vec<Node>),
+    CurrentPagePush {
+        range: Option<PageNodeRange>,
+        live: bool,
+    },
+    CurrentPageReplace(PageNodeRange),
+    PageDiscardsPush {
+        range: Option<PageNodeRange>,
+        live: bool,
+    },
+    PageDiscardsReplace(PageNodeRange),
+    SplitDiscardsReplace(PageNodeRange),
     InsertionsReplace {
         insertions: Vec<PageInsertion>,
         positions: Vec<Option<u16>>,
@@ -811,6 +911,7 @@ impl Default for PageBuilderState {
             page_node_root_count: 0,
             identity_enabled: false,
             semantic_roots: PageSemanticRoots::default(),
+            node_stream: PageNodeStream::default(),
             checkpoint_journal: PageCheckpointJournal {
                 timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
                 next_frame: 1,
@@ -823,6 +924,10 @@ impl Default for PageBuilderState {
                 applied: 0,
                 candidate_root_frame: None,
                 replay_work: 0,
+                accepted_rewind_work: 0,
+                accepted_redo_work: 0,
+                accepted_rewind_transitions: 0,
+                accepted_redo_transitions: 0,
             },
         }
     }
@@ -1013,8 +1118,22 @@ impl PageBuilderState {
         let origin = self.checkpoint_journal.applied;
         let origin_timeline = self.checkpoint_journal.timeline;
         let origin_scalars = self.scalar_snapshot();
+        let origin_semantic_roots = self.semantic_roots;
+        let rewind_before = self.checkpoint_journal.replay_work;
+        self.restore_checkpoint_mark(mark);
+        let accepted_rewind_work = self
+            .checkpoint_journal
+            .replay_work
+            .saturating_sub(rewind_before);
+        self.checkpoint_journal.accepted_rewind_work = self
+            .checkpoint_journal
+            .accepted_rewind_work
+            .saturating_add(accepted_rewind_work);
+        self.checkpoint_journal.accepted_rewind_transitions = self
+            .checkpoint_journal
+            .accepted_rewind_transitions
+            .saturating_add(1);
         let mut selected = self.take_payload();
-        let origin_semantic_roots = selected.semantic_roots;
         let contribution_before = selected
             .contribution
             .drain(..mark.roots.contribution_start)
@@ -1068,6 +1187,8 @@ impl PageBuilderState {
         AcceptedPageTail {
             origin_timeline,
             origin,
+            selected: mark.cursor,
+            accepted_rewind_work,
             future,
             future_frames,
             origin_scalars,
@@ -1109,12 +1230,34 @@ impl PageBuilderState {
         restored.mark_lane.append(&mut tail.mark_lane_after);
         self.install_payload(restored);
         self.rebuild_canonical_lane_values();
-        self.restore_scalars(tail.origin_scalars);
-        self.semantic_roots = tail.origin_semantic_roots;
         self.checkpoint_journal.inverses = tail.future;
         self.checkpoint_journal.frames = tail.future_frames;
-        self.checkpoint_journal.applied = tail.origin;
+        self.checkpoint_journal.applied = tail.selected;
         self.checkpoint_journal.timeline = tail.origin_timeline;
+        let redo_before = self.checkpoint_journal.replay_work;
+        while self.checkpoint_journal.applied < tail.origin {
+            let index = self.checkpoint_journal.applied;
+            self.toggle_page_inverse(index);
+            self.checkpoint_journal.applied += 1;
+        }
+        let accepted_redo_work = self
+            .checkpoint_journal
+            .replay_work
+            .saturating_sub(redo_before);
+        assert_eq!(
+            accepted_redo_work, tail.accepted_rewind_work,
+            "rejection redoes exactly the accepted span rewound at edit start"
+        );
+        self.checkpoint_journal.accepted_redo_work = self
+            .checkpoint_journal
+            .accepted_redo_work
+            .saturating_add(accepted_redo_work);
+        self.checkpoint_journal.accepted_redo_transitions = self
+            .checkpoint_journal
+            .accepted_redo_transitions
+            .saturating_add(1);
+        self.restore_scalars(tail.origin_scalars);
+        self.semantic_roots = tail.origin_semantic_roots;
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, _tail: AcceptedPageTail) {
@@ -1273,33 +1416,45 @@ impl PageBuilderState {
                 self.restore_scalars(old);
                 PageInverse::Scalars(current)
             }
-            PageInverse::ContributionPushBack(mut node) => {
-                if let Some(node) = node.take() {
-                    self.contribution.push_back(node);
+            PageInverse::ContributionPushBack(mut range) => {
+                if let Some(range) = range.take() {
+                    self.contribution
+                        .push_back(self.node_stream.take_one(range));
                 } else {
-                    node = self.contribution.pop_back();
+                    range = self
+                        .contribution
+                        .pop_back()
+                        .map(|node| self.node_stream.store_one(node));
                 }
-                PageInverse::ContributionPushBack(node)
+                PageInverse::ContributionPushBack(range)
             }
-            PageInverse::ContributionPushFront(mut node) => {
-                if let Some(node) = node.take() {
-                    self.contribution.push_front(node);
+            PageInverse::ContributionPushFront(mut range) => {
+                if let Some(range) = range.take() {
+                    self.contribution
+                        .push_front(self.node_stream.take_one(range));
                 } else {
-                    node = self.contribution.pop_front();
+                    range = self
+                        .contribution
+                        .pop_front()
+                        .map(|node| self.node_stream.store_one(node));
                 }
-                PageInverse::ContributionPushFront(node)
+                PageInverse::ContributionPushFront(range)
             }
             PageInverse::ContributionRemoved {
                 start,
                 count,
                 mut nodes,
             } => {
-                if let Some(restored) = nodes.take() {
+                if let Some(range) = nodes.take() {
+                    let restored = self.node_stream.take(range);
                     for (offset, node) in restored.into_iter().enumerate() {
                         self.contribution.insert(start + offset, node);
                     }
                 } else {
-                    nodes = Some(self.contribution.drain(start..start + count).collect());
+                    nodes = Some(
+                        self.node_stream
+                            .store(self.contribution.drain(start..start + count)),
+                    );
                 }
                 PageInverse::ContributionRemoved {
                     start,
@@ -1307,51 +1462,93 @@ impl PageBuilderState {
                     nodes,
                 }
             }
-            PageInverse::ContributionPoppedFront(mut node) => {
-                if let Some(restored) = node.take() {
-                    self.contribution.push_front(restored);
+            PageInverse::ContributionPoppedFront { mut range, live } => {
+                if !live {
+                    let coordinate = range.expect("journaled page source has a move coordinate");
+                    self.contribution
+                        .push_front(self.node_stream.take_one(coordinate));
                 } else {
-                    node = self.contribution.pop_front();
+                    let node = self
+                        .contribution
+                        .pop_front()
+                        .expect("redone page source move has a front node");
+                    if let Some(coordinate) = range {
+                        self.node_stream.put_one(coordinate, node);
+                    } else {
+                        range = Some(self.node_stream.store_one(node));
+                    }
                 }
-                PageInverse::ContributionPoppedFront(node)
+                PageInverse::ContributionPoppedFront { range, live: !live }
             }
             PageInverse::ContributionPrepended { count, mut nodes } => {
-                if let Some(restored) = nodes.take() {
+                if let Some(range) = nodes.take() {
+                    let restored = self.node_stream.take(range);
                     for node in restored.into_iter().rev() {
                         self.contribution.push_front(node);
                     }
                 } else {
-                    nodes = Some(self.contribution.drain(..count).collect());
+                    nodes = Some(self.node_stream.store(self.contribution.drain(..count)));
                 }
                 PageInverse::ContributionPrepended { count, nodes }
             }
-            PageInverse::CurrentPagePush(mut node) => {
-                if let Some(restored) = node.take() {
-                    self.current_page.push(restored);
+            PageInverse::CurrentPagePush { mut range, live } => {
+                if live {
+                    let node = self
+                        .current_page
+                        .pop()
+                        .expect("rewound page destination move has a tail node");
+                    if let Some(coordinate) = range {
+                        self.node_stream.put_one(coordinate, node);
+                    } else {
+                        range = Some(self.node_stream.store_one(node));
+                    }
                 } else {
-                    node = self.current_page.pop();
+                    self.current_page.push(
+                        self.node_stream
+                            .take_one(range.expect("rewound page destination has a coordinate")),
+                    );
                 }
-                PageInverse::CurrentPagePush(node)
+                PageInverse::CurrentPagePush { range, live: !live }
             }
-            PageInverse::CurrentPageReplace(mut old) => {
-                std::mem::swap(&mut self.current_page, &mut old);
-                PageInverse::CurrentPageReplace(old)
+            PageInverse::CurrentPageReplace(old) => {
+                let restored = PageNodeSequence::from_nodes(self.node_stream.take(old));
+                let current = self
+                    .node_stream
+                    .store(std::mem::replace(&mut self.current_page, restored).into_nodes());
+                PageInverse::CurrentPageReplace(current)
             }
-            PageInverse::PageDiscardsPush(mut node) => {
-                if let Some(restored) = node.take() {
-                    self.page_discards.push(restored);
+            PageInverse::PageDiscardsPush { mut range, live } => {
+                if live {
+                    let node = self
+                        .page_discards
+                        .pop()
+                        .expect("rewound page-discard move has a tail node");
+                    if let Some(coordinate) = range {
+                        self.node_stream.put_one(coordinate, node);
+                    } else {
+                        range = Some(self.node_stream.store_one(node));
+                    }
                 } else {
-                    node = self.page_discards.pop();
+                    self.page_discards.push(
+                        self.node_stream
+                            .take_one(range.expect("rewound page discard has a coordinate")),
+                    );
                 }
-                PageInverse::PageDiscardsPush(node)
+                PageInverse::PageDiscardsPush { range, live: !live }
             }
-            PageInverse::PageDiscardsReplace(mut old) => {
-                std::mem::swap(&mut self.page_discards, &mut old);
-                PageInverse::PageDiscardsReplace(old)
+            PageInverse::PageDiscardsReplace(old) => {
+                let restored = self.node_stream.take(old);
+                let current = self
+                    .node_stream
+                    .store(std::mem::replace(&mut self.page_discards, restored));
+                PageInverse::PageDiscardsReplace(current)
             }
-            PageInverse::SplitDiscardsReplace(mut old) => {
-                std::mem::swap(&mut self.split_discards, &mut old);
-                PageInverse::SplitDiscardsReplace(old)
+            PageInverse::SplitDiscardsReplace(old) => {
+                let restored = self.node_stream.take(old);
+                let current = self
+                    .node_stream
+                    .store(std::mem::replace(&mut self.split_discards, restored));
+                PageInverse::SplitDiscardsReplace(current)
             }
             PageInverse::InsertionsReplace {
                 mut insertions,
@@ -1429,6 +1626,16 @@ impl PageBuilderState {
     #[cfg(feature = "profiling")]
     pub(crate) const fn checkpoint_replay_work(&self) -> u64 {
         self.checkpoint_journal.replay_work
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn accepted_replay_work(&self) -> [u64; 4] {
+        [
+            self.checkpoint_journal.accepted_rewind_work,
+            self.checkpoint_journal.accepted_redo_work,
+            self.checkpoint_journal.accepted_rewind_transitions,
+            self.checkpoint_journal.accepted_redo_transitions,
+        ]
     }
 
     fn restore_insertion(&mut self, class: u16, old: Option<PageInsertion>) {
@@ -2090,6 +2297,7 @@ impl PageBuilderState {
             let current_page = std::mem::take(&mut self.current_page);
             let insertions = std::mem::take(&mut self.insertions);
             let positions = std::mem::take(&mut self.insertion_positions);
+            let current_page = self.node_stream.store(current_page.into_nodes());
             self.record_page_inverse(PageInverse::CurrentPageReplace(current_page));
             self.record_page_inverse(PageInverse::InsertionsReplace {
                 insertions,
@@ -2199,10 +2407,11 @@ impl PageBuilderState {
         let removed = self.contribution.drain(range).collect::<Vec<_>>();
         if !removed.is_empty() {
             self.record_scalars();
+            let stored = self.node_stream.store(removed.clone());
             self.record_page_inverse(PageInverse::ContributionRemoved {
                 start,
                 count: removed.len(),
-                nodes: Some(removed.clone()),
+                nodes: Some(stored),
             });
         }
         self.release_dynamic_nodes(&removed);
@@ -2241,17 +2450,25 @@ impl PageBuilderState {
         self.contribution().get(1)
     }
 
-    pub(crate) fn pop_contribution_front(&mut self) -> Option<Node> {
+    pub(crate) fn pop_contribution_front(&mut self) -> Option<PageNodeCarrier> {
         let node = self.contribution.pop_front()?;
         self.record_scalars();
-        self.record_page_inverse(PageInverse::ContributionPoppedFront(Some(node.clone())));
+        let inverse =
+            (!self.checkpoint_journal.frames.is_empty()).then(|| self.node_stream.reserve_one());
+        self.record_page_inverse(PageInverse::ContributionPoppedFront {
+            range: inverse,
+            live: false,
+        });
         self.release_dynamic_node(&node);
         if self.identity_enabled {
             self.semantic_roots
                 .contribution
                 .pop_front(semantic_node_identity(&node));
         }
-        Some(node)
+        Some(PageNodeCarrier {
+            node,
+            range: inverse,
+        })
     }
 
     pub(crate) fn prepend_contributions(&mut self, nodes: Vec<Node>) {
@@ -2285,7 +2502,10 @@ impl PageBuilderState {
 
     pub(crate) fn push_page_discard(&mut self, node: Node) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::PageDiscardsPush(None));
+        self.record_page_inverse(PageInverse::PageDiscardsPush {
+            range: None,
+            live: true,
+        });
         self.allocate_dynamic_node(&node);
         if self.identity_enabled {
             self.semantic_roots
@@ -2295,10 +2515,26 @@ impl PageBuilderState {
         self.page_discards.push(node);
     }
 
+    pub(crate) fn push_page_discard_carrier(&mut self, carrier: PageNodeCarrier) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::PageDiscardsPush {
+            range: carrier.range,
+            live: true,
+        });
+        self.allocate_dynamic_node(&carrier.node);
+        if self.identity_enabled {
+            self.semantic_roots
+                .page_discards
+                .push_back(semantic_node_identity(&carrier.node));
+        }
+        self.page_discards.push(carrier.node);
+    }
+
     pub(crate) fn take_page_discards(&mut self) -> Vec<Node> {
         self.record_scalars();
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::PageDiscardsReplace(self.page_discards.clone()));
+            let range = self.node_stream.store(self.page_discards.clone());
+            self.record_page_inverse(PageInverse::PageDiscardsReplace(range));
         }
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
@@ -2311,7 +2547,8 @@ impl PageBuilderState {
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::PageDiscardsReplace(nodes));
+            let range = self.node_stream.store(nodes);
+            self.record_page_inverse(PageInverse::PageDiscardsReplace(range));
         }
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
     }
@@ -2329,7 +2566,8 @@ impl PageBuilderState {
         let old = std::mem::replace(&mut self.split_discards, nodes);
         self.release_dynamic_nodes(&old);
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(old));
+            let range = self.node_stream.store(old);
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(range));
         }
         self.allocate_dynamic_word_totals(added);
         self.page_node_root_count = self
@@ -2341,9 +2579,8 @@ impl PageBuilderState {
     pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
         self.record_scalars();
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(
-                self.split_discards.clone(),
-            ));
+            let range = self.node_stream.store(self.split_discards.clone());
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(range));
         }
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
@@ -2356,7 +2593,8 @@ impl PageBuilderState {
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(nodes));
+            let range = self.node_stream.store(nodes);
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(range));
         }
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
     }
@@ -2371,9 +2609,37 @@ impl PageBuilderState {
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::CurrentPagePush(None));
+        self.record_page_inverse(PageInverse::CurrentPagePush {
+            range: None,
+            live: true,
+        });
         self.allocate_dynamic_node(&node);
         self.current_page.push(node);
+    }
+
+    pub(crate) fn push_current_page_carrier(&mut self, carrier: PageNodeCarrier) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::CurrentPagePush {
+            range: carrier.range,
+            live: true,
+        });
+        self.allocate_dynamic_node(&carrier.node);
+        self.current_page.push(carrier.node);
+    }
+
+    pub(crate) fn push_current_page_replacement(
+        &mut self,
+        carrier: PageNodeCarrier,
+        replacement: Node,
+    ) {
+        self.discard_carrier(carrier);
+        self.push_current_page(replacement);
+    }
+
+    pub(crate) fn discard_carrier(&mut self, carrier: PageNodeCarrier) {
+        if let Some(range) = carrier.range {
+            self.node_stream.put_one(range, carrier.node);
+        }
     }
 
     /// Removes one logical current-page tail.
@@ -2382,7 +2648,11 @@ impl PageBuilderState {
         let node = self.current_page.pop()?;
         self.record_scalars();
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::CurrentPagePush(Some(node.clone())));
+            let range = self.node_stream.store_one(node.clone());
+            self.record_page_inverse(PageInverse::CurrentPagePush {
+                range: Some(range),
+                live: false,
+            });
         }
         self.release_dynamic_node(&node);
         Some(node)
@@ -2454,7 +2724,10 @@ impl PageBuilderState {
     ) -> (Vec<Node>, Vec<Node>) {
         self.record_scalars();
         if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::CurrentPageReplace(self.current_page.clone()));
+            let range = self
+                .node_stream
+                .store(self.current_page.clone().into_nodes());
+            self.record_page_inverse(PageInverse::CurrentPageReplace(range));
         }
         let nodes = self.current_page.take_prefix(split_index);
         self.release_dynamic_nodes(&nodes.0);
