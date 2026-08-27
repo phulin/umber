@@ -428,7 +428,6 @@ impl MacroSlot {
 struct MacroWordSegment {
     words: Vec<TracedTokenWord>,
     next: u32,
-    live: bool,
 }
 
 impl MacroWordSegment {
@@ -440,7 +439,6 @@ impl MacroWordSegment {
         Ok(Self {
             words,
             next: NO_MACRO_SEGMENT,
-            live: true,
         })
     }
 }
@@ -1268,7 +1266,6 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn is_quiescent(&self) -> bool {
         self.frame_len() == 0
             && self.pending_slot().is_err()
-            && !self.macro_segments.iter().any(|segment| segment.live)
             && self.delimiter_len == 0
             && self.scanner_resumes.live_len() == 0
     }
@@ -1365,7 +1362,6 @@ impl<G> ExecutionScratch<G> {
     fn segment(&self, segment: u32) -> Result<&MacroWordSegment, ScratchError> {
         self.macro_segments
             .get(segment as usize)
-            .filter(|segment| segment.live)
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
@@ -1398,12 +1394,8 @@ impl<G> ExecutionScratch<G> {
         if self.free_macro_segment != NO_MACRO_SEGMENT {
             let index = self.free_macro_segment;
             let segment = &mut self.macro_segments[index as usize];
-            if segment.live {
-                return Err(ScratchError::InvalidCoordinate);
-            }
             self.free_macro_segment = segment.next;
             segment.next = NO_MACRO_SEGMENT;
-            segment.live = true;
             return Ok(index);
         }
         let index =
@@ -1458,7 +1450,6 @@ impl<G> ExecutionScratch<G> {
             let slot = &mut self.macro_segments[segment as usize];
             let next = slot.next;
             slot.words.clear();
-            slot.live = false;
             slot.next = self.free_macro_segment;
             self.free_macro_segment = segment;
             segment = next;
