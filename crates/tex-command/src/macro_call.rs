@@ -234,11 +234,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             return;
         }
         let mut text = String::new();
-        crate::processor::expand::append_print_esc_text(&self.state, name, &mut text);
+        crate::processor::expand::append_print_esc_text(self.state, name, &mut text);
         text.push_str("->");
         for word in self.state.token_list(tokens) {
             let token = word.semantic_token();
-            crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
+            crate::processor::expand::append_token_list_token_text(self.state, token, &mut text);
         }
         // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
         // an ordinary macro invocation. At an existing line boundary this
@@ -316,7 +316,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // Capture §82's context while the mismatching input level is
                 // still live; in particular, §336's frozen `\par` retains its
                 // `<inserted text>` ownership until this report is complete.
-                let context = self.command.output_open_context(&self.state);
+                let context = self.command.output_open_context(self.state);
                 self.command.semantic_diagnostics.push(
                     crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
                         macro_name,
@@ -533,21 +533,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             return;
         }
         let mut text = String::new();
-        crate::processor::expand::append_print_cs_text(&mut self.state, macro_name, &mut text);
+        crate::processor::expand::append_print_cs_text(self.state, macro_name, &mut text);
         let definition = self.state.definition(definition);
         // TeX82 §§389 uses `token_show` on the stored definition. A
         // non-`#` parameter marker is stored beside its compact out-parameter
         // slot and must render as one pair (`U3`), not as the literal marker
         // followed by the generic `#3` spelling.
         crate::processor::expand::append_meaning_token_words(
-            &self.state,
+            self.state,
             definition.parameter_text(),
             false,
             &mut text,
         );
         text.push_str("->");
         crate::processor::expand::append_meaning_token_words(
-            &self.state,
+            self.state,
             definition.replacement_text(),
             false,
             &mut text,
@@ -569,7 +569,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut text = format!("{marker}{parameter}<-");
         for word in self.argument_buffer(matching, argument)? {
             crate::processor::expand::append_token_list_token_text(
-                &self.state,
+                self.state,
                 word.semantic_token(),
                 &mut text,
             );
@@ -606,7 +606,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // already-committed opening before that trace, just as the ordinary
         // command-trace boundary does. A pending diagnostic took the queued
         // branch above so its earlier report still cannot be overtaken.
-        self.command.render_file_framing_events(&mut self.state);
+        self.command.render_file_framing_events(self.state);
         let mut output = self.begin_diagnostic();
         if force_newline {
             output.print_ln().print(&text);
@@ -626,7 +626,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.command.scanner.status() {
             ScannerStatus::Matching(context) => {
                 let spelling = self.state.resolve(context.macro_name).to_owned();
-                crate::processor::expand::print_esc_text(&self.state, &spelling)
+                crate::processor::expand::print_esc_text(self.state, &spelling)
             }
             _ => String::new(),
         }
@@ -639,11 +639,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// made before reaching here.
     fn report_paragraph_ended_before_complete(&mut self, partial: &[TracedTokenWord]) {
         let name = self.matching_macro_name();
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut display = String::new();
         for token in partial {
             crate::processor::expand::append_token_list_token_text(
-                &self.state,
+                self.state,
                 token.semantic_token(),
                 &mut display,
             );
@@ -670,7 +670,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §395's `<Report an extra right brace and goto continue>`.
     fn report_extra_right_brace_argument(&mut self) {
         let name = self.matching_macro_name();
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {

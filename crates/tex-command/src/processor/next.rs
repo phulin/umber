@@ -548,7 +548,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         delimiter_line: u32,
     ) -> Result<(), CommandError> {
         self.command
-            .begin_alignment_v_template(&self.state, alignment, saved_delimiter, delimiter_line)
+            .begin_alignment_v_template(self.state, alignment, saved_delimiter, delimiter_line)
             .map_err(|_| CommandError::input_invariant())?;
         if let Some(input) = self
             .command
@@ -1418,7 +1418,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         help: &'static [&'static str],
     ) -> Result<(), CommandError> {
         self.back_error(command, diagnostic)?;
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -1441,7 +1441,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         help: &'static [&'static str],
     ) {
         self.command.expansion.pending_diagnostics.push(diagnostic);
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -1630,7 +1630,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 raw_delivery.source_provenance(),
                 raw_delivery.is_direct_source(),
                 raw_delivery.direct_source_line(),
-                &self.state,
+                self.state,
             );
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),
@@ -1814,7 +1814,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     CompactSourceTokenizationStep::End => {
                         if let Some(level) =
-                            self.command.begin_pending_every_eof(&self.state, identity)
+                            self.command.begin_pending_every_eof(self.state, identity)
                         {
                             self.observe(CommandObservation::Input(InputRecord {
                                 transition: InputTransition::Push,
@@ -1836,7 +1836,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     if source.identity() == identity =>
                                 {
                                     self.command
-                                        .output_retiring_source_context(source, &self.state)
+                                        .output_retiring_source_context(source, self.state)
                                 }
                                 _ => return Err(CommandError::input_invariant()),
                             };
@@ -1844,7 +1844,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         let restart = self.retire_and_restart(identity)?;
                         if self.command.semantic_diagnostics.is_empty() {
-                            self.command.render_file_framing_events(&mut self.state);
+                            self.command.render_file_framing_events(self.state);
                         }
                         match restart {
                             RetirementRestart::Stop | RetirementRestart::Completed => {
@@ -2049,7 +2049,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn next_source_step(&mut self) -> CompactSourceTokenizationStep {
         self.command
-            .observe_active_source_dependencies(&mut self.state);
+            .observe_active_source_dependencies(self.state);
         let profile = self.command.profile();
         // TeX82's `firm_up_the_line` captures `end_line_char` when it loads
         // each physical line.  The cursor keeps that captured value through
@@ -2058,7 +2058,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
         let step = {
             let mut queries = LiveSourceQueries {
-                state: &mut self.state,
+                state: self.state,
                 create_control_sequences: self.create_source_control_sequences,
             };
             match profile.character_mode() {
@@ -2071,7 +2071,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         self.command
-            .observe_active_source_dependencies(&mut self.state);
+            .observe_active_source_dependencies(self.state);
         step
     }
 
@@ -2313,9 +2313,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             };
             let name = warning_index.map_or_else(String::new, |symbol| {
                 let spelling = self.state.resolve(symbol).to_owned();
-                super::expand::print_esc_text(&self.state, &spelling)
+                super::expand::print_esc_text(self.state, &spelling)
             });
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             let heading = match &status {
                 ScannerStatus::Defining(_) => "Runaway definition?",
                 ScannerStatus::Matching(_) => "Runaway argument?",
@@ -2340,7 +2340,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_or_else(String::new, |tokens| {
                         tokens.iter().fold(String::new(), |mut text, token| {
                             super::expand::append_token_list_token_text(
-                                &self.state,
+                                self.state,
                                 token.semantic_token(),
                                 &mut text,
                             );
@@ -2367,7 +2367,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         if let ScannerStatus::Skipping(skipping) = &status {
             let name =
-                super::expand::print_esc_text(&self.state, skipping.conditional.canonical_name());
+                super::expand::print_esc_text(self.state, skipping.conditional.canonical_name());
             let message = format!(
                 "Incomplete {name}; all text was ignored after line {}",
                 skipping.skip_line
@@ -2388,7 +2388,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     "the matching `\\fi'. I've inserted a `\\fi'; this might work.",
                 ]
             };
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -2447,7 +2447,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 raw.push(match_marker);
                 raw.push(char::from(b'0' + slot));
             } else {
-                super::expand::append_token_list_token_text(&self.state, token, &mut raw);
+                super::expand::append_token_list_token_text(self.state, token, &mut raw);
             }
             index += 1;
         }

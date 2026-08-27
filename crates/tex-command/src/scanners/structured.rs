@@ -1980,7 +1980,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         tokens: tex_state::TokenListId<G>,
     ) -> Result<crate::attempt::AttemptTokenListId, CommandError> {
-        let episode = self.command.push_output_replay_episode(&self.state, tokens);
+        let episode = self.command.push_output_replay_episode(self.state, tokens);
         let expanded = self
             .command
             .attempt
@@ -2063,7 +2063,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `inserted` level during §82's report, and `goto restart` then
             // consumes that same level as the definition target.
             self.push_inserted_error_token(inaccessible);
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             let mut report = self.state.print_err("Missing control sequence inserted");
             report
                 .help(&[
@@ -4866,7 +4866,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// thickness. Deferring the reports to stomach application reverses that
     /// order when the thickness itself takes §446's missing-number recovery.
     fn missing_delimiter_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
         {
             self.command
@@ -5323,7 +5323,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     )?
                     .value;
                 if !found_to {
-                    let context = self.command.output_open_context(&self.state);
+                    let context = self.command.output_open_context(self.state);
                     let mut report = self.state.print_err("Missing `to' inserted");
                     report.help(&[
                         "You should have said `\\read<number> to \\cs'.",
@@ -5482,7 +5482,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     size_recovery = Some(FontSizeRecovery::ImproperAtSize {
                         size: requested,
-                        context: self.command.output_open_context(&self.state),
+                        context: self.command.output_open_context(self.state),
                     });
                     Scaled::from_raw(10 * Scaled::UNITY)
                 },
@@ -5524,7 +5524,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     size_recovery = Some(FontSizeRecovery::IllegalMagnification {
                         value: requested,
-                        context: self.command.output_open_context(&self.state),
+                        context: self.command.output_open_context(self.state),
                     });
                     1000
                 })
@@ -5537,7 +5537,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             name: file_name.packed(),
             size,
             size_recovery,
-            error_context: self.command.output_open_context(&self.state),
+            error_context: self.command.output_open_context(self.state),
         })
     }
 
@@ -5930,7 +5930,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .collect::<Vec<_>>();
                             PdfImagePageSelection::Named(
                                 crate::processor::expand::token_slice_string_text(
-                                    &mut self.state,
+                                    self.state,
                                     &semantic,
                                 )
                                 .into_bytes(),
@@ -6500,7 +6500,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 > 1
             {
                 let mut text = String::new();
-                crate::processor::expand::append_print_esc_text(&self.state, "write", &mut text);
+                crate::processor::expand::append_print_esc_text(self.state, "write", &mut text);
                 text.push_str("->");
                 let words = self
                     .command
@@ -6510,7 +6510,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(|_| CommandError::input_invariant())?;
                 for word in words {
                     crate::processor::expand::append_token_list_token_text(
-                        &self.state,
+                        self.state,
                         word.semantic_token(),
                         &mut text,
                     );
@@ -6575,7 +6575,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §1372 calls `error` before its recovery loop consumes through the
         // frozen stopper. Preserve that instant: the write and inserted-list
         // levels are gone by the time shipout can render the queued report.
-        let error_context = unbalanced.then(|| self.command.output_open_context(&self.state));
+        let error_context = unbalanced.then(|| self.command.output_open_context(self.state));
         while stopper.spelling().semantic_token() != endwrite {
             if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
@@ -6677,7 +6677,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ScannedSetBoxPath::Payload(self.scan_box_payload()?)
         } else {
             ScannedSetBoxPath::Forbidden {
-                error_context: self.command.output_open_context(&self.state),
+                error_context: self.command.output_open_context(self.state),
             }
         };
         Ok(ScannedSetBoxAssignment { index, path })
@@ -6747,7 +6747,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     result,
                     PendingStructuredScalarPhase::VSplitTo { index },
                 )?;
-                (!found.value).then(|| self.command.output_open_context(&self.state))
+                (!found.value).then(|| self.command.output_open_context(self.state))
             }
             _ => unreachable!("index phase advanced to to/height"),
         };
@@ -6765,7 +6765,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 },
             )?
             .value;
-        let split_context = self.command.output_open_context(&self.state);
+        let split_context = self.command.output_open_context(self.state);
         Ok(ScannedVSplit {
             index,
             height,
@@ -6825,16 +6825,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 cat: Catcode::Active,
                 ..
             } => {
-                let raw = string_text(&self.state, token);
+                let raw = string_text(self.state, token);
                 let mut shown = String::new();
                 self.state.append_selector_string_text(&raw, &mut shown);
                 format!(
                     "> {shown}={}",
-                    Self::shown_meaning_text(&mut self.state, &command)
+                    Self::shown_meaning_text(self.state, &command)
                 )
             }
             Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
-                format!("> {}", Self::shown_meaning_text(&mut self.state, &command))
+                format!("> {}", Self::shown_meaning_text(self.state, &command))
             }
         };
         Ok(ScannedDisplayDiagnostic {
@@ -6860,7 +6860,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // TeX82 §§262/1297: `the_toks` turns an `ident_val` into a
             // control-sequence token, then `token_show` uses `print_cs`.
             // Its control-word delimiter therefore precedes §1293's period.
-            InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
+            InternalValue::Font(symbol) => print_cs_text(self.state, symbol),
             InternalValue::Tokens { tokens, .. } => {
                 let mut text = String::new();
                 let words = self
@@ -7391,7 +7391,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     PendingStructuredScalarPhase::InsertClass { pre },
                 )?
                 .value;
-            let context = (class == 255).then(|| self.command.output_open_context(&self.state));
+            let context = (class == 255).then(|| self.command.output_open_context(self.state));
             (class, context)
         };
         self.scan_box_group_opening()?;
@@ -8734,7 +8734,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         missing: &ScannedFileName,
     ) -> Result<ScannedFileName, CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         self.state
             .printer()
             .print_nl("! I can't find file `")

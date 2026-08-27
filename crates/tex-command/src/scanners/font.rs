@@ -109,7 +109,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `scan_font_ident` backs up a non-font command. Its normal
                 // main-control delivery is therefore still command-owned.
                 self.back_input(command)?;
-                let context = self.command.output_open_context(&self.state);
+                let context = self.command.output_open_context(self.state);
                 let mut report = self.state.resume_error_report(deferred);
                 report.context(context);
                 report.error().jump_out()?;

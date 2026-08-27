@@ -2536,8 +2536,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let value = match self.scan_the_internal_value(&command)? {
             Some(value) => value,
             None => {
-                let rendered = meaning_text(&mut self.state, &command);
-                let context = self.command.output_open_context(&self.state);
+                let rendered = meaning_text(self.state, &command);
+                let context = self.command.output_open_context(self.state);
                 let mut report = self
                     .state
                     .print_err(&format!("You can't use `{rendered}' after \\the"));
@@ -3537,7 +3537,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// quantities were mixed, and TeX assumes `1mu=1pt` and continues.
     ///
     fn mu_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Incompatible glue units");
         report
             .help(&["I'm going to assume that 1mu=1pt when they're mixed."])
@@ -3553,7 +3553,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // offending token as a `backed_up` level. CommandState, rather than
         // Universe, owns that level, so capture its display while it is live
         // for both immediate and deferred reporting.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         // §380 performs an undefined-control-sequence expansion before §444
         // reaches its vacuous constant. Queue behind any already-detected
         // command report. §1370's nested deferred-write processor must also
@@ -3581,7 +3581,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX82 §445's capped integer recovery.
     fn number_too_big_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Number too big");
         report
             .help(&[
@@ -3598,7 +3598,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn improper_alphabetic_constant_error(&mut self) -> Result<(), CommandError> {
         // §442 reaches `back_error`, so the caller has already restored the
         // offending token and §314 names it `<to be read again>`.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Improper alphabetic constant");
         report
             .help(&[
@@ -3613,7 +3613,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §418's wrong-mode half of `set_aux` while fetching an
     /// internal value. The value is still published as zero after the report.
     fn improper_auxiliary_error(&mut self, name: &str) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         // TeX82 §1370 keeps the write_text level live while expanded
         // scan_toks calls §418. Shipout expansion is transactional in Umber,
         // so carry the report (including §82's already-rendered context) over
@@ -3640,7 +3640,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn illegal_unit_mu_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (mu inserted)");
@@ -3661,7 +3661,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §407 has consumed the successful one-letter keyword before §454
         // calls §82's `error`, so capture the source cursor at that exact
         // point rather than reusing context from an earlier scanner report.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (replaced by filll)");
@@ -3675,7 +3675,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §459's unit recovery for ordinary dimensions, extended by
     /// pdfTeX 1.40.29 §459 with `nd`/`nc` even for a loaded TeX82 format.
     fn illegal_unit_pt_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (pt inserted)");
@@ -3700,7 +3700,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX82 §460's clamped dimension recovery.
     fn dimension_too_large_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Dimension too large");
         report
             .help(&[
@@ -3718,7 +3718,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §288 `prepare_mag` diagnostics. Capture it before opening the
         // report so a §325 one-token backup remains visible as
         // `<to be read again>`.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         match diagnostic {
             PrepareMagDiagnostic::IllegalMagnification { attempted } => {
                 let mut report = self

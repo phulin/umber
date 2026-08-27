@@ -14,7 +14,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Completes e-TeX 2.6 [23.328]'s nesting-warning context tail.
     fn finish_nesting_warning(&mut self, tracing_nesting: i32) {
         if tracing_nesting > 1 {
-            let starts_with_print_ln = self.command.open_context_starts_with_print_ln(&self.state);
+            let starts_with_print_ln = self.command.open_context_starts_with_print_ln(self.state);
             let context = self.error_context();
             let mut printer = self.state.printer();
             if starts_with_print_ln {
@@ -147,7 +147,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // precisely when `if_limit=fi_code`; the other limits add no
                 // delimiter to `print_cmd_chr(if_test,cur_if)`.
                 if frame.limit == IfLimit::Fi {
-                    crate::processor::expand::append_print_esc_text(&self.state, "else", &mut text);
+                    crate::processor::expand::append_print_esc_text(self.state, "else", &mut text);
                 }
                 (text, frame.source_line)
             })
@@ -179,7 +179,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !group_lines.is_empty() || !condition_lines.is_empty() {
             if tracing_nesting > 1 {
                 let starts_with_print_ln = saved_context.is_none()
-                    && self.command.open_context_starts_with_print_ln(&self.state);
+                    && self.command.open_context_starts_with_print_ln(self.state);
                 let context = saved_context.unwrap_or_else(|| self.error_context());
                 let mut printer = self.state.printer();
                 if starts_with_print_ln {

@@ -725,7 +725,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .iter()
                 .map(|word| word.semantic_token())
                 .collect::<Vec<_>>();
-            crate::processor::expand::token_slice_string_text(&mut self.state, &semantic_tokens)
+            crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens)
                 .chars()
                 .map(|ch| {
                     self.observed_token(TracedTokenWord::pack(
@@ -1010,7 +1010,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // makes §314 name the rejected token on its own
                     // `<to be read again>␣` line.
                     self.back_input(command)?;
-                    let context = self.command.output_open_context(&self.state);
+                    let context = self.command.output_open_context(self.state);
                     let mut report = self.state.resume_error_report(deferred);
                     report.context(context);
                     report.error().jump_out()?;
@@ -1072,7 +1072,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }),
                 );
                 self.command.alignment.align_state += 1;
-                let context = self.command.output_open_context(&self.state);
+                let context = self.command.output_open_context(self.state);
                 let mut report = self.state.print_err("Missing { inserted");
                 report
                     .help(&[
@@ -1550,7 +1550,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §§476/479 reach `error` only after their own `back_error` has
         // restored the rejected token, which is why §310's display is
         // rendered here rather than at the scanner's decision point.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         match diagnostic {
             MacroParameterDiagnostic::NonconsecutiveNumber => {
                 let mut report = self
@@ -1745,7 +1745,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map(|word| word.semantic_token())
             .collect::<Vec<_>>();
         let text =
-            crate::processor::expand::token_slice_string_text(&mut self.state, &semantic_tokens);
+            crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens);
         let tokens = text
             .chars()
             .map(|ch| {
@@ -2068,7 +2068,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .iter()
                     .copied(),
             );
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {

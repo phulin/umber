@@ -325,7 +325,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         if normalized.is_none() {
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             let mut report = self.state.print_err("Not a letter");
             report.help(&[
                 "Letters in \\hyphenation words must have \\lccode>0.",
@@ -338,7 +338,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn report_pattern_nonletter(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Nonletter");
         report.help(&["(See Appendix H.)"]);
         report.context(context);
@@ -363,7 +363,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let duplicate = *current;
         *current = pattern.has_trie_operation();
         if duplicate {
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             let mut report = self.state.print_err("Duplicate pattern");
             report.help(&["(See Appendix H.)"]);
             report.context(context);
@@ -379,7 +379,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §936 and §961 both reach §82 while the offending command is still
         // current and the source cursor is immediately after it, so both get a
         // context. `CommandState`, not `Universe`, owns that live input stack.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let (message, help): (&str, &[&str]) = match kind {
             HyphenationDataKind::Exceptions => (
                 "Improper \\hyphenation will be flushed",

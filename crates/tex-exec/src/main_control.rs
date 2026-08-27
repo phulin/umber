@@ -3211,7 +3211,7 @@ impl<G> MainControl<G> {
             return match crate::effective_tail::EffectiveTail::find(
                 context.page_contributions().iter(),
             ) {
-                Some(tail) => Self::classify_last_node(&context, tail.node()),
+                Some(tail) => Self::classify_last_node(context, tail.node()),
                 None => match context.page_last_node_type() {
                     11 => context
                         .page_last_skip()
@@ -3228,7 +3228,7 @@ impl<G> MainControl<G> {
             return None;
         }
         crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
-            .and_then(|tail| Self::classify_last_node(&context, tail.node()))
+            .and_then(|tail| Self::classify_last_node(context, tail.node()))
     }
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for

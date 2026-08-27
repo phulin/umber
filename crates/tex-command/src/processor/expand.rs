@@ -492,7 +492,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, &self.state);
+        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, self.state);
         let mut destination = None;
         let status =
             self.get_x_token_from_into(Some(command), ExpandedFetch::XToken, &mut destination)?;
@@ -1553,8 +1553,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // owns the deferred report, so commit any earlier §537 open
                     // framing now; a later §362 close must remain queued behind
                     // this diagnostic instead of overtaking it.
-                    self.command.render_file_framing_events(&mut self.state);
-                    let context = self.command.output_open_context(&self.state);
+                    self.command.render_file_framing_events(self.state);
+                    let context = self.command.output_open_context(self.state);
                     self.command.semantic_diagnostics.push(
                         crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },
                     );
@@ -2128,7 +2128,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         destination = None;
                     }
                     _ => {
-                        let rendered = print_esc_text(&self.state, "endcsname");
+                        let rendered = print_esc_text(self.state, "endcsname");
                         let command = destination
                             .take()
                             .expect("csname recovery consumes the delivered command");
@@ -2167,7 +2167,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .expect("command status initializes destination");
         self.push_rendered_text(
-            &string_text(&self.state, target.spelling().semantic_token()),
+            &string_text(self.state, target.spelling().semantic_token()),
             opener.origin(),
         );
         Ok(())
@@ -2183,7 +2183,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let target = destination
             .take()
             .expect("command status initializes destination");
-        let text = meaning_text(&mut self.state, &target);
+        let text = meaning_text(self.state, &target);
         self.push_rendered_text(&text, opener.origin());
         Ok(())
     }

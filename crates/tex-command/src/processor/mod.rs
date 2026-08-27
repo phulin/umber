@@ -285,7 +285,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the live command input cursor.
     #[must_use]
     pub fn error_context(&self) -> String {
-        self.command.output_open_context(&self.state)
+        self.command.output_open_context(self.state)
     }
 
     /// Captures tex.web's live input `line` while a delivered command still
@@ -409,10 +409,10 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         // so commit every transition already reached at this exact fetch
         // boundary before printing the trace. A close reached later during
         // expansion remains queued behind any earlier diagnostic.
-        self.command.render_file_framing_events(&mut self.state);
+        self.command.render_file_framing_events(self.state);
         let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
         let mut command_text = String::new();
-        expand::append_print_cmd_chr_text(&self.state, command, &mut command_text);
+        expand::append_print_cmd_chr_text(self.state, command, &mut command_text);
         self.print_command_trace_text(command_text, conditional_suffix);
     }
 
@@ -420,8 +420,8 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand<G>) {
         let conditional_suffix = self.command_trace_conditional_suffix(operand.meaning());
         let mut command = String::new();
-        crate::processor::expand::append_print_esc_text(&self.state, "unless", &mut command);
-        crate::processor::expand::append_print_cmd_chr_text(&self.state, operand, &mut command);
+        crate::processor::expand::append_print_esc_text(self.state, "unless", &mut command);
+        crate::processor::expand::append_print_cmd_chr_text(self.state, operand, &mut command);
         self.print_command_trace_text(command, conditional_suffix);
     }
 

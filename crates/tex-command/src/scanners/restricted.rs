@@ -154,7 +154,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // when the last input line is consumed. A preceding trace instead
             // makes the owned report cross admission so the executor can
             // publish that trace first without exposing World here.
-            let context = self.command.output_open_context(&self.state);
+            let context = self.command.output_open_context(self.state);
             if self.has_pending_diagnostic_effects()
                 || !self.command.semantic_diagnostics.is_empty()
                 || self.command.expanding_deferred_write()

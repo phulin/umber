@@ -574,7 +574,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn missing_expression_parenthesis_error(&mut self) -> Result<(), CommandError> {
         // e-TeX \[26.1576] reaches `back_error`, so the caller has already
         // restored the rejected token for §314 to name.
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Missing ) inserted for expression");
         report
             .help(&["I was expecting to see `+', `-', `*', `/', or `)'. Didn't."])
@@ -584,7 +584,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn expression_arithmetic_error(&mut self) -> Result<(), CommandError> {
-        let context = self.command.output_open_context(&self.state);
+        let context = self.command.output_open_context(self.state);
         let mut report = self.state.print_err("Arithmetic overflow");
         report
             .help(&[
