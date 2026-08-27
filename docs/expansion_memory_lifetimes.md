@@ -221,7 +221,11 @@ row itself acquires none. The temporary borrow ends before any command-driven
 mutation, while the final owner survives later assignment, group restoration,
 operation rollback, replay, retry, suspension, and generation retirement. TeX
 assignment level and journal state stay in the bank row and never enter the
-command.
+command. Consumers which only inspect a definition borrow its parameter and
+replacement spans through that existing id; they do not clone the id into an
+owning view. In particular, `\ifx` retains its two raw-delivery command slots as
+the sole operand owners while comparing borrowed meanings and definition
+spans.
 
 The publisher retains only a monotonic serial for cold format coordinates, and
 the token-list publisher retains warmed builder chunks and slots. Neither

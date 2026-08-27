@@ -544,6 +544,17 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     assert!(!ifx.contains("self.get_x_token()?"));
     assert!(ifx.contains("begin_scanner_episode(ScannerStatus::Normal"));
     assert!(ifx.contains("finish_scanner_episode(episode)"));
+    assert_eq!(ifx.matches(".meaning_ref()").count(), 2);
+    assert!(!ifx.contains(".meaning()"));
+    let ifx_comparison = conditionals
+        .split("fn ifx_meaning_eq(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn scan_if_relation(").next())
+        .expect("locate borrowed ifx meaning comparison");
+    assert!(ifx_comparison.contains("first_definition.parameter_text()"));
+    assert!(ifx_comparison.contains("second_definition.replacement_text()"));
+    assert!(!ifx_comparison.contains(".clone()"));
+    assert!(!ifx_comparison.contains("self.state.definition("));
     assert!(conditionals.contains("fn expand_unless("));
     assert!(conditionals.contains("inverted"));
     assert!(!input.contains("ConditionStack"));

@@ -103,6 +103,20 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
 }
 
 impl<G> DefinitionId<G> {
+    /// Borrows the packed parameter text through this definition's existing
+    /// owner.
+    #[must_use]
+    pub fn parameter_text(&self) -> &[TokenWord] {
+        &self.allocation.slice[..self.allocation.head.parameter_len as usize]
+    }
+
+    /// Borrows the packed replacement text through this definition's existing
+    /// owner.
+    #[must_use]
+    pub fn replacement_text(&self) -> &[TokenWord] {
+        &self.allocation.slice[self.allocation.head.parameter_len as usize..]
+    }
+
     /// Borrows one packed replacement word through this already-owned
     /// definition handle.
     ///
@@ -298,11 +312,11 @@ impl<G> DefinitionView<G> {
 
     #[must_use]
     pub fn parameter_text(&self) -> &[TokenWord] {
-        &self.id.allocation.slice[..self.id.allocation.head.parameter_len as usize]
+        self.id.parameter_text()
     }
 
     #[must_use]
     pub fn replacement_text(&self) -> &[TokenWord] {
-        &self.id.allocation.slice[self.id.allocation.head.parameter_len as usize..]
+        self.id.replacement_text()
     }
 }

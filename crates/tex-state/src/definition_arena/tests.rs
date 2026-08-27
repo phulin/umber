@@ -29,6 +29,11 @@ fn complete_rows_resolve_by_direct_id() {
             .allocate(&parameter, &replacement)
             .expect("test fixture is valid");
 
+        let owners = id.semantic_owner_count();
+        assert_eq!(id.parameter_text(), parameter);
+        assert_eq!(id.replacement_text(), replacement);
+        assert_eq!(id.semantic_owner_count(), owners);
+
         let view = generation.definitions().get(id);
         assert_eq!(view.parameter_text(), parameter);
         assert_eq!(view.replacement_text(), replacement);

@@ -1,7 +1,7 @@
 use super::*;
 use tex_state::env::AssignmentScope;
-use tex_state::meaning::MeaningWord;
-use tex_state::token::{Catcode, Token};
+use tex_state::meaning::{MeaningFlags, MeaningWord};
+use tex_state::token::{Catcode, Token, TokenWord};
 
 use crate::{CommandHostCapabilities, CommandSemanticDiagnostic, DeliveryStatus};
 
@@ -244,6 +244,58 @@ fn ifx_compares_raw_operands_without_expanding_them() {
 
         assert_eq!(next_character(&mut processor), 'y');
         assert_expanded_end(&mut processor);
+    });
+}
+
+#[test]
+fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
+    crate::test_harness::with_universe(|universe| {
+        let parameter = [TokenWord::pack(other('p'))];
+        let replacement = [TokenWord::pack(other('r'))];
+        let first = ResolvedMeaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: universe
+                .allocate_definition(&parameter, &replacement)
+                .expect("first definition"),
+        };
+        let equal = ResolvedMeaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: universe
+                .allocate_definition(&parameter, &replacement)
+                .expect("equal definition with distinct identity"),
+        };
+        let different_flags = ResolvedMeaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: universe
+                .allocate_definition(&parameter, &replacement)
+                .expect("definition with different flags"),
+        };
+        let different_parameter = ResolvedMeaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: universe
+                .allocate_definition(&[TokenWord::pack(other('q'))], &replacement)
+                .expect("definition with different parameter text"),
+        };
+        let different_replacement = ResolvedMeaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: universe
+                .allocate_definition(&parameter, &[TokenWord::pack(other('s'))])
+                .expect("definition with different replacement text"),
+        };
+
+        assert!(CommandProcessor::ifx_meaning_eq(&first, &equal));
+        assert!(!CommandProcessor::ifx_meaning_eq(&first, &different_flags));
+        assert!(!CommandProcessor::ifx_meaning_eq(
+            &first,
+            &different_parameter
+        ));
+        assert!(!CommandProcessor::ifx_meaning_eq(
+            &first,
+            &different_replacement
+        ));
+        let undefined = ResolvedMeaning::Static(Meaning::Undefined);
+        assert!(!CommandProcessor::ifx_meaning_eq(&undefined, &first));
+        assert!(CommandProcessor::ifx_meaning_eq(&undefined, &undefined));
     });
 }
 

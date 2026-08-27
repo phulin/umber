@@ -2561,14 +2561,16 @@ frame the skip was started for, because §500's `\if\iftrue abc\else d\fi`
 leaves an inner frame above it.
 
 The TeX82 predicate dispatcher selects `get_x_token` for character/category
-tests and `get_token` specifically for `\ifx`; the latter preserves raw
-meanings and must not expand either operand. `\ifx` compares non-macro
-meanings directly, while macros compare their flags plus raw parameter and
-replacement token sequences rather than their immutable-store allocation
-identities. The comparison remains exact when a bounded candidate index rolls
-over and equal live token sequences receive distinct timeline-local
-coordinates. Character/category tests normalize non-character operands to
-TeX's common relax sentinel before comparing them.
+tests and `get_next` specifically for `\ifx`; the latter preserves raw meanings
+and must not expand either operand. The two caller-local command slots remain
+the operand owners through comparison: `\ifx` borrows their meanings directly,
+and macros compare their flags plus raw parameter and replacement token
+sequences through the borrowed definition coordinates rather than cloning
+those owners or comparing immutable-store allocation identities. The
+comparison remains exact when a bounded candidate index rolls over and equal
+live token sequences receive distinct timeline-local coordinates.
+Character/category tests normalize non-character operands to TeX's common
+relax sentinel before comparing them.
 Boolean false limbs and selected `\ifcase` limbs re-enter the single
 `pass_text` machine, while `\else`, `\or`, and `\fi` change or pop only the
 live frame selected by its stable identity. Premature delimiters enqueue an
