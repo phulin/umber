@@ -1,10 +1,13 @@
-use super::{ModeLevelSummary, ModeList, ModeNest};
+use super::{ModeLevelSummary, ModeList, ModeNest, ModeNestStorage};
 
 #[cfg(test)]
 use super::AlignState;
 
 const MAX_LIVE_LEVELS: usize = 41;
-const MAX_JOURNAL_FRAMES: usize = 4;
+// Four command-attempt frames may nest inside the retained named-boundary
+// frames. The aggregate contract retains at most the prior/current boundary
+// lineages, each with the editor's bounded boundary ring.
+const MAX_JOURNAL_FRAMES: usize = 68;
 const FIELD_COUNT: usize = 12;
 const UNRECORDED: usize = usize::MAX;
 
@@ -148,9 +151,9 @@ enum PendingHcharsRollback {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Cursor {
-    generation: u64,
-    frame_id: u64,
-    cursor: usize,
+    pub(super) generation: u64,
+    pub(super) frame_id: u64,
+    pub(super) cursor: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -412,7 +415,51 @@ impl ListJournal<'_> {
     }
 }
 
-impl ModeNest {
+impl ModeNestStorage {
+    pub(super) fn validates_checkpoint_cursor(&self, cursor: Cursor) -> bool {
+        cursor.generation == self.journal.generation
+            && cursor.cursor <= self.journal.inverses.len()
+            && (self.journal.inverses.len() == cursor.cursor
+                || self
+                    .journal
+                    .frames
+                    .iter()
+                    .any(|frame| frame.cursor == cursor.cursor))
+    }
+
+    pub(super) fn restore_checkpoint_cursor(&mut self, cursor: Cursor) -> Result<(), CursorError> {
+        if !self.validates_checkpoint_cursor(cursor) {
+            return Err(CursorError::WrongGeneration);
+        }
+        if !self
+            .journal
+            .frames
+            .iter()
+            .any(|frame| frame.cursor == cursor.cursor)
+        {
+            debug_assert_eq!(self.journal.inverses.len(), cursor.cursor);
+            return Ok(());
+        }
+        loop {
+            let frame = self
+                .journal
+                .frames
+                .last()
+                .expect("validated checkpoint frame remains present");
+            let active = Cursor {
+                generation: frame.generation,
+                frame_id: frame.id,
+                cursor: frame.cursor,
+            };
+            self.rollback_journal(active)?;
+            if active.cursor == cursor.cursor {
+                break;
+            }
+        }
+        let _replacement = self.begin_journal();
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(super) fn reset_journal_for_test(&mut self) {
         assert!(self.journal.frames.is_empty());
@@ -575,5 +622,29 @@ impl ModeNest {
     fn level_by_id_mut(&mut self, id: u64) -> &mut ModeLevelSummary {
         let index = self.level_index(id);
         &mut self.levels[index]
+    }
+}
+
+impl ModeNest {
+    #[cfg(test)]
+    pub(super) fn reset_journal_for_test(&mut self) {
+        self.storage.borrow_mut().reset_journal_for_test();
+    }
+
+    pub(crate) fn begin_journal(&mut self) -> Cursor {
+        self.storage.borrow_mut().begin_journal()
+    }
+
+    #[cfg(test)]
+    pub(super) fn journal_inverse_len_for_test(&self) -> usize {
+        self.storage.borrow().journal_inverse_len_for_test()
+    }
+
+    pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
+        self.storage.borrow_mut().commit_journal(cursor)
+    }
+
+    pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
+        self.storage.borrow_mut().rollback_journal(cursor)
     }
 }

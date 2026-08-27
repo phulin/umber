@@ -438,12 +438,52 @@ impl ModeList {
 /// The capability deliberately does not implement `DerefMut` or expose its
 /// backing list. Operations either consume/replace owned values or execute a
 /// higher-ranked closure whose mutable borrow cannot escape.
+enum ModeListBorrow<'a> {
+    Direct(&'a mut ModeList),
+    Shared(std::cell::RefMut<'a, ModeList>),
+}
+
+impl std::ops::Deref for ModeListBorrow<'_> {
+    type Target = ModeList;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Direct(list) => list,
+            Self::Shared(list) => list,
+        }
+    }
+}
+
+impl std::ops::DerefMut for ModeListBorrow<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Direct(list) => list,
+            Self::Shared(list) => list,
+        }
+    }
+}
+
+enum ModeListJournalBorrow<'a> {
+    None,
+    Shared {
+        journal: std::cell::RefMut<'a, journal::ModeJournal>,
+        index: usize,
+    },
+}
+
 pub(crate) struct ModeListMutation<'a> {
-    list: &'a mut ModeList,
-    journal: Option<journal::ListJournal<'a>>,
+    list: ModeListBorrow<'a>,
+    journal: ModeListJournalBorrow<'a>,
 }
 
 impl ModeListMutation<'_> {
+    fn list_journal(&mut self) -> Option<journal::ListJournal<'_>> {
+        match &mut self.journal {
+            ModeListJournalBorrow::None => None,
+            ModeListJournalBorrow::Shared { journal, index } => journal.list(*index),
+        }
+    }
+
     pub(crate) fn push(&mut self, node: Node) {
         self.list.push(node);
     }
@@ -518,22 +558,25 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_pending_projection(self.list.pending_hchars.as_ref());
+        let old = self.list.pending_hchars.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_pending_projection(old.as_ref());
         }
         self.list.begin_pending_hchars(font, ch, origin);
     }
 
     pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_pending_value(self.list.pending_hchars.as_ref());
+        let old = self.list.pending_hchars.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_pending_value(old.as_ref());
         }
         self.list.set_pending_hchars(pending);
     }
 
     pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_pending_value(self.list.pending_hchars.as_ref());
+        let old = self.list.pending_hchars.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_pending_value(old.as_ref());
         }
         self.list.take_pending_hchars()
     }
@@ -542,15 +585,17 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl FnOnce(&mut PendingHRun) -> R,
     ) -> Option<R> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_pending_projection(self.list.pending_hchars.as_ref());
+        let old = self.list.pending_hchars.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_pending_projection(old.as_ref());
         }
         self.list.pending_hchars.as_mut().map(mutate)
     }
 
     pub(crate) fn set_space_factor(&mut self, value: i32) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_space_factor(self.list.space_factor);
+        let old = self.list.space_factor;
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_space_factor(old);
         }
         self.list.set_space_factor(value);
     }
@@ -560,53 +605,59 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_no_boundary(&mut self, value: bool) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_no_boundary(self.list.no_boundary);
+        let old = self.list.no_boundary;
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_no_boundary(old);
         }
         self.list.set_no_boundary(value);
     }
 
     pub(crate) fn set_hyphen_context(&mut self, language: u8, left: u8, right: u8) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_hyphen_context((
-                self.list.hyphen_language,
-                self.list.left_hyphen_min,
-                self.list.right_hyphen_min,
-            ));
+        let old = (
+            self.list.hyphen_language,
+            self.list.left_hyphen_min,
+            self.list.right_hyphen_min,
+        );
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_hyphen_context(old);
         }
         self.list.set_hyphen_context(language, left, right);
     }
 
     #[cfg(test)]
     pub(crate) fn set_hyphen_language(&mut self, language: u8) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_hyphen_context((
-                self.list.hyphen_language,
-                self.list.left_hyphen_min,
-                self.list.right_hyphen_min,
-            ));
+        let old = (
+            self.list.hyphen_language,
+            self.list.left_hyphen_min,
+            self.list.right_hyphen_min,
+        );
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_hyphen_context(old);
         }
         self.list.set_hyphen_language(language);
     }
 
     pub(crate) fn set_prev_depth(&mut self, depth: Scaled) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_prev_depth(self.list.prev_depth);
+        let old = self.list.prev_depth;
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_prev_depth(old);
         }
         self.list.set_prev_depth(depth);
     }
 
     pub(crate) fn set_prev_graf(&mut self, lines: i32) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_prev_graf(self.list.prev_graf);
+        let old = self.list.prev_graf;
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_prev_graf(old);
         }
         self.list.set_prev_graf(lines);
     }
 
     #[cfg(test)]
     pub(crate) fn set_align_state(&mut self, state: AlignState) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_align_state(self.list.align_state.clone());
+        let old = self.list.align_state.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_align_state(old);
         }
         self.list.set_align_state(state);
     }
@@ -616,30 +667,34 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
     ) -> Option<R> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_align_state(self.list.align_state.clone());
+        let old = self.list.align_state.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_align_state(old);
         }
         self.list.with_align_state_mut(mutate)
     }
 
     #[cfg(test)]
     pub(crate) fn take_align_state(&mut self) -> Option<AlignState> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_align_state(self.list.align_state.clone());
+        let old = self.list.align_state.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_align_state(old);
         }
         self.list.take_align_state()
     }
 
     pub(crate) fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_incomplete_fraction(self.list.incomplete_fraction.clone());
+        let old = self.list.incomplete_fraction.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_incomplete_fraction(old);
         }
         self.list.set_incomplete_fraction(fraction);
     }
 
     pub(crate) fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_incomplete_fraction(self.list.incomplete_fraction.clone());
+        let old = self.list.incomplete_fraction.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_incomplete_fraction(old);
         }
         self.list.take_incomplete_fraction()
     }
@@ -649,38 +704,44 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_display_interrupt(self.list.display_interrupt.clone());
+        let old = self.list.display_interrupt.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_display_interrupt(old);
         }
         self.list.set_display_interrupt(interrupt);
     }
 
     pub(crate) fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_display_interrupt(self.list.display_interrupt.clone());
+        let old = self.list.display_interrupt.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_display_interrupt(old);
         }
         self.list.take_display_interrupt()
     }
 
     pub(crate) fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_display_eq_no(self.list.display_eq_no.clone());
+        let old = self.list.display_eq_no.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_display_eq_no(old);
         }
         self.list.set_display_eq_no(eq_no);
     }
 
     pub(crate) fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
-        if let Some(journal) = &mut self.journal {
-            journal.record_display_eq_no(self.list.display_eq_no.clone());
+        let old = self.list.display_eq_no.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_display_eq_no(old);
         }
         self.list.take_display_eq_no()
     }
 
     pub(crate) fn set_display_alignment(&mut self, nodes: Vec<Node>, prev_depth: Option<Scaled>) {
         self.record_nodes();
-        if let Some(journal) = &mut self.journal {
-            journal.record_prev_depth(self.list.prev_depth);
-            journal.record_display_alignment(self.list.display_alignment);
+        let old_prev_depth = self.list.prev_depth;
+        let old_display_alignment = self.list.display_alignment;
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_prev_depth(old_prev_depth);
+            journal.record_display_alignment(old_display_alignment);
         }
         self.list.set_display_alignment(nodes, prev_depth);
     }
@@ -689,24 +750,28 @@ impl ModeListMutation<'_> {
         if self.list.display_alignment {
             self.record_nodes();
         }
-        if let Some(journal) = &mut self.journal {
-            journal.record_prev_depth(self.list.prev_depth);
-            journal.record_display_alignment(self.list.display_alignment);
+        let old_prev_depth = self.list.prev_depth;
+        let old_display_alignment = self.list.display_alignment;
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_prev_depth(old_prev_depth);
+            journal.record_display_alignment(old_display_alignment);
         }
         self.list.take_display_alignment()
     }
 
     fn record_node(&mut self, index: usize) {
-        if let Some(journal) = &mut self.journal
-            && self.list.nodes().get(index).is_some()
-        {
-            journal.record_nodes(&self.list.sequence);
+        if self.list.nodes().get(index).is_some() {
+            let old = self.list.sequence.clone();
+            if let Some(mut journal) = self.list_journal() {
+                journal.record_nodes(&old);
+            }
         }
     }
 
     fn record_nodes(&mut self) {
-        if let Some(journal) = &mut self.journal {
-            journal.record_nodes(&self.list.sequence);
+        let old = self.list.sequence.clone();
+        if let Some(mut journal) = self.list_journal() {
+            journal.record_nodes(&old);
         }
     }
 }
@@ -1009,8 +1074,8 @@ impl ModeLevelSummary {
 
     pub(crate) fn list_mutation(&mut self) -> ModeListMutation<'_> {
         ModeListMutation {
-            list: &mut self.list,
-            journal: None,
+            list: ModeListBorrow::Direct(&mut self.list),
+            journal: ModeListJournalBorrow::None,
         }
     }
 }
@@ -1025,23 +1090,6 @@ impl ModeNestSummary {
     #[must_use]
     pub fn levels(&self) -> &[ModeLevelSummary] {
         &self.levels
-    }
-
-    pub(crate) fn font_roots_are_live(&self, mut is_live: impl FnMut(FontId) -> bool) -> bool {
-        self.levels.iter().all(|level| {
-            let list = &level.list;
-            let nodes_are_live = list.nodes().iter().all(|node| {
-                let mut live = true;
-                node.visit_fonts(|font| live &= is_live(font));
-                live
-            });
-            let pending_is_live = list.pending_hchars.as_ref().is_none_or(|pending| {
-                is_live(pending.first.font)
-                    && is_live(pending.current.font)
-                    && pending.source.iter().all(|source| is_live(source.font))
-            });
-            nodes_are_live && pending_is_live
-        })
     }
 
     /// Whether this summary has any explicit checkpointable page coordinate.
@@ -1066,17 +1114,41 @@ impl ModeNestSummary {
     }
 
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
-        #[cfg(test)]
-        SEMANTIC_FINGERPRINT_CALLS.with(|calls| calls.set(calls.get() + 1));
-        universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
-            projection.usize(self.levels.len());
-            for level in self.levels.iter() {
-                hash_mode(level.mode, projection);
-                projection.i32(level.entry_line);
-                hash_mode_list(&level.list, universe, projection);
-            }
-        })
+        semantic_fingerprint_levels(&self.levels, universe)
     }
+}
+
+fn font_roots_are_live(
+    levels: &[ModeLevelSummary],
+    is_live: &mut impl FnMut(FontId) -> bool,
+) -> bool {
+    levels.iter().all(|level| {
+        let list = &level.list;
+        let nodes_are_live = list.nodes().iter().all(|node| {
+            let mut live = true;
+            node.visit_fonts(|font| live &= is_live(font));
+            live
+        });
+        let pending_is_live = list.pending_hchars.as_ref().is_none_or(|pending| {
+            is_live(pending.first.font)
+                && is_live(pending.current.font)
+                && pending.source.iter().all(|source| is_live(source.font))
+        });
+        nodes_are_live && pending_is_live
+    })
+}
+
+fn semantic_fingerprint_levels<G>(levels: &[ModeLevelSummary], universe: &Universe<G>) -> u64 {
+    #[cfg(test)]
+    SEMANTIC_FINGERPRINT_CALLS.with(|calls| calls.set(calls.get() + 1));
+    universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
+        projection.usize(levels.len());
+        for level in levels {
+            hash_mode(level.mode, projection);
+            projection.i32(level.entry_line);
+            hash_mode_list(&level.list, universe, projection);
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1272,9 +1344,98 @@ fn hash_optional_u32<G>(value: Option<u32>, projection: &mut EngineBoundaryHashe
 }
 
 /// Explicit stack of TeX mode levels.
-pub struct ModeNest {
+struct ModeNestStorage {
     levels: Vec<ModeLevelSummary>,
     journal: journal::ModeJournal,
+}
+
+impl ModeNestStorage {
+    fn placeholder() -> Self {
+        let levels = vec![ModeLevelSummary::new(Mode::Vertical)];
+        Self {
+            journal: journal::ModeJournal::enabled(levels.len()),
+            levels,
+        }
+    }
+}
+
+/// Opaque bounded root of one mode timeline position.
+pub(crate) struct ModeCheckpoint {
+    owner: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
+    cursor: ModeJournalCursor,
+}
+
+impl Clone for ModeCheckpoint {
+    fn clone(&self) -> Self {
+        Self {
+            owner: std::rc::Rc::clone(&self.owner),
+            cursor: self.cursor,
+        }
+    }
+}
+
+impl std::fmt::Debug for ModeCheckpoint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ModeCheckpoint")
+            .field("generation", &self.cursor.generation)
+            .field("frame", &self.cursor.frame_id)
+            .field("cursor", &self.cursor.cursor)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ModeCheckpoint {
+    pub(crate) fn font_roots_are_live(&self, mut is_live: impl FnMut(FontId) -> bool) -> bool {
+        let storage = self.owner.borrow();
+        font_roots_are_live(&storage.levels, &mut is_live)
+    }
+
+    pub(crate) fn retains_page_node_handles(&self) -> bool {
+        let storage = self.owner.borrow();
+        storage.levels.iter().any(|level| {
+            let list = &level.list;
+            list.sequence.retains_page_node_handles()
+                || list
+                    .incomplete_fraction
+                    .as_ref()
+                    .is_some_and(|fraction| !fraction.numerator.is_empty())
+                || list
+                    .display_interrupt
+                    .as_ref()
+                    .and_then(|interrupt| interrupt.prototype.as_ref())
+                    .is_some_and(|prototype| !prototype.children.is_empty())
+                || list
+                    .display_eq_no
+                    .as_ref()
+                    .is_some_and(|eqno| !eqno.display.is_empty())
+        })
+    }
+
+    pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
+        semantic_fingerprint_levels(&self.owner.borrow().levels, universe)
+    }
+
+    pub(crate) fn summary(&self) -> ModeNestSummary {
+        ModeNestSummary {
+            levels: self.owner.borrow().levels.clone(),
+        }
+    }
+
+    fn restore_storage(&self) -> Result<(), ExecError> {
+        self.owner
+            .borrow_mut()
+            .restore_checkpoint_cursor(self.cursor)
+            .map_err(|_| ExecError::EmptyModeNestSummary)
+    }
+}
+
+pub struct ModeNest {
+    storage: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
+    loan: Option<(
+        std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
+        ModeJournalCursor,
+    )>,
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
     max_nest_stack: usize,
@@ -1282,9 +1443,14 @@ pub struct ModeNest {
 
 impl Clone for ModeNest {
     fn clone(&self) -> Self {
+        let storage = self.storage.borrow();
+        let levels = storage.levels.clone();
         Self {
-            levels: self.levels.clone(),
-            journal: journal::ModeJournal::enabled(self.levels.len()),
+            storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
+                journal: journal::ModeJournal::enabled(levels.len()),
+                levels,
+            })),
+            loan: None,
             max_nest_stack: self.max_nest_stack,
         }
     }
@@ -1294,14 +1460,29 @@ impl std::fmt::Debug for ModeNest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ModeNest")
-            .field("levels", &self.levels)
+            .field("levels", &self.storage.borrow().levels)
             .finish()
     }
 }
 
 impl PartialEq for ModeNest {
     fn eq(&self, other: &Self) -> bool {
-        self.levels == other.levels
+        self.storage.borrow().levels == other.storage.borrow().levels
+    }
+}
+
+impl Drop for ModeNest {
+    fn drop(&mut self) {
+        let Some((origin, cursor)) = self.loan.take() else {
+            return;
+        };
+        let mut storage = self.storage.borrow_mut();
+        storage
+            .restore_checkpoint_cursor(cursor)
+            .expect("mode fork retains its origin checkpoint");
+        let returned = std::mem::replace(&mut *storage, ModeNestStorage::placeholder());
+        drop(storage);
+        *origin.borrow_mut() = returned;
     }
 }
 
@@ -1324,8 +1505,11 @@ impl ModeNest {
         let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
         levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
-            levels,
-            journal: journal::ModeJournal::enabled(1),
+            storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
+                levels,
+                journal: journal::ModeJournal::enabled(1),
+            })),
+            loan: None,
             max_nest_stack: 0,
         }
     }
@@ -1342,8 +1526,11 @@ impl ModeNest {
             )));
         }
         Ok(Self {
-            journal: journal::ModeJournal::enabled(summary.levels.len()),
-            levels: summary.levels,
+            storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
+                journal: journal::ModeJournal::enabled(summary.levels.len()),
+                levels: summary.levels,
+            })),
+            loan: None,
             max_nest_stack: 0,
         })
     }
@@ -1351,13 +1538,43 @@ impl ModeNest {
     #[must_use]
     pub fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
-            levels: self.levels.clone(),
+            levels: self.storage.borrow().levels.clone(),
         }
+    }
+
+    pub(crate) fn checkpoint(&mut self) -> ModeCheckpoint {
+        let cursor = self.storage.borrow_mut().begin_journal();
+        ModeCheckpoint {
+            owner: std::rc::Rc::clone(&self.storage),
+            cursor,
+        }
+    }
+
+    pub(crate) fn restore_checkpoint(
+        &mut self,
+        checkpoint: &ModeCheckpoint,
+    ) -> Result<(), ExecError> {
+        checkpoint.restore_storage()?;
+        self.storage = std::rc::Rc::clone(&checkpoint.owner);
+        Ok(())
+    }
+
+    pub(crate) fn fork_checkpoint(checkpoint: &ModeCheckpoint) -> Result<Self, ExecError> {
+        checkpoint.restore_storage()?;
+        let forked = std::mem::replace(
+            &mut *checkpoint.owner.borrow_mut(),
+            ModeNestStorage::placeholder(),
+        );
+        Ok(Self {
+            storage: std::rc::Rc::new(std::cell::RefCell::new(forked)),
+            loan: Some((std::rc::Rc::clone(&checkpoint.owner), checkpoint.cursor)),
+            max_nest_stack: 0,
+        })
     }
 
     #[must_use]
     pub fn depth(&self) -> usize {
-        self.levels.len()
+        self.storage.borrow().levels.len()
     }
 
     /// TeX82 §216's maximum `nest_ptr` observed before a semantic push.
@@ -1376,7 +1593,9 @@ impl ModeNest {
 
     #[must_use]
     pub fn current_mode(&self) -> Mode {
-        self.levels
+        self.storage
+            .borrow()
+            .levels
             .last()
             .expect("ModeNest always has at least one level")
             .mode()
@@ -1394,47 +1613,49 @@ impl ModeNest {
     /// Enters a semantic level while retaining TeX's `mode_line` diagnostic
     /// context. A negative line identifies the output-routine level.
     pub(crate) fn push_at_line(&mut self, mode: Mode, entry_line: i32) -> Result<(), ExecError> {
-        if self.levels.len() > Self::TEX82_NEST_SIZE {
+        let depth = self.storage.borrow().levels.len();
+        if depth > Self::TEX82_NEST_SIZE {
             return Err(ExecError::Fatal(tex_command::FatalError::overflow(
                 "semantic nest size",
                 Self::TEX82_NEST_SIZE as i32,
             )));
         }
-        self.max_nest_stack = self.max_nest_stack.max(self.levels.len().saturating_sub(1));
+        self.max_nest_stack = self.max_nest_stack.max(depth.saturating_sub(1));
         let mut level = ModeLevelSummary::new(mode);
         level.set_entry_line(entry_line);
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.mutate_list(|list| list.set_space_factor(1000));
         }
-        self.levels_mut_for_push().push(level);
-        self.journal.record_level_push();
+        let mut storage = self.storage.borrow_mut();
+        storage.levels.push(level);
+        storage.journal.record_level_push();
         Ok(())
     }
 
-    fn levels_mut_for_push(&mut self) -> &mut Vec<ModeLevelSummary> {
-        &mut self.levels
-    }
-
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {
-        if self.levels.len() == 1 {
+        if self.storage.borrow().levels.len() == 1 {
             return Err(ExecError::CannotPopBaseMode);
         }
         if self.current_list().pending_hchars().is_some() {
             return Err(ExecError::UncommittedPendingHchars);
         }
-        let popped = self
+        let mut storage = self.storage.borrow_mut();
+        let popped = storage
             .levels
             .pop()
             .expect("length checked before popping mode level");
-        self.journal.record_level_pop(popped.clone());
+        storage.journal.record_level_pop(popped.clone());
         Ok(popped)
     }
 
-    pub fn current_list(&self) -> &ModeList {
-        self.levels
-            .last()
-            .expect("ModeNest always has at least one level")
-            .list()
+    pub fn current_list(&self) -> std::cell::Ref<'_, ModeList> {
+        std::cell::Ref::map(self.storage.borrow(), |storage| {
+            storage
+                .levels
+                .last()
+                .expect("ModeNest always has at least one level")
+                .list()
+        })
     }
 
     /// Appends one owned node to the current mode list through its journaled
@@ -1444,50 +1665,65 @@ impl ModeNest {
     }
 
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
-        let index = self.levels.len() - 1;
-        let (levels, journal) = (&mut self.levels, &mut self.journal);
-        let level = levels
-            .last_mut()
-            .expect("ModeNest always has at least one level");
+        let storage = self.storage.borrow_mut();
+        let index = storage.levels.len() - 1;
+        let (levels, journal) = std::cell::RefMut::map_split(storage, |storage| {
+            (&mut storage.levels, &mut storage.journal)
+        });
+        let list = std::cell::RefMut::map(levels, |levels| {
+            &mut levels
+                .last_mut()
+                .expect("ModeNest always has at least one level")
+                .list
+        });
         ModeListMutation {
-            list: &mut level.list,
-            journal: journal.list(index),
+            list: ModeListBorrow::Shared(list),
+            journal: ModeListJournalBorrow::Shared { journal, index },
         }
     }
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
-        let (levels, journal) = (&mut self.levels, &mut self.journal);
-        levels.get_mut(index).map(|level| ModeListMutation {
-            list: &mut level.list,
-            journal: journal.list(index),
+        let storage = self.storage.borrow_mut();
+        if storage.levels.get(index).is_none() {
+            return None;
+        }
+        let (levels, journal) = std::cell::RefMut::map_split(storage, |storage| {
+            (&mut storage.levels, &mut storage.journal)
+        });
+        let list = std::cell::RefMut::map(levels, |levels| &mut levels[index].list);
+        Some(ModeListMutation {
+            list: ModeListBorrow::Shared(list),
+            journal: ModeListJournalBorrow::Shared { journal, index },
         })
     }
 
     #[must_use]
     pub fn enclosing_vertical_prev_graf(&self) -> i32 {
-        let index = self.enclosing_vertical_index();
-        self.levels[index].list().prev_graf()
+        let storage = self.storage.borrow();
+        let index = enclosing_vertical_index(&storage.levels);
+        storage.levels[index].list().prev_graf()
     }
 
     #[must_use]
     pub fn enclosing_vertical_prev_depth(&self) -> Option<Scaled> {
-        let index = self.enclosing_vertical_index();
-        self.levels[index].list().prev_depth()
+        let storage = self.storage.borrow();
+        let index = enclosing_vertical_index(&storage.levels);
+        storage.levels[index].list().prev_depth()
     }
 
     pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
-        let index = self.enclosing_vertical_index();
+        let index = enclosing_vertical_index(&self.storage.borrow().levels);
         self.list_mutation(index)
             .expect("enclosing vertical level exists")
             .set_prev_graf(lines);
     }
+}
 
-    fn enclosing_vertical_index(&self) -> usize {
-        self.levels
-            .iter()
-            .rposition(|level| matches!(level.mode(), Mode::Vertical | Mode::InternalVertical))
-            .expect("base vertical level is always present")
-    }
+fn enclosing_vertical_index(levels: &[ModeLevelSummary]) -> usize {
+    levels
+        .iter()
+        .rposition(|level| matches!(level.mode(), Mode::Vertical | Mode::InternalVertical))
+        .expect("base vertical level is always present")
 }
 
 #[cfg(test)]

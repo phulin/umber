@@ -35,7 +35,8 @@ pub(crate) fn append_node_to_vertical_list<G>(
     } else {
         crate::mode::IGNORE_DEPTH
     };
-    if let Some(prev_depth) = nest.current_list().prev_depth()
+    let prev_depth = nest.current_list().prev_depth();
+    if let Some(prev_depth) = prev_depth
         && prev_depth.raw() > ignored_depth.raw()
     {
         let baseline = stores

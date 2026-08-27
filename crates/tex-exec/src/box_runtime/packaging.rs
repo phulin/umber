@@ -58,8 +58,9 @@ pub(crate) fn take_last_box<G>(
             Ok(reset_removed_box_shift(&mut removed))
         }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
+            let current_list = nest.current_list();
             let Some(tail) =
-                crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
+                crate::effective_tail::EffectiveTail::find(current_list.nodes().iter())
             else {
                 return Ok(None);
             };
@@ -67,6 +68,7 @@ pub(crate) fn take_last_box<G>(
                 return Ok(None);
             }
             let range = tail.removal_range();
+            drop(current_list);
             let mut removed = nest.current_list_mutation().remove_node_range(range);
             Ok(reset_removed_box_shift(&mut removed))
         }

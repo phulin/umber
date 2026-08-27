@@ -3412,6 +3412,16 @@ impl<G> MainControl<G> {
         self.modes.current_mode()
     }
 
+    #[cfg(test)]
+    pub(crate) fn mode_nest_for_test(&self) -> &ModeNest {
+        &self.modes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mode_nest_mut_for_test(&mut self) -> &mut ModeNest {
+        &mut self.modes
+    }
+
     /// Returns the structural alignment started by the most recent replayed
     /// `\halign` or `\valign`, if it has not yet been finished.
     #[must_use]
@@ -6566,9 +6576,8 @@ impl<G> MainControl<G> {
             }
             Mode::DisplayMath => {
                 debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
-                if let Some((nodes, aux_prev_depth)) =
-                    self.modes.current_list_mutation().take_display_alignment()
-                {
+                let display_alignment = self.modes.current_list_mutation().take_display_alignment();
+                if let Some((nodes, aux_prev_depth)) = display_alignment {
                     let paired = self.scan_display_end(stores, diagnostic_effects)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
@@ -13436,11 +13445,12 @@ mod discretionary_hyphen_tests {
                 control.step(stores).expect("explicit hyphen"),
                 MainControlStep::Continue
             );
+            let current_list = control.modes.current_list();
             let Some(Node::Disc {
                 kind: DiscKind::ExplicitHyphen,
                 pre,
                 ..
-            }) = control.modes.current_list().nodes().last()
+            }) = current_list.nodes().last()
             else {
                 panic!("canonical replay appended an explicit discretionary hyphen");
             };
@@ -13478,7 +13488,8 @@ mod discretionary_hyphen_tests {
                 control.step(stores).expect("explicit hyphen"),
                 MainControlStep::Continue
             );
-            let Some(Node::Disc { pre, .. }) = control.modes.current_list().nodes().last() else {
+            let current_list = control.modes.current_list();
+            let Some(Node::Disc { pre, .. }) = current_list.nodes().last() else {
                 panic!("canonical replay appended an explicit discretionary hyphen");
             };
             assert!(pre.is_empty());

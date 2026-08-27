@@ -214,13 +214,8 @@ fn mode_summary_restores_an_independent_semantic_builder() {
     let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
     restored.current_list_mutation().push(kern(2));
 
-    let restored_nodes = restored
-        .levels
-        .last()
-        .expect("horizontal level")
-        .list
-        .sequence
-        .semantic();
+    let restored_list = restored.current_list();
+    let restored_nodes = restored_list.nodes();
     assert_eq!(snapshot_nodes.len(), 1);
     assert_eq!(
         summary
@@ -256,7 +251,8 @@ fn preexisting_node_write_barriers_apply_scoped_mutations() {
         })
         .expect("fixture tail");
 
-    let Node::Kern { amount, .. } = &nest.current_list().nodes()[0] else {
+    let current_list = nest.current_list();
+    let Node::Kern { amount, .. } = &current_list.nodes()[0] else {
         panic!("fixture node must remain a kern");
     };
     assert_eq!(*amount, Scaled::from_raw(23));
@@ -613,8 +609,8 @@ fn alignment_template_coordinates_survive_destructive_journal_rollback() {
     let _ = nest.current_list_mutation().take_align_state();
     nest.rollback_journal(cursor).expect("alignment rollback");
 
-    let column = &nest
-        .current_list()
+    let current_list = nest.current_list();
+    let column = &current_list
         .align_state()
         .expect("alignment restored")
         .columns()[0];

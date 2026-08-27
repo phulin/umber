@@ -3161,12 +3161,13 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
 
         run_to_end(&mut control, stores);
 
+        let current_list = control.modes.current_list();
         let [
             Node::Disc {
                 pre, post, replace, ..
             },
             ..,
-        ] = control.modes.current_list().nodes()
+        ] = current_list.nodes()
         else {
             panic!(
                 "the forbidden nested discretionary is pruned from the retained outer discretionary: {:?}",
@@ -8995,7 +8996,8 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 control.step(stores).expect("graphics command retries"),
                 MainControlStep::Continue
             );
-            let [node] = control.modes.current_list().nodes() else {
+            let current_list = control.modes.current_list();
+            let [node] = current_list.nodes() else {
                 panic!("{expected}: retry must append exactly one node");
             };
             assert!(
@@ -9005,6 +9007,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 ) || matches!((expected, node), ("matrix", Node::Whatsit(Whatsit::PdfSetMatrix { payload })) if payload == b"1 0 0 1")
                     || matches!((expected, node), ("color", Node::Whatsit(Whatsit::PdfColorStack { id: 0, action: tex_state::PdfColorStackAction::Push(payload) })) if payload == b"0 g")
             );
+            drop(current_list);
             assert_eq!(
                 control.step(stores).expect("following command remains"),
                 MainControlStep::Continue
@@ -10340,9 +10343,8 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                 control.step(stores).expect("destination command"),
                 MainControlStep::Continue
             );
-            let [Node::Whatsit(Whatsit::PdfDestination(destination))] =
-                control.modes.current_list().nodes()
-            else {
+            let current_list = control.modes.current_list();
+            let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_list.nodes() else {
                 panic!(
                     "mode {mode:?}: expected one destination, got {:?}",
                     control.modes.current_list().nodes()
@@ -10419,9 +10421,8 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
                     .expect("failed destination retries with every operand intact"),
                 MainControlStep::Continue
             );
-            let [Node::Whatsit(Whatsit::PdfDestination(destination))] =
-                dvi.modes.current_list().nodes()
-            else {
+            let current_list = dvi.modes.current_list();
+            let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_list.nodes() else {
                 panic!("one retried destination expected");
             };
             assert_eq!(destination.structure, Some(7));
@@ -10693,7 +10694,8 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
                     MainControlStep::Continue
                 );
             }
-            let nodes = control.modes.current_list().nodes();
+            let current_list = control.modes.current_list();
+            let nodes = current_list.nodes();
             assert!(
                 matches!(
                     nodes,

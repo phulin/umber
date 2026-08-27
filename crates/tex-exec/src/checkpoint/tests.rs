@@ -113,8 +113,8 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         );
         drop(processor);
 
-        let column = &modes
-            .current_list()
+        let current_list = modes.current_list();
+        let column = &current_list
             .align_state()
             .expect("restored alignment")
             .columns()[0];
@@ -247,5 +247,43 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
             2,
             "operational high-water survives rollback"
         );
+    });
+}
+
+#[test]
+fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        modes.push_current_node(tex_state::node::Node::Penalty(11));
+        let checkpoint = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::OuterParagraphEnd,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("checkpoint captures");
+
+        let (mut rejected, mut branch) = checkpoint
+            .fork_state(universe)
+            .expect("mode timeline forks");
+        branch
+            .mode_nest_mut_for_test()
+            .push_current_node(tex_state::node::Node::Penalty(22));
+        universe.return_rejected_pdf_from(&mut rejected);
+        drop(branch);
+        drop(rejected);
+
+        let (mut retried, retry) = checkpoint
+            .fork_state(universe)
+            .expect("returned mode timeline forks again");
+        assert_eq!(
+            retry.mode_nest_for_test().current_list().nodes(),
+            &[tex_state::node::Node::Penalty(11)],
+            "candidate-only nodes must not escape the rejected coarse owner"
+        );
+        universe.return_rejected_pdf_from(&mut retried);
+        drop(retry);
     });
 }

@@ -5,6 +5,7 @@ use tex_command::{
 };
 use tex_state::{RuntimeCheckpoint, Universe, UniverseError};
 
+use crate::mode::ModeCheckpoint;
 use crate::{ExecError, MainControl, ModeNest, ModeNestSummary};
 
 #[cfg(test)]
@@ -36,7 +37,7 @@ pub struct EngineCheckpoint<G> {
     boundary: EngineBoundary,
     pub(crate) runtime: RuntimeCheckpoint<G>,
     pub(crate) command: Box<CommandSummary<G>>,
-    pub(crate) modes: ModeNestSummary,
+    pub(crate) modes: ModeCheckpoint,
     mode_hash: u64,
     pub(crate) root_anchor: usize,
     effect_prefix: usize,
@@ -89,7 +90,7 @@ impl<G> EngineCheckpoint<G> {
                 return Err(CheckpointRestoreError::Command(error));
             }
         };
-        let modes = match ModeNest::from_summary(self.modes.clone()) {
+        let modes = match ModeNest::fork_checkpoint(&self.modes) {
             Ok(modes) => modes,
             Err(error) => {
                 source.return_rejected_pdf_from(&mut destination);
@@ -128,7 +129,7 @@ impl<G> EngineCheckpoint<G> {
             .root_source_anchor()
             .and_then(|anchor| usize::try_from(anchor).ok())
             .unwrap_or(0);
-        let modes = nest.summary();
+        let modes = nest.checkpoint();
         let mode_hash = modes.semantic_fingerprint(universe);
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
@@ -180,8 +181,8 @@ impl<G> EngineCheckpoint<G> {
     }
 
     #[must_use]
-    pub const fn mode_summary(&self) -> &ModeNestSummary {
-        &self.modes
+    pub fn mode_summary(&self) -> ModeNestSummary {
+        self.modes.summary()
     }
 
     #[must_use]
@@ -221,19 +222,14 @@ impl<G> EngineCheckpoint<G> {
             )));
         }
         let maximum_saved_depth = nest.maximum_saved_depth();
-        let mut restored_modes =
-            ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
-        // TeX's maxima are job-lifetime diagnostics, not semantic checkpoint
-        // state. Rolling back live modes must not refund an already observed
-        // §216 high-water mark.
-        restored_modes.retain_maximum_saved_depth(maximum_saved_depth);
         restore_validated_roots(
             command,
             nest,
             universe,
             &self.runtime,
             prepared_command,
-            restored_modes,
+            &self.modes,
+            maximum_saved_depth,
         )
     }
 }
@@ -244,14 +240,19 @@ fn restore_validated_roots<G>(
     universe: &mut Universe<G>,
     runtime: &RuntimeCheckpoint<G>,
     prepared_command: PreparedCommandRestore<G>,
-    restored_modes: ModeNest,
+    restored_modes: &ModeCheckpoint,
+    maximum_saved_depth: usize,
 ) -> Result<(), CheckpointRestoreError> {
     universe
         .restore_runtime_checkpoint_with_roots(runtime, || {
             command
                 .apply_prepared_restore(prepared_command)
                 .expect("aggregate preflight retained its command destination");
-            *nest = restored_modes;
+            nest.restore_checkpoint(restored_modes)
+                .expect("aggregate preflight retained its mode destination");
+            // TeX's maxima are job-lifetime diagnostics, not semantic checkpoint
+            // state. Rolling back live modes must not refund an observed high-water.
+            nest.retain_maximum_saved_depth(maximum_saved_depth);
         })
         .map_err(CheckpointRestoreError::Runtime)
 }

@@ -120,8 +120,8 @@ pub(crate) fn execute_delete_last<G>(
         execute_delete_last_outer_vertical(primitive, &error_context, stores, diagnostic_effects)?;
         return Ok(());
     }
-    let Some(tail) = crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
-    else {
+    let current_list = nest.current_list();
+    let Some(tail) = crate::effective_tail::EffectiveTail::find(current_list.nodes().iter()) else {
         return Ok(());
     };
     let matches_target = matches!(
@@ -130,8 +130,9 @@ pub(crate) fn execute_delete_last<G>(
             | (UnexpandablePrimitive::UnPenalty, Node::Penalty(_))
             | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
     );
+    let range = tail.removal_range();
+    drop(current_list);
     if matches_target {
-        let range = tail.removal_range();
         let _ = nest.current_list_mutation().remove_node_range(range);
     }
     Ok(())

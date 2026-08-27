@@ -108,6 +108,9 @@ fn main() {
                     ^ restore.1.checksum.rotate_left(13)
                     ^ fork.1.checksum.rotate_left(29)
                     ^ fixture_checksum(universe, &modes);
+                assert_mode_page_flat_gate(
+                    shape, boundaries, &capture.1, &clone.1, &fork.1, &restore.1,
+                );
                 print_row(
                     shape,
                     units,
@@ -124,6 +127,40 @@ fn main() {
             .expect("aggregate benchmark universe");
         }
     }
+}
+
+fn assert_mode_page_flat_gate(
+    shape: &str,
+    boundaries: usize,
+    capture: &Measurement,
+    clone: &Measurement,
+    fork: &Measurement,
+    restore: &Measurement,
+) {
+    if shape != "accumulated" {
+        return;
+    }
+    let per_boundary = |value: usize| value / boundaries;
+    assert!(
+        per_boundary(capture.stats.allocations) <= 400
+            && per_boundary(capture.stats.bytes_allocated) <= 60_000,
+        "mode/page capture allocation gate regressed"
+    );
+    assert!(
+        per_boundary(clone.stats.allocations) <= 320
+            && per_boundary(clone.stats.bytes_allocated) <= 30_000,
+        "mode/page checkpoint-clone allocation gate regressed"
+    );
+    assert!(
+        per_boundary(fork.stats.allocations) <= 1_260
+            && per_boundary(fork.stats.bytes_allocated) <= 1_600_000,
+        "mode/page fork allocation gate regressed"
+    );
+    assert!(
+        per_boundary(restore.stats.allocations) <= 380
+            && per_boundary(restore.stats.bytes_allocated) <= 60_000,
+        "mode/page restore allocation gate regressed"
+    );
 }
 
 fn fixture<G>(
