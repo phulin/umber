@@ -5,8 +5,8 @@ mod production;
 use std::sync::Arc;
 
 use tex_arith::Scaled;
-use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
-use tex_out::{ContentHash, PageArtifact};
+use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag, font_content_hash};
+use tex_out::PageArtifact;
 
 pub use production::{ProductionError, run_production};
 pub use tex_command::CommandWorkCounters;
@@ -150,7 +150,7 @@ pub fn benchmark_font() -> LoadedFont {
     LoadedFont::new(
         "batchfont",
         "batchfont.tfm",
-        ContentHash::from_bytes(b"batchfont").bytes(),
+        font_content_hash(b"batchfont"),
         0x64b2_0008,
         Scaled::from_raw(10 * Scaled::UNITY),
         Scaled::from_raw(10 * Scaled::UNITY),
