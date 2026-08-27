@@ -2307,6 +2307,15 @@ impl World {
         path: impl Into<PathBuf>,
         bytes: impl Into<Vec<u8>>,
     ) -> Result<(), WorldError> {
+        self.set_shared_memory_file(path, Arc::from(bytes.into()))
+    }
+
+    /// Adds or replaces one already-shared immutable file in an in-memory world.
+    pub fn set_shared_memory_file(
+        &mut self,
+        path: impl Into<PathBuf>,
+        bytes: Arc<[u8]>,
+    ) -> Result<(), WorldError> {
         let WorldBackend::Memory(memory) = &mut self.backend else {
             return Err(WorldError::new(
                 "set memory file",
@@ -2314,9 +2323,7 @@ impl World {
                 "world is not memory-backed",
             ));
         };
-        Arc::make_mut(memory)
-            .files
-            .insert(path.into(), Arc::from(bytes.into()));
+        Arc::make_mut(memory).files.insert(path.into(), bytes);
         Ok(())
     }
 

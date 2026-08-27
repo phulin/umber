@@ -34,7 +34,7 @@ use path::{RequestedFile, user_path_for_key};
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};
 use umber_vfs::{
     AdmissionError, FileContentId, FileOrigin, FileRequestBatch, ProjectWorkspace, ProvisionError,
-    ProvisionOutcome, ResourceLifecycle, TransactionError, UserRegistrationError, VirtualRoot,
+    ResourceLifecycle, TransactionError, UserRegistrationError, VirtualRoot,
 };
 pub use umber_vfs::{
     FileKind, FileRequest, FileRequestKey, RequestKeyError, ResolvedFile, ResourceDomain,
@@ -1247,11 +1247,16 @@ impl<'store> VirtualCompileSession<'store> {
             message: error.to_string(),
         })?;
         self.workspace
-            .register_user(path.clone(), bytes.clone())
+            .register_user(path.clone(), bytes)
             .map_err(map_user_registration)?;
         if let Some(session) = &mut self.incremental {
+            let file = self
+                .workspace
+                .user_files()
+                .find(|file| file.path() == &path)
+                .expect("the registered user file is present");
             session
-                .register_input_file(path.as_path(), bytes)
+                .register_input_file(path.as_path(), file.shared_bytes())
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
         }
         Ok(())
@@ -1553,8 +1558,13 @@ impl<'store> VirtualCompileSession<'store> {
                 expected_digest: None,
             },
             false,
-            true,
         )?;
+        if !was_bound && self.resource_is_bound(&key) {
+            let ResourceRequestKey::File(request) = &key else {
+                unreachable!("cached-file restoration has a file request")
+            };
+            self.register_incremental_input(request)?;
+        }
         if self
             .awaiting
             .as_ref()
@@ -1582,6 +1592,17 @@ impl<'store> VirtualCompileSession<'store> {
         &mut self,
         responses: Vec<ResourceResponse>,
     ) -> Result<(), CompileError> {
+        let file_requests = responses
+            .iter()
+            .filter_map(|response| match response {
+                ResourceResponse::File(file) => Some(file.request.clone()),
+                ResourceResponse::FileUnavailable(_)
+                | ResourceResponse::Font(_)
+                | ResourceResponse::FontUnavailable(_)
+                | ResourceResponse::PkFont(_)
+                | ResourceResponse::PkFontUnavailable(_) => None,
+            })
+            .collect::<BTreeSet<_>>();
         let awaited_before = self.awaiting.as_ref().map(|awaiting| {
             awaiting
                 .iter()
@@ -1600,7 +1621,7 @@ impl<'store> VirtualCompileSession<'store> {
         let result = responses
             .into_iter()
             .try_for_each(|response| match response {
-                ResourceResponse::File(file) => self.provide_file_inner(file, true, false),
+                ResourceResponse::File(file) => self.provide_file_inner(file, true),
                 ResourceResponse::FileUnavailable(request) => self
                     .workspace
                     .provision_unavailable(request)
@@ -1628,13 +1649,11 @@ impl<'store> VirtualCompileSession<'store> {
             ));
             self.font_cached_bytes = original_font_cached_bytes;
         } else {
-            if let Some(session) = &mut self.incremental {
-                for (request, file) in self.workspace.files() {
-                    if original_workspace.get(request).is_none() {
-                        session
-                            .register_input_file(file.path().as_path(), file.bytes().to_vec())
-                            .map_err(|error| CompileError::Incremental(error.to_string()))?;
-                    }
+            for request in file_requests {
+                if original_workspace.get(&request).is_none()
+                    && self.workspace.get(&request).is_some()
+                {
+                    self.register_incremental_input(&request)?;
                 }
             }
             let awaited_after = self.awaiting.as_ref().map(|awaiting| {
@@ -1672,10 +1691,32 @@ impl<'store> VirtualCompileSession<'store> {
             .candidate
             .as_mut()
             .expect("candidate presence was checked");
-        if let RetainedExecution::Initial { session, .. } = &mut candidate.execution {
-            register_incremental_inputs(session, &refreshed, &self.main_path)?;
-        }
         candidate.workspace = refreshed;
+        Ok(())
+    }
+
+    fn register_incremental_input(&mut self, request: &FileRequestKey) -> Result<(), CompileError> {
+        let Some(file) = self.workspace.get(request) else {
+            return Ok(());
+        };
+        let path = file.path().as_path().to_owned();
+        let bytes = file.shared_bytes();
+        let session = if let Some(session) = &mut self.incremental {
+            Some(session)
+        } else if let Some(RetainedCandidate {
+            execution: RetainedExecution::Initial { session, .. },
+            ..
+        }) = self.candidate.as_deref_mut()
+        {
+            Some(session)
+        } else {
+            None
+        };
+        if let Some(session) = session {
+            session
+                .register_input_file(&path, bytes)
+                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        }
         Ok(())
     }
 
@@ -1899,11 +1940,9 @@ impl<'store> VirtualCompileSession<'store> {
         &mut self,
         response: ResolvedFile,
         require_expected: bool,
-        register_incremental: bool,
     ) -> Result<(), CompileError> {
-        let request = response.request.clone();
         let mut staged = self.workspace.clone();
-        let outcome = if require_expected {
+        if require_expected {
             staged.provision(response)
         } else {
             staged.preload(response)
@@ -1923,15 +1962,6 @@ impl<'store> VirtualCompileSession<'store> {
             self.limits.cached_file_bytes,
         )?;
         self.workspace = staged;
-        if register_incremental
-            && outcome == ProvisionOutcome::Inserted
-            && let (Some(session), Some(file)) =
-                (&mut self.incremental, self.workspace.get(&request))
-        {
-            session
-                .register_input_file(file.path().as_path(), file.bytes().to_vec())
-                .map_err(|error| CompileError::Incremental(error.to_string()))?;
-        }
         Ok(())
     }
 
@@ -2795,7 +2825,7 @@ fn register_incremental_inputs(
         .chain(workspace.files().map(|(_, file)| file))
     {
         session
-            .register_input_file(file.path().as_path(), file.bytes().to_vec())
+            .register_input_file(file.path().as_path(), file.shared_bytes())
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
     }
     Ok(())

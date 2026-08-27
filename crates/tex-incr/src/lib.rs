@@ -436,7 +436,7 @@ pub struct RevisionCandidate<'store> {
     job_name: String,
     source_path: String,
     plan: CandidatePlan,
-    registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
+    registered_inputs: BTreeMap<PathBuf, Arc<[u8]>>,
     profile: CommandProfile,
     compatibility: CommandCompatibility,
     initex: bool,
@@ -814,7 +814,9 @@ fn initialize_candidate_runtime<G: 'static>(
         install_plain_catcodes(universe)?;
     }
     for (path, bytes) in &candidate.registered_inputs {
-        universe.world_mut().set_memory_file(path, bytes.clone())?;
+        universe
+            .world_mut()
+            .set_shared_memory_file(path, Arc::clone(bytes))?;
     }
     let options = CandidateControlOptions {
         job_name: &candidate.job_name,
@@ -1310,7 +1312,7 @@ pub struct Session<'store> {
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     checkpoint_budget: usize,
-    registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
+    registered_inputs: BTreeMap<PathBuf, Arc<[u8]>>,
     accepted_retention: Option<RetentionMetrics>,
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
@@ -1666,8 +1668,12 @@ impl<'store> Session<'store> {
             .map_or(0, |generation| generation.checkpoint_keys.len())
     }
 
-    pub fn register_input_file(&mut self, path: &Path, bytes: Vec<u8>) -> Result<(), SessionError> {
-        self.registered_inputs.insert(path.to_owned(), bytes);
+    pub fn register_input_file(
+        &mut self,
+        path: &Path,
+        bytes: impl Into<Arc<[u8]>>,
+    ) -> Result<(), SessionError> {
+        self.registered_inputs.insert(path.to_owned(), bytes.into());
         Ok(())
     }
 
