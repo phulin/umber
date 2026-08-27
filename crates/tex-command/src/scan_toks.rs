@@ -1744,8 +1744,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .iter()
             .map(|word| word.semantic_token())
             .collect::<Vec<_>>();
-        let text =
-            crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens);
+        let text = crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens);
         let tokens = text
             .chars()
             .map(|ch| {

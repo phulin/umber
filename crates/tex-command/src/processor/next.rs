@@ -2048,8 +2048,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn next_source_step(&mut self) -> CompactSourceTokenizationStep {
-        self.command
-            .observe_active_source_dependencies(self.state);
+        self.command.observe_active_source_dependencies(self.state);
         let profile = self.command.profile();
         // TeX82's `firm_up_the_line` captures `end_line_char` when it loads
         // each physical line.  The cursor keeps that captured value through
@@ -2070,8 +2069,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .next_compact_unicode_source_step(endlinechar, &mut queries),
             }
         };
-        self.command
-            .observe_active_source_dependencies(self.state);
+        self.command.observe_active_source_dependencies(self.state);
         step
     }
 

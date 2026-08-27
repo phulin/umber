@@ -5930,8 +5930,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .collect::<Vec<_>>();
                             PdfImagePageSelection::Named(
                                 crate::processor::expand::token_slice_string_text(
-                                    self.state,
-                                    &semantic,
+                                    self.state, &semantic,
                                 )
                                 .into_bytes(),
                             )
@@ -6450,82 +6449,79 @@ impl<G> CommandProcessor<'_, '_, G> {
             cat: Catcode::BeginGroup,
         };
         let pending = self.take_pending_structured_scanner()?;
-        let (stopper_level, write_words, mut child) = if let Some(PendingStructuredScanner {
-            phase,
-            child,
-        }) = pending
-        {
-            match phase {
-                PendingStructuredScannerPhase::WriteExpansion {
-                    tokens: retained,
-                    stopper_level,
-                    write_words,
-                } if retained == tokens => (stopper_level, write_words, child),
-                phase => {
-                    let mut pending = PendingStructuredScanner { phase, child };
-                    if let Some(child) = pending.take_child() {
-                        self.abort_continuation(child)?;
+        let (stopper_level, write_words, mut child) =
+            if let Some(PendingStructuredScanner { phase, child }) = pending {
+                match phase {
+                    PendingStructuredScannerPhase::WriteExpansion {
+                        tokens: retained,
+                        stopper_level,
+                        write_words,
+                    } if retained == tokens => (stopper_level, write_words, child),
+                    phase => {
+                        let mut pending = PendingStructuredScanner { phase, child };
+                        if let Some(child) = pending.take_child() {
+                            self.abort_continuation(child)?;
+                        }
+                        return Err(CommandError::input_invariant());
                     }
-                    return Err(CommandError::input_invariant());
                 }
-            }
-        } else {
-            let write_words = self
-                .command
-                .attempt
-                .arena()
-                .token_words(tokens)
-                .map_err(|_| CommandError::input_invariant())?
-                .len();
-            // The bottom stopper delivers the synthetic closing brace followed
-            // by frozen outer `\\endwrite`; the write list and opening brace sit
-            // above it exactly as TeX82's three `ins_list` calls do.
-            let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
-            let write_level = self
-                .command
-                .push_attempt_list_level(
-                    tokens,
-                    u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
-                    TokenBehavior::Ordinary,
-                    RetirementBehavior::Pop,
-                    ReplayTrace::Stored(StoredReplayReason::Write),
-                )
-                .map_err(|_| CommandError::input_invariant())?;
-            // TeX82 §§323 and 1370 trace the named write_text list at
-            // begin_token_list, before the opening-brace insertion and expanded
-            // scan_toks can report an error.
-            if self
-                .state
-                .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
-                > 1
-            {
-                let mut text = String::new();
-                crate::processor::expand::append_print_esc_text(self.state, "write", &mut text);
-                text.push_str("->");
-                let words = self
+            } else {
+                let write_words = self
                     .command
                     .attempt
                     .arena()
                     .token_words(tokens)
+                    .map_err(|_| CommandError::input_invariant())?
+                    .len();
+                // The bottom stopper delivers the synthetic closing brace followed
+                // by frozen outer `\\endwrite`; the write list and opening brace sit
+                // above it exactly as TeX82's three `ins_list` calls do.
+                let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
+                let write_level = self
+                    .command
+                    .push_attempt_list_level(
+                        tokens,
+                        u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
+                        TokenBehavior::Ordinary,
+                        RetirementBehavior::Pop,
+                        ReplayTrace::Stored(StoredReplayReason::Write),
+                    )
                     .map_err(|_| CommandError::input_invariant())?;
-                for word in words {
-                    crate::processor::expand::append_token_list_token_text(
-                        self.state,
-                        word.semantic_token(),
-                        &mut text,
+                // TeX82 §§323 and 1370 trace the named write_text list at
+                // begin_token_list, before the opening-brace insertion and expanded
+                // scan_toks can report an error.
+                if self
+                    .state
+                    .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
+                    > 1
+                {
+                    let mut text = String::new();
+                    crate::processor::expand::append_print_esc_text(self.state, "write", &mut text);
+                    text.push_str("->");
+                    let words = self
+                        .command
+                        .attempt
+                        .arena()
+                        .token_words(tokens)
+                        .map_err(|_| CommandError::input_invariant())?;
+                    for word in words {
+                        crate::processor::expand::append_token_list_token_text(
+                            self.state,
+                            word.semantic_token(),
+                            &mut text,
+                        );
+                    }
+                    self.command.semantic_diagnostics.push(
+                        crate::CommandSemanticDiagnostic::Trace {
+                            text,
+                            force_newline: false,
+                        },
                     );
                 }
-                self.command
-                    .semantic_diagnostics
-                    .push(crate::CommandSemanticDiagnostic::Trace {
-                        text,
-                        force_newline: false,
-                    });
-            }
-            self.observe_write_list_push(write_level);
-            self.push_write_recovery([left_brace], left_brace);
-            (stopper_level, write_words, None)
-        };
+                self.observe_write_list_push(write_level);
+                self.push_write_recovery([left_brace], left_brace);
+                (stopper_level, write_words, None)
+            };
 
         self.outer_recovered_while_absorbing = false;
         self.restore_structured_scanner_child(
