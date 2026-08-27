@@ -157,13 +157,13 @@ impl ModeList {
             && !self.display_alignment
     }
     #[must_use]
-    pub fn nodes(&self) -> &[Node] {
-        self.sequence.semantic()
+    pub fn nodes(&self) -> tex_state::node_sequence::NodeSequenceView<'_> {
+        self.sequence.semantic_view()
     }
 
     #[must_use]
-    pub fn physical_nodes(&self) -> &[Node] {
-        self.sequence.physical()
+    pub fn physical_nodes(&self) -> tex_state::node_sequence::NodeSequenceView<'_> {
+        self.sequence.physical_view()
     }
 
     pub fn take_nodes(&mut self) -> Vec<Node> {
@@ -341,6 +341,9 @@ impl ModeList {
     }
 
     pub fn pop_last_node(&mut self) -> Option<Node> {
+        if self.sequence.has_candidate() {
+            return self.sequence.pop_candidate();
+        }
         self.sequence.mutate_semantic(|nodes| nodes.pop())
     }
 
@@ -503,7 +506,7 @@ impl ModeListMutation<'_> {
         self.list.push(node);
     }
 
-    pub(crate) fn nodes(&self) -> &[Node] {
+    pub(crate) fn nodes(&self) -> tex_state::node_sequence::NodeSequenceView<'_> {
         self.list.nodes()
     }
 
@@ -534,6 +537,9 @@ impl ModeListMutation<'_> {
         index: usize,
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
+        if self.list.sequence.has_candidate() {
+            return self.list.sequence.with_candidate_node_mut(index, mutate);
+        }
         self.record_node(index);
         self.list.with_node_mut(index, mutate)
     }
@@ -543,6 +549,9 @@ impl ModeListMutation<'_> {
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
         if let Some(index) = self.list.nodes().len().checked_sub(1) {
+            if self.list.sequence.has_candidate() {
+                return self.list.sequence.with_candidate_node_mut(index, mutate);
+            }
             self.record_node(index);
         }
         self.list.with_last_node_mut(mutate)
@@ -783,7 +792,10 @@ impl ModeListMutation<'_> {
     }
 
     fn record_node(&mut self, index: usize) {
-        if self.journal_is_active() && self.list.nodes().get(index).is_some() {
+        if !self.list.sequence.has_candidate()
+            && self.journal_is_active()
+            && self.list.nodes().get(index).is_some()
+        {
             let needs_nodes = self
                 .list_journal()
                 .is_some_and(|journal| journal.needs_nodes());
@@ -798,7 +810,7 @@ impl ModeListMutation<'_> {
     }
 
     fn record_nodes(&mut self) {
-        if !self.journal_is_active() {
+        if !self.journal_is_active() || self.list.sequence.has_candidate() {
             return;
         }
         let needs_nodes = self
@@ -1195,7 +1207,7 @@ fn hash_mode_list<G>(
     universe: &Universe<G>,
     projection: &mut EngineBoundaryHasher<'_, G>,
 ) {
-    projection.nodes(list.nodes());
+    projection.nodes_iter(list.nodes().iter());
     match &list.align_state {
         Some(align) => {
             projection.bool(true);
@@ -1367,11 +1379,26 @@ struct ModeNestStorage {
     journal: journal::ModeJournal,
 }
 
+#[derive(Clone, Copy, Default)]
+struct ModeListRoot {
+    semantic: usize,
+    physical: usize,
+    page_node_root_count: usize,
+    display_alignment: bool,
+    prev_depth: Option<Scaled>,
+    prev_graf: i32,
+    space_factor: i32,
+    no_boundary: bool,
+    hyphen_language: u8,
+    left_hyphen_min: u8,
+    right_hyphen_min: u8,
+}
+
 impl ModeNestStorage {
     fn placeholder() -> Self {
         let levels = vec![ModeLevelSummary::new(Mode::Vertical)];
         Self {
-            journal: journal::ModeJournal::enabled(levels.len()),
+            journal: journal::ModeJournal::candidate(levels.len()),
             levels,
         }
     }
@@ -1382,6 +1409,8 @@ pub(crate) struct ModeCheckpoint {
     owner: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
     cursor: ModeJournalCursor,
     flat_root: Option<ModeLevelSummary>,
+    list_roots: Box<[ModeListRoot; 41]>,
+    list_root_count: u8,
 }
 
 impl Clone for ModeCheckpoint {
@@ -1390,6 +1419,8 @@ impl Clone for ModeCheckpoint {
             owner: std::rc::Rc::clone(&self.owner),
             cursor: self.cursor,
             flat_root: self.flat_root.clone(),
+            list_roots: self.list_roots.clone(),
+            list_root_count: self.list_root_count,
         }
     }
 }
@@ -1466,13 +1497,14 @@ pub struct ModeNest {
 }
 
 enum ModeNestLoan {
-    Journal {
-        origin: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
-        cursor: ModeJournalCursor,
-    },
     Flat {
         origin: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
         accepted: Box<ModeNestStorage>,
+    },
+    Rooted {
+        origin: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
+        source_journal: journal::ModeJournal,
+        candidate_cursor: ModeJournalCursor,
     },
 }
 
@@ -1520,16 +1552,26 @@ impl Drop for ModeNest {
             *origin.borrow_mut() = *accepted;
             return;
         }
-        let ModeNestLoan::Journal { origin, cursor } = loan else {
-            unreachable!()
-        };
-        let mut storage = self.storage.borrow_mut();
-        storage
-            .restore_checkpoint_cursor(cursor)
-            .expect("mode fork retains its origin checkpoint");
-        let returned = std::mem::replace(&mut *storage, ModeNestStorage::placeholder());
-        drop(storage);
-        *origin.borrow_mut() = returned;
+        if let ModeNestLoan::Rooted {
+            origin,
+            source_journal,
+            candidate_cursor,
+        } = loan
+        {
+            let mut storage = self.storage.borrow_mut();
+            storage
+                .rollback_journal(candidate_cursor)
+                .expect("candidate mode journal remains innermost");
+            for level in &mut storage.levels {
+                level.list.sequence.reject_candidate();
+            }
+            storage.journal = source_journal;
+            let returned = std::mem::replace(&mut *storage, ModeNestStorage::placeholder());
+            drop(storage);
+            *origin.borrow_mut() = returned;
+            return;
+        }
+        unreachable!("all mode loans are handled above");
     }
 }
 
@@ -1590,16 +1632,40 @@ impl ModeNest {
     }
 
     pub(crate) fn checkpoint(&mut self) -> ModeCheckpoint {
-        let flat_root = {
+        let (flat_root, list_roots, list_root_count) = {
             let storage = self.storage.borrow();
-            (storage.levels.len() == 1 && storage.levels[0].list.is_checkpoint_rootless())
-                .then(|| storage.levels[0].clone())
+            let flat_root = (storage.levels.len() == 1
+                && storage.levels[0].list.is_checkpoint_rootless())
+            .then(|| storage.levels[0].clone());
+            let mut list_roots = Box::new([ModeListRoot::default(); 41]);
+            for (root, level) in list_roots.iter_mut().zip(&storage.levels) {
+                *root = ModeListRoot {
+                    semantic: level.list.sequence.semantic_view().len(),
+                    physical: level.list.sequence.physical_view().len(),
+                    page_node_root_count: level.list.sequence.page_node_root_count(),
+                    display_alignment: level.list.display_alignment,
+                    prev_depth: level.list.prev_depth,
+                    prev_graf: level.list.prev_graf,
+                    space_factor: level.list.space_factor,
+                    no_boundary: level.list.no_boundary,
+                    hyphen_language: level.list.hyphen_language,
+                    left_hyphen_min: level.list.left_hyphen_min,
+                    right_hyphen_min: level.list.right_hyphen_min,
+                };
+            }
+            (
+                flat_root,
+                list_roots,
+                u8::try_from(storage.levels.len()).expect("mode depth fits u8"),
+            )
         };
         let cursor = self.storage.borrow_mut().begin_journal();
         ModeCheckpoint {
             owner: std::rc::Rc::clone(&self.storage),
             cursor,
             flat_root,
+            list_roots,
+            list_root_count,
         }
     }
 
@@ -1620,7 +1686,7 @@ impl ModeNest {
             );
             return Ok(Self {
                 storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
-                    journal: journal::ModeJournal::enabled(1),
+                    journal: journal::ModeJournal::candidate(1),
                     levels: vec![root.clone()],
                 })),
                 loan: Some(ModeNestLoan::Flat {
@@ -1630,16 +1696,46 @@ impl ModeNest {
                 max_nest_stack: 0,
             });
         }
-        checkpoint.restore_storage()?;
-        let forked = std::mem::replace(
+        let mut forked = std::mem::replace(
             &mut *checkpoint.owner.borrow_mut(),
             ModeNestStorage::placeholder(),
         );
+        let list_root_count = usize::from(checkpoint.list_root_count);
+        if forked.levels.len() != list_root_count {
+            *checkpoint.owner.borrow_mut() = forked;
+            return Err(ExecError::EmptyModeNestSummary);
+        }
+        for (level, root) in forked
+            .levels
+            .iter_mut()
+            .zip(&checkpoint.list_roots[..list_root_count])
+        {
+            level.list.display_alignment = root.display_alignment;
+            level.list.prev_depth = root.prev_depth;
+            level.list.prev_graf = root.prev_graf;
+            level.list.space_factor = root.space_factor;
+            level.list.no_boundary = root.no_boundary;
+            level.list.hyphen_language = root.hyphen_language;
+            level.list.left_hyphen_min = root.left_hyphen_min;
+            level.list.right_hyphen_min = root.right_hyphen_min;
+            level.list.sequence.begin_candidate(
+                root.semantic,
+                root.physical,
+                root.page_node_root_count,
+            );
+        }
+        let level_count = forked.levels.len();
+        let source_journal = std::mem::replace(
+            &mut forked.journal,
+            journal::ModeJournal::candidate(level_count),
+        );
+        let candidate_cursor = forked.begin_journal();
         Ok(Self {
             storage: std::rc::Rc::new(std::cell::RefCell::new(forked)),
-            loan: Some(ModeNestLoan::Journal {
+            loan: Some(ModeNestLoan::Rooted {
                 origin: std::rc::Rc::clone(&checkpoint.owner),
-                cursor: checkpoint.cursor,
+                source_journal,
+                candidate_cursor,
             }),
             max_nest_stack: 0,
         })

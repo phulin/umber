@@ -194,6 +194,57 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
 }
 
 #[test]
+fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
+    let mut page = PageBuilderState::default();
+    let rooted_mark = tokens(&[Token::param(7)]);
+    page.push_contribution(kern(-1));
+    page.push_current_page(kern(-2));
+    page.push_page_discard(kern(-3));
+    page.set_split_discards(vec![kern(-4)]);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-5)));
+    page.set_mark_class(PageMark::Bot, 7, rooted_mark.clone());
+    let checkpoint = page.checkpoint_mark();
+
+    for index in 0..4_096 {
+        page.push_contribution(kern(index));
+        page.push_current_page(kern(index));
+        page.push_page_discard(kern(index));
+        page.upsert_page_insertion(PageInsertion::new(
+            u16::try_from(index % 256).expect("class fits u16"),
+            Scaled::from_raw(index),
+        ));
+        page.set_mark_class(
+            PageMark::Bot,
+            u16::try_from(index % 256).expect("class fits u16"),
+            tokens(&[Token::param(
+                u8::try_from(index % 9 + 1).expect("parameter fits u8"),
+            )]),
+        );
+    }
+    let accepted_hash = hash_page(&page);
+
+    page.begin_checkpoint_fork(checkpoint);
+    assert_eq!(page.contribution().to_vec(), [kern(-1)]);
+    assert_eq!(page.current_page().cloned().collect::<Vec<_>>(), [kern(-2)]);
+    assert_eq!(
+        page.page_insertion(7).expect("rooted insertion").height(),
+        Scaled::from_raw(-5)
+    );
+    assert_eq!(page.mark_class_value(PageMark::Bot, 7), Some(&rooted_mark));
+
+    assert_eq!(page.pop_contribution_front(), Some(kern(-1)));
+    assert_eq!(page.take_current_page_prefix(1).0, [kern(-2)]);
+    assert_eq!(page.take_page_discards(), [kern(-3)]);
+    assert_eq!(page.take_split_discards(), [kern(-4)]);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(99)));
+    page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(8)]));
+    page.reject_checkpoint_fork();
+
+    assert_eq!(hash_page(&page), accepted_hash);
+    assert_eq!(page.contribution().len(), 4_097);
+}
+
+#[test]
 fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
     let mut source = PageBuilderState::default();
     source.push_contribution(kern(1));
@@ -224,7 +275,7 @@ fn insertion_classes_use_dense_direct_positions_and_canonical_iteration_order() 
     assert_eq!(
         page.page_insertions()
             .iter()
-            .map(PageInsertion::class)
+            .map(|insertion| insertion.class())
             .collect::<Vec<_>>(),
         [7, 255, 4095]
     );

@@ -10,6 +10,13 @@ pub(super) struct PageNodeSequence {
 }
 
 impl PageNodeSequence {
+    pub(super) fn from_nodes(nodes: Vec<Node>) -> Self {
+        Self { nodes }
+    }
+
+    pub(super) fn into_nodes(self) -> Vec<Node> {
+        self.nodes
+    }
     #[cfg(test)]
     pub(super) fn retained_bytes(&self) -> usize {
         self.nodes
@@ -26,8 +33,8 @@ impl PageNodeSequence {
         &self.nodes
     }
 
-    pub(super) fn last(&self) -> Option<&Node> {
-        self.nodes.last()
+    pub(super) fn get(&self, index: usize) -> Option<&Node> {
+        self.nodes.get(index)
     }
 
     pub(super) const fn len(&self) -> usize {

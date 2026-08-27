@@ -620,7 +620,6 @@ fn page_activity_snapshot<G>(
     let insertions = stores
         .page_insertions()
         .iter()
-        .cloned()
         .map(|insertion| {
             let count = stores
                 .count(insertion.class())

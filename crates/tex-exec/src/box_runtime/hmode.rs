@@ -1110,7 +1110,7 @@ pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
 
 pub(crate) fn adjust_interword_glue<G>(
     stores: &CommandContext<'_, G>,
-    nodes: &[Node],
+    nodes: tex_state::node_sequence::NodeSequenceView<'_>,
     spec: &mut GlueSpec,
 ) {
     let mut glyph = None;
@@ -1355,7 +1355,9 @@ pub(crate) fn append_italic_correction_with_fuel<G>(
     Ok(())
 }
 
-pub(crate) fn last_font_char(nodes: &[Node]) -> Option<(tex_state::ids::FontId, char)> {
+pub(crate) fn last_font_char(
+    nodes: tex_state::node_sequence::NodeSequenceView<'_>,
+) -> Option<(tex_state::ids::FontId, char)> {
     match nodes.last()? {
         Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => Some((*font, *ch)),
         _ => None,

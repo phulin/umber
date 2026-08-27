@@ -770,3 +770,39 @@ fn journal_fatal_commit_model_and_operational_invisibility_hold() {
     assert_eq!(nest.current_list().nodes(), &[kern(42)]);
     assert_eq!(nest.journal_inverse_len_for_test(), 0);
 }
+
+#[test]
+fn rooted_candidate_uses_a_private_suffix_and_coordinate_tail_removal() {
+    let mut source = ModeNest::new();
+    source.current_list_mutation().push(kern(-1));
+    let checkpoint = source.checkpoint();
+    for index in 0..4_096 {
+        source
+            .current_list_mutation()
+            .push(kern(i32::try_from(index).expect("test index fits i32")));
+    }
+
+    {
+        let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
+        assert_eq!(candidate.current_list().nodes(), &[kern(-1)]);
+        candidate
+            .current_list_mutation()
+            .with_node_mut(0, |node| *node = kern(-2));
+        assert_eq!(candidate.current_list().nodes(), &[kern(-2)]);
+        candidate.current_list_mutation().push(kern(9_001));
+        assert_eq!(candidate.current_list().nodes().len(), 2);
+        assert_eq!(
+            candidate.current_list_mutation().pop_last_node(),
+            Some(kern(9_001))
+        );
+        assert_eq!(
+            candidate.current_list_mutation().pop_last_node(),
+            Some(kern(-2))
+        );
+        assert!(candidate.current_list().nodes().is_empty());
+    }
+
+    assert_eq!(source.current_list().nodes().len(), 4_097);
+    assert_eq!(source.current_list().nodes().first(), Some(&kern(-1)));
+    assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
+}

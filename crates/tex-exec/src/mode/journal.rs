@@ -182,6 +182,25 @@ impl ModeJournal {
         !self.frames.is_empty()
     }
     pub(super) fn enabled(level_count: usize) -> Self {
+        Self::with_capacities(
+            level_count,
+            MAX_JOURNAL_FRAMES,
+            MAX_LIVE_LEVELS * MAX_JOURNAL_FRAMES,
+        )
+    }
+
+    /// One-attempt journal used only while a candidate owns the accepted
+    /// mode lane. It cannot publish retained boundaries and therefore does
+    /// not reserve the complete retained-boundary projection table.
+    pub(super) fn candidate(level_count: usize) -> Self {
+        Self::with_capacities(level_count, 1, level_count)
+    }
+
+    fn with_capacities(
+        level_count: usize,
+        frame_capacity: usize,
+        projection_capacity: usize,
+    ) -> Self {
         let mut level_ids = Vec::with_capacity(MAX_LIVE_LEVELS);
         level_ids.extend(1..=level_count as u64);
         Self {
@@ -190,8 +209,8 @@ impl ModeJournal {
             next_level_id: level_count as u64 + 1,
             next_frame_id: 1,
             level_ids,
-            frames: Vec::with_capacity(MAX_JOURNAL_FRAMES),
-            projections: Vec::with_capacity(MAX_LIVE_LEVELS * MAX_JOURNAL_FRAMES),
+            frames: Vec::with_capacity(frame_capacity),
+            projections: Vec::with_capacity(projection_capacity),
             inverses: Vec::with_capacity(32),
             replay_work: 0,
         }

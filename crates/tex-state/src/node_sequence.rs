@@ -4,6 +4,184 @@ use crate::node::Node;
 use crate::node_arena::PageListId;
 use smallvec::SmallVec;
 
+/// Borrowed semantic view over one accepted region followed by one private
+/// current-lineage region.
+///
+/// The view deliberately exposes sequence operations instead of pretending
+/// the logical list is one contiguous slice.  Checkpoint forks can therefore
+/// retain an immutable accepted prefix while appending candidate nodes without
+/// materializing the prefix.
+#[derive(Clone, Copy, Debug)]
+pub struct NodeSequenceView<'a> {
+    prior: &'a [Node],
+    current: &'a [Node],
+    replacements: &'a [(usize, Node)],
+}
+
+impl<'a> NodeSequenceView<'a> {
+    #[must_use]
+    pub const fn new(prior: &'a [Node], current: &'a [Node]) -> Self {
+        Self {
+            prior,
+            current,
+            replacements: &[],
+        }
+    }
+
+    fn with_replacements(
+        prior: &'a [Node],
+        current: &'a [Node],
+        replacements: &'a [(usize, Node)],
+    ) -> Self {
+        Self {
+            prior,
+            current,
+            replacements,
+        }
+    }
+
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.prior.len() + self.current.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.prior.is_empty() && self.current.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<&'a Node> {
+        if let Some((_, node)) = self
+            .replacements
+            .iter()
+            .rev()
+            .find(|(replaced, _)| *replaced == index)
+        {
+            return Some(node);
+        }
+        if index < self.prior.len() {
+            self.prior.get(index)
+        } else {
+            self.current.get(index - self.prior.len())
+        }
+    }
+
+    #[must_use]
+    pub fn first(self) -> Option<&'a Node> {
+        self.prior.first().or_else(|| self.current.first())
+    }
+
+    #[must_use]
+    pub fn last(self) -> Option<&'a Node> {
+        self.current.last().or_else(|| self.prior.last())
+    }
+
+    pub fn iter(self) -> NodeSequenceIter<'a> {
+        NodeSequenceIter {
+            view: self,
+            front: 0,
+            back: self.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn to_vec(self) -> Vec<Node> {
+        self.iter().cloned().collect()
+    }
+
+    #[must_use]
+    pub const fn regions(self) -> (&'a [Node], &'a [Node]) {
+        (self.prior, self.current)
+    }
+
+    /// Returns the backing slice only when this view occupies one region.
+    #[must_use]
+    pub fn contiguous(self) -> Option<&'a [Node]> {
+        if !self.replacements.is_empty() {
+            None
+        } else if self.current.is_empty() {
+            Some(self.prior)
+        } else if self.prior.is_empty() {
+            Some(self.current)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn expect_contiguous(self) -> &'a [Node] {
+        self.contiguous()
+            .expect("node sequence occupies more than one lineage region")
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NodeSequenceIter<'a> {
+    view: NodeSequenceView<'a>,
+    front: usize,
+    back: usize,
+}
+
+impl<'a> Iterator for NodeSequenceIter<'a> {
+    type Item = &'a Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+        let index = self.front;
+        self.front += 1;
+        self.view.get(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.back - self.front;
+        (len, Some(len))
+    }
+}
+
+impl DoubleEndedIterator for NodeSequenceIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+        self.back -= 1;
+        self.view.get(self.back)
+    }
+}
+
+impl ExactSizeIterator for NodeSequenceIter<'_> {}
+
+impl<'a> IntoIterator for NodeSequenceView<'a> {
+    type Item = &'a Node;
+    type IntoIter = NodeSequenceIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl std::ops::Index<usize> for NodeSequenceView<'_> {
+    type Output = Node;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).expect("node sequence index in bounds")
+    }
+}
+
+impl PartialEq<&[Node]> for NodeSequenceView<'_> {
+    fn eq(&self, other: &&[Node]) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl<const N: usize> PartialEq<&[Node; N]> for NodeSequenceView<'_> {
+    fn eq(&self, other: &&[Node; N]) -> bool {
+        self.len() == N && self.iter().eq(other.iter())
+    }
+}
+
 /// Allocation identity for one direct TeX82 high-memory cell.
 ///
 /// This is transient allocator-projection data. It does not participate in
@@ -63,6 +241,19 @@ pub struct NodeSequence {
     semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
     next_sequence_lineage_row: u32,
     page_node_root_count: usize,
+    candidate: Option<CandidateProjection>,
+}
+
+#[derive(Clone, Debug)]
+struct CandidateProjection {
+    semantic_root: usize,
+    physical_root: usize,
+    semantic: Vec<Node>,
+    physical: Vec<Node>,
+    semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
+    physical_high_cell_lineages: Vec<DirectHighCellLineages>,
+    page_node_root_count: usize,
+    replacements: Vec<(usize, Node)>,
 }
 
 /// Explicit physical-channel state. Mirrored sequences store no duplicate
@@ -105,6 +296,7 @@ impl NodeSequence {
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
             page_node_root_count,
+            candidate: None,
         }
     }
 
@@ -146,6 +338,7 @@ impl NodeSequence {
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
             page_node_root_count,
+            candidate: None,
         }
     }
 
@@ -172,15 +365,139 @@ impl NodeSequence {
 
     #[must_use]
     pub fn semantic(&self) -> &[Node] {
+        debug_assert!(self.candidate.is_none(), "use semantic_view during a fork");
         &self.semantic
     }
 
     #[must_use]
+    pub fn semantic_view(&self) -> NodeSequenceView<'_> {
+        self.candidate.as_ref().map_or_else(
+            || NodeSequenceView::new(&self.semantic, &[]),
+            |candidate| {
+                NodeSequenceView::with_replacements(
+                    &self.semantic[..candidate.semantic_root],
+                    &candidate.semantic,
+                    &candidate.replacements,
+                )
+            },
+        )
+    }
+
+    #[must_use]
     pub fn physical(&self) -> &[Node] {
+        debug_assert!(self.candidate.is_none(), "use physical_view during a fork");
         match &self.projection {
             PhysicalProjection::Mirrored => &self.semantic,
             PhysicalProjection::Distinct { nodes, .. } => nodes,
         }
+    }
+
+    #[must_use]
+    pub fn physical_view(&self) -> NodeSequenceView<'_> {
+        let accepted = match &self.projection {
+            PhysicalProjection::Mirrored => &self.semantic,
+            PhysicalProjection::Distinct { nodes, .. } => nodes,
+        };
+        self.candidate.as_ref().map_or_else(
+            || NodeSequenceView::new(accepted, &[]),
+            |candidate| {
+                NodeSequenceView::new(&accepted[..candidate.physical_root], &candidate.physical)
+            },
+        )
+    }
+
+    /// Installs a candidate-private append lane over an immutable accepted
+    /// prefix. The accepted suffix remains owned in place for constant-time
+    /// rejection.
+    pub fn begin_candidate(
+        &mut self,
+        semantic_root: usize,
+        physical_root: usize,
+        page_node_root_count: usize,
+    ) {
+        assert!(self.candidate.is_none());
+        assert!(semantic_root <= self.semantic.len());
+        assert!(physical_root <= self.physical().len());
+        self.candidate = Some(CandidateProjection {
+            semantic_root,
+            physical_root,
+            semantic: Vec::new(),
+            physical: Vec::new(),
+            semantic_high_cell_lineages: Vec::new(),
+            physical_high_cell_lineages: Vec::new(),
+            page_node_root_count,
+            replacements: Vec::new(),
+        });
+    }
+
+    /// Discards only the private candidate lane. The accepted owner was never
+    /// mutated and is immediately usable again.
+    pub fn reject_candidate(&mut self) {
+        self.candidate = None;
+    }
+
+    #[must_use]
+    pub const fn has_candidate(&self) -> bool {
+        self.candidate.is_some()
+    }
+
+    /// Pops the logical tail of a candidate by moving a private suffix node or
+    /// retreating the accepted root. The accepted owner is never mutated.
+    pub fn pop_candidate(&mut self) -> Option<Node> {
+        let mirrored = matches!(self.projection, PhysicalProjection::Mirrored);
+        let candidate = self.candidate.as_mut()?;
+        if let Some(node) = candidate.semantic.pop() {
+            let _physical = candidate.physical.pop();
+            let _ = candidate.semantic_high_cell_lineages.pop();
+            let _ = candidate.physical_high_cell_lineages.pop();
+            candidate.page_node_root_count = candidate.page_node_root_count.saturating_sub(
+                usize::from(node_retains_page_handle(&node)) * if mirrored { 1 } else { 2 },
+            );
+            return Some(node);
+        }
+        let index = candidate.semantic_root.checked_sub(1)?;
+        let node = candidate
+            .replacements
+            .iter()
+            .rposition(|(replaced, _)| *replaced == index)
+            .map_or_else(
+                || self.semantic[index].clone(),
+                |position| candidate.replacements.remove(position).1,
+            );
+        candidate.semantic_root = index;
+        candidate.physical_root = match &self.projection {
+            PhysicalProjection::Mirrored => index,
+            PhysicalProjection::Distinct { boundaries, .. } => boundaries[index],
+        };
+        candidate.page_node_root_count = candidate.page_node_root_count.saturating_sub(
+            usize::from(node_retains_page_handle(&node)) * if mirrored { 1 } else { 2 },
+        );
+        Some(node)
+    }
+
+    pub fn with_candidate_node_mut<R>(
+        &mut self,
+        index: usize,
+        mutate: impl FnOnce(&mut Node) -> R,
+    ) -> Option<R> {
+        let candidate = self.candidate.as_mut()?;
+        if index >= candidate.semantic_root {
+            return candidate
+                .semantic
+                .get_mut(index - candidate.semantic_root)
+                .map(mutate);
+        }
+        let position = candidate
+            .replacements
+            .iter()
+            .rposition(|(replaced, _)| *replaced == index);
+        let position = position.unwrap_or_else(|| {
+            candidate
+                .replacements
+                .push((index, self.semantic[index].clone()));
+            candidate.replacements.len() - 1
+        });
+        Some(mutate(&mut candidate.replacements[position].1))
     }
 
     #[must_use]
@@ -246,12 +563,25 @@ impl NodeSequence {
 
     pub fn push_mirrored(&mut self, node: Node) {
         let retains_page_root = node_retains_page_handle(&node);
+        let root_multiplier = if matches!(self.projection, PhysicalProjection::Mirrored) {
+            1
+        } else {
+            2
+        };
         let row = self.next_sequence_lineage_row;
         self.next_sequence_lineage_row = self
             .next_sequence_lineage_row
             .checked_add(1)
             .expect("node sequence lineage rows exceed u32");
         let lineages = direct_high_cell_lineages(&node, row);
+        if let Some(candidate) = &mut self.candidate {
+            candidate.semantic.push(node.clone());
+            candidate.physical.push(node);
+            candidate.semantic_high_cell_lineages.push(lineages.clone());
+            candidate.physical_high_cell_lineages.push(lineages);
+            candidate.page_node_root_count += usize::from(retains_page_root) * root_multiplier;
+            return;
+        }
         match &mut self.projection {
             PhysicalProjection::Mirrored => {
                 self.semantic.push(node);
@@ -269,12 +599,7 @@ impl NodeSequence {
                 high_cell_lineages.push(lineages);
             }
         }
-        self.page_node_root_count += usize::from(retains_page_root)
-            * if matches!(self.projection, PhysicalProjection::Mirrored) {
-                1
-            } else {
-                2
-            };
+        self.page_node_root_count += usize::from(retains_page_root) * root_multiplier;
     }
 
     pub fn extend_mirrored(&mut self, nodes: impl IntoIterator<Item = Node>) {
@@ -347,6 +672,24 @@ impl NodeSequence {
         physical_len: usize,
         page_node_root_count: usize,
     ) {
+        if let Some(candidate) = &mut self.candidate {
+            let semantic_suffix = semantic_len
+                .checked_sub(candidate.semantic_root)
+                .expect("candidate semantic root is retained");
+            let physical_suffix = physical_len
+                .checked_sub(candidate.physical_root)
+                .expect("candidate physical root is retained");
+            candidate.semantic.truncate(semantic_suffix);
+            candidate.physical.truncate(physical_suffix);
+            candidate
+                .semantic_high_cell_lineages
+                .truncate(semantic_suffix);
+            candidate
+                .physical_high_cell_lineages
+                .truncate(physical_suffix);
+            candidate.page_node_root_count = page_node_root_count;
+            return;
+        }
         if matches!(self.projection, PhysicalProjection::Mirrored) {
             assert_eq!(semantic_len, physical_len);
         }

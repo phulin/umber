@@ -42,6 +42,7 @@ struct Measurement {
 }
 
 fn main() {
+    run_early_suffix_gate();
     for &(shape, units) in &[("minimal", 1), ("accumulated", MANY_UNITS)] {
         for boundaries in [1, MANY_BOUNDARIES] {
             with_universe(budget(), |universe| {
@@ -128,7 +129,6 @@ fn main() {
             .expect("aggregate benchmark universe");
         }
     }
-    run_early_suffix_gate();
 }
 
 fn run_early_suffix_gate() {
@@ -137,11 +137,19 @@ fn run_early_suffix_gate() {
         with_universe(budget(), |universe| {
             let mut command = CommandState::new(CommandProfile::TEX82);
             let mut modes = ModeNest::new();
+            let mark = NodeTokenList::new([TokenWord::pack(Token::Char {
+                ch: 'm',
+                cat: Catcode::Other,
+            })]);
             modes.push_current_node(Node::Penalty(-1));
             {
                 let mut context = universe.command_context().expect("root context");
                 context.append_page_contribution(Node::Penalty(-1));
                 context.push_current_page_node(Node::Penalty(-1));
+                context.push_page_discard(Node::Penalty(-1));
+                context.set_split_discards(vec![Node::Penalty(-1)]);
+                context.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-1)));
+                context.set_page_mark_class(PageMark::Bot, 7, mark.clone());
             }
             let checkpoint = EngineCheckpoint::capture_checkpoint(
                 EngineBoundary::JobStart,
@@ -151,10 +159,6 @@ fn run_early_suffix_gate() {
                 ExecutionBudgetCounters::default(),
             )
             .expect("early rooted checkpoint");
-            let mark = NodeTokenList::new([TokenWord::pack(Token::Char {
-                ch: 'm',
-                cat: Catcode::Other,
-            })]);
             for index in 0..units {
                 modes.push_current_node(Node::Penalty(index as i32));
                 let mut context = universe.command_context().expect("suffix context");

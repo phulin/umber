@@ -225,7 +225,7 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
             stores
                 .page_insertions()
                 .iter()
-                .map(PageInsertion::class)
+                .map(|insertion| insertion.class())
                 .collect::<Vec<_>>(),
             [3, 9]
         );
@@ -1017,7 +1017,7 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
         .expect("white-box operation succeeds");
-        let records = stores.page_insertions();
+        let records = stores.page_insertions().to_vec();
         assert_eq!(
             records.iter().map(PageInsertion::class).collect::<Vec<_>>(),
             [3, 9]

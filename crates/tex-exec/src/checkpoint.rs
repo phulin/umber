@@ -128,6 +128,8 @@ impl<G> EngineCheckpoint<G> {
         let mut modes =
             ModeNest::fork_checkpoint(&self.modes).map_err(CheckpointRestoreError::Mode)?;
         modes.push_current_node(tex_state::node::Node::Penalty(17));
+        let _ = modes.current_list_mutation().pop_last_node();
+        let _ = modes.current_list_mutation().pop_last_node();
         drop(modes);
         let mode_work = self.modes.replay_work().saturating_sub(mode_before);
         let page_work = source

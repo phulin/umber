@@ -474,7 +474,7 @@ fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensio
     }
 }
 
-fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
+fn active_text_directions(nodes: tex_state::node_sequence::NodeSequenceView<'_>) -> Vec<Direction> {
     let mut active = Vec::new();
     for node in nodes {
         match node {

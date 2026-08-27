@@ -126,6 +126,10 @@ impl<G> EngineBoundaryHasher<'_, G> {
     }
 
     pub fn nodes(&mut self, nodes: &[Node]) {
+        self.nodes_iter(nodes.iter());
+    }
+
+    pub fn nodes_iter<'a>(&mut self, nodes: impl ExactSizeIterator<Item = &'a Node>) {
         self.hasher.usize(nodes.len());
         for node in nodes {
             self.node(node);
@@ -744,6 +748,24 @@ impl<G> Universe<G> {
         let mut page = std::mem::take(&mut self.page);
         page.begin_checkpoint_fork(checkpoint.page);
         page.push_contribution(crate::node::Node::Penalty(19));
+        let _ = page.pop_contribution_front();
+        let _ = page.take_current_page_prefix(1);
+        let _ = page.take_page_discards();
+        let _ = page.take_split_discards();
+        page.upsert_page_insertion(crate::page::PageInsertion::new(
+            7,
+            crate::scaled::Scaled::from_raw(29),
+        ));
+        page.set_mark_class(
+            crate::page::PageMark::Bot,
+            7,
+            crate::node::NodeTokenList::new([crate::token::TokenWord::pack(
+                crate::token::Token::Char {
+                    ch: 'c',
+                    cat: crate::token::Catcode::Other,
+                },
+            )]),
+        );
         page.reject_checkpoint_fork();
         let work = page.checkpoint_replay_work().saturating_sub(before);
         self.page = page;

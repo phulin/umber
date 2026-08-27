@@ -3603,7 +3603,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn page_contributions(&self) -> &std::collections::VecDeque<crate::node::Node> {
+    pub fn page_contributions(&self) -> crate::page::PageContributionView<'_> {
         self.page.contribution()
     }
 
@@ -3725,7 +3725,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn page_insertions(&self) -> &[crate::page::PageInsertion] {
+    pub fn page_insertions(&self) -> crate::page::PageInsertionView<'_> {
         self.page.page_insertions()
     }
 
