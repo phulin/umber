@@ -438,11 +438,11 @@ pub(crate) fn detach<G>(
             // artifact. Merely creating or enquiring about an unreferenced
             // form must not force an incomplete resource into the terminal
             // PDF projection.
-            pdf.form_artifacts.get(&form.object).map(|artifact| {
+            pdf.form_artifact(form.object).map(|artifact| {
                 Ok(DetachedPdfForm {
                     object: form.object,
                     resource: form.resource,
-                    artifact_bytes: pdf.payloads.get(artifact.payload).to_vec(),
+                    artifact_bytes: artifact.bytes,
                     width: form.width,
                     height: form.height,
                     depth: form.depth,
@@ -578,8 +578,8 @@ pub(crate) fn detach<G>(
         .map(|record| detach_action_record(record, &mut tokens))
         .transpose()?;
     let annotations = pdf
-        .annotations
-        .iter()
+        .annotations()
+        .into_iter()
         .map(|record| {
             let data = record.data();
             Ok(DetachedPdfAnnotation {
@@ -647,10 +647,10 @@ pub(crate) fn detach<G>(
         },
         annotations,
         links,
-        destinations: pdf.destinations.iter().cloned().collect(),
-        structure_destinations: pdf.structure_destinations.iter().cloned().collect(),
+        destinations: pdf.destination_records(false),
+        structure_destinations: pdf.destination_records(true),
         outlines,
-        threads: pdf.threads.iter().cloned().collect(),
+        threads: pdf.thread_records(),
         next_object: pdf.next_object,
     })
 }

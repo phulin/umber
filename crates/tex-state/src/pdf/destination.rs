@@ -55,10 +55,6 @@ impl PdfDestinationRecord {
         true
     }
 
-    pub(super) const fn definition_state(&self) -> (Option<u32>, bool) {
-        (self.structure, self.defined)
-    }
-
     pub(super) fn restore_definition(&mut self, structure: Option<u32>, defined: bool) {
         self.structure = structure;
         self.defined = defined;

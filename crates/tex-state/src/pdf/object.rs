@@ -119,6 +119,24 @@ impl<G> PdfRawObjectRecord<G> {
     pub const fn is_referenced(&self) -> bool {
         self.referenced
     }
+
+    pub(super) fn initialize_version(
+        mut self,
+        data: PdfRawObjectData<G>,
+        immediate: bool,
+    ) -> Result<Self, PdfRawObjectInitializeError> {
+        if self.data.is_some() {
+            return Err(PdfRawObjectInitializeError::AlreadyInitialized(self.id));
+        }
+        self.data = Some(data);
+        self.immediate = immediate;
+        Ok(self)
+    }
+
+    pub(super) fn reference_version(mut self) -> Self {
+        self.referenced = true;
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -131,27 +149,6 @@ struct PdfRawObjectState<G> {
 /// Owned raw-object table copied into explicit PDF checkpoints.
 #[derive(Debug)]
 pub(crate) struct PdfRawObjects<G>(PdfRawObjectState<G>);
-
-#[derive(Debug)]
-pub(crate) struct PdfRawObjectUndo<G> {
-    row: usize,
-    data: Option<Option<PdfRawObjectData<G>>>,
-    immediate: bool,
-    referenced: bool,
-    last_object: u32,
-}
-
-impl<G> Clone for PdfRawObjectUndo<G> {
-    fn clone(&self) -> Self {
-        Self {
-            row: self.row,
-            data: self.data.clone(),
-            immediate: self.immediate,
-            referenced: self.referenced,
-            last_object: self.last_object,
-        }
-    }
-}
 
 impl<G> Default for PdfRawObjects<G> {
     fn default() -> Self {
@@ -184,84 +181,21 @@ impl<G> PdfRawObjects<G> {
         self.0.records.truncate(len);
     }
 
-    pub(crate) fn begin_initialize(
-        &mut self,
-        id: PdfRawObjectId,
-    ) -> Result<PdfRawObjectUndo<G>, PdfRawObjectInitializeError> {
-        let state = &mut self.0;
-        let row = state
-            .records
-            .binary_search_by_key(&id, |record| record.id)
-            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
-        let record = &mut state.records[row];
-        if record.data.is_some() {
-            return Err(PdfRawObjectInitializeError::AlreadyInitialized(id));
-        }
-        Ok(PdfRawObjectUndo {
-            row,
-            data: Some(None),
-            immediate: record.immediate,
-            referenced: record.referenced,
-            last_object: state.last_object,
-        })
-    }
-
-    pub(crate) fn begin_reference(
-        &mut self,
-        id: PdfRawObjectId,
-    ) -> Result<PdfRawObjectUndo<G>, PdfRawObjectInitializeError> {
-        let state = &mut self.0;
-        let row = state
-            .records
-            .binary_search_by_key(&id, |record| record.id)
-            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
-        let record = &state.records[row];
-        Ok(PdfRawObjectUndo {
-            row,
-            data: None,
-            immediate: record.immediate,
-            referenced: record.referenced,
-            last_object: state.last_object,
-        })
-    }
-
-    pub(crate) fn cancel_change(&mut self, undo: PdfRawObjectUndo<G>) {
-        let record = &mut self.0.records[undo.row];
-        if let Some(data) = undo.data {
-            record.data = data;
-        }
-        record.immediate = undo.immediate;
-        record.referenced = undo.referenced;
-        self.0.last_object = undo.last_object;
-        self.0.fingerprint = fingerprint(&self.0);
-    }
-
-    pub(crate) fn restore_change(&mut self, undo: PdfRawObjectUndo<G>) {
-        self.cancel_change(undo);
-    }
-
-    pub(crate) fn swap_change(&mut self, undo: PdfRawObjectUndo<G>) -> PdfRawObjectUndo<G> {
-        let state = &mut self.0;
-        let record = &mut state.records[undo.row];
-        let current_data = undo.data.as_ref().map(|_| record.data.take());
-        let inverse = PdfRawObjectUndo {
-            row: undo.row,
-            data: current_data,
-            immediate: record.immediate,
-            referenced: record.referenced,
-            last_object: state.last_object,
-        };
-        if let Some(data) = undo.data {
-            record.data = data;
-        }
-        record.immediate = undo.immediate;
-        record.referenced = undo.referenced;
-        state.last_object = undo.last_object;
-        inverse
-    }
-
     pub(crate) fn set_fingerprint(&mut self, fingerprint: StateHashFragment) {
         self.0.fingerprint = fingerprint;
+    }
+
+    pub(crate) fn append_version_fingerprint(
+        &mut self,
+        operation: u8,
+        record: &PdfRawObjectRecord<G>,
+    ) {
+        let mut hasher = StateHasher::new(PDF_RAW_OBJECT_DOMAIN);
+        self.0.fingerprint.apply(&mut hasher);
+        hasher.u8(operation);
+        hasher.u32(self.0.last_object);
+        hash_record(&mut hasher, record);
+        self.0.fingerprint = hasher.finish_fragment();
     }
     #[must_use]
     pub(crate) fn fingerprint(&self) -> StateHashFragment {
@@ -271,6 +205,10 @@ impl<G> PdfRawObjects<G> {
     #[must_use]
     pub(crate) fn last_object(&self) -> u32 {
         self.0.last_object
+    }
+
+    pub(crate) fn set_last_object(&mut self, object: u32) {
+        self.0.last_object = object;
     }
 
     pub(crate) fn records(&self) -> impl Iterator<Item = &PdfRawObjectRecord<G>> {
@@ -287,51 +225,16 @@ impl<G> PdfRawObjects<G> {
     }
 
     pub(crate) fn reserve(&mut self, id: PdfRawObjectId) {
-        let state = &mut self.0;
-        debug_assert!(state.records.last().is_none_or(|record| record.id < id));
-        state.records.push(PdfRawObjectRecord {
+        debug_assert!(self.0.records.last().is_none_or(|record| record.id < id));
+        let record = PdfRawObjectRecord {
             id,
             data: None,
             immediate: false,
             referenced: false,
-        });
-        state.last_object = id.raw();
-        state.fingerprint = fingerprint(state);
-    }
-
-    pub(crate) fn initialize(
-        &mut self,
-        id: PdfRawObjectId,
-        data: PdfRawObjectData<G>,
-        immediate: bool,
-    ) -> Result<(), PdfRawObjectInitializeError> {
-        let state = &mut self.0;
-        let index = state
-            .records
-            .binary_search_by_key(&id, |record| record.id)
-            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
-        if state.records[index].data.is_some() {
-            return Err(PdfRawObjectInitializeError::AlreadyInitialized(id));
-        }
-        state.records[index].data = Some(data);
-        state.records[index].immediate = immediate;
-        state.last_object = id.raw();
-        state.fingerprint = fingerprint(state);
-        Ok(())
-    }
-
-    pub(crate) fn reference(
-        &mut self,
-        id: PdfRawObjectId,
-    ) -> Result<(), PdfRawObjectInitializeError> {
-        let state = &mut self.0;
-        let index = state
-            .records
-            .binary_search_by_key(&id, |record| record.id)
-            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
-        state.records[index].referenced = true;
-        state.fingerprint = fingerprint(state);
-        Ok(())
+        };
+        self.0.records.push(record.clone());
+        self.0.last_object = id.raw();
+        self.append_version_fingerprint(0, &record);
     }
 }
 
@@ -341,24 +244,18 @@ pub enum PdfRawObjectInitializeError {
     AlreadyInitialized(PdfRawObjectId),
 }
 
-fn fingerprint<G>(state: &PdfRawObjectState<G>) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_RAW_OBJECT_DOMAIN);
-    hasher.u32(state.last_object);
-    hasher.usize(state.records.len());
-    for record in state.records.iter() {
-        hasher.u32(record.id.raw());
-        hasher.bool(record.data.is_some());
-        if let Some(data) = &record.data {
-            hasher.bool(data.stream);
-            hasher.bool(data.stream_attr.is_some());
-            if let Some(attr) = &data.stream_attr {
-                hasher.bytes(&attr.semantic_id.bytes());
-            }
-            hasher.bool(data.file);
-            hasher.bytes(&data.data.semantic_id.bytes());
+fn hash_record<G>(hasher: &mut StateHasher, record: &PdfRawObjectRecord<G>) {
+    hasher.u32(record.id.raw());
+    hasher.bool(record.data.is_some());
+    if let Some(data) = &record.data {
+        hasher.bool(data.stream);
+        hasher.bool(data.stream_attr.is_some());
+        if let Some(attr) = &data.stream_attr {
+            hasher.bytes(&attr.semantic_id.bytes());
         }
-        hasher.bool(record.immediate);
-        hasher.bool(record.referenced);
+        hasher.bool(data.file);
+        hasher.bytes(&data.data.semantic_id.bytes());
     }
-    hasher.finish_fragment()
+    hasher.bool(record.immediate);
+    hasher.bool(record.referenced);
 }

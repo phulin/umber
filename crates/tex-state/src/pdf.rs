@@ -53,7 +53,7 @@ use crate::ids::FontId;
 use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
 const PDF_PAGE_DOMAIN: u64 = 0x7064_665f_7061_6765;
@@ -104,7 +104,7 @@ struct PdfColorStackRuntime {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PdfFormColorRollback(u64, StateHashFragment);
+pub struct PdfFormColorRollback(u64, StateHashFragment, PdfVersionRoot);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PdfColorStack {
@@ -421,11 +421,6 @@ impl<T> PdfRows<T> {
             .chain(&self.delta)
     }
 
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        let base_len = self.base_len.unwrap_or(self.accepted.len());
-        self.accepted[..base_len].iter_mut().chain(&mut self.delta)
-    }
-
     pub(crate) fn get(&self, index: usize) -> Option<&T> {
         let base_len = self.base_len.unwrap_or(self.accepted.len());
         if index < base_len {
@@ -457,14 +452,6 @@ impl<T> PdfRows<T> {
             self.delta.push(value);
         } else {
             self.accepted.push(value);
-        }
-    }
-
-    fn pop(&mut self) -> Option<T> {
-        if self.base_len.is_some() {
-            self.delta.pop()
-        } else {
-            self.accepted.pop()
         }
     }
 
@@ -590,12 +577,6 @@ impl<T> PdfDenseMap<T> {
         self.len += usize::from(old.is_none());
         old
     }
-
-    fn remove(&mut self, key: &u32) -> Option<T> {
-        let old = self.rows.get_mut(*key as usize)?.take();
-        self.len -= usize::from(old.is_some());
-        old
-    }
 }
 
 impl<T> std::ops::Index<&u32> for PdfDenseMap<T> {
@@ -677,7 +658,7 @@ struct PdfExternalImageEntry {
     mask_object: Option<u32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct PdfFormArtifactEntry {
     payload: PdfPayloadId,
     last_position: Option<(Scaled, Scaled)>,
@@ -1337,6 +1318,7 @@ pub(crate) struct PdfStateCursor<G> {
     external_image_fingerprint: StateHashFragment,
     raw_object_fingerprint: StateHashFragment,
     raw_object_count: usize,
+    raw_last_object: u32,
     document_fragment_fingerprint: StateHashFragment,
     document_fragment_count: usize,
     document_objects: PdfDocumentObjectIds,
@@ -1393,6 +1375,7 @@ impl<G> Clone for PdfStateCursor<G> {
             external_image_fingerprint: self.external_image_fingerprint,
             raw_object_fingerprint: self.raw_object_fingerprint,
             raw_object_count: self.raw_object_count,
+            raw_last_object: self.raw_last_object,
             document_fragment_fingerprint: self.document_fragment_fingerprint,
             document_fragment_count: self.document_fragment_count,
             document_objects: self.document_objects,
@@ -1436,6 +1419,8 @@ impl<G> Clone for PdfStateCursor<G> {
 pub(crate) struct PdfStateSnapshot<G> {
     cursor: PdfStateCursor<G>,
     undo_pos: u64,
+    general_root: PdfVersionRoot,
+    color_root: PdfVersionRoot,
 }
 
 impl<G> Clone for PdfStateSnapshot<G> {
@@ -1443,6 +1428,8 @@ impl<G> Clone for PdfStateSnapshot<G> {
         Self {
             cursor: self.cursor.clone(),
             undo_pos: self.undo_pos,
+            general_root: self.general_root,
+            color_root: self.color_root,
         }
     }
 }
@@ -1453,64 +1440,228 @@ impl<G> PdfStateSnapshot<G> {
     }
 }
 
-#[derive(Clone, Debug)]
-enum PdfUndo<G> {
-    TransactionPlaceholder,
-    Match(PdfMatchState),
-    RawObject(object::PdfRawObjectUndo<G>),
-    Annotation {
-        row: usize,
-        data: Option<PdfAnnotationData<G>>,
-    },
-    OpenLinkPop(PdfOpenLink<G>),
-    OpenLinkPush,
-    FormArtifact {
-        object: u32,
-        old: Option<PdfFormArtifactEntry>,
-    },
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+struct PdfVersionRoot(Option<u32>);
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PdfVersionIndexNode {
+    children: [Option<u32>; 2],
+    value: Option<u32>,
+}
+
+#[derive(Debug, Default)]
+struct PdfVersionIndex {
+    accepted: Vec<PdfVersionIndexNode>,
+    candidate: Vec<PdfVersionIndexNode>,
+}
+
+impl PdfVersionIndex {
+    const PROBES: u32 = u64::BITS;
+
+    fn node(&self, index: u32) -> PdfVersionIndexNode {
+        let index = index as usize;
+        if index < self.accepted.len() {
+            self.accepted[index]
+        } else {
+            self.candidate[index - self.accepted.len()]
+        }
+    }
+
+    fn get(&self, root: PdfVersionRoot, key: u64) -> Option<u32> {
+        let mut node = root.0?;
+        for shift in (0..u64::BITS).rev() {
+            node = self.node(node).children[((key >> shift) & 1) as usize]?;
+        }
+        self.node(node).value
+    }
+
+    fn insert(
+        &mut self,
+        root: PdfVersionRoot,
+        key: u64,
+        value: u32,
+        candidate: bool,
+    ) -> PdfVersionRoot {
+        let mut path = [None; u64::BITS as usize + 1];
+        path[0] = root.0;
+        for (depth, shift) in (0..u64::BITS).rev().enumerate() {
+            path[depth + 1] = path[depth]
+                .and_then(|node| self.node(node).children[((key >> shift) & 1) as usize]);
+        }
+
+        let mut leaf = path[u64::BITS as usize]
+            .map_or_else(PdfVersionIndexNode::default, |node| self.node(node));
+        leaf.value = Some(value);
+        let mut child = self.push(leaf, candidate);
+        for depth in (0..u64::BITS as usize).rev() {
+            let shift = u64::BITS as usize - depth - 1;
+            let branch = ((key >> shift) & 1) as usize;
+            let mut parent =
+                path[depth].map_or_else(PdfVersionIndexNode::default, |node| self.node(node));
+            parent.children[branch] = Some(child);
+            child = self.push(parent, candidate);
+        }
+        PdfVersionRoot(Some(child))
+    }
+
+    fn push(&mut self, node: PdfVersionIndexNode, candidate: bool) -> u32 {
+        let absolute = self.accepted.len() + self.candidate.len();
+        let absolute = u32::try_from(absolute).expect("PDF version-index capacity");
+        if candidate {
+            self.candidate.push(node);
+        } else {
+            debug_assert!(self.candidate.is_empty());
+            self.accepted.push(node);
+        }
+        absolute
+    }
+
+    fn reject_candidate(&mut self) {
+        self.candidate.clear();
+    }
+
+    fn accept_candidate(&mut self) {
+        self.accepted.append(&mut self.candidate);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfGeneralVersionKey {
+    Match,
+    RawObject(u32),
+    Annotation(u32),
+    OpenLinks,
+    FormArtifact(u32),
     Destination {
         structure: bool,
-        row: usize,
-        old_structure: Option<u32>,
-        old_defined: bool,
+        row: u32,
     },
-    ThreadBead {
-        row: usize,
-        old_len: usize,
-    },
-    ThreadBeadPush {
-        row: usize,
-        bead: PdfThreadBeadRecord,
+    Thread(u32),
+    Color {
+        row: u32,
+        target: PdfColorStackTarget,
     },
 }
 
-#[derive(Debug)]
-enum PdfColorUndo {
-    TransactionPlaceholder,
-    Set {
-        row: usize,
-        target: PdfColorStackTarget,
-        old_current: Vec<u8>,
+impl PdfGeneralVersionKey {
+    const fn packed(self) -> u64 {
+        match self {
+            Self::Match => 0,
+            Self::RawObject(row) => (1_u64 << 56) | row as u64,
+            Self::Annotation(row) => (2_u64 << 56) | row as u64,
+            Self::OpenLinks => 3_u64 << 56,
+            Self::FormArtifact(object) => (4_u64 << 56) | object as u64,
+            Self::Destination { structure, row } => {
+                (5_u64 << 56) | ((structure as u64) << 55) | row as u64
+            }
+            Self::Thread(row) => (6_u64 << 56) | row as u64,
+            Self::Color { row, target } => {
+                (7_u64 << 56)
+                    | ((matches!(target, PdfColorStackTarget::Form) as u64) << 55)
+                    | row as u64
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum PdfVersionValue<G> {
+    Match(PdfMatchState),
+    RawObject(PdfRawObjectRecord<G>),
+    Annotation {
+        data: Option<PdfAnnotationData<G>>,
     },
-    Push {
-        row: usize,
-        target: PdfColorStackTarget,
+    OpenLinks(Option<u32>),
+    FormArtifact {
+        entry: Option<PdfFormArtifactEntry>,
     },
-    Pop {
-        row: usize,
-        target: PdfColorStackTarget,
-        old_current: Vec<u8>,
+    Destination {
+        structure: Option<u32>,
+        defined: bool,
     },
+    Thread {
+        bead_head: Option<u32>,
+        len: u32,
+    },
+    Color(PdfColorRuntimeRoot),
 }
 
 #[derive(Debug)]
 struct PdfCandidateTransaction<G> {
     accepted: PdfStateSnapshot<G>,
     base: PdfStateSnapshot<G>,
-    undo_prefix_len: usize,
-    color_undo_prefix_len: usize,
     undo_low_water: u64,
     color_undo_low_water: u64,
+}
+
+#[derive(Debug)]
+struct PdfBranchArena<T> {
+    accepted: Vec<T>,
+    candidate: Vec<T>,
+}
+
+impl<T> Default for PdfBranchArena<T> {
+    fn default() -> Self {
+        Self {
+            accepted: Vec::new(),
+            candidate: Vec::new(),
+        }
+    }
+}
+
+impl<T> PdfBranchArena<T> {
+    fn get(&self, index: u32) -> Option<&T> {
+        let index = index as usize;
+        if index < self.accepted.len() {
+            self.accepted.get(index)
+        } else {
+            self.candidate.get(index - self.accepted.len())
+        }
+    }
+
+    fn push(&mut self, value: T, candidate: bool) -> u32 {
+        let absolute = self.accepted.len() + self.candidate.len();
+        let absolute = u32::try_from(absolute).expect("PDF branch-arena capacity");
+        if candidate {
+            self.candidate.push(value);
+        } else {
+            debug_assert!(self.candidate.is_empty());
+            self.accepted.push(value);
+        }
+        absolute
+    }
+
+    fn reject_candidate(&mut self) {
+        self.candidate.clear();
+    }
+
+    fn accept_candidate(&mut self) {
+        self.accepted.append(&mut self.candidate);
+    }
+}
+
+#[derive(Debug)]
+struct PdfOpenLinkNode<G> {
+    value: PdfOpenLink<G>,
+    previous: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PdfThreadBeadNode {
+    value: PdfThreadBeadRecord,
+    previous: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PdfColorRuntimeRoot {
+    current: u32,
+    pushed: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PdfColorPushNode {
+    value: u32,
+    previous: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -1587,12 +1738,21 @@ pub(crate) struct PdfState<G> {
     outline_fingerprint: StateHashFragment,
     threads: PdfRows<PdfThreadRecord>,
     thread_fingerprint: StateHashFragment,
+    general_root: PdfVersionRoot,
+    general_index: PdfVersionIndex,
+    color_root: PdfVersionRoot,
+    color_index: PdfVersionIndex,
+    general_versions: PdfBranchArena<PdfVersionValue<G>>,
+    open_link_nodes: PdfBranchArena<PdfOpenLinkNode<G>>,
+    thread_bead_nodes: PdfBranchArena<PdfThreadBeadNode>,
+    color_values: PdfBranchArena<Box<[u8]>>,
+    color_push_nodes: PdfBranchArena<PdfColorPushNode>,
     undo_base: u64,
-    undo: VecDeque<PdfUndo<G>>,
-    candidate_undo: VecDeque<PdfUndo<G>>,
+    undo_len: u64,
+    candidate_undo_len: u64,
     color_undo_base: u64,
-    color_undo: VecDeque<PdfColorUndo>,
-    candidate_color_undo: VecDeque<PdfColorUndo>,
+    color_undo_len: u64,
+    candidate_color_undo_len: u64,
     transaction: Option<PdfCandidateTransaction<G>>,
 }
 
@@ -1618,7 +1778,7 @@ impl<G> PdfStateSlot<G> {
         let Self::Owned(mut state) = std::mem::replace(self, Self::Loaned) else {
             panic!("accepted PDF state already has an exclusive candidate");
         };
-        state.begin_candidate_transaction(base);
+        state.open_candidate_lineage(base);
         Self::Owned(state)
     }
 
@@ -1668,38 +1828,22 @@ impl<G> PdfState<G> {
     pub(crate) fn history_head(&self) -> (u64, u64) {
         if let Some(transaction) = &self.transaction {
             (
-                transaction.base.undo_pos + self.candidate_undo.len() as u64,
-                transaction.base.cursor.color_undo_pos + self.candidate_color_undo.len() as u64,
+                transaction.base.undo_pos + self.candidate_undo_len,
+                transaction.base.cursor.color_undo_pos + self.candidate_color_undo_len,
             )
         } else {
             (
-                self.undo_base + self.undo.len() as u64,
-                self.color_undo_base + self.color_undo.len() as u64,
+                self.undo_base + self.undo_len,
+                self.color_undo_base + self.color_undo_len,
             )
         }
     }
 
-    pub(crate) fn begin_candidate_transaction(&mut self, base: &PdfStateSnapshot<G>) {
+    pub(crate) fn open_candidate_lineage(&mut self, base: &PdfStateSnapshot<G>) {
         assert!(self.transaction.is_none());
         assert!(self.snapshot_is_retained(base));
-        assert!(self.candidate_undo.is_empty() && self.candidate_color_undo.is_empty());
+        assert!(self.candidate_undo_len == 0 && self.candidate_color_undo_len == 0);
         let accepted = self.snapshot();
-        let undo_prefix_len = (base.undo_pos - self.undo_base) as usize;
-        let color_undo_prefix_len = (base.cursor.color_undo_pos - self.color_undo_base) as usize;
-
-        for index in (undo_prefix_len..self.undo.len()).rev() {
-            let undo = std::mem::replace(&mut self.undo[index], PdfUndo::TransactionPlaceholder);
-            let redo = self.swap_undo(undo);
-            self.undo[index] = redo;
-        }
-        for index in (color_undo_prefix_len..self.color_undo.len()).rev() {
-            let undo = std::mem::replace(
-                &mut self.color_undo[index],
-                PdfColorUndo::TransactionPlaceholder,
-            );
-            let redo = self.swap_color_undo(undo);
-            self.color_undo[index] = redo;
-        }
 
         let cursor = &base.cursor;
         self.pages.begin_transaction(cursor.page_count);
@@ -1722,7 +1866,6 @@ impl<G> PdfState<G> {
             .begin_transaction(cursor.space_font_name_count);
         self.annotations.begin_transaction(cursor.annotation_count);
         self.links.begin_transaction(cursor.link_count);
-        self.open_links.begin_transaction(cursor.open_link_count);
         self.color_stacks
             .begin_transaction(cursor.color_stack_count);
         self.forms.begin_transaction(cursor.form_count);
@@ -1735,11 +1878,13 @@ impl<G> PdfState<G> {
         self.payloads
             .begin_transaction(cursor.payload_count, cursor.payload_bytes);
         self.restore_cursor_scalars(cursor);
+        self.general_root = base.general_root;
+        self.color_root = base.color_root;
+        self.candidate_undo_len = 0;
+        self.candidate_color_undo_len = 0;
         self.transaction = Some(PdfCandidateTransaction {
             accepted,
             base: base.clone(),
-            undo_prefix_len,
-            color_undo_prefix_len,
             undo_low_water: base.undo_pos,
             color_undo_low_water: base.cursor.color_undo_pos,
         });
@@ -1755,42 +1900,38 @@ impl<G> PdfState<G> {
         self.rollback(base);
         let transaction = self.transaction.take().expect("PDF transaction exists");
         self.reject_row_transaction();
-
-        for index in transaction.undo_prefix_len..self.undo.len() {
-            let redo = std::mem::replace(&mut self.undo[index], PdfUndo::TransactionPlaceholder);
-            let undo = self.swap_undo(redo);
-            self.undo[index] = undo;
-        }
-        for index in transaction.color_undo_prefix_len..self.color_undo.len() {
-            let redo = std::mem::replace(
-                &mut self.color_undo[index],
-                PdfColorUndo::TransactionPlaceholder,
-            );
-            let undo = self.swap_color_undo(redo);
-            self.color_undo[index] = undo;
-        }
+        self.general_root = transaction.accepted.general_root;
+        self.color_root = transaction.accepted.color_root;
+        self.general_index.reject_candidate();
+        self.color_index.reject_candidate();
+        self.general_versions.reject_candidate();
+        self.open_link_nodes.reject_candidate();
+        self.thread_bead_nodes.reject_candidate();
+        self.color_values.reject_candidate();
+        self.color_push_nodes.reject_candidate();
+        self.candidate_undo_len = 0;
+        self.candidate_color_undo_len = 0;
         self.restore_cursor_scalars(&transaction.accepted.cursor);
     }
 
     pub(crate) fn accept_candidate_transaction(&mut self) {
         let transaction = self.transaction.take().expect("PDF transaction exists");
         self.accept_row_transaction();
-        for _ in transaction.base.undo_pos..transaction.undo_low_water {
-            self.candidate_undo
-                .pop_front()
-                .expect("pruned PDF candidate undo exists until acceptance");
-        }
-        for _ in transaction.base.cursor.color_undo_pos..transaction.color_undo_low_water {
-            self.candidate_color_undo
-                .pop_front()
-                .expect("pruned PDF candidate color undo exists until acceptance");
-        }
-        self.undo.clear();
-        self.undo.append(&mut self.candidate_undo);
+        self.general_index.accept_candidate();
+        self.color_index.accept_candidate();
+        self.general_versions.accept_candidate();
+        self.open_link_nodes.accept_candidate();
+        self.thread_bead_nodes.accept_candidate();
+        self.color_values.accept_candidate();
+        self.color_push_nodes.accept_candidate();
         self.undo_base = transaction.undo_low_water;
-        self.color_undo.clear();
-        self.color_undo.append(&mut self.candidate_color_undo);
+        self.undo_len =
+            self.candidate_undo_len - (transaction.undo_low_water - transaction.base.undo_pos);
+        self.candidate_undo_len = 0;
         self.color_undo_base = transaction.color_undo_low_water;
+        self.color_undo_len = self.candidate_color_undo_len
+            - (transaction.color_undo_low_water - transaction.base.cursor.color_undo_pos);
+        self.candidate_color_undo_len = 0;
     }
 
     fn reject_row_transaction(&mut self) {
@@ -1807,7 +1948,6 @@ impl<G> PdfState<G> {
         self.space_font_name_delta_lookup.clear();
         self.annotations.reject_transaction();
         self.links.reject_transaction();
-        self.open_links.reject_transaction();
         self.color_stacks.reject_transaction();
         self.forms.reject_transaction();
         self.destinations.reject_transaction();
@@ -1838,7 +1978,6 @@ impl<G> PdfState<G> {
             .append(&mut self.space_font_name_delta_lookup);
         self.annotations.accept_transaction();
         self.links.accept_transaction();
-        self.open_links.accept_transaction();
         self.color_stacks.accept_transaction();
         self.forms.accept_transaction();
         self.destinations.accept_transaction();
@@ -1854,10 +1993,10 @@ impl<G> PdfState<G> {
         self.output_parameters = cursor.output_parameters;
         self.pk_mode_row = cursor.pk_mode_row;
         self.fingerprint = cursor.fingerprint;
-        self.match_state.fingerprint = cursor.match_fingerprint;
         self.external_image_fingerprint = cursor.external_image_fingerprint;
         self.raw_objects
             .set_fingerprint(cursor.raw_object_fingerprint);
+        self.raw_objects.set_last_object(cursor.raw_last_object);
         self.document_fragments
             .set_fingerprint(cursor.document_fragment_fingerprint);
         self.document_objects = cursor.document_objects;
@@ -1884,234 +2023,179 @@ impl<G> PdfState<G> {
 
     pub(crate) fn prune_history(&mut self, low_water: (u64, u64)) {
         if let Some(transaction) = &mut self.transaction {
-            let undo_head = transaction.base.undo_pos + self.candidate_undo.len() as u64;
-            let color_head =
-                transaction.base.cursor.color_undo_pos + self.candidate_color_undo.len() as u64;
+            let undo_head = transaction.base.undo_pos + self.candidate_undo_len;
+            let color_head = transaction.base.cursor.color_undo_pos + self.candidate_color_undo_len;
             assert!(low_water.0 >= transaction.undo_low_water && low_water.0 <= undo_head);
             assert!(low_water.1 >= transaction.color_undo_low_water && low_water.1 <= color_head);
             transaction.undo_low_water = low_water.0;
             transaction.color_undo_low_water = low_water.1;
             return;
         }
-        let undo_head = self.undo_base + self.undo.len() as u64;
-        let color_head = self.color_undo_base + self.color_undo.len() as u64;
+        let undo_head = self.undo_base + self.undo_len;
+        let color_head = self.color_undo_base + self.color_undo_len;
         assert!(low_water.0 >= self.undo_base && low_water.0 <= undo_head);
         assert!(low_water.1 >= self.color_undo_base && low_water.1 <= color_head);
-        while self.undo_base < low_water.0 {
-            self.undo
-                .pop_front()
-                .expect("PDF undo low water is retained");
-            self.undo_base += 1;
-        }
-        while self.color_undo_base < low_water.1 {
-            self.color_undo
-                .pop_front()
-                .expect("PDF color undo low water is retained");
-            self.color_undo_base += 1;
-        }
+        self.undo_len = undo_head - low_water.0;
+        self.undo_base = low_water.0;
+        self.color_undo_len = color_head - low_water.1;
+        self.color_undo_base = low_water.1;
     }
 
-    fn apply_undo(&mut self, undo: PdfUndo<G>) {
-        match undo {
-            PdfUndo::TransactionPlaceholder => {
-                unreachable!("PDF transaction placeholder is never replayed")
-            }
-            PdfUndo::Match(old) => self.match_state = old,
-            PdfUndo::RawObject(old) => self.raw_objects.restore_change(old),
-            PdfUndo::Annotation { row, data } => self.annotations[row].restore_data(data),
-            PdfUndo::OpenLinkPop(record) => self.open_links.push(record),
-            PdfUndo::OpenLinkPush => {
-                self.open_links.pop();
-            }
-            PdfUndo::FormArtifact { object, old } => {
-                if let Some(old) = old {
-                    self.form_artifacts.insert(object, old);
-                } else {
-                    self.form_artifacts.remove(&object);
-                }
-            }
-            PdfUndo::Destination {
-                structure,
-                row,
-                old_structure,
-                old_defined,
-            } => {
-                let records = if structure {
-                    &mut self.structure_destinations
-                } else {
-                    &mut self.destinations
-                };
-                records[row].restore_definition(old_structure, old_defined);
-            }
-            PdfUndo::ThreadBead { row, old_len } => self.threads[row].truncate_beads(old_len),
-            PdfUndo::ThreadBeadPush { row, bead } => self.threads[row].push_bead(bead),
-        }
+    fn general_version(&self, key: PdfGeneralVersionKey) -> Option<&PdfVersionValue<G>> {
+        let event = self.general_index.get(self.general_root, key.packed())?;
+        self.general_versions.get(event)
     }
 
-    fn swap_undo(&mut self, undo: PdfUndo<G>) -> PdfUndo<G> {
-        match undo {
-            PdfUndo::TransactionPlaceholder => {
-                unreachable!("PDF transaction placeholder is never swapped")
-            }
-            PdfUndo::Match(mut old) => {
-                std::mem::swap(&mut self.match_state, &mut old);
-                PdfUndo::Match(old)
-            }
-            PdfUndo::RawObject(old) => PdfUndo::RawObject(self.raw_objects.swap_change(old)),
-            PdfUndo::Annotation { row, data } => {
-                let current = self.annotations[row].take_data();
-                self.annotations[row].restore_data(data);
-                PdfUndo::Annotation { row, data: current }
-            }
-            PdfUndo::OpenLinkPop(record) => {
-                self.open_links.push(record);
-                PdfUndo::OpenLinkPush
-            }
-            PdfUndo::OpenLinkPush => PdfUndo::OpenLinkPop(
-                self.open_links
-                    .pop()
-                    .expect("PDF open-link push has a transaction predecessor"),
-            ),
-            PdfUndo::FormArtifact { object, old } => {
-                let current = if let Some(old) = old {
-                    self.form_artifacts.insert(object, old)
-                } else {
-                    self.form_artifacts.remove(&object)
-                };
-                PdfUndo::FormArtifact {
-                    object,
-                    old: current,
-                }
-            }
-            PdfUndo::Destination {
-                structure,
-                row,
-                old_structure,
-                old_defined,
-            } => {
-                let records = if structure {
-                    &mut self.structure_destinations
-                } else {
-                    &mut self.destinations
-                };
-                let current = records[row].definition_state();
-                records[row].restore_definition(old_structure, old_defined);
-                PdfUndo::Destination {
-                    structure,
-                    row,
-                    old_structure: current.0,
-                    old_defined: current.1,
-                }
-            }
-            PdfUndo::ThreadBead { row, old_len } => {
-                let bead = self.threads[row]
-                    .pop_bead()
-                    .expect("PDF thread append has a transaction predecessor");
-                debug_assert_eq!(self.threads[row].beads().len(), old_len);
-                PdfUndo::ThreadBeadPush { row, bead }
-            }
-            PdfUndo::ThreadBeadPush { row, bead } => {
-                let old_len = self.threads[row].beads().len();
-                self.threads[row].push_bead(bead);
-                PdfUndo::ThreadBead { row, old_len }
-            }
-        }
-    }
-
-    fn swap_color_undo(&mut self, undo: PdfColorUndo) -> PdfColorUndo {
-        let (row, target) = match &undo {
-            PdfColorUndo::TransactionPlaceholder => {
-                unreachable!("PDF color transaction placeholder is never swapped")
-            }
-            PdfColorUndo::Set { row, target, .. }
-            | PdfColorUndo::Push { row, target }
-            | PdfColorUndo::Pop { row, target, .. } => (*row, *target),
-        };
-        let runtime = match target {
-            PdfColorStackTarget::Page => &mut self.color_stacks[row].page,
-            PdfColorStackTarget::Form => &mut self.color_stacks[row].form,
-        };
-        match undo {
-            PdfColorUndo::TransactionPlaceholder => unreachable!(),
-            PdfColorUndo::Set {
-                row,
-                target,
-                mut old_current,
-            } => {
-                std::mem::swap(&mut runtime.current, &mut old_current);
-                PdfColorUndo::Set {
-                    row,
-                    target,
-                    old_current,
-                }
-            }
-            PdfColorUndo::Push { row, target } => {
-                let old_current = std::mem::replace(
-                    &mut runtime.current,
-                    runtime
-                        .pushed
-                        .pop()
-                        .expect("PDF color push has a transaction predecessor"),
-                );
-                PdfColorUndo::Pop {
-                    row,
-                    target,
-                    old_current,
-                }
-            }
-            PdfColorUndo::Pop {
-                row,
-                target,
-                old_current,
-            } => {
-                runtime
-                    .pushed
-                    .push(std::mem::replace(&mut runtime.current, old_current));
-                PdfColorUndo::Push { row, target }
-            }
-        }
-    }
-
-    fn push_undo(&mut self, undo: PdfUndo<G>) {
-        if self.transaction.is_some() {
-            self.candidate_undo.push_back(undo);
+    fn push_general_version(&mut self, key: PdfGeneralVersionKey, value: PdfVersionValue<G>) {
+        let candidate = self.transaction.is_some();
+        let event = self.general_versions.push(value, candidate);
+        self.general_root =
+            self.general_index
+                .insert(self.general_root, key.packed(), event, candidate);
+        if candidate {
+            self.candidate_undo_len += 1;
         } else {
-            self.undo.push_back(undo);
+            self.undo_len += 1;
         }
     }
 
-    fn push_color_undo(&mut self, undo: PdfColorUndo) {
-        if self.transaction.is_some() {
-            self.candidate_color_undo.push_back(undo);
+    fn thread_state(&self, row: usize) -> (Option<u32>, u32) {
+        match self.general_version(PdfGeneralVersionKey::Thread(row as u32)) {
+            Some(PdfVersionValue::Thread { bead_head, len }) => (*bead_head, *len),
+            Some(_) => unreachable!("PDF thread version key has one value family"),
+            None => (None, 0),
+        }
+    }
+
+    fn thread_record(&self, row: usize) -> PdfThreadRecord {
+        let (mut head, len) = self.thread_state(row);
+        let mut beads = Vec::with_capacity(len as usize);
+        while let Some(index) = head {
+            let node = self
+                .thread_bead_nodes
+                .get(index)
+                .expect("PDF thread-bead root is live");
+            beads.push(node.value);
+            head = node.previous;
+        }
+        beads.reverse();
+        self.threads[row].clone().with_beads(beads)
+    }
+
+    fn open_link_root(&self) -> Option<u32> {
+        match self.general_version(PdfGeneralVersionKey::OpenLinks) {
+            Some(PdfVersionValue::OpenLinks(root)) => *root,
+            Some(_) => unreachable!("PDF open-link version key has one value family"),
+            None => None,
+        }
+    }
+
+    fn open_link_values(&self) -> Vec<PdfOpenLink<G>> {
+        let mut root = self.open_link_root();
+        let mut values = Vec::new();
+        while let Some(index) = root {
+            let node = self
+                .open_link_nodes
+                .get(index)
+                .expect("PDF open-link root is live");
+            values.push(node.value.clone());
+            root = node.previous;
+        }
+        values.reverse();
+        values
+    }
+
+    fn color_version(
+        &self,
+        row: usize,
+        target: PdfColorStackTarget,
+    ) -> Option<PdfColorRuntimeRoot> {
+        let key = PdfGeneralVersionKey::Color {
+            row: row as u32,
+            target,
+        };
+        let event = self.color_index.get(self.color_root, key.packed())?;
+        match self.general_versions.get(event) {
+            Some(PdfVersionValue::Color(root)) => Some(*root),
+            Some(_) => unreachable!("PDF color version key has one value family"),
+            None => unreachable!("PDF color version root is live"),
+        }
+    }
+
+    fn push_color_version(
+        &mut self,
+        row: usize,
+        target: PdfColorStackTarget,
+        root: PdfColorRuntimeRoot,
+    ) {
+        let candidate = self.transaction.is_some();
+        let event = self
+            .general_versions
+            .push(PdfVersionValue::Color(root), candidate);
+        let key = PdfGeneralVersionKey::Color {
+            row: row as u32,
+            target,
+        };
+        self.color_root = self
+            .color_index
+            .insert(self.color_root, key.packed(), event, candidate);
+        if candidate {
+            self.candidate_color_undo_len += 1;
         } else {
-            self.color_undo.push_back(undo);
+            self.color_undo_len += 1;
         }
     }
 
-    fn apply_color_undo(&mut self, undo: PdfColorUndo) {
-        let (row, target) = match &undo {
-            PdfColorUndo::TransactionPlaceholder => {
-                unreachable!("PDF color transaction placeholder is never replayed")
-            }
-            PdfColorUndo::Set { row, target, .. }
-            | PdfColorUndo::Push { row, target }
-            | PdfColorUndo::Pop { row, target, .. } => (*row, *target),
-        };
+    fn store_color_value(&mut self, value: Vec<u8>) -> u32 {
+        self.color_values
+            .push(value.into_boxed_slice(), self.transaction.is_some())
+    }
+
+    fn color_value(&self, value: u32) -> &[u8] {
+        self.color_values
+            .get(value)
+            .expect("PDF color value root is live")
+    }
+
+    fn materialize_color_runtime(
+        &mut self,
+        row: usize,
+        target: PdfColorStackTarget,
+    ) -> PdfColorRuntimeRoot {
+        if let Some(root) = self.color_version(row, target) {
+            return root;
+        }
         let runtime = match target {
-            PdfColorStackTarget::Page => &mut self.color_stacks[row].page,
-            PdfColorStackTarget::Form => &mut self.color_stacks[row].form,
+            PdfColorStackTarget::Page => self.color_stacks[row].page.clone(),
+            PdfColorStackTarget::Form => self.color_stacks[row].form.clone(),
         };
-        match undo {
-            PdfColorUndo::TransactionPlaceholder => unreachable!(),
-            PdfColorUndo::Set { old_current, .. } => runtime.current = old_current,
-            PdfColorUndo::Push { .. } => {
-                runtime.current = runtime.pushed.pop().expect("color push has predecessor");
-            }
-            PdfColorUndo::Pop { old_current, .. } => {
-                runtime
-                    .pushed
-                    .push(std::mem::replace(&mut runtime.current, old_current));
-            }
+        let candidate = self.transaction.is_some();
+        let mut pushed = None;
+        for value in runtime.pushed {
+            let value = self.color_values.push(value.into_boxed_slice(), candidate);
+            pushed = Some(self.color_push_nodes.push(
+                PdfColorPushNode {
+                    value,
+                    previous: pushed,
+                },
+                candidate,
+            ));
+        }
+        PdfColorRuntimeRoot {
+            current: self
+                .color_values
+                .push(runtime.current.into_boxed_slice(), candidate),
+            pushed,
+        }
+    }
+
+    fn color_current_bytes(&self, row: usize, target: PdfColorStackTarget) -> &[u8] {
+        if let Some(root) = self.color_version(row, target) {
+            return self.color_value(root.current);
+        }
+        match target {
+            PdfColorStackTarget::Page => &self.color_stacks[row].page.current,
+            PdfColorStackTarget::Form => &self.color_stacks[row].form.current,
         }
     }
 }
@@ -2172,12 +2256,21 @@ impl<G> Default for PdfState<G> {
             outline_fingerprint: outline_fingerprint::<G>(&[]),
             threads: PdfRows::default(),
             thread_fingerprint: thread_fingerprint(&PdfRows::default()),
+            general_root: PdfVersionRoot::default(),
+            general_index: PdfVersionIndex::default(),
+            color_root: PdfVersionRoot::default(),
+            color_index: PdfVersionIndex::default(),
+            general_versions: PdfBranchArena::default(),
+            open_link_nodes: PdfBranchArena::default(),
+            thread_bead_nodes: PdfBranchArena::default(),
+            color_values: PdfBranchArena::default(),
+            color_push_nodes: PdfBranchArena::default(),
             undo_base: 0,
-            undo: VecDeque::new(),
-            candidate_undo: VecDeque::new(),
+            undo_len: 0,
+            candidate_undo_len: 0,
             color_undo_base: 0,
-            color_undo: VecDeque::new(),
-            candidate_color_undo: VecDeque::new(),
+            color_undo_len: 0,
+            candidate_color_undo_len: 0,
             transaction: None,
         }
     }
@@ -2284,8 +2377,7 @@ impl<G> PdfState<G> {
             return Ok(None);
         }
         let raw_objects = self
-            .raw_objects
-            .records()
+            .raw_objects()
             .map(|record| {
                 let data = record
                     .data()
@@ -2712,47 +2804,107 @@ impl<G> PdfState<G> {
             .iter()
             .position(|record| record.object() == object)
             .ok_or(PdfAnnotationInitializeError(object))?;
-        let prior = self.annotations[row].take_data();
+        let key = PdfGeneralVersionKey::Annotation(row as u32);
+        let prior = match self.general_version(key) {
+            Some(PdfVersionValue::Annotation { data }) => data.clone(),
+            Some(_) => unreachable!("PDF annotation version key has one value family"),
+            None => self.annotations[row].data(),
+        };
         if prior.is_some() {
-            self.annotations[row].restore_data(prior);
             return Err(PdfAnnotationInitializeError(object));
         }
-        self.push_undo(PdfUndo::Annotation { row, data: prior });
-        let record = self
-            .annotations
-            .iter_mut()
-            .find(|record| record.object() == object)
-            .expect("annotation row was found");
         let dimensions = data.dimensions;
-        record
-            .initialize(data)
-            .map_err(|()| PdfAnnotationInitializeError(object))?;
+        self.push_general_version(
+            key,
+            PdfVersionValue::Annotation {
+                data: Some(data.clone()),
+            },
+        );
         self.annotation_fingerprint = append_annotation_data_fingerprint(
             self.annotation_fingerprint,
             object,
             dimensions,
             entries_semantic_id,
         );
-        Ok(record.clone())
+        let mut record = PdfAnnotationRecord::reserved(object);
+        record
+            .initialize(data)
+            .map_err(|()| PdfAnnotationInitializeError(object))?;
+        Ok(record)
     }
 
-    #[cfg(test)]
     #[must_use]
-    pub(crate) fn annotations(&self) -> &PdfRows<PdfAnnotationRecord<G>> {
-        &self.annotations
+    pub(crate) fn annotations(&self) -> Vec<PdfAnnotationRecord<G>> {
+        self.annotations
+            .iter()
+            .enumerate()
+            .map(|(row, record)| {
+                let mut record = record.clone();
+                if let Some(PdfVersionValue::Annotation { data }) =
+                    self.general_version(PdfGeneralVersionKey::Annotation(row as u32))
+                {
+                    record.restore_data(data.clone());
+                }
+                record
+            })
+            .collect()
+    }
+
+    fn destination_records(&self, structure: bool) -> Vec<PdfDestinationRecord> {
+        let records = if structure {
+            &self.structure_destinations
+        } else {
+            &self.destinations
+        };
+        records
+            .iter()
+            .enumerate()
+            .map(|(row, record)| {
+                let mut record = record.clone();
+                if let Some(PdfVersionValue::Destination {
+                    structure: target,
+                    defined,
+                }) = self.general_version(PdfGeneralVersionKey::Destination {
+                    structure,
+                    row: row as u32,
+                }) {
+                    record.restore_definition(*target, *defined);
+                }
+                record
+            })
+            .collect()
+    }
+
+    fn thread_records(&self) -> Vec<PdfThreadRecord> {
+        (0..self.threads.len())
+            .map(|row| self.thread_record(row))
+            .collect()
     }
 
     pub(crate) fn destination(
         &self,
         identity: &PdfDestinationIdentity,
         structure: bool,
-    ) -> Option<&PdfDestinationRecord> {
+    ) -> Option<PdfDestinationRecord> {
         let records = if structure {
             &self.structure_destinations
         } else {
             &self.destinations
         };
-        records.iter().find(|record| record.identity() == identity)
+        let (row, record) = records
+            .iter()
+            .enumerate()
+            .find(|(_, record)| record.identity() == identity)?;
+        let mut record = record.clone();
+        if let Some(PdfVersionValue::Destination { structure, defined }) =
+            self.general_version(PdfGeneralVersionKey::Destination {
+                structure,
+                row: row as u32,
+            })
+        {
+            record.restore_definition(*structure, *defined);
+        }
+        Some(record)
     }
 
     pub(crate) fn reserve_destination(
@@ -2761,7 +2913,7 @@ impl<G> PdfState<G> {
         structure: bool,
     ) -> Result<PdfDestinationRecord, PdfObjectCapacityError> {
         if let Some(record) = self.destination(&identity, structure) {
-            return Ok(record.clone());
+            return Ok(record);
         }
         let object = self.reserve_document_object()?;
         let record = PdfDestinationRecord::reserved(identity, object);
@@ -2772,9 +2924,15 @@ impl<G> PdfState<G> {
         };
         records.push(record.clone());
         if structure {
-            self.structure_destination_fingerprint = destination_fingerprint(records, true);
+            self.structure_destination_fingerprint = append_destination_fingerprint(
+                self.structure_destination_fingerprint,
+                &record,
+                true,
+                0,
+            );
         } else {
-            self.destination_fingerprint = destination_fingerprint(records, false);
+            self.destination_fingerprint =
+                append_destination_fingerprint(self.destination_fingerprint, &record, false, 0);
         }
         Ok(record)
     }
@@ -2794,29 +2952,39 @@ impl<G> PdfState<G> {
         .iter()
         .position(|record| record.object() == reserved.object())
         .expect("reserved destination exists");
-        let (old_structure, old_defined) = if structure {
-            self.structure_destinations[row].definition_state()
-        } else {
-            self.destinations[row].definition_state()
-        };
-        self.push_undo(PdfUndo::Destination {
+        let key = PdfGeneralVersionKey::Destination {
             structure,
-            row,
-            old_structure,
-            old_defined,
-        });
-        let records = if structure {
-            &mut self.structure_destinations
-        } else {
-            &mut self.destinations
+            row: row as u32,
         };
-        let record = &mut records[row];
+        let records = if structure {
+            &self.structure_destinations
+        } else {
+            &self.destinations
+        };
+        let mut record = records[row].clone();
+        if let Some(PdfVersionValue::Destination { structure, defined }) = self.general_version(key)
+        {
+            record.restore_definition(*structure, *defined);
+        }
         let duplicate = !record.define(structure_target);
         let result = record.clone();
+        self.push_general_version(
+            key,
+            PdfVersionValue::Destination {
+                structure: result.structure(),
+                defined: result.defined(),
+            },
+        );
         if structure {
-            self.structure_destination_fingerprint = destination_fingerprint(records, true);
+            self.structure_destination_fingerprint = append_destination_fingerprint(
+                self.structure_destination_fingerprint,
+                &result,
+                true,
+                1,
+            );
         } else {
-            self.destination_fingerprint = destination_fingerprint(records, false);
+            self.destination_fingerprint =
+                append_destination_fingerprint(self.destination_fingerprint, &result, false, 1);
         }
         Ok(PdfDestinationDefinition {
             record: result,
@@ -2844,15 +3012,26 @@ impl<G> PdfState<G> {
             self.reserve_document_object()?,
             self.reserve_document_object()?,
         );
-        let old_len = self.threads[index].beads().len();
-        self.push_undo(PdfUndo::ThreadBead {
-            row: index,
-            old_len,
-        });
-        let threads = &mut self.threads;
-        threads[index].push_bead(bead);
-        self.thread_fingerprint = thread_fingerprint(threads);
-        Ok((threads[index].clone(), bead))
+        let (previous, len) = self.thread_state(index);
+        let candidate = self.transaction.is_some();
+        let bead_head = self.thread_bead_nodes.push(
+            PdfThreadBeadNode {
+                value: bead,
+                previous,
+            },
+            candidate,
+        );
+        self.push_general_version(
+            PdfGeneralVersionKey::Thread(index as u32),
+            PdfVersionValue::Thread {
+                bead_head: Some(bead_head),
+                len: len + 1,
+            },
+        );
+        let record = self.thread_record(index);
+        self.thread_fingerprint =
+            append_thread_bead_fingerprint(self.thread_fingerprint, record.object(), bead);
+        Ok((record, bead))
     }
 
     pub(crate) fn reserve_thread(
@@ -2870,7 +3049,8 @@ impl<G> PdfState<G> {
         let record = PdfThreadRecord::new(identity, object);
         let threads = &mut self.threads;
         threads.push(record.clone());
-        self.thread_fingerprint = thread_fingerprint(threads);
+        self.thread_fingerprint =
+            append_thread_reservation_fingerprint(self.thread_fingerprint, &record);
         Ok(record)
     }
 
@@ -2956,23 +3136,41 @@ impl<G> PdfState<G> {
             attributes_semantic_id,
             action_semantic_id,
         );
-        self.open_links.push(PdfOpenLink {
+        let open = PdfOpenLink {
             record: record.clone(),
             nesting_depth,
-        });
-        self.push_undo(PdfUndo::OpenLinkPush);
+        };
+        let candidate = self.transaction.is_some();
+        let root = self.open_link_nodes.push(
+            PdfOpenLinkNode {
+                value: open,
+                previous: self.open_link_root(),
+            },
+            candidate,
+        );
+        self.push_general_version(
+            PdfGeneralVersionKey::OpenLinks,
+            PdfVersionValue::OpenLinks(Some(root)),
+        );
         self.links.push(record.clone());
-        self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
+        self.open_link_fingerprint = open_link_fingerprint_values(&self.open_link_values());
         Ok(record)
     }
 
     pub(crate) fn end_link(&mut self) -> Option<PdfOpenLink<G>> {
-        let open = self.open_links.pop();
-        if let Some(record) = &open {
-            self.push_undo(PdfUndo::OpenLinkPop(record.clone()));
-        }
-        self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
-        open
+        let root = self.open_link_root()?;
+        let node = self
+            .open_link_nodes
+            .get(root)
+            .expect("PDF open-link root is live");
+        let open = node.value.clone();
+        let previous = node.previous;
+        self.push_general_version(
+            PdfGeneralVersionKey::OpenLinks,
+            PdfVersionValue::OpenLinks(previous),
+        );
+        self.open_link_fingerprint = open_link_fingerprint_values(&self.open_link_values());
+        open.into()
     }
 
     #[cfg(test)]
@@ -2988,8 +3186,8 @@ impl<G> PdfState<G> {
 
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn open_links(&self) -> &PdfRows<PdfOpenLink<G>> {
-        &self.open_links
+    pub(crate) fn open_links(&self) -> Vec<PdfOpenLink<G>> {
+        self.open_link_values()
     }
 
     fn push_font_operation(&mut self, operation: PdfFontOperation) {
@@ -3261,18 +3459,35 @@ impl<G> PdfState<G> {
             last_position: artifact.last_position,
             snap_reference: artifact.snap_reference,
         };
-        let old = self.form_artifacts.insert(object, entry);
-        self.push_undo(PdfUndo::FormArtifact { object, old });
+        self.push_general_version(
+            PdfGeneralVersionKey::FormArtifact(object),
+            PdfVersionValue::FormArtifact { entry: Some(entry) },
+        );
     }
 
     #[must_use]
     pub(crate) fn form_artifact(&self, object: u32) -> Option<PdfFormArtifact> {
-        let entry = self.form_artifacts.get(&object)?;
+        let entry = match self.general_version(PdfGeneralVersionKey::FormArtifact(object)) {
+            Some(PdfVersionValue::FormArtifact { entry }) => entry.as_ref()?,
+            Some(_) => unreachable!("PDF form-artifact version key has one value family"),
+            None => self.form_artifacts.get(&object)?,
+        };
         Some(PdfFormArtifact {
             bytes: self.payloads.get(entry.payload).to_vec(),
             last_position: entry.last_position,
             snap_reference: entry.snap_reference,
         })
+    }
+
+    #[cfg(test)]
+    fn form_artifact_payload(&self, object: u32) -> Option<PdfPayloadId> {
+        match self.general_version(PdfGeneralVersionKey::FormArtifact(object)) {
+            Some(PdfVersionValue::FormArtifact { entry }) => {
+                entry.as_ref().map(|entry| entry.payload)
+            }
+            Some(_) => unreachable!("PDF form-artifact version key has one value family"),
+            None => self.form_artifacts.get(&object).map(|entry| entry.payload),
+        }
     }
 
     pub(crate) fn initialize_raw_object(
@@ -3281,43 +3496,49 @@ impl<G> PdfState<G> {
         data: PdfRawObjectData<G>,
         immediate: bool,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        let undo = self.raw_objects.begin_initialize(id)?;
-        match self.raw_objects.initialize(id, data, immediate) {
-            Ok(()) => {
-                self.push_undo(PdfUndo::RawObject(undo));
-                Ok(())
-            }
-            Err(error) => {
-                self.raw_objects.cancel_change(undo);
-                Err(error)
-            }
-        }
+        let record = self
+            .raw_object(id)
+            .ok_or(PdfRawObjectInitializeError::NotFound(id))?
+            .initialize_version(data, immediate)?;
+        self.push_general_version(
+            PdfGeneralVersionKey::RawObject(id.raw()),
+            PdfVersionValue::RawObject(record.clone()),
+        );
+        self.raw_objects.set_last_object(id.raw());
+        self.raw_objects.append_version_fingerprint(1, &record);
+        Ok(())
     }
 
     #[must_use]
     pub(crate) fn raw_object(&self, id: PdfRawObjectId) -> Option<PdfRawObjectRecord<G>> {
-        self.raw_objects.record(id)
+        match self.general_version(PdfGeneralVersionKey::RawObject(id.raw())) {
+            Some(PdfVersionValue::RawObject(record)) => Some(record.clone()),
+            Some(_) => unreachable!("PDF raw-object version key has one value family"),
+            None => self.raw_objects.record(id),
+        }
     }
 
     pub(crate) fn reference_raw_object(
         &mut self,
         id: PdfRawObjectId,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        let undo = self.raw_objects.begin_reference(id)?;
-        match self.raw_objects.reference(id) {
-            Ok(()) => {
-                self.push_undo(PdfUndo::RawObject(undo));
-                Ok(())
-            }
-            Err(error) => {
-                self.raw_objects.cancel_change(undo);
-                Err(error)
-            }
-        }
+        let record = self
+            .raw_object(id)
+            .ok_or(PdfRawObjectInitializeError::NotFound(id))?
+            .reference_version();
+        self.push_general_version(
+            PdfGeneralVersionKey::RawObject(id.raw()),
+            PdfVersionValue::RawObject(record.clone()),
+        );
+        self.raw_objects.append_version_fingerprint(2, &record);
+        Ok(())
     }
 
-    pub(crate) fn raw_objects(&self) -> impl Iterator<Item = &PdfRawObjectRecord<G>> {
-        self.raw_objects.records()
+    pub(crate) fn raw_objects(&self) -> impl Iterator<Item = PdfRawObjectRecord<G>> + '_ {
+        self.raw_objects.records().map(|record| {
+            self.raw_object(record.id())
+                .expect("PDF raw-object row is live")
+        })
     }
 
     #[must_use]
@@ -3420,7 +3641,7 @@ impl<G> PdfState<G> {
             font_operation_count: self.font_operations.len(),
             font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
-            match_fingerprint: self.match_state.fingerprint,
+            match_fingerprint: self.match_state().fingerprint,
             external_image_count: self.external_images.len(),
             payload_count: self.payloads.len(),
             payload_bytes: self.payloads.bytes,
@@ -3428,6 +3649,7 @@ impl<G> PdfState<G> {
             external_image_fingerprint: self.external_image_fingerprint,
             raw_object_fingerprint: self.raw_objects.fingerprint(),
             raw_object_count: self.raw_objects.len(),
+            raw_last_object: self.raw_objects.last_object(),
             document_fragment_fingerprint: self.document_fragments.fingerprint(),
             document_fragment_count: self.document_fragments.len(),
             document_objects: self.document_objects,
@@ -3443,7 +3665,7 @@ impl<G> PdfState<G> {
             link_fingerprint: self.link_fingerprint,
             link_count: self.links.len(),
             open_link_fingerprint: self.open_link_fingerprint,
-            open_link_count: self.open_links.len(),
+            open_link_count: self.open_link_values().len(),
             color_stack_fingerprint: self.color_stack_fingerprint,
             color_stack_count: self.color_stacks.len(),
             last_position: self.last_position,
@@ -3470,6 +3692,8 @@ impl<G> PdfState<G> {
         PdfStateSnapshot {
             cursor: self.cursor(),
             undo_pos: self.history_head().0,
+            general_root: self.general_root,
+            color_root: self.color_root,
         }
     }
 
@@ -3493,17 +3717,15 @@ impl<G> PdfState<G> {
             && cursor.thread_count <= self.threads.len()
             && if let Some(transaction) = &self.transaction {
                 snapshot.undo_pos >= transaction.undo_low_water
-                    && snapshot.undo_pos
-                        <= transaction.base.undo_pos + self.candidate_undo.len() as u64
+                    && snapshot.undo_pos <= transaction.base.undo_pos + self.candidate_undo_len
                     && cursor.color_undo_pos >= transaction.color_undo_low_water
                     && cursor.color_undo_pos
-                        <= transaction.base.cursor.color_undo_pos
-                            + self.candidate_color_undo.len() as u64
+                        <= transaction.base.cursor.color_undo_pos + self.candidate_color_undo_len
             } else {
                 snapshot.undo_pos >= self.undo_base
-                    && snapshot.undo_pos <= self.undo_base + self.undo.len() as u64
+                    && snapshot.undo_pos <= self.undo_base + self.undo_len
                     && cursor.color_undo_pos >= self.color_undo_base
-                    && cursor.color_undo_pos <= self.color_undo_base + self.color_undo.len() as u64
+                    && cursor.color_undo_pos <= self.color_undo_base + self.color_undo_len
             }
     }
 
@@ -3530,6 +3752,8 @@ impl<G> PdfState<G> {
     }
 
     pub(crate) fn rollback(&mut self, snapshot: PdfStateSnapshot<G>) {
+        let general_root = snapshot.general_root;
+        let color_root = snapshot.color_root;
         let cursor = snapshot.cursor;
         assert!(
             cursor.page_count <= self.pages.len(),
@@ -3545,41 +3769,28 @@ impl<G> PdfState<G> {
         self.font_operations.truncate(cursor.font_operation_count);
         self.font_resources.truncate(cursor.font_resource_count);
         self.fingerprint = cursor.fingerprint;
-        let transaction_bases = self.transaction.as_ref().map(|transaction| {
-            (
-                transaction.base.undo_pos,
-                transaction.base.cursor.color_undo_pos,
-            )
-        });
-        if let Some((undo_base, color_undo_base)) = transaction_bases {
-            while undo_base + self.candidate_undo.len() as u64 > snapshot.undo_pos {
-                let undo = self
-                    .candidate_undo
-                    .pop_back()
-                    .expect("PDF candidate undo cursor was validated");
-                self.apply_undo(undo);
-            }
-            while color_undo_base + self.candidate_color_undo.len() as u64 > cursor.color_undo_pos {
-                let undo = self
-                    .candidate_color_undo
-                    .pop_back()
-                    .expect("PDF candidate color cursor was validated");
-                self.apply_color_undo(undo);
-            }
+        self.general_root = general_root;
+        self.color_root = color_root;
+        if self.transaction.is_some() {
+            self.candidate_undo_len = snapshot.undo_pos
+                - self
+                    .transaction
+                    .as_ref()
+                    .expect("PDF transaction exists")
+                    .base
+                    .undo_pos;
+            self.candidate_color_undo_len = cursor.color_undo_pos
+                - self
+                    .transaction
+                    .as_ref()
+                    .expect("PDF transaction exists")
+                    .base
+                    .cursor
+                    .color_undo_pos;
         } else {
-            while self.undo_base + self.undo.len() as u64 > snapshot.undo_pos {
-                let undo = self.undo.pop_back().expect("PDF undo cursor was validated");
-                self.apply_undo(undo);
-            }
-            while self.color_undo_base + self.color_undo.len() as u64 > cursor.color_undo_pos {
-                let undo = self
-                    .color_undo
-                    .pop_back()
-                    .expect("PDF color undo cursor was validated");
-                self.apply_color_undo(undo);
-            }
+            self.undo_len = snapshot.undo_pos - self.undo_base;
+            self.color_undo_len = cursor.color_undo_pos - self.color_undo_base;
         }
-        self.match_state.fingerprint = cursor.match_fingerprint;
         self.external_images.truncate(cursor.external_image_count);
         self.external_image_fingerprint = cursor.external_image_fingerprint;
         self.raw_objects.truncate(cursor.raw_object_count);
@@ -3611,7 +3822,6 @@ impl<G> PdfState<G> {
         self.annotation_fingerprint = cursor.annotation_fingerprint;
         self.links.truncate(cursor.link_count);
         self.link_fingerprint = cursor.link_fingerprint;
-        self.open_links.truncate(cursor.open_link_count);
         self.open_link_fingerprint = cursor.open_link_fingerprint;
         self.color_stacks.truncate(cursor.color_stack_count);
         self.color_stack_fingerprint = cursor.color_stack_fingerprint;
@@ -3643,28 +3853,33 @@ impl<G> PdfState<G> {
         matched: bool,
     ) {
         let fingerprint = match_fingerprint(&haystack, &captures, slot_count, matched);
-        let old = std::mem::replace(
-            &mut self.match_state,
-            PdfMatchState {
+        self.push_general_version(
+            PdfGeneralVersionKey::Match,
+            PdfVersionValue::Match(PdfMatchState {
                 haystack,
                 captures,
                 slot_count,
                 matched,
                 fingerprint,
-            },
+            }),
         );
-        self.push_undo(PdfUndo::Match(old));
+    }
+
+    fn match_state(&self) -> &PdfMatchState {
+        match self.general_version(PdfGeneralVersionKey::Match) {
+            Some(PdfVersionValue::Match(state)) => state,
+            Some(_) => unreachable!("PDF match version key has one value family"),
+            None => &self.match_state,
+        }
     }
 
     pub(crate) fn match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
-        if !self.match_state.matched || index >= self.match_state.slot_count {
+        let state = self.match_state();
+        if !state.matched || index >= state.slot_count {
             return None;
         }
-        let &(start, end) = self.match_state.captures.get(index as usize)?.as_ref()?;
-        let bytes = self
-            .match_state
-            .haystack
-            .get(start as usize..end as usize)?;
+        let &(start, end) = state.captures.get(index as usize)?.as_ref()?;
+        let bytes = state.haystack.get(start as usize..end as usize)?;
         Some((start, bytes))
     }
 
@@ -3699,46 +3914,27 @@ impl<G> PdfState<G> {
     }
 
     pub(crate) fn form_color_rollback(&self) -> PdfFormColorRollback {
-        PdfFormColorRollback(self.history_head().1, self.color_stack_fingerprint)
+        PdfFormColorRollback(
+            self.history_head().1,
+            self.color_stack_fingerprint,
+            self.color_root,
+        )
     }
 
     pub(crate) fn rollback_form_colors(&mut self, rollback: PdfFormColorRollback) {
-        let PdfFormColorRollback(undo_len, fingerprint) = rollback;
+        let PdfFormColorRollback(undo_len, fingerprint, root) = rollback;
         let base = self
             .transaction
             .as_ref()
             .map_or(self.color_undo_base, |transaction| {
                 transaction.base.cursor.color_undo_pos
             });
-        while base
-            + if self.transaction.is_some() {
-                self.candidate_color_undo.len()
-            } else {
-                self.color_undo.len()
-            } as u64
-            > undo_len
-        {
-            let undo = if self.transaction.is_some() {
-                self.candidate_color_undo.pop_back()
-            } else {
-                self.color_undo.pop_back()
-            }
-            .expect("form color mark is retained");
-            debug_assert!(matches!(
-                undo,
-                PdfColorUndo::Set {
-                    target: PdfColorStackTarget::Form,
-                    ..
-                } | PdfColorUndo::Push {
-                    target: PdfColorStackTarget::Form,
-                    ..
-                } | PdfColorUndo::Pop {
-                    target: PdfColorStackTarget::Form,
-                    ..
-                }
-            ));
-            self.apply_color_undo(undo);
+        if self.transaction.is_some() {
+            self.candidate_color_undo_len = undo_len - base;
+        } else {
+            self.color_undo_len = undo_len - base;
         }
+        self.color_root = root;
         self.color_stack_fingerprint = fingerprint;
     }
 
@@ -3759,7 +3955,13 @@ impl<G> PdfState<G> {
                 pushed: Vec::new(),
             },
         });
-        self.color_stack_fingerprint = color_stack_fingerprint(&self.color_stacks);
+        self.color_stack_fingerprint = append_color_stack_definition_fingerprint(
+            self.color_stack_fingerprint,
+            0,
+            PdfColorStackMode::Direct,
+            true,
+            b"0 g 0 G",
+        );
     }
 
     pub(crate) fn allocate_color_stack(
@@ -3785,7 +3987,13 @@ impl<G> PdfState<G> {
                 pushed: Vec::new(),
             },
         });
-        self.color_stack_fingerprint = color_stack_fingerprint(&self.color_stacks);
+        self.color_stack_fingerprint = append_color_stack_definition_fingerprint(
+            self.color_stack_fingerprint,
+            id,
+            mode,
+            restore_at_page_start,
+            &self.color_stacks[id as usize].page.current,
+        );
         Ok(id)
     }
 
@@ -3802,54 +4010,52 @@ impl<G> PdfState<G> {
     ) -> Result<PdfColorStackEmission, PdfColorStackApplyError> {
         self.ensure_default_color_stack();
         let row = id as usize;
-        let (undo, emission) = {
-            let Some(stack) = self.color_stacks.get_mut(row) else {
-                return Err(PdfColorStackApplyError::Unknown);
-            };
-            let runtime = match target {
-                PdfColorStackTarget::Page => &mut stack.page,
-                PdfColorStackTarget::Form => &mut stack.form,
-            };
-            let undo = match action {
-                PdfColorStackAction::Set(bytes) => {
-                    let old_current = std::mem::replace(&mut runtime.current, bytes.clone());
-                    Some(PdfColorUndo::Set {
-                        row,
-                        target,
-                        old_current,
-                    })
-                }
-                PdfColorStackAction::Push(bytes) => {
-                    runtime
-                        .pushed
-                        .push(std::mem::replace(&mut runtime.current, bytes.clone()));
-                    Some(PdfColorUndo::Push { row, target })
-                }
-                PdfColorStackAction::Pop => {
-                    let next = runtime
-                        .pushed
-                        .pop()
-                        .ok_or(PdfColorStackApplyError::Underflow)?;
-                    let old_current = std::mem::replace(&mut runtime.current, next);
-                    Some(PdfColorUndo::Pop {
-                        row,
-                        target,
-                        old_current,
-                    })
-                }
-                PdfColorStackAction::Current => None,
-            };
-            let emission = PdfColorStackEmission {
-                mode: stack.mode,
-                payload: runtime.current.clone(),
-            };
-            (undo, emission)
+        let Some(mode) = self.color_stacks.get(row).map(|stack| stack.mode) else {
+            return Err(PdfColorStackApplyError::Unknown);
         };
-        if let Some(undo) = undo {
-            self.push_color_undo(undo);
+        let mut root = self.materialize_color_runtime(row, target);
+        let mutated = match action {
+            PdfColorStackAction::Set(bytes) => {
+                root.current = self.store_color_value(bytes.clone());
+                self.push_color_version(row, target, root);
+                true
+            }
+            PdfColorStackAction::Push(bytes) => {
+                let candidate = self.transaction.is_some();
+                root.pushed = Some(self.color_push_nodes.push(
+                    PdfColorPushNode {
+                        value: root.current,
+                        previous: root.pushed,
+                    },
+                    candidate,
+                ));
+                root.current = self.store_color_value(bytes.clone());
+                self.push_color_version(row, target, root);
+                true
+            }
+            PdfColorStackAction::Pop => {
+                let node = self
+                    .color_push_nodes
+                    .get(root.pushed.ok_or(PdfColorStackApplyError::Underflow)?)
+                    .expect("PDF color push root is live");
+                root.current = node.value;
+                root.pushed = node.previous;
+                self.push_color_version(row, target, root);
+                true
+            }
+            PdfColorStackAction::Current => false,
+        };
+        let payload = self.color_value(root.current).to_vec();
+        if mutated {
+            self.color_stack_fingerprint = append_color_stack_action_fingerprint(
+                self.color_stack_fingerprint,
+                id,
+                target,
+                action,
+                &payload,
+            );
         }
-        self.color_stack_fingerprint = color_stack_fingerprint(&self.color_stacks);
-        Ok(emission)
+        Ok(PdfColorStackEmission { mode, payload })
     }
 
     pub(crate) fn page_color_stack_restorations(&mut self) -> Vec<PdfColorStackEmission> {
@@ -3860,14 +4066,15 @@ impl<G> PdfState<G> {
         self.color_stacks
             .iter()
             .enumerate()
-            .filter(|(id, stack)| {
-                stack.restore_at_page_start
-                    && !stack.page.current.is_empty()
-                    && !(*id == 0 && stack.page.current == b"0 g 0 G")
-            })
-            .map(|(_, stack)| PdfColorStackEmission {
-                mode: stack.mode,
-                payload: stack.page.current.clone(),
+            .filter_map(|(id, stack)| {
+                let payload = self.color_current_bytes(id, PdfColorStackTarget::Page);
+                (stack.restore_at_page_start
+                    && !payload.is_empty()
+                    && !(id == 0 && payload == b"0 g 0 G"))
+                    .then(|| PdfColorStackEmission {
+                        mode: stack.mode,
+                        payload: payload.to_vec(),
+                    })
             })
             .collect()
     }
@@ -3891,6 +4098,49 @@ fn color_stack_fingerprint(stacks: &PdfRows<PdfColorStack>) -> StateHashFragment
             }
         }
     }
+    hasher.finish_fragment()
+}
+
+fn append_color_stack_definition_fingerprint(
+    previous: StateHashFragment,
+    id: u32,
+    mode: PdfColorStackMode,
+    restore_at_page_start: bool,
+    initial: &[u8],
+) -> StateHashFragment {
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6373_6476);
+    previous.apply(&mut hasher);
+    hasher.u8(0);
+    hasher.u32(id);
+    hasher.u8(match mode {
+        PdfColorStackMode::Origin => 0,
+        PdfColorStackMode::Page => 1,
+        PdfColorStackMode::Direct => 2,
+    });
+    hasher.bool(restore_at_page_start);
+    hasher.bytes(initial);
+    hasher.finish_fragment()
+}
+
+fn append_color_stack_action_fingerprint(
+    previous: StateHashFragment,
+    id: u32,
+    target: PdfColorStackTarget,
+    action: &PdfColorStackAction,
+    current: &[u8],
+) -> StateHashFragment {
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6373_6176);
+    previous.apply(&mut hasher);
+    hasher.u8(1);
+    hasher.u32(id);
+    hasher.u8(u8::from(matches!(target, PdfColorStackTarget::Form)));
+    hasher.u8(match action {
+        PdfColorStackAction::Set(_) => 0,
+        PdfColorStackAction::Push(_) => 1,
+        PdfColorStackAction::Pop => 2,
+        PdfColorStackAction::Current => 3,
+    });
+    hasher.bytes(current);
     hasher.finish_fragment()
 }
 
@@ -3963,6 +4213,16 @@ fn open_link_fingerprint<G>(links: &PdfRows<PdfOpenLink<G>>) -> StateHashFragmen
     hasher.finish_fragment()
 }
 
+fn open_link_fingerprint_values<G>(links: &[PdfOpenLink<G>]) -> StateHashFragment {
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6f70_6c6e);
+    hasher.usize(links.len());
+    for link in links {
+        hasher.u32(link.record.object());
+        hasher.u32(link.nesting_depth);
+    }
+    hasher.finish_fragment()
+}
+
 fn destination_fingerprint(
     records: &PdfRows<PdfDestinationRecord>,
     structure: bool,
@@ -3994,6 +4254,38 @@ fn destination_fingerprint(
     hasher.finish_fragment()
 }
 
+fn append_destination_fingerprint(
+    previous: StateHashFragment,
+    record: &PdfDestinationRecord,
+    structure: bool,
+    operation: u8,
+) -> StateHashFragment {
+    let mut hasher = StateHasher::new_exact(if structure {
+        0x7064_665f_7364_6476
+    } else {
+        0x7064_665f_6465_6476
+    });
+    previous.apply(&mut hasher);
+    hasher.u8(operation);
+    match record.identity() {
+        PdfDestinationIdentity::Name(name) => {
+            hasher.u8(0);
+            hasher.bytes(name);
+        }
+        PdfDestinationIdentity::Number(number) => {
+            hasher.u8(1);
+            hasher.u32(*number);
+        }
+    }
+    hasher.u32(record.object());
+    hasher.bool(record.defined());
+    hasher.bool(record.structure().is_some());
+    if let Some(target) = record.structure() {
+        hasher.u32(target);
+    }
+    hasher.finish_fragment()
+}
+
 fn outline_fingerprint<G>(_records: &[PdfOutlineRecord<G>]) -> StateHashFragment {
     StateHasher::new_exact(0x7064_665f_6f75_746c).finish_fragment()
 }
@@ -4017,6 +4309,39 @@ fn thread_fingerprint(records: &PdfRows<PdfThreadRecord>) -> StateHashFragment {
             hasher.u32(bead.rectangle_object());
         }
     }
+    hasher.finish_fragment()
+}
+
+fn append_thread_reservation_fingerprint(
+    previous: StateHashFragment,
+    record: &PdfThreadRecord,
+) -> StateHashFragment {
+    let mut hasher = StateHasher::new_exact(0x7064_665f_7468_7276);
+    previous.apply(&mut hasher);
+    match record.identity() {
+        PdfDestinationIdentity::Name(name) => {
+            hasher.u8(0);
+            hasher.bytes(name);
+        }
+        PdfDestinationIdentity::Number(number) => {
+            hasher.u8(1);
+            hasher.u32(*number);
+        }
+    }
+    hasher.u32(record.object());
+    hasher.finish_fragment()
+}
+
+fn append_thread_bead_fingerprint(
+    previous: StateHashFragment,
+    object: u32,
+    bead: PdfThreadBeadRecord,
+) -> StateHashFragment {
+    let mut hasher = StateHasher::new_exact(0x7064_665f_7468_6264);
+    previous.apply(&mut hasher);
+    hasher.u32(object);
+    hasher.u32(bead.bead_object());
+    hasher.u32(bead.rectangle_object());
     hasher.finish_fragment()
 }
 
@@ -4186,6 +4511,123 @@ pub struct PdfForkProfileMeasurement {
     pub requested_bytes: u64,
 }
 
+/// One replay-free candidate lifecycle phase measured against an early PDF
+/// checkpoint. `lifecycle_work` counts fixed control operations; historical
+/// key probes are reported separately on the enclosing measurement.
+#[cfg(all(feature = "profiling", feature = "testing"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfUndoDistancePhase {
+    pub elapsed_ns: u128,
+    pub allocations: u64,
+    pub requested_bytes: u64,
+    pub lifecycle_work: u32,
+    pub replay_work: u64,
+}
+
+/// Cost evidence for opening, mutating, rejecting, and accepting a candidate
+/// rooted at an early retained PDF checkpoint.
+#[cfg(all(feature = "profiling", feature = "testing"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfUndoDistanceMeasurement {
+    pub accepted_undo_distance: usize,
+    pub open: PdfUndoDistancePhase,
+    pub first_mutation: PdfUndoDistancePhase,
+    pub reject: PdfUndoDistancePhase,
+    pub accept: PdfUndoDistancePhase,
+    pub historical_lookup_probes: u32,
+}
+
+#[cfg(all(feature = "profiling", feature = "testing"))]
+fn measure_pdf_lifecycle_phase(
+    lifecycle_work: u32,
+    operation: impl FnOnce(),
+) -> PdfUndoDistancePhase {
+    use crate::measurement::{
+        HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,
+    };
+
+    let owner = HotCoreAllocationOwner::GenerationBoundary;
+    let before = hot_core_thread_allocation_measurement(owner);
+    let start = std::time::Instant::now();
+    {
+        let _scope = hot_core_allocation_scope(owner);
+        operation();
+    }
+    let elapsed_ns = start.elapsed().as_nanos();
+    let after = hot_core_thread_allocation_measurement(owner);
+    PdfUndoDistancePhase {
+        elapsed_ns,
+        allocations: after.calls - before.calls,
+        requested_bytes: after.requested_bytes - before.requested_bytes,
+        lifecycle_work,
+        replay_work: 0,
+    }
+}
+
+/// Profiles lifecycle work at a retained checkpoint followed by `distance`
+/// accepted general and color versions. Historical key resolution remains a
+/// fixed 64-probe trie walk and is intentionally excluded from lifecycle work.
+#[cfg(all(feature = "profiling", feature = "testing"))]
+pub fn profile_pdf_undo_distance(distance: usize) -> PdfUndoDistanceMeasurement {
+    let mut state = PdfState::<()>::default();
+    state.enable();
+    state.ensure_default_color_stack();
+    state.set_match(vec![0], Vec::new(), 0, false);
+    state
+        .apply_color_stack(
+            0,
+            PdfColorStackTarget::Page,
+            &PdfColorStackAction::Set(vec![0]),
+        )
+        .expect("default PDF color stack exists");
+    let base = state.snapshot();
+
+    for value in 0..distance {
+        let byte = value as u8;
+        state.set_match(vec![byte], Vec::new(), 0, true);
+        state
+            .apply_color_stack(
+                0,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Set(vec![byte]),
+            )
+            .expect("default PDF color stack exists");
+    }
+
+    let open = measure_pdf_lifecycle_phase(18, || state.open_candidate_lineage(&base));
+    let first_mutation = measure_pdf_lifecycle_phase(2, || {
+        state.set_match(vec![255], Vec::new(), 0, true);
+        state
+            .apply_color_stack(
+                0,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Set(vec![255]),
+            )
+            .expect("default PDF color stack exists");
+    });
+    let reject = measure_pdf_lifecycle_phase(21, || state.reject_candidate_transaction());
+
+    state.open_candidate_lineage(&base);
+    state.set_match(vec![254], Vec::new(), 0, true);
+    state
+        .apply_color_stack(
+            0,
+            PdfColorStackTarget::Page,
+            &PdfColorStackAction::Set(vec![254]),
+        )
+        .expect("default PDF color stack exists");
+    let accept = measure_pdf_lifecycle_phase(20, || state.accept_candidate_transaction());
+
+    PdfUndoDistanceMeasurement {
+        accepted_undo_distance: distance,
+        open,
+        first_mutation,
+        reject,
+        accept,
+        historical_lookup_probes: PdfVersionIndex::PROBES * 2,
+    }
+}
+
 #[cfg(all(feature = "profiling", feature = "testing"))]
 pub fn profile_pdf_fork_family(
     family: PdfForkProfileFamily,
@@ -4318,7 +4760,7 @@ pub fn profile_pdf_fork_family(
     {
         let _scope = hot_core_allocation_scope(owner);
         for _ in 0..iterations {
-            state.begin_candidate_transaction(std::hint::black_box(&mark));
+            state.open_candidate_lineage(std::hint::black_box(&mark));
             state.reject_candidate_transaction();
         }
     }

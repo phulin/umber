@@ -352,11 +352,13 @@ fn checkpoint_fork_and_restore_do_not_copy_image_or_form_payload_bytes() {
     );
     let checkpoint = state.snapshot();
     let image_id = state.external_images[0].payload;
-    let form_id = state.form_artifacts[&41].payload;
+    let form_id = state
+        .form_artifact_payload(41)
+        .expect("form payload exists");
     let image_address = state.payloads.get(image_id).as_ptr();
     let form_address = state.payloads.get(form_id).as_ptr();
 
-    state.begin_candidate_transaction(&checkpoint);
+    state.open_candidate_lineage(&checkpoint);
     assert_eq!(state.payloads.get(image_id).as_ptr(), image_address);
     assert_eq!(state.payloads.get(form_id).as_ptr(), form_address);
     state.rollback(checkpoint);
@@ -412,7 +414,7 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
         row_address(state.page_reservations.get(0)),
     ];
 
-    state.begin_candidate_transaction(&checkpoint);
+    state.open_candidate_lineage(&checkpoint);
     assert_eq!(addresses[0], row_address(state.font_resources.get(0)));
     assert_eq!(addresses[1], row_address(state.external_images.get(0)));
     assert_eq!(addresses[2], row_address(state.page_reservations.get(0)));
@@ -441,7 +443,7 @@ fn candidate_acceptance_replaces_only_the_prior_pdf_suffix() {
         object: 12,
     });
     state.set_match(vec![2], vec![Some((0, 1))], 1, true);
-    state.begin_candidate_transaction(&base);
+    state.open_candidate_lineage(&base);
     state.page_reservations.push(PdfPageReservation {
         number: 3,
         object: 13,
@@ -519,7 +521,9 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
                 (Scaled::from_raw(1), Scaled::from_raw(2)),
             ),
         );
-        let old_form_payload = state.form_artifacts[&51].payload;
+        let old_form_payload = state
+            .form_artifact_payload(51)
+            .expect("old form payload exists");
         let old_form_address = state.payloads.get(old_form_payload).as_ptr();
         let checkpoint = state.snapshot();
 
@@ -570,10 +574,12 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
         state
             .append_thread_bead(PdfDestinationIdentity::Number(7))
             .expect("second thread bead");
-        let accepted_form_payload = state.form_artifacts[&51].payload;
+        let accepted_form_payload = state
+            .form_artifact_payload(51)
+            .expect("accepted form payload exists");
         let accepted_form_address = state.payloads.get(accepted_form_payload).as_ptr();
 
-        state.begin_candidate_transaction(&checkpoint);
+        state.open_candidate_lineage(&checkpoint);
         assert_eq!(state.match_capture(0), Some((0, &[1, 2][..])));
         assert!(!state.raw_object(raw).expect("raw row").is_referenced());
         assert!(state.annotations()[0].data().is_none());
@@ -587,7 +593,7 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
             state.open_links()[0].record.object(),
             original_open.record.object()
         );
-        assert_eq!(state.threads[0].beads().len(), 1);
+        assert_eq!(state.thread_record(0).beads().len(), 1);
         assert_eq!(
             state.payloads.get(old_form_payload).as_ptr(),
             old_form_address
@@ -624,7 +630,7 @@ fn rollback_exactly_replays_overwrite_delete_and_pop_then_push_mutations() {
             state.open_links()[0].record.object(),
             replacement_open.object()
         );
-        assert_eq!(state.threads[0].beads().len(), 2);
+        assert_eq!(state.thread_record(0).beads().len(), 2);
         assert_eq!(
             state.payloads.get(accepted_form_payload).as_ptr(),
             accepted_form_address
@@ -777,7 +783,7 @@ fn pdf_candidate_begin_and_reject_allocate_nothing_with_exact_redo() {
     let before = hot_core_thread_allocation_measurement(owner);
     {
         let _scope = hot_core_allocation_scope(owner);
-        state.begin_candidate_transaction(&base);
+        state.open_candidate_lineage(&base);
         state.reject_candidate_transaction();
     }
     let after = hot_core_thread_allocation_measurement(owner);

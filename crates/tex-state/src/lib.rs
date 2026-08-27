@@ -91,7 +91,10 @@ pub mod packed_input;
 pub mod page;
 mod pdf;
 #[cfg(all(feature = "profiling", feature = "testing"))]
-pub use pdf::{PdfForkProfileFamily, PdfForkProfileMeasurement, profile_pdf_fork_family};
+pub use pdf::{
+    PdfForkProfileFamily, PdfForkProfileMeasurement, PdfUndoDistanceMeasurement,
+    PdfUndoDistancePhase, profile_pdf_fork_family, profile_pdf_undo_distance,
+};
 mod primitive;
 pub mod print;
 pub mod provenance;

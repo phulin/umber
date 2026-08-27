@@ -30,16 +30,9 @@ impl PdfThreadRecord {
         &self.beads
     }
 
-    pub(super) fn push_bead(&mut self, bead: PdfThreadBeadRecord) {
-        self.beads.push(bead);
-    }
-
-    pub(super) fn truncate_beads(&mut self, len: usize) {
-        self.beads.truncate(len);
-    }
-
-    pub(super) fn pop_bead(&mut self) -> Option<PdfThreadBeadRecord> {
-        self.beads.pop()
+    pub(super) fn with_beads(mut self, beads: Vec<PdfThreadBeadRecord>) -> Self {
+        self.beads = beads;
+        self
     }
 }
 

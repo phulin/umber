@@ -2735,7 +2735,7 @@ impl<'a, G> CommandContext<'a, G> {
         identity: &crate::PdfDestinationIdentity,
         structure: bool,
     ) -> Option<crate::PdfDestinationRecord> {
-        self.pdf.destination(identity, structure).cloned()
+        self.pdf.destination(identity, structure)
     }
 
     pub fn reserve_pdf_destination(
