@@ -1654,6 +1654,7 @@ struct SourceCursor {
 struct SourceLevel {
     frame: PackedInputFrame,
     cursor: SourceCursor,
+    open_depths: Option<Box<SourceOpenDepths>>,
     // source classification and cold diagnostic state
 }
 ```
@@ -1763,10 +1764,14 @@ cursor, or clones a definition/token-list owner per word. `token_at` returns
 canonical `TokenWord`; origin and source provenance remain adjacent diagnostic
 coordinates and never become token or meaning semantics.
 
-`CommandState::push_token_level` is the single live admission boundary.
-Transient insertions, backup/noexpand levels, alignment templates, stored
-every-hooks, output replay, and other source-adjacent replay stream their words
-and optional source provenance directly into one generation-owned `ReplayLane`.
+`CommandState::push_input_level` is the single live source/token frame
+transition. It updates TeX82's `max_in_stack` scalar on the singular live
+session owner and then makes the frame visible; it takes no lock and belongs to
+neither snapshot roots nor portable identity. `push_token_level` first admits
+the token storage and then delegates to that transition. Transient insertions,
+backup/noexpand levels, alignment templates, stored every-hooks, output replay,
+and other source-adjacent replay stream their words and optional source
+provenance directly into one generation-owned `ReplayLane`.
 The input level retains only a typed entry coordinate and length. The lane uses
 coarse stable word/provenance segments: exact LIFO retirement returns whole
 segments to reusable high-water storage, while a snapshot shares immutable
@@ -1840,7 +1845,11 @@ once to `AwaitingVTemplateRetirement`, remains the exact top level through
 end-template delivery, and is popped only after successful `do_endv`.
 Macro-body retirement atomically removes the activation matching that level's
 typed `param_start`; a mismatched activation chain is rejected before either
-owner is mutated. The committed lifecycle record may copy `ReplayTrace` for
+owner is mutated. A source pop moves its boxed `SourceOpenDepths` owner into
+the retirement result, so `file_warning` consumes the already-validated top
+frame record without an identity walk or ancestry clone. Nested `\input` and
+`\scantokens` install that record in the source-opening transition before the
+frame becomes observable. The committed lifecycle record may copy `ReplayTrace` for
 observation, but neither its action nor activation cleanup consults that trace.
 Its detached observation also retains the exhausted level's immutable class
 (source, backup, macro, parameter, alignment template, recovery, or token

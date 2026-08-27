@@ -60,10 +60,9 @@ collector (see `src/conditionals.rs`).
   current-generation lease, its same scratch lanes, typed ids, and integer
   resume cursors; resumption re-borrows dense state and cancellation drops the
   current candidate wholesale. These are process-local command state, never
-  format or summary payload.
-  Also owns `\tracingnesting`'s `record_source_open_depths`/
-  `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
-  [23.328] compares at a source level's `end_file_reading`.
+  format or summary payload. The live `CommandState` also owns TeX82's three
+  scalar stack maxima directly; they are operational session evidence outside
+  snapshot roots and survive rollback without shared synchronization.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   its cloneable value crosses only executor preflight/retry seams and never a
   durable snapshot or format boundary.
@@ -140,10 +139,12 @@ collector (see `src/conditionals.rs`).
   slot never crosses suspension. The module also owns cold backup source coordinates,
   explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
   reuse, and orthogonal delivery/retirement classifications. A source level's
-  `open_depths` field is `\tracingnesting`'s own
-  record; see `src/tracing_nesting.rs`.
+  optional `open_depths` owner is `\tracingnesting`'s own record. Nested source
+  opening installs it before the frame becomes visible, and retirement moves
+  it out with that exact top frame; see `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  centralized replay-lane admission, retained v-template lifecycle,
+  the one canonical source/token frame-push transition and scalar maximum
+  update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, `param_start` parameter replay ownership, and
   trace-independence tests.
 - `src/processor/`: public borrow-only processor facade with specialized raw

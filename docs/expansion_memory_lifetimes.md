@@ -394,7 +394,11 @@ claim that every live suspension can already detach across a revision.
 
 An input level owns either a source cursor or a classified token cursor. A
 source level owns its `SourceCursor`, registered backing, and optional boxed
-open-depth snapshot until EOF retirement. A durable token-list input now owns
+open-depth snapshot until EOF retirement. Nested source opening installs that
+snapshot as part of the same frame transition which updates the singular
+session-owned TeX82 input-stack maximum; retirement moves the snapshot owner
+out of the exact top frame for `file_warning`. There is no shared usage ledger,
+post-open identity search, or retirement-time ancestry clone. A durable token-list input now owns
 only the list id, chunk cursor, and length. Macro replacement input owns a
 definition coordinate; macro-argument input owns a sealed absolute scratch
 range and advances only the packed input frame's scalar position.

@@ -114,11 +114,10 @@ does not apply the SyncTeX layer.
   does not reach.
 
 `\tracingnesting` renders `etex.ch` [23.328]'s `file_warning`: a source level
-records the live group and conditional depth when it opens
-(`crates/tex-command/src/state.rs`'s `record_source_open_depths`, called from
-`open_registered_input`), and its retirement
+receives the live group and conditional ancestry in its canonical opening
+transition (`open_registered_input`), and its retirement
 (`crates/tex-command/src/processor/next.rs`'s `retire_and_restart`) compares
-that recording against the live depth, printing a "Warning: end of file when
+the moved frame-owned recording against the live depth, printing a "Warning: end of file when
 ... is incomplete" line for each group and conditional still open
 (`crates/tex-command/src/tracing_nesting.rs`). Unlike the other
 three parameters, this prints through the ambient selector rather than
