@@ -57,13 +57,22 @@ Until all owners populate their hooks, incremental convergence reports hash
 divergence and retains no suffix. This is the required fail-closed transition
 state, not a claim that a partial identity is complete.
 
-At this branch boundary the owner hooks deliberately remain absent. The
-mode/page hook depends on `umber2-pei0.2.7`, and the PDF hook depends on
-`umber2-pei0.2.9`; after those branches integrate, `umber2-pei0.2.10` must
-populate and perturb-test the command, World, hyphenation, dependency, source,
-font, and core owner roots as one rebased change before the identity can become
-`Some`. The issue remains open until that exact pass. No mode-only or
-coordinate-derived transition value is hashed in the meantime.
+The integrated PDF owner now publishes an O(1) component root from its fixed
+canonical cursor: mutation-maintained semantic fragments and future-relevant
+scalars participate, while general/color version roots and undo positions
+remain restore coordinates only. Ordinary capture does not request even this
+fixed projection. A focused restore test proves that a semantic PDF mutation
+perturbs the root and restoring its canonical cursor restores the root.
+
+The mode/page ownership work in `umber2-pei0.2.7` landed compact restore roots,
+not canonical semantic roots. Hashing their timeline, frame, cursor, or list
+length coordinates would fabricate equality. Their owner hooks therefore
+remain typed `None` pending the maintained canonical roots in
+`umber2-pei0.2.12`. Command, World, hyphenation, dependency, source, font, and
+core hooks likewise remain explicitly unavailable until their owners maintain
+complete canonical projections. The aggregate issue remains open until that
+exact pass; no owner identity or coordinate-derived transition value is hashed
+in the meantime.
 
 The focused perturbation test changes each component root independently and
 checks that every resulting complete identity differs. A separate capture
@@ -94,6 +103,13 @@ observation. Protected JobStart retention and the first/newest evidence pair
 may exceed an impossible budget; that overage is reported explicitly. The
 accepted-generation transition only validates and prunes the already-bounded
 root set, so it no longer hides a larger pre-acceptance peak.
+
+Each observed `(owner, family)` pair also carries a restart-root reference
+count. Releasing one checkpoint removes a distinct exact core-bank charge when
+its count reaches zero, while a genuinely shared append/journal owner remains
+charged at its largest observed size until its final restart root is released.
+This prevents both multiplying shared storage and retaining charges for banks
+that publication pruning has physically dropped.
 
 `RetentionMetrics` reports the shared-owner, per-root metadata, and detached
 evidence terms independently, with `checkpoint_root_bytes` equal to their sum.

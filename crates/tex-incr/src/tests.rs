@@ -819,6 +819,7 @@ fn history_budget_keeps_job_start_and_newest_observation() {
         ));
     }
     source.push_str("\\end");
+    let unbounded_source = source.clone();
     let mut session = Session::start(
         Box::leak(Box::new(new_reachability_store())),
         "budget",
@@ -842,10 +843,29 @@ fn history_budget_keeps_job_start_and_newest_observation() {
         1,
         "only protected JobStart remains restartable; newest evidence is detached"
     );
-    assert!(session.retention_metrics().is_some_and(|retention| {
-        retention.protected_overage_bytes > 0
-            && retention.checkpoint_root_bytes >= size_of::<BoundaryRecord>() * 2
-    }));
+    let bounded = session.retention_metrics().expect("bounded retention");
+    assert!(
+        bounded.protected_overage_bytes > 0
+            && bounded.checkpoint_root_bytes >= size_of::<BoundaryRecord>() * 2
+    );
+
+    let mut unbounded = Session::start(
+        Box::leak(Box::new(new_reachability_store())),
+        "unbounded-owner-reference",
+        RevisionId::new(1),
+        unbounded_source,
+        usize::MAX,
+    )
+    .expect("unbounded session");
+    unbounded.cold().expect("unbounded cold run");
+    assert!(
+        bounded.checkpoint_shared_owner_bytes
+            < unbounded
+                .retention_metrics()
+                .expect("unbounded retention")
+                .checkpoint_shared_owner_bytes,
+        "releasing distinct checkpoint banks must release their owner charges"
+    );
 }
 
 #[test]

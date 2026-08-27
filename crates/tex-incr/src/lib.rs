@@ -783,16 +783,23 @@ struct LiveHistoryState {
     occurrences: HashMap<(usize, EngineBoundary), u32>,
     paragraphs: usize,
     checkpoint_keys: Vec<Option<tex_exec::RetainedCheckpointKey>>,
+    checkpoint_retentions: Vec<Option<tex_exec::CheckpointRetention>>,
     checkpoint_budget: usize,
     shared_owner_charges: BTreeMap<
         (
             tex_exec::CheckpointOwnerKey,
             tex_exec::CheckpointOwnerFamily,
         ),
-        usize,
+        SharedOwnerRetention,
     >,
     checkpoint_metadata_bytes: usize,
     protected_overage_bytes: usize,
+}
+
+#[derive(Clone, Copy)]
+struct SharedOwnerRetention {
+    bytes: usize,
+    restart_roots: usize,
 }
 
 impl LiveHistoryState {
@@ -803,6 +810,7 @@ impl LiveHistoryState {
             occurrences: HashMap::new(),
             paragraphs: 0,
             checkpoint_keys: Vec::new(),
+            checkpoint_retentions: Vec::new(),
             checkpoint_budget,
             shared_owner_charges: BTreeMap::new(),
             checkpoint_metadata_bytes: 0,
@@ -834,7 +842,7 @@ impl LiveHistoryState {
     fn shared_owner_bytes(&self) -> usize {
         self.shared_owner_charges
             .values()
-            .copied()
+            .map(|charge| charge.bytes)
             .fold(0_usize, usize::saturating_add)
     }
 
@@ -842,8 +850,34 @@ impl LiveHistoryState {
         for charge in retention.shared_owners() {
             self.shared_owner_charges
                 .entry((charge.owner(), charge.family()))
-                .and_modify(|bytes| *bytes = (*bytes).max(charge.bytes()))
-                .or_insert(charge.bytes());
+                .and_modify(|retained| {
+                    retained.bytes = retained.bytes.max(charge.bytes());
+                    retained.restart_roots = retained.restart_roots.saturating_add(1);
+                })
+                .or_insert(SharedOwnerRetention {
+                    bytes: charge.bytes(),
+                    restart_roots: 1,
+                });
+        }
+    }
+
+    fn release_shared_owners(&mut self, retention: tex_exec::CheckpointRetention) {
+        for charge in retention.shared_owners() {
+            let key = (charge.owner(), charge.family());
+            let remove = {
+                let retained = self
+                    .shared_owner_charges
+                    .get_mut(&key)
+                    .expect("released checkpoint owner was observed at publication");
+                retained.restart_roots = retained
+                    .restart_roots
+                    .checked_sub(1)
+                    .expect("checkpoint owner reference count underflow");
+                retained.restart_roots == 0
+            };
+            if remove {
+                self.shared_owner_charges.remove(&key);
+            }
         }
     }
 
@@ -900,6 +934,10 @@ impl LiveHistoryState {
                 retained
                     .release(key)
                     .expect("publication owns the retained checkpoint key");
+                let retention = self.checkpoint_retentions[victim]
+                    .take()
+                    .expect("restart victim owns a retention descriptor");
+                self.release_shared_owners(retention);
                 continue;
             }
             let Some(victim) = self.evidence_victim() else {
@@ -908,6 +946,8 @@ impl LiveHistoryState {
             debug_assert!(self.checkpoint_keys[victim].is_none());
             self.records.remove(victim);
             self.checkpoint_keys.remove(victim);
+            let retention = self.checkpoint_retentions.remove(victim);
+            debug_assert!(retention.is_none());
         }
         self.protected_overage_bytes = self.retained_bytes().saturating_sub(self.checkpoint_budget);
     }
@@ -964,6 +1004,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
         self.state
             .checkpoint_keys
             .push(Some(self.retained.retain(checkpoint)));
+        self.state.checkpoint_retentions.push(Some(retention));
         self.state.enforce_publication_budget(&mut self.retained);
     }
 }
