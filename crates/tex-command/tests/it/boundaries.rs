@@ -384,10 +384,12 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .expect("locate direct token-list splice");
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
-    assert!(collector.contains("match self.get_next_into(&mut destination)"));
+    assert!(collector.contains("self.get_next_into(&mut destination)"));
+    assert!(collector.contains(".as_mut()"));
+    assert!(collector.contains("clear_command_destination(&mut destination)"));
     assert!(collector.contains("pending_expansion.take()"));
     assert!(collector.contains("PendingCollectorExpansion"));
-    assert!(collector.contains("self.expand(&command)"));
+    assert!(collector.contains("self.expand(command)"));
     assert!(collector.contains("self.append_direct_the_toks(output, &mut expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),

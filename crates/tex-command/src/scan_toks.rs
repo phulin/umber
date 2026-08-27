@@ -282,6 +282,11 @@ struct ReplacementFailure<G> {
     progress: ReplacementProgress<G>,
 }
 
+#[inline(always)]
+fn clear_command_destination<G>(destination: &mut Option<crate::CurrentCommand<G>>) {
+    *destination = None;
+}
+
 impl<G> From<CommandError> for ScanToksFailure<G> {
     fn from(error: CommandError) -> Self {
         Self {
@@ -1190,36 +1195,42 @@ impl<G> CommandProcessor<'_, '_, G> {
         } = progress;
         let mut destination = None;
         loop {
-            let delivered;
-            let spelling = {
-                let resumed_expansion = pending_expansion.take();
-                let (resumed_route, mut expansion_operand) =
-                    if let Some(mut pending) = resumed_expansion {
-                        self.resume_current_command(&pending.command);
-                        if let Some(child) = pending.child.take() {
-                            let (key, destination) = child.restore();
-                            if destination != pending.route {
-                                return Err(replacement_failure(
-                                    CommandError::input_invariant(),
-                                    output,
-                                    depth,
-                                    &mut pending_parameter,
-                                    None,
-                                ));
-                            }
-                            self.scanner_resume = Some(key);
+            let resumed_expansion = pending_expansion.take();
+            let (resumed_route, mut expansion_operand) =
+                if let Some(mut pending) = resumed_expansion {
+                    self.resume_current_command(&pending.command);
+                    if let Some(child) = pending.child.take() {
+                        let (key, child_destination) = child.restore();
+                        if child_destination != pending.route {
+                            return Err(replacement_failure(
+                                CommandError::input_invariant(),
+                                output,
+                                depth,
+                                &mut pending_parameter,
+                                None,
+                            ));
                         }
-                        destination = Some(pending.command);
-                        (Some(pending.route), pending.operand.take())
+                        self.scanner_resume = Some(key);
+                    }
+                    destination = Some(pending.command);
+                    (Some(pending.route), pending.operand.take())
+                } else {
+                    let delivery = if expansion.is_expanded() {
+                        self.get_next_into(&mut destination)
                     } else {
-                        (None, None)
+                        self.get_token_into(&mut destination)
                     };
-                let command = if destination.is_some() {
-                    destination.take()
-                } else if expansion.is_expanded() {
-                    match self.get_next_into(&mut destination) {
-                        Ok(crate::DeliveryStatus::Command) => destination.take(),
-                        Ok(crate::DeliveryStatus::End) => None,
+                    match delivery {
+                        Ok(crate::DeliveryStatus::Command) => {}
+                        Ok(crate::DeliveryStatus::End) => {
+                            return Err(replacement_failure(
+                                CommandError::input_invariant(),
+                                output,
+                                depth,
+                                &mut pending_parameter,
+                                None,
+                            ));
+                        }
                         Ok(_) => unreachable!("ordinary raw delivery has no side event"),
                         Err(error) => {
                             return Err(replacement_failure(
@@ -1231,173 +1242,182 @@ impl<G> CommandProcessor<'_, '_, G> {
                             ));
                         }
                     }
-                } else {
-                    match self.get_token_into(&mut destination) {
-                        Ok(crate::DeliveryStatus::Command) => destination.take(),
-                        Ok(crate::DeliveryStatus::End) => None,
-                        Ok(_) => unreachable!("ordinary token delivery has no side event"),
+                    (None, None)
+                };
+            let command = destination
+                .as_mut()
+                .expect("command delivery initializes destination");
+            if expansion.is_expanded() && is_expandable_command(command) {
+                let route = resumed_route.unwrap_or_else(|| match command.meaning_ref() {
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::The,
+                    )) => CollectorExpansionRoute::The,
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::Unexpanded,
+                    )) => CollectorExpansionRoute::Unexpanded,
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::Detokenize,
+                    )) => CollectorExpansionRoute::Detokenize,
+                    _ => CollectorExpansionRoute::Ordinary,
+                });
+                if route == CollectorExpansionRoute::The {
+                    // TeX82 §478 handles `\the` directly in `scan_toks`
+                    // instead of routing it through §380's ordinary
+                    // expanded-fetch loop. It therefore has only the raw
+                    // delivery produced by `get_next`; the resulting
+                    // `the_toks` splice is the canonical expansion event.
+                    match self.append_direct_the_toks(output, &mut expansion_operand) {
+                        Ok(true) => {
+                            clear_command_destination(&mut destination);
+                            continue;
+                        }
+                        Ok(false) => {}
                         Err(error) => {
+                            let command = destination
+                                .take()
+                                .expect("collector suspension retains its command");
                             return Err(replacement_failure(
                                 error,
                                 output,
                                 depth,
                                 &mut pending_parameter,
-                                None,
+                                Some(PendingCollectorExpansion {
+                                    command,
+                                    route,
+                                    operand: expansion_operand,
+                                    child: crate::execution_scratch::ChildContinuation::capture(
+                                        &mut self.scanner_resume,
+                                        route,
+                                    ),
+                                }),
                             ));
                         }
                     }
-                };
-                let mut command = command
-                    .ok_or_else(|| CommandError::input_invariant())
-                    .map_err(|error| {
-                        replacement_failure(error, output, depth, &mut pending_parameter, None)
-                    })?;
-                if expansion.is_expanded() && is_expandable_command(&command) {
-                    let route = resumed_route.unwrap_or_else(|| match command.meaning() {
-                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::The,
-                        )) => CollectorExpansionRoute::The,
-                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::Unexpanded,
-                        )) => CollectorExpansionRoute::Unexpanded,
-                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::Detokenize,
-                        )) => CollectorExpansionRoute::Detokenize,
-                        _ => CollectorExpansionRoute::Ordinary,
-                    });
-                    if route == CollectorExpansionRoute::The {
-                        // TeX82 §478 handles `\the` directly in `scan_toks`
-                        // instead of routing it through §380's ordinary
-                        // expanded-fetch loop. It therefore has only the raw
-                        // delivery produced by `get_next`; the resulting
-                        // `the_toks` splice is the canonical expansion event.
-                        match self.append_direct_the_toks(output, &mut expansion_operand) {
-                            Ok(true) => continue,
-                            Ok(false) => {}
-                            Err(error) => {
-                                return Err(replacement_failure(
-                                    error,
-                                    output,
-                                    depth,
-                                    &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command,
-                                        route,
-                                        operand: expansion_operand,
-                                        child: crate::execution_scratch::ChildContinuation::capture(
-                                            &mut self.scanner_resume,
-                                            route,
-                                        ),
-                                    }),
-                                ));
-                            }
+                }
+                if route == CollectorExpansionRoute::Unexpanded {
+                    match self.append_unexpanded(output) {
+                        Ok(()) => {
+                            clear_command_destination(&mut destination);
+                            continue;
                         }
-                    }
-                    if route == CollectorExpansionRoute::Unexpanded {
-                        match self.append_unexpanded(output) {
-                            Ok(()) => continue,
-                            Err(error) => {
-                                return Err(replacement_failure(
-                                    error,
-                                    output,
-                                    depth,
-                                    &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command,
+                        Err(error) => {
+                            let command = destination
+                                .take()
+                                .expect("collector suspension retains its command");
+                            return Err(replacement_failure(
+                                error,
+                                output,
+                                depth,
+                                &mut pending_parameter,
+                                Some(PendingCollectorExpansion {
+                                    command,
+                                    route,
+                                    operand: None,
+                                    child: crate::execution_scratch::ChildContinuation::capture(
+                                        &mut self.scanner_resume,
                                         route,
-                                        operand: None,
-                                        child: crate::execution_scratch::ChildContinuation::capture(
-                                            &mut self.scanner_resume,
-                                            route,
-                                        ),
-                                    }),
-                                ));
-                            }
-                        }
-                    }
-                    if route == CollectorExpansionRoute::Detokenize {
-                        match self.append_detokenize(output) {
-                            Ok(()) => continue,
-                            Err(error) => {
-                                return Err(replacement_failure(
-                                    error,
-                                    output,
-                                    depth,
-                                    &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command,
-                                        route,
-                                        operand: None,
-                                        child: crate::execution_scratch::ChildContinuation::capture(
-                                            &mut self.scanner_resume,
-                                            route,
-                                        ),
-                                    }),
-                                ));
-                            }
-                        }
-                    }
-                    if matches!(command.meaning(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
-                    {
-                        // e-TeX 2.6 change section [27.465] represents a
-                        // protected macro as `relax/no_expand_flag` for this
-                        // collector iteration. The spelling is retained, and
-                        // the reference instrumentation observes that exact
-                        // one-token suppression splice before the terminal
-                        // expanded delivery.
-                        observe!(
-                            self,
-                            CommandObservation::TokenList(TokenListRecord {
-                                transition: "splice",
-                                purpose: "protected_expansion_suppression",
-                                tokens: vec![self.observed_token(command.spelling())],
-                            }),
-                        );
-                        command.suppress_expandable();
-                    } else {
-                        // TeX82 §394 returns from a failed macro call after
-                        // either an ordinary non-`\long` `\par` or §23's
-                        // outer-validity recovery. Both return to §380's
-                        // get_x_token loop; this inlined expanded collector is
-                        // that loop's owner while scan_toks is active.
-                        match self.expand(&command) {
-                            Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
-                            Err(CommandError::OuterInMacroArgument) => {
-                                self.resume_scanner_episode_after_recovery(episode);
-                                continue;
-                            }
-                            Err(error) => {
-                                return Err(replacement_failure(
-                                    error,
-                                    output,
-                                    depth,
-                                    &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command,
-                                        route,
-                                        operand: None,
-                                        child: crate::execution_scratch::ChildContinuation::capture(
-                                            &mut self.scanner_resume,
-                                            route,
-                                        ),
-                                    }),
-                                ));
-                            }
+                                    ),
+                                }),
+                            ));
                         }
                     }
                 }
+                if route == CollectorExpansionRoute::Detokenize {
+                    match self.append_detokenize(output) {
+                        Ok(()) => {
+                            clear_command_destination(&mut destination);
+                            continue;
+                        }
+                        Err(error) => {
+                            let command = destination
+                                .take()
+                                .expect("collector suspension retains its command");
+                            return Err(replacement_failure(
+                                error,
+                                output,
+                                depth,
+                                &mut pending_parameter,
+                                Some(PendingCollectorExpansion {
+                                    command,
+                                    route,
+                                    operand: None,
+                                    child: crate::execution_scratch::ChildContinuation::capture(
+                                        &mut self.scanner_resume,
+                                        route,
+                                    ),
+                                }),
+                            ));
+                        }
+                    }
+                }
+                if matches!(command.meaning_ref(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
+                {
+                    // e-TeX 2.6 change section [27.465] represents a
+                    // protected macro as `relax/no_expand_flag` for this
+                    // collector iteration. The spelling is retained, and
+                    // the reference instrumentation observes that exact
+                    // one-token suppression splice before the terminal
+                    // expanded delivery.
+                    observe!(
+                        self,
+                        CommandObservation::TokenList(TokenListRecord {
+                            transition: "splice",
+                            purpose: "protected_expansion_suppression",
+                            tokens: vec![self.observed_token(command.spelling())],
+                        }),
+                    );
+                    command.suppress_expandable();
+                } else {
+                    // TeX82 §394 returns from a failed macro call after
+                    // either an ordinary non-`\long` `\par` or §23's
+                    // outer-validity recovery. Both return to §380's
+                    // get_x_token loop; this inlined expanded collector is
+                    // that loop's owner while scan_toks is active.
+                    match self.expand(command) {
+                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
+                            clear_command_destination(&mut destination);
+                            continue;
+                        }
+                        Err(CommandError::OuterInMacroArgument) => {
+                            self.resume_scanner_episode_after_recovery(episode);
+                            clear_command_destination(&mut destination);
+                            continue;
+                        }
+                        Err(error) => {
+                            let command = destination
+                                .take()
+                                .expect("collector suspension retains its command");
+                            return Err(replacement_failure(
+                                error,
+                                output,
+                                depth,
+                                &mut pending_parameter,
+                                Some(PendingCollectorExpansion {
+                                    command,
+                                    route,
+                                    operand: None,
+                                    child: crate::execution_scratch::ChildContinuation::capture(
+                                        &mut self.scanner_resume,
+                                        route,
+                                    ),
+                                }),
+                            ));
+                        }
+                    }
+                }
+            }
 
-                // The expanded collector has completed a get_x-style delivery
-                // for each retained unexpandable token. Emit that boundary before
-                // storing the spelling, while expandable commands above remain
-                // represented by their own expansion transitions.
-                if expansion.is_expanded() {
-                    self.observe_expanded_delivery(&command);
-                }
-                let spelling = command.spelling();
-                delivered = command;
-                spelling
-            };
+            // The expanded collector has completed a get_x-style delivery
+            // for each retained unexpandable token. Emit that boundary before
+            // storing the spelling, while expandable commands above remain
+            // represented by their own expansion transitions.
+            let command = destination
+                .as_ref()
+                .expect("command delivery initializes destination");
+            if expansion.is_expanded() {
+                self.observe_expanded_delivery(command);
+            }
+            let spelling = command.spelling();
 
             // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
             // delimiter by §789's ⟨v_j⟩ template inside `get_next`, so this
@@ -1413,7 +1433,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             // changes only the live current command to a space. That space is
             // recovery state, not input: §477 resumes with the inserted brace
             // and must not append the temporary current-command value.
-            if delivered.is_outer_recovery_space() {
+            if command.is_outer_recovery_space() {
+                clear_command_destination(&mut destination);
                 continue;
             }
             let token = spelling.semantic_token();
@@ -1422,6 +1443,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // once -- `##` is one parameter token in the body, not two.
                 if is_parameter(token) {
                     self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
+                    clear_command_destination(&mut destination);
                     continue;
                 }
                 if let Some(number) = parameter_number(token)
@@ -1437,10 +1459,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                             tokens: vec![self.observed_token(converted)],
                         }),
                     );
+                    clear_command_destination(&mut destination);
                     continue;
                 }
                 // §479's text is already rendered by
                 // `report_macro_parameter_diagnostic` below.
+                let delivered = destination
+                    .take()
+                    .expect("parameter recovery consumes the delivered command");
                 if let Err(error) =
                     self.back_error(delivered, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)
                 {
@@ -1470,6 +1496,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 && is_parameter(token)
             {
                 pending_parameter = Some((spelling, highest_parameter, target));
+                clear_command_destination(&mut destination);
                 continue;
             }
             if is_begin_group(token) {
@@ -1478,12 +1505,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             } else if is_end_group(token) {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
+                    clear_command_destination(&mut destination);
                     return Ok(output);
                 }
                 self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
             } else {
                 self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
             }
+            clear_command_destination(&mut destination);
         }
     }
 

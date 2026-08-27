@@ -21,9 +21,9 @@ use crate::observation::{
     InputTransition, ObservedToken, RecoveryKind, RecoveryRecord,
 };
 
-fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
     match meaning {
-        ResolvedMeaning::Static(meaning) => Some(meaning),
+        ResolvedMeaning::Static(meaning) => Some(*meaning),
         ResolvedMeaning::Macro { .. } => None,
     }
 }
@@ -619,9 +619,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         let next = next.expect("command status initializes destination");
-        let kind = match next.meaning() {
+        let kind = match next.meaning_ref() {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
-                ConditionalKind::from_primitive(primitive)
+                ConditionalKind::from_primitive(*primitive)
             }
             _ => None,
         };
@@ -1323,7 +1323,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         let relation = relation.expect("command status initializes destination");
-        match static_meaning(relation.meaning()) {
+        match static_meaning(relation.meaning_ref()) {
             Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
             Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
             Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),
@@ -1784,7 +1784,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// e-TeX's additions to TeX82 §299 when §367 traces an expandable
     /// conditional or delimiter before its expansion routine runs.
     pub(crate) fn command_trace_conditional_suffix(&self, meaning: ResolvedMeaning<G>) -> String {
-        let Some(meaning) = static_meaning(meaning) else {
+        let Some(meaning) = static_meaning(&meaning) else {
             return String::new();
         };
         if self.state.untracked_int_param(IntParam::TRACING_IFS) <= 0 {
@@ -1877,23 +1877,28 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
             let command = destination
-                .take()
+                .as_ref()
                 .expect("command status initializes destination");
-            if let Some(Meaning::ExpandablePrimitive(primitive)) = static_meaning(command.meaning())
+            let Some(meaning) = static_meaning(command.meaning_ref()) else {
+                destination = None;
+                continue;
+            };
+            if let Meaning::ExpandablePrimitive(primitive) = meaning
                 && ConditionalKind::from_primitive(primitive).is_some()
             {
                 nested_conditions = nested_conditions.saturating_add(1);
+                destination = None;
                 continue;
             }
-            let Some(delimiter) =
-                static_meaning(command.meaning()).and_then(ConditionalDelimiter::from_meaning)
-            else {
+            let Some(delimiter) = ConditionalDelimiter::from_meaning(meaning) else {
+                destination = None;
                 continue;
             };
             if nested_conditions != 0 {
                 if delimiter == ConditionalDelimiter::Fi {
                     nested_conditions -= 1;
                 }
+                destination = None;
                 continue;
             }
             return Ok(PassTextStop {

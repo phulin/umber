@@ -2117,15 +2117,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                     _ => unreachable!("ordinary expanded delivery returns only commands"),
                 }
                 let command = destination
-                    .take()
+                    .as_ref()
                     .expect("command status initializes destination");
-                match command.meaning() {
+                match command.meaning_ref() {
                     ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                         ExpandablePrimitive::EndCsName,
                     )) => break,
-                    ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => name.push(ch),
+                    ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
+                        name.push(*ch);
+                        destination = None;
+                    }
                     _ => {
                         let rendered = print_esc_text(&self.state, "endcsname");
+                        let command = destination
+                            .take()
+                            .expect("csname recovery consumes the delivered command");
                         self.back_error_reporting(
                             command,
                             MISSING_ENDCSNAME_DIAGNOSTIC,
@@ -3580,15 +3586,6 @@ pub(crate) fn is_main_loop_character<G>(meaning: ResolvedMeaning<G>) -> bool {
     )
 }
 
-fn is_expandable<G>(meaning: ResolvedMeaning<G>) -> bool {
-    matches!(meaning, ResolvedMeaning::Macro { .. })
-        || matches!(
-            meaning,
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
-                if primitive != ExpandablePrimitive::EndCsName
-        )
-}
-
 /// TeX82 §366's `cur_cmd>max_command` test for Umber's resolved command.
 ///
 /// `Meaning::Undefined` normally represents §207's `undefined_cs` command,
@@ -3597,8 +3594,10 @@ fn is_expandable<G>(meaning: ResolvedMeaning<G>) -> bool {
 /// but its command remains `out_param<max_command`; its token spelling keeps
 /// the two command identities distinct here.
 pub(crate) fn is_expandable_command<G>(command: &CurrentCommand<G>) -> bool {
-    is_expandable(command.meaning())
-        || (matches!(static_meaning(command.meaning()), Some(Meaning::Undefined))
+    let meaning = command.meaning_ref();
+    matches!(meaning, ResolvedMeaning::Macro { .. })
+        || matches!(meaning, ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) if *primitive != ExpandablePrimitive::EndCsName)
+        || (matches!(meaning, ResolvedMeaning::Static(Meaning::Undefined))
             && !matches!(command.spelling().semantic_token(), Token::Param(_)))
 }
 
