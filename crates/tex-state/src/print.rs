@@ -1057,6 +1057,19 @@ pub enum ErrorHistory {
 }
 
 impl ErrorChannel {
+    pub(crate) fn reachable_state_identity(&self) -> u64 {
+        crate::state_hash::semantic_scalar_root(0x6572_726f_725f_6368, |hasher| {
+            hasher.i32(self.error_count);
+            hasher.bool(self.long_help_seen);
+            hasher.u8(match self.history {
+                ErrorHistory::Spotless => 0,
+                ErrorHistory::WarningIssued => 1,
+                ErrorHistory::ErrorMessageIssued => 2,
+                ErrorHistory::FatalErrorStop => 3,
+            });
+        })
+    }
+
     /// tex.web §82's `incr(error_count)`, returning the incremented count so
     /// the report owner can perform the 100-error terminal transition.
     pub const fn record_scrolled_error(&mut self) -> i32 {

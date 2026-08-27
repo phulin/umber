@@ -1563,7 +1563,6 @@ struct WorldReachableStateIdentity {
     inputs: crate::state_hash::SemanticSequenceIdentity,
     artifacts: crate::state_hash::SemanticSequenceIdentity,
     scalars: crate::state_hash::SemanticMapIdentity,
-    resources: crate::state_hash::SemanticMapIdentity,
 }
 
 impl WorldReachableStateIdentity {
@@ -1577,7 +1576,6 @@ impl WorldReachableStateIdentity {
             inputs: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_696e),
             artifacts: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_6172),
             scalars,
-            resources: crate::state_hash::SemanticMapIdentity::empty(0x776f_726c_645f_7265),
         }
     }
 
@@ -1587,8 +1585,36 @@ impl WorldReachableStateIdentity {
             hasher.u64(self.inputs.root());
             hasher.u64(self.artifacts.root());
             hasher.u64(self.scalars.root());
-            hasher.u64(self.resources.root());
         })
+    }
+}
+
+struct StreamBufIdentityGuard<'a> {
+    bufs: &'a mut Arc<StreamBufState>,
+    identity: Option<&'a mut WorldReachableStateIdentity>,
+    old: Option<u64>,
+}
+
+impl std::ops::Deref for StreamBufIdentityGuard<'_> {
+    type Target = StreamBufState;
+
+    fn deref(&self) -> &Self::Target {
+        self.bufs.as_ref()
+    }
+}
+
+impl std::ops::DerefMut for StreamBufIdentityGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(self.bufs)
+    }
+}
+
+impl Drop for StreamBufIdentityGuard<'_> {
+    fn drop(&mut self) {
+        if let (Some(identity), Some(old)) = (&mut self.identity, self.old) {
+            let new = stable_hash(self.bufs.as_ref());
+            identity.scalars.replace(0, Some(old), Some(new));
+        }
     }
 }
 
@@ -2755,20 +2781,6 @@ impl World {
         bytes: Arc<[u8]>,
     ) -> Result<(), WorldError> {
         let path = path.into();
-        let identity_update = self.reachable_state_identity.as_ref().map(|_| {
-            let old = match &self.backend {
-                WorldBackend::Memory(memory) => memory
-                    .files
-                    .get(&path)
-                    .map(|bytes| stable_hash(&ContentHash::from_bytes(bytes))),
-                _ => None,
-            };
-            (
-                stable_hash(&path),
-                old,
-                stable_hash(&ContentHash::from_bytes(&bytes)),
-            )
-        });
         let WorldBackend::Memory(memory) = &mut self.backend else {
             return Err(WorldError::new(
                 "set memory file",
@@ -2777,11 +2789,6 @@ impl World {
             ));
         };
         Arc::make_mut(memory).files.insert(path.clone(), bytes);
-        if let (Some(identity), Some((key, old, new))) =
-            (&mut self.reachable_state_identity, identity_update)
-        {
-            identity.resources.replace(key, old, Some(new));
-        }
         Ok(())
     }
 
@@ -4197,7 +4204,7 @@ impl World {
             let EffectRecord::StreamWrite { sink, text } = record else {
                 unreachable!("a diagnostic batch contains printable writes only")
             };
-            let bufs = self.stream_bufs_mut();
+            let mut bufs = self.stream_bufs_mut();
             match sink {
                 PrintSink::Terminal => append_partial_line(&mut bufs.terminal_partial_line, text),
                 PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, text),
@@ -4320,7 +4327,7 @@ impl World {
             sink,
             text: text.clone(),
         });
-        let bufs = self.stream_bufs_mut();
+        let mut bufs = self.stream_bufs_mut();
         match sink {
             PrintSink::Terminal => append_partial_line(&mut bufs.terminal_partial_line, &text),
             PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &text),
@@ -4338,7 +4345,7 @@ impl World {
             bytes: bytes.clone(),
         });
         let projection = bytes_to_partial_line_projection(&bytes);
-        let bufs = self.stream_bufs_mut();
+        let mut bufs = self.stream_bufs_mut();
         match sink {
             PrintSink::Terminal => {
                 append_partial_line(&mut bufs.terminal_partial_line, &projection)
@@ -5382,8 +5389,16 @@ impl World {
         .fingerprint()
     }
 
-    fn stream_bufs_mut(&mut self) -> &mut StreamBufState {
-        Arc::make_mut(&mut self.stream_bufs)
+    fn stream_bufs_mut(&mut self) -> StreamBufIdentityGuard<'_> {
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(self.stream_bufs.as_ref()));
+        StreamBufIdentityGuard {
+            bufs: &mut self.stream_bufs,
+            identity: self.reachable_state_identity.as_mut(),
+            old,
+        }
     }
 
     #[must_use]
@@ -5451,7 +5466,13 @@ impl World {
     }
 
     pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
-        self.reachable_state_identity.map(|root| root.root())
+        self.reachable_state_identity.map(|root| {
+            crate::state_hash::semantic_scalar_root(0x776f_726c_645f_6669, |hasher| {
+                hasher.u64(root.root());
+                hasher.u32(self.file_framing.open_parens());
+                hasher.u64(self.error_channel.reachable_state_identity());
+            })
+        })
     }
 
     fn replace_identity_scalar(&mut self, key: u64, old: u64, new: u64) {

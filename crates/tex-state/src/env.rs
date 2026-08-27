@@ -2199,10 +2199,6 @@ fn state_word_semantic_contribution<G>(
     cell: StateCell,
     word: &StateWord<G>,
 ) -> Result<Option<u64>, ()> {
-    if matches!(cell, StateCell::FontRuntime(_)) {
-        // Mutable font runtime belongs to the authoritative font component.
-        return Ok(None);
-    }
     let is_default = match (cell, word) {
         (StateCell::Meaning(_), StateWord::Meaning(value)) => value == &MeaningWord::UNDEFINED,
         (StateCell::Count(_) | StateCell::IntegerParameter(_), StateWord::Integer(value)) => {
