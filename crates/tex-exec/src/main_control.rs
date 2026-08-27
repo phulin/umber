@@ -3882,7 +3882,7 @@ impl<G> MainControl<G> {
             if published.boundary == crate::EngineBoundary::ShipoutComplete {
                 stores
                     .release_page_suffix_if_rootless(
-                        self.modes.summary().retains_page_node_handles(),
+                        self.modes.retains_page_node_handles(),
                     )
                     .map_err(|_| ExecError::MissingToken {
                         context: "rootless shipout page release",

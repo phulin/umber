@@ -1377,27 +1377,6 @@ impl ModeNestSummary {
         &self.levels
     }
 
-    /// Whether this summary has any explicit checkpointable page coordinate.
-    pub(crate) fn retains_page_node_handles(&self) -> bool {
-        self.levels.iter().any(|level| {
-            let list = &level.list;
-            list.sequence.retains_page_node_handles()
-                || list
-                    .incomplete_fraction
-                    .as_ref()
-                    .is_some_and(|fraction| !fraction.numerator.is_empty())
-                || list
-                    .display_interrupt
-                    .as_ref()
-                    .and_then(|interrupt| interrupt.prototype.as_ref())
-                    .is_some_and(|prototype| !prototype.children.is_empty())
-                || list
-                    .display_eq_no
-                    .as_ref()
-                    .is_some_and(|eqno| !eqno.display.is_empty())
-        })
-    }
-
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
         semantic_fingerprint_levels(&self.levels, universe)
     }
@@ -2171,6 +2150,32 @@ impl ModeNest {
             list_root_count,
             reachable_state_identity_root,
         }
+    }
+
+    /// Reports whether any live mode payload retains page-arena coordinates.
+    ///
+    /// Shipout uses this borrowed projection before releasing a rootless page
+    /// suffix.  It deliberately stays on the live owner instead of cloning a
+    /// [`ModeNestSummary`] and every retained list merely to answer the
+    /// lifetime question.
+    pub(crate) fn retains_page_node_handles(&self) -> bool {
+        self.storage.borrow().levels.iter().any(|level| {
+            let list = &level.list;
+            list.sequence.retains_page_node_handles()
+                || list
+                    .incomplete_fraction
+                    .as_ref()
+                    .is_some_and(|fraction| !fraction.numerator.is_empty())
+                || list
+                    .display_interrupt
+                    .as_ref()
+                    .and_then(|interrupt| interrupt.prototype.as_ref())
+                    .is_some_and(|prototype| !prototype.children.is_empty())
+                || list
+                    .display_eq_no
+                    .as_ref()
+                    .is_some_and(|eqno| !eqno.display.is_empty())
+        })
     }
 
     pub(crate) fn restore_checkpoint(
