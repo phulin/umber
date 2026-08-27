@@ -125,8 +125,8 @@ lineage's empty containers.
 The enforced `world_checkpoint_gate` compares both 1 versus 64 payload units
 and 1 versus 32 retained boundaries. Its recorded optimized result is zero
 allocations for capture, checkpoint clone, and no-op restore; World fork is
-24 allocations / 1,040 requested bytes at both payload sizes, source/font fork
-is 20 / 984, and retained-boundary-only forks are respectively 20 / 808 and
+26 allocations / 1,120 requested bytes at both payload sizes, source/font fork
+is 20 / 984, and retained-boundary-only forks are respectively 22 / 888 and
 16 / 680 at both boundary counts. First candidate mutation is also flat:
 World is 15 / 2,627 and source/font is 26 / 4,706. The fixture reports logical
 retained-payload ownership separately (World 848 versus 48,476 bytes and
