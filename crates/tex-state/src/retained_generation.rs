@@ -184,6 +184,12 @@ pub(crate) struct PhysicalStateGeneration {
     _profiling_lifetime: crate::measurement::RetainedGenerationLifetime,
 }
 
+impl PhysicalStateGeneration {
+    pub(crate) fn clear_attachment(&mut self) {
+        self.attachment = None;
+    }
+}
+
 /// Move-only handle to one physical generation stored in its session's
 /// external reachability domain.
 pub struct RetainedStateGeneration<'store> {

@@ -5,7 +5,7 @@ use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
 use crate::env::{DenseState, DynamicMemoryRoot, StateError};
-use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
+use crate::generation::{Generation, GenerationCursor, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
 use crate::node_arena::{
     DurableListId, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
@@ -27,13 +27,35 @@ pub(crate) struct StateCore<G> {
 }
 
 impl<G> StateCore<G> {
-    pub(crate) fn fork(&self) -> Self {
+    /// Materializes one exact named-boundary bank. Candidate construction
+    /// later moves this bank out of its checkpoint slot instead of copying it.
+    pub(crate) fn checkpoint_copy(&self) -> Self {
         let generation = self.generation.generation().fork();
         Self {
             generation: GenerationOwner::new(generation),
             nodes: self.nodes.fork(),
             state: self.state.clone(),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn generation_cursor(&self) -> GenerationCursor {
+        self.generation.generation().cursor()
+    }
+
+    pub(crate) fn restore_generation_cursor(&mut self, cursor: GenerationCursor) {
+        self.generation.generation_mut().restore_cursor(cursor);
+    }
+
+    pub(crate) fn checkpoint_is_exact_head(
+        &self,
+        journal: crate::journal::JournalCursor<G>,
+        durable: NodeArenaCursor<PageLifetime>,
+        generation: GenerationCursor,
+    ) -> bool {
+        self.state.checkpoint_is_head(journal)
+            && self.nodes.cursor_is_head(durable)
+            && self.generation.generation().cursor() == generation
     }
 
     pub(crate) fn capture_format_values(
@@ -150,6 +172,13 @@ impl<G> StateCore<G> {
         self.nodes.truncate(cursor)
     }
 
+    pub(crate) fn restore_durable_node_cursor(
+        &mut self,
+        cursor: NodeArenaCursor<PageLifetime>,
+    ) -> Result<(), NodeArenaError> {
+        self.nodes.restore_checkpoint_cursor(cursor)
+    }
+
     /// Retires the complete generation after all admitted borrows end.
     pub(crate) fn retire(self) -> Result<StateCoreRetirement, StateError> {
         let journal_entries = self.state.journal_len();
@@ -178,8 +207,8 @@ impl<G> StateCore<G> {
     }
 
     #[must_use]
-    pub(crate) fn can_retire(&self) -> bool {
-        self.generation.is_unique()
+    pub(crate) fn can_retire_after_dropping(&self, owner: &GenerationOwner<G>) -> bool {
+        self.generation.is_unique() || self.generation.is_owned_only_by(owner)
     }
 }
 

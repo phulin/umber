@@ -21,6 +21,15 @@ mod tests;
 
 static NEXT_ARENA_OWNER: AtomicU64 = AtomicU64::new(1);
 static NEXT_LIST_GENERATION: AtomicU64 = AtomicU64::new(1);
+const LIST_GENERATION_STRIDE: u64 = 1_u64 << 32;
+
+fn next_list_generation_namespace() -> u64 {
+    NEXT_LIST_GENERATION
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            next.checked_add(LIST_GENERATION_STRIDE)
+        })
+        .expect("node-list generation namespace exhausted")
+}
 
 /// Operation-local node-list lifetime.
 pub enum ScratchLifetime {}
@@ -133,6 +142,7 @@ pub type DurableListId<G> = NodeListId<G>;
 pub struct NodeArenaCursor<L> {
     owner: u64,
     rows: u32,
+    next_generation: u64,
     _lifetime: PhantomData<fn(&L) -> &L>,
 }
 
@@ -449,6 +459,7 @@ impl<L> NodeMemoryScratch<L> {
 /// registry lookup, or reference count on a row.
 pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     owner: u64,
+    next_generation: u64,
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
     segments: Vec<Option<Rc<NodeArenaSegment<L, Glue, Tokens>>>>,
     segment_live_rows: Vec<u32>,
@@ -500,11 +511,19 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     pub(crate) fn fork(&self) -> Self {
         #[cfg(feature = "profiling")]
         crate::measurement::record_node_checkpoint_share(self.rows.iter().flatten().count());
+        let mut rows = Vec::with_capacity(self.rows.len().saturating_add(NODE_ARENA_SEGMENT_ROWS));
+        rows.extend(self.rows.iter().cloned());
+        let mut segments = Vec::with_capacity(self.segments.len().saturating_add(1));
+        segments.extend(self.segments.iter().cloned());
+        let mut segment_live_rows =
+            Vec::with_capacity(self.segment_live_rows.len().saturating_add(1));
+        segment_live_rows.extend_from_slice(&self.segment_live_rows);
         Self {
             owner: self.owner,
-            rows: self.rows.clone(),
-            segments: self.segments.clone(),
-            segment_live_rows: self.segment_live_rows.clone(),
+            next_generation: next_list_generation_namespace(),
+            rows,
+            segments,
+            segment_live_rows,
             accounting: self.accounting.clone(),
         }
     }
@@ -755,6 +774,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         assert_ne!(owner, 0, "node-arena owner identity exhausted");
         Self {
             owner,
+            next_generation: next_list_generation_namespace(),
             rows: Vec::new(),
             segments: Vec::new(),
             segment_live_rows: Vec::new(),
@@ -768,8 +788,14 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         NodeArenaCursor {
             owner: self.owner,
             rows: u32::try_from(self.rows.len()).expect("node arena exceeds u32 rows"),
+            next_generation: self.next_generation,
             _lifetime: PhantomData,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn cursor_is_head(&self, cursor: NodeArenaCursor<L>) -> bool {
+        cursor.owner == self.owner && cursor.rows as usize == self.rows.len()
     }
 
     /// Opens one nested suffix whose coordinates have one structural owner.
@@ -847,6 +873,15 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok(())
     }
 
+    pub(crate) fn restore_checkpoint_cursor(
+        &mut self,
+        cursor: NodeArenaCursor<L>,
+    ) -> Result<(), NodeArenaError> {
+        self.truncate(cursor)?;
+        self.next_generation = cursor.next_generation;
+        Ok(())
+    }
+
     /// Publishes one complete list whose children already belong to this arena.
     pub fn publish(
         &mut self,
@@ -873,8 +908,10 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         self.rows
             .try_reserve(1)
             .map_err(|_| NodeArenaError::AllocationFailed)?;
-        let generation = NEXT_LIST_GENERATION.fetch_add(1, Ordering::Relaxed);
-        assert_ne!(generation, 0, "node-list generation exhausted");
+        let generation = self.next_generation;
+        self.next_generation = generation
+            .checked_add(1)
+            .expect("node-list generation exhausted");
         let tex82_words = node_words(&nodes, false);
         let etex_words = node_words(&nodes, true);
         self.accounting.allocate_nodes(tex82_words, etex_words);
@@ -1048,8 +1085,10 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 .and_then(|index| index.checked_add(1))
                 .and_then(|row| u32::try_from(row).ok())
                 .ok_or(NodeArenaError::CapacityOverflow)?;
-            let generation = NEXT_LIST_GENERATION.fetch_add(1, Ordering::Relaxed);
-            assert_ne!(generation, 0, "node-list generation exhausted");
+            let generation = destination.next_generation;
+            destination.next_generation = generation
+                .checked_add(1)
+                .expect("node-list generation exhausted");
             let destination_id = NodeListId::from_row(destination.owner, row, generation);
             let nodes = self
                 .allocation(source_index)

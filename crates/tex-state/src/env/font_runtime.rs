@@ -227,15 +227,6 @@ impl FontRuntimeBank {
         Ok(())
     }
 
-    pub(crate) fn truncate(&mut self, len: u32) -> Result<(), BankError> {
-        let len = usize::try_from(len).map_err(|_| BankError::IndexOutOfBounds)?;
-        if len > self.rows.len() {
-            return Err(BankError::IndexOutOfBounds);
-        }
-        self.rows.truncate(len);
-        Ok(())
-    }
-
     pub(crate) fn parameter_count(&self, font: u32) -> Result<u32, BankError> {
         let count = self.row(font)?.parameter_count.value;
         u32::try_from(count).map_err(|_| BankError::IndexOutOfBounds)

@@ -30,6 +30,7 @@ pub struct JournalCursor<G> {
     group_entry_position: u32,
     checkpoint_position: u32,
     group_depth: u32,
+    save_stack: SaveStackProjection,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -54,18 +55,20 @@ impl<G> PartialEq for JournalCursor<G> {
             && self.group_entry_position == other.group_entry_position
             && self.checkpoint_position == other.checkpoint_position
             && self.group_depth == other.group_depth
+            && self.save_stack == other.save_stack
     }
 }
 
 impl<G> Eq for JournalCursor<G> {}
 
 impl<G> JournalCursor<G> {
-    pub(super) const fn new(
+    const fn new(
         owner: u64,
         group_id: u64,
         group_entry_position: u32,
         checkpoint_position: u32,
         group_depth: u32,
+        save_stack: SaveStackProjection,
     ) -> Self {
         Self {
             owner,
@@ -73,6 +76,7 @@ impl<G> JournalCursor<G> {
             group_entry_position,
             checkpoint_position,
             group_depth,
+            save_stack,
             _brand: PhantomData,
         }
     }
@@ -187,11 +191,13 @@ struct GroupSegment<G> {
 
 impl<G> Clone for GroupSegment<G> {
     fn clone(&self) -> Self {
+        let mut entries = Vec::with_capacity(self.entries.len().saturating_add(1));
+        entries.extend(self.entries.iter().cloned());
         Self {
             id: self.id,
             parent: self.parent,
             frame: self.frame,
-            entries: self.entries.clone(),
+            entries,
             checkpoint_pinned: self.checkpoint_pinned,
         }
     }
@@ -224,6 +230,11 @@ impl<G> Clone for CheckpointDelta<G> {
 struct SaveStackProjection {
     words: usize,
     latest_push: Option<(u32, usize)>,
+}
+
+pub(crate) enum RestoredGroups {
+    Truncate(usize),
+    Replace(Vec<GroupFrame>),
 }
 
 impl SaveStackProjection {
@@ -317,6 +328,11 @@ struct SaveJournalProfile {
 
 impl<G> Clone for SaveJournal<G> {
     fn clone(&self) -> Self {
+        let mut checkpoint_entries =
+            Vec::with_capacity(self.checkpoint_entries.len().saturating_add(64));
+        checkpoint_entries.extend(self.checkpoint_entries.iter().cloned());
+        let mut checkpoint_stamps = self.checkpoint_stamps.clone();
+        checkpoint_stamps.reserve(64);
         Self {
             owner: self.owner,
             active_groups: self.active_groups.clone(),
@@ -325,8 +341,8 @@ impl<G> Clone for SaveJournal<G> {
             pending_operation_groups: Vec::new(),
             spare_group_entries: Vec::new(),
             next_group_id: self.next_group_id,
-            checkpoint_entries: self.checkpoint_entries.clone(),
-            checkpoint_stamps: self.checkpoint_stamps.clone(),
+            checkpoint_entries,
+            checkpoint_stamps,
             checkpoint_epoch: self.checkpoint_epoch,
             operation_entries: Vec::new(),
             active_operations: Vec::new(),
@@ -385,9 +401,27 @@ impl<G> SaveJournal<G> {
             u32::try_from(self.checkpoint_entries.len())
                 .expect("checkpoint journal exceeds u32 entries"),
             group_depth,
+            self.save_stack,
         );
         self.advance_checkpoint_epoch();
         cursor
+    }
+
+    #[must_use]
+    pub(crate) fn cursor_is_head(&self, cursor: JournalCursor<G>) -> bool {
+        if cursor.owner != self.owner
+            || cursor.checkpoint_position() as usize != self.checkpoint_entries.len()
+            || cursor.group_depth() as usize != self.active_groups.len()
+        {
+            return false;
+        }
+        match self.active_groups.last() {
+            Some(group) => {
+                cursor.group_id() == group.id
+                    && cursor.group_entry_position() as usize == group.entries.len()
+            }
+            None => cursor.group_id() == 0 && cursor.group_entry_position() == 0,
+        }
     }
 
     pub(crate) fn begin_operation(&mut self) -> StateOperation<G> {
@@ -646,7 +680,7 @@ impl<G> SaveJournal<G> {
         self.checkpoint_entries
             .truncate(cursor.checkpoint_position() as usize);
         self.advance_checkpoint_epoch();
-        self.rebuild_save_stack_projection();
+        self.save_stack = cursor.save_stack;
     }
 
     pub(crate) fn finish_operation_rollback(&mut self, operation: StateOperation<G>) {
@@ -717,6 +751,14 @@ impl<G> SaveJournal<G> {
         if cursor.group_id() == 0 {
             return cursor.group_depth() == 0 && cursor.group_entry_position() == 0;
         }
+        if cursor.group_depth() as usize <= self.active_groups.len() {
+            let group = &self.active_groups[cursor.group_depth() as usize - 1];
+            if group.id == cursor.group_id()
+                && cursor.group_entry_position() as usize <= group.entries.len()
+            {
+                return true;
+            }
+        }
         let Some(group) = self.group_segment(cursor.group_id()) else {
             return false;
         };
@@ -735,7 +777,36 @@ impl<G> SaveJournal<G> {
         depth == cursor.group_depth()
     }
 
-    pub(crate) fn restore_group_cursor(&mut self, cursor: JournalCursor<G>) -> Vec<GroupFrame> {
+    pub(crate) fn restore_group_cursor(&mut self, cursor: JournalCursor<G>) -> RestoredGroups {
+        if cursor.group_depth() as usize <= self.active_groups.len()
+            && (cursor.group_depth() == 0
+                || self.active_groups[cursor.group_depth() as usize - 1].id == cursor.group_id())
+        {
+            while self.active_groups.len() > cursor.group_depth() as usize {
+                let segment = self.active_groups.pop().expect("active group suffix");
+                self.active_group_entries = self
+                    .active_group_entries
+                    .saturating_sub(segment.entries.len().saturating_add(1));
+                if segment.checkpoint_pinned {
+                    self.retained_groups.push(segment);
+                } else {
+                    self.recycle_segment(segment);
+                }
+            }
+            if let Some(group) = self.active_groups.last_mut() {
+                self.active_group_entries = self.active_group_entries.saturating_sub(
+                    group
+                        .entries
+                        .len()
+                        .saturating_sub(cursor.group_entry_position() as usize),
+                );
+                group
+                    .entries
+                    .truncate(cursor.group_entry_position() as usize);
+            }
+            self.save_stack = cursor.save_stack;
+            return RestoredGroups::Truncate(cursor.group_depth() as usize);
+        }
         let mut target = Vec::with_capacity(cursor.group_depth() as usize);
         let mut id = cursor.group_id();
         while id != 0 {
@@ -776,8 +847,13 @@ impl<G> SaveJournal<G> {
                 .entries
                 .truncate(cursor.group_entry_position() as usize);
         }
-        self.rebuild_save_stack_projection();
-        self.active_groups.iter().map(|group| group.frame).collect()
+        self.active_group_entries = self
+            .active_groups
+            .iter()
+            .map(|group| group.entries.len().saturating_add(1))
+            .sum();
+        self.save_stack = cursor.save_stack;
+        RestoredGroups::Replace(self.active_groups.iter().map(|group| group.frame).collect())
     }
 
     pub(crate) fn visit_group_mutations(&self, mut visit: impl FnMut(&Mutation<G>)) {

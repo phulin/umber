@@ -181,6 +181,18 @@ impl<G> DefinitionArena<G> {
         }
     }
 
+    pub(crate) const fn cursor(&self) -> u32 {
+        self.next_serial
+    }
+
+    pub(crate) fn restore_cursor(&mut self, cursor: u32) {
+        assert!(
+            cursor <= self.next_serial,
+            "definition cursor is beyond the publisher"
+        );
+        self.next_serial = cursor;
+    }
+
     pub(super) fn new(
         _token: ArenaToken<G, DefinitionNamespace>,
         accounting: MemoryAccounting,

@@ -40,10 +40,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   tests for the diagnostic channel.
 - `src/definition_arena.rs`: Private generation-branded non-atomic shared
   macro-definition owners, single-allocation immutable token payloads, and the
-  publisher which retains no released body.
+  exact publisher cursor which returns a rejected checkpoint loan to its
+  private suffix mark without retaining released bodies.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
-  token-list owners, reusable publication builders, and allocation-free owning
-  views/cursors; glue and provenance retain cheaper direct row resolution.
+  token-list owners, reusable publication builders, allocation-free owning
+  views/cursors, and exact private-suffix rollback for token, glue, and
+  provenance publication.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, and journal-cursor restore.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
@@ -105,7 +107,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
 - `src/generation.rs`: Fresh invariant generation brands, private publisher
   construction, episode-level guarded admission, cloneable coarse generation
-  ownership, and whole-generation retirement of inline arenas/capacity.
+  ownership, bounded publisher cursors for checkpoint loans, and
+  whole-generation retirement of inline arenas/capacity.
 - `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
 - `src/input.rs`: Storage-independent input policy, replay-kind, alignment
   phase, and source-id vocabulary shared with the command-owned input stack.
@@ -124,8 +127,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
 - `src/journal.rs`: Separate compact TeX group saves, first-before named-
-  checkpoint deltas, and reusable operation-local undo with owner-checked
-  stable cursors.
+  checkpoint deltas, fixed save-stack projections, prefix-independent exact
+  loan rollback, and reusable operation-local undo with owner-checked stable
+  cursors.
 - `src/journal/cell.rs`: Private packed encoding for the typed dense-state
   coordinates stored by narrow journal records.
 - `src/journal/tests.rs`: Split-lifetime rollback, packed-width, cursor, and
@@ -161,8 +165,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   coordinates without publishing duplicate page-arena rows. The module also
   owns TeX-cell lineage metadata and semantic-only equality.
 - `src/node_arena.rs`: Generation page and cold loaded-node arenas; copy-only
-  typed/rebranded coordinates; shared immutable checkpoint rows; owner-checked
-  suffix cursors; borrowed resolution; and cold-only exact-root relocation.
+  typed/rebranded coordinates; shared immutable checkpoint rows; exact
+  branch-local generation frontiers; owner-checked suffix cursors; borrowed
+  resolution; and cold-only exact-root relocation.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.
@@ -236,7 +241,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   replay convergence checks, and the Universe-owned executor-boundary builder
   which resolves child/font/value coordinates and erases diagnostic identity.
 - `src/stores.rs`: Coarse generation state owner, immutable/mutable admitted
-  episode views, typed shared-value publication, cold live-format payload
+  episode views, named-boundary exact bank materialization, private-suffix
+  loan rollback, typed shared-value publication, cold live-format payload
   capture, and whole-generation retirement.
 - `src/stores/tests.rs`: Direct arena resolution, generation-id bank
   installation, and coarse retirement tests.
@@ -254,9 +260,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/universe.rs`: Public session/generation aggregate, typed scalar
-  mutation and allocation facade, owner-checked journal cursors, admitted
-  command/execution views, borrow-only pure-memo capability, root-before-suffix
-  shipout transactions, and whole-session retirement.
+  mutation and allocation facade, exclusive retained-checkpoint state/node
+  bank loans, immutable primitive-registry sharing, owner-checked journal
+  cursors, admitted command/execution views, borrow-only pure-memo capability,
+  root-before-suffix shipout transactions, and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent
   interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream

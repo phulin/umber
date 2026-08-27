@@ -52,7 +52,7 @@ fn command_episode_admits_session_and_generation_once() {
 }
 
 #[test]
-fn runtime_checkpoint_fork_shares_definition_and_token_payload_owners() {
+fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners() {
     with_universe(budget(), |universe| {
         let symbol = universe.intern("shared").expect("intern symbol");
         let words = [TokenWord::pack(Token::frozen_relax())];
@@ -74,15 +74,77 @@ fn runtime_checkpoint_fork_shares_definition_and_token_payload_owners() {
         let definition_owners = definition.semantic_owner_count();
         let token_owners = tokens.semantic_owner_count();
 
-        let fork = universe
+        let mut fork = universe
             .fork_runtime_checkpoint(&checkpoint)
             .expect("checkpoint fork");
-        assert!(definition.semantic_owner_count() > definition_owners);
-        assert!(tokens.semantic_owner_count() > token_owners);
-        drop(fork);
+        assert_eq!(definition.semantic_owner_count(), definition_owners);
+        assert_eq!(tokens.semantic_owner_count(), token_owners);
+        universe.return_rejected_pdf_from(&mut fork);
 
         assert_eq!(definition.semantic_owner_count(), definition_owners);
         assert_eq!(tokens.semantic_owner_count(), token_owners);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn rejected_checkpoint_loan_returns_exact_private_suffix_coordinates_for_retry() {
+    with_universe(budget(), |universe| {
+        for index in 0..16 {
+            universe.register_primitive_meaning(&format!("primitive{index}"), Meaning::Relax);
+            universe
+                .assign_count(index, i32::from(index), AssignmentScope::Global)
+                .expect("baseline dense row");
+            universe
+                .begin_group(GroupKind::Simple, u32::from(index))
+                .expect("baseline save segment");
+        }
+        let checkpoint = universe.runtime_checkpoint().expect("early checkpoint");
+        for index in 0..16 {
+            universe
+                .assign_count(index, -i32::from(index), AssignmentScope::Local)
+                .expect("accepted suffix");
+            let _ = universe.publish_page_nodes(&[Node::Penalty(-i32::from(index))]);
+        }
+
+        let mut candidate = universe
+            .fork_runtime_checkpoint(&checkpoint)
+            .expect("loan exact checkpoint bank");
+        let first_node = candidate.publish_page_nodes(&[Node::Penalty(91)]);
+        let first_glue = candidate
+            .allocate_glue(crate::glue::GlueSpec::ZERO)
+            .expect("candidate glue");
+        let first_provenance = candidate
+            .allocate_provenance(crate::provenance::OriginRecord::UnknownBootstrap)
+            .expect("candidate provenance");
+        candidate
+            .assign_count(50_000, 91, AssignmentScope::Global)
+            .expect("candidate dense suffix");
+        universe.return_rejected_pdf_from(&mut candidate);
+
+        let mut retry = universe
+            .fork_runtime_checkpoint(&checkpoint)
+            .expect("reloan returned checkpoint bank");
+        assert_eq!(
+            retry.publish_page_nodes(&[Node::Penalty(91)]),
+            first_node,
+            "page-arena coordinates restart from the exact private suffix mark"
+        );
+        assert_eq!(
+            retry
+                .allocate_glue(crate::glue::GlueSpec::ZERO)
+                .expect("retry glue"),
+            first_glue
+        );
+        assert_eq!(
+            retry
+                .allocate_provenance(crate::provenance::OriginRecord::UnknownBootstrap)
+                .expect("retry provenance"),
+            first_provenance
+        );
+        assert_eq!(retry.primitive_registry_len(), 16);
+        assert_eq!(retry.count(50_000).expect("restored dense sentinel"), 0);
+        universe.return_rejected_pdf_from(&mut retry);
     })
     .expect("universe allocation");
 }
@@ -942,7 +1004,6 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
 #[test]
 fn runtime_checkpoint_validates_before_mutation() {
     with_universe(budget(), |universe| {
-        let page_prefix = universe.page_node_cursor();
         let retained = universe.publish_page_nodes(&[Node::Penalty(7)]);
         universe
             .command_context()
@@ -962,9 +1023,12 @@ fn runtime_checkpoint_validates_before_mutation() {
         universe
             .assign_count(0, 41, AssignmentScope::Global)
             .expect("candidate count");
-        universe
-            .truncate_page_nodes(page_prefix)
-            .expect("invalidate checkpoint page cursor");
+        let borrowed = checkpoint
+            .state_slot
+            .bundle
+            .borrow_mut()
+            .take()
+            .expect("borrow checkpoint bank");
 
         assert!(
             universe
@@ -981,6 +1045,14 @@ fn runtime_checkpoint_validates_before_mutation() {
                 .expect("count"),
             41,
             "runtime validation failure must leave dense state unchanged"
+        );
+        assert!(
+            checkpoint
+                .state_slot
+                .bundle
+                .borrow_mut()
+                .replace(borrowed)
+                .is_none()
         );
     })
     .expect("universe allocation");

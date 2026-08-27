@@ -192,6 +192,7 @@ impl ReachabilityStore {
                     .generation
                     .as_mut()
                     .ok_or(ReachabilityStoreError::StaleGeneration)?;
+                candidate.clear_attachment();
                 source
                     .universe
                     .return_rejected_pdf_from(&mut candidate.universe);

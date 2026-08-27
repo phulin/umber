@@ -92,6 +92,7 @@ impl<G> EngineCheckpoint<G> {
         let modes = match ModeNest::fork_checkpoint(&self.modes) {
             Ok(modes) => modes,
             Err(error) => {
+                drop(command);
                 source.return_rejected_pdf_from(&mut destination);
                 return Err(CheckpointRestoreError::Mode(error));
             }

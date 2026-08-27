@@ -18,7 +18,9 @@ use group::{GroupFrame, GroupKind, GroupMismatch};
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::ids::FontId;
 use crate::interner::Symbol;
-use crate::journal::{JournalCursor, JournalEntry, Mutation, SaveJournal, StateOperation};
+use crate::journal::{
+    JournalCursor, JournalEntry, Mutation, RestoredGroups, SaveJournal, StateOperation,
+};
 use crate::meaning::{MeaningWord, ResolvedMeaning};
 use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
@@ -494,6 +496,10 @@ impl<G> Clone for DenseState<G> {
 }
 
 impl<G> DenseState<G> {
+    #[must_use]
+    pub(crate) fn checkpoint_is_head(&self, cursor: JournalCursor<G>) -> bool {
+        self.journal.cursor_is_head(cursor)
+    }
     pub(crate) fn visit_dynamic_memory_roots(&self, mut visit: impl FnMut(DynamicMemoryRoot<G>)) {
         for meaning in self.meanings.values() {
             if let MeaningWord::Macro { definition, .. } = meaning {
@@ -1184,11 +1190,6 @@ impl<G> DenseState<G> {
         self.font_runtime.parameter_words()
     }
 
-    pub(crate) fn truncate_font_runtime(&mut self, len: u32) -> Result<(), StateError> {
-        self.font_runtime.truncate(len)?;
-        Ok(())
-    }
-
     pub(crate) fn hash_font_runtime(
         &self,
         font: FontId,
@@ -1656,7 +1657,10 @@ impl<G> DenseState<G> {
                 },
             )?;
         }
-        self.groups = self.journal.restore_group_cursor(cursor);
+        match self.journal.restore_group_cursor(cursor) {
+            RestoredGroups::Truncate(len) => self.groups.truncate(len),
+            RestoredGroups::Replace(groups) => self.groups = groups,
+        }
         self.journal.truncate_checkpoint(cursor);
         Ok(())
     }

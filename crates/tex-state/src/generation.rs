@@ -52,6 +52,14 @@ pub(crate) struct Generation<G> {
     provenance: ProvenanceArena<G>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GenerationCursor {
+    definitions: u32,
+    token_lists: u32,
+    glue: usize,
+    provenance: usize,
+}
+
 /// Cloneable lifetime authority for one complete immutable generation.
 ///
 /// Cloning is deliberately available only at this coarse boundary. The
@@ -107,6 +115,11 @@ impl<G> GenerationOwner<G> {
         Arc::strong_count(&self.generation) == 1
     }
 
+    #[must_use]
+    pub(crate) fn is_owned_only_by(&self, other: &Self) -> bool {
+        self.same_generation(other) && Arc::strong_count(&self.generation) == 2
+    }
+
     pub(crate) fn retire(self) -> Result<GenerationRetirement, Self> {
         match Arc::try_unwrap(self.generation) {
             Ok(generation) => Ok(generation
@@ -152,6 +165,30 @@ impl<G> Generation<G> {
             glue: self.glue.clone(),
             provenance: self.provenance.clone(),
         }
+    }
+
+    pub(crate) fn cursor(&self) -> GenerationCursor {
+        GenerationCursor {
+            definitions: self.definitions.cursor(),
+            token_lists: self.token_lists.cursor(),
+            glue: self.glue.len(),
+            provenance: self.provenance.len(),
+        }
+    }
+
+    pub(crate) fn validates_cursor(&self, cursor: GenerationCursor) -> bool {
+        cursor.definitions <= self.definitions.cursor()
+            && cursor.token_lists <= self.token_lists.cursor()
+            && cursor.glue <= self.glue.len()
+            && cursor.provenance <= self.provenance.len()
+    }
+
+    pub(crate) fn restore_cursor(&mut self, cursor: GenerationCursor) {
+        assert!(self.validates_cursor(cursor));
+        self.definitions.restore_cursor(cursor.definitions);
+        self.token_lists.restore_cursor(cursor.token_lists);
+        self.glue.truncate(cursor.glue);
+        self.provenance.truncate(cursor.provenance);
     }
 
     #[must_use]

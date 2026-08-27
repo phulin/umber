@@ -473,6 +473,24 @@ impl<G> TokenListArena<G> {
         }
     }
 
+    pub(crate) const fn cursor(&self) -> u32 {
+        self.next_serial
+    }
+
+    pub(crate) fn restore_cursor(&mut self, cursor: u32) {
+        assert!(
+            cursor <= self.next_serial,
+            "token-list cursor is beyond the publisher"
+        );
+        assert!(self.builder_slots.iter().all(|slot| !slot.live));
+        self.next_serial = cursor;
+        self.chunks.clear();
+        self.builder_slots.clear();
+        self.free_builder_slots.clear();
+        self.free_chunk_head = NO_CHUNK;
+        self.next_builder_serial = 1;
+    }
+
     pub(super) fn new(
         _token: ArenaToken<G, TokenListNamespace>,
         accounting: MemoryAccounting,
@@ -749,8 +767,10 @@ pub(crate) struct GlueArena<G> {
 
 impl<G> Clone for GlueArena<G> {
     fn clone(&self) -> Self {
+        let mut rows = Vec::with_capacity(self.rows.len().saturating_add(64));
+        rows.extend_from_slice(&self.rows);
         Self {
-            rows: self.rows.clone(),
+            rows,
             _brand: PhantomData,
         }
     }
@@ -799,6 +819,11 @@ impl<G> GlueArena<G> {
         self.rows.len()
     }
 
+    pub(crate) fn truncate(&mut self, len: usize) {
+        assert!(len <= self.rows.len(), "glue cursor is beyond the arena");
+        self.rows.truncate(len);
+    }
+
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
@@ -827,8 +852,10 @@ pub(crate) struct ProvenanceArena<G> {
 
 impl<G> Clone for ProvenanceArena<G> {
     fn clone(&self) -> Self {
+        let mut rows = Vec::with_capacity(self.rows.len().saturating_add(64));
+        rows.extend_from_slice(&self.rows);
         Self {
-            rows: self.rows.clone(),
+            rows,
             _brand: PhantomData,
         }
     }
@@ -881,6 +908,14 @@ impl<G> ProvenanceArena<G> {
     #[must_use]
     pub(crate) const fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    pub(crate) fn truncate(&mut self, len: usize) {
+        assert!(
+            len <= self.rows.len(),
+            "provenance cursor is beyond the arena"
+        );
+        self.rows.truncate(len);
     }
 
     #[cfg(test)]
