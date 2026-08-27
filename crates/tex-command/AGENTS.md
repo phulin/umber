@@ -54,9 +54,9 @@ collector (see `src/conditionals.rs`).
   fingerprints, and focused value/identity tests.
 - `src/state.rs`: exclusively mutable live aggregate command roots,
   persistent command state, cross-processor executor-owned replay-completion
-  fences, and current-generation execution scratch. A named checkpoint
-  explicitly forks one coarse root into private thread-confined non-atomic
-  ownership; warmed command delivery performs no root admission. Resource
+  fences, and current-generation execution scratch. A named checkpoint records
+  bounded timeline coordinates without cloning the aggregate root; warmed
+  command delivery performs no root admission. Resource
   continuations retain the exclusive
   current-generation lease, its same scratch lanes, typed ids, and integer
   resume cursors; resumption re-borrows dense state and cancellation drops the
@@ -64,6 +64,10 @@ collector (see `src/conditionals.rs`).
   format or summary payload. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive rollback without shared synchronization.
+- `src/timeline.rs`: generation-owned reversible stack storage. Physical input,
+  parameter, condition, group, aftergroup, and alignment rows survive a logical
+  pop while a checkpoint can reach them; fixed marks retain logical tops and
+  compact element-undo positions, and restore discards only the current suffix.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   the executor borrows the one caller-owned value through preflight and
   scanning, and moves it only into an actual retry or another semantic owner;
@@ -309,13 +313,11 @@ collector (see `src/conditionals.rs`).
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
   snapshots and named summaries backed by the command-root timeline and
   containing one coarse generation owner plus fixed scalar journal, arena,
-  stack, source-anchor, and profile coordinates; capture explicitly clones the
-  aggregate root once without traversing its immutable payload graphs, the
-  retained coarse root uses a private non-atomic owner because it never crosses
-  threads, validation never mutates the runtime, and capture requires quiescent
-  execution scratch. Restore clones the retained root into exclusive live
-  ownership before resetting scratch lanes and truncating unpublished storage
-  suffixes.
+  stack, source-anchor, and profile coordinates. Capture and retained-owner
+  clone copy only those marks. Main control returns its exclusive aggregate-root
+  loan before candidate fork; the fork reuses that generation-owned storage,
+  restores the named marks, and owns the only current suffix. Validation never
+  mutates the runtime, and capture requires quiescent execution scratch.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   and suspended-execution recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped

@@ -54,7 +54,7 @@ pub(crate) use tokenizer::{CompactSourceStepQueries, CompactSourceTokenizationSt
 /// other ownership classes.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
-    pub(crate) levels: Vec<InputLevel<G>>,
+    pub(crate) levels: crate::timeline::LogicalStack<InputLevel<G>>,
     /// Stable coarse-segment replay storage. Input levels carry only compact
     /// coordinates; exact LIFO retirement restores lane cursors in O(1).
     pub(crate) replay: ReplayLane<G>,
@@ -100,7 +100,7 @@ impl<G> Clone for InputState<G> {
 impl<G> Default for InputState<G> {
     fn default() -> Self {
         Self {
-            levels: Vec::new(),
+            levels: crate::timeline::LogicalStack::default(),
             replay: ReplayLane::default(),
             retained_file_line_number: 0,
             terminal_context_line: None,

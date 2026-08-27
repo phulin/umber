@@ -31,7 +31,7 @@ pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 /// stable execution-scratch slot.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ParameterState<G> {
-    pub(crate) activations: Vec<MacroActivation<G>>,
+    pub(crate) activations: crate::timeline::LogicalStack<MacroActivation<G>>,
     pub(crate) next_activation_identity: u64,
 }
 
@@ -42,7 +42,7 @@ impl<G> Clone for ParameterState<G> {
             "live macro scratch descriptors cannot cross a command-root clone"
         );
         Self {
-            activations: Vec::new(),
+            activations: crate::timeline::LogicalStack::default(),
             next_activation_identity: self.next_activation_identity,
         }
     }
@@ -51,7 +51,7 @@ impl<G> Clone for ParameterState<G> {
 impl<G> Default for ParameterState<G> {
     fn default() -> Self {
         Self {
-            activations: Vec::new(),
+            activations: crate::timeline::LogicalStack::default(),
             next_activation_identity: 0,
         }
     }
@@ -71,6 +71,18 @@ pub(crate) struct MacroActivation<G> {
     pub(crate) definition: DefinitionId<G>,
     pub(crate) arguments: MacroArguments<G>,
     pub(crate) invocation: OriginId,
+}
+
+impl<G> Clone for MacroActivation<G> {
+    fn clone(&self) -> Self {
+        Self {
+            identity: self.identity,
+            name: self.name,
+            definition: self.definition.clone(),
+            arguments: self.arguments,
+            invocation: self.invocation,
+        }
+    }
 }
 
 /// Private descriptor for one sealed at-most-nine-argument scratch slot.

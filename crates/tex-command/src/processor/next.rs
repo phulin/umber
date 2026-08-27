@@ -963,6 +963,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.profile().capabilities().supports_etex() {
             let prepended = tokens.len();
             for spelling in tokens.iter().rev() {
+                self.command.record_alignment_phase();
                 self.command.alignment.undo_delivery(
                     AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
@@ -1420,6 +1421,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         diagnostic: u64,
     ) -> Result<(), CommandError> {
         self.back_input(command)?;
+        self.command
+            .timeline
+            .borrow_mut()
+            .record_expansion_diagnostic_push();
         self.command.expansion.pending_diagnostics.push(diagnostic);
         Ok(())
     }
@@ -1460,6 +1465,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         message: String,
         help: &'static [&'static str],
     ) {
+        self.command
+            .timeline
+            .borrow_mut()
+            .record_expansion_diagnostic_push();
         self.command.expansion.pending_diagnostics.push(diagnostic);
         let context = self.command.output_open_context(self.state);
         self.command
@@ -1664,6 +1673,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.last_delivery = Some(delivery_stamp);
             self.check_outer_validity_entry(command)?;
             let previous_align_state = self.command.alignment.align_state;
+            self.command.record_alignment_phase();
             self.command.alignment.classify_delivery(command);
             let adjustment = command.alignment_adjustment();
             if self.command.alignment.active_alignment.is_some()
@@ -1779,6 +1789,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     level.cursor.backing_registered = true;
                 }
                 let source_step = self.next_source_step();
+                self.command.record_retained_file_line_number();
                 self.command.input.retain_active_file_line_number();
                 match source_step {
                     CompactSourceTokenizationStep::Token(token) => {
@@ -2045,6 +2056,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::VTemplatePopped => {
                 let previous_align_state = self.command.alignment.align_state;
+                self.command.record_alignment_phase();
                 if self.command.alignment.finish_u_template(identity) {
                     observe!(
                         self,
@@ -2286,6 +2298,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.command.scanner.clear_for_recovery();
         }
         if let Some(warning) = warning {
+            self.command
+                .timeline
+                .borrow_mut()
+                .record_expansion_diagnostic_push();
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
         let observed_tokens = std::iter::once(first_token)
@@ -2632,6 +2648,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand<G>) {
+        self.command.record_alignment_phase();
         self.command
             .alignment
             .undo_delivery(command.alignment_adjustment());
@@ -2641,6 +2658,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// brace was delivered as parameter text, so scalar macro matching must
     /// not leave a group entry for replacement replay to balance later.
     pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
+        self.command.record_alignment_phase();
         self.command.alignment.undo_delimiter_begin_group_delivery();
     }
 }

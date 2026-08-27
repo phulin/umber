@@ -36,7 +36,7 @@ pub struct EngineCheckpoint<G> {
     schema_version: u32,
     boundary: EngineBoundary,
     pub(crate) runtime: RuntimeCheckpoint<G>,
-    pub(crate) command: Box<CommandSummary<G>>,
+    pub(crate) command: CommandSummary<G>,
     pub(crate) modes: ModeCheckpoint,
     mode_hash: u64,
     pub(crate) root_anchor: usize,
@@ -51,7 +51,7 @@ impl<G> Clone for EngineCheckpoint<G> {
             schema_version: self.schema_version,
             boundary: self.boundary,
             runtime: self.runtime.clone(),
-            command: Box::new(self.command.as_ref().clone()),
+            command: self.command.clone(),
             modes: self.modes.clone(),
             mode_hash: self.mode_hash,
             root_anchor: self.root_anchor,
@@ -82,8 +82,7 @@ impl<G> EngineCheckpoint<G> {
                 tex_state::StateError::InvalidCursor,
             )));
         }
-        let command = match CommandState::fork_summary(self.command.as_ref(), source, &destination)
-        {
+        let command = match CommandState::fork_summary(&self.command, source, &destination) {
             Ok(command) => command,
             Err(error) => {
                 source.return_rejected_pdf_from(&mut destination);
@@ -141,7 +140,7 @@ impl<G> EngineCheckpoint<G> {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             runtime,
-            command: Box::new(command),
+            command,
             modes,
             mode_hash,
             root_anchor,
@@ -177,7 +176,7 @@ impl<G> EngineCheckpoint<G> {
     /// Returns the live command summary selected for later cold detachment.
     #[must_use]
     pub fn command_summary(&self) -> &CommandSummary<G> {
-        self.command.as_ref()
+        &self.command
     }
 
     #[must_use]
@@ -212,7 +211,7 @@ impl<G> EngineCheckpoint<G> {
         universe: &mut Universe<G>,
     ) -> Result<(), CheckpointRestoreError> {
         let prepared_command = command
-            .prepare_summary_restore(self.command.as_ref(), universe)
+            .prepare_summary_restore(&self.command, universe)
             .map_err(CheckpointRestoreError::Command)?;
         if !self.modes.font_roots_are_live(|font| {
             universe.runtime_checkpoint_retains_font(&self.runtime, font)

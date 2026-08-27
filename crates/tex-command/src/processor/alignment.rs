@@ -281,9 +281,9 @@ pub(crate) struct AlignmentDeliveryState<G> {
     /// `pop_alignment` restores.  Every alignment pushes an entry, nested or
     /// not, so `fin_align` always returns `align_state` to the running brace
     /// count that was live when `\\halign`/`\\valign` was read.
-    pub(crate) align_stack: Vec<i32>,
+    pub(crate) align_stack: crate::timeline::LogicalStack<i32>,
     pub(crate) active_alignment: Option<AlignmentIdentity>,
-    pub(crate) suspended: Vec<SuspendedAlignment<G>>,
+    pub(crate) suspended: crate::timeline::LogicalStack<SuspendedAlignment<G>>,
     pub(crate) active_cell: Option<ActiveCellDelivery<G>>,
     pub(crate) completed_preamble: Option<AlignmentPreamble>,
     /// The delimiter just returned from `do_endv`, retained until `fin_col`
@@ -330,9 +330,9 @@ impl<G> Default for AlignmentDeliveryState<G> {
     fn default() -> Self {
         Self {
             align_state: TOP_LEVEL_ALIGN_STATE,
-            align_stack: Vec::new(),
+            align_stack: crate::timeline::LogicalStack::default(),
             active_alignment: None,
-            suspended: Vec::new(),
+            suspended: crate::timeline::LogicalStack::default(),
             active_cell: None,
             completed_preamble: None,
             pending_fin_col_delimiter: None,

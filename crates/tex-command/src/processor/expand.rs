@@ -1217,6 +1217,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.write_expansion_depth != 0 {
             self.record_write_expansion();
         }
+        self.command
+            .timeline
+            .borrow_mut()
+            .record_cumulative_expansions(self.command.expansion.cumulative_expansions);
         self.command.expansion.cumulative_expansions = self
             .command
             .expansion

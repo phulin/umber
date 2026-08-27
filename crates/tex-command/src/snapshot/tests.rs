@@ -1,7 +1,5 @@
 use core::cell::Cell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
@@ -44,10 +42,14 @@ fn cursor(seed: u32) -> CommandSnapshotCursor {
             parameter_depth: seed + 7,
             condition_depth: seed + 8,
             alignment_depth: seed + 9,
+            alignment_undo: seed + 15,
+            suspended_alignment_depth: seed + 16,
+            suspended_alignment_undo: seed + 17,
             replay_depth: seed + 10,
             diagnostic_count: seed + 11,
             group_payload_depth: seed + 13,
             aftergroup_payload_count: seed + 14,
+            aftergroup_payload_undo: seed + 18,
             afterassignment_present: seed.is_multiple_of(2),
         },
     )
@@ -163,6 +165,25 @@ fn retained_summary_restores_the_pre_mutation_command_root() {
 }
 
 #[test]
+fn snapshot_restores_compact_alignment_phase_undo() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        command.alignment.align_state = 37;
+        let snapshot = command
+            .snapshot(universe)
+            .expect("alignment phase snapshots");
+
+        command.record_alignment_phase();
+        command.alignment.align_state = -19;
+        command
+            .rollback(&snapshot, universe)
+            .expect("alignment phase rolls back");
+
+        assert_eq!(command.alignment.align_state, 37);
+    });
+}
+
+#[test]
 fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
@@ -179,10 +200,14 @@ fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
                 parameter_depth: stacks.parameter_depth(),
                 condition_depth: stacks.condition_depth(),
                 alignment_depth: stacks.alignment_depth(),
+                alignment_undo: stacks.alignment_undo(),
+                suspended_alignment_depth: stacks.suspended_alignment_depth(),
+                suspended_alignment_undo: stacks.suspended_alignment_undo(),
                 replay_depth: stacks.replay_depth(),
                 diagnostic_count: stacks.diagnostic_count() + 1,
                 group_payload_depth: stacks.group_payload_depth(),
                 aftergroup_payload_count: stacks.aftergroup_payload_count(),
+                aftergroup_payload_undo: stacks.aftergroup_payload_undo(),
                 afterassignment_present: stacks.afterassignment_present(),
             },
         );
@@ -256,7 +281,7 @@ fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
         let snapshot = command
             .snapshot(universe)
             .expect("empty command attempt snapshots");
-        let (_, retained) = snapshot
+        let retained = snapshot
             .generation
             .resolve(snapshot.cursor())
             .expect("snapshot owner resolves");
@@ -310,48 +335,106 @@ fn rollback_restores_replay_lane_coordinates_after_candidate_admission() {
 }
 
 #[test]
-fn dropping_a_summary_releases_its_unreachable_aggregate_root() {
+fn rollback_restores_a_mutated_input_frame_cursor() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
-        let summary = command
-            .publish_summary(universe)
-            .expect("quiescent command state publishes");
-        let retained = Rc::downgrade(&summary.generation.roots);
+        crate::test_harness::push(
+            &mut command,
+            [
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Other,
+                },
+            ],
+        );
+        let snapshot = command.snapshot(universe).expect("input frame snapshots");
+
+        let mut capabilities = crate::CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("candidate delivery")
+                    .expect("candidate token")
+                    .spelling(),
+                word('a')
+            );
+        }
 
         command
-            .begin_file_name()
-            .expect("live command root mutates directly");
-        assert!(retained.upgrade().is_some());
-
-        drop(summary);
-        assert!(
-            retained.upgrade().is_none(),
-            "the dropped summary was the old aggregate root's last owner"
+            .rollback(&snapshot, universe)
+            .expect("input frame rolls back");
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("restored delivery")
+                .expect("restored token")
+                .spelling(),
+            word('a')
         );
     });
 }
 
 #[test]
-fn named_checkpoint_forks_once_and_warmed_mutation_stays_exclusive() {
+fn dropping_a_summary_releases_its_timeline_frame() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let summary = command
+            .publish_summary(universe)
+            .expect("quiescent command state publishes");
+        assert_eq!(command.timeline.borrow().live_frame_count(), 1);
+
+        command
+            .begin_file_name()
+            .expect("live command root mutates directly");
+        drop(summary);
+        assert_eq!(command.timeline.borrow().live_frame_count(), 0);
+    });
+}
+
+#[test]
+fn named_checkpoint_capture_and_warmed_mutation_clone_no_roots() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
         crate::state::reset_command_root_clone_count();
         let summary = command
             .publish_summary(universe)
             .expect("quiescent command state publishes");
-        assert_eq!(crate::state::command_root_clone_count(), 1);
+        assert_eq!(crate::state::command_root_clone_count(), 0);
 
         command
             .begin_file_name()
             .expect("post-capture mutation stays direct");
-        assert_eq!(crate::state::command_root_clone_count(), 1);
+        assert_eq!(crate::state::command_root_clone_count(), 0);
 
         command.end_file_name();
         command
             .begin_file_name()
             .expect("warmed mutation stays exclusive");
         command.end_file_name();
-        assert_eq!(crate::state::command_root_clone_count(), 1);
+        assert_eq!(crate::state::command_root_clone_count(), 0);
 
         drop(summary);
     });
@@ -404,25 +487,26 @@ fn stale_cursor_cannot_resolve_through_a_later_summary_owner() {
 fn repeated_8192_capture_prune_cycles_retain_constant_metadata() {
     crate::test_harness::with_universe(|universe| {
         let command = crate::CommandState::default();
-        let timeline_owners = Arc::strong_count(&command.timeline);
+        let timeline_owners = Rc::strong_count(&command.timeline);
+        let frame_capacity = command.timeline.borrow().frame_capacity();
 
         for _ in 0..8_192 {
             let summary = command
                 .publish_summary(universe)
                 .expect("summary publishes");
-            let retained = Rc::downgrade(&summary.generation.roots);
             drop(summary);
-            assert!(retained.upgrade().is_none());
+            assert_eq!(command.timeline.borrow().live_frame_count(), 0);
         }
 
-        assert_eq!(Arc::strong_count(&command.timeline), timeline_owners);
-        assert_eq!(command.timeline.next_serial.load(Ordering::Relaxed), 8_192);
+        assert_eq!(Rc::strong_count(&command.timeline), timeline_owners);
+        assert_eq!(command.timeline.borrow().next_serial, 8_192);
+        assert_eq!(command.timeline.borrow().frame_capacity(), frame_capacity);
     });
 }
 
 #[cfg(feature = "profiling")]
 #[test]
-fn warmed_8192_capture_prune_cycles_allocate_one_isolated_root_each() {
+fn warmed_8192_capture_prune_cycles_allocate_no_checkpoint_roots() {
     crate::test_harness::with_universe(|universe| {
         let command = crate::CommandState::default();
         let warm = command
@@ -442,9 +526,9 @@ fn warmed_8192_capture_prune_cycles_allocate_one_isolated_root_each() {
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
-        assert_eq!(after.calls - before.calls, 8_192);
-        assert!(after.requested_bytes > before.requested_bytes);
-        assert_eq!(Arc::strong_count(&command.timeline), 1);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(Rc::strong_count(&command.timeline), 1);
     });
 }
 
@@ -597,10 +681,14 @@ fn invalid_payload_cursor_leaves_live_payloads_unchanged() {
                 parameter_depth: stacks.parameter_depth(),
                 condition_depth: stacks.condition_depth(),
                 alignment_depth: stacks.alignment_depth(),
+                alignment_undo: stacks.alignment_undo(),
+                suspended_alignment_depth: stacks.suspended_alignment_depth(),
+                suspended_alignment_undo: stacks.suspended_alignment_undo(),
                 replay_depth: stacks.replay_depth(),
                 diagnostic_count: stacks.diagnostic_count(),
                 group_payload_depth: stacks.group_payload_depth(),
                 aftergroup_payload_count: stacks.aftergroup_payload_count() + 1,
+                aftergroup_payload_undo: stacks.aftergroup_payload_undo(),
                 afterassignment_present: stacks.afterassignment_present(),
             },
         );

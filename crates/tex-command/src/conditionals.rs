@@ -260,7 +260,7 @@ impl IncompleteCondition {
 /// Independent persistent condition stack.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ConditionStack {
-    pub(crate) frames: Vec<ConditionFrame>,
+    pub(crate) frames: crate::timeline::LogicalStack<ConditionFrame>,
     pub(crate) next_identity: u64,
 }
 
@@ -363,14 +363,17 @@ impl ConditionStack {
 
     /// Changes the exact frame selected before recursive operand expansion.
     pub(crate) fn change_if_limit(&mut self, identity: ConditionId, limit: IfLimit) -> bool {
-        let Some(frame) = self
+        let Some(index) = self
             .frames
-            .iter_mut()
-            .rev()
-            .find(|frame| frame.identity == identity)
+            .iter()
+            .rposition(|frame| frame.identity == identity)
         else {
             return false;
         };
+        let frame = self
+            .frames
+            .get_mut(index)
+            .expect("located condition frame remains live");
         frame.limit = limit;
         true
     }

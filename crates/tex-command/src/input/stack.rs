@@ -399,6 +399,9 @@ impl<G> CommandState<G> {
             // §362 clears the process-global `force_eof` for the same
             // `name>17` case, which is why both live under this gate.
             if name_class == SourceNameClass::File {
+                self.timeline
+                    .borrow_mut()
+                    .record_force_eof(self.input.force_eof);
                 self.input.force_eof = false;
             }
             return Ok(InputRetirement {
@@ -549,6 +552,9 @@ impl<G> CommandState<G> {
 
     pub(crate) fn allocate_input_level_identity(&mut self) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
+        self.timeline
+            .borrow_mut()
+            .record_next_input_level_identity(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
         identity
     }

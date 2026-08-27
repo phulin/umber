@@ -563,7 +563,12 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     // `push_alignment`/`pop_alignment` save and restore copies of it on the
     // alignment stack rather than giving any other record its own field.
     assert_eq!(alignment.matches("align_state: i32").count(), 1);
-    assert_eq!(alignment.matches("align_stack: Vec<i32>").count(), 1);
+    assert_eq!(
+        alignment
+            .matches("align_stack: crate::timeline::LogicalStack<i32>")
+            .count(),
+        1
+    );
     assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
     assert_eq!(
         next.matches("self.command.alignment.classify_delivery(")

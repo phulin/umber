@@ -264,6 +264,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
             ExecutionBudgetCounters::default(),
         )
         .expect("checkpoint captures");
+        drop(command);
 
         let (mut rejected, mut branch) = checkpoint
             .fork_state(universe)

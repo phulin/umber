@@ -82,6 +82,7 @@ mod scan_toks;
 mod scanners;
 mod snapshot;
 mod state;
+mod timeline;
 mod tracing_nesting;
 
 #[cfg(test)]

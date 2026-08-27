@@ -1,15 +1,15 @@
 //! Bounded in-session command snapshots and named command summaries.
 //!
-//! A retained value owns one explicitly forked aggregate command root and a
-//! fixed tuple of scalar cursors. Checkpoint publication performs that cold
-//! fork; ordinary live mutation never enters shared ownership. The subsystem
-//! which owns the live command timeline validates the cursors before restore.
+//! A retained value owns one coarse generation/timeline capability and a fixed
+//! tuple of scalar cursors. Checkpoint publication appends a reusable frame;
+//! it never clones the aggregate command roots. Generation-owned logical
+//! stacks and compact scalar undo restore the selected prefix before the sole
+//! current command borrower resumes execution.
 
 use core::fmt;
 use core::marker::PhantomData;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use tex_state::{GenerationOwner, Universe};
 
@@ -20,20 +20,47 @@ use crate::state::{CommandState, CommandStateRoots};
 
 /// Monotonic identity source for in-session command checkpoints.
 ///
-/// The snapshot or summary is the sole retained owner of its thread-confined
-/// aggregate roots. The timeline retains no root row or per-checkpoint
-/// metadata; it only prevents an old cursor from being paired with a later
-/// checkpoint on the same live command machine.
+/// The live command machine borrows the aggregate roots exclusively. Its drop
+/// returns that loan here for a candidate fork; a checkpoint retains only one
+/// reusable frame and its compact coordinates.
 pub(crate) struct CommandTimeline<G> {
-    next_serial: AtomicU32,
-    brand: PhantomData<fn(&G) -> &G>,
+    next_serial: u32,
+    frames: Vec<CommandTimelineFrame>,
+    free_frames: Vec<usize>,
+    returned_roots: Option<CommandStateRoots<G>>,
+    root_undo: Vec<CommandRootUndo<G>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CommandTimelineFrame {
+    serial: u32,
+    cursor: CommandSnapshotCursor,
+    attempt: AttemptMark,
+    root_undo: usize,
+    owners: u32,
+}
+
+enum CommandRootUndo<G> {
+    NameInProgress(bool),
+    Afterassignment(Option<crate::state::CommandPayload<G>>),
+    CumulativeExpansions(u64),
+    AlignState(i32),
+    NextInputLevelIdentity(u64),
+    NextSourceIdentity(u64),
+    RetainedFileLineNumber(i32),
+    ForceEof(bool),
+    PendingInputOpen(Option<crate::ScannedFileName>),
+    ExpansionDiagnosticPush,
 }
 
 impl<G> Default for CommandTimeline<G> {
     fn default() -> Self {
         Self {
-            next_serial: AtomicU32::new(0),
-            brand: PhantomData,
+            next_serial: 0,
+            frames: Vec::with_capacity(64),
+            free_frames: Vec::with_capacity(64),
+            returned_roots: None,
+            root_undo: Vec::with_capacity(256),
         }
     }
 }
@@ -45,8 +72,18 @@ impl<G> fmt::Debug for CommandTimeline<G> {
 }
 
 impl<G> CommandTimeline<G> {
+    #[cfg(test)]
+    fn live_frame_count(&self) -> usize {
+        self.frames.iter().filter(|frame| frame.serial != 0).count()
+    }
+
+    #[cfg(test)]
+    fn frame_capacity(&self) -> usize {
+        self.frames.capacity()
+    }
+
     pub(crate) fn retain(
-        &self,
+        &mut self,
         attempt: AttemptMark,
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
@@ -54,49 +91,233 @@ impl<G> CommandTimeline<G> {
         if !attempt.is_empty() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
-        self.retain_transient(arenas, stacks)
+        self.retain_transient(attempt, arenas, stacks)
     }
 
     fn retain_transient(
-        &self,
+        &mut self,
+        attempt: AttemptMark,
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
     ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
         let serial = self
             .next_serial
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |serial| {
-                serial.checked_add(1)
-            })
-            .map_err(|_| CommandSummaryError::TimelineCapacity)?
             .checked_add(1)
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandSnapshotCursor::new(serial, arenas, stacks))
+        self.next_serial = serial;
+        let cursor = CommandSnapshotCursor::new(serial, arenas, stacks);
+        let frame = CommandTimelineFrame {
+            serial,
+            cursor,
+            attempt,
+            root_undo: self.root_undo.len(),
+            owners: 1,
+        };
+        if let Some(slot) = self.free_frames.pop() {
+            self.frames[slot] = frame;
+        } else {
+            self.frames.push(frame);
+        }
+        Ok(cursor)
+    }
+
+    fn retain_owner(&mut self, serial: u32) -> bool {
+        let Some(frame) = self.frames.iter_mut().find(|frame| frame.serial == serial) else {
+            return false;
+        };
+        let Some(owners) = frame.owners.checked_add(1) else {
+            return false;
+        };
+        frame.owners = owners;
+        true
+    }
+
+    fn release_owner(&mut self, serial: u32) {
+        let Some((slot, frame)) = self
+            .frames
+            .iter_mut()
+            .enumerate()
+            .find(|(_, frame)| frame.serial == serial)
+        else {
+            return;
+        };
+        frame.owners -= 1;
+        if frame.owners == 0 {
+            frame.serial = 0;
+            self.free_frames.push(slot);
+        }
+    }
+
+    fn resolve(
+        &self,
+        cursor: CommandSnapshotCursor,
+    ) -> Option<(AttemptMark, CommandSnapshotCursor)> {
+        self.frames
+            .iter()
+            .find(|frame| frame.serial == cursor.command_journal() && frame.cursor == cursor)
+            .map(|frame| (frame.attempt, frame.cursor))
+    }
+
+    pub(crate) fn return_roots(&mut self, roots: CommandStateRoots<G>) {
+        debug_assert!(self.returned_roots.is_none());
+        self.returned_roots = Some(roots);
+    }
+
+    fn take_roots(&mut self) -> Option<CommandStateRoots<G>> {
+        self.returned_roots.take()
+    }
+
+    fn has_live_frame(&self) -> bool {
+        self.frames.iter().any(|frame| frame.serial != 0)
+    }
+
+    pub(crate) fn record_name_in_progress(&mut self, old: bool) {
+        if self.has_live_frame() {
+            self.root_undo.push(CommandRootUndo::NameInProgress(old));
+        }
+    }
+
+    pub(crate) fn record_afterassignment(&mut self, old: Option<crate::state::CommandPayload<G>>) {
+        if self.has_live_frame() {
+            self.root_undo.push(CommandRootUndo::Afterassignment(old));
+        }
+    }
+
+    pub(crate) fn record_cumulative_expansions(&mut self, old: u64) {
+        if self.has_live_frame() {
+            self.root_undo
+                .push(CommandRootUndo::CumulativeExpansions(old));
+        }
+    }
+
+    pub(crate) fn record_align_state(&mut self, old: i32) {
+        if self.has_live_frame() {
+            self.root_undo.push(CommandRootUndo::AlignState(old));
+        }
+    }
+
+    pub(crate) fn record_next_input_level_identity(&mut self, old: u64) {
+        if self.has_live_frame() {
+            self.root_undo
+                .push(CommandRootUndo::NextInputLevelIdentity(old));
+        }
+    }
+
+    pub(crate) fn record_next_source_identity(&mut self, old: u64) {
+        if self.has_live_frame() {
+            self.root_undo
+                .push(CommandRootUndo::NextSourceIdentity(old));
+        }
+    }
+
+    pub(crate) fn record_retained_file_line_number(&mut self, old: i32) {
+        if self.has_live_frame() {
+            self.root_undo
+                .push(CommandRootUndo::RetainedFileLineNumber(old));
+        }
+    }
+
+    pub(crate) fn record_force_eof(&mut self, old: bool) {
+        if self.has_live_frame() {
+            self.root_undo.push(CommandRootUndo::ForceEof(old));
+        }
+    }
+
+    pub(crate) fn record_pending_input_open(&mut self, old: Option<crate::ScannedFileName>) {
+        if self.has_live_frame() {
+            self.root_undo.push(CommandRootUndo::PendingInputOpen(old));
+        }
+    }
+
+    pub(crate) fn record_expansion_diagnostic_push(&mut self) {
+        if self.has_live_frame() {
+            self.root_undo
+                .push(CommandRootUndo::ExpansionDiagnosticPush);
+        }
+    }
+
+    fn restore_roots(
+        &mut self,
+        cursor: CommandSnapshotCursor,
+        roots: &mut CommandStateRoots<G>,
+    ) -> bool {
+        let Some(target) = self
+            .frames
+            .iter()
+            .find(|frame| frame.serial == cursor.command_journal() && frame.cursor == cursor)
+            .map(|frame| frame.root_undo)
+        else {
+            return false;
+        };
+        while self.root_undo.len() > target {
+            match self
+                .root_undo
+                .pop()
+                .expect("validated command undo suffix exists")
+            {
+                CommandRootUndo::NameInProgress(old) => roots.name_in_progress = old,
+                CommandRootUndo::Afterassignment(old) => roots.afterassignment = old,
+                CommandRootUndo::CumulativeExpansions(old) => {
+                    roots.expansion.cumulative_expansions = old;
+                }
+                CommandRootUndo::AlignState(old) => roots.alignment.align_state = old,
+                CommandRootUndo::NextInputLevelIdentity(old) => {
+                    roots.input.next_level_identity = old;
+                }
+                CommandRootUndo::NextSourceIdentity(old) => {
+                    roots.input.next_source_identity = old;
+                }
+                CommandRootUndo::RetainedFileLineNumber(old) => {
+                    roots.input.retained_file_line_number = old;
+                }
+                CommandRootUndo::ForceEof(old) => roots.input.force_eof = old,
+                CommandRootUndo::PendingInputOpen(old) => roots.pending_input_open = old,
+                CommandRootUndo::ExpansionDiagnosticPush => {
+                    roots.expansion.pending_diagnostics.pop();
+                }
+            }
+        }
+        for (slot, frame) in self.frames.iter_mut().enumerate() {
+            if frame.serial != 0 && frame.root_undo > target {
+                frame.serial = 0;
+                frame.owners = 0;
+                self.free_frames.push(slot);
+            }
+        }
+        true
     }
 }
 
-/// Sole coarse owner retained by one command snapshot or summary.
+/// Sole coarse capability retained by one command snapshot or summary.
 ///
 /// Command state and its in-session checkpoints never cross a thread boundary,
-/// so the aggregate root deliberately uses [`Rc`] while the independently
-/// shared generation and timeline capabilities retain their existing atomic
-/// owners.
+/// so the command timeline deliberately uses [`Rc`]. The independently shared
+/// state generation retains its existing atomic owner.
 pub struct CommandGenerationOwner<G> {
     generation: GenerationOwner<G>,
-    timeline: Arc<CommandTimeline<G>>,
-    roots: Rc<CommandStateRoots<G>>,
+    timeline: Rc<RefCell<CommandTimeline<G>>>,
     attempt: AttemptMark,
     serial: u32,
 }
 
 impl<G> Clone for CommandGenerationOwner<G> {
     fn clone(&self) -> Self {
+        assert!(
+            self.timeline.borrow_mut().retain_owner(self.serial),
+            "retained command owner must name a live timeline frame"
+        );
         Self {
             generation: self.generation.clone(),
-            timeline: Arc::clone(&self.timeline),
-            roots: Rc::clone(&self.roots),
+            timeline: Rc::clone(&self.timeline),
             attempt: self.attempt,
             serial: self.serial,
         }
+    }
+}
+
+impl<G> Drop for CommandGenerationOwner<G> {
+    fn drop(&mut self) {
+        self.timeline.borrow_mut().release_owner(self.serial);
     }
 }
 
@@ -109,15 +330,13 @@ impl<G> fmt::Debug for CommandGenerationOwner<G> {
 impl<G> CommandGenerationOwner<G> {
     pub(crate) fn new(
         generation: GenerationOwner<G>,
-        timeline: Arc<CommandTimeline<G>>,
-        roots: Rc<CommandStateRoots<G>>,
+        timeline: Rc<RefCell<CommandTimeline<G>>>,
         attempt: AttemptMark,
         cursor: CommandSnapshotCursor,
     ) -> Self {
         Self {
             generation,
             timeline,
-            roots,
             attempt,
             serial: cursor.command_journal(),
         }
@@ -126,20 +345,20 @@ impl<G> CommandGenerationOwner<G> {
     pub(crate) fn addresses(
         &self,
         generation: &GenerationOwner<G>,
-        timeline: &Arc<CommandTimeline<G>>,
+        timeline: &Rc<RefCell<CommandTimeline<G>>>,
     ) -> bool {
-        self.generation.same_generation(generation) && Arc::ptr_eq(&self.timeline, timeline)
+        self.generation.same_generation(generation) && Rc::ptr_eq(&self.timeline, timeline)
     }
 
     pub(crate) fn addresses_generation(&self, generation: &GenerationOwner<G>) -> bool {
         self.generation.same_generation(generation)
     }
 
-    pub(crate) fn resolve(
-        &self,
-        cursor: CommandSnapshotCursor,
-    ) -> Option<(Rc<CommandStateRoots<G>>, AttemptMark)> {
-        (cursor.command_journal() == self.serial).then(|| (Rc::clone(&self.roots), self.attempt))
+    pub(crate) fn resolve(&self, cursor: CommandSnapshotCursor) -> Option<AttemptMark> {
+        (cursor.command_journal() == self.serial)
+            .then(|| self.timeline.borrow().resolve(cursor))
+            .flatten()
+            .map(|(attempt, _)| attempt)
     }
 }
 
@@ -207,10 +426,14 @@ pub struct CommandStackCursors {
     parameter_depth: u32,
     condition_depth: u32,
     alignment_depth: u32,
+    alignment_undo: u32,
+    suspended_alignment_depth: u32,
+    suspended_alignment_undo: u32,
     replay_depth: u32,
     diagnostic_count: u32,
     group_payload_depth: u32,
     aftergroup_payload_count: u32,
+    aftergroup_payload_undo: u32,
     afterassignment_present: bool,
 }
 
@@ -236,6 +459,21 @@ impl CommandStackCursors {
     }
 
     #[must_use]
+    const fn alignment_undo(self) -> u32 {
+        self.alignment_undo
+    }
+
+    #[must_use]
+    const fn suspended_alignment_depth(self) -> u32 {
+        self.suspended_alignment_depth
+    }
+
+    #[must_use]
+    const fn suspended_alignment_undo(self) -> u32 {
+        self.suspended_alignment_undo
+    }
+
+    #[must_use]
     pub const fn replay_depth(self) -> u32 {
         self.replay_depth
     }
@@ -253,6 +491,11 @@ impl CommandStackCursors {
     #[must_use]
     pub const fn aftergroup_payload_count(self) -> u32 {
         self.aftergroup_payload_count
+    }
+
+    #[must_use]
+    const fn aftergroup_payload_undo(self) -> u32 {
+        self.aftergroup_payload_undo
     }
 
     #[must_use]
@@ -363,7 +606,7 @@ impl<G> CommandStateSnapshot<G> {
     pub(crate) fn addresses(
         &self,
         generation: &GenerationOwner<G>,
-        timeline: &Arc<CommandTimeline<G>>,
+        timeline: &Rc<RefCell<CommandTimeline<G>>>,
     ) -> bool {
         self.generation.addresses(generation, timeline)
     }
@@ -404,7 +647,7 @@ impl<G> TransientCommandSnapshot<G> {
     fn addresses(
         &self,
         generation: &GenerationOwner<G>,
-        timeline: &Arc<CommandTimeline<G>>,
+        timeline: &Rc<RefCell<CommandTimeline<G>>>,
     ) -> bool {
         self.generation.addresses(generation, timeline)
     }
@@ -569,15 +812,49 @@ impl std::error::Error for CommandRestoreError {}
 
 /// Fully validated command-root switch. Applying it cannot fail.
 pub struct PreparedCommandRestore<G> {
-    timeline: Arc<CommandTimeline<G>>,
-    roots: Rc<CommandStateRoots<G>>,
+    timeline: Rc<RefCell<CommandTimeline<G>>>,
+    cursor: CommandSnapshotCursor,
     attempt: AttemptMark,
 }
 
 impl<G> CommandState<G> {
-    /// Creates a fresh command timeline from one accepted summary. The cold
-    /// checkpoint fork is copied explicitly into an exclusively mutable live
-    /// root; runtime scratch and attempt lanes begin quiescent.
+    fn fork_timeline_summary(summary: &CommandSummary<G>) -> Result<Self, CommandRestoreError> {
+        let attempt = summary
+            .generation()
+            .resolve(summary.cursor())
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        if !attempt.is_empty() {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        let roots = summary
+            .generation
+            .timeline
+            .borrow_mut()
+            .take_roots()
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        let mut fork = Self::from_returned_roots(roots, Rc::clone(&summary.generation.timeline));
+        let restored = {
+            let timeline = Rc::clone(&fork.timeline);
+            timeline
+                .borrow_mut()
+                .restore_roots(summary.cursor(), &mut fork.roots)
+        };
+        if !restored || !fork.restore_logical_stacks(summary.cursor()) {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        Ok(fork)
+    }
+
+    /// Runs only the command-family fork for its standalone allocation gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_fork_summary(summary: &CommandSummary<G>) -> Result<Self, CommandRestoreError> {
+        Self::fork_timeline_summary(summary)
+    }
+
+    /// Moves the returned command-root loan into one candidate and restores the
+    /// accepted summary's exact logical prefix. Runtime scratch and attempt
+    /// lanes begin quiescent.
     #[doc(hidden)]
     pub fn fork_summary(
         summary: &CommandSummary<G>,
@@ -597,17 +874,7 @@ impl<G> CommandState<G> {
         {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        let (roots, attempt) = summary
-            .generation()
-            .resolve(summary.cursor())
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        if !attempt.is_empty() {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        let fork = Self {
-            roots: roots.as_ref().clone(),
-            ..Self::default()
-        };
+        let fork = Self::fork_timeline_summary(summary)?;
         fork.profile()
             .validate_fingerprint(
                 CommandProfileBoundary::Summary,
@@ -647,7 +914,7 @@ impl<G> CommandState<G> {
             "terminal format closure requires quiescent command state"
         );
         self.roots = crate::state::CommandStateRoots::default();
-        self.timeline = Arc::new(CommandTimeline::default());
+        self.timeline = Rc::new(RefCell::new(CommandTimeline::default()));
         self.attempt = crate::CommandAttempt::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
         self.active_attempt_operation = None;
@@ -660,17 +927,48 @@ impl<G> CommandState<G> {
         let attempt_rows = attempt
             .checked_row_count()
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandArenaCursors::new(0, 0, 0, 0, attempt_rows))
+        let input = self
+            .input
+            .levels
+            .mark()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        let parameters = self
+            .parameters
+            .activations
+            .mark()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        let conditions = self
+            .conditions
+            .frames
+            .mark()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        let groups = self
+            .group_payloads
+            .mark()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        Ok(CommandArenaCursors::new(
+            input.undo,
+            parameters.undo,
+            conditions.undo,
+            groups.undo,
+            attempt_rows,
+        ))
     }
 
     fn checkpoint_stacks(&self) -> Result<CommandStackCursors, CommandSummaryError> {
-        let aftergroup_payload_count = self
-            .group_payloads
-            .iter()
-            .try_fold(0_u32, |count, group| {
-                let group_count = u32::try_from(group.tokens.len()).ok()?;
-                count.checked_add(group_count)
-            })
+        let aftergroups = self
+            .aftergroup_payloads
+            .mark()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        let alignment = self
+            .alignment
+            .align_stack
+            .mark()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        let suspended = self
+            .alignment
+            .suspended
+            .mark()
             .ok_or(CommandSummaryError::TimelineCapacity)?;
         Ok(CommandStackCursors {
             input_depth: u32::try_from(self.input.levels.len())
@@ -679,15 +977,18 @@ impl<G> CommandState<G> {
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             condition_depth: u32::try_from(self.conditions.frames.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            alignment_depth: u32::try_from(self.alignment.align_stack.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            alignment_depth: alignment.top,
+            alignment_undo: alignment.undo,
+            suspended_alignment_depth: suspended.top,
+            suspended_alignment_undo: suspended.undo,
             replay_depth: u32::try_from(self.replay_completions.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             diagnostic_count: u32::try_from(self.semantic_diagnostics.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             group_payload_depth: u32::try_from(self.group_payloads.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            aftergroup_payload_count,
+            aftergroup_payload_count: aftergroups.top,
+            aftergroup_payload_undo: aftergroups.undo,
             afterassignment_present: self.afterassignment.is_some(),
         })
     }
@@ -752,7 +1053,7 @@ impl<G> CommandState<G> {
     ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
         let arenas = self.checkpoint_arenas(attempt)?;
         let stacks = self.checkpoint_stacks()?;
-        self.timeline.retain(attempt, arenas, stacks)
+        self.timeline.borrow_mut().retain(attempt, arenas, stacks)
     }
 
     fn resolve_restore(
@@ -760,34 +1061,61 @@ impl<G> CommandState<G> {
         owner: &CommandGenerationOwner<G>,
         cursor: CommandSnapshotCursor,
     ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
-        let (roots, attempt) = owner
+        let attempt = owner
             .resolve(cursor)
             .ok_or(CommandRestoreError::InvalidCursor)?;
         let attempt_rows = attempt
             .checked_row_count()
             .ok_or(CommandRestoreError::InvalidCursor)?;
         let arenas = cursor.arenas();
-        let stacks = cursor.stacks();
-        let matches = arenas.input_rows() == 0
-            && arenas.input_words() == 0
-            && arenas.parameter_words() == 0
-            && arenas.builder_words() == 0
-            && arenas.attempt_rows() == attempt_rows
-            && stacks.input_depth() as usize == roots.input.levels.len()
-            && stacks.parameter_depth() as usize == roots.parameters.activations.len()
-            && stacks.condition_depth() as usize == roots.conditions.frames.len()
-            && stacks.alignment_depth() as usize == roots.alignment.align_stack.len()
-            && stacks.replay_depth() as usize == roots.replay_completions.len()
-            && stacks.diagnostic_count() as usize == roots.semantic_diagnostics.len();
-        let root_aftergroup_payload_count =
-            roots.group_payloads.iter().try_fold(0_u32, |count, group| {
-                let group_count = u32::try_from(group.tokens.len()).ok()?;
-                count.checked_add(group_count)
-            });
-        let matches = matches
-            && stacks.group_payload_depth() as usize == roots.group_payloads.len()
-            && Some(stacks.aftergroup_payload_count()) == root_aftergroup_payload_count
-            && stacks.afterassignment_present() == roots.afterassignment.is_some();
+        let matches = self
+            .input
+            .levels
+            .validates(crate::timeline::LogicalStackMark {
+                top: cursor.stacks().input_depth(),
+                undo: arenas.input_rows(),
+            })
+            && self
+                .parameters
+                .activations
+                .validates(crate::timeline::LogicalStackMark {
+                    top: cursor.stacks().parameter_depth(),
+                    undo: arenas.input_words(),
+                })
+            && self
+                .conditions
+                .frames
+                .validates(crate::timeline::LogicalStackMark {
+                    top: cursor.stacks().condition_depth(),
+                    undo: arenas.parameter_words(),
+                })
+            && self
+                .group_payloads
+                .validates(crate::timeline::LogicalStackMark {
+                    top: cursor.stacks().group_payload_depth(),
+                    undo: arenas.builder_words(),
+                })
+            && self
+                .aftergroup_payloads
+                .validates(crate::timeline::LogicalStackMark {
+                    top: cursor.stacks().aftergroup_payload_count(),
+                    undo: cursor.stacks().aftergroup_payload_undo(),
+                })
+            && self
+                .alignment
+                .align_stack
+                .validates(crate::timeline::LogicalStackMark {
+                    top: cursor.stacks().alignment_depth(),
+                    undo: cursor.stacks().alignment_undo(),
+                })
+            && self
+                .alignment
+                .suspended
+                .validates(crate::timeline::LogicalStackMark {
+                    top: cursor.stacks().suspended_alignment_depth(),
+                    undo: cursor.stacks().suspended_alignment_undo(),
+                })
+            && arenas.attempt_rows() == attempt_rows;
         if !matches {
             return Err(CommandRestoreError::InvalidCursor);
         }
@@ -796,15 +1124,65 @@ impl<G> CommandState<G> {
             .validate_mark(attempt)
             .map_err(|_| CommandRestoreError::InvalidCursor)?;
         Ok(PreparedCommandRestore {
-            timeline: Arc::clone(&self.timeline),
-            roots,
+            timeline: Rc::clone(&self.timeline),
+            cursor,
             attempt,
         })
     }
 
-    /// Captures one exact in-session command root by explicitly forking it at
-    /// this cold boundary. The live root remains exclusively mutable; the
-    /// returned owner retains the isolated fork and bounded attempt mark.
+    fn restore_logical_stacks(&mut self, cursor: CommandSnapshotCursor) -> bool {
+        let stacks = cursor.stacks();
+        let arenas = cursor.arenas();
+        self.input
+            .levels
+            .restore(crate::timeline::LogicalStackMark {
+                top: stacks.input_depth(),
+                undo: arenas.input_rows(),
+            })
+            && self
+                .parameters
+                .activations
+                .restore(crate::timeline::LogicalStackMark {
+                    top: stacks.parameter_depth(),
+                    undo: arenas.input_words(),
+                })
+            && self
+                .conditions
+                .frames
+                .restore(crate::timeline::LogicalStackMark {
+                    top: stacks.condition_depth(),
+                    undo: arenas.parameter_words(),
+                })
+            && self
+                .group_payloads
+                .restore(crate::timeline::LogicalStackMark {
+                    top: stacks.group_payload_depth(),
+                    undo: arenas.builder_words(),
+                })
+            && self
+                .aftergroup_payloads
+                .restore(crate::timeline::LogicalStackMark {
+                    top: stacks.aftergroup_payload_count(),
+                    undo: stacks.aftergroup_payload_undo(),
+                })
+            && self
+                .alignment
+                .align_stack
+                .restore(crate::timeline::LogicalStackMark {
+                    top: stacks.alignment_depth(),
+                    undo: stacks.alignment_undo(),
+                })
+            && self
+                .alignment
+                .suspended
+                .restore(crate::timeline::LogicalStackMark {
+                    top: stacks.suspended_alignment_depth(),
+                    undo: stacks.suspended_alignment_undo(),
+                })
+    }
+
+    /// Captures one exact in-session command position as bounded marks. The
+    /// live root remains exclusively mutable and no accumulated payload moves.
     pub fn snapshot(
         &self,
         universe: &Universe<G>,
@@ -815,13 +1193,7 @@ impl<G> CommandState<G> {
         let attempt = self.attempt.arena().mark();
         let cursor = self.retain_cursor(attempt)?;
         Ok(CommandStateSnapshot::new(
-            CommandGenerationOwner::new(
-                generation,
-                Arc::clone(&self.timeline),
-                Rc::new(self.roots.clone()),
-                attempt,
-                cursor,
-            ),
+            CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
             cursor,
         ))
     }
@@ -841,21 +1213,19 @@ impl<G> CommandState<G> {
         let attempt = self.attempt.arena().mark();
         let arenas = self.checkpoint_arenas(attempt)?;
         let stacks = self.checkpoint_stacks()?;
-        let cursor = self.timeline.retain_transient(arenas, stacks)?;
+        let cursor = self
+            .timeline
+            .borrow_mut()
+            .retain_transient(attempt, arenas, stacks)?;
         Ok(TransientCommandSnapshot::new(
-            CommandGenerationOwner::new(
-                generation,
-                Arc::clone(&self.timeline),
-                Rc::new(self.roots.clone()),
-                attempt,
-                cursor,
-            ),
+            CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
             cursor,
         ))
     }
 
-    /// Publishes a bounded named-boundary summary with one explicit aggregate
-    /// root fork. Ordinary mutation remains direct before and after capture.
+    /// Publishes a bounded named-boundary summary. Ordinary mutation remains
+    /// direct before and after capture; accumulated command roots are not
+    /// cloned.
     pub fn publish_summary(
         &self,
         universe: &Universe<G>,
@@ -873,13 +1243,7 @@ impl<G> CommandState<G> {
             Some(source.cursor.next_physical_offset)
         });
         Ok(CommandSummary::new(
-            CommandGenerationOwner::new(
-                generation,
-                Arc::clone(&self.timeline),
-                Rc::new(self.roots.clone()),
-                attempt,
-                cursor,
-            ),
+            CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
             cursor,
             self.checkpoint_profile_fingerprint().get(),
             root_source_anchor,
@@ -914,14 +1278,23 @@ impl<G> CommandState<G> {
         &mut self,
         restore: PreparedCommandRestore<G>,
     ) -> Result<(), CommandRestoreError> {
-        if !Arc::ptr_eq(&restore.timeline, &self.timeline) {
+        if !Rc::ptr_eq(&restore.timeline, &self.timeline) {
             return Err(CommandRestoreError::ForeignGeneration);
         }
         self.attempt
             .arena()
             .validate_mark(restore.attempt)
             .map_err(|_| CommandRestoreError::InvalidCursor)?;
-        self.roots = restore.roots.as_ref().clone();
+        let restored = {
+            let timeline = Rc::clone(&self.timeline);
+            timeline
+                .borrow_mut()
+                .restore_roots(restore.cursor, &mut self.roots)
+        };
+        if !restored {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        assert!(self.restore_logical_stacks(restore.cursor));
         self.attempt
             .arena_mut()
             .truncate(restore.attempt)
@@ -956,7 +1329,7 @@ impl<G> CommandState<G> {
         self.profile()
             .validate_fingerprint(
                 CommandProfileBoundary::Snapshot,
-                restore.roots.expansion.profile.fingerprint(),
+                self.expansion.profile.fingerprint(),
             )
             .map_err(CommandRestoreError::Profile)?;
         Ok(restore)
@@ -988,7 +1361,7 @@ impl<G> CommandState<G> {
         self.profile()
             .validate_fingerprint(
                 CommandProfileBoundary::Snapshot,
-                restore.roots.expansion.profile.fingerprint(),
+                self.expansion.profile.fingerprint(),
             )
             .map_err(CommandRestoreError::Profile)?;
         self.apply_prepared_restore(restore)

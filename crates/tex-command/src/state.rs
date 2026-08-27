@@ -1,7 +1,8 @@
 //! Future-relevant state and discardable scratch allocation ownership.
 
+use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use tex_state::CommandContext;
 use tex_state::token::TracedTokenWord;
@@ -103,7 +104,9 @@ pub struct CommandStateRoots<G> {
     /// TeX82 §§280--282 `insert_token` payloads paired with the exact state
     /// save level that owns them. Frames and words are generation-branded by
     /// this aggregate root; no payload registry or per-value owner exists.
-    pub(crate) group_payloads: Vec<CommandGroupPayload<G>>,
+    pub(crate) group_payloads: crate::timeline::LogicalStack<CommandGroupPayload<G>>,
+    /// Generation-owned append lane addressed by compact group-local spans.
+    pub(crate) aftergroup_payloads: crate::timeline::LogicalStack<CommandPayload<G>>,
     /// TeX82 §1269's single pending token. The traced spelling remains in the
     /// same command root as input and group payloads, so rollback cannot leave
     /// an uncheckpointed side value behind.
@@ -152,6 +155,7 @@ impl<G> Clone for CommandStateRoots<G> {
             pending_replay_completions: self.pending_replay_completions.clone(),
             semantic_diagnostics: self.semantic_diagnostics.clone(),
             group_payloads: self.group_payloads.clone(),
+            aftergroup_payloads: self.aftergroup_payloads.clone(),
             afterassignment: self.afterassignment,
             name_in_progress: self.name_in_progress,
             pending_input_open: self.pending_input_open.clone(),
@@ -169,7 +173,7 @@ impl<G> Clone for CommandStateRoots<G> {
 #[derive(Debug)]
 pub struct CommandState<G> {
     pub(crate) roots: CommandStateRoots<G>,
-    pub(crate) timeline: Arc<crate::snapshot::CommandTimeline<G>>,
+    pub(crate) timeline: Rc<RefCell<crate::snapshot::CommandTimeline<G>>>,
     /// Runtime-only TeX82 stack maxima. Snapshot roots deliberately omit
     /// these scalars so high-water marks survive rollback without becoming
     /// command semantics or checkpoint identity.
@@ -328,7 +332,8 @@ impl<G> Default for CommandStateRoots<G> {
             replay_completions: Vec::new(),
             pending_replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
-            group_payloads: Vec::new(),
+            group_payloads: crate::timeline::LogicalStack::default(),
+            aftergroup_payloads: crate::timeline::LogicalStack::default(),
             afterassignment: None,
             name_in_progress: false,
             pending_input_open: None,
@@ -341,13 +346,20 @@ impl<G> Default for CommandState<G> {
     fn default() -> Self {
         Self {
             roots: CommandStateRoots::default(),
-            timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
+            timeline: Rc::new(RefCell::new(crate::snapshot::CommandTimeline::default())),
             stack_usage: CommandStackUsage::default(),
             terminal_buffer_slots: 0,
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
         }
+    }
+}
+
+impl<G> Drop for CommandState<G> {
+    fn drop(&mut self) {
+        let roots = core::mem::take(&mut self.roots);
+        self.timeline.borrow_mut().return_roots(roots);
     }
 }
 
@@ -465,29 +477,35 @@ impl<G> CommandPayload<G> {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct CommandGroupPayload<G> {
     pub(crate) frame: GroupFrame,
-    pub(crate) tokens: Vec<CommandPayload<G>>,
+    pub(crate) token_start: usize,
+    pub(crate) token_top: usize,
+    brand: core::marker::PhantomData<fn(&G) -> &G>,
     /// State-journal position of this level's newest §276 push.
     ///
     /// Tokens remain command-owned. This scalar only orders their newest
     /// physical save word against state-owned group/restore records.
-    latest_aftergroup_position: Option<u32>,
+    pub(crate) latest_aftergroup_position: Option<u32>,
 }
 
 impl<G> Clone for CommandGroupPayload<G> {
     fn clone(&self) -> Self {
         Self {
             frame: self.frame,
-            tokens: self.tokens.clone(),
+            token_start: self.token_start,
+            token_top: self.token_top,
+            brand: core::marker::PhantomData,
             latest_aftergroup_position: self.latest_aftergroup_position,
         }
     }
 }
 
 impl<G> CommandGroupPayload<G> {
-    const fn new(frame: GroupFrame) -> Self {
+    const fn new(frame: GroupFrame, token_start: usize) -> Self {
         Self {
             frame,
-            tokens: Vec::new(),
+            token_start,
+            token_top: token_start,
+            brand: core::marker::PhantomData,
             latest_aftergroup_position: None,
         }
     }
@@ -596,7 +614,9 @@ impl<G> CommandState<G> {
         let frame = state
             .begin_group(kind, entered_line)
             .map_err(CommandGroupError::State)?;
-        self.group_payloads.push(CommandGroupPayload::new(frame));
+        let aftergroup_top = self.aftergroup_payloads.len();
+        self.group_payloads
+            .push(CommandGroupPayload::new(frame, aftergroup_top));
         Ok(frame)
     }
 
@@ -612,7 +632,8 @@ impl<G> CommandState<G> {
             return Err(CommandGroupError::NoOpenGroup);
         };
         group.latest_aftergroup_position = Some(state.save_stack_order_position());
-        group.tokens.push(CommandPayload::new(spelling));
+        group.token_top += 1;
+        self.aftergroup_payloads.push(CommandPayload::new(spelling));
         Ok(())
     }
 
@@ -625,7 +646,7 @@ impl<G> CommandState<G> {
             .iter()
             .fold((0_usize, None), |(words, latest), group| {
                 (
-                    words.saturating_add(group.tokens.len()),
+                    words.saturating_add(group.token_top - group.token_start),
                     latest.max(group.latest_aftergroup_position),
                 )
             })
@@ -652,11 +673,11 @@ impl<G> CommandState<G> {
             .group_payloads
             .pop()
             .expect("validated command group frame remains present");
-        let aftergroup = group
-            .tokens
-            .into_iter()
+        let aftergroup = self.aftergroup_payloads[group.token_start..group.token_top]
+            .iter()
             .map(|payload| payload.spelling)
             .collect();
+        assert!(self.aftergroup_payloads.truncate_top(group.token_start));
         Ok(CommandGroupExit {
             restorations,
             aftergroup,
@@ -671,6 +692,9 @@ impl<G> CommandState<G> {
         spelling: TracedTokenWord,
     ) -> Result<(), CommandGroupError> {
         self.validate_group_payloads(state)?;
+        self.timeline
+            .borrow_mut()
+            .record_afterassignment(self.afterassignment);
         self.afterassignment = Some(CommandPayload::new(spelling));
         Ok(())
     }
@@ -682,6 +706,9 @@ impl<G> CommandState<G> {
         state: &CommandContext<'_, G>,
     ) -> Result<Option<TracedTokenWord>, CommandGroupError> {
         self.validate_group_payloads(state)?;
+        self.timeline
+            .borrow_mut()
+            .record_afterassignment(self.afterassignment);
         Ok(self.afterassignment.take().map(|payload| payload.spelling))
     }
 
@@ -1044,11 +1071,18 @@ impl<G> CommandState<G> {
     }
 
     pub(crate) fn take_pending_input_open(&mut self) -> Option<crate::ScannedFileName> {
-        self.pending_input_open.take()
+        let pending = self.pending_input_open.take();
+        self.timeline
+            .borrow_mut()
+            .record_pending_input_open(pending.clone());
+        pending
     }
 
     pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
         debug_assert!(self.pending_input_open.is_none());
+        self.timeline
+            .borrow_mut()
+            .record_pending_input_open(self.pending_input_open.clone());
         self.pending_input_open = Some(file_name);
     }
 
@@ -1056,12 +1090,47 @@ impl<G> CommandState<G> {
         if self.name_in_progress {
             return Err(crate::CommandError::input_invariant());
         }
+        self.timeline
+            .borrow_mut()
+            .record_name_in_progress(self.name_in_progress);
         self.name_in_progress = true;
         Ok(())
     }
 
     pub(crate) fn end_file_name(&mut self) {
+        self.timeline
+            .borrow_mut()
+            .record_name_in_progress(self.name_in_progress);
         self.name_in_progress = false;
+    }
+
+    pub(crate) fn record_alignment_phase(&mut self) {
+        self.timeline
+            .borrow_mut()
+            .record_align_state(self.alignment.align_state);
+    }
+
+    pub(crate) fn record_retained_file_line_number(&mut self) {
+        self.timeline
+            .borrow_mut()
+            .record_retained_file_line_number(self.input.retained_file_line_number);
+    }
+
+    /// Opens the smallest rollback-coupled scalar mutation for the standalone
+    /// checkpoint allocation gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_first_timeline_mutation(&mut self) {
+        self.begin_file_name()
+            .expect("profiling fixture begins outside filename scanning");
+    }
+
+    /// Reads the scalar used by the standalone rollback/fork isolation gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub fn profile_name_in_progress(&self) -> bool {
+        self.name_in_progress
     }
 
     /// Current TeX82 `line`, or zero for token-list and `\read` input.
@@ -1565,6 +1634,7 @@ impl<G> CommandState<G> {
                 self.finish_alignment_cell(alignment)?,
             )),
             AlignmentRequest::RecoverExtraTab(alignment) => {
+                self.record_alignment_phase();
                 self.alignment.recover_extra_tab(alignment)?;
                 Ok(AlignmentRequestResult::ExtraTabRecovered)
             }
@@ -1586,6 +1656,7 @@ impl<G> CommandState<G> {
     /// Begins an executor-owned structural alignment at the canonical preamble
     /// sentinel. Delimiter classification remains exclusively in `get_next`.
     pub fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
+        self.record_alignment_phase();
         self.alignment.begin_alignment(alignment);
     }
 
@@ -1594,6 +1665,7 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
+        self.record_alignment_phase();
         self.alignment.set_preamble_phase(alignment)
     }
 
@@ -1608,6 +1680,7 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
         templates: PreparedAlignmentCellTemplates<G>,
     ) -> Result<(), AlignmentLifecycleError> {
+        self.record_alignment_phase();
         self.alignment.begin_cell(alignment, templates)
     }
 
@@ -1619,6 +1692,7 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.active_cell_template(alignment)?;
+        self.record_alignment_phase();
         if let Some(template) = template {
             let level = self.push_alignment_template(
                 stores,
@@ -1643,6 +1717,7 @@ impl<G> CommandState<G> {
             .alignment
             .active_alignment
             .ok_or(AlignmentLifecycleError::NoActiveAlignment)?;
+        self.record_alignment_phase();
         self.alignment.align_state = 1_000_000;
         Ok(())
     }
@@ -1657,6 +1732,7 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let previous_align_state = self.alignment.align_state;
+        self.record_alignment_phase();
         let cell = self.alignment.active_cell_mut(alignment)?;
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
@@ -1786,6 +1862,7 @@ impl<G> CommandState<G> {
                 ReplayTrace::VTemplate,
             ),
         };
+        self.record_alignment_phase();
         self.alignment
             .begin_v_template(alignment, level, delimiter, delimiter_line)
     }
@@ -1858,6 +1935,7 @@ impl<G> CommandState<G> {
         self.prove_endv_input_shape(level)?;
         // TeX82 §791 changes `align_state` in `fin_col` before `get_next`
         // reaches the exhausted scanner backup and retained v-template.
+        self.record_alignment_phase();
         self.alignment.finish_cell(alignment, level)
     }
 
@@ -1910,6 +1988,7 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<crate::FinishedAlignmentCell, AlignmentLifecycleError> {
         let level = self.alignment.active_v_template_level(alignment)?;
+        self.record_alignment_phase();
         self.alignment.finish_cell(alignment, level)
     }
 
@@ -1962,6 +2041,7 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
+        self.record_alignment_phase();
         self.alignment.suspend_alignment(alignment)
     }
 
@@ -1970,6 +2050,7 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
+        self.record_alignment_phase();
         self.alignment.resume_alignment(alignment)
     }
 
@@ -1978,6 +2059,7 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
+        self.record_alignment_phase();
         self.alignment.finish_alignment(alignment)
     }
 
@@ -1988,16 +2070,24 @@ impl<G> CommandState<G> {
     /// identity against this value.
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
+        let mut state = Self::default();
+        state.roots.engine_semantics = CommandEngineSemantics::for_profile(profile);
+        state.roots.expansion.profile = profile;
+        state
+    }
+
+    pub(crate) fn from_returned_roots(
+        roots: CommandStateRoots<G>,
+        timeline: Rc<RefCell<crate::snapshot::CommandTimeline<G>>>,
+    ) -> Self {
         Self {
-            roots: CommandStateRoots {
-                engine_semantics: CommandEngineSemantics::for_profile(profile),
-                expansion: ExpansionState {
-                    profile,
-                    ..ExpansionState::default()
-                },
-                ..CommandStateRoots::default()
-            },
-            ..Self::default()
+            roots,
+            timeline,
+            stack_usage: CommandStackUsage::default(),
+            terminal_buffer_slots: 0,
+            attempt: crate::CommandAttempt::default(),
+            scratch: crate::execution_scratch::ExecutionScratch::default(),
+            active_attempt_operation: None,
         }
     }
 
@@ -2031,6 +2121,9 @@ impl<G> CommandState<G> {
             .map_err(|_| SourceRegistrationError::SourceIdentityExhausted)?;
         let id = tex_state::SourceId::new(raw);
         let source = RegisteredSource::register(id, self.profile(), registration)?;
+        self.timeline
+            .borrow_mut()
+            .record_next_source_identity(self.input.next_source_identity);
         self.input.next_source_identity += 1;
         let previous = self.input.pending_sources.insert(raw, source);
         debug_assert!(previous.is_none(), "source identities are unique");
@@ -2322,6 +2415,9 @@ impl<G> CommandState<G> {
             })
             .is_some();
         if has_source {
+            self.timeline
+                .borrow_mut()
+                .record_force_eof(self.input.force_eof);
             self.input.force_eof = true;
         }
         has_source
@@ -2601,6 +2697,9 @@ impl<G> CommandState<G> {
         Option<&mut crate::input::SourceCursor>,
         crate::input::LineBackingRegistry<'_>,
     ) {
+        self.timeline
+            .borrow_mut()
+            .record_next_source_identity(self.input.next_source_identity);
         // This method runs for every physical token. The old
         // `active_buffer_lines` projection allocated a temporary Vec merely
         // to reverse it. The last input level is the source cursor we are
