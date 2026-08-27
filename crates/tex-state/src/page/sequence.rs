@@ -38,6 +38,10 @@ impl PageNodeSequence {
         self.nodes.push(node);
     }
 
+    pub(super) fn pop(&mut self) -> Option<Node> {
+        self.nodes.pop()
+    }
+
     pub(super) fn clear(&mut self) {
         self.nodes.clear();
     }

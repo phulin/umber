@@ -10,6 +10,9 @@ use crate::scaled::Scaled;
 use sequence::PageNodeSequence;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_PAGE_TIMELINE: AtomicU64 = AtomicU64::new(1);
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
 pub const AWFUL_BAD: i32 = 0o7777777777;
@@ -295,7 +298,7 @@ impl PageInsertion {
 }
 
 /// Snapshot-owned state for TeX.web's page builder.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct PageBuilderState {
     contribution: VecDeque<Node>,
     current_page: PageNodeSequence,
@@ -330,6 +333,85 @@ pub(crate) struct PageBuilderState {
     split_bot_mark: Option<NodeTokenList>,
     mark_classes: Vec<(u16, MarkClassState)>,
     mark_class_positions: Vec<Option<u16>>,
+    tex82_dynamic_words: usize,
+    etex_dynamic_words: usize,
+    checkpoint_journal: PageCheckpointJournal,
+}
+
+/// Bounded root of one page-builder state on its generation timeline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PageCheckpointMark {
+    timeline: u64,
+    frame: u64,
+    cursor: usize,
+}
+
+#[derive(Clone)]
+struct PageCheckpointFrame {
+    id: u64,
+    cursor: usize,
+}
+
+#[derive(Clone)]
+struct PageCheckpointJournal {
+    timeline: u64,
+    next_frame: u64,
+    frames: Vec<PageCheckpointFrame>,
+    inverses: Vec<PageInverse>,
+    applied: usize,
+}
+
+#[derive(Clone)]
+enum PageInverse {
+    Noop,
+    Scalars(PageScalars),
+    ContributionPushBack(Option<Node>),
+    ContributionPushFront(Option<Node>),
+    ContributionRemoved {
+        start: usize,
+        count: usize,
+        nodes: Option<Vec<Node>>,
+    },
+    ContributionPoppedFront(Option<Node>),
+    ContributionPrepended {
+        count: usize,
+        nodes: Option<Vec<Node>>,
+    },
+    CurrentPagePush(Option<Node>),
+    CurrentPageReplace(PageNodeSequence),
+    PageDiscardsPush(Option<Node>),
+    PageDiscardsReplace(Vec<Node>),
+    SplitDiscardsReplace(Vec<Node>),
+    InsertionsReplace {
+        insertions: Vec<PageInsertion>,
+        positions: Vec<Option<u16>>,
+    },
+    InsertionUpsert {
+        class: u16,
+        old: Option<PageInsertion>,
+    },
+    Marks([Option<NodeTokenList>; 5]),
+    MarkClass {
+        class: u16,
+        old: Option<MarkClassState>,
+    },
+}
+
+#[derive(Clone)]
+struct PageScalars {
+    dimensions: [Scaled; 8],
+    page_max_depth: Scaled,
+    contents: PageContents,
+    last_glue: Option<GlueSpec>,
+    last_penalty: i32,
+    last_kern: Scaled,
+    last_node_type: i32,
+    insert_penalties: i32,
+    dead_cycles: i32,
+    least_page_cost: i32,
+    best_page_break: Option<PageBreak>,
+    best_size: Scaled,
+    fire_up: Option<PageFireUp>,
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
 }
@@ -398,11 +480,330 @@ impl Default for PageBuilderState {
             mark_class_positions: Vec::new(),
             tex82_dynamic_words: 0,
             etex_dynamic_words: 0,
+            checkpoint_journal: PageCheckpointJournal {
+                timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
+                next_frame: 1,
+                frames: Vec::with_capacity(64),
+                inverses: Vec::with_capacity(256),
+                applied: 0,
+            },
         }
     }
 }
 
 impl PageBuilderState {
+    pub(crate) fn checkpoint_mark(&mut self) -> PageCheckpointMark {
+        let frame = self.checkpoint_journal.next_frame;
+        self.checkpoint_journal.next_frame = self
+            .checkpoint_journal
+            .next_frame
+            .checked_add(1)
+            .expect("page checkpoint identity space exhausted");
+        let cursor = self.checkpoint_journal.applied;
+        self.checkpoint_journal
+            .frames
+            .push(PageCheckpointFrame { id: frame, cursor });
+        PageCheckpointMark {
+            timeline: self.checkpoint_journal.timeline,
+            frame,
+            cursor,
+        }
+    }
+
+    pub(crate) fn validates_checkpoint_mark(&self, mark: PageCheckpointMark) -> bool {
+        mark.timeline == self.checkpoint_journal.timeline
+            && mark.cursor <= self.checkpoint_journal.inverses.len()
+            && self
+                .checkpoint_journal
+                .frames
+                .iter()
+                .any(|frame| frame.id == mark.frame && frame.cursor == mark.cursor)
+    }
+
+    pub(crate) fn restore_checkpoint_mark(&mut self, mark: PageCheckpointMark) {
+        debug_assert!(self.validates_checkpoint_mark(mark));
+        while self.checkpoint_journal.applied > mark.cursor {
+            self.checkpoint_journal.applied -= 1;
+            self.toggle_page_inverse(self.checkpoint_journal.applied);
+        }
+        while self.checkpoint_journal.applied < mark.cursor {
+            let index = self.checkpoint_journal.applied;
+            self.toggle_page_inverse(index);
+            self.checkpoint_journal.applied += 1;
+        }
+    }
+
+    fn record_page_inverse(&mut self, inverse: PageInverse) {
+        if !self.checkpoint_journal.frames.is_empty() {
+            if self.checkpoint_journal.applied < self.checkpoint_journal.inverses.len() {
+                self.checkpoint_journal
+                    .inverses
+                    .truncate(self.checkpoint_journal.applied);
+                self.checkpoint_journal
+                    .frames
+                    .retain(|frame| frame.cursor <= self.checkpoint_journal.applied);
+            }
+            self.checkpoint_journal.inverses.push(inverse);
+            self.checkpoint_journal.applied += 1;
+        }
+    }
+
+    fn scalar_snapshot(&self) -> PageScalars {
+        PageScalars {
+            dimensions: [
+                self.page_goal,
+                self.page_total,
+                self.page_stretch,
+                self.page_fil_stretch,
+                self.page_fill_stretch,
+                self.page_filll_stretch,
+                self.page_shrink,
+                self.page_depth,
+            ],
+            page_max_depth: self.page_max_depth,
+            contents: self.contents,
+            last_glue: self.last_glue,
+            last_penalty: self.last_penalty,
+            last_kern: self.last_kern,
+            last_node_type: self.last_node_type,
+            insert_penalties: self.insert_penalties,
+            dead_cycles: self.dead_cycles,
+            least_page_cost: self.least_page_cost,
+            best_page_break: self.best_page_break,
+            best_size: self.best_size,
+            fire_up: self.fire_up,
+            tex82_dynamic_words: self.tex82_dynamic_words,
+            etex_dynamic_words: self.etex_dynamic_words,
+        }
+    }
+
+    fn record_scalars(&mut self) {
+        if !self.checkpoint_journal.frames.is_empty() {
+            let old = self.scalar_snapshot();
+            self.record_page_inverse(PageInverse::Scalars(old));
+        }
+    }
+
+    fn toggle_page_inverse(&mut self, index: usize) {
+        let inverse = std::mem::replace(
+            &mut self.checkpoint_journal.inverses[index],
+            PageInverse::Noop,
+        );
+        let inverse = match inverse {
+            PageInverse::Noop => unreachable!("page inverse slot is occupied"),
+            PageInverse::Scalars(old) => {
+                let current = self.scalar_snapshot();
+                self.restore_scalars(old);
+                PageInverse::Scalars(current)
+            }
+            PageInverse::ContributionPushBack(mut node) => {
+                if let Some(node) = node.take() {
+                    self.contribution.push_back(node);
+                } else {
+                    node = self.contribution.pop_back();
+                }
+                PageInverse::ContributionPushBack(node)
+            }
+            PageInverse::ContributionPushFront(mut node) => {
+                if let Some(node) = node.take() {
+                    self.contribution.push_front(node);
+                } else {
+                    node = self.contribution.pop_front();
+                }
+                PageInverse::ContributionPushFront(node)
+            }
+            PageInverse::ContributionRemoved {
+                start,
+                count,
+                mut nodes,
+            } => {
+                if let Some(restored) = nodes.take() {
+                    for (offset, node) in restored.into_iter().enumerate() {
+                        self.contribution.insert(start + offset, node);
+                    }
+                } else {
+                    nodes = Some(self.contribution.drain(start..start + count).collect());
+                }
+                PageInverse::ContributionRemoved {
+                    start,
+                    count,
+                    nodes,
+                }
+            }
+            PageInverse::ContributionPoppedFront(mut node) => {
+                if let Some(restored) = node.take() {
+                    self.contribution.push_front(restored);
+                } else {
+                    node = self.contribution.pop_front();
+                }
+                PageInverse::ContributionPoppedFront(node)
+            }
+            PageInverse::ContributionPrepended { count, mut nodes } => {
+                if let Some(restored) = nodes.take() {
+                    for node in restored.into_iter().rev() {
+                        self.contribution.push_front(node);
+                    }
+                } else {
+                    nodes = Some(self.contribution.drain(..count).collect());
+                }
+                PageInverse::ContributionPrepended { count, nodes }
+            }
+            PageInverse::CurrentPagePush(mut node) => {
+                if let Some(restored) = node.take() {
+                    self.current_page.push(restored);
+                } else {
+                    node = self.current_page.pop();
+                }
+                PageInverse::CurrentPagePush(node)
+            }
+            PageInverse::CurrentPageReplace(mut old) => {
+                std::mem::swap(&mut self.current_page, &mut old);
+                PageInverse::CurrentPageReplace(old)
+            }
+            PageInverse::PageDiscardsPush(mut node) => {
+                if let Some(restored) = node.take() {
+                    self.page_discards.push(restored);
+                } else {
+                    node = self.page_discards.pop();
+                }
+                PageInverse::PageDiscardsPush(node)
+            }
+            PageInverse::PageDiscardsReplace(mut old) => {
+                std::mem::swap(&mut self.page_discards, &mut old);
+                PageInverse::PageDiscardsReplace(old)
+            }
+            PageInverse::SplitDiscardsReplace(mut old) => {
+                std::mem::swap(&mut self.split_discards, &mut old);
+                PageInverse::SplitDiscardsReplace(old)
+            }
+            PageInverse::InsertionsReplace {
+                mut insertions,
+                mut positions,
+            } => {
+                std::mem::swap(&mut self.insertions, &mut insertions);
+                std::mem::swap(&mut self.insertion_positions, &mut positions);
+                PageInverse::InsertionsReplace {
+                    insertions,
+                    positions,
+                }
+            }
+            PageInverse::InsertionUpsert { class, mut old } => {
+                let current = self.page_insertion(class);
+                self.restore_insertion(class, old);
+                old = current;
+                PageInverse::InsertionUpsert { class, old }
+            }
+            PageInverse::Marks(mut old) => {
+                let current = [
+                    self.top_mark.clone(),
+                    self.first_mark.clone(),
+                    self.bot_mark.clone(),
+                    self.split_first_mark.clone(),
+                    self.split_bot_mark.clone(),
+                ];
+                [
+                    self.top_mark,
+                    self.first_mark,
+                    self.bot_mark,
+                    self.split_first_mark,
+                    self.split_bot_mark,
+                ] = old;
+                old = current;
+                PageInverse::Marks(old)
+            }
+            PageInverse::MarkClass { class, mut old } => {
+                let current = self
+                    .mark_class_position(class)
+                    .map(|position| self.mark_classes[position].1.clone());
+                self.restore_mark_class(class, old);
+                old = current;
+                PageInverse::MarkClass { class, old }
+            }
+        };
+        self.checkpoint_journal.inverses[index] = inverse;
+    }
+
+    fn restore_scalars(&mut self, old: PageScalars) {
+        self.page_goal = old.dimensions[0];
+        self.page_total = old.dimensions[1];
+        self.page_stretch = old.dimensions[2];
+        self.page_fil_stretch = old.dimensions[3];
+        self.page_fill_stretch = old.dimensions[4];
+        self.page_filll_stretch = old.dimensions[5];
+        self.page_shrink = old.dimensions[6];
+        self.page_depth = old.dimensions[7];
+        self.page_max_depth = old.page_max_depth;
+        self.contents = old.contents;
+        self.last_glue = old.last_glue;
+        self.last_penalty = old.last_penalty;
+        self.last_kern = old.last_kern;
+        self.last_node_type = old.last_node_type;
+        self.insert_penalties = old.insert_penalties;
+        self.dead_cycles = old.dead_cycles;
+        self.least_page_cost = old.least_page_cost;
+        self.best_page_break = old.best_page_break;
+        self.best_size = old.best_size;
+        self.fire_up = old.fire_up;
+        self.tex82_dynamic_words = old.tex82_dynamic_words;
+        self.etex_dynamic_words = old.etex_dynamic_words;
+    }
+
+    fn restore_insertion(&mut self, class: u16, old: Option<PageInsertion>) {
+        if let Some(position) = self.page_insertion_position(class) {
+            self.insertions.remove(position);
+        }
+        if let Some(insertion) = old {
+            self.insertions.push(insertion);
+            self.insertions.sort_by_key(PageInsertion::class);
+        }
+        self.rebuild_insertion_positions();
+    }
+
+    fn page_insertion_position(&self, class: u16) -> Option<usize> {
+        self.insertion_positions
+            .get(usize::from(class))
+            .copied()
+            .flatten()
+            .map(usize::from)
+    }
+
+    fn rebuild_insertion_positions(&mut self) {
+        self.insertion_positions.fill(None);
+        for (position, insertion) in self.insertions.iter().enumerate() {
+            let class = usize::from(insertion.class());
+            if self.insertion_positions.len() <= class {
+                self.insertion_positions.resize(class + 1, None);
+            }
+            self.insertion_positions[class] =
+                Some(u16::try_from(position).expect("active insertion-class count fits u16"));
+        }
+    }
+
+    fn restore_mark_class(&mut self, class: u16, old: Option<MarkClassState>) {
+        if let Some(position) = self.mark_class_position(class) {
+            self.remove_mark_class(class, position);
+        }
+        if let Some(state) = old {
+            let position = self
+                .mark_classes
+                .binary_search_by_key(&class, |(active, _)| *active)
+                .unwrap_or_else(|position| position);
+            self.mark_classes.insert(position, (class, state));
+            self.rebuild_mark_class_positions();
+        }
+    }
+
+    fn rebuild_mark_class_positions(&mut self) {
+        self.mark_class_positions.fill(None);
+        for (position, (class, _)) in self.mark_classes.iter().enumerate() {
+            let class = usize::from(*class);
+            if self.mark_class_positions.len() <= class {
+                self.mark_class_positions.resize(class + 1, None);
+            }
+            self.mark_class_positions[class] =
+                Some(u16::try_from(position).expect("active mark-class count fits u16"));
+        }
+    }
     /// Whether this checkpointable page state explicitly carries any live
     /// page-arena coordinate. A rootless state contributes no retained-prefix
     /// demand merely because the arena cursor has advanced.
@@ -421,22 +822,6 @@ impl PageBuilderState {
         } else {
             self.tex82_dynamic_words
         }
-    }
-
-    pub(crate) fn font_roots_are_live(
-        &self,
-        mut is_live: impl FnMut(crate::ids::FontId) -> bool,
-    ) -> bool {
-        self.contribution
-            .iter()
-            .chain(self.current_page.iter())
-            .chain(self.page_discards.iter())
-            .chain(self.split_discards.iter())
-            .all(|node| {
-                let mut live = true;
-                node.visit_fonts(|font| live &= is_live(font));
-                live
-            })
     }
 
     #[cfg(test)]
@@ -687,6 +1072,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn set_dimension(&mut self, dimension: PageDimension, value: Scaled) {
+        self.record_scalars();
         match dimension {
             PageDimension::Goal => self.page_goal = value,
             PageDimension::Total => self.page_total = value,
@@ -707,6 +1093,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn set_integer(&mut self, integer: PageInteger, value: i32) {
+        self.record_scalars();
         match integer {
             PageInteger::DeadCycles => self.dead_cycles = value,
             PageInteger::InsertPenalties => self.insert_penalties = value,
@@ -732,6 +1119,15 @@ impl PageBuilderState {
     }
 
     pub(crate) fn set_mark(&mut self, mark: PageMark, value: NodeTokenList) {
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::Marks([
+                self.top_mark.clone(),
+                self.first_mark.clone(),
+                self.bot_mark.clone(),
+                self.split_first_mark.clone(),
+                self.split_bot_mark.clone(),
+            ]));
+        }
         *match mark {
             PageMark::Top => &mut self.top_mark,
             PageMark::First => &mut self.first_mark,
@@ -742,6 +1138,15 @@ impl PageBuilderState {
     }
 
     pub(crate) fn clear_mark(&mut self, mark: PageMark) {
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::Marks([
+                self.top_mark.clone(),
+                self.first_mark.clone(),
+                self.bot_mark.clone(),
+                self.split_first_mark.clone(),
+                self.split_bot_mark.clone(),
+            ]));
+        }
         *match mark {
             PageMark::Top => &mut self.top_mark,
             PageMark::First => &mut self.first_mark,
@@ -771,6 +1176,12 @@ impl PageBuilderState {
             self.set_mark(mark, value);
             return;
         }
+        if !self.checkpoint_journal.frames.is_empty() {
+            let old = self
+                .mark_class_position(class)
+                .map(|position| self.mark_classes[position].1.clone());
+            self.record_page_inverse(PageInverse::MarkClass { class, old });
+        }
         self.ensure_mark_class(class).set(mark, value);
     }
 
@@ -782,6 +1193,12 @@ impl PageBuilderState {
         let Some(position) = self.mark_class_position(class) else {
             return;
         };
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::MarkClass {
+                class,
+                old: Some(self.mark_classes[position].1.clone()),
+            });
+        }
         self.mark_classes[position].1.clear(mark);
         if self.mark_classes[position].1.is_empty() {
             self.remove_mark_class(class, position);
@@ -845,6 +1262,13 @@ impl PageBuilderState {
         vsize: Scaled,
         max_depth: Scaled,
     ) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::InsertionsReplace {
+                insertions: self.insertions.clone(),
+                positions: self.insertion_positions.clone(),
+            });
+        }
         self.contents = contents;
         self.page_goal = vsize;
         self.page_max_depth = max_depth;
@@ -877,6 +1301,14 @@ impl PageBuilderState {
     /// controls are empty, while `page_so_far` remains observable until §991
     /// freezes the next page's specifications.
     pub(crate) fn start_page_after_output(&mut self) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::CurrentPageReplace(self.current_page.clone()));
+            self.record_page_inverse(PageInverse::InsertionsReplace {
+                insertions: self.insertions.clone(),
+                positions: self.insertion_positions.clone(),
+            });
+        }
         let released = dynamic_words(self.current_page.iter());
         self.release_dynamic_word_totals(released);
         self.current_page.clear();
@@ -901,6 +1333,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn set_contents(&mut self, contents: PageContents) {
+        self.record_scalars();
         self.contents = contents;
     }
 
@@ -917,6 +1350,13 @@ impl PageBuilderState {
     }
 
     pub(crate) fn record_best_break(&mut self, break_index: usize, best_size: Scaled, cost: i32) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::InsertionsReplace {
+                insertions: self.insertions.clone(),
+                positions: self.insertion_positions.clone(),
+            });
+        }
         self.best_page_break = Some(PageBreak::new(break_index));
         self.best_size = best_size;
         self.least_page_cost = cost;
@@ -926,6 +1366,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn record_fire_up(&mut self, trigger_index: usize) {
+        self.record_scalars();
         let best_break = self
             .best_page_break
             .unwrap_or_else(|| PageBreak::new(trigger_index));
@@ -941,6 +1382,8 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_contribution(&mut self, node: Node) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::ContributionPushBack(None));
         self.allocate_dynamic_node(&node);
         self.contribution.push_back(node);
     }
@@ -949,12 +1392,23 @@ impl PageBuilderState {
         &mut self,
         range: std::ops::RangeInclusive<usize>,
     ) -> Vec<Node> {
+        let start = *range.start();
         let removed = self.contribution.drain(range).collect::<Vec<_>>();
+        if !removed.is_empty() {
+            self.record_scalars();
+            self.record_page_inverse(PageInverse::ContributionRemoved {
+                start,
+                count: removed.len(),
+                nodes: Some(removed.clone()),
+            });
+        }
         self.release_dynamic_nodes(&removed);
         removed
     }
 
     pub(crate) fn prepend_contribution(&mut self, node: Node) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::ContributionPushFront(None));
         self.allocate_dynamic_node(&node);
         self.contribution.push_front(node);
     }
@@ -973,6 +1427,8 @@ impl PageBuilderState {
 
     pub(crate) fn pop_contribution_front(&mut self) -> Option<Node> {
         let node = self.contribution.pop_front()?;
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::ContributionPoppedFront(Some(node.clone())));
         self.release_dynamic_node(&node);
         Some(node)
     }
@@ -981,6 +1437,11 @@ impl PageBuilderState {
         if nodes.is_empty() {
             return;
         }
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::ContributionPrepended {
+            count: nodes.len(),
+            nodes: None,
+        });
         self.allocate_dynamic_nodes(&nodes);
         let mut queue = VecDeque::with_capacity(nodes.len() + self.contribution.len());
         queue.extend(nodes);
@@ -993,22 +1454,38 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_page_discard(&mut self, node: Node) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::PageDiscardsPush(None));
         self.allocate_dynamic_node(&node);
         self.page_discards.push(node);
     }
 
     pub(crate) fn take_page_discards(&mut self) -> Vec<Node> {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::PageDiscardsReplace(self.page_discards.clone()));
+        }
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
         nodes
     }
 
     pub(crate) fn clear_page_discards(&mut self) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::PageDiscardsReplace(self.page_discards.clone()));
+        }
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
     }
 
     pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(
+                self.split_discards.clone(),
+            ));
+        }
         let added = dynamic_words(nodes.iter());
         let old = std::mem::replace(&mut self.split_discards, nodes);
         self.release_dynamic_nodes(&old);
@@ -1016,12 +1493,24 @@ impl PageBuilderState {
     }
 
     pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(
+                self.split_discards.clone(),
+            ));
+        }
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
         nodes
     }
 
     pub(crate) fn clear_split_discards(&mut self) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(
+                self.split_discards.clone(),
+            ));
+        }
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
     }
@@ -1035,6 +1524,8 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::CurrentPagePush(None));
         self.allocate_dynamic_node(&node);
         self.current_page.push(node);
     }
@@ -1053,6 +1544,12 @@ impl PageBuilderState {
 
     pub(crate) fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
         let class = insertion.class();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::InsertionUpsert {
+                class,
+                old: self.page_insertion(class),
+            });
+        }
         let class_index = usize::from(class);
         if self.insertion_positions.len() <= class_index {
             self.insertion_positions.resize(class_index + 1, None);
@@ -1087,6 +1584,10 @@ impl PageBuilderState {
         &mut self,
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::CurrentPageReplace(self.current_page.clone()));
+        }
         let nodes = self.current_page.take_prefix(split_index);
         self.release_dynamic_nodes(&nodes.0);
         self.release_dynamic_nodes(&nodes.1);
@@ -1164,6 +1665,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn update_last_from_node(&mut self, node: &Node) {
+        self.record_scalars();
         self.last_glue = None;
         self.last_penalty = 0;
         self.last_kern = Scaled::from_raw(0);

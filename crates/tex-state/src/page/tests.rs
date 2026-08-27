@@ -153,6 +153,45 @@ fn page_semantic_hash_tracks_direct_suffix_changes() {
 }
 
 #[test]
+fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
+    let mut page = PageBuilderState::default();
+    page.push_contribution(kern(1));
+    page.push_current_page(kern(2));
+    page.push_page_discard(kern(3));
+    page.set_split_discards(vec![kern(4)]);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(5)));
+    page.set_mark_class(
+        super::PageMark::Bot,
+        7,
+        crate::node::NodeTokenList::default(),
+    );
+    page.set_dimension(super::PageDimension::Goal, Scaled::from_raw(6));
+    let expected = hash_page(&page);
+    let mark = page.checkpoint_mark();
+
+    page.push_contribution(kern(10));
+    page.prepend_contribution(kern(11));
+    page.pop_contribution_front();
+    page.push_current_page(kern(12));
+    page.push_page_discard(kern(13));
+    page.set_split_discards(vec![kern(14), kern(15)]);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(16)));
+    page.upsert_page_insertion(PageInsertion::new(8, Scaled::from_raw(17)));
+    page.clear_mark_class(super::PageMark::Bot, 7);
+    page.set_dimension(super::PageDimension::Goal, Scaled::from_raw(18));
+    assert_ne!(hash_page(&page), expected);
+
+    assert!(page.validates_checkpoint_mark(mark));
+    page.restore_checkpoint_mark(mark);
+    assert_eq!(hash_page(&page), expected);
+    assert_eq!(
+        page.page_insertion(7).unwrap().height(),
+        Scaled::from_raw(5)
+    );
+    assert_eq!(page.page_insertion(8), None);
+}
+
+#[test]
 fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
     let mut source = PageBuilderState::default();
     source.push_contribution(kern(1));

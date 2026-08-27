@@ -26,7 +26,7 @@ use crate::node_arena::{
     DurableListId, NodeArenaCursor, NodeArenaError, NodeArenaRegion, NodeList, PageLifetime,
     PageListId, PageNodeArena,
 };
-use crate::page::PageBuilderState;
+use crate::page::{PageBuilderState, PageCheckpointMark};
 use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
@@ -188,7 +188,7 @@ struct ShipoutRollback<G> {
 /// but cannot extract arena marks or individual store owners.
 pub struct RuntimeCheckpoint<G> {
     state: StateCheckpoint<G>,
-    page: PageBuilderState,
+    page: PageCheckpointMark,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
     fonts: FontStoreMark,
@@ -204,7 +204,7 @@ impl<G> Clone for RuntimeCheckpoint<G> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
-            page: self.page.clone(),
+            page: self.page,
             pdf: self.pdf.clone(),
             world: self.world.clone(),
             fonts: self.fonts,
@@ -564,7 +564,7 @@ impl<G> Universe<G> {
         };
         let retargeted = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(destination_owner, *mark),
-            page: checkpoint.page.clone(),
+            page: checkpoint.page,
             pdf: checkpoint.pdf.clone(),
             world: checkpoint.world.clone(),
             fonts: checkpoint.fonts,
@@ -2029,7 +2029,7 @@ impl<G> Universe<G> {
         }
         let checkpoint = RuntimeCheckpoint {
             state: self.state_checkpoint()?,
-            page: self.page.clone(),
+            page: self.page.checkpoint_mark(),
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
             fonts: self.fonts.watermark(),
@@ -2126,7 +2126,7 @@ impl<G> Universe<G> {
             || !self
                 .page_nodes
                 .font_roots_are_live(*mark.page(), font_survives)?
-            || !checkpoint.page.font_roots_are_live(font_survives)
+            || !self.page.validates_checkpoint_mark(checkpoint.page)
             || !self
                 .pdf
                 .snapshot_font_roots_are_live(&checkpoint.pdf, font_survives)
@@ -2141,7 +2141,7 @@ impl<G> Universe<G> {
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::restore_dense_state(
             self, mark,
         );
-        self.page = checkpoint.page.clone();
+        self.page.restore_checkpoint_mark(checkpoint.page);
         if !generation_fork {
             self.pdf.rollback(checkpoint.pdf.clone());
         }
