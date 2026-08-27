@@ -475,6 +475,21 @@ rule and may move into a typed suspension. Published effects may grow with the
 document because they are externally observable output, then end with the
 world/output owner. Queue capacities may remain as bounded high water.
 
+World checkpoints now own only scalar effect/input/artifact positions, fixed
+stream and clock state, and undo-journal marks. Effect rows, aligned
+publication sidecars, input records/content, and reduced dependency facts live
+in coarse immutable accepted blocks; a candidate appends into private suffixes
+and private counter/dependency journals. Source registrations and loaded font
+recipes use the same accepted-block/private-suffix split. Font identifier and
+expansion mutations are candidate overlays with exact reverse journals. Dense
+source/font/input identities share run-compressed accepted metadata and mint a
+fresh candidate run, so neither payload count nor retained-boundary count is a
+fork-time copy. Provisional page-output receipts cannot cross a quiescent
+checkpoint; committed artifact bytes have already crossed exactly once to the
+durable artifact ledger. Numbered write streams do not retain a redundant
+partial-line mirror because TeX never consults it for wrapping or any later
+semantic decision; terminal and log partial lines remain exact live state.
+
 A TeX group is a save-and-restoration boundary. The save journal records old
 packed values and exact group entry/exit order. On group exit it restores local
 assignments and preserves later global assignments. It does not own an arena,

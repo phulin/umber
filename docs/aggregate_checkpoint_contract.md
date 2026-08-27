@@ -95,6 +95,44 @@ currently trigger additional World copy-on-write; this is a deferred
 first-mutation copy and is not misreported as capture. PDF payload mutation
 already appends to its private delta and copies no prefix.
 
+## World, source, and font ownership outcome
+
+`umber2-pei0.2.4` replaces the World/source/font portion of that historical
+baseline with fixed marks and coarse accepted blocks. The concrete ownership
+classification is:
+
+| Column or family                                  | Representation at a retained boundary                                                                                                                                | Retained-byte owner and release                                                                                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Effect records and aligned publication sidecars   | One immutable accepted block per admitted lineage plus an empty destination-private suffix; the checkpoint stores absolute base and aligned scalar lengths           | Each block charges its record payload and six aligned sidecar columns once to the lineage that produced it; a rejected suffix dies with its candidate |
+| Publication and semantic counters                 | Current-lineage maps plus one undo journal; the checkpoint stores only the journal length and scalar identity frontiers                                              | Accepted next ordinals are recovered from immutable aligned effect columns, so no counter map crosses or is cloned at fork                            |
+| Stream state                                      | Fixed stream-slot state plus effect-position marks; numbered streams retain no unused partial-line mirror because it never changes later TeX behavior                | Terminal/log partial lines and the fixed open/read slots belong to the live World; stream-open context suffixes truncate with their effect positions  |
+| Input records and immutable bytes                 | Coarse accepted record/content blocks plus an empty destination-private record/content suffix; the checkpoint stores record and identity cursors                     | Input bytes are charged once to the block containing their record; accepted identities are shared as run blocks and new identities use the candidate  |
+| Reduced input dependencies                        | Coarse accepted maps plus a private override map and undo journal; the checkpoint stores the journal length and exact effective count                                | Accepted observations remain in their source lineage block; rollback deletes candidate-only overrides and terminal detachment materializes once       |
+| Artifact commits                                  | A retained artifact cursor; a fork starts an empty candidate commit ledger at that cursor                                                                            | Verified/committed bytes cross once into the durable artifact owner; provisional page receipts are quiescent transaction state and cannot checkpoint  |
+| Sources                                           | Immutable accepted registration/backing blocks plus private vectors and sparse index for the candidate; `SourceMapMark` remains fixed                                | Descriptor bytes, line indexes, regions, and generated backing are charged once to their accepted block; logical positions and marks are scalar       |
+| Fonts                                             | Immutable accepted loaded-font/index/hash blocks plus a private loaded-font suffix; identifier and expansion changes use candidate overrides with bounded undo marks | Loaded metrics and recipes are charged once to their accepted block; mutable identifier/expansion values roll back without copying immutable fonts    |
+| Dependency tracker and execution/identity scalars | Revision/invalidation epochs and run-compressed accepted identity metadata                                                                                           | No changed-at map or per-value identity table is cloned; job/revision counters remain fixed scalar state                                              |
+
+Only prior and current lineages are mutable authorities. Accepted blocks are
+immutable row storage, not additional generations, and no block registers
+roots or compacts/relocates values. Reads select accepted prefix or current
+suffix directly; mutation appends to the current suffix or its explicit undo
+journal. Restore first validates every mark, reverses mutable journals, resets
+scalars, and then truncates suffix columns. A fork shares the exact marked
+prefix, excludes source rows after the mark, and allocates only the new
+lineage's empty containers.
+
+The enforced `world_checkpoint_gate` compares both 1 versus 64 payload units
+and 1 versus 32 retained boundaries. Its recorded optimized result is zero
+allocations for capture, checkpoint clone, and no-op restore; World fork is
+24 allocations / 1,040 requested bytes at both payload sizes, source/font fork
+is 20 / 984, and retained-boundary-only forks are respectively 20 / 808 and
+16 / 680 at both boundary counts. First candidate mutation is also flat:
+World is 15 / 2,627 and source/font is 26 / 4,706. The fixture reports logical
+retained-payload ownership separately (World 848 versus 48,476 bytes and
+source/font 2,820 versus 97,068 bytes), demonstrating that real retained data
+scales while checkpoint representation and fork setup do not.
+
 ## Promotion thresholds
 
 Later ownership-family children must retain this baseline and meet these final
