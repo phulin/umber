@@ -353,7 +353,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         // list -- the exhausted macro body or replayed parameter the call
         // token itself came from, any backup or recovery insertion, and any
         // finished stored replay -- before `begin_token_list(..., macro)`.
-        // Those retirements must precede this body's input push.
+        // Those retirements must precede this body's input push. The pending
+        // frame stays canonical if an older active frame retires beneath it.
         self.conserve_input_stack()?;
         let frame = self
             .command
@@ -457,7 +458,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let argument_token_count = self
                 .command
                 .scratch
-                .match_words(matching, &argument)
+                .match_words(&argument)
                 .map_err(|_| CommandError::input_invariant())?
                 .len();
             observe!(
@@ -484,7 +485,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     tokens: self
                         .command
                         .scratch
-                        .match_words(matching, &argument)
+                        .match_words(&argument)
                         .expect("matched macro argument remains live until sealing")
                         .map(|token| self.observed_token(token))
                         .collect(),
@@ -492,7 +493,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
             self.command
                 .scratch
-                .finish_match_buffer(matching, argument)
+                .finish_match_buffer(argument)
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(())
@@ -1059,45 +1060,44 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn argument_buffer(
         &self,
-        matching: &MacroMatch<G>,
+        _matching: &MacroMatch<G>,
         buffer: &MacroMatchBuffer<G>,
     ) -> Result<MacroWords<'_, G>, CommandError> {
         self.command
             .scratch
-            .match_words(matching, buffer)
+            .match_words(buffer)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn push_argument_token(
         &mut self,
-        matching: &MacroMatch<G>,
+        _matching: &MacroMatch<G>,
         buffer: &mut MacroMatchBuffer<G>,
         token: TracedTokenWord,
         facts: MacroArgumentTokenFacts,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_match_word(matching, buffer, token, facts)
+            .push_match_word(buffer, token, facts)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn strip_argument_outer_group(
         &mut self,
-        matching: &MacroMatch<G>,
+        _matching: &MacroMatch<G>,
         buffer: MacroMatchBuffer<G>,
     ) -> Result<MacroMatchBuffer<G>, CommandError> {
         if self
             .command
             .scratch
-            .match_argument_facts(matching, &buffer)
+            .match_argument_facts(&buffer)
             .map_err(|_| CommandError::input_invariant())?
             .removable_outer_group()
         {
-            return self
-                .command
+            self.command
                 .scratch
-                .strip_match_outer_group(matching, buffer)
-                .map_err(|_| CommandError::input_invariant());
+                .strip_match_outer_group(&buffer)
+                .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(buffer)
     }

@@ -383,8 +383,7 @@ and survival patterns differ:
 struct ExecutionScratch<G> {
     macro_frames: Vec<PackedMacroFrame<G>>,
     macro_argument_segments: Vec<MacroWordSegment>,
-    macro_match_segments: Vec<MacroWordSegment>,
-    spare_macro_segments: Vec<MacroWordSegment>,
+    free_macro_segment: u32,
     scanner_frames: Vec<PackedScannerFrame<G>>,
     scanner_words: Vec<TracedTokenWord>,
     scanner_builders: Vec<PackedScannerBuilder<G>>,
@@ -412,11 +411,15 @@ discarding parent output, and preserving that output requires retention,
 copying, or compaction. Separate physical lanes let the macro restore its own
 argument-word length while the scanner destination is untouched.
 
-Macro and scanner nesting is ordinary push/pop over lane lengths. A macro
-frame records the opening segment watermark and up to nine absolute word
-ranges. The one matcher lane seals by moving whole segment owners onto that
-stack without copying token words; frame return restores the watermark and
-reuses the physical suffix. A scanner frame records the opening lengths of its
+Macro and scanner nesting is ordinary push/pop over lane lengths. Match
+admission initializes the next macro frame in place. That frame records its
+segment-chain endpoints and up to nine direct word ranges; one direct
+current-argument slot owns collection facts and its cursor until completion.
+The pending frame appends directly to its chain in the stable segment arena.
+An older active frame may retire beneath it and return its disjoint chain
+immediately; commit changes only the pending frame's role, while discard or
+later frame retirement returns that frame's chain to the intrusive free head.
+A scanner frame records the opening lengths of its
 temporary-word and builder lanes. No push creates an arena,
 scope capability, ownership token, loan, mailbox, watermark row, or parent
 graph. Fixed synchronous state stays in ordinary Rust stack locals. State that

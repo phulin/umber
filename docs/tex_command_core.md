@@ -1886,25 +1886,27 @@ struct MacroArguments {
 ```
 
 `MacroArguments` is fixed at 16 bytes, `MacroActivation` at 48 bytes, and each
-argument record stores nine optional absolute ranges plus the exact §394
-paragraph and removable-outer-group facts established during their first
-scan, beside one contiguous traced-word span. The paragraph fact records only
+live scratch frame stores nine relative ranges plus the exact §394 paragraph
+and removable-outer-group facts established during their first scan, beside
+one segmented traced-word suffix. The paragraph fact records only
 the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
 prefix and later committed after a mismatch is not reclassified. The scalar
-matcher accumulates completed arguments in definition order through one
-reusable segmented sealing lane. It consumes those facts for the non-`\long`
-decision and outer-pair removal without rereading stored words. Sealing moves
-whole physical segment owners onto the live absolute-offset bump stack and
-adds the frame base to its fixed range metadata; it copies no token word.
+matcher admits the one live frame before collection and updates its direct
+current-argument slot in definition order. It consumes those facts for the
+non-`\long` decision and outer-pair removal without rereading stored words.
+Sealing advances the live depth of that same metadata frame without moving its
+physical words because admission already appended to the frame's segment chain;
+no segment owner, argument table, range, fact, or word moves.
 Empty arguments retain empty half-open ranges. A compact
 `OutParameter(u8)` remains distinct from a literal parameter character emitted
 by the canonical `##` escape, so replay can substitute only the former without
 rewriting immutable macro definition token lists. Argument segments hold 4,096
-words. A sealed range maps `start + input_position` directly to segment and
-slot; no argument-local cursor or chain traversal participates. Macro frames
-record their segment watermark, and exact LIFO retirement rewinds the logical
-stack while returning physical segments to the generation's reusable
-high-water pool. Quiescent top-level calls clear lengths but retain every
+words. A sealed `(frame, argument slot)` selects its physical range directly,
+with no range search or second argument-local cursor. Sequential iterators
+follow each segment link once. Exact LIFO frame retirement returns its disjoint
+chain to the generation's intrusive reusable free head, so an older active
+frame can retire beneath a pending child without moving either frame's words.
+Quiescent top-level calls clear lengths but retain every
 warmed allocation. The processor appends one fixed-width invocation provenance
 record using the active activation's invocation coordinate as parent; no rooted
 weak value is created on replay. Node, diagnostic, and continuation boundaries

@@ -42,10 +42,11 @@ collector (see `src/conditionals.rs`).
   scratch, including scanner-owned sinks, promotion, and suspension scope
   capabilities. Macro invocation storage does not use this arena.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
-  Macro argument words use an absolute-offset segmented bump stack, one
-  reusable zero-copy sealing lane, fixed nine-range frame metadata, strict
-  LIFO logical rewind, and physical segment high-water reuse; activations
-  never own a heap buffer or arena scope.
+  The admitted macro frame's fixed nine-slot metadata owns the current argument
+  cursor and first-scan facts while words append to its intrusive chain in one
+  stable segment arena. Sealing changes only the frame role, retirement returns
+  that chain to the arena free head, and physical segments remain reusable high
+  water; activations never own a heap buffer or arena scope.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
@@ -237,8 +238,8 @@ collector (see `src/conditionals.rs`).
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, destination-directed construction into execution-scratch
-  segments, stable sealed absolute-range descriptors, uniform one-scalar
-  parameter replay, exact tail/nested retirement, and focused tests.
+  segments, stable sealed direct-slot descriptors, uniform one-scalar parameter
+  replay, exact tail/nested retirement, and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly
