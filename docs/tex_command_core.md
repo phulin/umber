@@ -656,6 +656,17 @@ through the same `get_next` path, so executor code cannot create a second
 lexer, expansion loop, or backup mechanism. `CommandState::snapshot` remains
 the transaction boundary for the resulting future input state.
 
+Within one synchronous scalar call, integer and internal-value results use a
+bounded caller-owned frame with disjoint typed-value and `CommandError` slots.
+Integer and internal-value call boundaries return only a compact
+complete/suspended/failed status; the successful path never transfers the
+error-sized carrier. Legacy `Result`-returning scalar boundaries settle at the
+producing call site instead of handing the whole carrier to a generic helper.
+Completion consumes the value immediately, while only a genuine resource
+suspension installs the existing move-only continuation edge in
+generation-owned scratch. The call frame owns no heap allocation, retained
+arena, cache, or durable state.
+
 Recoverable scalar diagnostics use the same borrow-scoped `CommandContext`
 that the processor already holds: its §73 `print_err` forwarding method opens
 the live `Universe` error report only for the duration of that report. Thus

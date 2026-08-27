@@ -3,7 +3,7 @@ use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
-use crate::{CommandHostCapabilities, CommandState, processor::DeliveryStatus};
+use crate::{CommandHostCapabilities, CommandState, RetainedScalarScan, processor::DeliveryStatus};
 
 #[test]
 fn keyword_replay_keeps_scalar_continuations_compact() {
@@ -11,6 +11,28 @@ fn keyword_replay_keeps_scalar_continuations_compact() {
     let pending = std::mem::size_of::<super::PendingScalarFrame<()>>();
     assert_eq!(prefix, 736);
     assert_eq!(pending, 792);
+}
+
+#[test]
+fn scalar_call_frame_separates_compact_status_value_and_error() {
+    assert_eq!(std::mem::size_of::<super::ScalarCallStatus>(), 1);
+    assert!(
+        std::mem::size_of::<super::ScalarCallFrame<super::ScannedScalar<i32>>>()
+            <= std::mem::size_of::<Option<crate::CommandError>>()
+                + std::mem::size_of::<Option<super::ScannedScalar<i32>>>()
+                + std::mem::align_of::<crate::CommandError>()
+    );
+
+    let mut call = super::ScalarCallFrame::default();
+    call.put_complete(super::ScannedScalar {
+        value: 17,
+        recovery: super::ScalarRecovery::None,
+        provenance: super::ScalarProvenance {
+            primary: tex_state::token::OriginId::UNKNOWN,
+        },
+    });
+    assert!(call.error.is_none());
+    assert_eq!(call.take_complete().value, 17);
 }
 
 fn other(ch: char) -> Token {
@@ -48,7 +70,10 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        assert_eq!(processor.scan_integer().expect("integer").value, -42);
+        let RetainedScalarScan::Complete(integer) = processor.scan_integer_retained() else {
+            panic!("integer scan must complete");
+        };
+        assert_eq!(integer.value, -42);
         let mut terminator = None;
         assert_eq!(
             processor
@@ -81,7 +106,10 @@ fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
             &mut diagnostic_effects,
         );
         assert!(processor.scan_optional_equals().expect("equals").value);
-        assert_eq!(processor.scan_integer().expect("operand").value, 7);
+        let RetainedScalarScan::Complete(integer) = processor.scan_integer_retained() else {
+            panic!("integer scan must complete");
+        };
+        assert_eq!(integer.value, 7);
     });
 }
 

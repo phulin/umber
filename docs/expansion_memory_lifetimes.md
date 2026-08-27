@@ -337,6 +337,15 @@ The reusable allocation-free scalar-frame family now owns optional-equals,
 keyword and matched-prefix restoration, integer, dimension, glue, filename,
 internal-value, expression, and font-selector progress. Every nested scalar or
 expansion is a non-`Copy` child edge tagged with its exact return destination.
+Synchronous integer and internal-value delivery use one bounded caller-owned
+`ScalarCallFrame<T>` whose value and `CommandError` occupy disjoint slots; a
+compact status names completion, suspension, or failure. The successful hot
+path therefore moves only `T`, while a real cold edge moves the error once.
+Legacy `Result`-returning scalar boundaries settle at their producing call
+site rather than passing the whole carrier to a generic helper. Completion
+consumes the value immediately, failure consumes the error, and the frame ends
+with the call; it is neither generation-retained storage nor a second
+continuation lane.
 The raw resource-capable entry points are private; the executor-facing retained
 surface returns a move-only result that carries either the completed value, the
 exact child capability, or a non-resource failure. An external caller therefore
