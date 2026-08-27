@@ -14,6 +14,7 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 const ACCUMULATED_MODE_LEVELS: usize = 32;
 
 fn main() {
+    early_root_read_gate();
     for mode_levels in [1, ACCUMULATED_MODE_LEVELS] {
         let ordinary = sample(mode_levels, false);
         let demanded = sample(mode_levels, true);
@@ -32,6 +33,56 @@ fn main() {
             ordinary.bytes_allocated,
             demanded.bytes_allocated,
         );
+    }
+}
+
+fn early_root_read_gate() {
+    for suffix in [1, 4_096] {
+        with_universe(budget(), |universe| {
+            let mut command = CommandState::new(CommandProfile::TEX82);
+            let mut modes = ModeNest::new();
+            modes.enable_reachable_state_identity();
+            universe.enable_reachable_state_identity();
+            modes.push_current_node(Node::Penalty(-1));
+            universe
+                .command_context()
+                .expect("root context")
+                .append_page_contribution(Node::Penalty(-1));
+            let checkpoint = EngineCheckpoint::profile_capture_checkpoint_with_identity_demand(
+                EngineBoundary::OuterParagraphEnd,
+                &mut command,
+                &mut modes,
+                universe,
+                ExecutionBudgetCounters::default(),
+            )
+            .expect("early identity checkpoint");
+            let expected = checkpoint.profile_mode_page_identity_roots();
+            assert!(expected.0.is_some() && expected.1.is_some());
+            for index in 0..suffix {
+                modes.push_current_node(Node::Penalty(index as i32));
+                universe
+                    .command_context()
+                    .expect("suffix context")
+                    .append_page_contribution(Node::Penalty(index as i32));
+            }
+
+            let region = Region::new(GLOBAL);
+            let mut checksum = 0_u64;
+            for ordinal in 0..4_096 {
+                let roots = black_box(&checkpoint).profile_mode_page_identity_roots();
+                assert_eq!(roots, expected);
+                checksum ^= roots.0.expect("mode root").rotate_left(ordinal % 63)
+                    ^ roots.1.expect("page root").rotate_right(ordinal % 61);
+            }
+            let stats = region.change();
+            assert_eq!(stats.allocations, 0, "identity reads allocated");
+            assert_eq!(stats.bytes_allocated, 0, "identity reads requested bytes");
+            println!(
+                "MODE_PAGE_IDENTITY_READ_GATE suffix={suffix} reads=4096 allocations={} requested_bytes={} checksum={checksum:016x}",
+                stats.allocations, stats.bytes_allocated,
+            );
+        })
+        .expect("identity read gate universe");
     }
 }
 

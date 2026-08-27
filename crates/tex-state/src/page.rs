@@ -596,6 +596,7 @@ pub(crate) struct PageBuilderState {
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
     page_node_root_count: usize,
+    identity_enabled: bool,
     semantic_roots: PageSemanticRoots,
     checkpoint_journal: PageCheckpointJournal,
 }
@@ -818,6 +819,7 @@ impl Default for PageBuilderState {
             tex82_dynamic_words: 0,
             etex_dynamic_words: 0,
             page_node_root_count: 0,
+            identity_enabled: false,
             semantic_roots: PageSemanticRoots::default(),
             checkpoint_journal: PageCheckpointJournal {
                 timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
@@ -837,7 +839,43 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
-    fn reachable_state_identity_root(&self) -> u64 {
+    pub(crate) fn enable_reachable_state_identity(&mut self) {
+        if self.identity_enabled {
+            return;
+        }
+        assert!(
+            self.contribution.is_empty()
+                && self.current_page.len() == 0
+                && self.page_discards.is_empty()
+                && self.split_discards.is_empty()
+                && self.insertions.is_empty()
+                && self.mark_classes.is_empty()
+                && self.top_mark.is_none()
+                && self.first_mark.is_none()
+                && self.bot_mark.is_none()
+                && self.split_first_mark.is_none()
+                && self.split_bot_mark.is_none(),
+            "page semantic identity must be selected before execution"
+        );
+        self.identity_enabled = true;
+        self.current_page.enable_semantic_identity();
+        self.semantic_roots.contribution =
+            SemanticSequenceIdentity::from_nodes(self.contribution.iter());
+        self.semantic_roots.page_discards =
+            SemanticSequenceIdentity::from_nodes(&self.page_discards);
+        self.semantic_roots.split_discards =
+            SemanticSequenceIdentity::from_nodes(&self.split_discards);
+        self.semantic_roots.insertions = self
+            .insertions
+            .iter()
+            .fold(0_u64, |root, value| root ^ insertion_identity(*value));
+        self.semantic_roots.marks = self.current_marks_identity();
+    }
+
+    fn reachable_state_identity_root(&self) -> Option<u64> {
+        if !self.identity_enabled {
+            return None;
+        }
         let mut hasher = page_identity_hasher(b"umber-page-semantic-root-v1");
         1_u16.hash(&mut hasher);
         match self.contents {
@@ -872,14 +910,16 @@ impl PageBuilderState {
         self.insert_penalties.hash(&mut hasher);
         self.dead_cycles.hash(&mut hasher);
         self.least_page_cost.hash(&mut hasher);
-        self.best_page_break.map(PageBreak::index).hash(&mut hasher);
+        self.best_page_break
+            .map(|value| value.index() as u64)
+            .hash(&mut hasher);
         self.best_size.raw().hash(&mut hasher);
         self.fire_up
             .map(|value| {
                 (
-                    value.best_break().index(),
+                    value.best_break().index() as u64,
                     value.best_size().raw(),
-                    value.trigger().index(),
+                    value.trigger().index() as u64,
                 )
             })
             .hash(&mut hasher);
@@ -889,12 +929,12 @@ impl PageBuilderState {
             self.semantic_roots.page_discards,
             self.semantic_roots.split_discards,
         ] {
-            sequence.len().hash(&mut hasher);
+            (sequence.len() as u64).hash(&mut hasher);
             sequence.raw().hash(&mut hasher);
         }
         self.semantic_roots.insertions.hash(&mut hasher);
         self.semantic_roots.marks.hash(&mut hasher);
-        hasher.finish()
+        Some(hasher.finish())
     }
 
     pub(crate) fn checkpoint_mark(&mut self) -> PageCheckpointMark {
@@ -958,7 +998,7 @@ impl PageBuilderState {
             roots,
             candidate_roots,
             semantic_roots: self.semantic_roots,
-            reachable_state_identity_root: Some(self.reachable_state_identity_root()),
+            reachable_state_identity_root: self.reachable_state_identity_root(),
         }
     }
 
@@ -1102,7 +1142,11 @@ impl PageBuilderState {
 
         let (mut current_page, _) = accepted.current_page.take_prefix(roots.current_page_end);
         current_page.extend(candidate.current_page.into_nodes());
-        candidate.current_page = PageNodeSequence::from_nodes(current_page);
+        let mut current_page = PageNodeSequence::from_nodes(current_page);
+        if self.identity_enabled {
+            current_page.enable_semantic_identity();
+        }
+        candidate.current_page = current_page;
 
         accepted.page_discards.truncate(roots.page_discards_end);
         accepted.page_discards.append(&mut candidate.page_discards);
@@ -1645,7 +1689,53 @@ impl PageBuilderState {
         self.fire_up = state.fire_up;
         self.insertions = state.insertions;
         self.insertion_positions = state.insertion_positions;
+        self.rebuild_semantic_roots_from_values();
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn rebuild_semantic_roots_from_values(&mut self) {
+        let marks = self.current_marks_identity();
+        self.current_page.enable_semantic_identity();
+        self.semantic_roots = PageSemanticRoots {
+            contribution: SemanticSequenceIdentity::from_nodes(self.contribution.iter()),
+            page_discards: SemanticSequenceIdentity::from_nodes(&self.page_discards),
+            split_discards: SemanticSequenceIdentity::from_nodes(&self.split_discards),
+            insertions: self
+                .insertions
+                .iter()
+                .fold(0_u64, |root, value| root ^ insertion_identity(*value)),
+            marks,
+        };
+    }
+
+    fn current_marks_identity(&self) -> u64 {
+        let mut marks = 0_u64;
+        for (mark, value) in [
+            (PageMark::Top, self.top_mark.as_ref()),
+            (PageMark::First, self.first_mark.as_ref()),
+            (PageMark::Bot, self.bot_mark.as_ref()),
+            (PageMark::SplitFirst, self.split_first_mark.as_ref()),
+            (PageMark::SplitBot, self.split_bot_mark.as_ref()),
+        ] {
+            if let Some(value) = value {
+                marks ^= mark_identity(0, mark, value);
+            }
+        }
+        for (class, state) in &self.mark_classes {
+            for mark in [
+                PageMark::Top,
+                PageMark::First,
+                PageMark::Bot,
+                PageMark::SplitFirst,
+                PageMark::SplitBot,
+            ] {
+                if let Some(value) = state.get(mark) {
+                    marks ^= mark_identity(*class, mark, value);
+                }
+            }
+        }
+        marks
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
@@ -1814,10 +1904,12 @@ impl PageBuilderState {
     }
 
     pub(crate) fn set_mark(&mut self, mark: PageMark, value: NodeTokenList) {
-        if let Some(old) = self.mark_value(mark) {
-            self.semantic_roots.marks ^= mark_identity(0, mark, old);
+        if self.identity_enabled {
+            if let Some(old) = self.mark_value(mark) {
+                self.semantic_roots.marks ^= mark_identity(0, mark, old);
+            }
+            self.semantic_roots.marks ^= mark_identity(0, mark, &value);
         }
-        self.semantic_roots.marks ^= mark_identity(0, mark, &value);
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::Marks([
                 self.top_mark.clone(),
@@ -1842,7 +1934,9 @@ impl PageBuilderState {
     }
 
     pub(crate) fn clear_mark(&mut self, mark: PageMark) {
-        if let Some(old) = self.mark_value(mark) {
+        if self.identity_enabled
+            && let Some(old) = self.mark_value(mark)
+        {
             self.semantic_roots.marks ^= mark_identity(0, mark, old);
         }
         if !self.checkpoint_journal.frames.is_empty() {
@@ -1905,10 +1999,12 @@ impl PageBuilderState {
             self.set_mark(mark, value);
             return;
         }
-        if let Some(old) = self.mark_class_value(mark, class) {
-            self.semantic_roots.marks ^= mark_identity(class, mark, old);
+        if self.identity_enabled {
+            if let Some(old) = self.mark_class_value(mark, class) {
+                self.semantic_roots.marks ^= mark_identity(class, mark, old);
+            }
+            self.semantic_roots.marks ^= mark_identity(class, mark, &value);
         }
-        self.semantic_roots.marks ^= mark_identity(class, mark, &value);
         if !self.checkpoint_journal.frames.is_empty() {
             let old = self
                 .mark_class_position(class)
@@ -1931,7 +2027,9 @@ impl PageBuilderState {
         let Some(position) = self.mark_class_position(class) else {
             return;
         };
-        if let Some(old) = self.mark_classes[position].1.get(mark) {
+        if self.identity_enabled
+            && let Some(old) = self.mark_classes[position].1.get(mark)
+        {
             self.semantic_roots.marks ^= mark_identity(class, mark, old);
         }
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2134,9 +2232,13 @@ impl PageBuilderState {
         self.best_size = best_size;
         self.least_page_cost = cost;
         for insertion in &mut self.insertions {
-            self.semantic_roots.insertions ^= insertion_identity(*insertion);
+            if self.identity_enabled {
+                self.semantic_roots.insertions ^= insertion_identity(*insertion);
+            }
             insertion.best_ins_index = insertion.last_ins_index;
-            self.semantic_roots.insertions ^= insertion_identity(*insertion);
+            if self.identity_enabled {
+                self.semantic_roots.insertions ^= insertion_identity(*insertion);
+            }
         }
     }
 
@@ -2160,9 +2262,11 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPushBack(None));
         self.allocate_dynamic_node(&node);
-        self.semantic_roots
-            .contribution
-            .push_back(semantic_node_identity(&node));
+        if self.identity_enabled {
+            self.semantic_roots
+                .contribution
+                .push_back(semantic_node_identity(&node));
+        }
         self.contribution.push_back(node);
     }
 
@@ -2181,8 +2285,10 @@ impl PageBuilderState {
             });
         }
         self.release_dynamic_nodes(&removed);
-        self.semantic_roots.contribution =
-            SemanticSequenceIdentity::from_nodes(self.contribution.iter());
+        if self.identity_enabled {
+            self.semantic_roots.contribution =
+                SemanticSequenceIdentity::from_nodes(self.contribution.iter());
+        }
         removed
     }
 
@@ -2190,9 +2296,11 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPushFront(None));
         self.allocate_dynamic_node(&node);
-        self.semantic_roots
-            .contribution
-            .push_front(semantic_node_identity(&node));
+        if self.identity_enabled {
+            self.semantic_roots
+                .contribution
+                .push_front(semantic_node_identity(&node));
+        }
         if let Some(fork) = &mut self.checkpoint_journal.fork
             && fork.flat_origin.is_some()
             && fork.target_roots.is_some()
@@ -2262,18 +2370,22 @@ impl PageBuilderState {
                 }
             };
             self.release_dynamic_node(&node);
-            self.semantic_roots
-                .contribution
-                .pop_front(semantic_node_identity(&node));
+            if self.identity_enabled {
+                self.semantic_roots
+                    .contribution
+                    .pop_front(semantic_node_identity(&node));
+            }
             return Some(node);
         }
         let node = self.contribution.pop_front()?;
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPoppedFront(Some(node.clone())));
         self.release_dynamic_node(&node);
-        self.semantic_roots
-            .contribution
-            .pop_front(semantic_node_identity(&node));
+        if self.identity_enabled {
+            self.semantic_roots
+                .contribution
+                .pop_front(semantic_node_identity(&node));
+        }
         Some(node)
     }
 
@@ -2287,8 +2399,10 @@ impl PageBuilderState {
             nodes: None,
         });
         self.allocate_dynamic_nodes(&nodes);
-        let prefix = SemanticSequenceIdentity::from_nodes(&nodes);
-        self.semantic_roots.contribution = prefix.concat(self.semantic_roots.contribution);
+        if self.identity_enabled {
+            let prefix = SemanticSequenceIdentity::from_nodes(&nodes);
+            self.semantic_roots.contribution = prefix.concat(self.semantic_roots.contribution);
+        }
         if let Some(fork) = &mut self.checkpoint_journal.fork
             && fork.flat_origin.is_some()
             && fork.target_roots.is_some()
@@ -2324,9 +2438,11 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscardsPush(None));
         self.allocate_dynamic_node(&node);
-        self.semantic_roots
-            .page_discards
-            .push_back(semantic_node_identity(&node));
+        if self.identity_enabled {
+            self.semantic_roots
+                .page_discards
+                .push_back(semantic_node_identity(&node));
+        }
         self.page_discards.push(node);
     }
 
@@ -2377,7 +2493,9 @@ impl PageBuilderState {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
-        self.semantic_roots.split_discards = SemanticSequenceIdentity::from_nodes(&nodes);
+        if self.identity_enabled {
+            self.semantic_roots.split_discards = SemanticSequenceIdentity::from_nodes(&nodes);
+        }
         let old = std::mem::replace(&mut self.split_discards, nodes);
         self.release_dynamic_nodes(&old);
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2503,10 +2621,12 @@ impl PageBuilderState {
 
     pub(crate) fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
         let class = insertion.class();
-        if let Some(old) = self.page_insertion(class) {
-            self.semantic_roots.insertions ^= insertion_identity(old);
+        if self.identity_enabled {
+            if let Some(old) = self.page_insertion(class) {
+                self.semantic_roots.insertions ^= insertion_identity(old);
+            }
+            self.semantic_roots.insertions ^= insertion_identity(insertion);
         }
-        self.semantic_roots.insertions ^= insertion_identity(insertion);
         let old = (!self.checkpoint_journal.frames.is_empty())
             .then(|| self.page_insertion(class))
             .flatten();
@@ -2754,13 +2874,19 @@ fn insertion_identity(insertion: PageInsertion) -> u64 {
             broken_at,
         } => {
             1_u8.hash(&mut hasher);
-            broken_ins_index.hash(&mut hasher);
-            broken_at.hash(&mut hasher);
+            (broken_ins_index as u64).hash(&mut hasher);
+            broken_at.map(|value| value as u64).hash(&mut hasher);
         }
     }
     insertion.height.raw().hash(&mut hasher);
-    insertion.last_ins_index.hash(&mut hasher);
-    insertion.best_ins_index.hash(&mut hasher);
+    insertion
+        .last_ins_index
+        .map(|value| value as u64)
+        .hash(&mut hasher);
+    insertion
+        .best_ins_index
+        .map(|value| value as u64)
+        .hash(&mut hasher);
     hasher.finish()
 }
 
@@ -2768,10 +2894,7 @@ fn mark_identity(class: u16, mark: PageMark, value: &NodeTokenList) -> u64 {
     let mut hasher = page_identity_hasher(b"umber-page-mark-v1");
     class.hash(&mut hasher);
     mark.index().hash(&mut hasher);
-    value.words().len().hash(&mut hasher);
-    for word in value.words() {
-        word.raw().hash(&mut hasher);
-    }
+    value.hash(&mut hasher);
     hasher.finish()
 }
 

@@ -3,6 +3,7 @@ use super::{
 };
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
+use crate::page::PageBuilderState;
 use crate::scaled::{GlueSetRatio, Scaled};
 
 enum Durable {}
@@ -51,6 +52,35 @@ fn explicit_roots_promote_exact_closure_once() {
             .expect("test fixture is valid")
             .nodes(),
         [Node::Penalty(7)]
+    );
+}
+
+#[test]
+fn equivalent_page_list_layouts_publish_the_same_page_semantic_root() {
+    let mut left_arena = NodeArena::<PageLifetime>::new();
+    left_arena.enable_semantic_identity();
+    let left_children = left_arena
+        .publish(vec![Node::Penalty(7)])
+        .expect("left child list");
+    let mut right_arena = NodeArena::<PageLifetime>::new();
+    right_arena.enable_semantic_identity();
+    let _layout_noise = right_arena
+        .publish(vec![Node::Penalty(99)])
+        .expect("right layout noise");
+    let right_children = right_arena
+        .publish(vec![Node::Penalty(7)])
+        .expect("right child list");
+    assert_ne!(left_children, right_children);
+
+    let mut left_page = PageBuilderState::default();
+    left_page.enable_reachable_state_identity();
+    left_page.push_contribution(boxed(left_children));
+    let mut right_page = PageBuilderState::default();
+    right_page.enable_reachable_state_identity();
+    right_page.push_contribution(boxed(right_children));
+    assert_eq!(
+        left_page.checkpoint_mark().reachable_state_identity_root(),
+        right_page.checkpoint_mark().reachable_state_identity_root(),
     );
 }
 

@@ -47,7 +47,10 @@ fn semantic_sequence_identity<'a, T: Hash + 'a>(values: impl IntoIterator<Item =
         value.hash(&mut hasher);
         sequence.push_back(hasher.finish());
     }
-    sequence.raw()
+    match sequence.raw() {
+        0 => u64::MAX,
+        value => value,
+    }
 }
 
 /// Operation-local node-list lifetime.
@@ -150,7 +153,13 @@ impl<L> Eq for NodeListId<L> {}
 
 impl<L> core::hash::Hash for NodeListId<L> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.semantic_identity.hash(state);
+        if self.semantic_identity == 0 {
+            self.owner.hash(state);
+            self.row.hash(state);
+            self.generation.hash(state);
+        } else {
+            self.semantic_identity.hash(state);
+        }
     }
 }
 
@@ -488,6 +497,7 @@ pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
     segments: Vec<Option<Rc<NodeArenaSegment<L, Glue, Tokens>>>>,
     segment_live_rows: Vec<u32>,
+    semantic_identity_enabled: bool,
     accounting: MemoryAccounting,
 }
 
@@ -551,6 +561,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             rows,
             segments,
             segment_live_rows,
+            semantic_identity_enabled: self.semantic_identity_enabled,
             accounting: self.accounting.clone(),
         }
     }
@@ -807,8 +818,17 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             rows: Vec::new(),
             segments: Vec::new(),
             segment_live_rows: Vec::new(),
+            semantic_identity_enabled: false,
             accounting,
         }
+    }
+
+    pub(crate) fn enable_semantic_identity(&mut self) {
+        assert!(
+            self.rows.is_empty() || self.semantic_identity_enabled,
+            "node semantic identity must be selected before publication"
+        );
+        self.semantic_identity_enabled = true;
     }
 
     /// Captures the suffix position after canonical roots have been recorded.
@@ -948,7 +968,11 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         let tex82_words = node_words(&nodes, false);
         let etex_words = node_words(&nodes, true);
         self.accounting.allocate_nodes(tex82_words, etex_words);
-        let semantic_identity = semantic_sequence_identity(nodes.iter());
+        let semantic_identity = if self.semantic_identity_enabled {
+            semantic_sequence_identity(nodes.iter())
+        } else {
+            0
+        };
         self.append_allocation(
             generation,
             semantic_identity,
@@ -999,8 +1023,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         destination: &mut NodeArena<D, Glue, Tokens>,
     ) -> Result<Vec<NodeListId<D>>, NodeArenaError>
     where
-        Glue: Clone,
-        Tokens: Clone,
+        Glue: Clone + Hash,
+        Tokens: Clone + Hash,
     {
         self.promote_into_with(
             roots,
@@ -1079,6 +1103,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     where
         Glue: Clone,
         Tokens: Clone,
+        OtherGlue: Hash,
+        OtherTokens: Hash,
     {
         let mut scratch = NodeRelocationScratch::default();
         Ok(self
@@ -1103,6 +1129,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     where
         Glue: Clone,
         Tokens: Clone,
+        OtherGlue: Hash,
+        OtherTokens: Hash,
     {
         scratch.begin();
         for root in roots {
@@ -1148,10 +1176,11 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 })
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
-            let semantic_identity = self.rows[source_index]
-                .as_ref()
-                .expect("postorder contains a live source row")
-                .semantic_identity;
+            let semantic_identity = if destination.semantic_identity_enabled {
+                semantic_sequence_identity(nodes.iter())
+            } else {
+                0
+            };
             let destination_id =
                 NodeListId::from_row(destination.owner, row, generation, semantic_identity);
             #[cfg(feature = "profiling")]

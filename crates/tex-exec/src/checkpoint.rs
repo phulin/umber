@@ -568,6 +568,16 @@ impl<G> EngineCheckpoint<G> {
         self.reachable_state_identity
     }
 
+    /// Exposes owner-published component roots to the focused checkpoint gate.
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub fn profile_mode_page_identity_roots(&self) -> (Option<u64>, Option<u64>) {
+        (
+            self.modes.reachable_state_identity_root(),
+            self.runtime.reachable_state_identity_roots().page(),
+        )
+    }
+
     #[must_use]
     pub const fn retention(&self) -> CheckpointRetention {
         self.retention

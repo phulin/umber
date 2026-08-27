@@ -323,6 +323,7 @@ fn insertion_classes_use_dense_direct_positions_and_canonical_iteration_order() 
 #[test]
 fn maintained_page_identity_covers_mutation_matrix_and_restore() {
     let mut page = PageBuilderState::default();
+    page.enable_reachable_state_identity();
     let initial = page
         .checkpoint_mark()
         .reachable_state_identity_root()
@@ -361,6 +362,8 @@ fn maintained_page_identity_covers_mutation_matrix_and_restore() {
 fn page_identity_is_order_invariant_for_sparse_maps_and_constant_read_after_suffix() {
     let mut left = PageBuilderState::default();
     let mut right = PageBuilderState::default();
+    left.enable_reachable_state_identity();
+    right.enable_reachable_state_identity();
     let mark7 = tokens(&[Token::param(7)]);
     let mark8 = tokens(&[Token::param(8)]);
     left.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(70)));
@@ -383,4 +386,42 @@ fn page_identity_is_order_invariant_for_sparse_maps_and_constant_read_after_suff
         left.push_current_page(kern(index));
     }
     assert_eq!(early.reachable_state_identity_root(), expected);
+}
+
+#[test]
+fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
+    let mut page = PageBuilderState::default();
+    page.enable_reachable_state_identity();
+    page.push_contribution(kern(1));
+    let early = page.checkpoint_mark();
+    page.push_contribution(kern(2));
+    let accepted_future = page
+        .checkpoint_mark()
+        .reachable_state_identity_root()
+        .expect("accepted future root");
+
+    page.begin_checkpoint_fork(early);
+    page.push_contribution(kern(3));
+    let rejected_candidate = page
+        .checkpoint_mark()
+        .reachable_state_identity_root()
+        .expect("rejected candidate root");
+    assert_ne!(rejected_candidate, accepted_future);
+    page.reject_checkpoint_fork();
+    assert_eq!(
+        page.checkpoint_mark().reachable_state_identity_root(),
+        Some(accepted_future),
+    );
+
+    page.begin_checkpoint_fork(early);
+    page.push_contribution(kern(4));
+    let committed_candidate = page
+        .checkpoint_mark()
+        .reachable_state_identity_root()
+        .expect("committed candidate root");
+    page.commit_checkpoint_fork();
+    assert_eq!(
+        page.checkpoint_mark().reachable_state_identity_root(),
+        Some(committed_candidate),
+    );
 }

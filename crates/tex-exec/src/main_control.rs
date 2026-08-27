@@ -2459,6 +2459,14 @@ impl<G> MainControl<G> {
         )
     }
 
+    /// Selects maintained convergence identity before an incremental session
+    /// begins ordinary execution.
+    #[doc(hidden)]
+    pub fn enable_reachable_state_identity(&mut self, stores: &mut Universe<G>) {
+        self.modes.enable_reachable_state_identity();
+        stores.enable_reachable_state_identity();
+    }
+
     /// Restores a named checkpoint into this command processor.  The
     /// checkpoint is quiescent, so command-owned replay episodes are reset
     /// rather than serialized into a durable format or editor boundary.

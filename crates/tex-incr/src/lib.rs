@@ -1045,6 +1045,7 @@ fn initialize_candidate_runtime<G: 'static>(
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
     control.attach_pure_memo_capability(universe);
+    control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
     let mut ledger = OutputLedger::new();
     ledger.commit_job_start(

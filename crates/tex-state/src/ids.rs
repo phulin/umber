@@ -3,7 +3,7 @@
 
 macro_rules! opaque_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(u32);
 
         impl $name {
@@ -25,12 +25,6 @@ macro_rules! opaque_id {
                 self.0
             }
         }
-
-        impl core::hash::Hash for $name {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                core::hash::Hash::hash(&self.raw(), state);
-            }
-        }
     };
 }
 
@@ -39,7 +33,7 @@ opaque_id!(SnapshotId);
 macro_rules! semantic_id {
     ($name:ident, $namespace:expr, $builtin_slots:expr) => {
         #[repr(transparent)]
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
         pub struct $name(crate::identity::HandleIdentity);
 
         #[allow(dead_code, unused_comparisons)]
@@ -79,6 +73,14 @@ macro_rules! semantic_id {
             #[must_use]
             pub const fn raw(self) -> u32 {
                 self.0.slot()
+            }
+        }
+
+        // Semantic projections use the dense slot, never the rollback owner
+        // namespace/generation embedded in the live capability.
+        impl core::hash::Hash for $name {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                core::hash::Hash::hash(&self.raw(), state);
             }
         }
     };

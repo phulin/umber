@@ -2506,6 +2506,14 @@ impl<G> Universe<G> {
         self.runtime_checkpoint_with_page_roots(false)
     }
 
+    /// Selects maintained mode/page convergence identity before page material
+    /// is published for an incremental session.
+    #[doc(hidden)]
+    pub fn enable_reachable_state_identity(&mut self) {
+        self.page.enable_reachable_state_identity();
+        self.page_nodes.enable_semantic_identity();
+    }
+
     /// Captures runtime roots while incorporating executor-owned page
     /// carriers into the generation's monotonic retained prefix.
     #[doc(hidden)]
@@ -2611,7 +2619,11 @@ impl<G> Universe<G> {
             font_roots_valid,
         });
         let pdf = self.pdf.snapshot();
+        let page = self.page.checkpoint_mark();
         let identity_roots = RuntimeCheckpointIdentityRoots {
+            page: wants_reachable_state_identity
+                .then(|| page.reachable_state_identity_root())
+                .flatten(),
             pdf: wants_reachable_state_identity.then(|| pdf.reachable_state_identity_root()),
             // The remaining owners do not yet expose canonical maintained
             // semantic roots. Their typed absence keeps aggregate identity
@@ -2621,7 +2633,7 @@ impl<G> Universe<G> {
         let checkpoint = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(owner, mark),
             state_slot,
-            page: self.page.checkpoint_mark(),
+            page,
             pdf,
             world: self.world.snapshot(),
             fonts: font_mark,

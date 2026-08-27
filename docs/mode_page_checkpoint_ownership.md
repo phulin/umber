@@ -34,6 +34,16 @@ extent before the old prior lineage is released. A later edit still has only
 the accepted prior and one private current suffix; no checkpoint, chunk, or
 list creates a third generation.
 
+When an incremental session requests convergence identity before job start,
+each ordered node lane also maintains a version-1 domain-separated polynomial
+identity beside its ordinary extent. Append, prepend, and end consumption use
+scalar arithmetic; the accepted/current (and contribution front/prior/back)
+regions compose from their fixed roots without walking payload. Immutable page
+list coordinates carry the semantic identity of their published child list,
+so relocation, arena owner, row, generation, and cursor changes do not change a
+mode or page root. This is derived state inside the existing coarse lane, not a
+cache, registry, per-node owner, or second ownership graph.
+
 A shipout transaction created inside a candidate records the accepted roots
 and the lengths of every candidate-private region in its fixed page mark.
 Rollback restores those coordinates after applying its move-only private
@@ -86,3 +96,13 @@ The storage may retain bounded spare capacity up to the generation's observed
 high-water mark. That capacity is reusable storage, not live semantic payload.
 No compaction, per-value owner, root registration, ordinary-path copy-on-write,
 or deferred prefix clone is permitted.
+
+Identity maintenance is selected once, before execution, by the incremental
+history session. Batch and other non-incremental sessions leave it disabled:
+node-sequence mutation, page-list publication, alignment/pending-run mutation,
+insertions, and marks then perform none of the new semantic hash work. In an
+enabled session, each coarse lane owns only fixed scalar roots and list ids
+reuse the identity computed while their immutable payload is published;
+checkpoint demand merely copies/composes those roots and allocates nothing.
+The optional `ModeCheckpoint` and runtime page hooks stay `None` for a disabled
+owner and are populated only for the enabled convergence owner.

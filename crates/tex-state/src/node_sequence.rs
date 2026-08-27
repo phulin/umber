@@ -364,6 +364,7 @@ pub struct NodeSequence {
     semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
     next_sequence_lineage_row: u32,
     page_node_root_count: usize,
+    semantic_identity_enabled: bool,
     semantic_identity: SemanticSequenceIdentity,
     candidate: Option<CandidateProjection>,
 }
@@ -407,6 +408,15 @@ impl PartialEq for NodeSequence {
 }
 
 impl NodeSequence {
+    /// Enables the inline semantic lane before a convergence session mutates it.
+    pub fn enable_semantic_identity(&mut self) {
+        if !self.semantic_identity_enabled {
+            assert!(self.candidate.is_none());
+            self.semantic_identity = SemanticSequenceIdentity::from_nodes(&self.semantic);
+            self.semantic_identity_enabled = true;
+        }
+    }
+
     #[must_use]
     pub fn mirrored(nodes: Vec<Node>) -> Self {
         let (semantic_high_cell_lineages, next_sequence_lineage_row) =
@@ -416,7 +426,8 @@ impl NodeSequence {
             .filter(|node| node_retains_page_handle(node))
             .count();
         Self {
-            semantic_identity: SemanticSequenceIdentity::from_nodes(&nodes),
+            semantic_identity_enabled: false,
+            semantic_identity: SemanticSequenceIdentity::empty(),
             semantic: nodes,
             projection: PhysicalProjection::Mirrored,
             semantic_high_cell_lineages,
@@ -455,7 +466,8 @@ impl NodeSequence {
             .filter(|node| node_retains_page_handle(node))
             .count();
         Self {
-            semantic_identity: SemanticSequenceIdentity::from_nodes(&semantic),
+            semantic_identity_enabled: false,
+            semantic_identity: SemanticSequenceIdentity::empty(),
             semantic,
             projection: PhysicalProjection::Distinct {
                 nodes: physical,
@@ -582,9 +594,11 @@ impl NodeSequence {
             candidate.page_node_root_count = candidate.page_node_root_count.saturating_sub(
                 usize::from(node_retains_page_handle(&node)) * if mirrored { 1 } else { 2 },
             );
-            candidate
-                .semantic_identity
-                .pop_back(semantic_node_identity(&node));
+            if self.semantic_identity_enabled {
+                candidate
+                    .semantic_identity
+                    .pop_back(semantic_node_identity(&node));
+            }
             return Some(node);
         }
         let index = candidate.semantic_root.checked_sub(1)?;
@@ -604,9 +618,11 @@ impl NodeSequence {
         candidate.page_node_root_count = candidate.page_node_root_count.saturating_sub(
             usize::from(node_retains_page_handle(&node)) * if mirrored { 1 } else { 2 },
         );
-        candidate
-            .semantic_identity
-            .pop_back(semantic_node_identity(&node));
+        if self.semantic_identity_enabled {
+            candidate
+                .semantic_identity
+                .pop_back(semantic_node_identity(&node));
+        }
         Some(node)
     }
 
@@ -646,7 +662,9 @@ impl NodeSequence {
             .filter(|node| node_retains_page_handle(node))
             .count();
         candidate.physical = logical.clone();
-        candidate.semantic_identity = SemanticSequenceIdentity::from_nodes(&logical);
+        if self.semantic_identity_enabled {
+            candidate.semantic_identity = SemanticSequenceIdentity::from_nodes(&logical);
+        }
         candidate.semantic = logical;
         Some(result)
     }
@@ -673,10 +691,14 @@ impl NodeSequence {
                 .push((index, self.semantic[index].clone()));
             candidate.replacements.len() - 1
         });
-        let old = semantic_node_identity(&candidate.replacements[position].1);
+        let old = self
+            .semantic_identity_enabled
+            .then(|| semantic_node_identity(&candidate.replacements[position].1));
         let result = mutate(&mut candidate.replacements[position].1);
-        let new = semantic_node_identity(&candidate.replacements[position].1);
-        candidate.semantic_identity.replace(index, old, new);
+        if let Some(old) = old {
+            let new = semantic_node_identity(&candidate.replacements[position].1);
+            candidate.semantic_identity.replace(index, old, new);
+        }
         Some(result)
     }
 
@@ -760,11 +782,13 @@ impl NodeSequence {
             candidate.semantic_high_cell_lineages.push(lineages.clone());
             candidate.physical_high_cell_lineages.push(lineages);
             candidate.page_node_root_count += usize::from(retains_page_root) * root_multiplier;
-            candidate
-                .semantic_identity
-                .push_back(semantic_node_identity(
-                    candidate.semantic.last().expect("pushed node"),
-                ));
+            if self.semantic_identity_enabled {
+                candidate
+                    .semantic_identity
+                    .push_back(semantic_node_identity(
+                        candidate.semantic.last().expect("pushed node"),
+                    ));
+            }
             return;
         }
         match &mut self.projection {
@@ -785,9 +809,11 @@ impl NodeSequence {
             }
         }
         self.page_node_root_count += usize::from(retains_page_root) * root_multiplier;
-        self.semantic_identity.push_back(semantic_node_identity(
-            self.semantic.last().expect("pushed semantic node"),
-        ));
+        if self.semantic_identity_enabled {
+            self.semantic_identity.push_back(semantic_node_identity(
+                self.semantic.last().expect("pushed semantic node"),
+            ));
+        }
     }
 
     pub fn extend_mirrored(&mut self, nodes: impl IntoIterator<Item = Node>) {
@@ -798,7 +824,11 @@ impl NodeSequence {
 
     pub fn replace_channels(&mut self, semantic: Vec<Node>, physical: Vec<Node>) {
         assert_eq!(semantic.len(), physical.len());
+        let enabled = self.semantic_identity_enabled;
         *self = Self::from_channels(semantic, physical);
+        if enabled {
+            self.enable_semantic_identity();
+        }
     }
 
     /// Mutates semantic nodes and atomically resets the physical channel to
@@ -815,7 +845,9 @@ impl NodeSequence {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
-        self.semantic_identity = SemanticSequenceIdentity::from_nodes(&self.semantic);
+        if self.semantic_identity_enabled {
+            self.semantic_identity = SemanticSequenceIdentity::from_nodes(&self.semantic);
+        }
         result
     }
 
@@ -850,7 +882,9 @@ impl NodeSequence {
                     .filter(|node| node_retains_page_handle(node))
                     .count(),
             };
-        self.semantic_identity = SemanticSequenceIdentity::from_nodes(&self.semantic);
+        if self.semantic_identity_enabled {
+            self.semantic_identity = SemanticSequenceIdentity::from_nodes(&self.semantic);
+        }
     }
 
     /// Restores a checkpointed suffix cursor and its maintained root count.

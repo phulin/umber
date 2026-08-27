@@ -8,13 +8,24 @@ use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct PageNodeSequence {
     nodes: Vec<Node>,
+    identity_enabled: bool,
     identity: SemanticSequenceIdentity,
 }
 
 impl PageNodeSequence {
     pub(super) fn from_nodes(nodes: Vec<Node>) -> Self {
-        let identity = SemanticSequenceIdentity::from_nodes(&nodes);
-        Self { nodes, identity }
+        Self {
+            nodes,
+            identity_enabled: false,
+            identity: SemanticSequenceIdentity::empty(),
+        }
+    }
+
+    pub(super) fn enable_semantic_identity(&mut self) {
+        if !self.identity_enabled {
+            self.identity = SemanticSequenceIdentity::from_nodes(&self.nodes);
+            self.identity_enabled = true;
+        }
     }
 
     pub(super) fn into_nodes(self) -> Vec<Node> {
@@ -45,13 +56,17 @@ impl PageNodeSequence {
     }
 
     pub(super) fn push(&mut self, node: Node) {
-        self.identity.push_back(semantic_node_identity(&node));
+        if self.identity_enabled {
+            self.identity.push_back(semantic_node_identity(&node));
+        }
         self.nodes.push(node);
     }
 
     pub(super) fn pop(&mut self) -> Option<Node> {
         let node = self.nodes.pop()?;
-        self.identity.pop_back(semantic_node_identity(&node));
+        if self.identity_enabled {
+            self.identity.pop_back(semantic_node_identity(&node));
+        }
         Some(node)
     }
 
@@ -62,7 +77,9 @@ impl PageNodeSequence {
 
     pub(super) fn truncate(&mut self, len: usize) {
         self.nodes.truncate(len);
-        self.identity = SemanticSequenceIdentity::from_nodes(&self.nodes);
+        if self.identity_enabled {
+            self.identity = SemanticSequenceIdentity::from_nodes(&self.nodes);
+        }
     }
 
     pub(super) fn take_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {

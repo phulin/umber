@@ -64,22 +64,27 @@ remain restore coordinates only. Ordinary capture does not request even this
 fixed projection. A focused restore test proves that a semantic PDF mutation
 perturbs the root and restoring its canonical cursor restores the root.
 
-The mode/page ownership work in `umber2-pei0.2.7` landed compact restore roots,
-not canonical semantic roots. Hashing their timeline, frame, cursor, or list
-length coordinates would fabricate equality. Their owner hooks therefore
-remain typed `None` pending the maintained canonical roots in
-`umber2-pei0.2.12`. Command, World, hyphenation, dependency, source, font, and
-core hooks likewise remain explicitly unavailable until their owners maintain
-complete canonical projections. The aggregate issue remains open until that
-exact pass; no owner identity or coordinate-derived transition value is hashed
-in the meantime.
+Mode and page now publish version-1 domain-separated canonical roots from their
+authoritative coarse owners. The incremental history session enables their
+inline root lanes before job start; ordinary batch owners keep them disabled
+and pay no node, token, alignment, insertion, mark, or arena-payload hashing.
+Enabled ordered lanes compose accepted/current and contribution
+front/prior/back roots in bounded scalar work. Checkpoint capture copies the
+mode root and publishes the page root only under exact-identity demand; neither
+path hashes a timeline, frame, cursor, owner, arena row, or payload scan.
+Command, World, hyphenation, dependency, source, font, and core hooks remain
+explicitly unavailable until their owners maintain complete canonical
+projections, so the aggregate still fails closed meanwhile.
 
 The focused perturbation test changes each component root independently and
 checks that every resulting complete identity differs. A separate capture
 test proves that both ordinary capture and requested-but-incomplete capture
 perform zero mode semantic traversals. The profiling-only
 `checkpoint_identity_gate` compares the two paths after warmup at one and 32
-mode levels and requires identical allocation calls and requested bytes.
+mode levels and requires identical allocation calls and requested bytes. It
+also retains an enabled early mode/page checkpoint across one and 4,096 suffix
+mutations, reads both published roots 4,096 times, and requires zero allocation
+calls and zero requested bytes at both depths.
 
 ## Publication-time retention outcome
 
@@ -146,6 +151,15 @@ hyphenation 7,168; World 7,168; PDF payload 0; dependencies 1,024;
 sources/fonts 2,048; execution counters 16. The PDF mark itself is fixed scalar
 metadata; its independent payload-retention and zero-allocation authority is
 the completed `pdf_checkpoint_gate` evidence from `umber2-66p0.23.1`.
+
+The 2026-08-27 post-mode/page-identity retention audit reports minimal mode/page
+charges of 1,968/528 bytes and accumulated 64-unit charges of 34,704/162,816
+bytes. Relative to the recorded pre-identity accumulated row, this is
++10,536 mode bytes and +4,608 page bytes in the existing coarse owners. The
+increase is fixed inline booleans/scalar sequence and component roots plus the
+bounded mode checkpoint root array; it creates no heap owner, registry, per-node
+allocation, or additional generation. Disabled batch owners have the same
+layout charge but execute none of the semantic hashing.
 
 At the recorded baseline, capture and restore copied accumulated command, mode, page,
 hyphenation, and World state. Checkpoint clone repeats most of those copies.

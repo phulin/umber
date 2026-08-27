@@ -96,16 +96,13 @@ fn runtime_identity_demand_publishes_only_available_owner_roots() {
             crate::RuntimeCheckpointIdentityRoots::default()
         );
 
+        universe.enable_reachable_state_identity();
         let demanded = universe
             .runtime_checkpoint_with_page_roots_and_identity(false, true)
             .expect("identity-demanded checkpoint");
         let roots = demanded.reachable_state_identity_roots();
         assert!(roots.pdf().is_some(), "PDF publishes a maintained root");
-        assert_eq!(
-            roots.page(),
-            None,
-            "page restore coordinates are not hashes"
-        );
+        assert!(roots.page().is_some(), "page publishes a maintained root");
         assert_eq!(roots.world(), None);
         assert_eq!(roots.hyphenation(), None);
         assert_eq!(roots.dependency(), None);

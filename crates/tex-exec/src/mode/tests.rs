@@ -831,6 +831,7 @@ fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
 #[test]
 fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
     let mut nest = ModeNest::new();
+    nest.enable_reachable_state_identity();
     let initial = nest
         .checkpoint()
         .reachable_state_identity_root()
@@ -863,6 +864,7 @@ fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
 #[test]
 fn rooted_mode_candidate_identity_rejects_without_layout_dependence() {
     let mut source = ModeNest::new();
+    source.enable_reachable_state_identity();
     source.current_list_mutation().push(kern(1));
     let root = source.checkpoint();
     let expected = root.reachable_state_identity_root();
@@ -871,9 +873,9 @@ fn rooted_mode_candidate_identity_rejects_without_layout_dependence() {
     }
     {
         let mut candidate = ModeNest::fork_checkpoint(&root).expect("candidate fork");
-        assert_eq!(Some(candidate.reachable_state_identity_root()), expected);
+        assert_eq!(candidate.reachable_state_identity_root(), expected);
         candidate.current_list_mutation().push(kern(9_001));
-        assert_ne!(Some(candidate.reachable_state_identity_root()), expected);
+        assert_ne!(candidate.reachable_state_identity_root(), expected);
     }
     assert_ne!(
         source.checkpoint().reachable_state_identity_root(),

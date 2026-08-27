@@ -160,22 +160,22 @@ All production mutation of live TeX state should pass through `Universe` or simi
   typed list coordinates.
 - `src/node_sequence.rs`: Explicit mirrored-or-distinct semantic and
   TeX-physical operation buffers. Mirrored hot lists store one node/inline
-  lineage channel with O(1) identity projection; cold detached extraction can
+  lineage channel with demand-enabled composable semantic identity; cold detached extraction can
   materialize two owned channels. Named checkpoints retain direct child
   coordinates without publishing duplicate page-arena rows. The module also
   owns TeX-cell lineage metadata and semantic-only equality.
 - `src/node_arena.rs`: Generation page and cold loaded-node arenas; copy-only
   typed/rebranded coordinates; shared immutable checkpoint rows; exact
   branch-local generation frontiers; owner-checked suffix cursors; borrowed
-  resolution; and cold-only exact-root relocation.
+  resolution; demand-enabled layout-independent list identities; and cold-only exact-root relocation.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.
 - `src/page.rs`: Page-lifetime builder state with directly owned contribution,
   current-page, discard, insertion, and mark buffers; active insertion classes
   and sparse mark classes retain canonical iteration order beside dense direct
-  lookup indexes. The aggregate Universe owns immutable page-list publication
-  and rollback cursors.
+  lookup indexes, plus demand-enabled authoritative component roots restored by
+  the existing marks. The aggregate Universe owns immutable page-list publication and rollback cursors.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, allocation-free scalar checkpoint marks,
