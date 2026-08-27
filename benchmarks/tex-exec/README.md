@@ -55,14 +55,17 @@ exact allocation equality, exact operation counters, and zero replay counters
 are the deterministic CPU-work gate. A stable timing comparison belongs in a
 repeated Criterion benchmark, not this correctness executable.
 
-`checkpoint_identity_gate` also covers the demand-selected mode/page semantic
-roots. It retains one early enabled checkpoint, applies one versus 4,096 later
-mode and page mutations, and reads both stored component roots 4,096 times.
-The 2026-08-27 gate recorded zero allocation calls and zero requested bytes at
-both suffix depths with the same checksum (`c6a236e27a381c6a`). Its ordinary
-versus requested-but-incomplete capture rows remain byte-identical at one and
-32 mode levels (32 calls and 282,968 requested bytes), proving that late demand
-does not turn batch owners into identity-tracking owners or scan their payload.
+`checkpoint_identity_gate` covers the demand-selected complete reachable-state
+identity. It retains one early enabled checkpoint, applies one versus 4,096
+later mode and page mutations, and reads both the aggregate identity and stored
+mode/page component roots 4,096 times. The gate requires zero allocation calls
+and zero requested bytes at both suffix depths. Its ordinary versus demanded
+capture rows must remain byte-identical at one and 32 mode levels, proving that
+identity reads are bounded and that batch owners do not scan or hash payloads.
+The completed 2026-08-27 run recorded zero allocations and zero requested bytes
+for both read depths with checksum `0eb2ec4c4855e84f`; ordinary and demanded
+capture both recorded 32 allocations and 293,264 requested bytes at one and 32
+mode levels.
 
 Run the shipout lowering cases with:
 

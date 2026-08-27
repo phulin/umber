@@ -20,11 +20,11 @@ fn main() {
         let demanded = sample(mode_levels, true);
         assert_eq!(
             ordinary.allocations, demanded.allocations,
-            "requesting an unavailable identity allocated for {mode_levels} mode levels"
+            "requesting the maintained identity allocated during checkpoint capture for {mode_levels} mode levels"
         );
         assert_eq!(
             ordinary.bytes_allocated, demanded.bytes_allocated,
-            "requesting an unavailable identity copied payload for {mode_levels} mode levels"
+            "requesting the maintained identity copied payload during checkpoint capture for {mode_levels} mode levels"
         );
         println!(
             "CHECKPOINT_IDENTITY_GATE mode_levels={mode_levels} ordinary_allocations={} demanded_allocations={} ordinary_requested_bytes={} demanded_requested_bytes={}",
@@ -41,6 +41,7 @@ fn early_root_read_gate() {
         with_universe(budget(), |universe| {
             let mut command = CommandState::new(CommandProfile::TEX82);
             let mut modes = ModeNest::new();
+            assert!(command.enable_reachable_state_identity());
             modes.enable_reachable_state_identity();
             universe.enable_reachable_state_identity();
             modes.push_current_node(Node::Penalty(-1));
@@ -58,6 +59,9 @@ fn early_root_read_gate() {
             .expect("early identity checkpoint");
             let expected = checkpoint.profile_mode_page_identity_roots();
             assert!(expected.0.is_some() && expected.1.is_some());
+            let expected_complete = checkpoint
+                .reachable_state_identity()
+                .expect("all authoritative roots are available");
             for index in 0..suffix {
                 modes.push_current_node(Node::Penalty(index as i32));
                 universe
@@ -71,14 +75,19 @@ fn early_root_read_gate() {
             for ordinal in 0..4_096 {
                 let roots = black_box(&checkpoint).profile_mode_page_identity_roots();
                 assert_eq!(roots, expected);
-                checksum ^= roots.0.expect("mode root").rotate_left(ordinal % 63)
+                let complete = black_box(&checkpoint)
+                    .reachable_state_identity()
+                    .expect("complete root remains available");
+                assert_eq!(complete, expected_complete);
+                checksum ^= complete.fingerprint().rotate_left(ordinal % 59)
+                    ^ roots.0.expect("mode root").rotate_left(ordinal % 63)
                     ^ roots.1.expect("page root").rotate_right(ordinal % 61);
             }
             let stats = region.change();
             assert_eq!(stats.allocations, 0, "identity reads allocated");
             assert_eq!(stats.bytes_allocated, 0, "identity reads requested bytes");
             println!(
-                "MODE_PAGE_IDENTITY_READ_GATE suffix={suffix} reads=4096 allocations={} requested_bytes={} checksum={checksum:016x}",
+                "REACHABLE_STATE_IDENTITY_READ_GATE suffix={suffix} reads=4096 allocations={} requested_bytes={} checksum={checksum:016x}",
                 stats.allocations, stats.bytes_allocated,
             );
         })
@@ -90,6 +99,11 @@ fn sample(mode_levels: usize, demand_identity: bool) -> Stats {
     with_universe(budget(), |universe| {
         let mut command = CommandState::new(CommandProfile::TEX82);
         let mut modes = ModeNest::new();
+        if demand_identity {
+            assert!(command.enable_reachable_state_identity());
+            modes.enable_reachable_state_identity();
+            universe.enable_reachable_state_identity();
+        }
         for level in 0..mode_levels {
             modes
                 .push(if level % 2 == 0 {
@@ -132,7 +146,10 @@ fn sample(mode_levels: usize, demand_identity: bool) -> Stats {
             )
         }
         .expect("measured checkpoint");
-        assert_eq!(checkpoint.reachable_state_identity(), None);
+        assert_eq!(
+            checkpoint.reachable_state_identity().is_some(),
+            demand_identity
+        );
         let stats = region.change();
         black_box(checkpoint);
         stats

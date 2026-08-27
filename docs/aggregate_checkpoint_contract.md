@@ -72,19 +72,23 @@ Enabled ordered lanes compose accepted/current and contribution
 front/prior/back roots in bounded scalar work. Checkpoint capture copies the
 mode root and publishes the page root only under exact-identity demand; neither
 path hashes a timeline, frame, cursor, owner, arena row, or payload scan.
-Command, World, hyphenation, dependency, source, font, and core hooks remain
-explicitly unavailable until their owners maintain complete canonical
-projections, so the aggregate still fails closed meanwhile.
+Command, World, hyphenation, dependency, source, font, and core now publish
+demand-enabled canonical roots beside the existing mode, page, and PDF roots.
+Selection occurs before incremental JobStart setup; ordinary batch owners do
+no added identity hashing. A late selection after an owner has crossed an
+untracked mutation barrier remains explicitly unavailable, so the aggregate
+continues to fail closed instead of substituting a cursor or owner id.
 
 The focused perturbation test changes each component root independently and
 checks that every resulting complete identity differs. A separate capture
-test proves that both ordinary capture and requested-but-incomplete capture
-perform zero mode semantic traversals. The profiling-only
+test proves that ordinary capture performs no semantic traversal. The
+profiling-only
 `checkpoint_identity_gate` compares the two paths after warmup at one and 32
 mode levels and requires identical allocation calls and requested bytes. It
-also retains an enabled early mode/page checkpoint across one and 4,096 suffix
-mutations, reads both published roots 4,096 times, and requires zero allocation
-calls and zero requested bytes at both depths.
+also retains an enabled early complete checkpoint across one and 4,096 suffix
+mutations, reads the aggregate identity and published mode/page roots 4,096
+times, and requires zero allocation calls and zero requested bytes at both
+depths.
 
 ## Publication-time retention outcome
 
@@ -253,6 +257,17 @@ transition: fork 41 / 45,800; restore 1 / 48; reject 4 / 44,192; accept 0 / 0;
 and first mutation 4 / 10,624. Seventeen-sample medians remained within the
 gate's conservative four-times diagnostic bound, while semantic sentinels and
 rejection/retry coordinate equality were checked independently.
+
+The rooted-lifecycle work in `umber2-pei0.2.13` replaces these independently
+materialized checkpoint banks with scalar marks plus one explicit edit-start
+rewind/materialization transaction. The identity seam is deliberately narrow:
+each owner keeps its demand latch and canonical accumulator, mutation barriers
+continue to apply the same old/new keyed contribution or ordered append, and
+the future checkpoint mark copies only the accumulator scalar. Rewind and
+candidate rejection restore that scalar through the same existing journal or
+owner mark. No identity placeholder, checkpoint census, or compensating scan
+is needed when `.2.13` removes `StateCore::checkpoint_copy` and the current
+World/source/font accepted-block fork path.
 
 ## Promotion thresholds
 
