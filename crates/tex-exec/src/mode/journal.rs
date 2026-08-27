@@ -31,6 +31,9 @@ struct ListProjection {
     node_len: usize,
     physical_node_len: usize,
     page_node_root_count: usize,
+    semantic_identity: tex_state::node_sequence::SemanticSequenceIdentity,
+    list_semantic_identity_root: u64,
+    component_roots: super::ModeComponentRoots,
     inverse_positions: [usize; FIELD_COUNT],
 }
 
@@ -41,6 +44,9 @@ impl ListProjection {
             node_len: list.nodes().len(),
             physical_node_len: list.physical_nodes().len(),
             page_node_root_count: list.sequence.page_node_root_count(),
+            semantic_identity: list.sequence.semantic_identity(),
+            list_semantic_identity_root: list.semantic_identity_root,
+            component_roots: list.component_roots,
             inverse_positions: [UNRECORDED; FIELD_COUNT],
         }
     }
@@ -53,6 +59,8 @@ pub(super) struct PendingHRunProjection {
     insertion_index: usize,
     source_len: usize,
     script: tex_fonts::Script,
+    source_identity_root: u64,
+    semantic_identity_root: u64,
 }
 
 impl PendingHRunProjection {
@@ -63,6 +71,8 @@ impl PendingHRunProjection {
             insertion_index: run.insertion_index,
             source_len: run.source.len(),
             script: run.script,
+            source_identity_root: run.source_identity_root,
+            semantic_identity_root: run.semantic_identity_root,
         }
     }
 
@@ -72,6 +82,8 @@ impl PendingHRunProjection {
         run.insertion_index = self.insertion_index;
         run.source.truncate(self.source_len);
         run.script = self.script;
+        run.source_identity_root = self.source_identity_root;
+        run.semantic_identity_root = self.semantic_identity_root;
     }
 }
 
@@ -671,7 +683,10 @@ impl ModeNestStorage {
                 projection.node_len,
                 projection.physical_node_len,
                 projection.page_node_root_count,
+                projection.semantic_identity,
             );
+            level.list.semantic_identity_root = projection.list_semantic_identity_root;
+            level.list.component_roots = projection.component_roots;
         }
         self.journal.projections.truncate(frame.projection_start);
         Ok(())

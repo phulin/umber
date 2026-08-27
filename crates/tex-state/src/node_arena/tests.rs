@@ -56,8 +56,8 @@ fn explicit_roots_promote_exact_closure_once() {
 
 #[test]
 fn sparse_relocation_maps_bound_capacity_by_live_keys_in_both_directions() {
-    let page_value = NodeListId::<PageLifetime>::from_row(9, 1, 11);
-    let durable_value = NodeListId::<Durable>::from_row(13, 1, 17);
+    let page_value = NodeListId::<PageLifetime>::from_row(9, 1, 11, 23);
+    let durable_value = NodeListId::<Durable>::from_row(13, 1, 17, 23);
     let mut durable_to_page = NodeRelocationScratch::<Durable, PageLifetime>::default();
     durable_to_page.begin();
     for key in [7, 1_000_000_007, usize::MAX - 1] {
@@ -317,7 +317,7 @@ fn retained_failed_region_remains_available_to_enclosing_rollback() {
 #[test]
 fn invalid_child_rejects_publication_without_growing_arena() {
     let mut arena = NodeArena::<PageLifetime>::new();
-    let invalid = NodeListId::from_row(arena.owner.wrapping_add(1), 1, 1);
+    let invalid = NodeListId::from_row(arena.owner.wrapping_add(1), 1, 1, 1);
     assert_eq!(
         arena.publish(vec![boxed(invalid)]),
         Err(NodeArenaError::InvalidList)

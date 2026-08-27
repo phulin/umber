@@ -5,9 +5,11 @@
 //! only while borrowing that arena. Lifetime transitions rebrand coordinates
 //! while the generation-owned row stays in place.
 
+use ahash::RandomState;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 use smallvec::SmallVec;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use crate::durable_arena::{GlueId, TokenListId};
@@ -31,6 +33,23 @@ fn next_list_generation_namespace() -> u64 {
         .expect("node-list generation namespace exhausted")
 }
 
+fn semantic_sequence_identity<'a, T: Hash + 'a>(values: impl IntoIterator<Item = &'a T>) -> u64 {
+    let state = RandomState::with_seeds(
+        0x756d_6265_725f_6e6f,
+        0x6465_5f73_656d_616e,
+        0x7469_635f_7631_5f66,
+        0x6978_6564_5f73_6565,
+    );
+    let mut sequence = crate::node_sequence::SemanticSequenceIdentity::empty();
+    for value in values {
+        let mut hasher = state.build_hasher();
+        hasher.write(b"umber-node-semantic-identity-v1");
+        value.hash(&mut hasher);
+        sequence.push_back(hasher.finish());
+    }
+    sequence.raw()
+}
+
 /// Operation-local node-list lifetime.
 pub enum ScratchLifetime {}
 
@@ -46,6 +65,7 @@ pub struct NodeListId<L> {
     owner: u64,
     row: u32,
     generation: u64,
+    semantic_identity: u64,
     _lifetime: PhantomData<fn(&L) -> &L>,
 }
 
@@ -54,20 +74,27 @@ impl<L> NodeListId<L> {
         owner: 0,
         row: 0,
         generation: 0,
+        semantic_identity: 0,
         _lifetime: PhantomData,
     };
 
-    const fn from_row(owner: u64, row: u32, generation: u64) -> Self {
+    const fn from_row(owner: u64, row: u32, generation: u64, semantic_identity: u64) -> Self {
         Self {
             owner,
             row,
             generation,
+            semantic_identity,
             _lifetime: PhantomData,
         }
     }
 
     pub(crate) const fn rebrand<D>(self) -> NodeListId<D> {
-        NodeListId::from_row(self.owner, self.row, self.generation)
+        NodeListId::from_row(
+            self.owner,
+            self.row,
+            self.generation,
+            self.semantic_identity,
+        )
     }
 
     const fn index(self) -> Option<usize> {
@@ -88,7 +115,7 @@ impl<L> NodeListId<L> {
         if row == 0 {
             Self::EMPTY
         } else {
-            Self::from_row(1, row, 1)
+            Self::from_row(1, row, 1, row as u64)
         }
     }
 
@@ -123,9 +150,7 @@ impl<L> Eq for NodeListId<L> {}
 
 impl<L> core::hash::Hash for NodeListId<L> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.owner.hash(state);
-        self.row.hash(state);
-        self.generation.hash(state);
+        self.semantic_identity.hash(state);
     }
 }
 
@@ -470,6 +495,7 @@ struct NodeArenaRow<L, Glue, Tokens> {
     generation: u64,
     segment: u32,
     offset: u32,
+    semantic_identity: u64,
     _lifetime: PhantomData<fn(&L, &Glue, &Tokens)>,
 }
 
@@ -499,6 +525,7 @@ impl<L, Glue, Tokens> Clone for NodeArenaRow<L, Glue, Tokens> {
             generation: self.generation,
             segment: self.segment,
             offset: self.offset,
+            semantic_identity: self.semantic_identity,
             _lifetime: PhantomData,
         }
     }
@@ -558,6 +585,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     fn append_allocation(
         &mut self,
         generation: u64,
+        semantic_identity: u64,
         allocation: NodeArenaAllocation<L, Glue, Tokens>,
     ) -> Result<(), NodeArenaError> {
         let can_append = self
@@ -597,6 +625,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             generation,
             segment: u32::try_from(segment_index).map_err(|_| NodeArenaError::CapacityOverflow)?,
             offset,
+            semantic_identity,
             _lifetime: PhantomData,
         }));
         Ok(())
@@ -886,7 +915,11 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     pub fn publish(
         &mut self,
         nodes: Vec<Node<NodeListId<L>, Glue, Tokens>>,
-    ) -> Result<NodeListId<L>, NodeArenaError> {
+    ) -> Result<NodeListId<L>, NodeArenaError>
+    where
+        Glue: Hash,
+        Tokens: Hash,
+    {
         if nodes.is_empty() {
             return Ok(NodeListId::empty());
         }
@@ -915,8 +948,10 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         let tex82_words = node_words(&nodes, false);
         let etex_words = node_words(&nodes, true);
         self.accounting.allocate_nodes(tex82_words, etex_words);
+        let semantic_identity = semantic_sequence_identity(nodes.iter());
         self.append_allocation(
             generation,
+            semantic_identity,
             NodeArenaAllocation {
                 nodes: nodes.into_boxed_slice(),
                 tex82_words,
@@ -924,7 +959,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 accounting: self.accounting.clone(),
             },
         )?;
-        Ok(NodeListId::from_row(self.owner, next, generation))
+        Ok(NodeListId::from_row(
+            self.owner,
+            next,
+            generation,
+            semantic_identity,
+        ))
     }
 
     /// Borrows one complete list.
@@ -1089,7 +1129,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             destination.next_generation = generation
                 .checked_add(1)
                 .expect("node-list generation exhausted");
-            let destination_id = NodeListId::from_row(destination.owner, row, generation);
             let nodes = self
                 .allocation(source_index)
                 .map(|allocation| allocation.nodes.as_ref())
@@ -1109,6 +1148,12 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 })
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
+            let semantic_identity = self.rows[source_index]
+                .as_ref()
+                .expect("postorder contains a live source row")
+                .semantic_identity;
+            let destination_id =
+                NodeListId::from_row(destination.owner, row, generation, semantic_identity);
             #[cfg(feature = "profiling")]
             crate::measurement::record_node_external_materialization(nodes.len());
             scratch.relocation.insert(source_index, destination_id);
@@ -1119,6 +1164,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
                 .allocate_nodes(tex82_words, etex_words);
             destination.append_allocation(
                 generation,
+                semantic_identity,
                 NodeArenaAllocation {
                     nodes,
                     tex82_words,

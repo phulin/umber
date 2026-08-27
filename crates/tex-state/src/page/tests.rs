@@ -319,3 +319,68 @@ fn insertion_classes_use_dense_direct_positions_and_canonical_iteration_order() 
     assert!(page.page_insertions().is_empty());
     assert_eq!(page.page_insertion(255), None);
 }
+
+#[test]
+fn maintained_page_identity_covers_mutation_matrix_and_restore() {
+    let mut page = PageBuilderState::default();
+    let initial = page
+        .checkpoint_mark()
+        .reachable_state_identity_root()
+        .expect("page root is available");
+    page.set_dimension(super::PageDimension::Goal, Scaled::from_raw(1));
+    page.push_contribution(kern(2));
+    page.push_current_page(kern(3));
+    page.push_page_discard(kern(4));
+    page.set_split_discards(vec![kern(5)]);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(6)));
+    page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(7)]));
+    let rooted = page.checkpoint_mark();
+    let expected = rooted
+        .reachable_state_identity_root()
+        .expect("page root is available");
+    assert_ne!(expected, initial);
+
+    page.prepend_contribution(kern(8));
+    page.push_current_page(kern(9));
+    page.clear_page_discards();
+    page.clear_split_discards();
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(10)));
+    page.clear_mark_class(PageMark::Bot, 7);
+    assert_ne!(
+        page.checkpoint_mark().reachable_state_identity_root(),
+        Some(expected)
+    );
+    page.restore_checkpoint_mark(rooted);
+    assert_eq!(
+        page.checkpoint_mark().reachable_state_identity_root(),
+        Some(expected)
+    );
+}
+
+#[test]
+fn page_identity_is_order_invariant_for_sparse_maps_and_constant_read_after_suffix() {
+    let mut left = PageBuilderState::default();
+    let mut right = PageBuilderState::default();
+    let mark7 = tokens(&[Token::param(7)]);
+    let mark8 = tokens(&[Token::param(8)]);
+    left.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(70)));
+    left.upsert_page_insertion(PageInsertion::new(8, Scaled::from_raw(80)));
+    left.set_mark_class(PageMark::First, 7, mark7.clone());
+    left.set_mark_class(PageMark::Bot, 8, mark8.clone());
+    right.set_mark_class(PageMark::Bot, 8, mark8);
+    right.set_mark_class(PageMark::First, 7, mark7);
+    right.upsert_page_insertion(PageInsertion::new(8, Scaled::from_raw(80)));
+    right.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(70)));
+    assert_eq!(
+        left.checkpoint_mark().reachable_state_identity_root(),
+        right.checkpoint_mark().reachable_state_identity_root()
+    );
+
+    let early = left.checkpoint_mark();
+    let expected = early.reachable_state_identity_root();
+    for index in 0..4_096 {
+        left.push_contribution(kern(index));
+        left.push_current_page(kern(index));
+    }
+    assert_eq!(early.reachable_state_identity_root(), expected);
+}

@@ -1,4 +1,5 @@
 use crate::node::Node;
+use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
 /// Current-page suffix owned directly by the page lifetime.
 ///
@@ -7,11 +8,13 @@ use crate::node::Node;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct PageNodeSequence {
     nodes: Vec<Node>,
+    identity: SemanticSequenceIdentity,
 }
 
 impl PageNodeSequence {
     pub(super) fn from_nodes(nodes: Vec<Node>) -> Self {
-        Self { nodes }
+        let identity = SemanticSequenceIdentity::from_nodes(&nodes);
+        Self { nodes, identity }
     }
 
     pub(super) fn into_nodes(self) -> Vec<Node> {
@@ -42,25 +45,35 @@ impl PageNodeSequence {
     }
 
     pub(super) fn push(&mut self, node: Node) {
+        self.identity.push_back(semantic_node_identity(&node));
         self.nodes.push(node);
     }
 
     pub(super) fn pop(&mut self) -> Option<Node> {
-        self.nodes.pop()
+        let node = self.nodes.pop()?;
+        self.identity.pop_back(semantic_node_identity(&node));
+        Some(node)
     }
 
     pub(super) fn clear(&mut self) {
         self.nodes.clear();
+        self.identity = SemanticSequenceIdentity::empty();
     }
 
     pub(super) fn truncate(&mut self, len: usize) {
         self.nodes.truncate(len);
+        self.identity = SemanticSequenceIdentity::from_nodes(&self.nodes);
     }
 
     pub(super) fn take_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
         let split_index = split_index.min(self.nodes.len());
         let after = self.nodes.split_off(split_index);
         let before = std::mem::take(&mut self.nodes);
+        self.identity = SemanticSequenceIdentity::empty();
         (before, after)
+    }
+
+    pub(super) const fn semantic_identity(&self) -> SemanticSequenceIdentity {
+        self.identity
     }
 }

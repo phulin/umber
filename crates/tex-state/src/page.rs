@@ -6,10 +6,13 @@ mod state_hash;
 
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
+use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 use crate::scaled::Scaled;
+use ahash::RandomState;
 use sequence::PageNodeSequence;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_PAGE_TIMELINE: AtomicU64 = AtomicU64::new(1);
@@ -593,6 +596,7 @@ pub(crate) struct PageBuilderState {
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
     page_node_root_count: usize,
+    semantic_roots: PageSemanticRoots,
     checkpoint_journal: PageCheckpointJournal,
 }
 
@@ -605,6 +609,8 @@ pub(crate) struct PageCheckpointMark {
     scalars: PageScalars,
     roots: PagePayloadRoots,
     candidate_roots: Option<PageCandidateRoots>,
+    semantic_roots: PageSemanticRoots,
+    reachable_state_identity_root: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -677,6 +683,7 @@ struct PagePayload {
     mark_class_positions: Vec<Option<u16>>,
     insertion_lane: Vec<InsertionLaneRecord>,
     mark_lane: Vec<MarkLaneRecord>,
+    semantic_roots: PageSemanticRoots,
 }
 
 #[derive(Clone)]
@@ -733,6 +740,15 @@ struct PageScalars {
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
     page_node_root_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PageSemanticRoots {
+    contribution: SemanticSequenceIdentity,
+    page_discards: SemanticSequenceIdentity,
+    split_discards: SemanticSequenceIdentity,
+    insertions: u64,
+    marks: u64,
 }
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,
@@ -802,6 +818,7 @@ impl Default for PageBuilderState {
             tex82_dynamic_words: 0,
             etex_dynamic_words: 0,
             page_node_root_count: 0,
+            semantic_roots: PageSemanticRoots::default(),
             checkpoint_journal: PageCheckpointJournal {
                 timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
                 next_frame: 1,
@@ -820,6 +837,66 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    fn reachable_state_identity_root(&self) -> u64 {
+        let mut hasher = page_identity_hasher(b"umber-page-semantic-root-v1");
+        1_u16.hash(&mut hasher);
+        match self.contents {
+            PageContents::Empty => 0_u8,
+            PageContents::InsertsOnly => 1,
+            PageContents::BoxThere => 2,
+        }
+        .hash(&mut hasher);
+        for value in [
+            self.page_goal,
+            self.page_total,
+            self.page_stretch,
+            self.page_fil_stretch,
+            self.page_fill_stretch,
+            self.page_filll_stretch,
+            self.page_shrink,
+            self.page_depth,
+            self.page_max_depth,
+        ] {
+            value.raw().hash(&mut hasher);
+        }
+        match self.last_glue {
+            Some(glue) => {
+                1_u8.hash(&mut hasher);
+                hash_page_glue(glue, &mut hasher);
+            }
+            None => 0_u8.hash(&mut hasher),
+        }
+        self.last_penalty.hash(&mut hasher);
+        self.last_kern.raw().hash(&mut hasher);
+        self.last_node_type.hash(&mut hasher);
+        self.insert_penalties.hash(&mut hasher);
+        self.dead_cycles.hash(&mut hasher);
+        self.least_page_cost.hash(&mut hasher);
+        self.best_page_break.map(PageBreak::index).hash(&mut hasher);
+        self.best_size.raw().hash(&mut hasher);
+        self.fire_up
+            .map(|value| {
+                (
+                    value.best_break().index(),
+                    value.best_size().raw(),
+                    value.trigger().index(),
+                )
+            })
+            .hash(&mut hasher);
+        for sequence in [
+            self.semantic_roots.contribution,
+            self.current_page.semantic_identity(),
+            self.semantic_roots.page_discards,
+            self.semantic_roots.split_discards,
+        ] {
+            sequence.len().hash(&mut hasher);
+            sequence.raw().hash(&mut hasher);
+        }
+        self.semantic_roots.insertions.hash(&mut hasher);
+        self.semantic_roots.marks.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub(crate) fn checkpoint_mark(&mut self) -> PageCheckpointMark {
         let frame = self.checkpoint_journal.next_frame;
         self.checkpoint_journal.next_frame = self
@@ -880,6 +957,8 @@ impl PageBuilderState {
             scalars,
             roots,
             candidate_roots,
+            semantic_roots: self.semantic_roots,
+            reachable_state_identity_root: Some(self.reachable_state_identity_root()),
         }
     }
 
@@ -938,6 +1017,7 @@ impl PageBuilderState {
             self.insertion_lane.truncate(candidate.insertion_lane_len);
             self.mark_lane.truncate(candidate.mark_lane_len);
         }
+        self.semantic_roots = mark.semantic_roots;
     }
 
     pub(crate) fn begin_checkpoint_fork(&mut self, mark: PageCheckpointMark) {
@@ -948,6 +1028,7 @@ impl PageBuilderState {
         let origin_scalars = self.scalar_snapshot();
         let flat_origin = Box::new(self.take_payload());
         self.restore_scalars(mark.scalars);
+        self.semantic_roots = mark.semantic_roots;
         let future = std::mem::take(&mut self.checkpoint_journal.inverses);
         let future_frames = std::mem::take(&mut self.checkpoint_journal.frames);
         self.checkpoint_journal.applied = 0;
@@ -1150,6 +1231,7 @@ impl PageBuilderState {
             mark_class_positions: std::mem::take(&mut self.mark_class_positions),
             insertion_lane: std::mem::take(&mut self.insertion_lane),
             mark_lane: std::mem::take(&mut self.mark_lane),
+            semantic_roots: std::mem::take(&mut self.semantic_roots),
         }
     }
 
@@ -1169,6 +1251,7 @@ impl PageBuilderState {
         self.mark_class_positions = payload.mark_class_positions;
         self.insertion_lane = payload.insertion_lane;
         self.mark_lane = payload.mark_lane;
+        self.semantic_roots = payload.semantic_roots;
     }
 
     fn record_scalars(&mut self) {
@@ -1731,6 +1814,10 @@ impl PageBuilderState {
     }
 
     pub(crate) fn set_mark(&mut self, mark: PageMark, value: NodeTokenList) {
+        if let Some(old) = self.mark_value(mark) {
+            self.semantic_roots.marks ^= mark_identity(0, mark, old);
+        }
+        self.semantic_roots.marks ^= mark_identity(0, mark, &value);
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::Marks([
                 self.top_mark.clone(),
@@ -1755,6 +1842,9 @@ impl PageBuilderState {
     }
 
     pub(crate) fn clear_mark(&mut self, mark: PageMark) {
+        if let Some(old) = self.mark_value(mark) {
+            self.semantic_roots.marks ^= mark_identity(0, mark, old);
+        }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::Marks([
                 self.top_mark.clone(),
@@ -1815,6 +1905,10 @@ impl PageBuilderState {
             self.set_mark(mark, value);
             return;
         }
+        if let Some(old) = self.mark_class_value(mark, class) {
+            self.semantic_roots.marks ^= mark_identity(class, mark, old);
+        }
+        self.semantic_roots.marks ^= mark_identity(class, mark, &value);
         if !self.checkpoint_journal.frames.is_empty() {
             let old = self
                 .mark_class_position(class)
@@ -1837,6 +1931,9 @@ impl PageBuilderState {
         let Some(position) = self.mark_class_position(class) else {
             return;
         };
+        if let Some(old) = self.mark_classes[position].1.get(mark) {
+            self.semantic_roots.marks ^= mark_identity(class, mark, old);
+        }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::MarkClass {
                 class,
@@ -1989,6 +2086,7 @@ impl PageBuilderState {
             .page_node_root_count
             .checked_sub(released_page_roots)
             .expect("released more page roots than were live");
+        self.semantic_roots.insertions = 0;
         self.contents = PageContents::Empty;
         self.last_glue = None;
         self.last_penalty = 0;
@@ -2036,7 +2134,9 @@ impl PageBuilderState {
         self.best_size = best_size;
         self.least_page_cost = cost;
         for insertion in &mut self.insertions {
+            self.semantic_roots.insertions ^= insertion_identity(*insertion);
             insertion.best_ins_index = insertion.last_ins_index;
+            self.semantic_roots.insertions ^= insertion_identity(*insertion);
         }
     }
 
@@ -2060,6 +2160,9 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPushBack(None));
         self.allocate_dynamic_node(&node);
+        self.semantic_roots
+            .contribution
+            .push_back(semantic_node_identity(&node));
         self.contribution.push_back(node);
     }
 
@@ -2078,6 +2181,8 @@ impl PageBuilderState {
             });
         }
         self.release_dynamic_nodes(&removed);
+        self.semantic_roots.contribution =
+            SemanticSequenceIdentity::from_nodes(self.contribution.iter());
         removed
     }
 
@@ -2085,6 +2190,9 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPushFront(None));
         self.allocate_dynamic_node(&node);
+        self.semantic_roots
+            .contribution
+            .push_front(semantic_node_identity(&node));
         if let Some(fork) = &mut self.checkpoint_journal.fork
             && fork.flat_origin.is_some()
             && fork.target_roots.is_some()
@@ -2154,12 +2262,18 @@ impl PageBuilderState {
                 }
             };
             self.release_dynamic_node(&node);
+            self.semantic_roots
+                .contribution
+                .pop_front(semantic_node_identity(&node));
             return Some(node);
         }
         let node = self.contribution.pop_front()?;
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPoppedFront(Some(node.clone())));
         self.release_dynamic_node(&node);
+        self.semantic_roots
+            .contribution
+            .pop_front(semantic_node_identity(&node));
         Some(node)
     }
 
@@ -2173,6 +2287,8 @@ impl PageBuilderState {
             nodes: None,
         });
         self.allocate_dynamic_nodes(&nodes);
+        let prefix = SemanticSequenceIdentity::from_nodes(&nodes);
+        self.semantic_roots.contribution = prefix.concat(self.semantic_roots.contribution);
         if let Some(fork) = &mut self.checkpoint_journal.fork
             && fork.flat_origin.is_some()
             && fork.target_roots.is_some()
@@ -2208,6 +2324,9 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscardsPush(None));
         self.allocate_dynamic_node(&node);
+        self.semantic_roots
+            .page_discards
+            .push_back(semantic_node_identity(&node));
         self.page_discards.push(node);
     }
 
@@ -2220,6 +2339,7 @@ impl PageBuilderState {
             roots.page_discards_end = 0;
             nodes.append(&mut self.page_discards);
             self.release_dynamic_nodes(&nodes);
+            self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
             return nodes;
         }
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2227,6 +2347,7 @@ impl PageBuilderState {
         }
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
+        self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
         nodes
     }
 
@@ -2238,6 +2359,7 @@ impl PageBuilderState {
             roots.page_discards_end = 0;
             let nodes = std::mem::take(&mut self.page_discards);
             self.release_dynamic_nodes(&nodes);
+            self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
             return;
         }
         let nodes = std::mem::take(&mut self.page_discards);
@@ -2245,6 +2367,7 @@ impl PageBuilderState {
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::PageDiscardsReplace(nodes));
         }
+        self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
     }
 
     pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
@@ -2254,6 +2377,7 @@ impl PageBuilderState {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
+        self.semantic_roots.split_discards = SemanticSequenceIdentity::from_nodes(&nodes);
         let old = std::mem::replace(&mut self.split_discards, nodes);
         self.release_dynamic_nodes(&old);
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2275,6 +2399,7 @@ impl PageBuilderState {
             roots.split_discards_end = 0;
             nodes.append(&mut self.split_discards);
             self.release_dynamic_nodes(&nodes);
+            self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
             return nodes;
         }
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2284,6 +2409,7 @@ impl PageBuilderState {
         }
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
+        self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
         nodes
     }
 
@@ -2295,6 +2421,7 @@ impl PageBuilderState {
             roots.split_discards_end = 0;
             let nodes = std::mem::take(&mut self.split_discards);
             self.release_dynamic_nodes(&nodes);
+            self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
             return;
         }
         let nodes = std::mem::take(&mut self.split_discards);
@@ -2302,6 +2429,7 @@ impl PageBuilderState {
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::SplitDiscardsReplace(nodes));
         }
+        self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
     }
 
     pub(crate) fn current_page_tail(&self) -> Option<&Node> {
@@ -2375,6 +2503,10 @@ impl PageBuilderState {
 
     pub(crate) fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
         let class = insertion.class();
+        if let Some(old) = self.page_insertion(class) {
+            self.semantic_roots.insertions ^= insertion_identity(old);
+        }
+        self.semantic_roots.insertions ^= insertion_identity(insertion);
         let old = (!self.checkpoint_journal.frames.is_empty())
             .then(|| self.page_insertion(class))
             .flatten();
@@ -2583,6 +2715,64 @@ impl PageBuilderState {
     pub(crate) const fn has_last_glue(&self) -> bool {
         self.last_glue.is_some()
     }
+}
+
+impl PageCheckpointMark {
+    #[must_use]
+    pub(crate) const fn reachable_state_identity_root(self) -> Option<u64> {
+        self.reachable_state_identity_root
+    }
+}
+
+fn page_identity_hasher(domain: &[u8]) -> ahash::AHasher {
+    let state = RandomState::with_seeds(
+        0x756d_6265_725f_7061,
+        0x6765_5f69_6465_6e74,
+        0x6974_795f_7631_5f66,
+        0x6978_6564_5f73_6565,
+    );
+    let mut hasher = state.build_hasher();
+    hasher.write(domain);
+    hasher
+}
+
+fn hash_page_glue(glue: GlueSpec, hasher: &mut impl Hasher) {
+    glue.width.raw().hash(hasher);
+    glue.stretch.raw().hash(hasher);
+    (glue.stretch_order as u8).hash(hasher);
+    glue.shrink.raw().hash(hasher);
+    (glue.shrink_order as u8).hash(hasher);
+}
+
+fn insertion_identity(insertion: PageInsertion) -> u64 {
+    let mut hasher = page_identity_hasher(b"umber-page-insertion-v1");
+    insertion.class.hash(&mut hasher);
+    match insertion.status {
+        PageInsertionStatus::Inserting => 0_u8.hash(&mut hasher),
+        PageInsertionStatus::SplitUp {
+            broken_ins_index,
+            broken_at,
+        } => {
+            1_u8.hash(&mut hasher);
+            broken_ins_index.hash(&mut hasher);
+            broken_at.hash(&mut hasher);
+        }
+    }
+    insertion.height.raw().hash(&mut hasher);
+    insertion.last_ins_index.hash(&mut hasher);
+    insertion.best_ins_index.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn mark_identity(class: u16, mark: PageMark, value: &NodeTokenList) -> u64 {
+    let mut hasher = page_identity_hasher(b"umber-page-mark-v1");
+    class.hash(&mut hasher);
+    mark.index().hash(&mut hasher);
+    value.words().len().hash(&mut hasher);
+    for word in value.words() {
+        word.raw().hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn dynamic_words<'a>(nodes: impl Iterator<Item = &'a Node>) -> (usize, usize) {

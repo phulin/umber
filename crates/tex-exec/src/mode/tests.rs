@@ -827,3 +827,56 @@ fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
     assert_eq!(source.current_list().nodes().len(), 4_097);
     assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
 }
+
+#[test]
+fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
+    let mut nest = ModeNest::new();
+    let initial = nest
+        .checkpoint()
+        .reachable_state_identity_root()
+        .expect("mode root is available");
+    nest.current_list_mutation().set_prev_graf(7);
+    let scalar = nest
+        .checkpoint()
+        .reachable_state_identity_root()
+        .expect("mode root is available");
+    assert_ne!(scalar, initial);
+    nest.current_list_mutation().push(kern(11));
+    let rooted = nest.checkpoint();
+    let expected = rooted
+        .reachable_state_identity_root()
+        .expect("mode root is available");
+    for index in 0..4_096 {
+        nest.current_list_mutation().push(kern(index));
+    }
+    assert_ne!(
+        nest.checkpoint().reachable_state_identity_root(),
+        Some(expected)
+    );
+    nest.restore_checkpoint(&rooted).expect("root restores");
+    assert_eq!(
+        nest.checkpoint().reachable_state_identity_root(),
+        Some(expected)
+    );
+}
+
+#[test]
+fn rooted_mode_candidate_identity_rejects_without_layout_dependence() {
+    let mut source = ModeNest::new();
+    source.current_list_mutation().push(kern(1));
+    let root = source.checkpoint();
+    let expected = root.reachable_state_identity_root();
+    for index in 0..4_096 {
+        source.current_list_mutation().push(kern(index));
+    }
+    {
+        let mut candidate = ModeNest::fork_checkpoint(&root).expect("candidate fork");
+        assert_eq!(Some(candidate.reachable_state_identity_root()), expected);
+        candidate.current_list_mutation().push(kern(9_001));
+        assert_ne!(Some(candidate.reachable_state_identity_root()), expected);
+    }
+    assert_ne!(
+        source.checkpoint().reachable_state_identity_root(),
+        expected
+    );
+}

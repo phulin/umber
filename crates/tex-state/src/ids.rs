@@ -3,7 +3,7 @@
 
 macro_rules! opaque_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
         pub struct $name(u32);
 
         impl $name {
@@ -23,6 +23,12 @@ macro_rules! opaque_id {
             #[must_use]
             pub const fn raw(self) -> u32 {
                 self.0
+            }
+        }
+
+        impl core::hash::Hash for $name {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                core::hash::Hash::hash(&self.raw(), state);
             }
         }
     };

@@ -502,23 +502,15 @@ pub(crate) fn append_pending_hchar<G>(
     ch: char,
     origin: OriginId,
 ) {
-    let mut appended = false;
-    let _ = list.with_pending_hchars_mut(|pending| {
-        if font_is_ltr_shaping
+    let script = list.pending_hchars().and_then(|pending| {
+        let script = tex_fonts::character_script(ch);
+        (font_is_ltr_shaping
             && is_supported_script(pending.script)
-            && is_supported_script(tex_fonts::character_script(ch))
-        {
-            let script = tex_fonts::character_script(ch);
-            if is_strong_script(script) {
-                pending.script = script;
-            }
-        }
-        pending
-            .source
-            .push(crate::mode::PendingHChar { font, ch, origin });
-        pending.current = PendingHRunChar::new(font, ch, origin);
-        appended = true;
+            && is_supported_script(script)
+            && is_strong_script(script))
+        .then_some(script)
     });
+    let appended = list.append_pending_hchar(font, ch, origin, script);
     if !appended {
         list.begin_pending_hchars(font, ch, origin);
     }
