@@ -47,7 +47,7 @@ impl ListProjection {
 }
 
 #[derive(Clone)]
-struct PendingHRunProjection {
+pub(super) struct PendingHRunProjection {
     first: super::PendingHChar,
     current: super::PendingHRunChar,
     insertion_index: usize,
@@ -56,7 +56,7 @@ struct PendingHRunProjection {
 }
 
 impl PendingHRunProjection {
-    fn capture(run: &super::PendingHRun) -> Self {
+    pub(super) fn capture(run: &super::PendingHRun) -> Self {
         Self {
             first: run.first.clone(),
             current: run.current.clone(),
@@ -376,15 +376,37 @@ impl ListJournal<'_> {
         );
     }
 
-    pub(super) fn record_pending_projection(&mut self, old: Option<&super::PendingHRun>) {
+    pub(super) fn record_pending_projection(&mut self, old: Option<PendingHRunProjection>) {
         if self.inverse_positions[PENDING_HCHARS] == UNRECORDED {
             self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
             self.inverses.push(Inverse::PendingHchars {
                 level_id: self.level_id,
-                old: old.map_or(PendingHcharsRollback::Absent, |run| {
-                    PendingHcharsRollback::Projection(PendingHRunProjection::capture(run))
-                }),
+                old: old.map_or(
+                    PendingHcharsRollback::Absent,
+                    PendingHcharsRollback::Projection,
+                ),
             });
+        }
+    }
+
+    pub(super) fn record_pending_owned(&mut self, mut old: Option<super::PendingHRun>) {
+        let position = self.inverse_positions[PENDING_HCHARS];
+        if position == UNRECORDED {
+            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
+            self.inverses.push(Inverse::PendingHchars {
+                level_id: self.level_id,
+                old: PendingHcharsRollback::Value(old),
+            });
+            return;
+        }
+        let Inverse::PendingHchars { old: rollback, .. } = &mut self.inverses[position] else {
+            unreachable!("pending-hchar field records its own inverse variant")
+        };
+        if let PendingHcharsRollback::Projection(projection) = rollback {
+            if let Some(run) = &mut old {
+                projection.clone().restore(run);
+            }
+            *rollback = PendingHcharsRollback::Value(old);
         }
     }
 

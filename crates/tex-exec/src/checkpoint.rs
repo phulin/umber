@@ -123,19 +123,35 @@ impl<G> EngineCheckpoint<G> {
     pub fn profile_mode_page_owner_cycle(
         &self,
         source: &mut Universe<G>,
-    ) -> Result<(u64, u64), CheckpointRestoreError> {
+    ) -> Result<[u64; 9], CheckpointRestoreError> {
         let mode_before = self.modes.replay_work();
         let mut modes =
             ModeNest::fork_checkpoint(&self.modes).map_err(CheckpointRestoreError::Mode)?;
+        let mode_replace = u64::from(
+            modes
+                .current_list_mutation()
+                .with_node_mut(0, |node| *node = tex_state::node::Node::Penalty(13))
+                .is_some(),
+        );
         modes.push_current_node(tex_state::node::Node::Penalty(17));
-        let _ = modes.current_list_mutation().pop_last_node();
-        let _ = modes.current_list_mutation().pop_last_node();
+        let mode_private_pop = u64::from(modes.current_list_mutation().pop_last_node().is_some());
+        let mode_root_pop = u64::from(modes.current_list_mutation().pop_last_node().is_some());
         drop(modes);
         let mode_work = self.modes.replay_work().saturating_sub(mode_before);
         let page_work = source
             .profile_page_owner_cycle(&self.runtime)
             .map_err(CheckpointRestoreError::Runtime)?;
-        Ok((mode_work, page_work))
+        Ok([
+            mode_work,
+            mode_replace,
+            mode_private_pop,
+            mode_root_pop,
+            page_work[0],
+            page_work[1],
+            page_work[2],
+            page_work[3] + page_work[4],
+            page_work[5],
+        ])
     }
 
     /// Captures a named boundary. Command publication proves that no scanner,

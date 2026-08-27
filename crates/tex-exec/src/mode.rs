@@ -582,21 +582,25 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
-        let old = self
-            .journal_is_active()
-            .then(|| self.list.pending_hchars.clone());
-        if let (Some(old), Some(mut journal)) = (old, self.list_journal()) {
-            journal.record_pending_projection(old.as_ref());
+        if self.journal_is_active() {
+            let old = self
+                .list
+                .pending_hchars
+                .as_ref()
+                .map(journal::PendingHRunProjection::capture);
+            if let Some(mut journal) = self.list_journal() {
+                journal.record_pending_projection(old);
+            }
         }
         self.list.begin_pending_hchars(font, ch, origin);
     }
 
     pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
-        let old = self
-            .journal_is_active()
-            .then(|| self.list.pending_hchars.clone());
-        if let (Some(old), Some(mut journal)) = (old, self.list_journal()) {
-            journal.record_pending_value(old.as_ref());
+        if self.journal_is_active() {
+            let old = self.list.take_pending_hchars();
+            if let Some(mut journal) = self.list_journal() {
+                journal.record_pending_owned(old);
+            }
         }
         self.list.set_pending_hchars(pending);
     }
@@ -615,11 +619,15 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl FnOnce(&mut PendingHRun) -> R,
     ) -> Option<R> {
-        let old = self
-            .journal_is_active()
-            .then(|| self.list.pending_hchars.clone());
-        if let (Some(old), Some(mut journal)) = (old, self.list_journal()) {
-            journal.record_pending_projection(old.as_ref());
+        if self.journal_is_active() {
+            let old = self
+                .list
+                .pending_hchars
+                .as_ref()
+                .map(journal::PendingHRunProjection::capture);
+            if let Some(mut journal) = self.list_journal() {
+                journal.record_pending_projection(old);
+            }
         }
         self.list.pending_hchars.as_mut().map(mutate)
     }
@@ -687,7 +695,7 @@ impl ModeListMutation<'_> {
 
     #[cfg(test)]
     pub(crate) fn set_align_state(&mut self, state: AlignState) {
-        let old = self.list.align_state.clone();
+        let old = self.list.take_align_state();
         if let Some(mut journal) = self.list_journal() {
             journal.record_align_state(old);
         }
@@ -716,7 +724,7 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
-        let old = self.list.incomplete_fraction.clone();
+        let old = self.list.take_incomplete_fraction();
         if let Some(mut journal) = self.list_journal() {
             journal.record_incomplete_fraction(old);
         }
@@ -736,7 +744,7 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
-        let old = self.list.display_interrupt.clone();
+        let old = self.list.take_display_interrupt();
         if let Some(mut journal) = self.list_journal() {
             journal.record_display_interrupt(old);
         }
@@ -752,7 +760,7 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
-        let old = self.list.display_eq_no.clone();
+        let old = self.list.take_display_eq_no();
         if let Some(mut journal) = self.list_journal() {
             journal.record_display_eq_no(old);
         }

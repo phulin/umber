@@ -35,13 +35,23 @@ ceilings sit below the checked-in pre-mode/page-migration baseline, so restoring
 an accumulated mode-list or page-builder clone makes the run fail rather than
 merely changing a diagnostic row.
 
-The final `MODE_PAGE_EARLY_SUFFIX_GATE` row captures a rootless checkpoint,
-then compares one versus 4,096 later mode nodes, page nodes, insertion writes,
-mark writes, and journal records. It isolates the mode/page owner fork, first
-mutation, and rejection seams from the command, core, and World ownership
-families. Allocation calls and requested bytes must be byte-for-byte equal;
-an explicit replay-work counter must remain zero, so a fast allocator result
-cannot conceal depth-dependent rewind or replay CPU work.
+The first `MODE_PAGE_EARLY_SUFFIX_GATE` row captures a genuinely rooted
+checkpoint containing mode, contribution, current-page, page-discard,
+split-discard, insertion, and mark values, then compares one versus 4,096 later
+writes in each growing lane. It isolates the mode/page owner fork, first
+destructive mutation, and rejection seams from the command, core, and World
+ownership families. The row reports each exercised destructive family:
+accepted-node replacement, private and accepted mode-tail removal,
+contribution and current-page removal, both discard clears, and insertion and
+mark replacement. Allocation calls and requested bytes must be byte-for-byte
+equal, and both replay-work counters must remain zero.
+
+The elapsed nanoseconds are a single-shot diagnostic, not a statistical
+threshold. Values such as 33 us versus 44 us for depths one and 4,096 represent
+the same fixed lifecycle work plus scheduler, cache, and allocator noise; the
+exact allocation equality, exact operation counters, and zero replay counters
+are the deterministic CPU-work gate. A stable timing comparison belongs in a
+repeated Criterion benchmark, not this correctness executable.
 
 Run the shipout lowering cases with:
 

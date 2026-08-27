@@ -34,6 +34,12 @@ extent before the old prior lineage is released. A later edit still has only
 the accepted prior and one private current suffix; no checkpoint, chunk, or
 list creates a third generation.
 
+A shipout transaction created inside a candidate records the accepted roots
+and the lengths of every candidate-private region in its fixed page mark.
+Rollback restores those coordinates after applying its move-only private
+inverses. It therefore cannot leave an accepted contribution, current-page, or
+discard root consumed merely because artifact lowering aborted.
+
 ## Mode marks
 
 A mode checkpoint records the mode-timeline lineage and serial, the semantic

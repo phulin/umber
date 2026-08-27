@@ -604,6 +604,7 @@ pub(crate) struct PageCheckpointMark {
     cursor: usize,
     scalars: PageScalars,
     roots: PagePayloadRoots,
+    candidate_roots: Option<PageCandidateRoots>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -615,6 +616,18 @@ struct PagePayloadRoots {
     split_discards_end: usize,
     insertion_end: usize,
     mark_end: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PageCandidateRoots {
+    accepted: PagePayloadRoots,
+    contribution_front_len: usize,
+    contribution_back_len: usize,
+    current_page_len: usize,
+    page_discards_len: usize,
+    split_discards_len: usize,
+    insertion_lane_len: usize,
+    mark_lane_len: usize,
 }
 
 #[derive(Clone)]
@@ -825,6 +838,18 @@ impl PageBuilderState {
             insertion_end: self.insertion_lane.len(),
             mark_end: self.mark_lane.len(),
         };
+        let candidate_roots = self.checkpoint_journal.fork.as_ref().and_then(|fork| {
+            Some(PageCandidateRoots {
+                accepted: fork.target_roots?,
+                contribution_front_len: fork.contribution_front.len(),
+                contribution_back_len: self.contribution.len(),
+                current_page_len: self.current_page.len(),
+                page_discards_len: self.page_discards.len(),
+                split_discards_len: self.split_discards.len(),
+                insertion_lane_len: self.insertion_lane.len(),
+                mark_lane_len: self.mark_lane.len(),
+            })
+        });
         self.checkpoint_journal
             .frames
             .push(PageCheckpointFrame { id: frame, cursor });
@@ -834,6 +859,7 @@ impl PageBuilderState {
             cursor,
             scalars,
             roots,
+            candidate_roots,
         }
     }
 
@@ -866,6 +892,7 @@ impl PageBuilderState {
             && mark.cursor <= self.checkpoint_journal.inverses.len()
             && mark.frame != 0
             && mark.frame < self.checkpoint_journal.next_frame
+            && mark.candidate_roots.is_some() == self.checkpoint_journal.fork.is_some()
     }
 
     pub(crate) fn restore_checkpoint_mark(&mut self, mark: PageCheckpointMark) {
@@ -878,6 +905,22 @@ impl PageBuilderState {
             let index = self.checkpoint_journal.applied;
             self.toggle_page_inverse(index);
             self.checkpoint_journal.applied += 1;
+        }
+        if let Some(candidate) = mark.candidate_roots {
+            let fork = self
+                .checkpoint_journal
+                .fork
+                .as_mut()
+                .expect("candidate mark retains its fork owner");
+            fork.target_roots = Some(candidate.accepted);
+            fork.contribution_front
+                .truncate(candidate.contribution_front_len);
+            self.contribution.truncate(candidate.contribution_back_len);
+            self.current_page.truncate(candidate.current_page_len);
+            self.page_discards.truncate(candidate.page_discards_len);
+            self.split_discards.truncate(candidate.split_discards_len);
+            self.insertion_lane.truncate(candidate.insertion_lane_len);
+            self.mark_lane.truncate(candidate.mark_lane_len);
         }
     }
 
@@ -2262,6 +2305,31 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::CurrentPagePush(None));
         self.allocate_dynamic_node(&node);
         self.current_page.push(node);
+    }
+
+    /// Removes one logical current-page tail without materializing an
+    /// accepted prefix. During a checkpoint fork the accepted owner remains
+    /// immutable: a private suffix is moved, or the accepted coordinate is
+    /// retreated and only the returned node is copied.
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn pop_current_page(&mut self) -> Option<Node> {
+        if let Some(fork) = &mut self.checkpoint_journal.fork
+            && let (Some(origin), Some(roots)) = (&fork.flat_origin, &mut fork.target_roots)
+        {
+            let node = self.current_page.pop().or_else(|| {
+                roots.current_page_end = roots.current_page_end.checked_sub(1)?;
+                origin.current_page.get(roots.current_page_end).cloned()
+            })?;
+            self.release_dynamic_node(&node);
+            return Some(node);
+        }
+        let node = self.current_page.pop()?;
+        self.record_scalars();
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::CurrentPagePush(Some(node.clone())));
+        }
+        self.release_dynamic_node(&node);
+        Some(node)
     }
 
     pub(crate) fn page_insertions(&self) -> PageInsertionView<'_> {

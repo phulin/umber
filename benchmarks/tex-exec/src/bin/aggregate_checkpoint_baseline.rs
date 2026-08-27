@@ -175,7 +175,12 @@ fn run_early_suffix_gate() {
                 let work = checkpoint
                     .profile_mode_page_owner_cycle(universe)
                     .expect("rooted owner cycle");
-                ((), work.0 ^ work.1.rotate_left(17))
+                assert_eq!(
+                    work,
+                    [0, 1, 1, 1, 0, 1, 1, 2, 2],
+                    "owner cycle skipped or replayed a destructive seam"
+                );
+                ((), work[0] ^ work[4].rotate_left(17))
             });
             assert_eq!(measurement.checksum, 0, "owner cycle replayed accepted history");
             observations.push((
@@ -192,7 +197,7 @@ fn run_early_suffix_gate() {
     assert_eq!(small.1, large.1, "owner-cycle allocations depend on suffix depth");
     assert_eq!(small.2, large.2, "owner-cycle bytes depend on suffix depth");
     println!(
-        "MODE_PAGE_EARLY_SUFFIX_GATE small_units={} large_units={} allocations={} requested_bytes={} small_ns={} large_ns={} replay_work=0",
+        "MODE_PAGE_EARLY_SUFFIX_GATE small_units={} large_units={} allocations={} requested_bytes={} small_ns={} large_ns={} mode_replay_work=0 page_replay_work=0 mode_replace=1 mode_private_pop=1 mode_root_pop=1 contribution_pop=1 current_pop=1 discard_clears=2 insertion_mark_updates=2",
         small.0,
         large.0,
         large.1,

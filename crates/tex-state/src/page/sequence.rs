@@ -53,6 +53,10 @@ impl PageNodeSequence {
         self.nodes.clear();
     }
 
+    pub(super) fn truncate(&mut self, len: usize) {
+        self.nodes.truncate(len);
+    }
+
     pub(super) fn take_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
         let split_index = split_index.min(self.nodes.len());
         let after = self.nodes.split_off(split_index);

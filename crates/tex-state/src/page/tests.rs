@@ -233,14 +233,44 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     assert_eq!(page.mark_class_value(PageMark::Bot, 7), Some(&rooted_mark));
 
     assert_eq!(page.pop_contribution_front(), Some(kern(-1)));
-    assert_eq!(page.take_current_page_prefix(1).0, [kern(-2)]);
-    assert_eq!(page.take_page_discards(), [kern(-3)]);
-    assert_eq!(page.take_split_discards(), [kern(-4)]);
+    assert_eq!(page.pop_current_page(), Some(kern(-2)));
+    page.clear_page_discards();
+    page.clear_split_discards();
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(99)));
     page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(8)]));
     page.reject_checkpoint_fork();
 
     assert_eq!(hash_page(&page), accepted_hash);
+    assert_eq!(page.contribution().len(), 4_097);
+}
+
+#[test]
+fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
+    let mut page = PageBuilderState::default();
+    page.push_contribution(kern(-1));
+    page.push_current_page(kern(-2));
+    page.push_page_discard(kern(-3));
+    page.set_split_discards(vec![kern(-4)]);
+    let checkpoint = page.checkpoint_mark();
+    for index in 0..4_096 {
+        page.push_contribution(kern(index));
+        page.push_current_page(kern(index));
+        page.push_page_discard(kern(index));
+    }
+
+    page.begin_checkpoint_fork(checkpoint);
+    let shipout = page.checkpoint_mark();
+    assert_eq!(page.pop_contribution_front(), Some(kern(-1)));
+    assert_eq!(page.pop_current_page(), Some(kern(-2)));
+    page.clear_page_discards();
+    page.clear_split_discards();
+    page.rollback_transaction(shipout);
+
+    assert_eq!(page.contribution().to_vec(), [kern(-1)]);
+    assert_eq!(page.current_page().cloned().collect::<Vec<_>>(), [kern(-2)]);
+    assert_eq!(page.take_page_discards(), [kern(-3)]);
+    assert_eq!(page.take_split_discards(), [kern(-4)]);
+    page.reject_checkpoint_fork();
     assert_eq!(page.contribution().len(), 4_097);
 }
 

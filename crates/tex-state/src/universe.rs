@@ -740,7 +740,7 @@ impl<G> Universe<G> {
     pub fn profile_page_owner_cycle(
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
-    ) -> Result<u64, UniverseError> {
+    ) -> Result<[u64; 6], UniverseError> {
         if !self.page.validates_checkpoint_mark(checkpoint.page) {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
@@ -748,10 +748,10 @@ impl<G> Universe<G> {
         let mut page = std::mem::take(&mut self.page);
         page.begin_checkpoint_fork(checkpoint.page);
         page.push_contribution(crate::node::Node::Penalty(19));
-        let _ = page.pop_contribution_front();
-        let _ = page.take_current_page_prefix(1);
-        let _ = page.take_page_discards();
-        let _ = page.take_split_discards();
+        let contribution = u64::from(page.pop_contribution_front().is_some());
+        let current = u64::from(page.pop_current_page().is_some());
+        page.clear_page_discards();
+        page.clear_split_discards();
         page.upsert_page_insertion(crate::page::PageInsertion::new(
             7,
             crate::scaled::Scaled::from_raw(29),
@@ -767,9 +767,9 @@ impl<G> Universe<G> {
             )]),
         );
         page.reject_checkpoint_fork();
-        let work = page.checkpoint_replay_work().saturating_sub(before);
+        let replay = page.checkpoint_replay_work().saturating_sub(before);
         self.page = page;
-        Ok(work)
+        Ok([replay, contribution, current, 1, 1, 2])
     }
     #[doc(hidden)]
     pub fn prune_pdf_history(&mut self, low_water: (u64, u64)) {
