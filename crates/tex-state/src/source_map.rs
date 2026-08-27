@@ -330,13 +330,75 @@ pub(crate) struct SourceMapMark {
     identities: IdentityMark,
 }
 
+/// One immutable source-map prefix accepted at a revision boundary.
+///
+/// Rows and their coarse indexes are shared as one block. A candidate opens
+/// empty vectors and maps for its suffix; source values never acquire
+/// per-registration owners.
+#[derive(Debug)]
+struct AcceptedSourceBlock {
+    parent: Option<Arc<Self>>,
+    regions: Arc<Vec<SourceRegion>>,
+    registration_roots: Arc<Vec<SourceRegistrationRef>>,
+    region_by_source: Arc<AHashMap<SourceId, usize>>,
+    generated: Arc<Vec<GeneratedSource>>,
+    region_len: usize,
+    generated_len: usize,
+    total_regions: usize,
+    total_generated: usize,
+}
+
+impl AcceptedSourceBlock {
+    fn region_for_source(&self, source: SourceId) -> Option<SourceRegion> {
+        self.region_by_source
+            .get(&source)
+            .and_then(|index| {
+                let base = self.total_regions - self.region_len;
+                (*index >= base)
+                    .then(|| self.regions.get(*index - base))
+                    .flatten()
+            })
+            .copied()
+            .or_else(|| self.parent.as_ref()?.region_for_source(source))
+    }
+
+    fn region_for_position(&self, position: SourcePos) -> Option<SourceRegion> {
+        let region = self.regions[..self.region_len]
+            .iter()
+            .rev()
+            .find(|region| region.start.0 <= position.0)
+            .copied();
+        region.or_else(|| self.parent.as_ref()?.region_for_position(position))
+    }
+
+    fn registration(&self, index: usize) -> Option<&SourceRegistrationRef> {
+        let base = self.total_regions - self.region_len;
+        if index < base {
+            return self.parent.as_ref()?.registration(index);
+        }
+        self.registration_roots
+            .get(index - base)
+            .filter(|_| index < self.total_regions)
+    }
+
+    fn generated(&self, index: usize) -> Option<&GeneratedSource> {
+        let base = self.total_generated - self.generated_len;
+        if index < base {
+            return self.parent.as_ref()?.generated(index);
+        }
+        self.generated
+            .get(index - base)
+            .filter(|_| index < self.total_generated)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SourceMap {
-    regions: Vec<SourceRegion>,
-    registration_roots: Vec<SourceRegistrationRef>,
-    region_by_source: AHashMap<SourceId, usize>,
-    line_starts: Vec<Arc<[usize]>>,
-    generated: Vec<GeneratedSource>,
+    accepted: Option<Arc<AcceptedSourceBlock>>,
+    regions: Arc<Vec<SourceRegion>>,
+    registration_roots: Arc<Vec<SourceRegistrationRef>>,
+    region_by_source: Arc<AHashMap<SourceId, usize>>,
+    generated: Arc<Vec<GeneratedSource>>,
     next_pos: u64,
     forced_next_pos: bool,
     identities: IdentityAllocator,
@@ -345,11 +407,11 @@ pub(crate) struct SourceMap {
 impl Default for SourceMap {
     fn default() -> Self {
         Self {
-            regions: Vec::new(),
-            registration_roots: Vec::new(),
-            region_by_source: AHashMap::new(),
-            line_starts: Vec::new(),
-            generated: Vec::new(),
+            accepted: None,
+            regions: Arc::new(Vec::new()),
+            registration_roots: Arc::new(Vec::new()),
+            region_by_source: Arc::new(AHashMap::new()),
+            generated: Arc::new(Vec::new()),
             next_pos: 0,
             forced_next_pos: false,
             identities: IdentityAllocator::new(0),
@@ -360,11 +422,11 @@ impl Default for SourceMap {
 impl Clone for SourceMap {
     fn clone(&self) -> Self {
         Self {
-            regions: self.regions.clone(),
-            registration_roots: self.registration_roots.clone(),
-            region_by_source: self.region_by_source.clone(),
-            line_starts: self.line_starts.clone(),
-            generated: self.generated.clone(),
+            accepted: self.accepted.clone(),
+            regions: Arc::clone(&self.regions),
+            registration_roots: Arc::clone(&self.registration_roots),
+            region_by_source: Arc::clone(&self.region_by_source),
+            generated: Arc::clone(&self.generated),
             next_pos: self.next_pos,
             forced_next_pos: self.forced_next_pos,
             identities: self.identities.fork(),
@@ -373,6 +435,28 @@ impl Clone for SourceMap {
 }
 
 impl SourceMap {
+    fn accepted_region_len(&self) -> usize {
+        self.accepted
+            .as_ref()
+            .map_or(0, |block| block.total_regions)
+    }
+
+    fn accepted_generated_len(&self) -> usize {
+        self.accepted
+            .as_ref()
+            .map_or(0, |block| block.total_generated)
+    }
+
+    fn region_len(&self) -> usize {
+        self.accepted_region_len()
+            .saturating_add(self.regions.len())
+    }
+
+    fn generated_len(&self) -> usize {
+        self.accepted_generated_len()
+            .saturating_add(self.generated.len())
+    }
+
     #[cfg(test)]
     pub(crate) fn set_next_position_for_test(&mut self, next_pos: u64) {
         assert!(self.regions.is_empty());
@@ -417,9 +501,9 @@ impl SourceMap {
         let backing = match descriptor {
             SourceDescriptor::World { input_record, .. } => SourceBacking::World(input_record),
             SourceDescriptor::Generated(generated) => {
-                let raw = u32::try_from(self.generated.len())
+                let raw = u32::try_from(self.generated_len())
                     .map_err(|_| SourceMapError::LogicalPositionExhausted)?;
-                self.generated.push(generated);
+                Arc::make_mut(&mut self.generated).push(generated);
                 SourceBacking::Generated(GeneratedSourceId(raw))
             }
         };
@@ -427,26 +511,26 @@ impl SourceMap {
             .identities
             .allocate()
             .map_err(|_| SourceMapError::LogicalPositionExhausted)?;
-        let region_index = self.regions.len();
-        self.regions.push(SourceRegion {
+        let region_index = self.region_len();
+        Arc::make_mut(&mut self.regions).push(SourceRegion {
             start: SourcePos(start),
             byte_len,
             source,
             backing,
             identity,
         });
-        self.registration_roots
-            .push(SourceRegistrationRef(Arc::new(SourceRegistrationValue {
-                region: self.regions[region_index],
+        Arc::make_mut(&mut self.registration_roots).push(SourceRegistrationRef(Arc::new(
+            SourceRegistrationValue {
+                region: *self.regions.last().expect("registered source row exists"),
                 descriptor: owned_descriptor,
                 line_starts: Arc::clone(&line_starts),
-            })));
+            },
+        )));
         assert_eq!(
-            self.region_by_source.insert(source, region_index),
+            Arc::make_mut(&mut self.region_by_source).insert(source, region_index),
             None,
             "live source registration is unique"
         );
-        self.line_starts.push(line_starts);
         self.next_pos = next_pos;
         Ok(SourcePos(start))
     }
@@ -535,11 +619,17 @@ impl SourceMap {
     }
 
     pub(crate) fn region_for_source(&self, source: SourceId) -> Option<SourceRegion> {
+        let base = self.accepted_region_len();
         let region = self
             .region_by_source
             .get(&source)
-            .and_then(|index| self.regions.get(*index))
-            .copied()?;
+            .and_then(|index| {
+                (*index >= base)
+                    .then(|| self.regions.get(*index - base))
+                    .flatten()
+                    .copied()
+            })
+            .or_else(|| self.accepted.as_ref()?.region_for_source(source))?;
         (region.source == source && self.identities.contains(region.identity)).then_some(region)
     }
 
@@ -548,8 +638,7 @@ impl SourceMap {
         if span.hi().0 > region.anchor().0 {
             return None;
         }
-        self.registration_roots
-            .get(region.identity.slot() as usize)
+        self.registration(region.identity.slot() as usize)
             .filter(|registration| registration.region() == region)
             .cloned()
     }
@@ -559,8 +648,7 @@ impl SourceMap {
         source: SourceId,
     ) -> Option<SourceRegistrationRef> {
         let region = self.region_for_source(source)?;
-        self.registration_roots
-            .get(region.identity.slot() as usize)
+        self.registration(region.identity.slot() as usize)
             .filter(|registration| registration.region() == region)
             .cloned()
     }
@@ -571,11 +659,12 @@ impl SourceMap {
     }
 
     pub(crate) fn region_for_position(&self, position: SourcePos) -> Option<SourceRegion> {
-        let index = self
+        let region = self
             .regions
             .partition_point(|region| region.start.0 <= position.0)
-            .checked_sub(1)?;
-        let region = self.regions[index];
+            .checked_sub(1)
+            .map(|index| self.regions[index])
+            .or_else(|| self.accepted.as_ref()?.region_for_position(position))?;
         (position.0 <= region.anchor().0 && self.identities.contains(region.identity))
             .then_some(region)
     }
@@ -586,30 +675,37 @@ impl SourceMap {
     }
 
     pub(crate) fn generated(&self, id: GeneratedSourceId) -> Option<&GeneratedSource> {
-        self.generated.get(id.0 as usize)
+        let index = id.0 as usize;
+        let base = self.accepted_generated_len();
+        if index < base {
+            return self.accepted.as_ref()?.generated(index);
+        }
+        self.generated.get(index - base)
     }
 
     #[cfg(test)]
     pub(crate) fn line_starts(&self, region: SourceRegion) -> Option<&[usize]> {
         self.identities
             .contains(region.identity)
-            .then(|| self.line_starts.get(region.identity.slot() as usize))
+            .then(|| self.line_starts_at(region.identity.slot() as usize))
             .flatten()
             .map(AsRef::as_ref)
     }
 
     pub(crate) fn watermark(&self) -> SourceMapMark {
         SourceMapMark {
-            regions: self.regions.len(),
-            generated: self.generated.len(),
+            regions: self.region_len(),
+            generated: self.generated_len(),
             next_pos: self.next_pos,
             identities: self.identities.watermark(),
         }
     }
 
     pub(crate) fn validates(&self, mark: SourceMapMark) -> bool {
-        mark.regions <= self.regions.len()
-            && mark.generated <= self.generated.len()
+        mark.regions >= self.accepted_region_len()
+            && mark.regions <= self.region_len()
+            && mark.generated >= self.accepted_generated_len()
+            && mark.generated <= self.generated_len()
             && (mark.next_pos <= self.next_pos || !self.forced_next_pos)
             && self.identities.validate_rollback(mark.identities).is_ok()
     }
@@ -619,25 +715,114 @@ impl SourceMap {
     }
 
     fn truncate_to_inner(&mut self, mark: SourceMapMark) {
-        assert!(mark.regions <= self.regions.len());
-        assert!(mark.generated <= self.generated.len());
+        let region_base = self.accepted_region_len();
+        let generated_base = self.accepted_generated_len();
+        assert!((region_base..=self.region_len()).contains(&mark.regions));
+        assert!((generated_base..=self.generated_len()).contains(&mark.generated));
         assert!(mark.next_pos <= self.next_pos || !self.forced_next_pos);
         self.identities
             .rollback(mark.identities)
             .expect("source-map mark is not an ancestor");
-        for (index, region) in self.regions[mark.regions..].iter().enumerate() {
+        let local_regions = mark.regions - region_base;
+        for (index, region) in self.regions[local_regions..].iter().enumerate() {
             assert_eq!(
-                self.region_by_source.remove(&region.source),
-                Some(mark.regions + index),
+                Arc::make_mut(&mut self.region_by_source).remove(&region.source),
+                Some(region_base + local_regions + index),
                 "live source index matches rollback suffix"
             );
         }
-        self.regions.truncate(mark.regions);
-        self.registration_roots.truncate(mark.regions);
-        self.line_starts.truncate(mark.regions);
-        self.generated.truncate(mark.generated);
+        Arc::make_mut(&mut self.regions).truncate(local_regions);
+        Arc::make_mut(&mut self.registration_roots).truncate(local_regions);
+        Arc::make_mut(&mut self.generated).truncate(mark.generated - generated_base);
         if self.forced_next_pos {
             self.next_pos = mark.next_pos;
         }
+    }
+
+    fn registration(&self, index: usize) -> Option<&SourceRegistrationRef> {
+        let base = self.accepted_region_len();
+        if index < base {
+            return self.accepted.as_ref()?.registration(index);
+        }
+        self.registration_roots.get(index - base)
+    }
+
+    #[cfg(test)]
+    fn line_starts_at(&self, index: usize) -> Option<&[usize]> {
+        self.registration(index)
+            .map(|registration| registration.0.line_starts.as_ref())
+    }
+
+    pub(crate) fn fork_at(&self, mark: SourceMapMark) -> Self {
+        assert!(self.validates(mark));
+        let parent_regions = self.accepted_region_len();
+        let parent_generated = self.accepted_generated_len();
+        let region_len = mark.regions - parent_regions;
+        let generated_len = mark.generated - parent_generated;
+        let accepted = if region_len == 0 && generated_len == 0 {
+            self.accepted.clone()
+        } else {
+            Some(Arc::new(AcceptedSourceBlock {
+                parent: self.accepted.clone(),
+                regions: Arc::clone(&self.regions),
+                registration_roots: Arc::clone(&self.registration_roots),
+                region_by_source: Arc::clone(&self.region_by_source),
+                generated: Arc::clone(&self.generated),
+                region_len,
+                generated_len,
+                total_regions: mark.regions,
+                total_generated: mark.generated,
+            }))
+        };
+        let mut identities = self.identities.fork();
+        identities
+            .rollback(mark.identities)
+            .expect("source-map fork mark is an ancestor");
+        Self {
+            accepted,
+            regions: Arc::new(Vec::new()),
+            registration_roots: Arc::new(Vec::new()),
+            region_by_source: Arc::new(AHashMap::new()),
+            generated: Arc::new(Vec::new()),
+            next_pos: mark.next_pos,
+            forced_next_pos: self.forced_next_pos,
+            identities,
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn retained_payload_bytes(&self) -> usize {
+        let region_bytes = self
+            .regions_for_profile()
+            .map(|region| {
+                std::mem::size_of::<SourceRegion>()
+                    + self
+                        .registration(region.identity.slot() as usize)
+                        .map_or(0, |registration| {
+                            registration.0.line_starts.len() * std::mem::size_of::<usize>()
+                        })
+            })
+            .sum::<usize>();
+        let generated_bytes = (0..self.generated_len())
+            .filter_map(|index| self.generated(GeneratedSourceId(index as u32)))
+            .map(GeneratedSource::len)
+            .sum::<usize>();
+        region_bytes.saturating_add(generated_bytes)
+    }
+
+    #[cfg(feature = "profiling")]
+    fn regions_for_profile(&self) -> impl Iterator<Item = SourceRegion> + '_ {
+        (0..self.region_len()).filter_map(|index| {
+            if index < self.accepted_region_len() {
+                self.accepted
+                    .as_ref()?
+                    .registration(index)
+                    .map(SourceRegistrationRef::region)
+            } else {
+                self.regions
+                    .get(index - self.accepted_region_len())
+                    .copied()
+            }
+        })
     }
 }

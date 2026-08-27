@@ -228,6 +228,8 @@ pub use universe::{
     with_universe_in_epoch,
 };
 #[cfg(feature = "profiling")]
+pub use universe::{SourceFontCheckpointHarness, SourceFontCheckpointMark};
+#[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;
 pub use world::{
     ArtifactOrigin, ArtifactPublicationId, ArtifactPublicationRecord,

@@ -882,7 +882,6 @@ impl ReadTarget {
 pub struct StreamBufState {
     read_streams: [Option<ReadTarget>; STREAM_SLOT_COUNT],
     write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
-    partial_lines: [String; STREAM_SLOT_COUNT],
     log_partial_line: String,
     terminal_partial_line: String,
     terminal_input_next: usize,
@@ -912,11 +911,6 @@ impl StreamBufState {
     #[must_use]
     pub fn write_stream_target(&self, slot: StreamSlot) -> Option<&WriteTarget> {
         self.write_streams[slot.index()].as_ref()
-    }
-
-    #[must_use]
-    pub fn partial_line(&self, slot: StreamSlot) -> &str {
-        &self.partial_lines[slot.index()]
     }
 
     #[must_use]
@@ -1617,6 +1611,27 @@ impl AcceptedEffectBlock {
             })
             .or_else(|| self.parent.as_ref()?.semantic_counter(key))
     }
+
+    #[cfg(feature = "profiling")]
+    fn retained_payload_bytes(&self) -> usize {
+        self.parent
+            .as_ref()
+            .map_or(0, |parent| parent.retained_payload_bytes())
+            .saturating_add(
+                self.effects[..self.len]
+                    .iter()
+                    .map(effect_retained_bytes)
+                    .sum::<usize>(),
+            )
+            .saturating_add(self.len.saturating_mul(
+                std::mem::size_of::<EffectSequence>()
+                    + std::mem::size_of::<Option<EffectPublicationId>>()
+                    + std::mem::size_of::<Option<EffectPublicationRecordOrdinal>>()
+                    + std::mem::size_of::<EffectDomain>()
+                    + std::mem::size_of::<EffectSemanticRecordOrdinal>()
+                    + std::mem::size_of::<EffectPlacementIntraOrder>(),
+            ))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1677,6 +1692,27 @@ impl AcceptedInputBlock {
             .get(&hash)
             .cloned()
             .or_else(|| self.parent.as_ref()?.content_root(hash))
+    }
+
+    #[cfg(feature = "profiling")]
+    fn retained_payload_bytes(&self) -> usize {
+        self.parent
+            .as_ref()
+            .map_or(0, |parent| parent.retained_payload_bytes())
+            .saturating_add(
+                self.records[..self.len]
+                    .iter()
+                    .map(|record| {
+                        std::mem::size_of::<InputRecord>()
+                            .saturating_add(record.path.as_os_str().len())
+                            .saturating_add(
+                                self.contents
+                                    .get(&record.hash)
+                                    .map_or(0, |bytes| bytes.len()),
+                            )
+                    })
+                    .sum::<usize>(),
+            )
     }
 }
 
@@ -2343,6 +2379,47 @@ impl World {
     #[must_use]
     pub fn profile_checkpoint_fork(&self, snapshot: &WorldSnapshot) -> Self {
         self.fork_checkpoint(snapshot)
+    }
+
+    /// Logical payload charged once to this World's accepted/current lineage
+    /// and committed-artifact owner by the standalone checkpoint gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_retained_checkpoint_bytes(&self) -> usize {
+        let effects = self
+            .accepted_effects
+            .as_ref()
+            .map_or(0, |block| block.retained_payload_bytes())
+            .saturating_add(
+                self.effects
+                    .iter()
+                    .map(effect_retained_bytes)
+                    .sum::<usize>(),
+            );
+        let inputs = self
+            .accepted_inputs
+            .as_ref()
+            .map_or(0, |block| block.retained_payload_bytes())
+            .saturating_add(
+                self.inputs
+                    .iter()
+                    .map(|record| {
+                        std::mem::size_of::<InputRecord>()
+                            .saturating_add(record.path.as_os_str().len())
+                            .saturating_add(
+                                self.input_contents
+                                    .get(&record.hash)
+                                    .map_or(0, |bytes| bytes.len()),
+                            )
+                    })
+                    .sum::<usize>(),
+            );
+        effects.saturating_add(inputs).saturating_add(
+            self.committed_artifacts
+                .iter()
+                .map(|artifact| artifact.bytes().len())
+                .sum::<usize>(),
+        )
     }
 
     /// Enables rollback-capable ownership for the standalone checkpoint gate.
@@ -3680,7 +3757,6 @@ impl World {
             target: target.clone(),
         });
         self.stream_bufs_mut().write_streams[slot.index()] = Some(target);
-        self.stream_bufs_mut().partial_lines[slot.index()].clear();
     }
 
     /// Whether TeX's numbered output stream is currently open.
@@ -3738,7 +3814,6 @@ impl World {
         }
         self.append_effect(EffectRecord::StreamClose { slot });
         self.stream_bufs_mut().write_streams[slot.index()] = None;
-        self.stream_bufs_mut().partial_lines[slot.index()].clear();
         true
     }
 
@@ -3846,15 +3921,11 @@ impl World {
                     self.record_printable_write(PrintSink::Log, log);
                 }
             }
-            PrintSink::Stream(slot) => {
+            PrintSink::Stream(_) => {
                 self.append_effect(EffectRecord::StreamWrite {
                     sink,
                     text: text.to_owned(),
                 });
-                append_partial_line(
-                    &mut self.stream_bufs_mut().partial_lines[slot.index()],
-                    text,
-                );
             }
         }
     }
@@ -4032,16 +4103,11 @@ impl World {
                     self.record_printable_bytes(PrintSink::Log, log);
                 }
             }
-            PrintSink::Stream(slot) => {
+            PrintSink::Stream(_) => {
                 self.append_effect(EffectRecord::StreamWriteBytes {
                     sink,
                     bytes: bytes.to_vec(),
                 });
-                let projection = bytes_to_partial_line_projection(bytes);
-                append_partial_line(
-                    &mut self.stream_bufs_mut().partial_lines[slot.index()],
-                    &projection,
-                );
             }
         }
     }

@@ -110,8 +110,7 @@ fn sparse_source_index_tracks_registration_rollback_and_fork() {
     );
     assert_eq!(fork.position(SourceId::new(3), 0), Ok(discarded));
 
-    let discarded_index = map
-        .region_by_source
+    let discarded_index = Arc::make_mut(&mut map.region_by_source)
         .remove(&SourceId::new(3))
         .expect("source has a derived index");
     assert_eq!(
@@ -120,8 +119,7 @@ fn sparse_source_index_tracks_registration_rollback_and_fork() {
         "source lookup must not retain a linear fallback"
     );
     assert_eq!(
-        map.region_by_source
-            .insert(SourceId::new(3), discarded_index),
+        Arc::make_mut(&mut map.region_by_source).insert(SourceId::new(3), discarded_index),
         None
     );
 
@@ -259,6 +257,28 @@ fn fork_keeps_inherited_regions_and_separates_new_logical_ranges() {
     assert_ne!(parent_only, child_only);
     assert!(child.region_for_position(parent_only).is_none());
     assert!(parent.region_for_position(child_only).is_none());
+}
+
+#[test]
+fn checkpoint_fork_accepts_only_the_marked_prefix_and_opens_a_private_suffix() {
+    let mut parent = SourceMap::default();
+    let inherited = parent
+        .register(SourceId::new(0), generated(b"root"))
+        .expect("root registers");
+    let mark = parent.watermark();
+    let parent_only = parent
+        .register(SourceId::new(1), generated(b"parent"))
+        .expect("parent source registers");
+
+    let mut child = parent.fork_at(mark);
+    assert_eq!(child.position(SourceId::new(0), 0), Ok(inherited));
+    assert!(child.region_for_position(parent_only).is_none());
+    let child_only = child
+        .register(SourceId::new(1), generated(b"child"))
+        .expect("child source registers");
+    assert_ne!(parent_only, child_only);
+    assert!(parent.region_for_position(child_only).is_none());
+    assert_eq!(parent.position(SourceId::new(1), 0), Ok(parent_only));
 }
 
 #[test]

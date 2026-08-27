@@ -231,6 +231,87 @@ impl<G> std::fmt::Debug for RuntimeCheckpoint<G> {
     }
 }
 
+/// Standalone source/font ownership fixture for the deterministic checkpoint
+/// allocation gate. It deliberately excludes dense engine state so the gate
+/// attributes only these two coarse stores.
+#[cfg(feature = "profiling")]
+pub struct SourceFontCheckpointHarness {
+    sources: SourceMap,
+    fonts: FontStore,
+}
+
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy)]
+pub struct SourceFontCheckpointMark {
+    sources: SourceMapMark,
+    fonts: FontStoreMark,
+}
+
+#[cfg(feature = "profiling")]
+impl SourceFontCheckpointHarness {
+    #[must_use]
+    pub fn with_units(units: usize) -> Self {
+        let mut harness = Self {
+            sources: SourceMap::default(),
+            fonts: FontStore::new(),
+        };
+        for index in 0..units {
+            harness.append_unit(index);
+        }
+        harness
+    }
+
+    pub fn append_unit(&mut self, index: usize) {
+        let source = crate::input::SourceId::new(index as u32);
+        let bytes: std::sync::Arc<[u8]> = vec![index as u8; 96].into();
+        self.sources
+            .register_without_line_starts(
+                source,
+                crate::source_map::SourceDescriptor::named_generated(
+                    format!("checkpoint-{index:04}.tex"),
+                    bytes,
+                ),
+            )
+            .expect("profiling source fits the logical position space");
+        let font = tex_fonts::LoadedFont::new(
+            format!("checkpoint-font-{index:04}"),
+            std::path::PathBuf::from(format!("checkpoint-font-{index:04}.tfm")),
+            tex_fonts::font_content_hash(&[index as u8; 32]),
+            index as u32,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(10 * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+            tex_fonts::FontMetrics::default(),
+        );
+        self.fonts
+            .intern(font)
+            .expect("profiling font fits the store");
+    }
+
+    #[must_use]
+    pub fn checkpoint(&self) -> SourceFontCheckpointMark {
+        SourceFontCheckpointMark {
+            sources: self.sources.watermark(),
+            fonts: self.fonts.watermark(),
+        }
+    }
+
+    #[must_use]
+    pub fn fork(&self, mark: SourceFontCheckpointMark) -> Self {
+        Self {
+            sources: self.sources.fork_at(mark.sources),
+            fonts: self.fonts.fork_at(mark.fonts),
+        }
+    }
+
+    #[must_use]
+    pub fn retained_payload_bytes(&self) -> usize {
+        self.sources
+            .retained_payload_bytes()
+            .saturating_add(self.fonts.retained_payload_bytes())
+    }
+}
+
 /// Exclusive aggregate transaction for one staged shipout.
 pub struct ShipoutTransaction<'a, G> {
     universe: &'a mut Universe<G>,
@@ -547,11 +628,11 @@ impl<G> Universe<G> {
             retained_page_bound: self.retained_page_bound,
             durable_page_bound: self.durable_page_bound,
             shipout_scratch: ShipoutScratchArena::default(),
-            fonts: self.fonts.clone(),
+            fonts: self.fonts.fork_at(checkpoint.fonts),
             page,
             page_lent_to_candidate: false,
             pdf,
-            sources: self.sources.clone(),
+            sources: self.sources.fork_at(checkpoint.sources),
             hyphenation: HyphenationTable::from_checkpoint(&checkpoint.hyphenation),
             world: self.world.fork_checkpoint(&checkpoint.world),
             dependencies: self.dependencies.fork_tracker(&checkpoint.dependencies),

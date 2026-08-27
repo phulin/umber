@@ -11,6 +11,8 @@
 //! live identities through the aggregate store facade.
 
 use core::num::{NonZeroU32, NonZeroU64};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const BUILTIN_NAMESPACE: NonZeroU64 = NonZeroU64::MIN;
 const FIRST_GENERATION: NonZeroU32 = NonZeroU32::MIN;
@@ -100,6 +102,27 @@ struct AllocationRun {
     tag: AllocationTag,
 }
 
+#[derive(Debug)]
+struct AcceptedIdentityRuns {
+    parent: Option<Arc<Self>>,
+    runs: Arc<Vec<AllocationRun>>,
+    total_len: u32,
+}
+
+impl AcceptedIdentityRuns {
+    fn tag_at(&self, slot: u32) -> Option<AllocationTag> {
+        if slot >= self.total_len {
+            return None;
+        }
+        let parent_len = self.parent.as_ref().map_or(0, |parent| parent.total_len);
+        if slot < parent_len {
+            return self.parent.as_ref()?.tag_at(slot);
+        }
+        let index = self.runs.partition_point(|run| run.end <= slot);
+        self.runs.get(index).map(|run| run.tag)
+    }
+}
+
 /// Generation table shared by rollback-truncated store implementations.
 ///
 /// This owns only identity/liveness metadata; semantic store data remains in
@@ -107,7 +130,8 @@ struct AllocationRun {
 #[derive(Debug)]
 pub(crate) struct IdentityAllocator {
     active: AllocationTag,
-    runs: Vec<AllocationRun>,
+    accepted: Option<Arc<AcceptedIdentityRuns>>,
+    runs: Arc<Vec<AllocationRun>>,
     len: u32,
     builtin_slots: u32,
 }
@@ -145,13 +169,16 @@ impl IdentityAllocator {
                 namespace,
                 generation: FIRST_GENERATION,
             },
-            runs: (builtin_slots != 0)
-                .then_some(AllocationRun {
-                    end: builtin_slots,
-                    tag: HandleIdentity::builtin(0).tag(),
-                })
-                .into_iter()
-                .collect(),
+            accepted: None,
+            runs: Arc::new(
+                (builtin_slots != 0)
+                    .then_some(AllocationRun {
+                        end: builtin_slots,
+                        tag: HandleIdentity::builtin(0).tag(),
+                    })
+                    .into_iter()
+                    .collect(),
+            ),
             len: builtin_slots,
             builtin_slots,
         }
@@ -162,20 +189,24 @@ impl IdentityAllocator {
     /// timelines; handles subsequently minted by either side are foreign to
     /// the other.
     pub(crate) fn fork(&self) -> Self {
-        let namespace = loop {
-            let candidate = fresh_namespace();
-            if candidate != self.active.namespace
-                && self.runs.iter().all(|run| run.tag.namespace != candidate)
-            {
-                break candidate;
-            }
+        let namespace = fresh_namespace();
+        let accepted_len = self.accepted.as_ref().map_or(0, |runs| runs.total_len);
+        let accepted = if self.len == accepted_len {
+            self.accepted.clone()
+        } else {
+            Some(Arc::new(AcceptedIdentityRuns {
+                parent: self.accepted.clone(),
+                runs: Arc::clone(&self.runs),
+                total_len: self.len,
+            }))
         };
         Self {
             active: AllocationTag {
                 namespace,
                 generation: FIRST_GENERATION,
             },
-            runs: self.runs.clone(),
+            accepted,
+            runs: Arc::new(Vec::new()),
             len: self.len,
             builtin_slots: self.builtin_slots,
         }
@@ -193,10 +224,11 @@ impl IdentityAllocator {
             generation: self.active.generation,
             slot,
         };
-        if let Some(run) = self.runs.last_mut().filter(|run| run.tag == self.active) {
+        let runs = Arc::make_mut(&mut self.runs);
+        if let Some(run) = runs.last_mut().filter(|run| run.tag == self.active) {
             run.end = self.len;
         } else {
-            self.runs.push(AllocationRun {
+            runs.push(AllocationRun {
                 end: self.len,
                 tag: self.active,
             });
@@ -238,7 +270,9 @@ impl IdentityAllocator {
     /// before mutating any of them.
     pub(crate) fn validate_rollback(&self, mark: IdentityMark) -> Result<(), IdentityError> {
         let len = mark.len;
+        let accepted_len = self.accepted.as_ref().map_or(0, |runs| runs.total_len) as usize;
         if len < self.builtin_slots as usize
+            || len < accepted_len
             || len > self.len as usize
             || (len != 0 && self.tag_at((len - 1) as u32) != mark.frontier)
             || (len == 0 && mark.frontier.is_some())
@@ -271,16 +305,17 @@ impl IdentityAllocator {
             .ok_or(IdentityError::GenerationExhausted)?;
         self.active.generation = generation;
         self.len = u32::try_from(len).expect("validated identity length fits u32");
-        while self
-            .runs
+        let accepted_len = self.accepted.as_ref().map_or(0, |runs| runs.total_len);
+        let runs = Arc::make_mut(&mut self.runs);
+        while runs
             .last()
-            .is_some_and(|_| self.runs.len() > 1 && self.runs[self.runs.len() - 2].end >= self.len)
+            .is_some_and(|_| runs.len() > 1 && runs[runs.len() - 2].end >= self.len)
         {
-            self.runs.pop();
+            runs.pop();
         }
-        if self.len == 0 {
-            self.runs.clear();
-        } else if let Some(run) = self.runs.last_mut() {
+        if self.len == accepted_len {
+            runs.clear();
+        } else if let Some(run) = runs.last_mut() {
             run.end = self.len;
         }
         Ok(())
@@ -294,10 +329,11 @@ impl IdentityAllocator {
             .len
             .checked_add(count)
             .expect("frozen identity extent fits u32");
-        if let Some(run) = self.runs.last_mut().filter(|run| run.tag == self.active) {
+        let runs = Arc::make_mut(&mut self.runs);
+        if let Some(run) = runs.last_mut().filter(|run| run.tag == self.active) {
             run.end = self.len;
         } else {
-            self.runs.push(AllocationRun {
+            runs.push(AllocationRun {
                 end: self.len,
                 tag: self.active,
             });
@@ -308,19 +344,17 @@ impl IdentityAllocator {
         if slot >= self.len {
             return None;
         }
+        let accepted_len = self.accepted.as_ref().map_or(0, |runs| runs.total_len);
+        if slot < accepted_len {
+            return self.accepted.as_ref()?.tag_at(slot);
+        }
         let index = self.runs.partition_point(|run| run.end <= slot);
         self.runs.get(index).map(|run| run.tag)
     }
 }
 
 fn fresh_namespace() -> NonZeroU64 {
-    loop {
-        let state = ahash::RandomState::new();
-        let raw = state.hash_one(0x6964_656e_7469_7479_u64);
-        if let Some(namespace) = NonZeroU64::new(raw)
-            && namespace.get() > RESERVED_NAMESPACE_MAX
-        {
-            return namespace;
-        }
-    }
+    static NEXT_NAMESPACE: AtomicU64 = AtomicU64::new(RESERVED_NAMESPACE_MAX + 1);
+    let raw = NEXT_NAMESPACE.fetch_add(1, Ordering::Relaxed);
+    NonZeroU64::new(raw).expect("identity namespace space exhausted")
 }
