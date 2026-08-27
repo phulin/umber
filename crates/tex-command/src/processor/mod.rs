@@ -612,6 +612,10 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.fuel.fuel_mut().record_expanded_delivery();
     }
 
+    pub(crate) fn record_meaning_lookup(&mut self) {
+        self.fuel.fuel_mut().record_meaning_lookup();
+    }
+
     pub(crate) fn record_write_expansion(&mut self) {
         self.fuel.fuel_mut().record_write_expansion();
     }

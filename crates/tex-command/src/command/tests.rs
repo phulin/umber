@@ -10,7 +10,7 @@ use super::{CurrentCommand, DeliveryStamp};
 #[test]
 fn command_delivery_layout_stays_compact() {
     assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 24);
-    assert!(std::mem::size_of::<CurrentCommand<()>>() <= 136);
+    assert!(std::mem::size_of::<CurrentCommand<()>>() <= 144);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
 }
 
@@ -23,22 +23,6 @@ fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCo
         None,
         &universe.command_context().expect("command context"),
     )
-}
-
-fn resolution_meaning_lookups<G>(universe: &mut tex_state::Universe<G>, token: Token) -> u64 {
-    let mut destination = None;
-    let mut fuel = crate::CommandFuelLedger::default();
-    CurrentCommand::resolve_into(
-        &mut destination,
-        TracedTokenWord::pack(token, OriginId::UNKNOWN),
-        DeliveryStamp::new(17, 23, 29),
-        None,
-        false,
-        None,
-        &universe.command_context().expect("command context"),
-        fuel.fuel_mut(),
-    );
-    fuel.work().meaning_lookups
 }
 
 #[test]
@@ -88,41 +72,6 @@ fn ordinary_character_is_resolved_without_a_state_handle() {
             })
         );
         assert_eq!(command.control_sequence(), None);
-    });
-}
-
-#[test]
-fn resolution_records_the_existing_meaning_lookup_accounting_partition() {
-    crate::test_harness::with_universe(|universe| {
-        let symbol = universe.intern("defined").expect("intern");
-        assert_eq!(
-            resolution_meaning_lookups(universe, Token::Cs(symbol.symbol())),
-            1
-        );
-        assert_eq!(
-            resolution_meaning_lookups(
-                universe,
-                Token::Char {
-                    ch: '!',
-                    cat: Catcode::Active,
-                }
-            ),
-            1
-        );
-        assert_eq!(
-            resolution_meaning_lookups(
-                universe,
-                Token::Char {
-                    ch: 'x',
-                    cat: Catcode::Letter,
-                }
-            ),
-            0
-        );
-        assert_eq!(
-            resolution_meaning_lookups(universe, Token::frozen_relax()),
-            0
-        );
     });
 }
 

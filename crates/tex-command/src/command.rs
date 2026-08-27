@@ -5,7 +5,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
-use crate::{CommandFuel, CommandFuelLedger, SourceLocation, SourceProvenance, SourceRange};
+use crate::{SourceLocation, SourceProvenance, SourceRange};
 
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
 /// and `cur_tok`.
@@ -19,26 +19,15 @@ use crate::{CommandFuel, CommandFuelLedger, SourceLocation, SourceProvenance, So
 pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,
     meaning: ResolvedMeaning<G>,
-    effective_adjustment: EffectiveCommandAdjustment,
+    macro_observation_operand: Option<i64>,
+    identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
     source_provenance: Option<SourceProvenance>,
     direct_source: bool,
     direct_source_line: Option<u32>,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
-}
-
-/// Exceptional changes to one command's already-resolved effective meaning.
-///
-/// Ordinary identity is derived only when observation needs it. The two
-/// exceptional states are mutually exclusive in canonical delivery, so one
-/// discriminator replaces both the retained identity classifier and the
-/// outer-recovery flag.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum EffectiveCommandAdjustment {
-    None,
-    NoExpandFrozenRelax,
-    OuterRecoverySpace,
+    outer_recovery_space: bool,
 }
 
 impl<G> Clone for CurrentCommand<G> {
@@ -46,13 +35,15 @@ impl<G> Clone for CurrentCommand<G> {
         Self {
             spelling: self.spelling,
             meaning: self.meaning.clone(),
-            effective_adjustment: self.effective_adjustment,
+            macro_observation_operand: self.macro_observation_operand,
+            identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_provenance: self.source_provenance,
             direct_source: self.direct_source,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
+            outer_recovery_space: self.outer_recovery_space,
         }
     }
 }
@@ -61,13 +52,15 @@ impl<G> PartialEq for CurrentCommand<G> {
     fn eq(&self, other: &Self) -> bool {
         self.spelling == other.spelling
             && self.meaning == other.meaning
-            && self.effective_adjustment == other.effective_adjustment
+            && self.macro_observation_operand == other.macro_observation_operand
+            && self.identity == other.identity
             && self.control_sequence == other.control_sequence
             && self.delivery == other.delivery
             && self.source_provenance == other.source_provenance
             && self.direct_source == other.direct_source
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
+            && self.outer_recovery_space == other.outer_recovery_space
     }
 }
 
@@ -77,13 +70,15 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.spelling.hash(state);
         self.meaning.hash(state);
-        self.effective_adjustment.hash(state);
+        self.macro_observation_operand.hash(state);
+        self.identity.hash(state);
         self.control_sequence.hash(state);
         self.delivery.hash(state);
         self.source_provenance.hash(state);
         self.direct_source.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
+        self.outer_recovery_space.hash(state);
     }
 }
 
@@ -239,7 +234,6 @@ impl<G> CurrentCommand<G> {
         state: &CommandContext<'_, G>,
     ) -> Self {
         let mut destination = None;
-        let mut fuel = CommandFuelLedger::default();
         Self::resolve_into(
             &mut destination,
             spelling,
@@ -248,13 +242,11 @@ impl<G> CurrentCommand<G> {
             direct_source,
             direct_source_line,
             state,
-            fuel.fuel_mut(),
         );
         destination.expect("command resolution initializes its destination")
     }
 
     /// Resolves directly into the active delivery request's final slot.
-    #[allow(clippy::too_many_arguments)] // one complete delivery plus its two resolution capabilities
     pub(crate) fn resolve_into<'destination>(
         destination: &'destination mut Option<Self>,
         spelling: TracedTokenWord,
@@ -263,20 +255,15 @@ impl<G> CurrentCommand<G> {
         direct_source: bool,
         direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
-        fuel: &mut CommandFuel,
     ) -> &'destination mut Self {
         debug_assert!(destination.is_none());
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
-            Token::Cs(symbol) => {
-                fuel.record_meaning_lookup();
-                (Some(symbol), state.compact_control_sequence_meaning(symbol))
-            }
+            Token::Cs(symbol) => (Some(symbol), state.compact_control_sequence_meaning(symbol)),
             Token::Char {
                 ch,
                 cat: Catcode::Active,
             } => {
-                fuel.record_meaning_lookup();
                 let symbol = state.active_character_symbol(ch);
                 (
                     symbol,
@@ -323,16 +310,20 @@ impl<G> CurrentCommand<G> {
                     .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
             ),
         };
+        let macro_observation_operand = None;
+        let identity = CommandIdentity::from_meaning(&meaning);
         *destination = Some(Self {
             spelling,
             meaning,
-            effective_adjustment: EffectiveCommandAdjustment::None,
+            macro_observation_operand,
+            identity,
             control_sequence,
             delivery,
             source_provenance,
             direct_source,
             direct_source_line,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
+            outer_recovery_space: false,
         });
         destination
             .as_mut()
@@ -346,30 +337,22 @@ impl<G> CurrentCommand<G> {
     /// boundary, but TeX82 §15 assigns `end_cs_name` a command code at or
     /// below `max_command`; §25 therefore preserves it through `\noexpand`.
     pub(crate) fn suppress_expandable(&mut self) {
-        if !matches!(
-            self.meaning,
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                tex_state::meaning::ExpandablePrimitive::EndCsName
-            ))
-        ) && matches!(
-            self.meaning,
-            ResolvedMeaning::Static(Meaning::Undefined)
-                | ResolvedMeaning::Macro { .. }
-                | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
-        ) {
+        if !matches!(self.identity, CommandIdentity::EndCsName)
+            && matches!(
+                self.meaning,
+                ResolvedMeaning::Static(Meaning::Undefined)
+                    | ResolvedMeaning::Macro { .. }
+                    | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
+            )
+        {
             self.meaning = ResolvedMeaning::Static(Meaning::Relax);
-            self.effective_adjustment = EffectiveCommandAdjustment::NoExpandFrozenRelax;
+            self.identity = CommandIdentity::NoExpandFrozenRelax;
         }
     }
 
     /// Returns the command-owned identity selected by raw input delivery.
-    pub(crate) fn identity(&self) -> CommandIdentity {
-        match self.effective_adjustment {
-            EffectiveCommandAdjustment::NoExpandFrozenRelax => CommandIdentity::NoExpandFrozenRelax,
-            EffectiveCommandAdjustment::None | EffectiveCommandAdjustment::OuterRecoverySpace => {
-                CommandIdentity::from_meaning(&self.meaning)
-            }
-        }
+    pub(crate) const fn identity(&self) -> CommandIdentity {
+        self.identity
     }
 
     /// The active character this delivery would have been, had `\\noexpand`
@@ -381,10 +364,7 @@ impl<G> CurrentCommand<G> {
     /// `\\ifcat` perform that reconstruction — everywhere else a `\\noexpand`
     /// delivery keeps its `relax`/`no_expand_flag` identity.
     pub(crate) fn no_expand_active_character(&self) -> Option<char> {
-        if !matches!(
-            self.effective_adjustment,
-            EffectiveCommandAdjustment::NoExpandFrozenRelax
-        ) {
+        if !matches!(self.identity, CommandIdentity::NoExpandFrozenRelax) {
             return None;
         }
         match self.spelling.semantic_token() {
@@ -414,10 +394,11 @@ impl<G> CurrentCommand<G> {
             ch: ' ',
             cat: Catcode::Space,
         });
+        self.macro_observation_operand = None;
         self.control_sequence = None;
         self.source_provenance = None;
         self.direct_source = false;
-        self.effective_adjustment = EffectiveCommandAdjustment::OuterRecoverySpace;
+        self.outer_recovery_space = true;
     }
 
     /// Replaces an intercepted alignment terminator's effective meaning while
@@ -426,6 +407,7 @@ impl<G> CurrentCommand<G> {
         self.meaning = ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
             tex_state::meaning::ExpandablePrimitive::EndTemplate,
         ));
+        self.macro_observation_operand = None;
         self.control_sequence = None;
     }
 
@@ -436,10 +418,7 @@ impl<G> CurrentCommand<G> {
     /// `scan_toks` collector to append before the inserted right brace closes
     /// the runaway text.
     pub(crate) const fn is_outer_recovery_space(&self) -> bool {
-        matches!(
-            self.effective_adjustment,
-            EffectiveCommandAdjustment::OuterRecoverySpace
-        )
+        self.outer_recovery_space
     }
 
     /// Completes TeX82's `get_x_token` conversion of inaccessible
@@ -452,6 +431,7 @@ impl<G> CurrentCommand<G> {
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.spelling = TracedTokenWord::pack(frozen_endv, self.spelling.origin());
         self.meaning = ResolvedMeaning::Static(Meaning::EndV);
+        self.macro_observation_operand = None;
         self.control_sequence = None;
         // The preceding tab/span/cr adjustment belongs to the intercepted
         // delimiter. TeX82 §343 replaces `cur_tok` with frozen end-v before
@@ -502,6 +482,10 @@ impl<G> CurrentCommand<G> {
     #[must_use]
     pub const fn meaning_ref(&self) -> &ResolvedMeaning<G> {
         &self.meaning
+    }
+
+    pub(crate) const fn macro_observation_operand(&self) -> Option<i64> {
+        self.macro_observation_operand
     }
 
     /// Returns the control-sequence identity, if this spelling resolves via
@@ -579,13 +563,15 @@ impl<G> CurrentCommand<G> {
         Self {
             spelling: self.spelling,
             meaning: self.meaning.clone(),
-            effective_adjustment: self.effective_adjustment,
+            macro_observation_operand: self.macro_observation_operand,
+            identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_provenance: self.source_provenance,
             direct_source: self.direct_source,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
+            outer_recovery_space: self.outer_recovery_space,
         }
     }
 }
