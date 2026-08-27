@@ -8676,17 +8676,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
                 // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
                 // `file_warning` at this level's eventual `end_file_reading`.
-                let open_depths = crate::input::SourceOpenDepths {
-                    group_lineages: self.state.group_lineages().into_boxed_slice(),
-                    conditional_identities: self
-                        .command
-                        .conditions
-                        .frames
-                        .iter()
-                        .map(|frame| frame.identity.0)
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                };
+                let open_depths = self.capture_source_open_depths();
                 self.command
                     .open_registered_file_with_depths(source, open_depths)
                     .map_err(|_| CommandError::input_invariant())?;

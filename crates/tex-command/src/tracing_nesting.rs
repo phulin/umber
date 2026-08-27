@@ -11,6 +11,22 @@ use crate::input::SourceOpenDepths;
 use crate::processor::CommandProcessor;
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Captures e-TeX 2.6 [23.328]'s source-opening ancestry before the new
+    /// input frame becomes visible.
+    pub(crate) fn capture_source_open_depths(&self) -> SourceOpenDepths {
+        SourceOpenDepths {
+            group_lineages: self.state.group_lineages().into_boxed_slice(),
+            conditional_identities: self
+                .command
+                .conditions
+                .frames
+                .iter()
+                .map(|frame| frame.identity.0)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        }
+    }
+
     /// Completes e-TeX 2.6 [23.328]'s nesting-warning context tail.
     fn finish_nesting_warning(&mut self, tracing_nesting: i32) {
         if tracing_nesting > 1 {
