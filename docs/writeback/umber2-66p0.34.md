@@ -12,10 +12,11 @@ the candidate has SHA-256
 `4d3d3e5cb3bfa7d96e7c202620153159be703b01c9829688757e3c88fb9e7a02`.
 
 The accepted control and perf rows were serialized with
-`flock /tmp/umber-perf-host.lock`. Both zero-loss perf rows began and ended at
-CPU-pressure `avg10=0.00`; process receipts show no running Cargo, rustc,
-Umber, or perf peer. Issue-private binaries, perf data, reports, process and
-pressure receipts, and build logs live under `target/umber2-66p0.34/`.
+`flock /tmp/umber-perf-host.lock`. Both zero-loss perf rows and all six exact
+control rows began at CPU-pressure `avg10=0.00`; process receipts show no
+running Cargo, rustc, Umber, or perf peer. Issue-private binaries, perf data,
+reports, process and pressure receipts, and build logs live under
+`target/umber2-66p0.34/`.
 
 ## Ownership proof and structural change
 
@@ -56,17 +57,34 @@ status 1, identical canonical diagnostics, empty standard output, and no
 published output artifact. The two control diagnostics have identical
 SHA-256 `68031179ff7c37a0902ed1181ea753addeb0ea80ebc5f38881ed24fb40ac85b1`.
 
-The baseline capture contains 1,508 samples and 17,874,257,621 approximate
+Three exact control pairs alternate baseline/candidate order as `B/C`, `C/B`,
+and `B/C`. Their medians support a whole-engine improvement on every recorded
+CPU and elapsed-time metric:
+
+| Metric     | Baseline median | Candidate median | Median paired change |
+| ---------- | --------------: | ---------------: | -------------------: |
+| Cycles     |  18,150,916,218 |   17,915,482,279 |              -0.917% |
+| Task clock |     7,706.34 ms |      7,467.44 ms |              -1.201% |
+| Wall       |          8.01 s |           7.63 s |              -1.607% |
+| User       |          8.60 s |           8.39 s |              -1.061% |
+| System     |          0.88 s |           0.84 s |              -3.261% |
+
+The three per-pair cycle changes are -0.334%, -0.917%, and -3.344%; no pair
+regresses. Task clock has one +0.158% first-pair row followed by -1.201% and
+-4.058%, with the median remaining favorable.
+
+An independent zero-loss sampling pair supplies symbol attribution. The
+baseline capture contains 1,508 samples and 17,874,257,621 approximate
 weighted cycles; the candidate contains 1,509 samples and 17,978,903,035
-cycles. Total sampled cycles rise 104,645,414 (0.59%), so the whole-program
-row is supporting context and is not labeled a benefit. At the changed
-boundary, the baseline `ProcessorFuel::charge` accounts for 44 self samples,
-529,173,807 self cycles, and 626,575,061 ancestry cycles. The candidate's
-single `CommandFuel::charge` accounts for 28 self samples, 344,986,363 self
-cycles, and 418,962,971 ancestry cycles: reductions of 184,187,444 self
-cycles (34.8%) and 207,612,090 ancestry cycles (33.1%). `ProcessorFuel` is
-absent from the candidate symbol table. Both captures report zero lost
-samples.
+cycles. That single sampled total rises 104,645,414 (0.59%), so it is retained
+as supporting context and not used for the whole-engine decision. At the
+changed boundary, baseline `ProcessorFuel::charge` accounts for 44 self
+samples, 529,173,807 self cycles, and 626,575,061 ancestry cycles. The
+candidate's single `CommandFuel::charge` accounts for 28 self samples,
+344,986,363 self cycles, and 418,962,971 ancestry cycles: reductions of
+184,187,444 self cycles (34.8%) and 207,612,090 ancestry cycles (33.1%).
+`ProcessorFuel` is absent from the candidate symbol table. Both captures
+report zero lost samples.
 
 ## Verification
 
