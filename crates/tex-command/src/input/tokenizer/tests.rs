@@ -882,12 +882,13 @@ impl super::CompactSourceStepQueries for CompactNameProbe {
 
 #[test]
 fn compact_control_words_borrow_raw_text_and_own_superscript_fallbacks() {
-    let mut state = state(br"\alpha \^^61lpha");
+    let mut state = state(br"\a \alpha \^^61lpha");
     let mut queries = CompactNameProbe::default();
 
     let _ = state.next_compact_exact_source_step(-1, &mut queries);
     let _ = state.next_compact_exact_source_step(-1, &mut queries);
+    let _ = state.next_compact_exact_source_step(-1, &mut queries);
 
     assert_eq!(queries.borrowed_words, ["alpha"]);
-    assert_eq!(queries.owned_words, ["alpha"]);
+    assert_eq!(queries.owned_words, ["a", "alpha"]);
 }

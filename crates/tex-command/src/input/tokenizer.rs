@@ -731,6 +731,7 @@ impl SourceCursor {
         };
         let mut end = first.range().end();
         let mut location = first.range().terminal_location();
+        let mut name_len = 1_usize;
         let kind = if first_catcode == Catcode::Letter {
             loop {
                 let saved = self.line.clone().expect("control sequence has a line");
@@ -755,6 +756,7 @@ impl SourceCursor {
                     name.push(next.code());
                     owned_name = Some(name);
                 }
+                name_len += 1;
                 end = next.range().end();
                 location = next.range().terminal_location();
             }
@@ -781,7 +783,7 @@ impl SourceCursor {
                 location,
             });
         }
-        if kind == SourceControlSequenceKind::Word {
+        if kind == SourceControlSequenceKind::Word && name_len > 1 {
             let start = usize::try_from(name_start).expect("source offset fits backing index");
             let end = usize::try_from(end).expect("source offset fits backing index");
             let name = std::str::from_utf8(&bytes[start..end])
