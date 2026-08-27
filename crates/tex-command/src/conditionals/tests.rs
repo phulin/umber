@@ -146,12 +146,14 @@ fn active_character_operand_stays_in_the_caller_slot_for_conditional_treatment()
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [no_expand, active]);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -182,12 +184,14 @@ fn false_boolean_skips_to_else_and_matching_fi_retires_the_frame() {
             [if_false, other('f'), otherwise, other('t'), fi],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -227,12 +231,14 @@ fn ifx_compares_raw_operands_without_expanding_them() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -248,6 +254,7 @@ fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [or, other('t')]);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         {
             let mut context = universe.command_context().expect("command context");
@@ -255,6 +262,7 @@ fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
                 &mut command,
                 &mut context,
                 &mut capabilities,
+                &mut fuel,
                 &mut diagnostic_effects,
             );
             assert_eq!(next_character(&mut processor), 't');

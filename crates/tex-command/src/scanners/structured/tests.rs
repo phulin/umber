@@ -16,12 +16,14 @@ fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSele
         let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         )
         .scan_write_stream()
@@ -91,12 +93,14 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 

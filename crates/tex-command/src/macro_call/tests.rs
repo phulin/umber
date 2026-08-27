@@ -139,12 +139,14 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [nested, letter('n'), tail, letter('z')]);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut destination = None;
@@ -270,12 +272,14 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
         let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut actual = Vec::new();
@@ -326,12 +330,14 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
             [macro_token, letter('x'), other(','), letter('z')],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut destination = None;
@@ -406,12 +412,14 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut destination = None;
@@ -466,12 +474,14 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             [long, begin, paragraph, end, short, begin, paragraph, end],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -547,12 +557,14 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
             [macro_token, paragraph, letter('x'), paragraph, other(',')],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut destination = None;
@@ -622,12 +634,14 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 

@@ -47,12 +47,14 @@ fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let crate::RetainedScalarScan::Complete(scanned) = processor.scan_integer_retained() else {

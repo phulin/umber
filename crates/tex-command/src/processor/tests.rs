@@ -27,12 +27,14 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [token]);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -63,12 +65,14 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
         crate::test_harness::push(&mut command, [brace]);
         let initial_align_state = command.alignment.align_state;
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -133,6 +137,7 @@ fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
             .open_registered_source(source)
             .expect("source opening");
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut observer = RecordingObserver::default();
         let (stamp, source_range, source_location) = {
@@ -141,6 +146,7 @@ fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
                 &mut command,
                 &mut context,
                 &mut capabilities,
+                &mut fuel,
                 &mut diagnostic_effects,
             )
             .with_observer(&mut observer);
@@ -207,12 +213,14 @@ fn direct_source_command_captures_its_physical_line_before_retirement() {
             .open_registered_source(source)
             .expect("source opening");
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -248,12 +256,14 @@ fn direct_source_control_sequences_preserve_creation_policy_after_compact_delive
             .open_registered_source(source)
             .expect("source opening");
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 
@@ -286,12 +296,14 @@ fn frozen_macro_primitive_observation_retains_endwrite_identity() {
         let endwrite = universe.primitive_token("endwrite").expect("write stopper");
         let mut command = CommandState::default();
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
 

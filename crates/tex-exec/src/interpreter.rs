@@ -108,7 +108,7 @@ impl<G> PersistentInterpreter<G> {
         lifecycle.maximum_live_processors = lifecycle.maximum_live_processors.max(1);
 
         InterpreterProcessor {
-            processor: CommandProcessor::borrowed(
+            processor: CommandProcessor::new(
                 command,
                 state,
                 host,

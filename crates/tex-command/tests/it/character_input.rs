@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tex_command::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
+    CommandFuelLedger, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
     RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::interner::InternerBudget;
@@ -24,12 +24,15 @@ fn external_command_boundary_delivers_registered_source_characters() {
             .expect("source registration");
         command.open_registered_source(source).expect("source open");
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = CommandProcessor::new(
             &mut command,
             &mut context,
             CommandHostContext::new(&mut capabilities),
+            fuel.fuel_mut(),
+            None,
             &mut diagnostic_effects,
         );
 

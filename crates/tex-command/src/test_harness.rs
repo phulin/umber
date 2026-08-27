@@ -5,7 +5,9 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{CommandContext, GenerationBrand, Universe};
 
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
-use crate::{CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState};
+use crate::{
+    CommandFuelLedger, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
+};
 
 fn budget() -> InternerBudget {
     InternerBudget::new(16_384, 16_384, 1 << 20).expect("test interner budget")
@@ -40,12 +42,15 @@ pub(crate) fn processor<'episode, 'admission, G>(
     command: &'episode mut CommandState<G>,
     context: &'episode mut CommandContext<'admission, G>,
     capabilities: &'episode mut CommandHostCapabilities,
+    fuel: &'episode mut CommandFuelLedger,
     diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
 ) -> CommandProcessor<'episode, 'admission, G> {
     CommandProcessor::new(
         command,
         context,
         CommandHostContext::new(capabilities),
+        fuel.fuel_mut(),
+        None,
         diagnostic_effects,
     )
 }

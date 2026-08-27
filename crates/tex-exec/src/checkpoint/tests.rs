@@ -91,11 +91,14 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             .expect("retained checkpoint restores into its owning timeline");
 
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = tex_command::CommandFuelLedger::default();
         let mut context = universe.command_context().expect("command context");
         let mut processor = CommandProcessor::new(
             &mut command,
             &mut context,
             CommandHostContext::new(&mut capabilities),
+            fuel.fuel_mut(),
+            None,
             &mut diagnostic_effects,
         );
         assert_eq!(

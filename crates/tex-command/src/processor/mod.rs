@@ -11,9 +11,7 @@ mod tests;
 
 use tex_state::CommandContext;
 
-use crate::{
-    CommandError, CommandFuel, CommandFuelLedger, CommandHostContext, CommandState, DeliveryStamp,
-};
+use crate::{CommandError, CommandFuel, CommandHostContext, CommandState, DeliveryStamp};
 
 use crate::input::InputLevelId;
 
@@ -136,7 +134,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) state: &'episode mut CommandContext<'admission, G>,
     pub(crate) host: CommandHostContext<'episode>,
     observer: Option<&'episode mut dyn CommandObserver>,
-    fuel: ProcessorFuel<'episode>,
+    fuel: &'episode mut CommandFuel,
     diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
@@ -357,27 +355,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     }
 }
 
-enum ProcessorFuel<'a> {
-    Owned(CommandFuelLedger),
-    Shared(&'a mut CommandFuel),
-}
-
-impl ProcessorFuel<'_> {
-    fn charge(&mut self) -> Result<(), crate::CommandError> {
-        match self {
-            Self::Owned(fuel) => fuel.fuel_mut().charge(),
-            Self::Shared(fuel) => fuel.charge(),
-        }
-    }
-
-    fn fuel_mut(&mut self) -> &mut CommandFuel {
-        match self {
-            Self::Owned(fuel) => fuel.fuel_mut(),
-            Self::Shared(fuel) => fuel,
-        }
-    }
-}
-
 impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub(crate) fn copy_durable_token_list_into_attempt(
         &mut self,
@@ -493,50 +470,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         command: &'episode mut CommandState<G>,
         state: &'episode mut CommandContext<'admission, G>,
         host: CommandHostContext<'episode>,
-        diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
-    ) -> Self {
-        command.observe_tracked_dependencies(state);
-        Self {
-            command,
-            state,
-            host,
-            observer: None,
-            fuel: ProcessorFuel::Owned(CommandFuelLedger::default()),
-            diagnostic_effects,
-            immediate_write_retirement: None,
-            pending_file_warning_context: None,
-            last_delivery: None,
-            last_integer_terminator: None,
-            next_delivery_sequence: 0,
-            scanner_resume: None,
-            read_line_ended: false,
-            outer_recovered_while_matching: false,
-            outer_recovered_while_absorbing: false,
-            eof_recovered_while_matching: false,
-            expression_depth: 0,
-            is_in_csname: false,
-            output_routine_active: false,
-            scanned_glue_identity: None,
-            scanned_glue_register: None,
-            write_expansion_depth: 0,
-            command_trace_mode_prefix: None,
-            command_trace_printed: false,
-            command_trace_count: 0,
-            create_source_control_sequences: false,
-        }
-    }
-
-    /// Borrows a session-owned command interpreter without constructing an
-    /// intermediate owned fuel ledger or independently selecting evidence.
-    ///
-    /// Production main control uses this constructor for every short-lived
-    /// `Universe` borrow facade. The command state, fuel, and optional
-    /// observer all remain owned by the persistent engine session.
-    #[must_use]
-    pub fn borrowed(
-        command: &'episode mut CommandState<G>,
-        state: &'episode mut CommandContext<'admission, G>,
-        host: CommandHostContext<'episode>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
@@ -547,7 +480,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             state,
             host,
             observer,
-            fuel: ProcessorFuel::Shared(fuel),
+            fuel,
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
@@ -570,13 +503,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             command_trace_count: 0,
             create_source_control_sequences: false,
         }
-    }
-
-    /// Lends a run-owned monotonic ledger to this processor episode.
-    #[must_use]
-    pub fn with_fuel(mut self, fuel: &'episode mut CommandFuel) -> Self {
-        self.fuel = ProcessorFuel::Shared(fuel);
-        self
     }
 
     /// Supplies TeX82's executor-owned output-routine state to scalar scans.
@@ -605,19 +531,19 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     }
 
     pub(crate) fn record_token_frame(&mut self, scanner: bool) {
-        self.fuel.fuel_mut().record_token_frame(scanner);
+        self.fuel.record_token_frame(scanner);
     }
 
     pub(crate) fn record_expanded_delivery(&mut self) {
-        self.fuel.fuel_mut().record_expanded_delivery();
+        self.fuel.record_expanded_delivery();
     }
 
     pub(crate) fn record_meaning_lookup(&mut self) {
-        self.fuel.fuel_mut().record_meaning_lookup();
+        self.fuel.record_meaning_lookup();
     }
 
     pub(crate) fn record_write_expansion(&mut self) {
-        self.fuel.fuel_mut().record_write_expansion();
+        self.fuel.record_write_expansion();
     }
 
     /// Claims command-owned semantic diagnostics in detection order.

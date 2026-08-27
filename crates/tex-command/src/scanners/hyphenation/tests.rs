@@ -21,12 +21,14 @@ fn pattern_scan_keeps_letters_and_interleaved_numeric_weights() {
             .collect::<Vec<_>>();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let scanned = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         )
         .scan_hyphenation_data(HyphenationDataKind::Patterns)

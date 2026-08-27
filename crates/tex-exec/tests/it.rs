@@ -378,10 +378,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(control.contains("mod cold;"));
     assert!(control.contains("mod hot_apply;"));
     assert_eq!(control.matches("fn command_processor<").count(), 1);
-    assert_eq!(
-        interpreter.matches("CommandProcessor::borrowed(").count(),
-        1
-    );
+    assert_eq!(interpreter.matches("CommandProcessor::new(").count(), 1);
     assert!(!control.contains("enum ScannedStep"));
     assert!(!control.contains("struct PreparedOperation"));
     assert!(control.contains("struct OperationFrame<G>"));
@@ -789,6 +786,16 @@ fn session_ledger_lends_typed_fuel_without_transferring_ownership() {
     leaf_operation(session.fuel_mut());
     leaf_operation(session.fuel_mut());
     assert_eq!(session.burned(), 2);
+}
+
+#[test]
+fn every_processor_borrows_the_singular_fuel_ledger() {
+    let processor = include_str!("../src/../../tex-command/src/processor/mod.rs");
+
+    assert!(processor.contains("fuel: &'episode mut CommandFuel,"));
+    assert_eq!(processor.matches("pub fn new(").count(), 1);
+    assert!(!processor.contains("ProcessorFuel"));
+    assert!(!processor.contains("with_fuel"));
 }
 
 #[test]
