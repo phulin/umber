@@ -3254,9 +3254,12 @@ context-free `^^` spelling or rescanning the completed diagnostic text.
 
 TeX82 macro tracing follows that same split. The command processor formats
 §389's invocation and §400's completed arguments while it owns their live token
-buffers, then queues non-error diagnostic values. `tex-exec` drains those
-values in order through §245's diagnostic scope, so `\tracingonline` routing is
-selected at the committed call rather than by the expansion layer.
+buffers, then queues non-error diagnostic values. At a completed processor
+episode, `tex-exec` claims that existing `Vec` allocation wholesale and
+consumes its values in order through §245's diagnostic scope; command state is
+left with one fresh empty queue. No element collector or second diagnostic
+representation crosses the boundary, so `\tracingonline` routing is selected
+at the committed call rather than by the expansion layer.
 
 - the command core chooses canonical recovery tokens and state transitions;
 - typed diagnostics capture primary origin, related origins, macro invocation
