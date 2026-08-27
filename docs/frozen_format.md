@@ -321,7 +321,7 @@ one incoming edge for every non-root node, and nonempty exception words whose
 positions do not exceed the character count. Endpoint and repeated exception
 positions remain representable because TeX's exception scanner accepts leading,
 trailing, and adjacent hyphens. The validated trie is installed as the immutable
-format base in one thread-confined coarse shared owner. Aggregate checkpoint
+format base in one coarse shared owner. Aggregate checkpoint
 capture, clone, fork, and restore clone only that owner's handle. Runtime
 exceptions and saved hyphen-code maps remain separate bounded checkpoint
 values, so their rollback and fork isolation never copy the initialized trie.

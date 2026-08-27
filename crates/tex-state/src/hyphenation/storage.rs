@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +14,7 @@ use super::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PatternOwner {
     Building(BTreeMap<u8, Vec<TrieNode>>),
-    Initialized(Rc<BTreeMap<u8, Vec<TrieNode>>>),
+    Initialized(Arc<BTreeMap<u8, Vec<TrieNode>>>),
 }
 
 impl PatternOwner {
@@ -45,7 +44,7 @@ impl PatternOwner {
         else {
             unreachable!("initialized patterns returned above");
         };
-        *self = Self::Initialized(Rc::new(languages));
+        *self = Self::Initialized(Arc::new(languages));
     }
 }
 
@@ -182,7 +181,7 @@ impl<'de> Deserialize<'de> for HyphenationTable {
             }
         }
         Ok(Self {
-            patterns: PatternOwner::Initialized(Rc::new(patterns)),
+            patterns: PatternOwner::Initialized(Arc::new(patterns)),
             runtime: HyphenationRuntime {
                 exceptions,
                 hyphen_codes: rows.hyphen_codes,
