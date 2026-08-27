@@ -88,7 +88,7 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
 }
 
 #[test]
-fn runtime_identity_demand_publishes_only_available_owner_roots() {
+fn runtime_identity_demand_publishes_every_authoritative_owner_root() {
     with_universe(budget(), |universe| {
         let ordinary = universe.runtime_checkpoint().expect("ordinary checkpoint");
         assert_eq!(
@@ -103,12 +103,115 @@ fn runtime_identity_demand_publishes_only_available_owner_roots() {
         let roots = demanded.reachable_state_identity_roots();
         assert!(roots.pdf().is_some(), "PDF publishes a maintained root");
         assert!(roots.page().is_some(), "page publishes a maintained root");
-        assert_eq!(roots.world(), None);
-        assert_eq!(roots.hyphenation(), None);
-        assert_eq!(roots.dependency(), None);
-        assert_eq!(roots.source(), None);
-        assert_eq!(roots.font(), None);
-        assert_eq!(roots.core(), None);
+        assert!(roots.world().is_some());
+        assert!(roots.hyphenation().is_some());
+        assert!(roots.dependency().is_some());
+        assert!(roots.source().is_some());
+        assert!(roots.font().is_some());
+        assert!(roots.core().is_some());
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn late_runtime_identity_selection_fails_closed_for_missed_core_mutation() {
+    with_universe(budget(), |universe| {
+        universe
+            .assign_count(17, 41, AssignmentScope::Global)
+            .expect("pre-demand mutation");
+        universe.enable_reachable_state_identity();
+        let roots = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("identity-demanded checkpoint")
+            .reachable_state_identity_roots();
+        assert_eq!(roots.core(), None, "missed owner history stays unavailable");
+        assert!(roots.page().is_some());
+        assert!(roots.world().is_some());
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn maintained_runtime_roots_change_at_each_owner_mutation_barrier() {
+    with_universe(budget(), |universe| {
+        universe.enable_reachable_state_identity();
+        let baseline = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("baseline checkpoint")
+            .reachable_state_identity_roots();
+
+        universe
+            .assign_count(9, 73, AssignmentScope::Global)
+            .expect("core mutation");
+        let after_core = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("core checkpoint")
+            .reachable_state_identity_roots();
+        assert_ne!(after_core.core(), baseline.core());
+
+        universe
+            .world_mut()
+            .write_text(crate::PrintSink::Terminal, "identity");
+        let after_world = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("World checkpoint")
+            .reachable_state_identity_roots();
+        assert_ne!(after_world.world(), baseline.world());
+
+        universe
+            .command_context()
+            .expect("command admission")
+            .add_hyphenation_exception_for_language(
+                3,
+                ExceptionSpec {
+                    word: "semantic".to_owned(),
+                    positions: vec![3],
+                },
+            );
+        let after_hyphenation = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("hyphenation checkpoint")
+            .reachable_state_identity_roots();
+        assert_ne!(after_hyphenation.hyphenation(), baseline.hyphenation());
+
+        let token = universe
+            .begin_dependency_region()
+            .expect("dependency region");
+        universe
+            .abandon_dependency_region(token)
+            .expect("dependency region closes");
+        let after_dependency = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("dependency checkpoint")
+            .reachable_state_identity_roots();
+        assert_ne!(after_dependency.dependency(), baseline.dependency());
+
+        universe
+            .command_context()
+            .expect("command admission")
+            .register_source(
+                crate::input::SourceId::new(91),
+                crate::source_map::SourceDescriptor::named_generated(
+                    "semantic.tex",
+                    std::sync::Arc::from(&b"semantic source"[..]),
+                ),
+            )
+            .expect("source registration");
+        let after_source = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("source checkpoint")
+            .reachable_state_identity_roots();
+        assert_ne!(after_source.source(), baseline.source());
+
+        universe
+            .command_context()
+            .expect("command admission")
+            .intern_font(test_font("identityfont"));
+        let after_font = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("font checkpoint")
+            .reachable_state_identity_roots();
+        assert_ne!(after_font.font(), baseline.font());
     })
     .expect("universe allocation");
 }

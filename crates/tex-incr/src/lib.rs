@@ -1017,6 +1017,10 @@ fn initialize_candidate_runtime<G: 'static>(
     let (universe, checkpoints) = admitted.parts();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     universe.begin_retained_session()?;
+    // Identity owners must see every job mutation, including fresh profile,
+    // registered input, and JobStart setup. Batch execution never selects
+    // this demand path and therefore performs none of the added hash work.
+    universe.enable_reachable_state_identity();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     if restored_control.is_none() {
         install_plain_catcodes(universe)?;

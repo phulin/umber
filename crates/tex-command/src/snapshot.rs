@@ -18,6 +18,44 @@ use crate::processor::ScannerStatus;
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
 use crate::state::{CommandState, CommandStateRoots};
 
+fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ 0x636f_6d6d_616e_6431;
+    let mut feed = |value: u64| {
+        for byte in value.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    let mut semantics = std::collections::hash_map::DefaultHasher::new();
+    roots.engine_semantics.hash(&mut semantics);
+    feed(semantics.finish());
+    feed(roots.input.levels.len() as u64);
+    feed(roots.input.retained_file_line_number as u64);
+    feed(u64::from(roots.input.terminal_context_line.is_some()));
+    feed(roots.input.pending_sources.len() as u64);
+    feed(u64::from(roots.input.force_eof));
+    feed(roots.parameters.activations.len() as u64);
+    feed(roots.conditions.tracked_stack_projection());
+    feed(roots.alignment.align_state as u64);
+    feed(roots.alignment.align_stack.len() as u64);
+    feed(roots.alignment.suspended.len() as u64);
+    feed(u64::from(roots.alignment.active_alignment.is_some()));
+    feed(u64::from(roots.alignment.active_cell.is_some()));
+    feed(u64::from(roots.alignment.completed_preamble.is_some()));
+    feed(roots.replay_completions.len() as u64);
+    feed(roots.pending_replay_completions.len() as u64);
+    feed(roots.semantic_diagnostics.len() as u64);
+    feed(roots.group_payloads.len() as u64);
+    feed(roots.aftergroup_payloads.len() as u64);
+    feed(u64::from(roots.afterassignment.is_some()));
+    feed(u64::from(roots.name_in_progress));
+    feed(u64::from(roots.pending_input_open.is_some()));
+    feed(roots.named_token_list_pushes.len() as u64);
+    hash
+}
+
 /// Monotonic identity source for in-session command checkpoints.
 ///
 /// The live command machine borrows the aggregate roots exclusively. Its drop
@@ -1320,9 +1358,34 @@ impl<G> CommandState<G> {
             cursor,
             self.checkpoint_profile_fingerprint().get(),
             root_source_anchor,
-            None,
+            self.reachable_state_identity_root(),
             retained_owner_bytes,
         ))
+    }
+
+    /// Enables bounded command-root publication before incremental execution.
+    /// Late selection fails closed because existing command activity may have
+    /// crossed mutation barriers without maintaining semantic value metadata.
+    #[doc(hidden)]
+    pub fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.roots.reachable_state_identity_enabled {
+            return true;
+        }
+        if !self.attempt.is_empty()
+            || self.active_attempt_operation.is_some()
+            || !self.roots.replay_completions.is_empty()
+            || !self.roots.pending_replay_completions.is_empty()
+        {
+            return false;
+        }
+        self.roots.reachable_state_identity_enabled = true;
+        true
+    }
+
+    fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.roots
+            .reachable_state_identity_enabled
+            .then(|| bounded_command_identity(&self.roots))
     }
 
     /// Validates every command owner, profile, and cursor without mutating

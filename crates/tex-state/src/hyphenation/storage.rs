@@ -68,6 +68,7 @@ pub(crate) struct HyphenationCheckpoint {
     pattern_retained_bytes: usize,
     runtime: HyphenationRuntime,
     trie_capacity: usize,
+    reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
 }
 
 impl Default for HyphenationRuntime {
@@ -100,6 +101,7 @@ impl Clone for HyphenationTable {
             // roots, not a duplicate of warmed dependency evidence.
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: self.trie_capacity,
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 }
@@ -117,6 +119,7 @@ impl HyphenationTable {
             pattern_retained_bytes: self.pattern_retained_bytes,
             runtime: self.runtime.clone(),
             trie_capacity: self.trie_capacity,
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 
@@ -127,6 +130,7 @@ impl HyphenationTable {
             runtime: checkpoint.runtime.clone(),
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: checkpoint.trie_capacity,
+            reachable_state_identity: checkpoint.reachable_state_identity,
         }
     }
 
@@ -136,6 +140,7 @@ impl HyphenationTable {
         self.runtime = checkpoint.runtime.clone();
         self.dependency_fingerprints = OnceLock::new();
         self.trie_capacity = checkpoint.trie_capacity;
+        self.reachable_state_identity = checkpoint.reachable_state_identity;
     }
 }
 
@@ -214,6 +219,7 @@ impl<'de> Deserialize<'de> for HyphenationTable {
             },
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: default_trie_capacity(),
+            reachable_state_identity: None,
         })
     }
 }

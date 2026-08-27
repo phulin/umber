@@ -7,6 +7,7 @@ use ahash::AHashMap;
 
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::input::SourceId;
+use crate::state_hash::{SemanticSequenceIdentity, semantic_scalar_root};
 use crate::token::OriginId;
 use crate::world::{ContentHash, InputRecordId};
 
@@ -328,6 +329,7 @@ pub(crate) struct SourceMapMark {
     generated: usize,
     next_pos: u64,
     identities: IdentityMark,
+    reachable_state_identity: Option<SemanticSequenceIdentity>,
 }
 
 impl SourceMapMark {
@@ -417,6 +419,7 @@ pub(crate) struct SourceMap {
     next_pos: u64,
     forced_next_pos: bool,
     identities: IdentityAllocator,
+    reachable_state_identity: Option<SemanticSequenceIdentity>,
 }
 
 impl Default for SourceMap {
@@ -430,6 +433,7 @@ impl Default for SourceMap {
             next_pos: 0,
             forced_next_pos: false,
             identities: IdentityAllocator::new(0),
+            reachable_state_identity: None,
         }
     }
 }
@@ -445,6 +449,7 @@ impl Clone for SourceMap {
             next_pos: self.next_pos,
             forced_next_pos: self.forced_next_pos,
             identities: self.identities.fork(),
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 }
@@ -510,6 +515,11 @@ impl SourceMap {
             return Ok(position);
         }
 
+        let semantic_registration = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| source_descriptor_identity(&descriptor));
+
         let byte_len = descriptor.byte_len();
         let owned_descriptor = descriptor.clone();
         let (start, next_pos) = self.reserve_positions(byte_len)?;
@@ -541,6 +551,11 @@ impl SourceMap {
                 line_starts: Arc::clone(&line_starts),
             },
         )));
+        if let (Some(root), Some(registration)) =
+            (&mut self.reachable_state_identity, semantic_registration)
+        {
+            root.push(registration);
+        }
         assert_eq!(
             Arc::make_mut(&mut self.region_by_source).insert(source, region_index),
             None,
@@ -713,6 +728,7 @@ impl SourceMap {
             generated: self.generated_len(),
             next_pos: self.next_pos,
             identities: self.identities.watermark(),
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 
@@ -752,6 +768,23 @@ impl SourceMap {
         if self.forced_next_pos {
             self.next_pos = mark.next_pos;
         }
+        self.reachable_state_identity = mark.reachable_state_identity;
+    }
+
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity.is_some() {
+            return true;
+        }
+        if self.region_len() != 0 || self.generated_len() != 0 {
+            return false;
+        }
+        self.reachable_state_identity =
+            Some(SemanticSequenceIdentity::empty(0x736f_7572_6365_5f31));
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity.map(|root| root.root())
     }
 
     fn registration(&self, index: usize) -> Option<&SourceRegistrationRef> {
@@ -802,6 +835,7 @@ impl SourceMap {
             next_pos: mark.next_pos,
             forced_next_pos: self.forced_next_pos,
             identities,
+            reachable_state_identity: mark.reachable_state_identity,
         }
     }
 
@@ -840,4 +874,24 @@ impl SourceMap {
             }
         })
     }
+}
+
+fn source_descriptor_identity(descriptor: &SourceDescriptor) -> u64 {
+    semantic_scalar_root(0x736f_7572_6365_5f64, |hasher| match descriptor {
+        SourceDescriptor::World { byte_len, .. } => {
+            hasher.tag(0);
+            hasher.u64(*byte_len);
+        }
+        SourceDescriptor::Generated(source) => {
+            hasher.tag(1);
+            hasher.bytes(&source.hash().bytes());
+            match source.logical_path() {
+                Some(path) => {
+                    hasher.bool(true);
+                    hasher.str(path);
+                }
+                None => hasher.bool(false),
+            }
+        }
+    })
 }

@@ -7,6 +7,27 @@ fn generated(bytes: &[u8]) -> SourceDescriptor {
 }
 
 #[test]
+fn semantic_root_excludes_logical_position_layout() {
+    let descriptor = SourceDescriptor::named_generated("same.tex", Arc::from(&b"same"[..]));
+    let mut left = SourceMap::default();
+    let mut right = SourceMap::default();
+    left.set_next_position_for_test(17);
+    right.set_next_position_for_test(9_001);
+    assert!(left.enable_reachable_state_identity());
+    assert!(right.enable_reachable_state_identity());
+    left.register(SourceId::new(3), descriptor.clone())
+        .expect("left registration");
+    right
+        .register(SourceId::new(99), descriptor)
+        .expect("right registration");
+    assert_eq!(
+        left.reachable_state_identity_root(),
+        right.reachable_state_identity_root(),
+        "source ids and logical positions are storage layout, not semantics"
+    );
+}
+
+#[test]
 fn regions_reserve_distinct_anchor_positions_and_validate_spans() {
     let mut map = SourceMap::default();
     map.set_next_position_for_test(0);

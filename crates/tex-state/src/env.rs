@@ -462,6 +462,7 @@ pub(crate) struct DenseState<G> {
     journal: SaveJournal<G>,
     groups: Vec<GroupFrame>,
     next_group_lineage: u64,
+    reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
 }
 
 impl<G> Clone for DenseState<G> {
@@ -491,6 +492,7 @@ impl<G> Clone for DenseState<G> {
             journal: self.journal.clone(),
             groups: self.groups.clone(),
             next_group_lineage: self.next_group_lineage,
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 }
@@ -867,7 +869,26 @@ impl<G> DenseState<G> {
             journal: SaveJournal::new(),
             groups: Vec::new(),
             next_group_lineage: 1,
+            reachable_state_identity: None,
         })
+    }
+
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity.is_some() {
+            return true;
+        }
+        if self.fresh_parameter_profiles != 0 || !self.groups.is_empty() || self.journal_len() != 0
+        {
+            return false;
+        }
+        self.reachable_state_identity = Some(crate::state_hash::SemanticMapIdentity::empty(
+            0x636f_7265_5f65_6e76,
+        ));
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity.map(|root| root.root())
     }
 
     /// Installs one complete fresh profile layer without creating TeX
@@ -900,20 +921,28 @@ impl<G> DenseState<G> {
         for &default in defaults {
             match default {
                 FreshParameterDefault::Integer(parameter, value) => self
-                    .integer_parameters
-                    .write(u32::from(parameter.raw()), BankCell::level_one(value))
+                    .write_cell(
+                        StateCell::IntegerParameter(parameter.raw()),
+                        BankCell::level_one(StateWord::Integer(value)),
+                    )
                     .expect("typed integer parameter fits the fixed bank"),
                 FreshParameterDefault::Dimension(parameter, value) => self
-                    .dimension_parameters
-                    .write(u32::from(parameter.raw()), BankCell::level_one(value))
+                    .write_cell(
+                        StateCell::DimensionParameter(parameter.raw()),
+                        BankCell::level_one(StateWord::Dimension(value)),
+                    )
                     .expect("typed dimension parameter fits the fixed bank"),
                 FreshParameterDefault::EmptyGlue(parameter) => self
-                    .glue_parameters
-                    .write(u32::from(parameter.raw()), BankCell::level_one(None))
+                    .write_cell(
+                        StateCell::GlueParameter(parameter.raw()),
+                        BankCell::level_one(StateWord::Glue(None)),
+                    )
                     .expect("typed glue parameter fits the fixed bank"),
                 FreshParameterDefault::EmptyTokens(parameter) => self
-                    .token_parameters
-                    .write(u32::from(parameter.raw()), BankCell::level_one(None))
+                    .write_cell(
+                        StateCell::TokenParameter(parameter.raw()),
+                        BankCell::level_one(StateWord::TokenList(None)),
+                    )
                     .expect("typed token parameter fits the fixed bank"),
             }
         }
@@ -926,9 +955,11 @@ impl<G> DenseState<G> {
     pub(crate) fn refresh_job_clock(&mut self, clock: JobClock) {
         crate::world::install_job_clock_params(
             &mut |parameter, value| {
-                self.integer_parameters
-                    .write(u32::from(parameter.raw()), BankCell::level_one(value))
-                    .expect("job-clock parameter fits the fixed bank");
+                self.write_cell(
+                    StateCell::IntegerParameter(parameter.raw()),
+                    BankCell::level_one(StateWord::Integer(value)),
+                )
+                .expect("job-clock parameter fits the fixed bank");
             },
             clock,
         );
@@ -1809,6 +1840,12 @@ impl<G> DenseState<G> {
         cell: StateCell,
         value: BankCell<StateWord<G>>,
     ) -> Result<(), StateError> {
+        let identity_before = self
+            .reachable_state_identity
+            .is_some()
+            .then(|| self.read_cell(cell))
+            .transpose()?;
+        let identity_after = value.value.clone();
         let BankCell { value, level } = value;
         match (cell, value) {
             (StateCell::Meaning(index), StateWord::Meaning(word)) => self
@@ -1863,6 +1900,17 @@ impl<G> DenseState<G> {
                 BankCellValue::Dimension(BankCell { value: word, level }),
             )?,
             _ => return Err(StateError::CellKindMismatch),
+        }
+        if let (Some(before), Some(root)) =
+            (identity_before, self.reachable_state_identity.as_mut())
+        {
+            let key = state_cell_semantic_key(cell);
+            let old = state_word_semantic_contribution(cell, &before.value);
+            let new = state_word_semantic_contribution(cell, &identity_after);
+            match (old, new) {
+                (Ok(old), Ok(new)) => root.replace(key, old, new),
+                (Err(()), _) | (_, Err(())) => self.reachable_state_identity = None,
+            }
         }
         Ok(())
     }
@@ -2051,6 +2099,177 @@ fn restoration_cell(cell: StateCell) -> GroupRestorationCell {
             }
         }),
     }
+}
+
+fn state_cell_semantic_key(cell: StateCell) -> u64 {
+    crate::state_hash::semantic_scalar_root(0x636f_7265_5f6b_6579, |hasher| match cell {
+        StateCell::Meaning(index) => {
+            hasher.u8(0);
+            hasher.u32(index);
+        }
+        StateCell::Count(index) => {
+            hasher.u8(1);
+            hasher.u16(index);
+        }
+        StateCell::Dimension(index) => {
+            hasher.u8(2);
+            hasher.u16(index);
+        }
+        StateCell::TokenRegister(index) => {
+            hasher.u8(3);
+            hasher.u16(index);
+        }
+        StateCell::GlueRegister(index) => {
+            hasher.u8(4);
+            hasher.u16(index);
+        }
+        StateCell::BoxRegister(index) => {
+            hasher.u8(5);
+            hasher.u16(index);
+        }
+        StateCell::MuGlueRegister(index) => {
+            hasher.u8(6);
+            hasher.u16(index);
+        }
+        StateCell::IntegerParameter(index) => {
+            hasher.u8(7);
+            hasher.u16(index);
+        }
+        StateCell::DimensionParameter(index) => {
+            hasher.u8(8);
+            hasher.u16(index);
+        }
+        StateCell::TokenParameter(index) => {
+            hasher.u8(9);
+            hasher.u16(index);
+        }
+        StateCell::GlueParameter(index) => {
+            hasher.u8(10);
+            hasher.u16(index);
+        }
+        StateCell::CurrentFont => hasher.u8(11),
+        StateCell::MathFamilyFont(index) => {
+            hasher.u8(12);
+            hasher.u8(index);
+        }
+        StateCell::Code(kind, scalar) => {
+            hasher.u8(13 + kind as u8);
+            hasher.u32(scalar);
+        }
+        StateCell::FontRuntime(cell) => {
+            hasher.u8(19);
+            hasher.u64(font_runtime_cell_semantic_key(cell));
+        }
+    })
+}
+
+fn font_runtime_cell_semantic_key(cell: FontRuntimeCell) -> u64 {
+    crate::state_hash::semantic_scalar_root(0x666f_6e74_5f72_746b, |hasher| match cell {
+        FontRuntimeCell::ParameterCount(font) => {
+            hasher.u8(0);
+            hasher.u32(font);
+        }
+        FontRuntimeCell::Dimen { font, number } => {
+            hasher.u8(1);
+            hasher.u32(font);
+            hasher.u32(number);
+        }
+        FontRuntimeCell::HyphenChar(font) => {
+            hasher.u8(2);
+            hasher.u32(font);
+        }
+        FontRuntimeCell::SkewChar(font) => {
+            hasher.u8(3);
+            hasher.u32(font);
+        }
+        FontRuntimeCell::PdfCode { table, font, code } => {
+            hasher.u8(4);
+            hasher.u8(table);
+            hasher.u32(font);
+            hasher.u8(code);
+        }
+        FontRuntimeCell::LigaturesDisabled(font) => {
+            hasher.u8(5);
+            hasher.u32(font);
+        }
+    })
+}
+
+fn state_word_semantic_contribution<G>(
+    cell: StateCell,
+    word: &StateWord<G>,
+) -> Result<Option<u64>, ()> {
+    if matches!(cell, StateCell::FontRuntime(_)) {
+        // Mutable font runtime belongs to the authoritative font component.
+        return Ok(None);
+    }
+    let is_default = match (cell, word) {
+        (StateCell::Meaning(_), StateWord::Meaning(value)) => value == &MeaningWord::UNDEFINED,
+        (StateCell::Count(_) | StateCell::IntegerParameter(_), StateWord::Integer(value)) => {
+            *value == 0
+        }
+        (
+            StateCell::Dimension(_) | StateCell::DimensionParameter(_),
+            StateWord::Dimension(value),
+        ) => value.raw() == 0,
+        (
+            StateCell::TokenRegister(_) | StateCell::TokenParameter(_),
+            StateWord::TokenList(value),
+        ) => value.is_none(),
+        (
+            StateCell::GlueRegister(_) | StateCell::MuGlueRegister(_) | StateCell::GlueParameter(_),
+            StateWord::Glue(value),
+        ) => value.is_none(),
+        (StateCell::BoxRegister(_), StateWord::NodeList(value)) => value.is_none(),
+        (StateCell::CurrentFont | StateCell::MathFamilyFont(_), StateWord::Font(value)) => {
+            value.raw() == 0
+        }
+        (StateCell::Code(kind, scalar), StateWord::Code(value)) => {
+            let expected = match kind {
+                CodeTableKind::Catcode => catcode_default(scalar),
+                CodeTableKind::Lccode => lccode_default(scalar),
+                CodeTableKind::Uccode => uccode_default(scalar),
+                CodeTableKind::Sfcode => sfcode_default(scalar),
+                CodeTableKind::Mathcode => mathcode_default(scalar),
+                CodeTableKind::Delcode => delcode_default(scalar),
+            };
+            *value == expected
+        }
+        _ => false,
+    };
+    if is_default {
+        return Ok(None);
+    }
+    let identity = match word {
+        StateWord::Meaning(value) => value.semantic_identity().ok_or(())?,
+        StateWord::Integer(value) => {
+            crate::state_hash::semantic_scalar_root(0x636f_7265_5f69_6e74, |hasher| {
+                hasher.i32(*value)
+            })
+        }
+        StateWord::Dimension(value) => {
+            crate::state_hash::semantic_scalar_root(0x636f_7265_5f64_696d, |hasher| {
+                hasher.i32(value.raw())
+            })
+        }
+        StateWord::TokenList(Some(value)) => value.semantic_identity().ok_or(())?,
+        StateWord::Glue(Some(value)) => value.semantic_identity().ok_or(())?,
+        StateWord::NodeList(Some(value)) => value.semantic_identity().ok_or(())?,
+        StateWord::Font(value) => {
+            crate::state_hash::semantic_scalar_root(0x636f_7265_5f66_6e74, |hasher| {
+                hasher.u32(value.raw())
+            })
+        }
+        StateWord::Code(value) => {
+            crate::state_hash::semantic_scalar_root(0x636f_7265_5f63_6f64, |hasher| {
+                hasher.u64(*value as u64)
+            })
+        }
+        StateWord::TokenList(None) | StateWord::Glue(None) | StateWord::NodeList(None) => {
+            unreachable!("default optional values returned above")
+        }
+    };
+    Ok(Some(identity))
 }
 
 fn is_extended_register_cell(cell: StateCell) -> bool {

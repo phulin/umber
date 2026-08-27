@@ -2463,6 +2463,7 @@ impl<G> MainControl<G> {
     /// begins ordinary execution.
     #[doc(hidden)]
     pub fn enable_reachable_state_identity(&mut self, stores: &mut Universe<G>) {
+        let _ = self.command.enable_reachable_state_identity();
         self.modes.enable_reachable_state_identity();
         stores.enable_reachable_state_identity();
     }

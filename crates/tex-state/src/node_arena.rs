@@ -127,6 +127,17 @@ impl<L> NodeListId<L> {
     pub const fn is_empty(self) -> bool {
         self.row == 0
     }
+
+    pub(crate) const fn semantic_identity(self) -> Option<u64> {
+        if self.row == 0 {
+            Some(0)
+        } else {
+            match self.semantic_identity {
+                0 => None,
+                identity => Some(identity),
+            }
+        }
+    }
 }
 
 impl<L> Clone for NodeListId<L> {

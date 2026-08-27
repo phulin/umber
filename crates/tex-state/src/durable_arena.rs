@@ -21,10 +21,10 @@ pub(super) enum ProvenanceNamespace {}
 const TOKEN_CHUNK_WORDS: usize = 64;
 const NO_CHUNK: u32 = u32::MAX;
 
-macro_rules! dense_id {
+macro_rules! semantic_dense_id {
     ($name:ident) => {
         pub struct $name<G> {
-            row: NonZeroU32,
+            packed: u64,
             _brand: PhantomData<fn(&G) -> &G>,
         }
 
@@ -38,7 +38,7 @@ macro_rules! dense_id {
 
         impl<G> PartialEq for $name<G> {
             fn eq(&self, other: &Self) -> bool {
-                self.row == other.row
+                self.packed as u32 == other.packed as u32
             }
         }
 
@@ -46,7 +46,7 @@ macro_rules! dense_id {
 
         impl<G> core::hash::Hash for $name<G> {
             fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                self.row.hash(state);
+                (self.packed as u32).hash(state);
             }
         }
 
@@ -57,33 +57,82 @@ macro_rules! dense_id {
         }
 
         impl<G> $name<G> {
-            fn from_row(row: NonZeroU32) -> Self {
+            fn from_row_with_semantic(row: NonZeroU32, semantic_identity: u64) -> Self {
                 Self {
-                    row,
+                    packed: u64::from(row.get())
+                        | (u64::from((semantic_identity as u32).max(1)) << 32),
                     _brand: PhantomData,
                 }
             }
 
             fn index(self) -> usize {
-                self.row.get() as usize - 1
+                self.packed as u32 as usize - 1
             }
 
             pub(crate) fn format_index(self) -> u32 {
-                self.row.get() - 1
+                self.packed as u32 - 1
+            }
+
+            pub(crate) const fn semantic_identity(self) -> Option<u64> {
+                match self.packed >> 32 {
+                    0 => None,
+                    identity => Some(identity),
+                }
             }
         }
     };
 }
 
-dense_id!(GlueId);
-dense_id!(ProvenanceId);
+semantic_dense_id!(GlueId);
+
+pub struct ProvenanceId<G> {
+    row: NonZeroU32,
+    _brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> Clone for ProvenanceId<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<G> Copy for ProvenanceId<G> {}
+impl<G> PartialEq for ProvenanceId<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.row == other.row
+    }
+}
+impl<G> Eq for ProvenanceId<G> {}
+impl<G> core::hash::Hash for ProvenanceId<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.row.hash(state);
+    }
+}
+impl<G> core::fmt::Debug for ProvenanceId<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("ProvenanceId(..)")
+    }
+}
+impl<G> ProvenanceId<G> {
+    fn from_row(row: NonZeroU32) -> Self {
+        Self {
+            row,
+            _brand: PhantomData,
+        }
+    }
+    fn index(self) -> usize {
+        self.row.get() as usize - 1
+    }
+    pub(crate) fn format_index(self) -> u32 {
+        self.row.get() - 1
+    }
+}
 
 /// Shared owner of one immutable stored token list.
 ///
 /// The wrapper is generation branded and deliberately non-`Copy`. Cloning it
 /// records a genuine semantic alias through non-atomic shared ownership.
 pub struct TokenListId<G> {
-    serial: NonZeroU32,
+    packed_identity: u64,
     words: Rc<[TokenWord]>,
     accounting: MemoryAccounting,
     _brand: PhantomData<fn(&G) -> &G>,
@@ -92,7 +141,7 @@ pub struct TokenListId<G> {
 impl<G> Clone for TokenListId<G> {
     fn clone(&self) -> Self {
         Self {
-            serial: self.serial,
+            packed_identity: self.packed_identity,
             words: Rc::clone(&self.words),
             accounting: self.accounting.clone(),
             _brand: PhantomData,
@@ -111,7 +160,7 @@ impl<G> Drop for TokenListId<G> {
 
 impl<G> PartialEq for TokenListId<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.serial == other.serial
+        self.packed_identity as u32 == other.packed_identity as u32
     }
 }
 
@@ -119,7 +168,7 @@ impl<G> Eq for TokenListId<G> {}
 
 impl<G> core::hash::Hash for TokenListId<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.serial.hash(state);
+        (self.packed_identity as u32).hash(state);
     }
 }
 
@@ -134,14 +183,24 @@ impl<G> TokenListId<G> {
         serial: NonZeroU32,
         words: Rc<[TokenWord]>,
         accounting: MemoryAccounting,
+        semantic_identity: u64,
     ) -> Self {
         let memory_words = token_list_memory_words(words.len());
         accounting.allocate_shared_dynamic(memory_words);
         Self {
-            serial,
+            packed_identity: u64::from(serial.get())
+                | (u64::from((semantic_identity as u32).max(u32::from(semantic_identity != 0)))
+                    << 32),
             words,
             accounting,
             _brand: PhantomData,
+        }
+    }
+
+    pub(crate) const fn semantic_identity(&self) -> Option<u64> {
+        match self.packed_identity >> 32 {
+            0 => None,
+            identity => Some(identity),
         }
     }
 
@@ -152,7 +211,7 @@ impl<G> TokenListId<G> {
     }
 
     pub(crate) const fn format_index(&self) -> u32 {
-        self.serial.get() - 1
+        self.packed_identity as u32 - 1
     }
 
     pub(crate) fn capture_format(&self) -> Vec<u32> {
@@ -177,6 +236,7 @@ impl<G> TokenListId<G> {
                     serial,
                     Rc::from(Vec::<TokenWord>::new().into_boxed_slice()),
                     MemoryAccounting::default(),
+                    0,
                 )
             })
     }
@@ -456,6 +516,7 @@ pub(crate) struct TokenListArena<G> {
     free_chunk_head: u32,
     next_builder_serial: u64,
     accounting: MemoryAccounting,
+    semantic_identity_enabled: bool,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -469,6 +530,7 @@ impl<G> TokenListArena<G> {
             free_chunk_head: NO_CHUNK,
             next_builder_serial: 1,
             accounting,
+            semantic_identity_enabled: self.semantic_identity_enabled,
             _brand: PhantomData,
         }
     }
@@ -503,6 +565,7 @@ impl<G> TokenListArena<G> {
             free_chunk_head: NO_CHUNK,
             next_builder_serial: 1,
             accounting,
+            semantic_identity_enabled: false,
             _brand: PhantomData,
         }
     }
@@ -668,13 +731,36 @@ impl<G> TokenListArena<G> {
             Some(word)
         })
         .collect::<Rc<[_]>>();
+        let semantic_identity = if self.semantic_identity_enabled {
+            crate::state_hash::semantic_scalar_root(0x746f_6b65_6e73_7631, |hasher| {
+                hasher.usize(words.len());
+                for word in words.iter() {
+                    hasher.u32(word.raw());
+                }
+            })
+            .max(1)
+        } else {
+            0
+        };
         self.release_builder_slot(builder, true)?;
         self.next_serial = serial.get();
         Ok(TokenListId::from_words(
             serial,
             words,
             self.accounting.clone(),
+            semantic_identity,
         ))
+    }
+
+    pub(crate) fn enable_semantic_identity(&mut self) -> bool {
+        if self.semantic_identity_enabled {
+            return true;
+        }
+        if self.next_serial != 0 {
+            return false;
+        }
+        self.semantic_identity_enabled = true;
+        true
     }
 
     pub(crate) fn discard_builder(
@@ -762,6 +848,7 @@ impl<G> TokenListArena<G> {
 /// Durable immutable glue specifications.
 pub(crate) struct GlueArena<G> {
     rows: Vec<GlueSpec>,
+    semantic_identity_enabled: bool,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -771,6 +858,7 @@ impl<G> Clone for GlueArena<G> {
         rows.extend_from_slice(&self.rows);
         Self {
             rows,
+            semantic_identity_enabled: self.semantic_identity_enabled,
             _brand: PhantomData,
         }
     }
@@ -780,6 +868,7 @@ impl<G> GlueArena<G> {
     pub(super) fn new(_token: ArenaToken<G, GlueNamespace>) -> Self {
         Self {
             rows: Vec::new(),
+            semantic_identity_enabled: false,
             _brand: PhantomData,
         }
     }
@@ -793,7 +882,30 @@ impl<G> GlueArena<G> {
             .try_reserve(1)
             .map_err(|_| DurableAllocationError::AllocationFailed)?;
         self.rows.push(value);
-        Ok(GlueId::from_row(row))
+        let semantic_identity = if self.semantic_identity_enabled {
+            crate::state_hash::semantic_scalar_root(0x676c_7565_5f76_3100, |hasher| {
+                hasher.i32(value.width.raw());
+                hasher.i32(value.stretch.raw());
+                hasher.u8(value.stretch_order as u8);
+                hasher.i32(value.shrink.raw());
+                hasher.u8(value.shrink_order as u8);
+            })
+            .max(1)
+        } else {
+            0
+        };
+        Ok(GlueId::from_row_with_semantic(row, semantic_identity))
+    }
+
+    pub(crate) fn enable_semantic_identity(&mut self) -> bool {
+        if self.semantic_identity_enabled {
+            return true;
+        }
+        if !self.rows.is_empty() {
+            return false;
+        }
+        self.semantic_identity_enabled = true;
+        true
     }
 
     /// Reserves a complete promotion batch without publishing a row.

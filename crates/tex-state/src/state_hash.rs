@@ -338,6 +338,109 @@ fn splitmix64(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
+/// Demand-enabled, allocation-free canonical root for one semantic map.
+///
+/// Keys are semantic coordinates, never storage rows or owner ids. Each live
+/// entry contributes independently, so replacing a value is reversible from
+/// the old/new pair already present at the owner's mutation barrier. This is
+/// derived scalar state beside the authoritative owner, not a lookup table or
+/// second ownership graph.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SemanticMapIdentity {
+    domain: u64,
+    xor: u64,
+    entries: u64,
+}
+
+/// Demand-enabled canonical root for one append-only semantic sequence.
+///
+/// Rollback owners retain this two-word value in their existing marks, so a
+/// rewind restores it without walking or retaining the sequence payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SemanticSequenceIdentity {
+    domain: u64,
+    root: u64,
+    len: u64,
+}
+
+impl SemanticSequenceIdentity {
+    #[must_use]
+    pub(crate) fn empty(domain: u64) -> Self {
+        Self {
+            domain,
+            root: semantic_scalar_root(domain ^ 0x656d_7074_795f_7631, |_| {}),
+            len: 0,
+        }
+    }
+
+    pub(crate) fn push(&mut self, value: u64) {
+        self.root = semantic_scalar_root(self.domain ^ 0x7075_7368_5f76_3100, |hasher| {
+            hasher.u64(self.root);
+            hasher.u64(self.len);
+            hasher.u64(value);
+        });
+        self.len = self
+            .len
+            .checked_add(1)
+            .expect("semantic sequence exhausted");
+    }
+
+    #[must_use]
+    pub(crate) const fn root(self) -> u64 {
+        self.root
+    }
+}
+
+impl SemanticMapIdentity {
+    #[must_use]
+    pub(crate) const fn empty(domain: u64) -> Self {
+        Self {
+            domain,
+            xor: 0,
+            entries: 0,
+        }
+    }
+
+    pub(crate) fn replace(&mut self, key: u64, old: Option<u64>, new: Option<u64>) {
+        if let Some(value) = old {
+            self.xor ^= semantic_map_leaf(self.domain, key, value);
+            self.entries = self
+                .entries
+                .checked_sub(1)
+                .expect("semantic map removal names a live entry");
+        }
+        if let Some(value) = new {
+            self.xor ^= semantic_map_leaf(self.domain, key, value);
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .expect("semantic map entry count exhausted");
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn root(self) -> u64 {
+        let mut hasher = StateHasher::new_exact(self.domain ^ 0x726f_6f74_5f76_3100);
+        hasher.u64(self.entries);
+        hasher.u64(self.xor);
+        hasher.finish()
+    }
+}
+
+#[must_use]
+pub(crate) fn semantic_scalar_root(domain: u64, build: impl FnOnce(&mut StateHasher)) -> u64 {
+    let mut hasher = StateHasher::new_exact(domain);
+    build(&mut hasher);
+    hasher.finish()
+}
+
+fn semantic_map_leaf(domain: u64, key: u64, value: u64) -> u64 {
+    semantic_scalar_root(domain ^ 0x6c65_6166_5f76_3100, |hasher| {
+        hasher.u64(key);
+        hasher.u64(value);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{StateHashFragment, StateHasher, semantic_identity_bytes};

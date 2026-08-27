@@ -4,7 +4,7 @@ use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::FontId;
 use crate::interner::{ControlSequenceKind, SymbolId};
 use crate::scaled::Scaled;
-use crate::state_hash::StateHashFragment;
+use crate::state_hash::{SemanticMapIdentity, StateHashFragment, semantic_scalar_root};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -160,6 +160,7 @@ pub(crate) struct FontStoreMark {
     pub(crate) expansion_writes_len: u32,
     non_parameter_font_info_words: usize,
     identities: IdentityMark,
+    reachable_state_identity: Option<SemanticMapIdentity>,
 }
 
 impl FontStoreMark {
@@ -339,6 +340,7 @@ pub(crate) struct FontStore {
     font_hash_fragments: Arc<Vec<StateHashFragment>>,
     complete_hash_fragments: Arc<Vec<StateHashFragment>>,
     identities: IdentityAllocator,
+    reachable_state_identity: Option<SemanticMapIdentity>,
 }
 
 impl Clone for FontStore {
@@ -361,6 +363,7 @@ impl Clone for FontStore {
             font_hash_fragments: Arc::clone(&self.font_hash_fragments),
             complete_hash_fragments: Arc::clone(&self.complete_hash_fragments),
             identities: self.identities.fork(),
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 }
@@ -435,6 +438,7 @@ impl FontStore {
             font_hash_fragments: Arc::new(vec![hash_fragment]),
             complete_hash_fragments: Arc::new(vec![complete_hash_fragment]),
             identities: IdentityAllocator::new(1),
+            reachable_state_identity: None,
         }
     }
 
@@ -683,6 +687,7 @@ impl FontStore {
             font_hash_fragments: Arc::new(font_hash_fragments),
             complete_hash_fragments: Arc::new(complete_hash_fragments),
             identities,
+            reachable_state_identity: None,
         })
     }
 
@@ -736,6 +741,16 @@ impl FontStore {
         Arc::make_mut(&mut self.font_hash_fragments).push(hash_fragment);
         Arc::make_mut(&mut self.complete_hash_fragments)
             .push(complete_font_hash_fragment(hash_fragment, None));
+        if let Some(root) = &mut self.reachable_state_identity {
+            root.replace(
+                hash_fragment.fingerprint(),
+                None,
+                Some(font_state_identity(
+                    complete_font_hash_fragment(hash_fragment, None),
+                    None,
+                )),
+            );
+        }
         if deduplicate {
             Arc::make_mut(&mut self.by_key).insert(key, id);
         }
@@ -758,6 +773,8 @@ impl FontStore {
             // including when an already-loaded font is found. The identifier
             // is mutable independently of the immutable metric program.
             let previous_fragment = self.complete_fragment(id);
+            let immutable = *self.hash_fragment(id);
+            let expansion = self.expansion(id);
             Arc::make_mut(&mut self.identifier_writes).push((id, previous, previous_fragment));
             if let Some(local) = self.local_index(id) {
                 Arc::make_mut(&mut self.identifiers)[local] = Some(symbol);
@@ -765,6 +782,13 @@ impl FontStore {
             } else {
                 self.identifier_overrides
                     .insert(id, (Some(symbol), complete_hash_fragment));
+            }
+            if let Some(root) = &mut self.reachable_state_identity {
+                root.replace(
+                    immutable.fingerprint(),
+                    Some(font_state_identity(previous_fragment, expansion)),
+                    Some(font_state_identity(complete_hash_fragment, expansion)),
+                );
             }
             true
         } else {
@@ -908,11 +932,20 @@ impl FontStore {
             return Ok(false);
         }
         let previous = self.expansion(id);
+        let immutable = *self.hash_fragment(id);
+        let complete = self.complete_fragment(id);
         Arc::make_mut(&mut self.expansion_writes).push((id, previous));
         if let Some(index) = self.local_index(id) {
             Arc::make_mut(&mut self.expansion_specs)[index] = Some(expansion);
         } else {
             self.expansion_overrides.insert(id, Some(expansion));
+        }
+        if let Some(root) = &mut self.reachable_state_identity {
+            root.replace(
+                immutable.fingerprint(),
+                Some(font_state_identity(complete, previous)),
+                Some(font_state_identity(complete, Some(expansion))),
+            );
         }
         Ok(true)
     }
@@ -983,6 +1016,7 @@ impl FontStore {
             .expect("font expansion write log exceeds u32 entries"),
             non_parameter_font_info_words: self.non_parameter_font_info_words,
             identities: self.identities.watermark(),
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 
@@ -1066,6 +1100,7 @@ impl FontStore {
         Arc::make_mut(&mut self.font_hash_fragments).truncate(local_len);
         Arc::make_mut(&mut self.complete_hash_fragments).truncate(local_len);
         Arc::make_mut(&mut self.by_key).retain(|_, id| id.raw() < mark.len);
+        self.reachable_state_identity = mark.reachable_state_identity;
     }
 
     pub(crate) fn fork_at(&self, mark: FontStoreMark) -> Self {
@@ -1118,7 +1153,37 @@ impl FontStore {
             font_hash_fragments: Arc::new(Vec::new()),
             complete_hash_fragments: Arc::new(Vec::new()),
             identities,
+            reachable_state_identity: mark.reachable_state_identity,
         }
+    }
+
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity.is_some() {
+            return true;
+        }
+        if self.len() != 1
+            || !self.identifier_writes.is_empty()
+            || !self.expansion_writes.is_empty()
+        {
+            return false;
+        }
+        let null = NULL_FONT;
+        let immutable = *self.hash_fragment(null);
+        let mut root = SemanticMapIdentity::empty(0x666f_6e74_5f72_7431);
+        root.replace(
+            immutable.fingerprint(),
+            None,
+            Some(font_state_identity(
+                self.complete_fragment(null),
+                self.expansion(null),
+            )),
+        );
+        self.reachable_state_identity = Some(root);
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity.map(|root| root.root())
     }
 
     #[cfg(feature = "profiling")]
@@ -1207,6 +1272,22 @@ pub(crate) fn complete_font_hash_fragment(
                 fragment.str(name);
             }
             None => fragment.bool(false),
+        }
+    })
+}
+
+fn font_state_identity(complete: StateHashFragment, expansion: Option<FontExpansion>) -> u64 {
+    semantic_scalar_root(0x666f_6e74_5f73_7431, |hasher| {
+        complete.apply(hasher);
+        match expansion {
+            Some(expansion) => {
+                hasher.bool(true);
+                hasher.u16(expansion.stretch);
+                hasher.u16(expansion.shrink);
+                hasher.u8(expansion.step);
+                hasher.bool(expansion.auto_expand);
+            }
+            None => hasher.bool(false),
         }
     })
 }

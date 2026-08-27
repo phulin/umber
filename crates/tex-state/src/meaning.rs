@@ -219,6 +219,32 @@ impl<G> MeaningWord<G> {
             Self::Static(_) | Self::Macro { .. } => None,
         }
     }
+
+    pub(crate) fn semantic_identity(&self) -> Option<u64> {
+        let definition_identity = match self {
+            Self::Macro { definition, .. } => Some(definition.semantic_identity()?),
+            Self::Static(_) | Self::Font(_) => None,
+        };
+        Some(crate::state_hash::semantic_scalar_root(
+            0x6d65_616e_696e_6731,
+            |hasher| match self {
+                Self::Static(word) => {
+                    hasher.u8(0);
+                    hasher.u64(*word);
+                }
+                Self::Font(font) => {
+                    hasher.u8(1);
+                    hasher.u32(font.raw());
+                }
+                Self::Macro { flags, definition } => {
+                    hasher.u8(2);
+                    hasher.u8(flags.bits());
+                    let _ = definition;
+                    hasher.u64(definition_identity.expect("macro identity was resolved"));
+                }
+            },
+        ))
+    }
 }
 
 /// Decoded meaning returned by an admitted generation borrow.

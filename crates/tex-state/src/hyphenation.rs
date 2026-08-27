@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
+use crate::state_hash::{SemanticMapIdentity, semantic_scalar_root};
+
 pub(crate) use storage::HyphenationCheckpoint;
 use storage::{HyphenationRuntime, PatternOwner};
 
@@ -53,6 +55,7 @@ pub struct HyphenationTable {
     dependency_fingerprints: OnceLock<BTreeMap<(u8, u8), u64>>,
     /// Runtime `trie_size`. This is configuration, not format-image state.
     trie_capacity: usize,
+    reachable_state_identity: Option<SemanticMapIdentity>,
 }
 
 impl PartialEq for HyphenationTable {
@@ -64,6 +67,44 @@ impl PartialEq for HyphenationTable {
 }
 
 impl Eq for HyphenationTable {}
+
+fn pattern_key_identity(language: u8, letters: &[char]) -> u64 {
+    semantic_scalar_root(0x6879_7068_5f70_6174, |hasher| {
+        hasher.u8(language);
+        hasher.usize(letters.len());
+        for letter in letters {
+            hasher.u32(*letter as u32);
+        }
+    })
+}
+
+fn byte_sequence_identity(domain: u64, values: &[u8]) -> u64 {
+    semantic_scalar_root(domain, |hasher| {
+        hasher.usize(values.len());
+        for value in values {
+            hasher.u8(*value);
+        }
+    })
+}
+
+fn positions_identity(positions: &[usize]) -> u64 {
+    semantic_scalar_root(0x6879_7068_5f70_6f73, |hasher| {
+        hasher.usize(positions.len());
+        for position in positions {
+            hasher.usize(*position);
+        }
+    })
+}
+
+fn hyphen_codes_identity(codes: &BTreeMap<char, char>) -> u64 {
+    semantic_scalar_root(0x6879_7068_5f63_6f64, |hasher| {
+        hasher.usize(codes.len());
+        for (from, to) in codes {
+            hasher.u32(*from as u32);
+            hasher.u32(*to as u32);
+        }
+    })
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(super) struct LanguageHyphenation {
@@ -149,6 +190,7 @@ impl HyphenationTable {
             runtime: HyphenationRuntime::default(),
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: default_trie_capacity(),
+            reachable_state_identity: None,
         }
     }
 
@@ -157,10 +199,20 @@ impl HyphenationTable {
     /// Keeping this explicit permits deterministic capacity-boundary tests and
     /// avoids making exhaustion depend on the host allocator.
     pub fn set_trie_capacity(&mut self, capacity: usize) {
+        if let Some(root) = &mut self.reachable_state_identity {
+            root.replace(0, Some(self.trie_capacity as u64), Some(capacity as u64));
+        }
         self.trie_capacity = capacity;
     }
 
     pub fn set_exception_capacity(&mut self, capacity: usize) {
+        if let Some(root) = &mut self.reachable_state_identity {
+            root.replace(
+                1,
+                Some(self.runtime.exception_capacity as u64),
+                Some(capacity as u64),
+            );
+        }
         self.runtime.exception_capacity = capacity;
     }
 
@@ -170,6 +222,11 @@ impl HyphenationTable {
     }
 
     pub(crate) fn close_patterns(&mut self) {
+        if self.patterns.is_building()
+            && let Some(root) = &mut self.reachable_state_identity
+        {
+            root.replace(2, Some(0), Some(1));
+        }
         self.patterns.initialize();
     }
 
@@ -264,6 +321,10 @@ impl HyphenationTable {
         if pattern.letters.is_empty() {
             return Ok(false);
         }
+        let identity_key = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| pattern_key_identity(language, &pattern.letters));
         let existing_nodes = self
             .patterns
             .languages()
@@ -292,8 +353,21 @@ impl HyphenationTable {
             node = edge_or_insert(nodes, node, ch);
         }
         let duplicate = !nodes[node].values.is_empty();
+        let (old_identity, new_identity) = if identity_key.is_some() {
+            (
+                (!nodes[node].values.is_empty())
+                    .then(|| byte_sequence_identity(0x6879_7068_5f70_6f6c, &nodes[node].values)),
+                (!pattern.values.is_empty())
+                    .then(|| byte_sequence_identity(0x6879_7068_5f70_6f6c, &pattern.values)),
+            )
+        } else {
+            (None, None)
+        };
         let old_value_bytes = nodes[node].values.len();
         nodes[node].values = pattern.values;
+        if let (Some(root), Some(key)) = (&mut self.reachable_state_identity, identity_key) {
+            root.replace(key, old_identity, new_identity);
+        }
         let missing_edges = missing_nodes.saturating_sub(usize::from(new_language));
         self.pattern_retained_bytes = self
             .pattern_retained_bytes
@@ -346,6 +420,20 @@ impl HyphenationTable {
             return ExceptionInsertion::Ignored;
         }
         self.dependency_fingerprints = OnceLock::new();
+        let key = self.reachable_state_identity.as_ref().map(|_| {
+            semantic_scalar_root(0x6879_7068_5f65_786b, |hasher| {
+                hasher.u8(language);
+                hasher.str(&exception.word);
+            })
+        });
+        let old_identity = key.and_then(|_| {
+            self.runtime
+                .exceptions
+                .get(&language)
+                .and_then(|exceptions| exceptions.get(&exception.word))
+                .map(|positions| positions_identity(positions))
+        });
+        let new_identity = key.map(|_| positions_identity(&exception.positions));
         let replaced = self
             .runtime
             .exceptions
@@ -353,6 +441,9 @@ impl HyphenationTable {
             .or_default()
             .insert(exception.word, exception.positions)
             .is_some();
+        if let (Some(root), Some(key)) = (&mut self.reachable_state_identity, key) {
+            root.replace(key, old_identity, new_identity);
+        }
         if replaced {
             ExceptionInsertion::Replaced
         } else {
@@ -367,9 +458,49 @@ impl HyphenationTable {
         codes: impl IntoIterator<Item = (char, char)>,
     ) {
         self.dependency_fingerprints = OnceLock::new();
-        self.runtime
-            .hyphen_codes
-            .insert(language, codes.into_iter().collect());
+        let codes = codes.into_iter().collect::<BTreeMap<_, _>>();
+        let identities = self.reachable_state_identity.as_ref().map(|_| {
+            (
+                self.runtime
+                    .hyphen_codes
+                    .get(&language)
+                    .map(hyphen_codes_identity),
+                hyphen_codes_identity(&codes),
+            )
+        });
+        self.runtime.hyphen_codes.insert(language, codes);
+        if let (Some(root), Some((old_identity, new_identity))) =
+            (&mut self.reachable_state_identity, identities)
+        {
+            root.replace(
+                semantic_scalar_root(0x6879_7068_5f63_6f6b, |hasher| hasher.u8(language)),
+                old_identity,
+                Some(new_identity),
+            );
+        }
+    }
+
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity.is_some() {
+            return true;
+        }
+        if !self.patterns.is_building()
+            || !self.patterns.languages().is_empty()
+            || !self.runtime.exceptions.is_empty()
+            || !self.runtime.hyphen_codes.is_empty()
+        {
+            return false;
+        }
+        let mut root = SemanticMapIdentity::empty(0x6879_7068_5f72_7431);
+        root.replace(0, None, Some(self.trie_capacity as u64));
+        root.replace(1, None, Some(self.runtime.exception_capacity as u64));
+        root.replace(2, None, Some(0));
+        self.reachable_state_identity = Some(root);
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity.map(|root| root.root())
     }
 
     #[must_use]

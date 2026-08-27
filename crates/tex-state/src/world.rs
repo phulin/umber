@@ -1051,6 +1051,25 @@ fn effect_root_identity_for(records: &[EffectRecord]) -> EffectRootIdentity {
     }
 }
 
+fn stable_hash(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher as _;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn world_scalar_identities(world: &World) -> [(u64, u64); 7] {
+    [
+        (0, stable_hash(world.stream_bufs.as_ref())),
+        (1, stable_hash(&world.rng)),
+        (2, stable_hash(&world.pdf_rng)),
+        (3, stable_hash(&world.pdf_time_micros)),
+        (4, stable_hash(&world.pdf_timer_origin_micros)),
+        (5, stable_hash(&world.job_clock)),
+        (6, stable_hash(&world.shell_escape_policy)),
+    ]
+}
+
 impl EffectRecord {
     /// Opaque retained-memory charge for detached session accounting.
     #[must_use]
@@ -1535,6 +1554,42 @@ pub struct WorldSnapshot {
     /// would count the same report once per attempt. §82's hundredth-error
     /// transition reads this count, so the two have to move together.
     error_channel: crate::print::ErrorChannel,
+    reachable_state_identity: Option<WorldReachableStateIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WorldReachableStateIdentity {
+    effects: crate::state_hash::SemanticSequenceIdentity,
+    inputs: crate::state_hash::SemanticSequenceIdentity,
+    artifacts: crate::state_hash::SemanticSequenceIdentity,
+    scalars: crate::state_hash::SemanticMapIdentity,
+    resources: crate::state_hash::SemanticMapIdentity,
+}
+
+impl WorldReachableStateIdentity {
+    fn new(world: &World) -> Self {
+        let mut scalars = crate::state_hash::SemanticMapIdentity::empty(0x776f_726c_645f_7363);
+        for (key, value) in world_scalar_identities(world) {
+            scalars.replace(key, None, Some(value));
+        }
+        Self {
+            effects: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_6566),
+            inputs: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_696e),
+            artifacts: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_6172),
+            scalars,
+            resources: crate::state_hash::SemanticMapIdentity::empty(0x776f_726c_645f_7265),
+        }
+    }
+
+    fn root(self) -> u64 {
+        crate::state_hash::semantic_scalar_root(0x776f_726c_645f_7274, |hasher| {
+            hasher.u64(self.effects.root());
+            hasher.u64(self.inputs.root());
+            hasher.u64(self.artifacts.root());
+            hasher.u64(self.scalars.root());
+            hasher.u64(self.resources.root());
+        })
+    }
 }
 
 /// Immutable accepted effect blocks shared by successive revision lineages.
@@ -1890,6 +1945,7 @@ pub struct World {
     execution_trace: Vec<ExecutionTraceEvent>,
     unavailable_memory_outputs: BTreeSet<PathBuf>,
     stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
+    reachable_state_identity: Option<WorldReachableStateIdentity>,
 }
 
 /// Memory-backed materialization prefix retained across one host retry.
@@ -2336,6 +2392,7 @@ impl Clone for World {
             execution_trace: self.execution_trace.clone(),
             unavailable_memory_outputs: self.unavailable_memory_outputs.clone(),
             stream_open_contexts: self.stream_open_contexts.clone(),
+            reachable_state_identity: self.reachable_state_identity,
         }
     }
 }
@@ -2629,6 +2686,7 @@ impl World {
             execution_trace: Vec::new(),
             unavailable_memory_outputs: BTreeSet::new(),
             stream_open_contexts: Arc::new(BTreeMap::new()),
+            reachable_state_identity: None,
         }
     }
 
@@ -2696,6 +2754,21 @@ impl World {
         path: impl Into<PathBuf>,
         bytes: Arc<[u8]>,
     ) -> Result<(), WorldError> {
+        let path = path.into();
+        let identity_update = self.reachable_state_identity.as_ref().map(|_| {
+            let old = match &self.backend {
+                WorldBackend::Memory(memory) => memory
+                    .files
+                    .get(&path)
+                    .map(|bytes| stable_hash(&ContentHash::from_bytes(bytes))),
+                _ => None,
+            };
+            (
+                stable_hash(&path),
+                old,
+                stable_hash(&ContentHash::from_bytes(&bytes)),
+            )
+        });
         let WorldBackend::Memory(memory) = &mut self.backend else {
             return Err(WorldError::new(
                 "set memory file",
@@ -2703,7 +2776,12 @@ impl World {
                 "world is not memory-backed",
             ));
         };
-        Arc::make_mut(memory).files.insert(path.into(), bytes);
+        Arc::make_mut(memory).files.insert(path.clone(), bytes);
+        if let (Some(identity), Some((key, old, new))) =
+            (&mut self.reachable_state_identity, identity_update)
+        {
+            identity.resources.replace(key, old, Some(new));
+        }
         Ok(())
     }
 
@@ -2865,6 +2943,7 @@ impl World {
             modification_date: content.modification_date,
             origin: content.origin,
         });
+        self.record_input_identity();
         content
     }
 
@@ -3234,6 +3313,7 @@ impl World {
             modification_date: content.modification_date,
             origin: content.origin,
         });
+        self.record_input_identity();
         Ok(Some(line))
     }
 
@@ -3637,6 +3717,7 @@ impl World {
         reservation: ArtifactPublicationReservation,
     ) {
         Arc::make_mut(&mut self.artifact_commits).push(hash);
+        self.record_artifact_identity(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
             hash,
             bytes,
@@ -3673,7 +3754,9 @@ impl World {
         artifact: CommittedArtifact,
         publication: ArtifactPublicationRecord,
     ) {
-        Arc::make_mut(&mut self.artifact_commits).push(artifact.hash);
+        let hash = artifact.hash;
+        Arc::make_mut(&mut self.artifact_commits).push(hash);
+        self.record_artifact_identity(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(artifact);
         Arc::make_mut(&mut self.artifact_publications).push(publication);
     }
@@ -4366,17 +4449,39 @@ impl World {
     }
 
     pub fn set_shell_escape_policy(&mut self, policy: ShellEscapePolicy) {
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.shell_escape_policy));
         self.shell_escape_policy = policy;
+        if let Some(old) = old {
+            self.replace_identity_scalar(6, old, stable_hash(&self.shell_escape_policy));
+        }
     }
 
     #[must_use]
     pub fn next_random_u64(&mut self) -> u64 {
-        self.rng.next_u64()
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.rng));
+        let value = self.rng.next_u64();
+        if let Some(old) = old {
+            self.replace_identity_scalar(1, old, stable_hash(&self.rng));
+        }
+        value
     }
 
     /// Re-seeds pdfTeX's independent deterministic random stream.
     pub fn set_pdf_random_seed(&mut self, seed: i32) {
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.pdf_rng));
         self.pdf_rng = PdfRandomState::from_seed(seed);
+        if let Some(old) = old {
+            self.replace_identity_scalar(2, old, stable_hash(&self.pdf_rng));
+        }
     }
 
     #[must_use]
@@ -4386,21 +4491,51 @@ impl World {
 
     #[must_use]
     pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
-        self.pdf_rng.uniform(bound)
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.pdf_rng));
+        let value = self.pdf_rng.uniform(bound);
+        if let Some(old) = old {
+            self.replace_identity_scalar(2, old, stable_hash(&self.pdf_rng));
+        }
+        value
     }
 
     #[must_use]
     pub fn pdf_normal_deviate(&mut self) -> i32 {
-        self.pdf_rng.normal()
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.pdf_rng));
+        let value = self.pdf_rng.normal();
+        if let Some(old) = old {
+            self.replace_identity_scalar(2, old, stable_hash(&self.pdf_rng));
+        }
+        value
     }
 
     /// Supplies the current monotonic time without consulting the host during expansion.
     pub fn set_pdf_time_micros(&mut self, micros: u64) {
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.pdf_time_micros));
         self.pdf_time_micros = micros;
+        if let Some(old) = old {
+            self.replace_identity_scalar(3, old, stable_hash(&self.pdf_time_micros));
+        }
     }
 
     pub fn reset_pdf_timer(&mut self) {
+        let old = self
+            .reachable_state_identity
+            .as_ref()
+            .map(|_| stable_hash(&self.pdf_timer_origin_micros));
         self.pdf_timer_origin_micros = self.pdf_time_micros;
+        if let Some(old) = old {
+            self.replace_identity_scalar(4, old, stable_hash(&self.pdf_timer_origin_micros));
+        }
     }
 
     #[must_use]
@@ -5296,6 +5431,45 @@ impl World {
             commit_mode: self.commit_mode,
             file_framing: self.file_framing,
             error_channel: self.error_channel.clone(),
+            reachable_state_identity: self.reachable_state_identity,
+        }
+    }
+
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity.is_some() {
+            return true;
+        }
+        if self.effect_pos() != EffectPos::default()
+            || !self.inputs.is_empty()
+            || self.artifact_pos() != 0
+            || !self.shell_escapes.is_empty()
+        {
+            return false;
+        }
+        self.reachable_state_identity = Some(WorldReachableStateIdentity::new(self));
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity.map(|root| root.root())
+    }
+
+    fn replace_identity_scalar(&mut self, key: u64, old: u64, new: u64) {
+        if let Some(identity) = &mut self.reachable_state_identity {
+            identity.scalars.replace(key, Some(old), Some(new));
+        }
+    }
+
+    fn record_input_identity(&mut self) {
+        let record = self.inputs.last().expect("input record was just published");
+        if let Some(identity) = &mut self.reachable_state_identity {
+            identity.inputs.push(stable_hash(record));
+        }
+    }
+
+    fn record_artifact_identity(&mut self, hash: ContentHash) {
+        if let Some(identity) = &mut self.reachable_state_identity {
+            identity.artifacts.push(stable_hash(&hash));
         }
     }
 
@@ -5392,6 +5566,7 @@ impl World {
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;
         self.error_channel = snapshot.error_channel.clone();
+        self.reachable_state_identity = snapshot.reachable_state_identity;
     }
 
     /// Installs a retained checkpoint into a new generation. Accepted effects
@@ -5480,6 +5655,7 @@ impl World {
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;
         self.error_channel = snapshot.error_channel.clone();
+        self.reachable_state_identity = snapshot.reachable_state_identity;
     }
 
     /// Builds one isolated revision suffix from a retained mark without
@@ -5505,6 +5681,9 @@ impl World {
     }
 
     fn append_effect(&mut self, record: EffectRecord) {
+        if let Some(identity) = &mut self.reachable_state_identity {
+            identity.effects.push(stable_hash(&record));
+        }
         self.effects_mut().push(record);
         let terminal = self.active_terminal_publication;
         let sequence = if let Some(publication) = terminal {

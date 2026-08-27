@@ -1908,7 +1908,7 @@ impl<G> Universe<G> {
     ) -> Result<DefinitionId<G>, PromotionError>
     where
         Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
-        Replacement: ExactSizeIterator<Item = TokenWord>,
+        Replacement: Clone + ExactSizeIterator<Item = TokenWord>,
     {
         let parameter_words = parameter_text.len();
         let replacement_words = replacement_text.len();
@@ -2510,6 +2510,14 @@ impl<G> Universe<G> {
     /// is published for an incremental session.
     #[doc(hidden)]
     pub fn enable_reachable_state_identity(&mut self) {
+        if let Some(core) = &mut self.core {
+            let _ = core.enable_reachable_state_identity();
+        }
+        let _ = self.world.enable_reachable_state_identity();
+        let _ = self.hyphenation.enable_reachable_state_identity();
+        let _ = self.dependencies.enable_reachable_state_identity();
+        let _ = self.sources.enable_reachable_state_identity();
+        let _ = self.fonts.enable_reachable_state_identity();
         self.page.enable_reachable_state_identity();
         self.page_nodes.enable_semantic_identity();
     }
@@ -2620,15 +2628,42 @@ impl<G> Universe<G> {
         });
         let pdf = self.pdf.snapshot();
         let page = self.page.checkpoint_mark();
+        let core_identity = live_core.reachable_state_identity_root().map(|core| {
+            crate::state_hash::semantic_scalar_root(0x636f_7265_5f61_6767, |hasher| {
+                hasher.u64(core);
+                hasher.u8(self.interaction_mode as u8);
+                match self.prepared_mag {
+                    Some(mag) => {
+                        hasher.bool(true);
+                        hasher.i32(mag);
+                    }
+                    None => hasher.bool(false),
+                }
+            })
+        });
         let identity_roots = RuntimeCheckpointIdentityRoots {
             page: wants_reachable_state_identity
                 .then(|| page.reachable_state_identity_root())
                 .flatten(),
             pdf: wants_reachable_state_identity.then(|| pdf.reachable_state_identity_root()),
-            // The remaining owners do not yet expose canonical maintained
-            // semantic roots. Their typed absence keeps aggregate identity
-            // fail-closed; restore cursors and owner ids are not substitutes.
-            ..RuntimeCheckpointIdentityRoots::default()
+            world: wants_reachable_state_identity
+                .then(|| self.world.reachable_state_identity_root())
+                .flatten(),
+            hyphenation: wants_reachable_state_identity
+                .then(|| self.hyphenation.reachable_state_identity_root())
+                .flatten(),
+            dependency: wants_reachable_state_identity
+                .then(|| self.dependencies.reachable_state_identity_root())
+                .flatten(),
+            source: wants_reachable_state_identity
+                .then(|| self.sources.reachable_state_identity_root())
+                .flatten(),
+            font: wants_reachable_state_identity
+                .then(|| self.fonts.reachable_state_identity_root())
+                .flatten(),
+            core: wants_reachable_state_identity
+                .then_some(core_identity)
+                .flatten(),
         };
         let checkpoint = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(owner, mark),

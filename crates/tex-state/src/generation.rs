@@ -212,6 +212,16 @@ impl<G> Generation<G> {
         self.provenance.truncate(cursor.provenance);
     }
 
+    /// Enables canonical immutable-value roots before this generation
+    /// publishes semantic payload. A late request fails closed instead of
+    /// walking already-published values or hashing their coordinates.
+    pub(crate) fn enable_semantic_identity(&mut self) -> bool {
+        let definitions = self.definitions.enable_semantic_identity();
+        let token_lists = self.token_lists.enable_semantic_identity();
+        let glue = self.glue.enable_semantic_identity();
+        definitions && token_lists && glue
+    }
+
     #[must_use]
     pub(crate) fn memory_accounting(&self) -> MemoryAccounting {
         self.accounting.clone()

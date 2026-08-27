@@ -381,25 +381,22 @@ fn semantic_edit_matches_a_fresh_cold_execution() {
 }
 
 #[test]
-fn absent_complete_identity_fails_closed_for_no_op_convergence() {
+fn complete_identity_matches_no_op_convergence() {
     let source = page_source(12);
     let mut session = session(RevisionId::new(1), &source);
     session.cold().expect("baseline");
     let output = session
         .advance(RevisionId::new(2), edit(&session, 0..0, ""))
         .expect("no-op revision");
-    assert_eq!(
-        output.reuse.same_history_stop,
-        SameHistoryStop::HashesDiverged
-    );
-    assert!(output.reuse.convergence_boundary.is_none());
+    assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert!(output.reuse.convergence_boundary.is_some());
     assert!(output.reuse.same_history_attempts > 0);
     assert!(
         session
             .history()
             .iter()
-            .all(|record| record.reachable_state_identity().is_none()),
-        "a partial component projection must not become convergence identity"
+            .all(|record| record.reachable_state_identity().is_some()),
+        "incremental history demands a complete owner-composed identity"
     );
 }
 
@@ -441,11 +438,8 @@ fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
     let output = session
         .advance(RevisionId::new(2), edit(&session, 0..0, ""))
         .expect("no-op revision");
-    assert_eq!(
-        output.reuse.same_history_stop,
-        SameHistoryStop::HashesDiverged
-    );
-    assert!(output.reuse.convergence_boundary.is_none());
+    assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert!(output.reuse.convergence_boundary.is_some());
     assert_eq!(
         session
             .history()

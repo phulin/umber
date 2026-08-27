@@ -74,6 +74,10 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 #[derive(Debug)]
 #[doc(hidden)]
 pub struct CommandStateRoots<G> {
+    /// Demand latch for fixed-size semantic root publication. The root itself
+    /// is read from bounded logical-stack projections at named quiescent
+    /// boundaries; no input payload or timeline row is traversed.
+    pub(crate) reachable_state_identity_enabled: bool,
     /// Canonical compiled implementation executing the format's command
     /// profile. Unlike the profile, this is job configuration and is not part
     /// of portable format identity.
@@ -143,6 +147,7 @@ impl<G> Clone for CommandStateRoots<G> {
         #[cfg(test)]
         COMMAND_ROOT_CLONES.set(COMMAND_ROOT_CLONES.get().saturating_add(1));
         Self {
+            reachable_state_identity_enabled: self.reachable_state_identity_enabled,
             engine_semantics: self.engine_semantics,
             input: self.input.clone(),
             parameters: self.parameters.clone(),
@@ -383,6 +388,7 @@ impl<G> PendingExpansion<G> {
 impl<G> Default for CommandStateRoots<G> {
     fn default() -> Self {
         Self {
+            reachable_state_identity_enabled: false,
             engine_semantics: CommandEngineSemantics::default(),
             input: InputState::default(),
             parameters: ParameterState::default(),

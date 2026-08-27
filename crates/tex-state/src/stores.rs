@@ -27,6 +27,19 @@ pub(crate) struct StateCore<G> {
 }
 
 impl<G> StateCore<G> {
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        let generation = self.generation.generation_mut().enable_semantic_identity();
+        if !generation || !self.state.enable_reachable_state_identity() {
+            return false;
+        }
+        self.nodes.enable_semantic_identity();
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.state.reachable_state_identity_root()
+    }
+
     pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
         let (variable, dynamic) = self.memory_accounting().words(false);
         std::mem::size_of::<Self>()
@@ -384,7 +397,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     ) -> Result<DefinitionId<G>, DefinitionAllocationError>
     where
         Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
-        Replacement: ExactSizeIterator<Item = TokenWord>,
+        Replacement: Clone + ExactSizeIterator<Item = TokenWord>,
     {
         self.generation
             .definitions_mut()

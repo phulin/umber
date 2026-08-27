@@ -56,6 +56,7 @@ struct DefinitionHeader {
     parameters: MacroParameterPattern,
     accounting: MemoryAccounting,
     memory_words: usize,
+    semantic_identity: u64,
 }
 
 impl Drop for DefinitionHeader {
@@ -103,6 +104,12 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
 }
 
 impl<G> DefinitionId<G> {
+    pub(crate) fn semantic_identity(&self) -> Option<u64> {
+        match self.allocation.head.semantic_identity {
+            0 => None,
+            identity => Some(identity),
+        }
+    }
     /// Borrows the packed parameter text through this definition's existing
     /// owner.
     #[must_use]
@@ -169,6 +176,7 @@ pub enum DefinitionAllocationError {
 pub(crate) struct DefinitionArena<G> {
     next_serial: u32,
     accounting: MemoryAccounting,
+    semantic_identity_enabled: bool,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -177,6 +185,7 @@ impl<G> DefinitionArena<G> {
         Self {
             next_serial: self.next_serial,
             accounting,
+            semantic_identity_enabled: self.semantic_identity_enabled,
             _brand: PhantomData,
         }
     }
@@ -200,6 +209,7 @@ impl<G> DefinitionArena<G> {
         Self {
             next_serial: 0,
             accounting,
+            semantic_identity_enabled: false,
             _brand: PhantomData,
         }
     }
@@ -233,7 +243,7 @@ impl<G> DefinitionArena<G> {
     ) -> Result<DefinitionId<G>, DefinitionAllocationError>
     where
         Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
-        Replacement: ExactSizeIterator<Item = TokenWord>,
+        Replacement: Clone + ExactSizeIterator<Item = TokenWord>,
     {
         let parameter_len = parameter_text.len();
         let replacement_len = replacement_text.len();
@@ -247,6 +257,18 @@ impl<G> DefinitionArena<G> {
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         u32::try_from(final_word_len).map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
         let parameters = MacroParameterPattern::from_word_iter(parameter_text.clone());
+        let semantic_identity = self.semantic_identity_enabled.then(|| {
+            crate::state_hash::semantic_scalar_root(0x6465_6669_6e69_7431, |hasher| {
+                hasher.usize(parameter_len);
+                for word in parameter_text.clone() {
+                    hasher.u32(word.raw());
+                }
+                hasher.usize(replacement_len);
+                for word in replacement_text.clone() {
+                    hasher.u32(word.raw());
+                }
+            })
+        });
         let memory_words = definition_memory_words(final_word_len);
         self.accounting.allocate_shared_dynamic(memory_words);
         let allocation = ThinRc::new(
@@ -256,6 +278,9 @@ impl<G> DefinitionArena<G> {
                 parameters,
                 accounting: self.accounting.clone(),
                 memory_words,
+                semantic_identity: semantic_identity
+                    .unwrap_or(0)
+                    .max(u64::from(semantic_identity.is_some())),
             },
             DefinitionWords {
                 parameters: parameter_text,
@@ -267,6 +292,17 @@ impl<G> DefinitionArena<G> {
             allocation,
             _brand: PhantomData,
         })
+    }
+
+    pub(crate) fn enable_semantic_identity(&mut self) -> bool {
+        if self.semantic_identity_enabled {
+            return true;
+        }
+        if self.next_serial != 0 {
+            return false;
+        }
+        self.semantic_identity_enabled = true;
+        true
     }
 
     /// Reserves a complete promotion batch without changing any logical

@@ -242,6 +242,7 @@ pub struct DependencyTracker {
 pub(crate) struct DependencyTrackerSnapshot {
     revision: u64,
     invalidated_at: ChangedAt,
+    reachable_state_identity_root: Option<u64>,
 }
 
 /// Optional recording state installed around one interpreter computation.
@@ -254,6 +255,7 @@ pub struct DependencyRuntime {
     active: Option<ActiveDependencyRegion>,
     next_region_epoch: u64,
     tracking_enabled: bool,
+    reachable_state_identity_root: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -316,6 +318,7 @@ impl Clone for DependencyRuntime {
             active: None,
             next_region_epoch: self.next_region_epoch,
             tracking_enabled: self.tracking_enabled,
+            reachable_state_identity_root: self.reachable_state_identity_root,
         }
     }
 }
@@ -342,6 +345,9 @@ impl DependencyRuntime {
             .expect("dependency region epoch exhausted");
         let epoch = self.next_region_epoch;
         self.tracking_enabled = true;
+        if self.reachable_state_identity_root.is_some() {
+            self.reachable_state_identity_root = Some(dependency_identity_root(true));
+        }
         self.active = Some(ActiveDependencyRegion {
             epoch,
             region: DependencyRegion::default(),
@@ -430,11 +436,13 @@ impl DependencyRuntime {
         DependencyTrackerSnapshot {
             revision: self.tracker.revision,
             invalidated_at: self.tracker.invalidated_at,
+            reachable_state_identity_root: self.reachable_state_identity_root,
         }
     }
 
     pub(crate) fn restore_tracker(&mut self, snapshot: &DependencyTrackerSnapshot) {
         self.tracker.restore(snapshot);
+        self.reachable_state_identity_root = snapshot.reachable_state_identity_root;
     }
 
     /// Opens a destination-private validation epoch for a revision fork.
@@ -460,13 +468,35 @@ impl DependencyRuntime {
             active: None,
             next_region_epoch: self.next_region_epoch,
             tracking_enabled: self.tracking_enabled,
+            reachable_state_identity_root: snapshot.reachable_state_identity_root,
         }
+    }
+
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity_root.is_some() {
+            return true;
+        }
+        if self.active.is_some() || self.tracking_enabled {
+            return false;
+        }
+        self.reachable_state_identity_root = Some(dependency_identity_root(false));
+        true
+    }
+
+    pub(crate) const fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity_root
     }
 
     #[must_use]
     pub const fn tracker(&self) -> &DependencyTracker {
         &self.tracker
     }
+}
+
+fn dependency_identity_root(tracking_enabled: bool) -> u64 {
+    crate::state_hash::semantic_scalar_root(0x6465_7065_6e64_5f31, |hasher| {
+        hasher.bool(tracking_enabled);
+    })
 }
 
 impl DependencyTracker {
