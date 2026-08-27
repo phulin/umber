@@ -78,7 +78,7 @@ collector (see `src/conditionals.rs`).
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics.
-  Production borrows use `CommandProcessor::borrowed`, which takes the
+  Every construction uses `CommandProcessor::new`, which takes the
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no
   temporary owned ledger or whole-context handoff.

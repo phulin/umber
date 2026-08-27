@@ -3159,8 +3159,10 @@ arena position, journal cursor, or borrow.
 Host capabilities, `CurrentCommand`, delivery stamps, cache contents, spare
 buffer capacity, timers, and profiling counters are absent.
 
-Command resource fuel is absent as well. `CommandFuel` is a distinct
-monotonic run ledger lent to every `CommandProcessor` episode. It charges
+Command resource fuel is absent as well. `CommandFuelLedger` is the distinct
+monotonic run owner and lends its singular `CommandFuel` directly to every
+`CommandProcessor` episode. The processor stores only that mutable borrow; it
+has no owned-ledger alternative or per-charge ownership dispatch. The ledger charges
 before each central raw-delivery attempt, including attempts nested beneath
 expanded delivery, macro matching, and scanners. The same ledger counts raw
 token-frame steps, completed expanded deliveries, live meaning lookups,

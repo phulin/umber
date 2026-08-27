@@ -149,8 +149,9 @@ the existing scalar error-count observation at the operation boundary.
 
 `MainControl` owns `CommandState`, mode/execution roots, fuel ledger,
 and explicit host capabilities. Each operation constructs borrow-scoped
-`CommandProcessor` and `CommandHostContext` values; neither can outlive the
-operation or enter a snapshot.
+`CommandProcessor` and `CommandHostContext` values; the processor directly
+borrows the ledger's singular `CommandFuel` and has no owned-fuel form. Neither
+borrowed facade can outlive the operation or enter a snapshot.
 
 `CommandSummary` is deliberately not the private per-step savepoint: summary
 publication requires a durable quiescent boundary. `CommandStateSnapshot`
