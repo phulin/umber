@@ -973,7 +973,7 @@ impl<G> ExecutionScratch<G> {
         word: TracedTokenWord,
         facts: MacroArgumentTokenFacts,
     ) -> Result<(), ScratchError> {
-        let slot_index = self.pending_slot_index()?;
+        let slot_index = self.pending_macro_slot as usize;
         debug_assert_eq!(
             self.macro_slots[slot_index].current_argument,
             Some(buffer.slot)
@@ -990,7 +990,7 @@ impl<G> ExecutionScratch<G> {
             self.macro_slots[slot_index].last_segment = segment;
         }
         let segment = self.macro_slots[slot_index].last_segment;
-        let offset = self.segment(segment)?.words.len();
+        let offset = self.macro_segments[segment as usize].words.len();
         self.macro_segments[segment as usize].words.push(word);
         let slot = &mut self.macro_slots[slot_index];
         slot.word_len = slot
