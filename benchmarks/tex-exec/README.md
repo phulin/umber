@@ -33,7 +33,9 @@ The executable also enforces accumulated-state per-boundary allocation and
 requested-byte ceilings for capture, checkpoint clone, fork, and restore. The
 ceilings sit below the checked-in pre-mode/page-migration baseline, so restoring
 an accumulated mode-list or page-builder clone makes the run fail rather than
-merely changing a diagnostic row.
+merely changing a diagnostic row. The capture byte ceiling includes the fixed
+exact core/node checkpoint bank introduced by the later core-family migration;
+it does not scale with mode or page payload.
 
 The first `MODE_PAGE_EARLY_SUFFIX_GATE` row captures a genuinely rooted
 checkpoint containing mode, contribution, current-page, page-discard,

@@ -310,6 +310,9 @@ fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
                 .expect("accepted context")
                 .append_page_contribution(tex_state::node::Node::Penalty(index));
         }
+        // The command timeline returns its exclusive roots before an aggregate
+        // candidate may borrow them.
+        drop(command);
 
         let (mut rejected, mut branch) = checkpoint
             .fork_state(universe)

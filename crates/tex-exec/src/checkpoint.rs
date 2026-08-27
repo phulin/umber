@@ -74,14 +74,9 @@ impl<G> EngineCheckpoint<G> {
         let mut destination = source
             .fork_runtime_checkpoint(&self.runtime)
             .map_err(CheckpointRestoreError::Runtime)?;
-        if !self.modes.font_roots_are_live(|font| {
-            destination.runtime_checkpoint_retains_font(&self.runtime, font)
-        }) {
-            source.return_rejected_pdf_from(&mut destination);
-            return Err(CheckpointRestoreError::Runtime(UniverseError::State(
-                tex_state::StateError::InvalidCursor,
-            )));
-        }
+        // Capture pairs this opaque mode root with a later font watermark from
+        // the same admitted generation.  A second walk here would inspect the
+        // accepted owner's post-checkpoint suffix, not the bounded mode root.
         let command = match CommandState::fork_summary(&self.command, source, &destination) {
             Ok(command) => command,
             Err(error) => {

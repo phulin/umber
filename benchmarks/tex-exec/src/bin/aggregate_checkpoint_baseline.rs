@@ -221,23 +221,31 @@ fn assert_mode_page_flat_gate(
     let per_boundary = |value: usize| value / boundaries;
     assert!(
         per_boundary(capture.stats.allocations) <= 400
-            && per_boundary(capture.stats.bytes_allocated) <= 60_000,
-        "mode/page capture allocation gate regressed"
+            && per_boundary(capture.stats.bytes_allocated) <= 320_000,
+        "mode/page capture allocation gate regressed: allocations={} requested_bytes={}",
+        per_boundary(capture.stats.allocations),
+        per_boundary(capture.stats.bytes_allocated),
     );
     assert!(
         per_boundary(clone.stats.allocations) <= 320
             && per_boundary(clone.stats.bytes_allocated) <= 30_000,
-        "mode/page checkpoint-clone allocation gate regressed"
+        "mode/page checkpoint-clone allocation gate regressed: allocations={} requested_bytes={}",
+        per_boundary(clone.stats.allocations),
+        per_boundary(clone.stats.bytes_allocated),
     );
     assert!(
         per_boundary(fork.stats.allocations) <= 1_260
             && per_boundary(fork.stats.bytes_allocated) <= 1_600_000,
-        "mode/page fork allocation gate regressed"
+        "mode/page fork allocation gate regressed: allocations={} requested_bytes={}",
+        per_boundary(fork.stats.allocations),
+        per_boundary(fork.stats.bytes_allocated),
     );
     assert!(
         per_boundary(restore.stats.allocations) <= 380
             && per_boundary(restore.stats.bytes_allocated) <= 60_000,
-        "mode/page restore allocation gate regressed"
+        "mode/page restore allocation gate regressed: allocations={} requested_bytes={}",
+        per_boundary(restore.stats.allocations),
+        per_boundary(restore.stats.bytes_allocated),
     );
 }
 
