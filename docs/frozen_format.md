@@ -321,8 +321,10 @@ one incoming edge for every non-root node, and nonempty exception words whose
 positions do not exceed the character count. Endpoint and repeated exception
 positions remain representable because TeX's exception scanner accepts leading,
 trailing, and adjacent hyphens. The validated trie is installed as the immutable
-format base; later job mutations retain the existing copy-on-write `Arc`
-snapshot behavior.
+format base in one thread-confined coarse shared owner. Aggregate checkpoint
+capture, clone, fork, and restore clone only that owner's handle. Runtime
+exceptions and saved hyphen-code maps remain separate bounded checkpoint
+values, so their rollback and fork isolation never copy the initialized trie.
 The trie-node total is validated against the producer profile's `trie_size`
 (8000 for TeX82/e-TeX and 1,100,000 for pdfTeX). `hyph_size` remains an
 explicit serialized process coordinate because canonical TRIP and e-TRIP use
