@@ -1650,25 +1650,26 @@ impl<G> CommandProcessor<'_, '_, G> {
             .token_parameter(tex_state::env::banks::TokParam::EVERY_EOF)
             .expect("everyeof is an admitted token parameter");
         let tracing_scantokens = self.state.int_param(IntParam::TRACING_SCAN_TOKENS);
-        let level = self
-            .command
-            .open_scantokens(
-                SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes()),
-                every_eof,
-                scantokens_numeric_name(tracing_scantokens),
-            )
-            .map_err(|_| CommandError::input_invariant())?;
-        self.command.record_source_open_depths(
-            level,
-            self.state.group_lineages().into_boxed_slice(),
-            self.command
+        let open_depths = crate::input::SourceOpenDepths {
+            group_lineages: self.state.group_lineages().into_boxed_slice(),
+            conditional_identities: self
+                .command
                 .conditions
                 .frames
                 .iter()
                 .map(|frame| frame.identity.0)
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
-        );
+        };
+        let level = self
+            .command
+            .open_scantokens(
+                SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes()),
+                every_eof,
+                scantokens_numeric_name(tracing_scantokens),
+                open_depths,
+            )
+            .map_err(|_| CommandError::input_invariant())?;
         let source = self
             .command
             .active_source_snapshot()

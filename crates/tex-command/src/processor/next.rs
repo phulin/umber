@@ -1939,7 +1939,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
-        let open_depths = self.command.source_open_depths(identity);
         let nesting_context = self
             .pending_file_warning_context
             .take()
@@ -1949,6 +1948,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .retire_exhausted_input(identity)
             .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
+        let open_depths = retirement.source_open_depths;
         // e-TeX 2.6 [23.328]'s `file_warning`: `end_file_reading` retiring a
         // real source level (never a `\read` pseudo-file's `EndReadLine`, and
         // never a token-list level) is the one point this level's recorded

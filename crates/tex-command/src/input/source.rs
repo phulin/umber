@@ -235,13 +235,13 @@ impl SourceRegistration {
 pub(crate) struct LineBackingRegistry<'a> {
     pub(crate) profile: CommandProfile,
     pub(crate) next_identity: &'a mut u64,
-    pub(crate) usage: crate::state::CommandUsageTracker,
+    pub(crate) usage: &'a mut crate::state::CommandStackUsage,
     pub(crate) buffer_start: usize,
     pub(crate) name_class: Option<SourceNameClass>,
 }
 
 impl LineBackingRegistry<'_> {
-    pub(crate) fn record_line_usage(&self, cursor: &SourceCursor) {
+    pub(crate) fn record_line_usage(&mut self, cursor: &SourceCursor) {
         if let Some(positions) =
             source_line_buffer_high_water(cursor, self.name_class, self.buffer_start)
         {

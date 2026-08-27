@@ -107,8 +107,9 @@ pub(crate) struct SourceLevel<G> {
     /// live group and conditional boundary ancestry recorded when this
     /// level's `begin_file_reading` ran, compared against the current stacks
     /// at `end_file_reading` to drive `\tracingnesting`'s `file_warning`.
-    /// `None` until the opener records it (this crate has no `Universe`
-    /// access at construction time; see `CommandState::record_source_open_depths`).
+    /// A nested source-opening transition installs this record before the
+    /// frame becomes visible on the input stack. Root, terminal, and `\read`
+    /// sources need no record and keep the compact optional owner empty.
     pub(crate) open_depths: Option<Box<SourceOpenDepths>>,
 }
 

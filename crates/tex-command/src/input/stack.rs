@@ -15,7 +15,7 @@ use super::{
 /// One committed input-lifecycle transition.
 ///
 /// `trace` explains the replay that ended but does not select `action`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputRetirement {
     pub(crate) identity: InputLevelId,
     pub(crate) action: InputRetirementAction,
@@ -27,6 +27,8 @@ pub(crate) struct InputRetirement {
     pub(crate) name_class: Option<SourceNameClass>,
     pub(crate) source: Option<tex_state::SourceId>,
     pub(crate) trace: Option<ReplayTrace>,
+    /// Frame-owned e-TeX nesting ancestry moved out by source retirement.
+    pub(crate) source_open_depths: Option<Box<super::SourceOpenDepths>>,
 }
 
 /// Observer-visible class of an exhausted input level.
@@ -175,7 +177,7 @@ impl<G> CommandState<G> {
             })
             .sum::<usize>()
             .saturating_add(parameter_count);
-        self.usage.record_parameter_push(parameter_ptr);
+        self.stack_usage.record_parameter_push(parameter_ptr);
         let activation =
             self.parameters
                 .push_activation(name, definition.clone(), arguments, invocation);
@@ -200,12 +202,10 @@ impl<G> CommandState<G> {
         let span = source
             .admit(&mut self.input.replay)
             .expect("generation replay lane admission");
-        // TeX82 §321 checks `input_ptr` before `push_input` increments it.
-        self.usage.record_input_push(self.input.levels.len());
         let identity = self.allocate_input_level_identity();
         let frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
-        self.input.levels.push(InputLevel::Tokens(TokenCursor {
+        self.push_input_level(InputLevel::Tokens(TokenCursor {
             span,
             behavior,
             retirement,
@@ -357,8 +357,13 @@ impl<G> CommandState<G> {
         }
 
         let InputLevel::Tokens(cursor) = level else {
-            let InputLevel::Source(source) = level else {
-                unreachable!("the inspected top level was not a token cursor");
+            let InputLevel::Source(source) = self
+                .input
+                .levels
+                .pop()
+                .expect("the inspected top source remains live")
+            else {
+                unreachable!("the inspected top level was not a source cursor");
             };
             let name_class = source.name_class;
             let source_id = source.cursor.current_backing().id;
@@ -398,7 +403,6 @@ impl<G> CommandState<G> {
             if framed {
                 self.file_framing_events.push(FileFramingEvent::Close);
             }
-            self.input.levels.pop();
             return Ok(InputRetirement {
                 identity: expected,
                 action,
@@ -406,6 +410,7 @@ impl<G> CommandState<G> {
                 name_class: Some(name_class),
                 source: Some(source_id),
                 trace: None,
+                source_open_depths: source.open_depths,
             });
         };
         if cursor.retirement == RetirementBehavior::RetainExhaustedVTemplate {
@@ -432,6 +437,7 @@ impl<G> CommandState<G> {
                 name_class: None,
                 source: None,
                 trace: Some(trace),
+                source_open_depths: None,
             });
         }
 
@@ -472,6 +478,7 @@ impl<G> CommandState<G> {
             name_class: None,
             source: None,
             trace: Some(cursor.trace),
+            source_open_depths: None,
         })
     }
 
@@ -500,6 +507,7 @@ impl<G> CommandState<G> {
                 name_class: Some(source.name_class),
                 source: Some(source.cursor.current_backing().id),
                 trace: None,
+                source_open_depths: source.open_depths,
             });
         };
         self.finish_macro_body_retirement(&cursor.behavior)
@@ -525,10 +533,18 @@ impl<G> CommandState<G> {
             name_class: None,
             source: None,
             trace: Some(cursor.trace),
+            source_open_depths: None,
         })
     }
 
-    fn allocate_input_level_identity(&mut self) -> InputLevelId {
+    /// Commits the one canonical input-frame push transition.
+    pub(crate) fn push_input_level(&mut self, level: InputLevel<G>) {
+        // TeX82 §321 checks `input_ptr` before `push_input` increments it.
+        self.stack_usage.record_input_push(self.input.levels.len());
+        self.input.levels.push(level);
+    }
+
+    pub(crate) fn allocate_input_level_identity(&mut self) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
         identity

@@ -1,9 +1,7 @@
 //! Future-relevant state and discardable scratch allocation ownership.
 
-use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tex_state::CommandContext;
 use tex_state::token::TracedTokenWord;
@@ -195,10 +193,13 @@ impl<G> Clone for CommandStateRoots<G> {
 pub struct CommandState<G> {
     pub(crate) roots: CommandStateRoots<G>,
     pub(crate) timeline: Arc<crate::snapshot::CommandTimeline<G>>,
-    /// Runtime-only TeX82 stack accounting. Snapshot roots deliberately omit
-    /// this tracker so high-water marks survive rollback without becoming
+    /// Runtime-only TeX82 stack maxima. Snapshot roots deliberately omit
+    /// these scalars so high-water marks survive rollback without becoming
     /// command semantics or checkpoint identity.
-    pub(crate) usage: CommandUsageTracker,
+    pub(crate) stack_usage: CommandStackUsage,
+    /// Retained width of TeX82 §31's bottom terminal buffer. This is live
+    /// session accounting used to compose later nested buffer high waters.
+    pub(crate) terminal_buffer_slots: usize,
     /// Storage for scanner, expansion, and retry coordinates in the current
     /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
@@ -365,7 +366,8 @@ impl<G> Default for CommandState<G> {
         Self {
             roots: CommandStateRoots::default(),
             timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
-            usage: CommandUsageTracker::default(),
+            stack_usage: CommandStackUsage::default(),
+            terminal_buffer_slots: 0,
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
@@ -381,68 +383,17 @@ pub struct CommandStackUsage {
     pub buffer_stack: usize,
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct CommandUsageTracker {
-    maxima: Arc<Mutex<CommandStackUsage>>,
-    terminal_buffer_slots: Arc<AtomicUsize>,
-}
-
-impl std::fmt::Debug for CommandUsageTracker {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("CommandUsageTracker(..)")
-    }
-}
-
-impl PartialEq for CommandUsageTracker {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for CommandUsageTracker {}
-
-impl Hash for CommandUsageTracker {
-    fn hash<H: Hasher>(&self, _state: &mut H) {}
-}
-
-impl CommandUsageTracker {
-    pub(crate) fn record_input_push(&self, input_ptr: usize) {
-        let mut usage = self
-            .maxima
-            .lock()
-            .expect("command usage mutex is not poisoned");
-        usage.input_stack = usage.input_stack.max(input_ptr);
+impl CommandStackUsage {
+    pub(crate) fn record_input_push(&mut self, input_ptr: usize) {
+        self.input_stack = self.input_stack.max(input_ptr);
     }
 
-    pub(crate) fn record_parameter_push(&self, param_ptr_after: usize) {
-        let mut usage = self
-            .maxima
-            .lock()
-            .expect("command usage mutex is not poisoned");
-        usage.parameter_stack = usage.parameter_stack.max(param_ptr_after);
+    pub(crate) fn record_parameter_push(&mut self, param_ptr_after: usize) {
+        self.parameter_stack = self.parameter_stack.max(param_ptr_after);
     }
 
-    pub(crate) fn record_buffer_usage(&self, buffer_positions: usize) {
-        let mut usage = self
-            .maxima
-            .lock()
-            .expect("command usage mutex is not poisoned");
-        usage.buffer_stack = usage.buffer_stack.max(buffer_positions);
-    }
-
-    pub(crate) fn get(&self) -> CommandStackUsage {
-        *self
-            .maxima
-            .lock()
-            .expect("command usage mutex is not poisoned")
-    }
-
-    fn set_terminal_buffer_slots(&self, slots: usize) {
-        self.terminal_buffer_slots.store(slots, Ordering::Relaxed);
-    }
-
-    fn terminal_buffer_slots(&self) -> usize {
-        self.terminal_buffer_slots.load(Ordering::Relaxed)
+    pub(crate) fn record_buffer_usage(&mut self, buffer_positions: usize) {
+        self.buffer_stack = self.buffer_stack.max(buffer_positions);
     }
 }
 
@@ -1086,7 +1037,7 @@ impl<G> CommandState<G> {
     /// Returns runtime-only TeX82 command-stack maxima for §1334.
     #[must_use]
     pub fn stack_usage(&self) -> CommandStackUsage {
-        self.usage.get()
+        self.stack_usage
     }
 
     /// Returns a content-free, innermost-first tail of the live input stack
@@ -1175,9 +1126,10 @@ impl<G> CommandState<G> {
         // TeX82 §31's initial terminal `input_ln` starts at buffer index zero;
         // §1334 subsequently prints `max_buf_stack+1`.
         if !line.is_empty() {
-            self.usage.record_buffer_usage(line.chars().count() + 1);
+            self.stack_usage
+                .record_buffer_usage(line.chars().count() + 1);
         }
-        self.usage.set_terminal_buffer_slots(line.chars().count());
+        self.terminal_buffer_slots = line.chars().count();
         self.input.terminal_context_line = Some(line);
     }
 
@@ -2189,6 +2141,23 @@ impl<G> CommandState<G> {
         self.open_registered_source_as(source, SourceNameClass::File)
     }
 
+    /// Opens a nested file with its e-TeX nesting ancestry already owned by
+    /// the frame that becomes visible on the input stack.
+    pub(crate) fn open_registered_file_with_depths(
+        &mut self,
+        source: tex_state::SourceId,
+        open_depths: crate::input::SourceOpenDepths,
+    ) -> Result<InputLevelId, UnknownRegisteredSource> {
+        let registered = self.take_registered_source(source)?;
+        Ok(self.push_source_level(
+            registered,
+            SourceNameClass::File,
+            crate::input::SourceRetirement::Pop,
+            None,
+            Some(Box::new(open_depths)),
+        ))
+    }
+
     pub(crate) fn prepare_started_input(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
         let InputLevel::Source(level) = self.input.levels.last_mut()? else {
             return None;
@@ -2216,6 +2185,7 @@ impl<G> CommandState<G> {
             name_class,
             crate::input::SourceRetirement::Pop,
             None,
+            None,
         );
         Ok(())
     }
@@ -2241,6 +2211,7 @@ impl<G> CommandState<G> {
             SourceNameClass::Terminal,
             crate::input::SourceRetirement::EndReadLine,
             None,
+            None,
         );
         Ok(identity)
     }
@@ -2261,6 +2232,7 @@ impl<G> CommandState<G> {
             registered,
             SourceNameClass::Terminal,
             crate::input::SourceRetirement::Pop,
+            None,
             None,
         );
         let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
@@ -2306,6 +2278,7 @@ impl<G> CommandState<G> {
         registration: SourceRegistration,
         every_eof: Option<tex_state::TokenListId<G>>,
         numeric_name: u8,
+        open_depths: crate::input::SourceOpenDepths,
     ) -> Result<InputLevelId, SourceRegistrationError> {
         assert!(matches!(numeric_name, 18 | 19));
         let source = self.register_source(registration)?;
@@ -2317,6 +2290,7 @@ impl<G> CommandState<G> {
             SourceNameClass::Scantokens(numeric_name),
             crate::input::SourceRetirement::Pop,
             every_eof,
+            Some(Box::new(open_depths)),
         ))
     }
 
@@ -2356,11 +2330,9 @@ impl<G> CommandState<G> {
         name_class: SourceNameClass,
         retirement: crate::input::SourceRetirement,
         every_eof: Option<tex_state::TokenListId<G>>,
+        open_depths: Option<Box<crate::input::SourceOpenDepths>>,
     ) -> InputLevelId {
-        // TeX82 §321 checks `input_ptr` before `push_input` increments it.
-        self.usage.record_input_push(self.input.levels.len());
-        let identity = InputLevelId(self.input.next_level_identity);
-        self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
+        let identity = self.allocate_input_level_identity();
         let framing_name = match name_class {
             SourceNameClass::File
                 if registered.framing == crate::SourceFramingPolicy::Canonical =>
@@ -2380,63 +2352,24 @@ impl<G> CommandState<G> {
             self.file_framing_events
                 .push(FileFramingEvent::Open { name });
         }
-        self.input.levels.push(InputLevel::Source(SourceLevel {
+        self.push_input_level(InputLevel::Source(SourceLevel {
             frame: crate::input::PackedInputFrame::source(identity.0, registered.id),
             cursor: Box::new(SourceCursor::new(registered)),
             name_class,
             retirement,
             every_eof,
-            open_depths: None,
+            open_depths,
         }));
         identity
     }
 
-    /// e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
-    /// if_stack[in_open]:=cond_ptr`, represented by their full enclosing
-    /// identity chains and recorded by the opener because
-    /// `push_source_level` has no `Universe` access to read the live group
-    /// depth itself. A no-op if `level` is not a live source level (for
-    /// example, it has already been retired).
-    pub(crate) fn record_source_open_depths(
-        &mut self,
-        level: InputLevelId,
-        group_lineages: Box<[u64]>,
-        conditional_identities: Box<[u64]>,
-    ) {
-        for entry in &mut self.input.levels {
-            if let InputLevel::Source(source) = entry
-                && source.identity() == level
-            {
-                source.open_depths = Some(Box::new(crate::input::SourceOpenDepths {
-                    group_lineages,
-                    conditional_identities,
-                }));
-                return;
-            }
-        }
-    }
-
-    /// The `\tracingnesting` open-depth record [`Self::record_source_open_depths`]
-    /// attached to a still-live source level, read before retirement removes it.
-    pub(crate) fn source_open_depths(
-        &self,
-        level: InputLevelId,
-    ) -> Option<crate::input::SourceOpenDepths> {
-        self.input.levels.iter().find_map(|entry| match entry {
-            InputLevel::Source(source) if source.identity() == level => {
-                source.open_depths.as_deref().cloned()
-            }
-            _ => None,
-        })
-    }
-
-    pub(crate) fn current_source_open_depths(&self) -> Option<crate::input::SourceOpenDepths> {
+    pub(crate) fn current_source_open_depths(&self) -> Option<&crate::input::SourceOpenDepths> {
         self.input
             .levels
             .iter()
             .rev()
             .find_map(|entry| match entry {
-                InputLevel::Source(source) => source.open_depths.as_deref().cloned(),
+                InputLevel::Source(source) => source.open_depths.as_deref(),
                 _ => None,
             })
     }
@@ -2499,7 +2432,7 @@ impl<G> CommandState<G> {
     /// Records the §31 buffer index reached by the active physical line.
     /// Every enclosing source retains its normalized line in TeX's shared
     /// buffer; token-list levels consume no buffer positions.
-    fn record_active_buffer_line_usage(&self) {
+    fn record_active_buffer_line_usage(&mut self) {
         let mut lines = self.active_buffer_lines();
         let Some(_) = lines.pop() else {
             return;
@@ -2514,18 +2447,18 @@ impl<G> CommandState<G> {
             return;
         };
         let buffer_start = 1_usize
-            .saturating_add(self.usage.terminal_buffer_slots())
+            .saturating_add(self.terminal_buffer_slots)
             .saturating_add(outer_slots);
         if let Some(positions) = crate::input::source_line_buffer_high_water(
             &active.cursor,
             Some(active.name_class),
             buffer_start,
         ) {
-            self.usage.record_buffer_usage(positions);
+            self.stack_usage.record_buffer_usage(positions);
         }
     }
 
-    pub(crate) fn record_csname_buffer_usage(&self, name_len: usize) {
+    pub(crate) fn record_csname_buffer_usage(&mut self, name_len: usize) {
         if name_len == 0 {
             return;
         }
@@ -2540,9 +2473,8 @@ impl<G> CommandState<G> {
                 });
         // §374 starts at `first`; §1334 adds one to the greatest written
         // buffer index.
-        self.usage.record_buffer_usage(
-            self.usage
-                .terminal_buffer_slots()
+        self.stack_usage.record_buffer_usage(
+            self.terminal_buffer_slots
                 .saturating_add(occupied)
                 .saturating_add(name_len)
                 .saturating_add(2),
@@ -2759,14 +2691,14 @@ impl<G> CommandState<G> {
                         .saturating_add(1)
                 });
         let buffer_start = 1_usize
-            .saturating_add(self.usage.terminal_buffer_slots())
+            .saturating_add(self.terminal_buffer_slots)
             .saturating_add(occupied_below_active);
         let name_class = self.input.levels.last().and_then(|level| match level {
             InputLevel::Source(source) => Some(source.name_class),
             InputLevel::Tokens(_) => None,
         });
-        let usage = self.usage.clone();
-        let input = &mut self.input;
+        let usage = &mut self.stack_usage;
+        let input = &mut self.roots.input;
         let lines = crate::input::LineBackingRegistry {
             profile,
             next_identity: &mut input.next_source_identity,
