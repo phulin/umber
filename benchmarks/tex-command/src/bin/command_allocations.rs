@@ -188,9 +188,10 @@ fn run_one<G>(
     let region = Region::new(GLOBAL);
     perturb_if_requested(perturb);
     let mut observer = CountingObserver::default();
+    let mut context = universe.command_context().expect("command context");
     let processor = CommandProcessor::new(
         &mut case.command,
-        universe.command_context().expect("command context"),
+        &mut context,
         CommandHostContext::new(&mut case.capabilities),
         &mut case.diagnostic_effects,
     );
@@ -445,9 +446,10 @@ fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> Processo
         replay,
     };
     if matches!(workload, Workload::MacroArgumentMatching) {
+        let mut context = universe.command_context().expect("command context");
         let mut processor = CommandProcessor::new(
             &mut case.command,
-            universe.command_context().expect("command context"),
+            &mut context,
             CommandHostContext::new(&mut case.capabilities),
             &mut case.diagnostic_effects,
         );
@@ -546,9 +548,10 @@ fn rendering_case<G>(universe: &mut Universe<G>) -> RenderingCase<G> {
         .expect("rendering source opens");
     let mut capabilities = CommandHostCapabilities::default();
     let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+    let mut context = universe.command_context().expect("command context");
     let current = CommandProcessor::new(
         &mut command,
-        universe.command_context().expect("command context"),
+        &mut context,
         CommandHostContext::new(&mut capabilities),
         &mut diagnostic_effects,
     )

@@ -228,8 +228,9 @@ fn source_known_creating_delivery() {
         open_source(&mut command, &format!(r"\{NAME} ").repeat(OPERATIONS));
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -257,8 +258,9 @@ fn source_known_probe_delivery() {
         open_source(&mut command, &format!(r"\{NAME} ").repeat(OPERATIONS));
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -285,8 +287,9 @@ fn source_new_creating_delivery() {
         open_source(&mut command, &source);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -313,8 +316,9 @@ fn source_unknown_probe_delivery() {
         open_source(&mut command, &source);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -353,8 +357,9 @@ fn stored_control_sequence_delivery() {
         }
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -400,8 +405,9 @@ fn warmed_backup_push_pop_throughput() {
         open_source(&mut command, "b");
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -435,8 +441,9 @@ fn warmed_keyword_mismatch_throughput() {
         open_source(&mut command, &"dimensiox".repeat(OPERATIONS + 1));
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -488,8 +495,9 @@ fn destination_directed_warm_delivery() {
         }
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -516,10 +524,7 @@ fn destination_directed_warm_delivery() {
                 processor.get_x_token_into(&mut destination).unwrap(),
                 DeliveryStatus::Command
             );
-            assert_char_ref(
-                destination.as_ref().expect("direct expanded command"),
-                'd',
-            );
+            assert_char_ref(destination.as_ref().expect("direct expanded command"), 'd');
             destination = None;
         }
         measure_zero("destination_directed_24576_delivery", || {
@@ -544,10 +549,7 @@ fn destination_directed_warm_delivery() {
                     processor.get_x_token_into(&mut destination).unwrap(),
                     DeliveryStatus::Command
                 );
-                assert_char_ref(
-                    destination.as_ref().expect("direct expanded command"),
-                    'd',
-                );
+                assert_char_ref(destination.as_ref().expect("direct expanded command"), 'd');
                 destination = None;
             }
         });
@@ -560,8 +562,9 @@ fn ordinary_source_delivery() {
         open_source(&mut command, "ssssssssssssssss");
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -581,8 +584,9 @@ fn packed_backup_and_replay() {
         open_source(&mut command, "bbbbbbbbbbbbbbbb");
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -619,8 +623,9 @@ fn stored_token_replay() {
         }
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -687,8 +692,9 @@ fn macro_argument_matching() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = processor(
-            universe,
+            &mut context,
             &mut command,
             &mut capabilities,
             &mut diagnostic_effects,
@@ -741,15 +747,15 @@ fn open_source<G>(command: &mut CommandState<G>, source: &str) {
     command.open_registered_source(registered).unwrap();
 }
 
-fn processor<'a, G>(
-    universe: &'a mut Universe<G>,
-    command: &'a mut CommandState<G>,
-    capabilities: &'a mut CommandHostCapabilities,
-    diagnostic_effects: &'a mut tex_state::diagnostic::DiagnosticEffects,
-) -> CommandProcessor<'a, 'a, G> {
+fn processor<'episode, 'admission, G>(
+    context: &'episode mut tex_state::CommandContext<'admission, G>,
+    command: &'episode mut CommandState<G>,
+    capabilities: &'episode mut CommandHostCapabilities,
+    diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
+) -> CommandProcessor<'episode, 'admission, G> {
     CommandProcessor::new(
         command,
-        universe.command_context().expect("command context"),
+        context,
         CommandHostContext::new(capabilities),
         diagnostic_effects,
     )
