@@ -1456,6 +1456,7 @@ struct PdfVersionIndex {
 }
 
 impl PdfVersionIndex {
+    #[cfg(all(feature = "profiling", feature = "testing"))]
     const PROBES: u32 = u64::BITS;
 
     fn node(&self, index: u32) -> PdfVersionIndexNode {
