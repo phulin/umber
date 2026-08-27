@@ -108,6 +108,16 @@ for an admitted episode; they are not smuggled into tokens or definitions.
 One call-local admitted `CommandContext` remains stable while the executor
 refreshes those capabilities and the command processor borrows it in place;
 processor retirement ends that borrow without an owned context handoff.
+Ordinary main-control execution uses that same stack-local admission for
+operation preparation, semantic application, page-output selection, and
+save-stack accounting. Each phase accepts only a shared or mutable reborrow;
+none owns, stores, or reconstructs the facade. The context is sufficient
+because it already contains the admitted generation plus the live World,
+dependency, font, page, PDF, source, hyphenation, interaction, and accounting
+borrows. Resource resolution, suspension packaging, rollback, and outer
+executor publication occur only after the call-local value is dropped, so the
+single-admission path adds no owner, cache, heap indirection, or lifetime
+mechanism.
 
 `ReachabilityStore::new` creates the session's interning epoch and one coarse
 allocation containing its inline two-slot store. Its `Interner` holds an

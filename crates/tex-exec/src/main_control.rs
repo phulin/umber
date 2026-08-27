@@ -2164,10 +2164,9 @@ impl<G> MainControl<G> {
 
     fn local_glue_pointer_reassigned<T, D>(
         &self,
-        stores: &mut Universe<G>,
+        context: &CommandContext<'_, G>,
         scanned: &ColdOperation<G, T, D>,
     ) -> bool {
-        let context = stores.command_context().expect("live generation");
         let (index, value, source_identity, source_is_target, physical, pointer_sources) =
             match scanned {
                 ColdOperation::Skip {
@@ -2229,15 +2228,11 @@ impl<G> MainControl<G> {
 
     fn etex_redundant_local_glue_assignment<T, D>(
         &self,
-        stores: &mut Universe<G>,
+        context: &CommandContext<'_, G>,
         scanned: &ColdOperation<G, T, D>,
     ) -> bool {
-        stores
-            .command_context()
-            .expect("live generation")
-            .int_param(IntParam::ETEX_EXTENDED_MODE)
-            > 0
-            && self.local_glue_pointer_reassigned(stores, scanned)
+        context.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
+            && self.local_glue_pointer_reassigned(context, scanned)
     }
 
     pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
@@ -2709,9 +2704,8 @@ impl<G> MainControl<G> {
     /// `get_next` -- so what reaches here is the residue. Every step driver
     /// calls this once, immediately after it reports the operation's other
     /// diagnostics.
-    fn drain_file_framing_events(&mut self, stores: &mut Universe<G>) {
-        self.command
-            .render_file_framing_events(&mut stores.command_context().expect("live generation"));
+    fn drain_file_framing_events(&mut self, stores: &mut CommandContext<'_, G>) {
+        self.command.render_file_framing_events(stores);
     }
 
     /// tex.web §1335 `final_cleanup`'s tail, run once a step has produced
@@ -2920,7 +2914,8 @@ impl<G> MainControl<G> {
     /// Publishes source-open framing after root registration without
     /// consuming the first command, allowing hosts to checkpoint JobStart.
     pub fn flush_pending_file_framing(&mut self, stores: &mut Universe<G>) {
-        self.drain_file_framing_events(stores);
+        let mut context = stores.command_context().expect("live generation");
+        self.drain_file_framing_events(&mut context);
     }
 
     /// Selects whether exhaustion of the registered root ends an authored
@@ -3520,14 +3515,13 @@ impl<G> MainControl<G> {
     ///
     /// Returns whether this call was the entry, so an observed step publishes
     /// the prologue's push only on the step that produced it.
-    fn enter_main_control(&mut self, stores: &mut Universe<G>) -> bool {
+    fn enter_main_control(&mut self, stores: &mut CommandContext<'_, G>) -> bool {
         // Seeds `line` before the first command is delivered; every step
         // republishes it after delivery (see `apply_operation`).
         if std::mem::replace(&mut self.main_control_entered, true) {
             return false;
         }
-        let mut context = stores.command_context().expect("live generation");
-        schedule_everyjob(&mut self.command, &mut context);
+        schedule_everyjob(&mut self.command, stores);
         true
     }
 
@@ -4200,7 +4194,7 @@ impl<G> MainControl<G> {
 
     /// Records TeX's checked save-stack high-water projection after one
     /// direct main-control operation.
-    fn record_save_stack_usage(&mut self, stores: &mut Universe<G>) {
+    fn record_save_stack_usage(&mut self, stores: &CommandContext<'_, G>) {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
         // §273 boundaries. Vcenters and insertions deliberately have smaller
         // projections (§§1167/1099), so derive the words from each live kind.
@@ -4213,8 +4207,6 @@ impl<G> MainControl<G> {
         let (aftergroup_words, latest_aftergroup_position) =
             self.command.aftergroup_save_stack_projection();
         let checked = stores
-            .command_context()
-            .expect("save-stack admission")
             .checked_save_stack_words(
                 aftergroup_words,
                 latest_aftergroup_position,
@@ -4894,7 +4886,9 @@ impl<G> MainControl<G> {
                     &mut diagnostic_effects,
                     &mut operation_frame,
                 );
-                self.record_save_stack_usage(stores);
+                self.record_save_stack_usage(
+                    &stores.command_context().expect("save-stack admission"),
+                );
                 let boundary = self.episode_commit_boundary(
                     stores,
                     &applied,
@@ -5061,7 +5055,9 @@ impl<G> MainControl<G> {
                     &mut diagnostic_effects,
                     &mut operation_frame,
                 );
-                self.record_save_stack_usage(stores);
+                self.record_save_stack_usage(
+                    &stores.command_context().expect("save-stack admission"),
+                );
                 let boundary = self.episode_commit_boundary(
                     stores,
                     &applied,
@@ -5247,7 +5243,7 @@ impl<G> MainControl<G> {
                 stores.set_interaction_mode(interaction);
             }
             operations += 1;
-            self.record_save_stack_usage(stores);
+            self.record_save_stack_usage(&stores.command_context().expect("save-stack admission"));
             let boundary = self.episode_commit_boundary(
                 stores,
                 &applied,
@@ -5740,7 +5736,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let result = self.apply_operation(stores, settled, diagnostic_effects);
-        self.record_save_stack_usage(stores);
+        self.record_save_stack_usage(&stores.command_context().expect("save-stack admission"));
         if result.is_ok()
             && let Some(error) = self.operation_evidence_limit_error()
         {
@@ -5899,8 +5895,8 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
         while !self.boxes.output_routine_active {
+            let mut context = stores.command_context().expect("live generation");
             let selected = {
-                let mut context = stores.command_context().expect("live generation");
                 let Some(fire_up) = context.page_fire_up() else {
                     break;
                 };
@@ -5927,6 +5923,7 @@ impl<G> MainControl<G> {
                     // host-visible. Deferred whatsit diagnostics are added by
                     // the nested shipout transaction at its own pre-commit
                     // boundary.
+                    drop(context);
                     stores
                         .world_mut()
                         .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
@@ -5962,14 +5959,13 @@ impl<G> MainControl<G> {
                             .extend(
                                 self.command
                                     .publish_named_token_list_pushes(
-                                        &mut stores.command_context().expect("live generation"),
+                                        &mut context,
                                         diagnostic_effects,
                                     )
                                     .into_iter()
                                     .map(CommandObservation::Input),
                             );
                     }
-                    let mut context = stores.command_context().expect("live generation");
                     let mut processor = command_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
@@ -5988,7 +5984,6 @@ impl<G> MainControl<G> {
                     // persistent interpreter. Retire its borrow facade before
                     // opening the matching semantic group and mode barriers.
                     drop(processor);
-                    drop(context);
                     if enclosing.is_some() {
                         let mut deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
@@ -5996,13 +5991,13 @@ impl<G> MainControl<G> {
                         self.page_output_observations.append(&mut deferred);
                     }
                     opened?;
-                    let mut context = stores.command_context().expect("live generation");
                     enter_group(
                         &mut context,
                         &mut self.command,
                         diagnostic_effects,
                         GroupKind::Output,
                     );
+                    drop(context);
                     self.modes.push_at_line(
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
@@ -7668,21 +7663,18 @@ impl<G> MainControl<G> {
             }));
         }
 
-        if self.enter_main_control(stores) {
+        self.ensure_primitive_handles(stores);
+        let mut context = stores.command_context().expect("live generation");
+        if self.enter_main_control(&mut context) {
             let entry_records: Vec<CommandObservation> = self
                 .command
-                .publish_named_token_list_pushes(
-                    &mut stores.command_context().expect("live generation"),
-                    diagnostic_effects,
-                )
+                .publish_named_token_list_pushes(&mut context, diagnostic_effects)
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
             self.observe_committed(entry_records);
         }
-        self.drain_file_framing_events(stores);
-        self.ensure_primitive_handles(stores);
-        let mut context = stores.command_context().expect("live generation");
+        self.drain_file_framing_events(&mut context);
         self.refresh_host_capabilities(&context);
         let innermost_group = context.innermost_group_kind();
         let mut diagnostics = Vec::new();
@@ -7888,7 +7880,9 @@ impl<G> MainControl<G> {
         }
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
-        self.drain_file_framing_events(stores);
+        let mut context = stores.command_context().expect("live generation");
+        self.drain_file_framing_events(&mut context);
+        drop(context);
 
         if let Some((operation, meaning)) = fused_hot {
             return Ok(Some(PreflightDelivery::<G> {
@@ -8159,24 +8153,23 @@ impl<G> MainControl<G> {
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
         // paragraph-start transition).
-        if matches!(&delivery, OperationDelivery::<G>::Replay) && self.enter_main_control(stores) {
+        self.ensure_primitive_handles(stores);
+        let mut context = stores.command_context().expect("live generation");
+        if matches!(&delivery, OperationDelivery::<G>::Replay)
+            && self.enter_main_control(&mut context)
+        {
             // §1030's prologue precedes `big_switch`, so its push is published
             // ahead of the first command this step delivers rather than with
             // the step's own applied records.
             let entry_records: Vec<CommandObservation> = self
                 .command
-                .publish_named_token_list_pushes(
-                    &mut stores.command_context().expect("live generation"),
-                    diagnostic_effects,
-                )
+                .publish_named_token_list_pushes(&mut context, diagnostic_effects)
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
             self.observe_committed(entry_records);
         }
-        self.drain_file_framing_events(stores);
-        self.ensure_primitive_handles(stores);
-        let mut context = stores.command_context().expect("live generation");
+        self.drain_file_framing_events(&mut context);
         self.refresh_host_capabilities(&context);
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let root_main_file_origin = self.active_external_file_is_root_main();
@@ -8424,7 +8417,9 @@ impl<G> MainControl<G> {
             frame.error = Some(error);
             return OperationReadiness::Failed;
         }
-        self.drain_file_framing_events(stores);
+        let mut context = stores.command_context().expect("live generation");
+        self.drain_file_framing_events(&mut context);
+        drop(context);
         let scanned = match scanned {
             ScannedOperation::<G>::Cold(scanned) => scanned,
             ScannedOperation::<G>::Hot(operation) => {
@@ -8721,25 +8716,24 @@ impl<G> MainControl<G> {
             active.preamble_start_pending = false;
             active.align_peek_pending = true;
         }
+        let context = stores.command_context().expect("cold operation admission");
         let mut scanned = match scanned {
-            ColdOperation::ShowGroups { diagnostic: None } => {
-                let context = stores.command_context().expect("live generation");
-                ColdOperation::ShowGroups {
-                    diagnostic: Some(detached_showgroups(
-                        &context,
-                        &self.active_alignment,
-                        &self.boxes,
-                        &self.active_discretionaries,
-                        &self.active_math_choices,
-                        &self.active_math_left_boundaries,
-                        &self.active_math_shifts,
-                    )),
-                }
-            }
+            ColdOperation::ShowGroups { diagnostic: None } => ColdOperation::ShowGroups {
+                diagnostic: Some(detached_showgroups(
+                    &context,
+                    &self.active_alignment,
+                    &self.boxes,
+                    &self.active_discretionaries,
+                    &self.active_math_choices,
+                    &self.active_math_left_boundaries,
+                    &self.active_math_shifts,
+                )),
+            },
             scanned => scanned,
         };
-        let reassigning_glue = self.local_glue_pointer_reassigned(stores, &scanned);
-        let redundant_glue = self.etex_redundant_local_glue_assignment(stores, &scanned);
+        let reassigning_glue = self.local_glue_pointer_reassigned(&context, &scanned);
+        let redundant_glue = self.etex_redundant_local_glue_assignment(&context, &scanned);
+        drop(context);
         match &mut scanned {
             ColdOperation::Skip {
                 redundant,
