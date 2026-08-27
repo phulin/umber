@@ -1613,16 +1613,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.next_delivery_sequence,
             );
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            if matches!(
-                spelling.semantic_token(),
-                Token::Cs(_)
-                    | Token::Char {
-                        cat: Catcode::Active,
-                        ..
-                    }
-            ) {
-                self.record_meaning_lookup();
-            }
             let command = CurrentCommand::<G>::resolve_into(
                 destination,
                 spelling,
@@ -1631,6 +1621,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 raw_delivery.is_direct_source(),
                 raw_delivery.direct_source_line(),
                 self.state,
+                self.fuel.fuel_mut(),
             );
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),

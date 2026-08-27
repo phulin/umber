@@ -63,6 +63,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
+    let command = fs::read_to_string(manifest_dir.join("src/command.rs"))
+        .expect("read current-command representation");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read typed delivery driver");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
@@ -85,6 +87,29 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         );
     }
     assert!(next.contains("RawDeliverySlot::empty()"));
+    assert!(
+        !command.contains("macro_observation_operand"),
+        "current commands must not retain a permanently empty observer operand"
+    );
+    let current_command = command
+        .split("pub struct CurrentCommand<G> {")
+        .nth(1)
+        .and_then(|tail| tail.split("\n}").next())
+        .expect("locate current-command fields");
+    assert!(
+        !current_command.contains("identity: CommandIdentity"),
+        "ordinary command identity must be derived only by observation"
+    );
+    assert!(current_command.contains("effective_adjustment: EffectiveCommandAdjustment"));
+    let canonical_delivery = next
+        .split("fn get_next_canonical(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn deliver_raw_input_into(").next())
+        .expect("locate canonical delivery body");
+    assert!(
+        !canonical_delivery.contains("spelling.semantic_token()"),
+        "canonical delivery must leave token classification and its accounting in resolution"
+    );
     assert!(levels.contains("size_of::<RawDeliverySlot>() == 88"));
     assert_eq!(
         next.matches("fn next_source_step(").count(),

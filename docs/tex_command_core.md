@@ -213,6 +213,22 @@ suspension can mutate state. Assignment level remains solely in the dense bank,
 so delivered-command ownership does not duplicate journaling or reinterpret a
 meaning after delivery.
 
+The same resolution match records mutable-meaning lookup work directly in the
+call-local fuel ledger. Canonical delivery does not unpack the spelling a
+second time merely to recover that operational count, and no classification is
+returned or retained in the command, input level, snapshot, or continuation.
+The command likewise does not retain a macro-observation operand that is
+always empty. Observation consumes the operand it derives from the command's
+effective identity and meaning, so the default representation has one fewer
+normalization field and no exceptional handoff.
+
+Ordinary command identity is derived from the resolved meaning at the
+observation boundary instead of classified and retained during every raw
+delivery. The command stores only one effective-adjustment discriminator for
+the mutually exclusive `\noexpand` frozen-relax and outer-recovery-space
+states. This consolidates the prior identity classifier and recovery boolean
+without changing recovery, alignment, replay, or suspension order.
+
 `CurrentCommand::resolve_into` lends the initialized caller destination back
 to the raw driver, so the remaining delivery steps mutate and observe that
 one final command in place. Alignment classification writes its exact

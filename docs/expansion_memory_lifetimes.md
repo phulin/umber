@@ -212,6 +212,24 @@ operation rollback, replay, retry, suspension, and generation retirement. TeX
 assignment level and journal state stay in the bank row and never enter the
 command.
 
+Resolution records control-sequence and active-character meaning work directly
+in the call-local fuel ledger at the match that performs the lookup. The caller
+does not decode the same spelling again or carry a classification beside the
+initialized command borrow. The count is operational accounting, not a command
+field, input-level classifier, snapshot value, or continuation payload.
+
+The current command also carries no separate macro-observation operand. That
+slot was never populated: observation uses the operand already derived from
+the effective command identity and meaning. Removing the permanently empty
+field keeps ordinary delivery and the exceptional backup/suspension copies on
+the same smaller representation.
+
+Ordinary command identity is not another retained classifier. Observation
+derives it from the resolved meaning only when publishing a command. One
+compact adjustment discriminator retains the mutually exclusive exceptional
+states for `\noexpand`'s frozen relax and outer-validity's recovery space; it
+replaces the former always-populated identity plus separate recovery flag.
+
 The publisher retains only a monotonic serial for cold format coordinates, and
 the token-list publisher retains warmed builder chunks and slots. Neither
 retains a published payload. A dead serial becomes an empty compatibility row
