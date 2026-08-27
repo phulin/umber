@@ -283,6 +283,12 @@ fn verified_owner_retains_touched_packed_shards_and_replays_unseen_keys_offline(
         ResourceResponse::FileUnavailable(key) if key.name() == "absent.pdf"
     )));
     assert_eq!(cold.manifest_parses, 1);
+    assert!(cold.manifest_read_bytes > cold.retained_manifest_bytes);
+    assert_eq!(cold.packed_selection_calls, 1);
+    assert_eq!(cold.packed_selection_keys, 2);
+    assert_eq!(cold.packed_selection_bytes, cold.retained_manifest_bytes);
+    assert_eq!(cold.packed_validation_calls, 1);
+    assert_eq!(cold.packed_validation_bytes, cold.retained_manifest_bytes);
     assert_eq!(cold.retained_manifest_shards, 1);
     assert!(cold.retained_manifest_bytes > 0);
 
@@ -315,9 +321,18 @@ fn verified_owner_retains_touched_packed_shards_and_replays_unseen_keys_offline(
         [ResourceResponse::File(file)] if file.request.name() == "later.sty" && file.bytes == later
     ));
     assert_eq!(extended.manifest_reads, 0);
+    assert_eq!(extended.manifest_read_bytes, 0);
     assert_eq!(extended.manifest_parses, 0);
     assert_eq!(extended.manifest_validations, 0);
     assert_eq!(extended.shard_loads, 0);
+    assert_eq!(extended.packed_selection_calls, 1);
+    assert_eq!(extended.packed_selection_keys, 1);
+    assert_eq!(
+        extended.packed_selection_bytes,
+        cold.retained_manifest_bytes
+    );
+    assert_eq!(extended.packed_validation_calls, 0);
+    assert_eq!(extended.packed_validation_bytes, 0);
     assert_eq!(extended.manifest_parse_peak_bytes, 0);
     assert_eq!(extended.retained_manifest_shards, 1);
     assert_eq!(
@@ -339,9 +354,15 @@ fn verified_owner_retains_touched_packed_shards_and_replays_unseen_keys_offline(
         )
         .expect("all compact records replay without a shard parse");
     assert_eq!(warm.manifest_reads, 0);
+    assert_eq!(warm.manifest_read_bytes, 0);
     assert_eq!(warm.manifest_parses, 0);
     assert_eq!(warm.manifest_validations, 0);
     assert_eq!(warm.shard_loads, 0);
+    assert_eq!(warm.packed_selection_calls, 1);
+    assert_eq!(warm.packed_selection_keys, 3);
+    assert_eq!(warm.packed_selection_bytes, cold.retained_manifest_bytes);
+    assert_eq!(warm.packed_validation_calls, 0);
+    assert_eq!(warm.packed_validation_bytes, 0);
     assert!(warm.verified_manifest_hits >= 2);
     assert_eq!(warm.manifest_parse_peak_bytes, 0);
     assert_eq!(warm.retained_manifest_shards, 1);

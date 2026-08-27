@@ -23,10 +23,16 @@ const SAMPLES: usize = 5;
 #[derive(Clone, Copy, Debug, Default)]
 struct Work {
     manifest_reads: u64,
+    manifest_read_bytes: u64,
     manifest_parses: u64,
     manifest_validations: u64,
     verified_manifest_hits: u64,
     shard_loads: u64,
+    packed_selection_calls: u64,
+    packed_selection_keys: u64,
+    packed_selection_bytes: u64,
+    packed_validation_calls: u64,
+    packed_validation_bytes: u64,
     object_hashes: u64,
     object_cache_hits: u64,
 }
@@ -34,6 +40,9 @@ struct Work {
 impl Work {
     fn add(&mut self, telemetry: ResolverTelemetry) {
         self.manifest_reads = self.manifest_reads.saturating_add(telemetry.manifest_reads);
+        self.manifest_read_bytes = self
+            .manifest_read_bytes
+            .saturating_add(telemetry.manifest_read_bytes);
         self.manifest_parses = self
             .manifest_parses
             .saturating_add(telemetry.manifest_parses);
@@ -44,6 +53,21 @@ impl Work {
             .verified_manifest_hits
             .saturating_add(telemetry.verified_manifest_hits);
         self.shard_loads = self.shard_loads.saturating_add(telemetry.shard_loads);
+        self.packed_selection_calls = self
+            .packed_selection_calls
+            .saturating_add(telemetry.packed_selection_calls);
+        self.packed_selection_keys = self
+            .packed_selection_keys
+            .saturating_add(telemetry.packed_selection_keys);
+        self.packed_selection_bytes = self
+            .packed_selection_bytes
+            .saturating_add(telemetry.packed_selection_bytes);
+        self.packed_validation_calls = self
+            .packed_validation_calls
+            .saturating_add(telemetry.packed_validation_calls);
+        self.packed_validation_bytes = self
+            .packed_validation_bytes
+            .saturating_add(telemetry.packed_validation_bytes);
         self.object_hashes = self.object_hashes.saturating_add(telemetry.object_hashes);
         self.object_cache_hits = self
             .object_cache_hits
@@ -52,6 +76,9 @@ impl Work {
 
     fn add_work(&mut self, other: Self) {
         self.manifest_reads = self.manifest_reads.saturating_add(other.manifest_reads);
+        self.manifest_read_bytes = self
+            .manifest_read_bytes
+            .saturating_add(other.manifest_read_bytes);
         self.manifest_parses = self.manifest_parses.saturating_add(other.manifest_parses);
         self.manifest_validations = self
             .manifest_validations
@@ -60,6 +87,21 @@ impl Work {
             .verified_manifest_hits
             .saturating_add(other.verified_manifest_hits);
         self.shard_loads = self.shard_loads.saturating_add(other.shard_loads);
+        self.packed_selection_calls = self
+            .packed_selection_calls
+            .saturating_add(other.packed_selection_calls);
+        self.packed_selection_keys = self
+            .packed_selection_keys
+            .saturating_add(other.packed_selection_keys);
+        self.packed_selection_bytes = self
+            .packed_selection_bytes
+            .saturating_add(other.packed_selection_bytes);
+        self.packed_validation_calls = self
+            .packed_validation_calls
+            .saturating_add(other.packed_validation_calls);
+        self.packed_validation_bytes = self
+            .packed_validation_bytes
+            .saturating_add(other.packed_validation_bytes);
         self.object_hashes = self.object_hashes.saturating_add(other.object_hashes);
         self.object_cache_hits = self
             .object_cache_hits
@@ -88,10 +130,16 @@ impl Work {
         };
         Ok(Self {
             manifest_reads: get("manifest_reads")?,
+            manifest_read_bytes: get("manifest_read_bytes")?,
             manifest_parses: get("manifest_parses")?,
             manifest_validations: get("manifest_validations")?,
             verified_manifest_hits: get("verified_manifest_hits")?,
             shard_loads: get("shard_loads")?,
+            packed_selection_calls: get("packed_selection_calls")?,
+            packed_selection_keys: get("packed_selection_keys")?,
+            packed_selection_bytes: get("packed_selection_bytes")?,
+            packed_validation_calls: get("packed_validation_calls")?,
+            packed_validation_bytes: get("packed_validation_bytes")?,
             object_hashes: get("object_hashes")?,
             object_cache_hits: get("object_cache_hits")?,
         })
@@ -264,12 +312,18 @@ fn print_result(label: &str, elapsed: Duration, work: Work) {
 
 fn print_work(work: Work) {
     print!(
-        "manifest_reads={} manifest_parses={} manifest_validations={} verified_manifest_hits={} shard_loads={} object_hashes={} object_cache_hits={}",
+        "manifest_reads={} manifest_read_bytes={} manifest_parses={} manifest_validations={} verified_manifest_hits={} shard_loads={} packed_selection_calls={} packed_selection_keys={} packed_selection_bytes={} packed_validation_calls={} packed_validation_bytes={} object_hashes={} object_cache_hits={}",
         work.manifest_reads,
+        work.manifest_read_bytes,
         work.manifest_parses,
         work.manifest_validations,
         work.verified_manifest_hits,
         work.shard_loads,
+        work.packed_selection_calls,
+        work.packed_selection_keys,
+        work.packed_selection_bytes,
+        work.packed_validation_calls,
+        work.packed_validation_bytes,
         work.object_hashes,
         work.object_cache_hits,
     );

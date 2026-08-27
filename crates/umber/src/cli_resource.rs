@@ -215,12 +215,24 @@ pub struct ResolverTelemetry {
     pub verified_manifest_hits: u64,
     /// Root or shard payloads read from local, persistent-cache, or transport bytes.
     pub manifest_reads: u64,
+    /// Exact serialized root plus packed-shard bytes presented by those reads.
+    pub manifest_read_bytes: u64,
     /// Strict root or shard parser invocations.
     pub manifest_parses: u64,
     /// Root or shard payload digest validations.
     pub manifest_validations: u64,
     /// Complete packed shards validated and retained.
     pub shard_loads: u64,
+    /// Packed-shard lookup batches against already validated bytes.
+    pub packed_selection_calls: u64,
+    /// Canonical request keys probed by packed-shard lookup batches.
+    pub packed_selection_keys: u64,
+    /// Validated shard bytes presented to packed lookup batches, counted once per call.
+    pub packed_selection_bytes: u64,
+    /// Complete packed-shard structural validation attempts.
+    pub packed_validation_calls: u64,
+    /// Exact packed-shard bytes presented to structural validation.
+    pub packed_validation_bytes: u64,
     /// Largest verified serialized root or packed shard read in one operation.
     pub manifest_parse_peak_bytes: u64,
     /// Packed shards currently retained by the verified owner.
@@ -1690,7 +1702,11 @@ impl DistributionResolver {
         if shared.shards.contains_key(&index) {
             telemetry.verified_manifest_hits = telemetry.verified_manifest_hits.saturating_add(1);
             shared.record_retention(telemetry);
-            return Ok(selected_records(&shared.shards[&index], request_keys));
+            return Ok(selected_records(
+                &shared.shards[&index],
+                request_keys,
+                telemetry,
+            ));
         }
         let local_root = loaded.local_root.clone();
         let digest = loaded
@@ -1742,15 +1758,22 @@ impl DistributionResolver {
             bytes
         };
         telemetry.manifest_reads = telemetry.manifest_reads.saturating_add(1);
+        telemetry.manifest_read_bytes = telemetry
+            .manifest_read_bytes
+            .saturating_add(bytes.len() as u64);
         telemetry.manifest_validations = telemetry.manifest_validations.saturating_add(1);
         telemetry.manifest_parse_peak_bytes =
             telemetry.manifest_parse_peak_bytes.max(bytes.len() as u64);
         check_cancelled(cancellation)?;
+        telemetry.packed_validation_calls = telemetry.packed_validation_calls.saturating_add(1);
+        telemetry.packed_validation_bytes = telemetry
+            .packed_validation_bytes
+            .saturating_add(bytes.len() as u64);
         let shard = ValidatedPackedShard::new(bytes, &loaded.root, index)
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
         telemetry.shard_loads = telemetry.shard_loads.saturating_add(1);
         shared.shards.insert(index, Arc::new(shard));
-        let selected = selected_records(&shared.shards[&index], request_keys);
+        let selected = selected_records(&shared.shards[&index], request_keys, telemetry);
         shared.record_retention(telemetry);
         Ok(selected)
     }
@@ -1831,6 +1854,9 @@ impl DistributionResolver {
                 (bytes, None)
             };
             telemetry.manifest_reads = telemetry.manifest_reads.saturating_add(1);
+            telemetry.manifest_read_bytes = telemetry
+                .manifest_read_bytes
+                .saturating_add(manifest_bytes.len() as u64);
             telemetry.manifest_parse_peak_bytes = telemetry
                 .manifest_parse_peak_bytes
                 .max(manifest_bytes.len() as u64);
@@ -1852,7 +1878,15 @@ impl DistributionResolver {
 fn selected_records(
     shard: &ValidatedPackedShard,
     request_keys: &[String],
+    telemetry: &mut ResolverTelemetry,
 ) -> BTreeMap<String, Option<SelectedDistributionRecord>> {
+    telemetry.packed_selection_calls = telemetry.packed_selection_calls.saturating_add(1);
+    telemetry.packed_selection_keys = telemetry
+        .packed_selection_keys
+        .saturating_add(request_keys.len() as u64);
+    telemetry.packed_selection_bytes = telemetry
+        .packed_selection_bytes
+        .saturating_add(shard.bytes().len() as u64);
     request_keys
         .iter()
         .map(|key| {
@@ -1873,11 +1907,17 @@ fn selected_records(
 fn emit_failed_distribution_telemetry(telemetry: ResolverTelemetry) {
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
-            "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_parses={} manifest_validations={} shard_loads={} manifest_parse_peak_bytes={} retained_manifest_shards={} retained_manifest_bytes={}",
+            "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_read_bytes={} manifest_parses={} manifest_validations={} shard_loads={} packed_selection_calls={} packed_selection_keys={} packed_selection_bytes={} packed_validation_calls={} packed_validation_bytes={} manifest_parse_peak_bytes={} retained_manifest_shards={} retained_manifest_bytes={}",
             telemetry.manifest_reads,
+            telemetry.manifest_read_bytes,
             telemetry.manifest_parses,
             telemetry.manifest_validations,
             telemetry.shard_loads,
+            telemetry.packed_selection_calls,
+            telemetry.packed_selection_keys,
+            telemetry.packed_selection_bytes,
+            telemetry.packed_validation_calls,
+            telemetry.packed_validation_bytes,
             telemetry.manifest_parse_peak_bytes,
             telemetry.retained_manifest_shards,
             telemetry.retained_manifest_bytes,
