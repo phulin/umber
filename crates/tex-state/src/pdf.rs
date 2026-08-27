@@ -3058,21 +3058,21 @@ impl<G> PdfState<G> {
     /// Detaches unresolved navigation identities in pdfTeX's finalization
     /// order without exposing the checkpointed destination/thread ledgers.
     pub(crate) fn unresolved_navigation_warnings(&self) -> Vec<PdfNavigationWarning> {
-        self.destinations
-            .iter()
+        self.destination_records(false)
+            .into_iter()
             .filter(|record| !record.defined())
             .map(|record| PdfNavigationWarning::Destination(record.identity().clone()))
             .chain(
-                self.structure_destinations
-                    .iter()
+                self.destination_records(true)
+                    .into_iter()
                     .filter(|record| !record.defined())
                     .map(|record| {
                         PdfNavigationWarning::StructureDestination(record.identity().clone())
                     }),
             )
             .chain(
-                self.threads
-                    .iter()
+                self.thread_records()
+                    .into_iter()
                     .filter(|record| record.beads().is_empty())
                     .map(|record| PdfNavigationWarning::Thread(record.identity().clone())),
             )
@@ -3772,22 +3772,10 @@ impl<G> PdfState<G> {
         self.fingerprint = cursor.fingerprint;
         self.general_root = general_root;
         self.color_root = color_root;
-        if self.transaction.is_some() {
-            self.candidate_undo_len = snapshot.undo_pos
-                - self
-                    .transaction
-                    .as_ref()
-                    .expect("PDF transaction exists")
-                    .base
-                    .undo_pos;
-            self.candidate_color_undo_len = cursor.color_undo_pos
-                - self
-                    .transaction
-                    .as_ref()
-                    .expect("PDF transaction exists")
-                    .base
-                    .cursor
-                    .color_undo_pos;
+        if let Some(transaction) = &self.transaction {
+            self.candidate_undo_len = snapshot.undo_pos - transaction.base.undo_pos;
+            self.candidate_color_undo_len =
+                cursor.color_undo_pos - transaction.base.cursor.color_undo_pos;
         } else {
             self.undo_len = snapshot.undo_pos - self.undo_base;
             self.color_undo_len = cursor.color_undo_pos - self.color_undo_base;
