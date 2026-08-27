@@ -120,7 +120,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the terminal whenever the ambient selector already does.
     pub(crate) fn warn_file_boundary_incomplete(
         &mut self,
-        open_depths: Box<SourceOpenDepths>,
+        open_depths: SourceOpenDepths,
         saved_context: Option<String>,
     ) {
         let tracing_nesting = self.state.int_param(IntParam::TRACING_NESTING);

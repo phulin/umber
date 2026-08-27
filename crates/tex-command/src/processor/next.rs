@@ -1956,7 +1956,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if matches!(action, InputRetirementAction::SourcePopped)
             && let Some(open_depths) = open_depths
         {
-            self.warn_file_boundary_incomplete(open_depths, nesting_context);
+            self.warn_file_boundary_incomplete(*open_depths, nesting_context);
         }
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
             let reason = if self.take_immediate_write_retirement(identity) {
