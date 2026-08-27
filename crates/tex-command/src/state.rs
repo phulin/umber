@@ -384,10 +384,6 @@ pub struct CommandStackUsage {
 }
 
 impl CommandStackUsage {
-    pub(crate) fn record_input_push(&mut self, input_ptr: usize) {
-        self.input_stack = self.input_stack.max(input_ptr);
-    }
-
     pub(crate) fn record_parameter_push(&mut self, param_ptr_after: usize) {
         self.parameter_stack = self.parameter_stack.max(param_ptr_after);
     }

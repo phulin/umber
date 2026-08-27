@@ -540,7 +540,7 @@ impl<G> CommandState<G> {
     /// Commits the one canonical input-frame push transition.
     pub(crate) fn push_input_level(&mut self, level: InputLevel<G>) {
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
-        self.stack_usage.record_input_push(self.input.levels.len());
+        self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
         self.input.levels.push(level);
     }
 
