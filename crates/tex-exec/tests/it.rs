@@ -385,6 +385,24 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!control.contains("struct PreparedColdOperation"));
     assert!(!control.contains("struct PrepareOperationError"));
     assert!(!control.contains("Prepared(Box<ColdOperation"));
+    assert!(control.contains("struct PreflightCommand<G>"));
+    assert!(control.contains("command: Option<PreflightCommand<G>>"));
+    for retired in [
+        "PendingPreflightCommand",
+        "struct PendingOperationScan",
+        "struct PendingPrefixedCommandScan",
+        "struct PendingPrefixScan",
+        "fn for_delivery(",
+        "fn with_cursor(",
+        "fn with_scanner(",
+    ] {
+        assert!(
+            !control.contains(retired),
+            "retained preflight command mirror: {retired}"
+        );
+    }
+    assert!(!control.contains("command.clone()"));
+    assert!(!cold_scan.contains("command.clone()"));
 
     assert!(cold.contains("mod operation;"));
     assert!(cold.contains("mod scan;"));

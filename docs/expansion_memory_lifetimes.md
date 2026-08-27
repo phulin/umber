@@ -353,18 +353,21 @@ exact child capability, or a non-resource failure. An external caller therefore
 cannot use a raw scalar API, and an internal structured caller cannot propagate
 a suspension with `?` while silently abandoning its child.
 
-One singular direct-operation parent owns the settled command, delivery cursor,
-completed fixed-sequence operands, current phase, and scalar child. Its exact
-phases cover register and box-dimension assignments; unary integer, dimension,
-and glue commands; paragraph-shape and penalty arrays; fontdimen, font-integer,
-font-code, font-expansion, and font-only operations; code tables and catcodes;
-openout filename scanning; marks; math families; arithmetic target/keyword/
-operand sequences; and leader payload, command, and glue delivery. Expansion
-frames own number, internal-value, font, mark-class, margin-kern, PDF scalar,
-balanced-text, and file-enquiry children. Conditional frames own already-pushed
-condition identity, inversion, and exact numeric/font/box/stream operands.
-Alignment preamble frames own tabskip optional-equals and glue phases beside
-their scanner episode and partially built templates.
+One singular caller-owned preflight frame holds the sole current command,
+delivery cursor, compact dispatch phase, optional scalar child, and completed
+fixed-sequence operands. Raw, settled, expanding, main-loop, prefix, leader,
+and direct-operation scanning borrow and mutate that frame in place; only an
+actual resource suspension moves it into the retained retry destination. Its
+exact operation phases cover register and box-dimension assignments; unary
+integer, dimension, and glue commands; paragraph-shape and penalty arrays;
+fontdimen, font-integer, font-code, font-expansion, and font-only operations;
+code tables and catcodes; openout filename scanning; marks; math families;
+arithmetic target/keyword/operand sequences; and leader payload, command, and
+glue delivery. Expansion frames own number, internal-value, font, mark-class,
+margin-kern, PDF scalar, balanced-text, and file-enquiry children. Conditional
+frames own already-pushed condition identity, inversion, and exact numeric/
+font/box/stream operands. Alignment preamble frames own tabskip optional-equals
+and glue phases beside their scanner episode and partially built templates.
 
 Structured scanner parents retain character/register definitions, token-list
 register and parameter assignments, glue parameters, rules, packing, insert,

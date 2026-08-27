@@ -65,8 +65,9 @@ collector (see `src/conditionals.rs`).
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive rollback without shared synchronization.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
-  its cloneable value crosses only executor preflight/retry seams and never a
-  durable snapshot or format boundary.
+  the executor borrows the one caller-owned value through preflight and
+  scanning, and moves it only into an actual retry or another semantic owner;
+  it never enters a durable snapshot or format boundary.
 - `src/processor/expand.rs`: canonical expanded delivery, including the
   same-borrow preflight settlement that reports and discards undefined
   commands before returning the following command to the executor. The

@@ -19,7 +19,7 @@ fn material_origin<G>(
 #[allow(clippy::too_many_arguments)] // mirrors the typed main-control context
 pub(in crate::main_control) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: tex_command::CurrentCommand<G>,
+    command: &mut PreflightCommand<G>,
     global: bool,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -67,7 +67,7 @@ pub(in crate::main_control) fn scan<G>(
             // dispatch irrespective of its spelling. Inaccessible alignment
             // sentinels have the distinct `EndV`/`EndTemplate` meanings and
             // remain owned by their dedicated paths.
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         // TeX82 §1094's `hmode+stop,...: head_for_vmode`. §1095's
         // unrestricted branch (`mode>0`) backs the stop up, then backs an
@@ -78,7 +78,7 @@ pub(in crate::main_control) fn scan<G>(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) if mode == Mode::Horizontal => {
             processor
-                .recover_stop_for_vertical_mode(command)
+                .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::Continue)
         }
@@ -89,7 +89,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) if mode == Mode::RestrictedHorizontal => {
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         // §1046's "math-only cases in non-math modes, or vice versa" table
         // lists `mmode+stop`, so §1047's `insert_dollar_sign` closes the math
@@ -98,7 +98,7 @@ pub(in crate::main_control) fn scan<G>(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
             processor
-                .recover_missing_math_shift(command)
+                .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::MissingMathShift)
         }
@@ -134,7 +134,9 @@ pub(in crate::main_control) fn scan<G>(
                     incomplete_conditions,
                 });
             }
-            processor.back_input(command).map_err(command_error)?;
+            processor
+                .back_input(command.take_current())
+                .map_err(command_error)?;
             Ok(ColdOperation::EjectResidualPage)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
@@ -333,7 +335,7 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
-            let origin = material_origin(processor, &command);
+            let origin = material_origin(processor, command);
             scan_unary_scalar_operation(
                 processor,
                 meaning,
@@ -355,7 +357,7 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DiscretionaryHyphen) => {
             Ok(ColdOperation::DiscretionaryHyphen {
-                origin: material_origin(processor, &command),
+                origin: material_origin(processor, command),
             })
         }
         Meaning::UnexpandablePrimitive(
@@ -377,7 +379,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::VFilNeg,
         ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
             processor
-                .recover_missing_math_shift(command)
+                .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::MissingMathShift)
         }
@@ -394,7 +396,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::VFilNeg,
         ) if mode == Mode::Horizontal => {
             processor
-                .recover_stop_for_vertical_mode(command)
+                .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::Continue)
         }
@@ -412,7 +414,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::VSs
             | UnexpandablePrimitive::VFilNeg,
         ) if mode == Mode::RestrictedHorizontal => {
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         // TeX82 §1057's `vmode+vskip: append_glue` (using `abs(mode)`, so both
         // outer `Vertical` and `InternalVertical` match `vmode`).
@@ -1193,7 +1195,7 @@ pub(in crate::main_control) fn scan<G>(
             // in math mode. §1047's `insert_dollar_sign` closes math with an
             // inserted `$` and replays `\hrule` in the resulting mode.
             processor
-                .recover_missing_math_shift(command)
+                .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::MissingMathShift)
         }
@@ -1206,7 +1208,7 @@ pub(in crate::main_control) fn scan<G>(
             // lookahead may cross a line boundary, while §804's paragraph
             // diagnostic must retain the line on which the rule was read.
             processor
-                .recover_stop_for_vertical_mode(command)
+                .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::Continue)
         }
@@ -1270,7 +1272,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::SplitDiscards,
         ) if mode == Mode::Horizontal => {
             processor
-                .recover_stop_for_vertical_mode(command)
+                .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::Continue)
         }
@@ -1284,7 +1286,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::PageDiscards
             | UnexpandablePrimitive::SplitDiscards,
         ) if mode == Mode::RestrictedHorizontal => {
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         // e-TeX 2.6 `etex.ch` [15.208, 45.999] assigns both saved-discard
         // enquiries the `un_vbox` command code with modifiers above
@@ -1295,7 +1297,7 @@ pub(in crate::main_control) fn scan<G>(
             UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards,
         ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
             processor
-                .recover_missing_math_shift(command)
+                .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::MissingMathShift)
         }
@@ -1461,7 +1463,7 @@ pub(in crate::main_control) fn scan<G>(
             if mode == Mode::Horizontal =>
         {
             processor
-                .recover_stop_for_vertical_mode(command)
+                .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::Continue)
         }
@@ -1470,7 +1472,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
             if mode == Mode::RestrictedHorizontal =>
         {
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         // `\halign` is legal directly in vertical mode (TeX82's
         // `vmode+halign:init_align`).
@@ -1485,7 +1487,7 @@ pub(in crate::main_control) fn scan<G>(
                 })
             } else if mode == Mode::DisplayMath {
                 if innermost_group != Some(GroupKind::MathShift) {
-                    scan_off_save(processor, command, innermost_group)
+                    scan_off_save(processor, command.take_current(), innermost_group)
                 } else {
                     // TeX82 §774's `init_align` admits a display alignment at
                     // the display's own math-shift save level. The execute
@@ -1512,7 +1514,7 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Math | Mode::DisplayMath)
                 && innermost_group != Some(GroupKind::MathShift)
             {
-                scan_off_save(processor, command, innermost_group)
+                scan_off_save(processor, command.take_current(), innermost_group)
             } else {
                 Ok(ColdOperation::BeginAlignment {
                     vertical: true,
@@ -1528,7 +1530,7 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
                 && processor.paragraph_end_needs_alignment_recovery() =>
         {
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         // TeX82 §§1046--1047 classify `mmode+par_end` as a math-mode
         // mismatch: insert `$`, then rescan the same `\par` after the math
@@ -1539,7 +1541,7 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Math | Mode::DisplayMath) =>
         {
             processor
-                .recover_missing_math_shift(command)
+                .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
             Ok(ColdOperation::MissingMathShift)
         }
@@ -1558,7 +1560,7 @@ pub(in crate::main_control) fn scan<G>(
         } if matches!(mode, Mode::Math | Mode::DisplayMath)
             && innermost_group != Some(GroupKind::MathShift) =>
         {
-            scan_off_save(processor, command, innermost_group)
+            scan_off_save(processor, command.take_current(), innermost_group)
         }
         Meaning::CharToken {
             cat: Catcode::MathShift,
@@ -1610,7 +1612,7 @@ pub(in crate::main_control) fn scan<G>(
         } => Ok(ColdOperation::Character {
             ch,
             cat,
-            origin: material_origin(processor, &command),
+            origin: material_origin(processor, command),
             suppress_left_boundary: false,
         }),
         // TeX82 §1105's `any_mode(remove_item): delete_last`. No operand of
@@ -1657,7 +1659,7 @@ pub(in crate::main_control) fn scan<G>(
                 Ok(ColdOperation::NonScript)
             } else {
                 processor
-                    .recover_missing_math_shift(command)
+                    .recover_missing_math_shift(command.take_current())
                     .map_err(command_error)?;
                 Ok(ColdOperation::MissingMathShift)
             }
@@ -1721,7 +1723,7 @@ pub(in crate::main_control) fn scan<G>(
         // `ColdOperation::Continue` -- see umber2-johp.69 and
         // `docs/tex_command_core.md`'s dispatch-completeness invariant.
         Meaning::UnexpandablePrimitive(primitive) => {
-            scan_unclassified_primitive(processor, command, primitive, mode)
+            scan_unclassified_primitive(processor, command.take_current(), primitive, mode)
         }
         // Every other `Meaning` variant reaching this point has no named
         // dispatch arm above. `scan_unclassified_meaning` applies the same
@@ -1729,7 +1731,13 @@ pub(in crate::main_control) fn scan<G>(
         // exhaustive match over `Meaning` -- and, inside its `CharToken`
         // case, over `Catcode` -- so a newly added variant fails to compile
         // there instead of reaching a silent `ColdOperation::Continue` here.
-        meaning => scan_unclassified_meaning(processor, command, meaning, mode, innermost_group),
+        meaning => scan_unclassified_meaning(
+            processor,
+            command.take_current(),
+            meaning,
+            mode,
+            innermost_group,
+        ),
     }
 }
 

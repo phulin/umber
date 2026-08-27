@@ -6231,8 +6231,9 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
             control.pending_direct_operation.as_ref(),
             Some(PendingDirectOperation::Retained {
                 destination: PendingDirectDestination::Preflight(
-                    PendingPreflightCommand::Settled {
-                        command,
+                    PreflightCommand {
+                        command: Some(command),
+                        phase: PreflightCommandPhase::Settled,
                         scanner: Some(_),
                         ..
                     }
