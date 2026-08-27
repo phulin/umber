@@ -657,7 +657,7 @@ impl<G> Universe<G> {
             fonts: checkpoint.fonts,
             sources: checkpoint.sources,
             hyphenation: checkpoint.hyphenation.clone(),
-            dependencies: checkpoint.dependencies.clone(),
+            dependencies: checkpoint.dependencies,
             interaction_mode: checkpoint.interaction_mode,
             prepared_mag: checkpoint.prepared_mag,
             engine_usage: checkpoint.engine_usage.clone(),
