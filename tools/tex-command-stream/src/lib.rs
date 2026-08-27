@@ -1471,11 +1471,12 @@ mod tests {
             capabilities: &mut CommandHostCapabilities,
             diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         ) -> Vec<(char, u64)> {
+            let mut context = universe
+                .command_context()
+                .expect("admitted command context");
             let mut processor = CommandProcessor::new(
                 command,
-                universe
-                    .command_context()
-                    .expect("admitted command context"),
+                &mut context,
                 CommandHostContext::new(capabilities),
                 diagnostic_effects,
             );
@@ -1506,11 +1507,12 @@ mod tests {
             );
 
             {
+                let mut context = universe
+                    .command_context()
+                    .expect("admitted command context");
                 let mut processor = CommandProcessor::new(
                     &mut command,
-                    universe
-                        .command_context()
-                        .expect("admitted command context"),
+                    &mut context,
                     CommandHostContext::new(&mut capabilities),
                     &mut diagnostic_effects,
                 );
