@@ -130,7 +130,7 @@ impl ModeNest {
 }
 
 /// The list-under-construction owned by one mode level.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {
     sequence: tex_state::node_sequence::NodeSequence,
     align_state: Option<AlignState>,
@@ -158,31 +158,6 @@ struct ModeComponentRoots {
     display_interrupt: u64,
     display_eq_no: u64,
     pending_hchars: u64,
-}
-
-impl Default for ModeList {
-    fn default() -> Self {
-        let list = Self {
-            sequence: tex_state::node_sequence::NodeSequence::default(),
-            align_state: None,
-            incomplete_fraction: None,
-            display_interrupt: None,
-            display_eq_no: None,
-            display_alignment: false,
-            prev_depth: None,
-            prev_graf: 0,
-            pending_hchars: None,
-            space_factor: 0,
-            no_boundary: false,
-            hyphen_language: 0,
-            left_hyphen_min: 0,
-            right_hyphen_min: 0,
-            component_roots: ModeComponentRoots::default(),
-            identity_enabled: false,
-            semantic_identity_root: 0,
-        };
-        list
-    }
 }
 
 impl ModeList {
@@ -744,6 +719,7 @@ impl ModeListMutation<'_> {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn with_pending_hchars_mut<R>(
         &mut self,
         mutate: impl FnOnce(&mut PendingHRun) -> R,
@@ -1043,7 +1019,7 @@ impl AlignState {
         default_tabskip: GlueSpec,
         loop_start: Option<usize>,
     ) -> Self {
-        let state = Self {
+        Self {
             kind,
             pack_spec,
             columns,
@@ -1057,8 +1033,7 @@ impl AlignState {
             identity_enabled: false,
             definition_identity_root: 0,
             semantic_identity_root: 0,
-        };
-        state
+        }
     }
 
     #[must_use]

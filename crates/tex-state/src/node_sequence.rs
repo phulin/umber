@@ -95,6 +95,11 @@ impl SemanticSequenceIdentity {
     }
 
     #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    #[must_use]
     pub const fn raw(self) -> u64 {
         self.hash
     }
