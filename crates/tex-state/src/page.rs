@@ -647,6 +647,7 @@ pub(crate) struct AcceptedPageTail {
     future: Vec<PageInverse>,
     future_frames: Vec<PageCheckpointFrame>,
     origin_scalars: PageScalars,
+    origin_semantic_roots: PageSemanticRoots,
     contribution_before: VecDeque<Node>,
     contribution_after: VecDeque<Node>,
     current_page_after: Vec<Node>,
@@ -1013,6 +1014,7 @@ impl PageBuilderState {
         let origin_timeline = self.checkpoint_journal.timeline;
         let origin_scalars = self.scalar_snapshot();
         let mut selected = self.take_payload();
+        let origin_semantic_roots = selected.semantic_roots;
         let contribution_before = selected
             .contribution
             .drain(..mark.roots.contribution_start)
@@ -1024,6 +1026,9 @@ impl PageBuilderState {
             .current_page
             .take_prefix(mark.roots.current_page_end);
         selected.current_page = PageNodeSequence::from_nodes(current_page_before);
+        if self.identity_enabled {
+            selected.current_page.enable_semantic_identity();
+        }
         let page_discards_after = selected
             .page_discards
             .split_off(mark.roots.page_discards_end);
@@ -1066,6 +1071,7 @@ impl PageBuilderState {
             future,
             future_frames,
             origin_scalars,
+            origin_semantic_roots,
             contribution_before,
             contribution_after,
             current_page_after,
@@ -1090,6 +1096,9 @@ impl PageBuilderState {
         let mut current_page = restored.current_page.into_nodes();
         current_page.append(&mut tail.current_page_after);
         restored.current_page = PageNodeSequence::from_nodes(current_page);
+        if self.identity_enabled {
+            restored.current_page.enable_semantic_identity();
+        }
         restored.page_discards.append(&mut tail.page_discards_after);
         restored
             .split_discards
@@ -1101,6 +1110,7 @@ impl PageBuilderState {
         self.install_payload(restored);
         self.rebuild_canonical_lane_values();
         self.restore_scalars(tail.origin_scalars);
+        self.semantic_roots = tail.origin_semantic_roots;
         self.checkpoint_journal.inverses = tail.future;
         self.checkpoint_journal.frames = tail.future_frames;
         self.checkpoint_journal.applied = tail.origin;

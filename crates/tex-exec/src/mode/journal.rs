@@ -640,26 +640,16 @@ impl ModeNestStorage {
     pub(super) fn validates_checkpoint_cursor(&self, cursor: Cursor) -> bool {
         cursor.generation == self.journal.generation
             && cursor.cursor <= self.journal.inverses.len()
-            && (self.journal.inverses.len() == cursor.cursor
-                || self
-                    .journal
-                    .frames
-                    .iter()
-                    .any(|frame| frame.cursor == cursor.cursor))
+            && self.journal.frames.iter().any(|frame| {
+                frame.generation == cursor.generation
+                    && frame.id == cursor.frame_id
+                    && frame.cursor == cursor.cursor
+            })
     }
 
     pub(super) fn restore_checkpoint_cursor(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         if !self.validates_checkpoint_cursor(cursor) {
             return Err(CursorError::WrongGeneration);
-        }
-        if !self
-            .journal
-            .frames
-            .iter()
-            .any(|frame| frame.cursor == cursor.cursor)
-        {
-            debug_assert_eq!(self.journal.inverses.len(), cursor.cursor);
-            return Ok(());
         }
         loop {
             let frame = self
@@ -673,7 +663,7 @@ impl ModeNestStorage {
                 cursor: frame.cursor,
             };
             self.rollback_journal(active)?;
-            if active.cursor == cursor.cursor {
+            if active.frame_id == cursor.frame_id {
                 break;
             }
         }

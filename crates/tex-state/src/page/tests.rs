@@ -400,26 +400,26 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
         .reachable_state_identity_root()
         .expect("accepted future root");
 
-    page.begin_checkpoint_fork(early);
+    let rejected_tail = page.begin_checkpoint_candidate(early);
     page.push_contribution(kern(3));
     let rejected_candidate = page
         .checkpoint_mark()
         .reachable_state_identity_root()
         .expect("rejected candidate root");
     assert_ne!(rejected_candidate, accepted_future);
-    page.reject_checkpoint_fork();
+    page.reject_checkpoint_candidate(rejected_tail);
     assert_eq!(
         page.checkpoint_mark().reachable_state_identity_root(),
         Some(accepted_future),
     );
 
-    page.begin_checkpoint_fork(early);
+    let accepted_tail = page.begin_checkpoint_candidate(early);
     page.push_contribution(kern(4));
     let committed_candidate = page
         .checkpoint_mark()
         .reachable_state_identity_root()
         .expect("committed candidate root");
-    page.commit_checkpoint_fork();
+    page.accept_checkpoint_candidate(accepted_tail);
     assert_eq!(
         page.checkpoint_mark().reachable_state_identity_root(),
         Some(committed_candidate),
