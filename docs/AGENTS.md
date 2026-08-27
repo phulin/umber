@@ -10,6 +10,10 @@ than only its layout. Follow the "Writing Markdown" rules in the repository-leve
 
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
+`aggregate_checkpoint_contract.md` defines the component-by-component final
+checkpoint marks, restore order, retention charges, complete optional identity,
+representative pre-refactor benchmark, and later flat-scaling gates.
+
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, counters, measurement controls, and capture
 analysis workflow. Historical measurements belong in Git history or Beads,

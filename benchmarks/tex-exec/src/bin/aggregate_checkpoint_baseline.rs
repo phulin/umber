@@ -179,7 +179,11 @@ fn fixture<G>(
         let mut context = universe.command_context().expect("state fixture context");
         for index in 0..units {
             context
-                .assign_count(index as u16, index as i32, tex_state::AssignmentScope::Global)
+                .assign_count(
+                    index as u16,
+                    index as i32,
+                    tex_state::AssignmentScope::Global,
+                )
                 .expect("dependency-tracked count");
             context.append_page_contribution(Node::Penalty(index as i32));
             context.push_current_page_node(Node::Penalty(index as i32 + 1));
@@ -217,7 +221,10 @@ fn fixture<G>(
     let world = universe.world_mut();
     world.open_out(StreamSlot::new(0), "aggregate-checkpoint.out");
     for index in 0..units {
-        world.write_text(PrintSink::Stream(StreamSlot::new(0)), &format!("effect-{index}"));
+        world.write_text(
+            PrintSink::Stream(StreamSlot::new(0)),
+            &format!("effect-{index}"),
+        );
         world.record_special("aggregate-checkpoint", vec![index as u8; 16]);
     }
     world.profile_publish_artifact(vec![0xa5; units * 64]);

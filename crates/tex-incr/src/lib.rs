@@ -21,11 +21,11 @@ use tex_command::{
     SourceRegistrationError,
 };
 use tex_exec::{
-    Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner,
-    CheckpointSink, DetachedEngineCompletion, DetachedFormatDump,
-    DetachedPreparedPage, EngineBoundary, EngineCheckpoint, EngineCompletionDemand, MainControl,
-    MainControlStep, OutputLedger, ResourceFulfillment, ResourceHost, ResourceNeed,
-    ResourceOutcome, ResourceWorld, canonical_font_resource_path,
+    Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink,
+    DetachedEngineCompletion, DetachedFormatDump, DetachedPreparedPage, EngineBoundary,
+    EngineCheckpoint, EngineCompletionDemand, MainControl, MainControlStep, OutputLedger,
+    ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome, ResourceWorld,
+    canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;

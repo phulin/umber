@@ -6859,7 +6859,7 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
             let mut control = MainControl::tex82_initex(stores);
             register_cmr10_as(&mut control, stores, "cmr10.tfm");
             register_source(&mut control, source);
-        let mut ledger = crate::OutputLedger::new();
+            let mut ledger = crate::OutputLedger::new();
             let mut checkpoints = Vec::new();
             let cancellation = crate::Cancellation::new();
 
