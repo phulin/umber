@@ -424,24 +424,43 @@ impl<'store> RetainedStateGeneration<'store> {
     }
 
     #[doc(hidden)]
-    pub fn accept_candidate(&mut self, candidate: &mut Self) {
+    pub fn prepare_candidate_accept(&mut self, candidate: &mut Self) {
         let source_key = self.key.expect("an accepted generation has a store slot");
         let candidate_key = candidate
             .key
             .expect("a current generation has a store slot");
         assert!(self.store.same_store(&candidate.store));
         self.store
-            .accept_candidate(source_key, candidate_key)
+            .prepare_candidate_accept(source_key, candidate_key)
             .expect("the source and current slots own one candidate transaction");
     }
 
     #[doc(hidden)]
-    pub fn reject_candidate(mut self) {
+    pub fn finish_candidate_accept(&mut self, candidate: &mut Self) {
+        let source_key = self.key.expect("an accepted generation has a store slot");
+        let candidate_key = candidate
+            .key
+            .expect("a current generation has a store slot");
+        self.store
+            .finish_candidate_accept(source_key, candidate_key)
+            .expect("destination acceptance waits for source settlement");
+    }
+
+    #[doc(hidden)]
+    pub fn prepare_candidate_reject(&mut self) {
+        let key = self.key.expect("a current generation rejects once");
+        self.store
+            .prepare_candidate_reject(key)
+            .expect("the current slot owns one candidate transaction");
+    }
+
+    #[doc(hidden)]
+    pub fn finish_candidate_reject(mut self) {
         let key = self.key.take().expect("a current generation rejects once");
         if self.store.generation_is_candidate(key) {
             self.store
-                .reject_candidate(key)
-                .expect("the current slot owns one candidate transaction");
+                .finish_candidate_reject(key)
+                .expect("destination rejection waits for source settlement");
         }
         let _ = self
             .store

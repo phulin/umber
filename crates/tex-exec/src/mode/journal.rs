@@ -93,8 +93,14 @@ impl PendingHRunProjection {
         std::mem::swap(&mut self.current, &mut run.current);
         std::mem::swap(&mut self.insertion_index, &mut run.insertion_index);
         std::mem::swap(&mut self.script, &mut run.script);
-        std::mem::swap(&mut self.source_identity_root, &mut run.source_identity_root);
-        std::mem::swap(&mut self.semantic_identity_root, &mut run.semantic_identity_root);
+        std::mem::swap(
+            &mut self.source_identity_root,
+            &mut run.source_identity_root,
+        );
+        std::mem::swap(
+            &mut self.semantic_identity_root,
+            &mut run.semantic_identity_root,
+        );
         if let Some(mut suffix) = self.source_suffix.take() {
             debug_assert_eq!(run.source.len(), self.source_len);
             run.source.append(&mut suffix);
@@ -728,19 +734,14 @@ impl ModeNestStorage {
                 let accepted_list_root = level.list.semantic_identity_root;
                 let accepted_components = level.list.component_roots;
                 let tail = level.list.sequence.split_accepted_tail(
-                        projection.node_len,
-                        projection.physical_node_len,
-                        projection.page_node_root_count,
-                        projection.semantic_identity,
-                    );
+                    projection.node_len,
+                    projection.physical_node_len,
+                    projection.page_node_root_count,
+                    projection.semantic_identity,
+                );
                 level.list.semantic_identity_root = projection.list_semantic_identity_root;
                 level.list.component_roots = projection.component_roots;
-                node_tails.push((
-                    projection.id,
-                    tail,
-                    accepted_list_root,
-                    accepted_components,
-                ));
+                node_tails.push((projection.id, tail, accepted_list_root, accepted_components));
             }
             accepted.frames.push(AcceptedFrame {
                 frame,
@@ -783,9 +784,7 @@ impl ModeNestStorage {
         }
         self.rollback_journal(candidate)?;
         for mut accepted_frame in accepted.frames.drain(..).rev() {
-            for (level_id, tail, list_root, components) in
-                accepted_frame.node_tails.drain(..)
-            {
+            for (level_id, tail, list_root, components) in accepted_frame.node_tails.drain(..) {
                 let level = self.level_by_id_mut(level_id);
                 level.list.sequence.restore_accepted_tail(tail);
                 level.list.semantic_identity_root = list_root;

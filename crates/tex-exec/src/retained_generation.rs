@@ -228,6 +228,13 @@ pub struct RetainedEngineGeneration<'store> {
     liveness: Arc<()>,
 }
 
+/// Direct owners restored together from one aggregate checkpoint.
+#[doc(hidden)]
+pub struct RestoredCheckpointRuntime<G> {
+    pub control: crate::MainControl<G>,
+    pub ledger: crate::OutputLedger,
+}
+
 /// Weak coarse-owner witness used by lifecycle tests and host diagnostics.
 /// It retains no runtime row, arena, checkpoint, or generation coordinate.
 #[derive(Clone, Debug)]
@@ -368,15 +375,27 @@ impl<'store> RetainedEngineGeneration<'store> {
     /// Explicitly settles the accepted/current owner transaction before the
     /// prior generation retires. No individual component may commit itself.
     #[doc(hidden)]
-    pub fn accept_candidate(&mut self, candidate: &mut Self) {
-        self.state.accept_candidate(&mut candidate.state);
+    pub fn prepare_candidate_accept(&mut self, candidate: &mut Self) {
+        self.state.prepare_candidate_accept(&mut candidate.state);
+    }
+
+    #[doc(hidden)]
+    pub fn finish_candidate_accept(&mut self, candidate: &mut Self) {
+        self.state.finish_candidate_accept(&mut candidate.state);
     }
 
     /// Explicitly rejects every current owner before releasing the current
     /// physical slot. `Drop` remains only an unwind safety net.
     #[doc(hidden)]
-    pub fn reject_candidate(self) {
-        self.state.reject_candidate();
+    pub fn prepare_candidate_reject(&mut self) {
+        if self.state.is_candidate_transaction_destination() {
+            self.state.prepare_candidate_reject();
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn finish_candidate_reject(self) {
+        self.state.finish_candidate_reject();
     }
 
     /// Mutation-free terminal preflight. Every retained root is statically
@@ -438,7 +457,7 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
             .get(self.source_generation, self.checkpoint)
             .map_err(RetainedEngineForkError::Access)?;
         let budget_counters = checkpoint.budget_counters();
-        let (universe, control) = checkpoint
+        let (universe, control, ledger) = checkpoint
             .fork_state(universe)
             .map_err(RetainedEngineForkError::Restore)?;
         Ok(RetainedStateForkBuild::new(
@@ -446,7 +465,7 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
             Box::new(EngineGenerationSidecars::<G> {
                 generation: self.generation,
                 checkpoints: RetainedCheckpointSlots::default(),
-                attachment: Some(Box::new(control)),
+                attachment: Some(Box::new(RestoredCheckpointRuntime { control, ledger })),
             }),
             budget_counters,
         ))
@@ -800,8 +819,11 @@ mod tests {
         type Output = (i32, RetainedCheckpointKey);
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let mut control = admitted
-                .take_attachment::<crate::MainControl<G>>(self.runtime)
+            let RestoredCheckpointRuntime {
+                mut control,
+                mut ledger,
+            } = admitted
+                .take_attachment::<RestoredCheckpointRuntime<G>>(self.runtime)
                 .expect("fork owns restored main control");
             let before = admitted
                 .universe()
@@ -822,8 +844,10 @@ mod tests {
                 .expect("candidate checkpoint");
             if self.accept_modes {
                 control.accept_checkpoint_candidate();
+                ledger.accept_checkpoint_candidate();
             } else {
                 control.reject_checkpoint_candidate();
+                ledger.reject_checkpoint_candidate();
             }
             (before, admitted.retain_checkpoint(checkpoint))
         }
@@ -877,8 +901,11 @@ mod tests {
         type Output = RetainedEngineAttachmentKey;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let mut control = admitted
-                .take_attachment::<crate::MainControl<G>>(self.0)
+            let RestoredCheckpointRuntime {
+                mut control,
+                ledger,
+            } = admitted
+                .take_attachment::<RestoredCheckpointRuntime<G>>(self.0)
                 .expect("fork runtime");
             let step = control
                 .advance_episode(admitted.universe())
@@ -888,7 +915,7 @@ mod tests {
                 crate::StepResult::Suspended(crate::ResourceNeed::Input { ref name, .. })
                     if name == "child.tex"
             ));
-            admitted.attach(control)
+            admitted.attach(RestoredCheckpointRuntime { control, ledger })
         }
     }
 
@@ -898,8 +925,11 @@ mod tests {
         type Output = crate::StepResult;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let mut control = admitted
-                .take_attachment::<crate::MainControl<G>>(self.0)
+            let RestoredCheckpointRuntime {
+                mut control,
+                mut ledger,
+            } = admitted
+                .take_attachment::<RestoredCheckpointRuntime<G>>(self.0)
                 .expect("suspended runtime");
             control.capabilities_mut().register_input(
                 "child.tex",
@@ -913,6 +943,7 @@ mod tests {
                     .advance_episode(admitted.universe())
                     .expect("resource retry");
                 if step == crate::StepResult::Progress(crate::MainControlStep::End) {
+                    ledger.accept_checkpoint_candidate();
                     return step;
                 }
             }
@@ -1175,7 +1206,8 @@ mod tests {
             })
             .expect("candidate admission");
         assert_eq!(before, 41);
-        accepted.accept_candidate(&mut accepted_candidate);
+        accepted.prepare_candidate_accept(&mut accepted_candidate);
+        accepted.finish_candidate_accept(&mut accepted_candidate);
         accepted.retire().expect("old prior retires");
         assert!(!accepted_witness.is_live());
         assert_eq!(
@@ -1245,7 +1277,8 @@ mod tests {
             .with_admitted(SuspendFork(runtime))
             .expect("suspension admission");
 
-        accepted.accept_candidate(&mut current);
+        accepted.prepare_candidate_accept(&mut current);
+        accepted.finish_candidate_accept(&mut current);
         accepted.retire().expect("accept current generation");
         let resumed = current
             .with_admitted(ResumeFork(suspension))

@@ -1889,13 +1889,7 @@ impl PartialEq for ModeNest {
 
 impl Drop for ModeNest {
     fn drop(&mut self) {
-        let Some(loan) = self.loan.take() else {
-            return;
-        };
-        self.storage
-            .borrow_mut()
-            .reject_checkpoint_candidate(loan.candidate_cursor, loan.accepted)
-            .expect("candidate mode journal remains innermost");
+        self.reject_checkpoint_candidate();
     }
 }
 
@@ -1917,6 +1911,19 @@ impl ModeNest {
             .accept_checkpoint_candidate(loan.candidate_cursor)
             .expect("candidate mode journal remains live");
         drop(loan.accepted);
+    }
+
+    /// Returns candidate-owned ranges to the accepted mode owner after every
+    /// destination owner has completed its rejection phase. `Drop` calls the
+    /// same path only as an unwind guard.
+    pub(crate) fn reject_checkpoint_candidate(&mut self) {
+        let Some(loan) = self.loan.take() else {
+            return;
+        };
+        self.storage
+            .borrow_mut()
+            .reject_checkpoint_candidate(loan.candidate_cursor, loan.accepted)
+            .expect("candidate mode journal remains innermost");
     }
 
     /// TeX82 §11's maximum number of simultaneously saved semantic levels.

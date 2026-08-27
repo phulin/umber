@@ -374,6 +374,7 @@ pub struct EngineCheckpoint<G> {
     pub(crate) runtime: RuntimeCheckpoint<G>,
     pub(crate) command: CommandSummary<G>,
     pub(crate) modes: ModeCheckpoint,
+    output: crate::canonical_step::OutputLedgerCheckpoint,
     reachable_state_identity: Option<ReachableStateIdentity>,
     retention: CheckpointRetention,
     pub(crate) root_anchor: usize,
@@ -390,6 +391,7 @@ impl<G> Clone for EngineCheckpoint<G> {
             runtime: self.runtime.clone(),
             command: self.command.clone(),
             modes: self.modes.clone(),
+            output: self.output.clone(),
             reachable_state_identity: self.reachable_state_identity,
             retention: self.retention,
             root_anchor: self.root_anchor,
@@ -408,7 +410,7 @@ impl<G> EngineCheckpoint<G> {
     pub(crate) fn fork_state(
         &self,
         source: &mut Universe<G>,
-    ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
+    ) -> Result<(Universe<G>, MainControl<G>, crate::OutputLedger), CheckpointRestoreError> {
         let mut destination = source
             .fork_runtime_checkpoint(&self.runtime)
             .map_err(CheckpointRestoreError::Runtime)?;
@@ -430,9 +432,11 @@ impl<G> EngineCheckpoint<G> {
                 return Err(CheckpointRestoreError::Mode(error));
             }
         };
+        let output = crate::OutputLedger::resume(&self.output);
         Ok((
             destination,
             MainControl::from_checkpoint_fork(command, modes),
+            output,
         ))
     }
 
@@ -444,7 +448,7 @@ impl<G> EngineCheckpoint<G> {
     pub fn profile_fork_state(
         &self,
         source: &mut Universe<G>,
-    ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
+    ) -> Result<(Universe<G>, MainControl<G>, crate::OutputLedger), CheckpointRestoreError> {
         self.fork_state(source)
     }
 
@@ -541,6 +545,7 @@ impl<G> EngineCheckpoint<G> {
             .and_then(|anchor| usize::try_from(anchor).ok())
             .unwrap_or(0);
         let modes = nest.checkpoint();
+        let output = crate::OutputLedger::new().checkpoint();
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();
@@ -560,6 +565,7 @@ impl<G> EngineCheckpoint<G> {
             runtime,
             command,
             modes,
+            output,
             reachable_state_identity,
             retention,
             root_anchor,
@@ -567,6 +573,13 @@ impl<G> EngineCheckpoint<G> {
             artifact_prefix,
             budget_counters,
         })
+    }
+
+    pub(crate) fn set_output_ledger(
+        &mut self,
+        output: crate::canonical_step::OutputLedgerCheckpoint,
+    ) {
+        self.output = output;
     }
 
     #[must_use]

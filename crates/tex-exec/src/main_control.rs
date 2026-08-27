@@ -71,7 +71,7 @@ mod hot_apply;
 
 use cold::*;
 
-type PreparedDviPages = Arc<Vec<crate::dispatch::PreparedDviPage>>;
+type PreparedDviPages = Vec<crate::dispatch::PreparedDviPage>;
 type GluePointerSource<G> = Option<(GlueId<G>, Option<GlueId<G>>)>;
 
 /// TeX82 §1176's live `math_shift_group` context as observed by e-TeX
@@ -84,11 +84,11 @@ enum MathShiftContext {
 }
 
 fn push_prepared_dvi_page(pages: &mut PreparedDviPages, page: crate::dispatch::PreparedDviPage) {
-    Arc::make_mut(pages).push(page);
+    pages.push(page);
 }
 
 fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch::PreparedDviPage> {
-    Arc::try_unwrap(std::mem::take(pages)).unwrap_or_else(|shared| shared.as_ref().clone())
+    std::mem::take(pages)
 }
 
 fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
@@ -2025,16 +2025,29 @@ impl<G> MainControl<G> {
         }
     }
 
-    /// Returns command roots and promotes mode roots before aggregate state
-    /// acceptance. Consuming `self` makes terminal owner handoff explicit.
-    pub fn accept_checkpoint_candidate(mut self) {
-        self.modes.accept_checkpoint_candidate();
+    /// Extracts the moved command/mode owner for the aggregate settlement
+    /// barrier. Destination owners must settle before this receipt commits or
+    /// returns the source-side mode ranges.
+    #[doc(hidden)]
+    pub fn prepare_checkpoint_candidate(mut self) -> PreparedCheckpointControl {
+        PreparedCheckpointControl {
+            modes: std::mem::take(&mut self.modes),
+        }
+    }
+
+    /// Convenience barrier used by owner-local tests. Aggregate callers use
+    /// [`Self::prepare_checkpoint_candidate`] so destination owners settle
+    /// first.
+    pub fn accept_checkpoint_candidate(self) {
+        self.prepare_checkpoint_candidate().accept();
     }
 
     /// Returns command and mode roots through their rejection paths before
     /// aggregate state rejection. Consuming `self` prevents later use of a
     /// partially settled command machine.
-    pub fn reject_checkpoint_candidate(self) {}
+    pub fn reject_checkpoint_candidate(self) {
+        self.prepare_checkpoint_candidate().reject();
+    }
 
     pub(crate) fn arm_terminal_revision(&mut self, step: MainControlStep) {
         debug_assert!(matches!(
@@ -3409,10 +3422,6 @@ impl<G> MainControl<G> {
     #[must_use]
     pub fn take_prepared_dvi_pages(&mut self) -> Vec<crate::dispatch::PreparedDviPage> {
         take_prepared_dvi_pages(&mut self.prepared_dvi_pages)
-    }
-
-    pub(crate) fn prepared_dvi_pages(&self) -> &[crate::dispatch::PreparedDviPage] {
-        &self.prepared_dvi_pages
     }
 
     /// Drains named boundaries that became safe during committed direct
@@ -9424,6 +9433,26 @@ impl<G> MainControl<G> {
         self.capabilities.set_startup_job_name(&filename);
         self.startup_terminal_line.clone_from(&filename);
         Ok(filename)
+    }
+}
+
+/// Prepared source-side settlement kept outside the destination generation.
+///
+/// The receipt deliberately owns the live mode owner. Dropping it is only an
+/// unwind guard; normal aggregate settlement calls [`Self::accept`] or
+/// [`Self::reject`] after the destination page/layout owners have settled.
+#[doc(hidden)]
+pub struct PreparedCheckpointControl {
+    modes: ModeNest,
+}
+
+impl PreparedCheckpointControl {
+    pub fn accept(mut self) {
+        self.modes.accept_checkpoint_candidate();
+    }
+
+    pub fn reject(mut self) {
+        self.modes.reject_checkpoint_candidate();
     }
 }
 

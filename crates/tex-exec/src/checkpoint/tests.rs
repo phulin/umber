@@ -437,7 +437,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
         .expect("checkpoint captures");
         drop(command);
 
-        let (mut rejected, mut branch) = checkpoint
+        let (mut rejected, mut branch, _ledger) = checkpoint
             .fork_state(universe)
             .expect("mode timeline forks");
         branch
@@ -447,7 +447,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
         drop(branch);
         drop(rejected);
 
-        let (mut retried, retry) = checkpoint
+        let (mut retried, retry, _ledger) = checkpoint
             .fork_state(universe)
             .expect("returned mode timeline forks again");
         assert_eq!(
@@ -485,7 +485,7 @@ fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
         // candidate may borrow them.
         drop(command);
 
-        let (mut rejected, mut branch) = checkpoint
+        let (mut rejected, mut branch, _ledger) = checkpoint
             .fork_state(universe)
             .expect("early checkpoint forks");
         assert!(
@@ -511,7 +511,7 @@ fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
             512,
             "rejection returns the untouched accepted page payload",
         );
-        let (mut retried, retry) = checkpoint
+        let (mut retried, retry, _ledger) = checkpoint
             .fork_state(universe)
             .expect("returned early checkpoint forks again");
         assert!(retry.mode_nest_for_test().current_list().nodes().is_empty());

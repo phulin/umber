@@ -35,9 +35,8 @@ struct CandidateTransactionSlots {
 enum CandidateTransactionPhase {
     AcceptedRewound,
     CandidateLive,
-    CandidateUndo,
-    RejectionRedo,
-    AcceptedPromoted,
+    DestinationAcceptCommitted,
+    DestinationRejectReturned,
 }
 
 /// Coarse owner of the one reachability domain shared by a session's prior
@@ -230,7 +229,7 @@ impl ReachabilityStore {
     /// generation may retire. Every aggregate family will settle through this
     /// one ordered barrier; the current implementation delegates the families
     /// already owned by `Universe` and deliberately exposes no PDF-only seam.
-    pub(crate) fn accept_candidate(
+    pub(crate) fn prepare_candidate_accept(
         &self,
         source_key: ReachabilityGenerationKey,
         candidate_key: ReachabilityGenerationKey,
@@ -250,18 +249,35 @@ impl ReachabilityStore {
             .as_mut()
             .ok_or(ReachabilityStoreError::StaleGeneration)?;
         candidate.universe.accept_checkpoint_candidate();
-        transaction.phase = CandidateTransactionPhase::AcceptedPromoted;
-        debug_assert_eq!(
-            transaction.phase,
-            CandidateTransactionPhase::AcceptedPromoted
-        );
+        transaction.phase = CandidateTransactionPhase::DestinationAcceptCommitted;
+        storage.candidate_transaction = Some(transaction);
+        Ok(())
+    }
+
+    /// Completes acceptance only after source-side command and mode move
+    /// bookkeeping has released every superseded accepted range.
+    pub(crate) fn finish_candidate_accept(
+        &self,
+        source_key: ReachabilityGenerationKey,
+        candidate_key: ReachabilityGenerationKey,
+    ) -> Result<(), ReachabilityStoreError> {
+        let mut storage = self.storage.borrow_mut();
+        let transaction = storage
+            .candidate_transaction
+            .filter(|transaction| {
+                transaction.source == source_key && transaction.candidate == candidate_key
+            })
+            .ok_or(ReachabilityStoreError::CandidateTransactionMismatch)?;
+        if transaction.phase != CandidateTransactionPhase::DestinationAcceptCommitted {
+            return Err(ReachabilityStoreError::CandidateTransactionMismatch);
+        }
         storage.candidate_transaction = None;
         Ok(())
     }
 
     /// Rejects the complete candidate transaction in reverse owner order and
     /// restores the accepted source before either slot becomes accessible.
-    pub(crate) fn reject_candidate(
+    pub(crate) fn prepare_candidate_reject(
         &self,
         candidate_key: ReachabilityGenerationKey,
     ) -> Result<(), ReachabilityStoreError> {
@@ -273,8 +289,6 @@ impl ReachabilityStore {
         if transaction.phase != CandidateTransactionPhase::CandidateLive {
             return Err(ReachabilityStoreError::CandidateTransactionMismatch);
         }
-        transaction.phase = CandidateTransactionPhase::CandidateUndo;
-        debug_assert_eq!(transaction.phase, CandidateTransactionPhase::CandidateUndo);
         let [source, candidate] = two_slots_mut(
             &mut storage.slots,
             transaction.source.slot,
@@ -292,8 +306,25 @@ impl ReachabilityStore {
         source
             .universe
             .reject_checkpoint_candidate(&mut candidate.universe);
-        transaction.phase = CandidateTransactionPhase::RejectionRedo;
-        debug_assert_eq!(transaction.phase, CandidateTransactionPhase::RejectionRedo);
+        transaction.phase = CandidateTransactionPhase::DestinationRejectReturned;
+        storage.candidate_transaction = Some(transaction);
+        Ok(())
+    }
+
+    /// Completes rejection only after source-side command and mode journals
+    /// have consumed returned candidate carriers and replayed accepted moves.
+    pub(crate) fn finish_candidate_reject(
+        &self,
+        candidate_key: ReachabilityGenerationKey,
+    ) -> Result<(), ReachabilityStoreError> {
+        let mut storage = self.storage.borrow_mut();
+        let transaction = storage
+            .candidate_transaction
+            .filter(|transaction| transaction.candidate == candidate_key)
+            .ok_or(ReachabilityStoreError::CandidateTransactionMismatch)?;
+        if transaction.phase != CandidateTransactionPhase::DestinationRejectReturned {
+            return Err(ReachabilityStoreError::CandidateTransactionMismatch);
+        }
         storage.candidate_transaction = None;
         Ok(())
     }
@@ -304,7 +335,10 @@ impl ReachabilityStore {
     pub(crate) fn drop_generation(&self, key: ReachabilityGenerationKey) {
         let transaction = self.storage.borrow().candidate_transaction;
         if let Some(transaction) = transaction {
-            let _ = self.reject_candidate(transaction.candidate);
+            if transaction.phase == CandidateTransactionPhase::CandidateLive {
+                let _ = self.prepare_candidate_reject(transaction.candidate);
+            }
+            let _ = self.finish_candidate_reject(transaction.candidate);
         }
         let _ = self.take_generation(key);
     }

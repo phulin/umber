@@ -88,8 +88,8 @@ pub use job::{
 };
 pub use main_control::{
     AdvanceOutcome, AdvanceReadiness, AdvanceTelemetry, DiagnosticStep, DiagnosticStepResult,
-    MainControl, MainControlStep, ResourceNeed, RootCompletionPolicy, StepResult,
-    TrackedStepResult,
+    MainControl, MainControlStep, PreparedCheckpointControl, ResourceNeed, RootCompletionPolicy,
+    StepResult, TrackedStepResult,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
@@ -97,10 +97,10 @@ pub use mode::{
 };
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_generation::{
-    AdmittedEngineGeneration, CheckpointPruningReceipt, RetainedCheckpointKey,
-    RetainedCheckpointStore, RetainedEngineAccessError, RetainedEngineAttachmentKey,
-    RetainedEngineForkError, RetainedEngineGeneration, RetainedEngineOperation,
-    RetainedEngineRetirement,
+    AdmittedEngineGeneration, CheckpointPruningReceipt, RestoredCheckpointRuntime,
+    RetainedCheckpointKey, RetainedCheckpointStore, RetainedEngineAccessError,
+    RetainedEngineAttachmentKey, RetainedEngineForkError, RetainedEngineGeneration,
+    RetainedEngineOperation, RetainedEngineRetirement,
 };
 pub use retained_resource::{
     ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,

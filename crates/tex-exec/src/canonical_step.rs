@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fmt;
+use std::rc::Rc;
 
 use tex_command::{CommandObserver, CommandSummaryError, FontResource, PdfImageResource};
 use tex_state::Universe;
@@ -62,18 +64,55 @@ impl TerminalRevisionReceipt {
 /// that may become visible after such an operation commits: named checkpoint
 /// capture, exact resource registration, authoritative absence, and the
 /// monotonic suspension serial.
-#[derive(Debug, Default)]
 pub struct OutputLedger {
+    storage: Rc<RefCell<OutputLedgerStorage>>,
+    accepted_tail: Option<Vec<crate::PreparedDviPage>>,
+    accepted_root: usize,
     job_start_committed: bool,
     suspension_serial: u64,
     terminal_step: Option<MainControlStep>,
     terminal_closed: bool,
 }
 
+#[derive(Debug, Default)]
+struct OutputLedgerStorage {
+    prepared_dvi_pages: Vec<crate::PreparedDviPage>,
+}
+
+/// Fixed rooted coordinate into the one accepted output lineage.
+#[derive(Clone, Debug)]
+pub(crate) struct OutputLedgerCheckpoint {
+    storage: Rc<RefCell<OutputLedgerStorage>>,
+    prepared_page_count: usize,
+}
+
+impl Default for OutputLedger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for OutputLedger {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OutputLedger")
+            .field(
+                "prepared_dvi_pages",
+                &self.storage.borrow().prepared_dvi_pages.len(),
+            )
+            .field("accepted_root", &self.accepted_root)
+            .field("candidate", &self.accepted_tail.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl OutputLedger {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
+            storage: Rc::new(RefCell::new(OutputLedgerStorage::default())),
+            accepted_tail: None,
+            accepted_root: 0,
             job_start_committed: false,
             suspension_serial: 0,
             terminal_step: None,
@@ -83,13 +122,54 @@ impl OutputLedger {
 
     /// Creates a ledger resumed from an already retained `JobStart` record.
     #[must_use]
-    pub const fn resume() -> Self {
+    pub(crate) fn resume(checkpoint: &OutputLedgerCheckpoint) -> Self {
+        let mut storage = checkpoint.storage.borrow_mut();
+        assert!(
+            checkpoint.prepared_page_count <= storage.prepared_dvi_pages.len(),
+            "output checkpoint lies beyond the accepted ledger"
+        );
+        let accepted_tail = storage
+            .prepared_dvi_pages
+            .split_off(checkpoint.prepared_page_count);
+        drop(storage);
         Self {
+            storage: Rc::clone(&checkpoint.storage),
+            accepted_tail: Some(accepted_tail),
+            accepted_root: checkpoint.prepared_page_count,
             job_start_committed: true,
             suspension_serial: 0,
             terminal_step: None,
             terminal_closed: false,
         }
+    }
+
+    pub(crate) fn checkpoint(&self) -> OutputLedgerCheckpoint {
+        OutputLedgerCheckpoint {
+            storage: Rc::clone(&self.storage),
+            prepared_page_count: self.storage.borrow().prepared_dvi_pages.len(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn accept_checkpoint_candidate(&mut self) {
+        let _ = self.accepted_tail.take();
+    }
+
+    #[doc(hidden)]
+    pub fn reject_checkpoint_candidate(&mut self) {
+        let Some(mut accepted) = self.accepted_tail.take() else {
+            return;
+        };
+        let mut storage = self.storage.borrow_mut();
+        storage.prepared_dvi_pages.truncate(self.accepted_root);
+        storage.prepared_dvi_pages.append(&mut accepted);
+    }
+
+    fn collect_prepared_pages<G>(&mut self, control: &mut MainControl<G>) {
+        self.storage
+            .borrow_mut()
+            .prepared_dvi_pages
+            .append(&mut control.take_prepared_dvi_pages());
     }
 
     #[must_use]
@@ -140,6 +220,7 @@ impl OutputLedger {
         {
             return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
         }
+        self.collect_prepared_pages(control);
         let pdf = demand
             .pdf()
             .then(|| {
@@ -162,10 +243,9 @@ impl OutputLedger {
             stream_open_contexts,
             world.committed_artifacts().to_vec(),
             world.artifact_publications(),
-            control.prepared_dvi_pages().to_vec(),
+            self.storage.borrow().prepared_dvi_pages.clone(),
             pdf,
         )?;
-        let _ = control.take_prepared_dvi_pages();
         self.terminal_closed = true;
         control.close_terminal_revision(receipt.step);
         Ok(completion)
@@ -248,26 +328,34 @@ impl OutputLedger {
     }
 
     fn publish<G>(
-        &self,
+        &mut self,
         control: &mut MainControl<G>,
         universe: &mut Universe<G>,
         sink: &mut dyn CheckpointSink<G>,
         boundaries: &[EngineBoundary],
     ) -> Result<(), CommandSummaryError> {
+        self.collect_prepared_pages(control);
         for &boundary in boundaries {
             if !sink.wants_checkpoint(boundary) {
                 continue;
             }
             let counters = ExecutionBudgetCounters::default();
-            let checkpoint = control.capture_checkpoint_with_identity_demand(
+            let mut checkpoint = control.capture_checkpoint_with_identity_demand(
                 boundary,
                 universe,
                 counters,
                 sink.wants_reachable_state_identity(boundary),
             )?;
+            checkpoint.set_output_ledger(self.checkpoint());
             sink.checkpoint(checkpoint);
         }
         Ok(())
+    }
+}
+
+impl Drop for OutputLedger {
+    fn drop(&mut self) {
+        self.reject_checkpoint_candidate();
     }
 }
 

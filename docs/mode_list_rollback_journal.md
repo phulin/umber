@@ -41,10 +41,12 @@ Append and tail extension record only the original length. Scalar setters are
 restored from the entry projection. Before an API returns `&mut Node`,
 `&mut Vec<Node>`, `&mut AlignState`, or another reference able to change
 pre-existing state, its write barrier must preserve the affected old value.
-Bulk ownership-taking operations record the moved value rather than cloning
-it. A destructive operation may use a full owned-list inverse when a smaller
-inverse would be more expensive or error-prone, but ordinary append must never
-take that fallback.
+Bulk ownership-taking operations move one coarse source-range carrier through
+the aggregate transaction. The journal retains only its owner/generation/range
+coordinate and current destination. It never keeps a cloned full-list inverse.
+Candidate `PageNodeArena` output is a separate new range produced from an
+immutable borrowed source view; reject returns the candidate carrier before
+Mode undo, and accepted redo returns the saved source range to its destination.
 
 Commit discards the innermost frame only after merging any inverse needed by
 its parent. Rollback validates the cursor before mutation, replays inverses in

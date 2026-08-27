@@ -50,6 +50,22 @@ Rollback restores those coordinates after applying its move-only private
 inverses. It therefore cannot leave an accepted contribution, current-page, or
 discard root consumed merely because artifact lowering aborted.
 
+List transfers follow the same two-lineage rule. A destructive Mode operation
+does not retain a copied `NodeSequence` inverse. It moves one coarse range
+carrier, identified by its source owner, generation, and range, through any
+Mode destination and then into the candidate `PageNodeArena` suffix. Kernels
+borrow immutable source ranges and publish only semantically new output ranges;
+they do not turn the source range back into an owned `Vec`. The compact move
+journal records the source coordinate and current destination once.
+
+Rooted settlement has three aggregate phases. Acceptance commits destination
+page/layout ranges, releases source-side move bookkeeping, and only then closes
+the transaction. Rejection first detaches candidate destination ranges and
+returns their carriers, then Mode undoes the candidate suffix and forward-redoes
+the saved accepted moves, and finally the page/layout owners reinstall those
+accepted ranges. The reachability store is the sole phase coordinator; a
+rooted component cannot use a one-shot accept/reject API or settle itself.
+
 ## Mode marks
 
 A mode checkpoint records the mode-timeline lineage and serial, the semantic
@@ -92,6 +108,14 @@ records and execution counters. Shared prefix bytes are never charged once per
 checkpoint, and detached committed shipout artifacts are charged to the output
 owner rather than the speculative page timeline.
 
+Prepared DVI receipts have their own direct `OutputLedger` owner. An engine
+checkpoint stores one fixed receipt-count mark into that accepted ledger.
+Forking splits the accepted receipt tail at the mark and resumes the prefix;
+the candidate appends a private suffix. Rejection drops that suffix and
+reattaches the saved tail, while acceptance drops the superseded tail and keeps
+the live prefix plus candidate suffix. Earlier receipts are never copied into a
+candidate, and MainControl has no `Arc<Vec<_>>` copy-on-write receipt buffer.
+
 The storage may retain bounded spare capacity up to the generation's observed
 high-water mark. That capacity is reusable storage, not live semantic payload.
 No compaction, per-value owner, root registration, ordinary-path copy-on-write,
@@ -104,5 +128,7 @@ insertions, and marks then perform none of the new semantic hash work. In an
 enabled session, each coarse lane owns only fixed scalar roots and list ids
 reuse the identity computed while their immutable payload is published;
 checkpoint demand merely copies/composes those roots and allocates nothing.
-The optional `ModeCheckpoint` and runtime page hooks stay `None` for a disabled
-owner and are populated only for the enabled convergence owner.
+Identity demand changes only whether scalar semantic roots are maintained.
+Mode, page, move-carrier, and output-ledger ownership and settlement are the
+same with identity enabled or disabled; there is no separate rootless
+lifecycle.
