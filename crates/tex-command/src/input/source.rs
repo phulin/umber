@@ -91,30 +91,6 @@ pub enum SourceNameClass {
     File,
 }
 
-/// One tex.web §537/§362 file-bracketing transition, queued for the engine.
-///
-/// `tex-command` prints nothing (see the crate's `AGENTS.md`): this is the
-/// record of when a named [`SourceNameClass::File`] level or e-TeX's traced
-/// `\scantokens` pseudo-file opened or exhausted, in exact occurrence order.
-/// A later layer renders §537's `(name`/`)` form without tex-command touching
-/// a print channel. Terminal, `\read`, and untraced `\scantokens` levels are
-/// excluded symmetrically at push and retirement.
-///
-/// `Close` carries no name: tex.web's §362 `end_file_reading` prints a bare
-/// `)`, and the queue's strict open/close ordering is already enough for a
-/// stack-disciplined consumer to know which file is closing.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum FileFramingEvent {
-    /// §537 `start_input`: `print_char("("); slow_print(name)`, also used by
-    /// e-TeX's traced pseudo-file with one space as `name`.
-    Open {
-        /// A §537 resolved name, or e-TeX's one-space pseudo-file name.
-        name: Arc<str>,
-    },
-    /// §362: a file's last line was consumed, printing `print_char(")")`.
-    Close,
-}
-
 /// Host-neutral input used to register one complete immutable source.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SourceRegistration {
@@ -371,6 +347,13 @@ pub(crate) struct RegisteredSource {
 }
 
 impl RegisteredSource {
+    /// Returns the §537 name when this source owns canonical file framing.
+    pub(crate) fn canonical_framing_name(&self) -> Option<Arc<str>> {
+        (self.framing == SourceFramingPolicy::Canonical)
+            .then(|| self.framing_name.clone().or_else(|| self.name.clone()))
+            .flatten()
+    }
+
     #[cfg(test)]
     pub(crate) fn rebind_generated(
         &self,

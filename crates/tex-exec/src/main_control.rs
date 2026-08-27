@@ -2695,19 +2695,6 @@ impl<G> MainControl<G> {
             })
     }
 
-    /// Renders whatever §537/§362 bracketing the command core queued but had
-    /// no `Universe<G>` in hand to print.
-    ///
-    /// The command core renders every event at the point tex.web prints it
-    /// whenever it can -- §362's `)` has to precede the
-    /// `check_outer_validity` diagnostic printed a line later inside
-    /// `get_next` -- so what reaches here is the residue. Every step driver
-    /// calls this once, immediately after it reports the operation's other
-    /// diagnostics.
-    fn drain_file_framing_events(&mut self, stores: &mut CommandContext<'_, G>) {
-        self.command.render_file_framing_events(stores);
-    }
-
     /// tex.web §1335 `final_cleanup`'s tail, run once a step has produced
     /// [`ReplayStep::End`]: closing every still-open paren, reporting
     /// unfinished conditionals, the "(see the transcript file..." note, and
@@ -2911,11 +2898,19 @@ impl<G> MainControl<G> {
         Ok(id)
     }
 
-    /// Publishes source-open framing after root registration without
-    /// consuming the first command, allowing hosts to checkpoint JobStart.
-    pub fn flush_pending_file_framing(&mut self, stores: &mut Universe<G>) {
-        let mut context = stores.command_context().expect("live generation");
-        self.drain_file_framing_events(&mut context);
+    /// Renders the registered root's §537 opening at the driver's startup
+    /// boundary without advancing input.
+    pub fn open_registered_root_framing(&mut self, stores: &mut Universe<G>) {
+        let source = self
+            .root_main_source
+            .expect("root framing requires a registered root source");
+        let Some(name) = self.command.live_file_framing_name(source) else {
+            return;
+        };
+        stores
+            .command_context()
+            .expect("live generation")
+            .print_file_open(name);
     }
 
     /// Selects whether exhaustion of the registered root ends an authored
@@ -2986,9 +2981,7 @@ impl<G> MainControl<G> {
         drop(context);
         let id = self.register_root_source(source)?;
         if has_resolved_name {
-            self.command.render_file_framing_events(
-                &mut stores.command_context().expect("live generation"),
-            );
+            self.open_registered_root_framing(stores);
         } else {
             crate::job::open_startup_input_after_log(stores, startup_name);
         }
@@ -7674,7 +7667,6 @@ impl<G> MainControl<G> {
                 .collect();
             self.observe_committed(entry_records);
         }
-        self.drain_file_framing_events(&mut context);
         self.refresh_host_capabilities(&context);
         let innermost_group = context.innermost_group_kind();
         let mut diagnostics = Vec::new();
@@ -7880,10 +7872,6 @@ impl<G> MainControl<G> {
         }
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
-        let mut context = stores.command_context().expect("live generation");
-        self.drain_file_framing_events(&mut context);
-        drop(context);
-
         if let Some((operation, meaning)) = fused_hot {
             return Ok(Some(PreflightDelivery::<G> {
                 delivery: OperationDelivery::<G>::Hot(operation),
@@ -8169,7 +8157,6 @@ impl<G> MainControl<G> {
                 .collect();
             self.observe_committed(entry_records);
         }
-        self.drain_file_framing_events(&mut context);
         self.refresh_host_capabilities(&context);
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let root_main_file_origin = self.active_external_file_is_root_main();
@@ -8417,9 +8404,6 @@ impl<G> MainControl<G> {
             frame.error = Some(error);
             return OperationReadiness::Failed;
         }
-        let mut context = stores.command_context().expect("live generation");
-        self.drain_file_framing_events(&mut context);
-        drop(context);
         let scanned = match scanned {
             ScannedOperation::<G>::Cold(scanned) => scanned,
             ScannedOperation::<G>::Hot(operation) => {

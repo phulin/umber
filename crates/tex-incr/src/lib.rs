@@ -1179,7 +1179,7 @@ fn start_candidate_job<G>(
         registration = registration.with_framing_name(name);
     }
     control.register_root_source(registration)?;
-    control.flush_pending_file_framing(universe);
+    control.open_registered_root_framing(universe);
     Ok(())
 }
 

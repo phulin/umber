@@ -111,19 +111,18 @@ collector (see `src/conditionals.rs`).
   is §537 `start_input`'s file, because §537 is how TeX reaches every `\input`
   and the job's root file alike; only §331's terminal and §483's `\read`
   streams need `open_registered_source_as` (`umber2-johp.245`). It also owns
-  `SourceRegistration::with_name` (§537's `a_make_name_string`) and
-  `FileFramingEvent`, the queued `Open`/`Close` record of when a named `File`
-  level or traced `\scantokens` pseudo-file opened or exhausted. Named `File`
+  `SourceRegistration::with_name` (§537's `a_make_name_string`). Named `File`
   levels are command-framed by default; the explicit
   `SourceFramingPolicy::ExternallyOwned` exception preserves an authored root's
-  `File` identity while suppressing duplicate events when its surrounding host
-  wrapper already owns that transcript frame. The queue exists because the input stack is reached
-  from places that hold no `Universe`; `CommandState::render_file_framing_events`
-  prints it as tex.web's `(name`/`)` bracketing through
-  `tex_state::file_framing`, and the processor drains it the instant a source
-  retires, because §362 prints its `)` ahead of the `check_outer_validity`
-  diagnostic on the next line. Whatever the core could not render itself the
-  engine drains once per step.
+  `File` identity while suppressing the transcript frame when its surrounding
+  host wrapper owns it. File and traced-`\scantokens` pushes return their one
+  call-local opening name to the processor that already owns a live
+  `CommandContext`; source retirement similarly returns one close bit through
+  `InputRetirement`. The processor prints each at the transition itself, with
+  §362's `)` after `file_warning` and ahead of the next
+  `check_outer_validity` diagnostic. Startup drivers render the registered
+  root's existing source-owned name at their selector boundary. Command state
+  owns no framing-event queue or snapshot cursor.
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
   and focused line-contract tests.

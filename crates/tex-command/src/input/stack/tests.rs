@@ -108,7 +108,7 @@ fn source_retirement_moves_its_open_depth_owners() {
         };
         let group_owner = open_depths.group_lineages.as_ptr();
         let conditional_owner = open_depths.conditional_identities.as_ptr();
-        let identity = state
+        let (identity, _) = state
             .open_registered_file_with_depths(source, open_depths)
             .expect("source opens");
 

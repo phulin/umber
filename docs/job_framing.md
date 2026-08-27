@@ -110,20 +110,15 @@ placed:
   `open_parens` plus the three prints that maintain it (§537's `(name`,
   §362's `)`, §1335's `␣)` apiece). Both are print-adjacent `World` state and
   both roll back with the effects that carried what they count.
-- **`tex-command`** gains a _name_ on an opened source (§537's
+- **`tex-command`** owns the name on an opened source (§537's
   `a_make_name_string`, which Umber's anonymous byte registrations had no
-  place for) and a queue of file-framing events, which it renders itself
-  through `tex_state::file_framing`.
+  place for). A file or traced-`\scantokens` push returns its one opening name
+  to the processor that already owns the live `CommandContext`, which renders
+  it immediately. Retirement returns its one close fact through the existing
+  `InputRetirement` result. Neither transition enters persistent command or
+  snapshot state.
 
-  The queue exists because §537's push and §362's pop are input-stack
-  operations, reached from methods that hold no `Universe`; it lives on
-  `CommandState` rather than on the short-lived `CommandProcessor` because an
-  open and its matching close are normally in _different_ steps, so a
-  processor-scoped accumulator would lose every open before its close
-  arrived. `CommandState`'s own step snapshot is a wholesale clone and
-  restore, so a field there is captured and rolled back with everything else.
-
-  **When it drains is part of the contract.** §362 is
+  **The close point is part of the contract.** §362 is
 
   ```text
   print_char(")"); decr(open_parens); ... end_file_reading;
@@ -131,15 +126,15 @@ placed:
   ```
 
   -- the `)` precedes a diagnostic printed one statement later from inside
-  `get_next`, where no engine driver is on the stack. The processor therefore
-  drains the instant a source retires. Leaving it for the end of the step put
-  `Incomplete \iffalse` and the runaway family _inside_ a file bracket
-  tex.web had already closed.
+  `get_next`. The processor therefore prints the retirement's call-local close
+  after `file_warning` and before it resumes outer-validity checks. Delaying it
+  to the end of the step would put `Incomplete \iffalse` and the runaway
+  family _inside_ a file bracket tex.web had already closed.
 - **`tex-exec`** gains `job.rs`, which owns the banner, the `**` line, and
-  the §1332 tail, and drains whatever residue the command core could not
-  render once per step. A retained `EngineSession` has already
-  opened its root before command execution, so it routes that §537 opening
-  directly through `tex_state::file_framing` as a terminal-only print, and
+  the §1332 tail. A retained `EngineSession` has already opened its root before
+  command execution, so its startup seam reads the name from that live source
+  level and routes §537's opening directly through `tex_state::file_framing`.
+  An externally framed root uses the host-supplied startup name instead, and
   §1335 can close an unconsumed root with `␣)`.
 
   pdfTeX's navigation warnings are later than that generic cleanup: the

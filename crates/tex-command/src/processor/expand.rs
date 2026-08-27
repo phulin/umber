@@ -1543,11 +1543,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // inserting a replacement token; §380 then restarts its one
                 // expanded-fetch loop at the following input token.
                 Meaning::Undefined => {
-                    // §370 reports synchronously at this point. The executor
-                    // owns the deferred report, so commit any earlier §537 open
-                    // framing now; a later §362 close must remain queued behind
-                    // this diagnostic instead of overtaking it.
-                    self.command.render_file_framing_events(self.state);
                     let context = self.command.output_open_context(self.state);
                     self.command.semantic_diagnostics.push(
                         crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },
@@ -1645,7 +1640,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("everyeof is an admitted token parameter");
         let tracing_scantokens = self.state.int_param(IntParam::TRACING_SCAN_TOKENS);
         let open_depths = self.capture_source_open_depths();
-        let level = self
+        let (level, framing_name) = self
             .command
             .open_scantokens(
                 SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes()),
@@ -1654,6 +1649,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 open_depths,
             )
             .map_err(|_| CommandError::input_invariant())?;
+        if let Some(name) = framing_name {
+            self.state.print_file_open(&name);
+        }
         let source = self
             .command
             .active_source_snapshot()

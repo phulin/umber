@@ -8,8 +8,8 @@ use tex_state::token::OriginId;
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    FileFramingEvent, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
-    RetirementBehavior, SourceNameClass, StoredReplayReason, TokenBehavior, TokenCursor,
+    InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
+    SourceNameClass, StoredReplayReason, TokenBehavior, TokenCursor,
 };
 
 /// One committed input-lifecycle transition.
@@ -29,6 +29,8 @@ pub(crate) struct InputRetirement {
     pub(crate) trace: Option<ReplayTrace>,
     /// Frame-owned e-TeX nesting ancestry moved out by source retirement.
     pub(crate) source_open_depths: Option<Box<super::SourceOpenDepths>>,
+    /// Whether §362 must print this source retirement's bare `)` now.
+    pub(crate) closes_file_frame: bool,
 }
 
 /// Observer-visible class of an exhausted input level.
@@ -383,8 +385,7 @@ impl<G> CommandState<G> {
             // `name<=17` read/terminal pseudo-sources retire without
             // consuming a pending forced EOF meant for their parent file.
             //
-            // §362 also prints `)` for exactly that same `name>17` case,
-            // so the framing close is queued here under the one gate.
+            // §362 also prints `)` for exactly that same `name>17` case.
             // `pop_input_level_at_end_of_job` deliberately does not mirror
             // it: its unconditional §1335 unwinding is the *other* closing
             // mechanism, `final_cleanup`'s `␣)` per still-open file, which
@@ -400,9 +401,6 @@ impl<G> CommandState<G> {
             if name_class == SourceNameClass::File {
                 self.input.force_eof = false;
             }
-            if framed {
-                self.file_framing_events.push(FileFramingEvent::Close);
-            }
             return Ok(InputRetirement {
                 identity: expected,
                 action,
@@ -411,6 +409,7 @@ impl<G> CommandState<G> {
                 source: Some(source_id),
                 trace: None,
                 source_open_depths: source.open_depths,
+                closes_file_frame: framed,
             });
         };
         if cursor.retirement == RetirementBehavior::RetainExhaustedVTemplate {
@@ -438,6 +437,7 @@ impl<G> CommandState<G> {
                 source: None,
                 trace: Some(trace),
                 source_open_depths: None,
+                closes_file_frame: false,
             });
         }
 
@@ -479,6 +479,7 @@ impl<G> CommandState<G> {
             source: None,
             trace: Some(cursor.trace),
             source_open_depths: None,
+            closes_file_frame: false,
         })
     }
 
@@ -508,6 +509,7 @@ impl<G> CommandState<G> {
                 source: Some(source.cursor.current_backing().id),
                 trace: None,
                 source_open_depths: source.open_depths,
+                closes_file_frame: false,
             });
         };
         self.finish_macro_body_retirement(&cursor.behavior)
@@ -534,6 +536,7 @@ impl<G> CommandState<G> {
             source: None,
             trace: Some(cursor.trace),
             source_open_depths: None,
+            closes_file_frame: false,
         })
     }
 

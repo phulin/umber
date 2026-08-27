@@ -767,6 +767,7 @@ impl<'a, G> EngineSession<'a, G> {
     /// format-loaded sessions.
     fn print_startup_input_opening(&mut self) {
         if self.root_framing_is_command_owned {
+            self.control.open_registered_root_framing(self.stores);
             return;
         }
         let startup_input_name = self

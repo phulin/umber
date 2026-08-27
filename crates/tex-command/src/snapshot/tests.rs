@@ -46,7 +46,6 @@ fn cursor(seed: u32) -> CommandSnapshotCursor {
             alignment_depth: seed + 9,
             replay_depth: seed + 10,
             diagnostic_count: seed + 11,
-            framing_event_count: seed + 12,
             group_payload_depth: seed + 13,
             aftergroup_payload_count: seed + 14,
             afterassignment_present: seed.is_multiple_of(2),
@@ -70,7 +69,6 @@ fn snapshot_clone_retains_one_coarse_owner_and_copies_only_cursors() {
     assert_eq!(cloned.cursor(), cursor(7));
     assert_eq!(cloned.cursor().command_journal(), 7);
     assert_eq!(cloned.cursor().arenas().attempt_rows(), 12);
-    assert_eq!(cloned.cursor().stacks().framing_event_count(), 19);
     assert_eq!(cloned.cursor().stacks().group_payload_depth(), 20);
     assert_eq!(cloned.cursor().stacks().aftergroup_payload_count(), 21);
 }
@@ -183,7 +181,6 @@ fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
                 alignment_depth: stacks.alignment_depth(),
                 replay_depth: stacks.replay_depth(),
                 diagnostic_count: stacks.diagnostic_count() + 1,
-                framing_event_count: stacks.framing_event_count(),
                 group_payload_depth: stacks.group_payload_depth(),
                 aftergroup_payload_count: stacks.aftergroup_payload_count(),
                 afterassignment_present: stacks.afterassignment_present(),
@@ -602,7 +599,6 @@ fn invalid_payload_cursor_leaves_live_payloads_unchanged() {
                 alignment_depth: stacks.alignment_depth(),
                 replay_depth: stacks.replay_depth(),
                 diagnostic_count: stacks.diagnostic_count(),
-                framing_event_count: stacks.framing_event_count(),
                 group_payload_depth: stacks.group_payload_depth(),
                 aftergroup_payload_count: stacks.aftergroup_payload_count() + 1,
                 afterassignment_present: stacks.afterassignment_present(),

@@ -209,7 +209,6 @@ pub struct CommandStackCursors {
     alignment_depth: u32,
     replay_depth: u32,
     diagnostic_count: u32,
-    framing_event_count: u32,
     group_payload_depth: u32,
     aftergroup_payload_count: u32,
     afterassignment_present: bool,
@@ -244,11 +243,6 @@ impl CommandStackCursors {
     #[must_use]
     pub const fn diagnostic_count(self) -> u32 {
         self.diagnostic_count
-    }
-
-    #[must_use]
-    pub const fn framing_event_count(self) -> u32 {
-        self.framing_event_count
     }
 
     #[must_use]
@@ -691,8 +685,6 @@ impl<G> CommandState<G> {
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             diagnostic_count: u32::try_from(self.semantic_diagnostics.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            framing_event_count: u32::try_from(self.file_framing_events.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             group_payload_depth: u32::try_from(self.group_payloads.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             aftergroup_payload_count,
@@ -786,8 +778,7 @@ impl<G> CommandState<G> {
             && stacks.condition_depth() as usize == roots.conditions.frames.len()
             && stacks.alignment_depth() as usize == roots.alignment.align_stack.len()
             && stacks.replay_depth() as usize == roots.replay_completions.len()
-            && stacks.diagnostic_count() as usize == roots.semantic_diagnostics.len()
-            && stacks.framing_event_count() as usize == roots.file_framing_events.len();
+            && stacks.diagnostic_count() as usize == roots.semantic_diagnostics.len();
         let root_aftergroup_payload_count =
             roots.group_payloads.iter().try_fold(0_u32, |count, group| {
                 let group_count = u32::try_from(group.tokens.len()).ok()?;

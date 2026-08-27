@@ -37,8 +37,8 @@ pub use lines::{
     SourceScalarRange,
 };
 pub use source::{
-    FileFramingEvent, MalformedUnicodeRange, RegisteredSourceKind, SourceFramingPolicy,
-    SourceNameClass, SourceRegistration, SourceRegistrationError,
+    MalformedUnicodeRange, RegisteredSourceKind, SourceFramingPolicy, SourceNameClass,
+    SourceRegistration, SourceRegistrationError,
 };
 pub use tokenizer::{
     CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName,

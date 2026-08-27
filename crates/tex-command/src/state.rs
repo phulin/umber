@@ -12,9 +12,9 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{CompactSourceStepQueries, CompactSourceTokenizationStep};
 use crate::input::{
-    FileFramingEvent, InputLevel, InputLevelId, PhysicalLine, RegisteredSource,
-    RegisteredSourceKind, SourceCharacter, SourceCursor, SourceLevel, SourceNameClass,
-    SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
+    InputLevel, InputLevelId, PhysicalLine, RegisteredSource, RegisteredSourceKind,
+    SourceCharacter, SourceCursor, SourceLevel, SourceNameClass, SourceRegistration,
+    SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
@@ -133,28 +133,6 @@ pub struct CommandStateRoots<G> {
     /// committed observations.
     pub(crate) named_token_list_pushes:
         Vec<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>,
-    /// tex.web §537/§362 file-bracketing transitions, in the order they
-    /// happened, waiting for the engine to render them as `(name`/`)`.
-    ///
-    /// This lives on [`CommandState`] rather than on the short-lived
-    /// [`crate::CommandProcessor`] borrow that
-    /// `take_restricted_integer_recoveries` uses, and deliberately so. A
-    /// file's open and its eventual retirement are not generally the same
-    /// executor step -- a source stays live, and typically outlives many
-    /// processor episodes, between `\input` and its last line -- so a
-    /// processor-local accumulator would already have lost the open event by
-    /// the time the close event is due, or would need its own cross-step
-    /// carry mechanism duplicating this one.
-    ///
-    /// Placing it here is safe under rollback for the same reason
-    /// `named_token_list_pushes` above already is: checkpoint publication
-    /// explicitly forks an isolated aggregate root, and rollback clones that
-    /// retained root into the live command machine before truncating attempt
-    /// storage. A queued event from a rolled-back step therefore disappears
-    /// with every other command-state mutation from that step, while a
-    /// committed step's events survive until the executor drains them with
-    /// [`Self::take_file_framing_events`].
-    pub(crate) file_framing_events: Vec<FileFramingEvent>,
 }
 
 impl<G> Clone for CommandStateRoots<G> {
@@ -178,7 +156,6 @@ impl<G> Clone for CommandStateRoots<G> {
             name_in_progress: self.name_in_progress,
             pending_input_open: self.pending_input_open.clone(),
             named_token_list_pushes: self.named_token_list_pushes.clone(),
-            file_framing_events: self.file_framing_events.clone(),
         }
     }
 }
@@ -356,7 +333,6 @@ impl<G> Default for CommandStateRoots<G> {
             name_in_progress: false,
             pending_input_open: None,
             named_token_list_pushes: Vec::new(),
-            file_framing_events: Vec::new(),
         }
     }
 }
@@ -978,7 +954,6 @@ impl<G> CommandState<G> {
             && self.semantic_diagnostics.is_empty()
             && !self.name_in_progress
             && self.named_token_list_pushes.is_empty()
-            && self.file_framing_events.is_empty()
             && self.expansion.pending_diagnostics.is_empty()
             && self.expansion.observed_dependencies.is_empty()
             && self.expansion.semantic_barriers.is_empty();
@@ -1448,50 +1423,6 @@ impl<G> CommandState<G> {
     pub fn take_semantic_diagnostics(&mut self) -> Vec<CommandSemanticDiagnostic> {
         self.semantic_diagnostics.drain(..).collect()
     }
-    /// Drains the queued §537/§362 file-bracketing transitions, in order,
-    /// without rendering them.
-    ///
-    /// The queue exists because §537's push and §362's pop are input-stack
-    /// operations, and the input stack is reached from places that hold no
-    /// `Universe`. Prefer [`Self::render_file_framing_events`], which is the
-    /// same drain followed by the print; this raw form is for callers that
-    /// only want to observe the transitions.
-    #[must_use]
-    pub fn take_file_framing_events(&mut self) -> Vec<FileFramingEvent> {
-        std::mem::take(&mut self.file_framing_events)
-    }
-
-    /// Drains the queue and prints tex.web's `(name` and `)` bracketing for
-    /// each transition, in order.
-    ///
-    /// Callers must drain at every point where tex.web itself would already
-    /// have printed, not merely once per step. §362 is why:
-    ///
-    /// ```text
-    /// print_char(")"); decr(open_parens); ... end_file_reading;
-    /// check_outer_validity;
-    /// ```
-    ///
-    /// `check_outer_validity` reports `Incomplete \if...` and the runaway
-    /// family from inside `get_next`, so a `)` left queued until the step
-    /// ends puts that diagnostic *inside* a file bracket tex.web had already
-    /// closed. §54's `open_parens` therefore lives on `World`
-    /// ([`tex_state::file_framing`]) and both the command core and the engine
-    /// driver render through it.
-    ///
-    /// Draining after a rolled-back step is harmless but pointless: rollback
-    /// restores the whole [`CommandState`] to its pre-step value and the
-    /// `Universe` snapshot takes both the prints and `open_parens` back with
-    /// it.
-    pub fn render_file_framing_events(&mut self, context: &mut CommandContext<'_, G>) {
-        for event in self.file_framing_events.drain(..) {
-            match event {
-                FileFramingEvent::Open { name } => context.print_file_open(&name),
-                FileFramingEvent::Close => context.print_file_close(),
-            }
-        }
-    }
-
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.
     ///
@@ -2143,15 +2074,17 @@ impl<G> CommandState<G> {
         &mut self,
         source: tex_state::SourceId,
         open_depths: crate::input::SourceOpenDepths,
-    ) -> Result<InputLevelId, UnknownRegisteredSource> {
+    ) -> Result<(InputLevelId, Option<std::sync::Arc<str>>), UnknownRegisteredSource> {
         let registered = self.take_registered_source(source)?;
-        Ok(self.push_source_level(
+        let framing_name = registered.canonical_framing_name();
+        let identity = self.push_source_level(
             registered,
             SourceNameClass::File,
             crate::input::SourceRetirement::Pop,
             None,
             Some(Box::new(open_depths)),
-        ))
+        );
+        Ok((identity, framing_name))
     }
 
     pub(crate) fn prepare_started_input(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
@@ -2239,6 +2172,26 @@ impl<G> CommandState<G> {
         Ok(())
     }
 
+    /// Returns the canonical §537 framing name of one live file source.
+    ///
+    /// Startup drivers call this at the selector-visible root-open boundary;
+    /// the name remains owned by the source level rather than by a pending
+    /// effect carrier.
+    #[must_use]
+    pub fn live_file_framing_name(&self, source: tex_state::SourceId) -> Option<&str> {
+        self.input.levels.iter().find_map(|level| {
+            let InputLevel::Source(level) = level else {
+                return None;
+            };
+            let backing = level.cursor.current_backing();
+            (backing.id == source
+                && level.name_class == SourceNameClass::File
+                && backing.framing == crate::SourceFramingPolicy::Canonical)
+                .then(|| backing.framing_name.as_deref().or(backing.name.as_deref()))
+                .flatten()
+        })
+    }
+
     /// Installs the immutable bytes acquired for an already-active §483
     /// `begin_file_reading` level.
     pub(crate) fn finish_read_line(
@@ -2275,19 +2228,21 @@ impl<G> CommandState<G> {
         every_eof: Option<tex_state::TokenListId<G>>,
         numeric_name: u8,
         open_depths: crate::input::SourceOpenDepths,
-    ) -> Result<InputLevelId, SourceRegistrationError> {
+    ) -> Result<(InputLevelId, Option<std::sync::Arc<str>>), SourceRegistrationError> {
         assert!(matches!(numeric_name, 18 | 19));
         let source = self.register_source(registration)?;
         let registered = self
             .take_registered_source(source)
             .expect("a source registered above is present");
-        Ok(self.push_source_level(
+        let framing_name = (numeric_name == 19).then(|| std::sync::Arc::from(" "));
+        let identity = self.push_source_level(
             registered,
             SourceNameClass::Scantokens(numeric_name),
             crate::input::SourceRetirement::Pop,
             every_eof,
             Some(Box::new(open_depths)),
-        ))
+        );
+        Ok((identity, framing_name))
     }
 
     /// Pushes e-TeX §24.362's `\everyeof` above its exhausted pseudo-file.
@@ -2315,7 +2270,7 @@ impl<G> CommandState<G> {
         ))
     }
 
-    /// Pushes one source level and queues any canonical file-like opening.
+    /// Pushes one source level and returns any canonical file-like opening.
     ///
     /// This is the one place a source level enters the input stack, so
     /// Ordinary files use their resolved name. e-TeX's traced `\scantokens`
@@ -2329,25 +2284,6 @@ impl<G> CommandState<G> {
         open_depths: Option<Box<crate::input::SourceOpenDepths>>,
     ) -> InputLevelId {
         let identity = self.allocate_input_level_identity();
-        let framing_name = match name_class {
-            SourceNameClass::File
-                if registered.framing == crate::SourceFramingPolicy::Canonical =>
-            {
-                registered
-                    .framing_name
-                    .clone()
-                    .or_else(|| registered.name.clone())
-            }
-            SourceNameClass::File => None,
-            SourceNameClass::Scantokens(19) => Some(" ".into()),
-            SourceNameClass::Terminal
-            | SourceNameClass::ReadStream(_)
-            | SourceNameClass::Scantokens(_) => None,
-        };
-        if let Some(name) = framing_name {
-            self.file_framing_events
-                .push(FileFramingEvent::Open { name });
-        }
         self.push_input_level(InputLevel::Source(SourceLevel {
             frame: crate::input::PackedInputFrame::source(identity.0, registered.id),
             cursor: Box::new(SourceCursor::new(registered)),

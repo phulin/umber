@@ -101,7 +101,7 @@ pub use host::{
     PdfImageResource,
 };
 pub use input::{
-    CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName, FileFramingEvent,
+    CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName,
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
     RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceFramingPolicy,
     SourceLocation, SourceNameClass, SourceProvenance, SourceRange, SourceRegistration,

@@ -600,14 +600,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
             return;
         }
-        // TeX82 §537 prints an input file's opening before it reads the
-        // first line. Expansion can open that file below a token already held
-        // by §368's `\expandafter`, so §389's next macro trace can be the
-        // first print reached while the new source level is live. Publish the
-        // already-committed opening before that trace, just as the ordinary
-        // command-trace boundary does. A pending diagnostic took the queued
-        // branch above so its earlier report still cannot be overtaken.
-        self.command.render_file_framing_events(self.state);
         let mut output = self.begin_diagnostic();
         if force_newline {
             output.print_ln().print(&text);

@@ -1863,9 +1863,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             self.pending_file_warning_context = Some((identity, context));
                         }
                         let restart = self.retire_and_restart(identity)?;
-                        if self.command.semantic_diagnostics.is_empty() {
-                            self.command.render_file_framing_events(self.state);
-                        }
                         match restart {
                             RetirementRestart::Stop | RetirementRestart::Completed => {
                                 return Ok(RawInputStatus::End);
@@ -1969,6 +1966,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
         let open_depths = retirement.source_open_depths;
+        let closes_file_frame = retirement.closes_file_frame;
         // e-TeX 2.6 [23.328]'s `file_warning`: `end_file_reading` retiring a
         // real source level (never a `\read` pseudo-file's `EndReadLine`, and
         // never a token-list level) is the one point this level's recorded
@@ -1977,6 +1975,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             && let Some(open_depths) = open_depths
         {
             self.warn_file_boundary_incomplete(*open_depths, nesting_context);
+        }
+        // TeX82 §362 closes the file after `file_warning` and before the next
+        // `check_outer_validity` diagnostic. Render the call-local retirement
+        // transition at that exact point; there is no cross-step effect state.
+        if closes_file_frame {
+            self.state.print_file_close();
         }
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
             let reason = if self.take_immediate_write_retirement(identity) {

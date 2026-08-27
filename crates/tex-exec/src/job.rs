@@ -514,8 +514,8 @@ pub(crate) fn report_unclosed_groups<G>(stores: &mut Universe<G>, depth: usize) 
 
 /// Records and prints the retained session's already-opened root source.
 ///
-/// The retained driver selects the root before canonical execution starts,
-/// so this opening cannot arrive through [`FileFramingEvent`]. It is still
+/// The retained driver selects an externally framed root before canonical
+/// execution starts. This is still
 /// TeX82 §537's `print_char("("); incr(open_parens)`: §1335 must therefore
 /// see it when `\end` or `\dump` abandons the still-open root.
 pub(crate) fn open_startup_input<G>(stores: &mut Universe<G>, name: &str) {
