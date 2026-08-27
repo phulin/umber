@@ -13,6 +13,7 @@ use crate::env::{AssignmentScope, CodeTableKind, StateError};
 use crate::font::{FontStore, FontStoreMark};
 use crate::generation::{GenerationBrand, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
+use crate::hyphenation::HyphenationCheckpoint;
 use crate::hyphenation::HyphenationTable;
 use crate::interner::{
     ControlSequenceKind, Interner, InternerAccessError, InternerBudget, InternerError,
@@ -192,7 +193,7 @@ pub struct RuntimeCheckpoint<G> {
     world: crate::world::WorldSnapshot,
     fonts: FontStoreMark,
     sources: SourceMapMark,
-    hyphenation: HyphenationTable,
+    hyphenation: HyphenationCheckpoint,
     dependencies: crate::dependency::DependencyTrackerSnapshot,
     interaction_mode: InteractionMode,
     prepared_mag: Option<i32>,
@@ -545,7 +546,7 @@ impl<G> Universe<G> {
             page: self.page.clone(),
             pdf,
             sources: self.sources.clone(),
-            hyphenation: self.hyphenation.clone(),
+            hyphenation: HyphenationTable::from_checkpoint(&checkpoint.hyphenation),
             world: self.world.clone(),
             dependencies: self.dependencies.clone(),
             interaction_mode: self.interaction_mode,
@@ -2033,7 +2034,7 @@ impl<G> Universe<G> {
             world: self.world.snapshot(),
             fonts: self.fonts.watermark(),
             sources: self.sources.watermark(),
-            hyphenation: self.hyphenation.clone(),
+            hyphenation: self.hyphenation.checkpoint(),
             dependencies: self.dependencies.snapshot_tracker(),
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
@@ -2149,7 +2150,9 @@ impl<G> Universe<G> {
         } else {
             self.world.rollback(&checkpoint.world);
         }
-        self.hyphenation = checkpoint.hyphenation.clone();
+        if !generation_fork {
+            self.hyphenation.restore_checkpoint(&checkpoint.hyphenation);
+        }
         self.dependencies.restore_tracker(&checkpoint.dependencies);
         self.interaction_mode = checkpoint.interaction_mode;
         self.prepared_mag = checkpoint.prepared_mag;

@@ -95,8 +95,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
   inline-small dense mutable banks, typed namespace/generation coordinates,
   first-write journal integration, stale rejection, nested rollback, and
   plateau controls.
-- `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
-- `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
+- `src/hyphenation.rs`: Liang-style position lookup with one coarse immutable
+  owner for the initialized pattern trie and separately checkpointed bounded
+  runtime exception and saved-code maps.
+- `src/hyphenation/storage.rs`: Coarse initialized-trie owner, separately
+  cloneable mutable runtime value, and cold format wire decomposition.
+- `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions,
+  bounds, overlapping matches, and frozen-owner snapshot semantics.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
 - `src/generation.rs`: Fresh invariant generation brands, private publisher
   construction, episode-level guarded admission, cloneable coarse generation
@@ -310,5 +315,8 @@ Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive 
 State performance benchmarks live in the standalone `benchmarks/tex-state`
 crate. The `pdf_checkpoint_gate` and `pdf_fork_metadata` binaries measure
 allocation-free scalar marks and exclusive transactional candidate setup by
-PDF field family; the broader state budgets run explicitly with
+PDF field family; `hyphen_checkpoint_gate` proves capture, checkpoint clone,
+restore, and fork allocation are flat across initialized trie sizes while a
+fixed bounded mutable payload remains rollback-safe. The broader state budgets
+run explicitly with
 `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.

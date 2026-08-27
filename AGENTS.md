@@ -72,8 +72,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `benchmarks/tex-command`: command-core allocation and packed-cutover gates.
 - `benchmarks/tex-exec`: focused shipout-lowering diagnostic.
 - `benchmarks/tex-incr`: accepted-edit pure-memo diagnostic.
-- `benchmarks/tex-state`: snapshot/state performance gates, focused PDF
-  checkpoint and transactional candidate-family gates, and state diagnostics.
+- `benchmarks/tex-state`: snapshot/state performance gates, focused PDF and
+  frozen-hyphenation checkpoint gates, transactional candidate-family gates,
+  and state diagnostics.
 - `benchmarks/tex-typeset`: pure layout, allocation, and compact-width gates.
 - `tests/`: committed fixtures and parity test definitions.
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.

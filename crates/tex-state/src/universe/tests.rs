@@ -1,6 +1,7 @@
 use super::{UniverseError, with_universe};
 use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
+use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::interner::InternerBudget;
 use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
@@ -100,6 +101,94 @@ fn runtime_checkpoint_fork_resets_newer_retained_page_bound() {
             .expect("older checkpoint fork");
         fork.runtime_checkpoint()
             .expect("forked retained bound addresses its truncated page arena");
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn runtime_checkpoint_hyphenation_restore_and_fork_isolate_mutable_state() {
+    with_universe(budget(), |universe| {
+        {
+            let mut context = universe.command_context().expect("hyphenation context");
+            context
+                .add_hyphenation_pattern_for_language(
+                    7,
+                    PatternSpec {
+                        letters: "hyphen".chars().collect(),
+                        values: vec![0, 2, 0, 3, 0, 0, 0],
+                    },
+                )
+                .expect("pattern fits");
+            context.add_hyphenation_exception_for_language(
+                7,
+                ExceptionSpec {
+                    word: "baseline".to_owned(),
+                    positions: vec![4],
+                },
+            );
+            context.save_hyphenation_codes(7, [('A', 'a')]);
+            context.close_hyphenation_patterns();
+        }
+        let checkpoint = universe.runtime_checkpoint().expect("hyphen checkpoint");
+
+        {
+            let mut context = universe.command_context().expect("speculative context");
+            context.add_hyphenation_exception_for_language(
+                7,
+                ExceptionSpec {
+                    word: "hyphen".to_owned(),
+                    positions: vec![4],
+                },
+            );
+            context.save_hyphenation_codes(7, [('A', 'z')]);
+        }
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore hyphen checkpoint");
+        {
+            let context = universe.command_context().expect("restored context");
+            assert_eq!(
+                context.hyphen_positions_for_language(7, "hyphen", 0, 0),
+                vec![3],
+                "the initialized trie survives restore"
+            );
+            assert_eq!(
+                context.hyphen_positions_for_language(7, "baseline", 0, 0),
+                vec![4],
+                "the checkpointed exception survives restore"
+            );
+            assert_eq!(context.saved_hyphenation_code(7, 'A'), Some(Some('a')));
+        }
+
+        let mut fork = universe
+            .fork_runtime_checkpoint(&checkpoint)
+            .expect("fork hyphen checkpoint");
+        {
+            fork.hyphenation.add_exception_for_language(
+                7,
+                ExceptionSpec {
+                    word: "hyphen".to_owned(),
+                    positions: vec![2],
+                },
+            );
+            fork.hyphenation.save_hyphen_codes(7, [('A', 'f')]);
+            assert_eq!(
+                fork.hyphenation
+                    .hyphen_positions_for_language(7, "hyphen", 0, 0),
+                vec![2]
+            );
+        }
+        assert_eq!(
+            universe
+                .hyphenation
+                .hyphen_positions_for_language(7, "hyphen", 0, 0),
+            vec![3],
+            "fork exceptions do not mutate the source"
+        );
+        assert_eq!(
+            universe.hyphenation.saved_hyphen_code(7, 'A'),
+            Some(Some('a'))
+        );
     })
     .expect("universe allocation");
 }
