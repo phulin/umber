@@ -258,6 +258,13 @@ pub struct DependencyRuntime {
     reachable_state_identity_root: Option<u64>,
 }
 
+pub(crate) struct AcceptedDependencyTail {
+    tracker: DependencyTracker,
+    next_region_epoch: u64,
+    tracking_enabled: bool,
+    reachable_state_identity_root: Option<u64>,
+}
+
 #[derive(Debug)]
 struct ActiveDependencyRegion {
     epoch: u64,
@@ -445,10 +452,10 @@ impl DependencyRuntime {
         self.reachable_state_identity_root = snapshot.reachable_state_identity_root;
     }
 
-    /// Opens a destination-private validation epoch for a revision fork.
-    /// Existing observations fail closed against the new global stamp; no
-    /// per-key payload crosses into the candidate lineage.
-    pub(crate) fn fork_tracker(&self, snapshot: &DependencyTrackerSnapshot) -> Self {
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        snapshot: &DependencyTrackerSnapshot,
+    ) -> AcceptedDependencyTail {
         assert!(
             self.active.is_none(),
             "a dependency recorder crossed a checkpoint"
@@ -459,13 +466,16 @@ impl DependencyRuntime {
             .max(snapshot.revision)
             .checked_add(1)
             .expect("dependency revision exhausted");
-        Self {
-            tracker: DependencyTracker {
+        let tracker = std::mem::replace(
+            &mut self.tracker,
+            DependencyTracker {
                 revision,
                 invalidated_at: ChangedAt(revision),
                 changed: Arc::new(AHashMap::new()),
             },
-            active: None,
+        );
+        AcceptedDependencyTail {
+            tracker,
             next_region_epoch: self.next_region_epoch,
             tracking_enabled: self.tracking_enabled,
             reachable_state_identity_root: snapshot.reachable_state_identity_root,
@@ -485,6 +495,18 @@ impl DependencyRuntime {
 
     pub(crate) const fn reachable_state_identity_root(&self) -> Option<u64> {
         self.reachable_state_identity_root
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(&mut self, tail: AcceptedDependencyTail) {
+        assert!(self.active.is_none());
+        self.tracker = tail.tracker;
+        self.next_region_epoch = tail.next_region_epoch;
+        self.tracking_enabled = tail.tracking_enabled;
+        self.reachable_state_identity_root = tail.reachable_state_identity_root;
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, _tail: AcceptedDependencyTail) {
+        assert!(self.active.is_none());
     }
 
     #[must_use]

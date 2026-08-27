@@ -1068,6 +1068,7 @@ fn initialize_candidate_runtime<G: 'static>(
             .restart_boundary
             .is_some_and(|key| key.boundary != EngineBoundary::JobStart);
     let (universe, checkpoints) = admitted.parts();
+    let rooted = restored_control.is_some();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if !rooted_restart {
         universe.begin_retained_session()?;
@@ -1107,15 +1108,17 @@ fn initialize_candidate_runtime<G: 'static>(
     control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
     let mut ledger = OutputLedger::new();
-    ledger.commit_job_start(
-        &mut control,
-        universe,
-        &mut LiveHistorySink {
-            state: &mut history,
-            retained: checkpoints,
-        },
-    )?;
-    start_candidate_job(universe, &mut control, options)?;
+    if !rooted {
+        ledger.commit_job_start(
+            &mut control,
+            universe,
+            &mut LiveHistorySink {
+                state: &mut history,
+                retained: checkpoints,
+            },
+        )?;
+        start_candidate_job(universe, &mut control, options)?;
+    }
     Ok(CandidateRuntime {
         control,
         ledger,

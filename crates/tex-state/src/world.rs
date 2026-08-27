@@ -1641,6 +1641,7 @@ struct AcceptedEffectBlock {
 }
 
 impl AcceptedEffectBlock {
+    #[cfg(any(test, feature = "profiling"))]
     fn extend(
         parent: Option<Arc<Self>>,
         source: &World,
@@ -1725,6 +1726,42 @@ enum EffectCounterUndo {
     },
 }
 
+#[derive(Debug)]
+struct AcceptedEffectCounterWrite {
+    undo: EffectCounterUndo,
+    after: Option<u64>,
+}
+
+#[derive(Debug)]
+struct AcceptedInputDependencyWrite {
+    path: Arc<Path>,
+    previous: Option<InputDependency>,
+    after: Option<InputDependency>,
+}
+
+/// Whole World chunks detached from the accepted head while one rooted
+/// candidate owns the mutable timeline.
+pub(crate) struct AcceptedWorldTail {
+    head: WorldSnapshot,
+    effects: Vec<EffectRecord>,
+    effect_sequences: Vec<EffectSequence>,
+    effect_publications: Vec<Option<EffectPublicationId>>,
+    effect_publication_record_ordinals: Vec<Option<EffectPublicationRecordOrdinal>>,
+    effect_domains: Vec<EffectDomain>,
+    effect_semantic_record_ordinals: Vec<EffectSemanticRecordOrdinal>,
+    effect_placement_intra_orders: Vec<EffectPlacementIntraOrder>,
+    effect_publication_dispositions: Vec<EffectPublicationDisposition>,
+    effect_counters: Vec<AcceptedEffectCounterWrite>,
+    inputs: Vec<InputRecord>,
+    input_identities: crate::identity::AcceptedIdentityTail,
+    input_dependencies: Vec<AcceptedInputDependencyWrite>,
+    shell_escapes: Vec<ShellEscapeRecord>,
+    artifact_commits: Vec<ContentHash>,
+    committed_artifacts: Vec<CommittedArtifact>,
+    artifact_publications: Vec<ArtifactPublicationRecord>,
+    stream_open_contexts: Vec<(EffectPos, String)>,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct AcceptedInputBlock {
     parent: Option<Arc<Self>>,
@@ -1771,6 +1808,7 @@ impl AcceptedInputDependencyBlock {
 }
 
 impl AcceptedInputBlock {
+    #[cfg(any(test, feature = "profiling"))]
     fn extend(parent: Option<Arc<Self>>, source: &World, len: usize) -> Option<Arc<Self>> {
         if len == 0 {
             return parent;
@@ -5566,6 +5604,7 @@ impl World {
         self.pdf_rng = snapshot.pdf_rng.clone();
         self.pdf_time_micros = snapshot.pdf_time_micros;
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
+        self.job_clock = snapshot.job_clock;
         self.shell_escape_policy = snapshot.shell_escape_policy;
         if self.inputs.len() != snapshot.input_len {
             Arc::make_mut(&mut self.inputs).truncate(snapshot.input_len);
@@ -5590,9 +5629,259 @@ impl World {
         self.reachable_state_identity = snapshot.reachable_state_identity;
     }
 
+    /// Rewinds the direct World owner to a rooted mark and detaches the exact
+    /// accepted suffix needed for either rejection redo or promotion discard.
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        snapshot: &WorldSnapshot,
+    ) -> AcceptedWorldTail {
+        self.assert_snapshot_retained(snapshot);
+        assert!(self.active_effect_publication.is_none());
+        assert!(self.active_effect_output_attempt.is_none());
+        assert!(self.active_effect_domain.is_none());
+        let head = self.snapshot();
+
+        let effects = Arc::make_mut(&mut self.effects).split_off(snapshot.effect_len);
+        let effect_sequences =
+            Arc::make_mut(&mut self.effect_sequences).split_off(snapshot.effect_len);
+        let effect_publications =
+            Arc::make_mut(&mut self.effect_publications).split_off(snapshot.effect_len);
+        let effect_publication_record_ordinals =
+            Arc::make_mut(&mut self.effect_publication_record_ordinals)
+                .split_off(snapshot.effect_len);
+        let effect_domains =
+            Arc::make_mut(&mut self.effect_domains).split_off(snapshot.effect_len);
+        let effect_semantic_record_ordinals =
+            Arc::make_mut(&mut self.effect_semantic_record_ordinals)
+                .split_off(snapshot.effect_len);
+        let effect_placement_intra_orders =
+            Arc::make_mut(&mut self.effect_placement_intra_orders)
+                .split_off(snapshot.effect_len);
+        let effect_publication_dispositions =
+            Arc::make_mut(&mut self.effect_publication_dispositions)
+                .split_off(snapshot.effect_publication_disposition_len);
+
+        let counter_suffix = Arc::make_mut(&mut self.effect_counter_journal)
+            .split_off(snapshot.effect_counter_journal_len);
+        let effect_counters = counter_suffix
+            .into_iter()
+            .map(|undo| {
+                let after = match undo {
+                    EffectCounterUndo::Publication { key, .. } => self
+                        .next_effect_publication_record_ordinals
+                        .get(&key)
+                        .copied(),
+                    EffectCounterUndo::Semantic { key, .. } => {
+                        self.next_effect_semantic_record_ordinals.get(&key).copied()
+                    }
+                };
+                AcceptedEffectCounterWrite { undo, after }
+            })
+            .collect::<Vec<_>>();
+        for write in effect_counters.iter().rev() {
+            match write.undo {
+                EffectCounterUndo::Publication { key, previous } => match previous {
+                    Some(value) => {
+                        Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
+                            .insert(key, value);
+                    }
+                    None => {
+                        Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
+                            .remove(&key);
+                    }
+                },
+                EffectCounterUndo::Semantic { key, previous } => match previous {
+                    Some(value) => {
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
+                            .insert(key, value);
+                    }
+                    None => {
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
+                            .remove(&key);
+                    }
+                },
+            }
+        }
+
+        let inputs = Arc::make_mut(&mut self.inputs).split_off(snapshot.input_len);
+        let input_identities = self
+            .input_identities
+            .begin_checkpoint_candidate(snapshot.input_identities)
+            .expect("validated World input identity mark remains rewindable");
+        let dependency_suffix = Arc::make_mut(&mut self.input_dependency_journal)
+            .split_off(snapshot.input_dependency_journal_len);
+        let input_dependencies = dependency_suffix
+            .into_iter()
+            .map(|(path, previous)| {
+                let after = self.input_dependencies.get(path.as_ref()).cloned();
+                AcceptedInputDependencyWrite {
+                    path,
+                    previous,
+                    after,
+                }
+            })
+            .collect::<Vec<_>>();
+        for write in input_dependencies.iter().rev() {
+            match &write.previous {
+                Some(value) => {
+                    Arc::make_mut(&mut self.input_dependencies)
+                        .insert(Arc::clone(&write.path), value.clone());
+                }
+                None => {
+                    Arc::make_mut(&mut self.input_dependencies).remove(write.path.as_ref());
+                }
+            }
+        }
+        self.input_dependency_len = snapshot.input_dependency_len;
+
+        let shell_escapes = self.shell_escapes.split_off(snapshot.shell_escape_len);
+        let artifact_mark = snapshot
+            .artifact_commit_len
+            .checked_sub(self.artifact_base)
+            .expect("World artifact mark follows the live base");
+        let artifact_commits = Arc::make_mut(&mut self.artifact_commits).split_off(artifact_mark);
+        let committed_artifacts =
+            Arc::make_mut(&mut self.committed_artifacts).split_off(artifact_mark);
+        let artifact_publications =
+            Arc::make_mut(&mut self.artifact_publications).split_off(artifact_mark);
+        let context_keys = self
+            .stream_open_contexts
+            .range((std::ops::Bound::Excluded(snapshot.effect_pos), std::ops::Bound::Unbounded))
+            .map(|(position, _)| *position)
+            .collect::<Vec<_>>();
+        let stream_open_contexts = context_keys
+            .into_iter()
+            .filter_map(|position| {
+                Arc::make_mut(&mut self.stream_open_contexts)
+                    .remove(&position)
+                    .map(|context| (position, context))
+            })
+            .collect();
+
+        self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
+        self.next_effect_sequence = snapshot.next_effect_sequence;
+        self.next_publication_sequence = snapshot.next_publication_sequence;
+        self.next_effect_publication_identity = snapshot.next_effect_publication_identity;
+        self.next_effect_domain = snapshot.next_effect_domain;
+        self.next_effect_output_attempt_identity = snapshot.next_effect_output_attempt_identity;
+        self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
+        self.next_terminal_publication_identity = snapshot.next_terminal_publication_identity;
+        self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
+        self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
+        self.active_terminal_publication = snapshot.active_terminal_publication;
+        self.stream_bufs = Arc::clone(&snapshot.stream_bufs);
+        self.rng = snapshot.rng;
+        self.pdf_rng = snapshot.pdf_rng.clone();
+        self.pdf_time_micros = snapshot.pdf_time_micros;
+        self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
+        self.job_clock = snapshot.job_clock;
+        self.shell_escape_policy = snapshot.shell_escape_policy;
+        self.commit_mode = snapshot.commit_mode;
+        self.file_framing = snapshot.file_framing;
+        self.error_channel = snapshot.error_channel.clone();
+
+        AcceptedWorldTail {
+            head,
+            effects,
+            effect_sequences,
+            effect_publications,
+            effect_publication_record_ordinals,
+            effect_domains,
+            effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
+            effect_publication_dispositions,
+            effect_counters,
+            inputs,
+            input_identities,
+            input_dependencies,
+            shell_escapes,
+            artifact_commits,
+            committed_artifacts,
+            artifact_publications,
+            stream_open_contexts,
+        }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        root: &WorldSnapshot,
+        mut tail: AcceptedWorldTail,
+    ) {
+        self.rollback(root);
+        self.input_identities
+            .reject_checkpoint_candidate(tail.input_identities);
+        Arc::make_mut(&mut self.effects).append(&mut tail.effects);
+        Arc::make_mut(&mut self.effect_sequences).append(&mut tail.effect_sequences);
+        Arc::make_mut(&mut self.effect_publications).append(&mut tail.effect_publications);
+        Arc::make_mut(&mut self.effect_publication_record_ordinals)
+            .append(&mut tail.effect_publication_record_ordinals);
+        Arc::make_mut(&mut self.effect_domains).append(&mut tail.effect_domains);
+        Arc::make_mut(&mut self.effect_semantic_record_ordinals)
+            .append(&mut tail.effect_semantic_record_ordinals);
+        Arc::make_mut(&mut self.effect_placement_intra_orders)
+            .append(&mut tail.effect_placement_intra_orders);
+        Arc::make_mut(&mut self.effect_publication_dispositions)
+            .append(&mut tail.effect_publication_dispositions);
+        for write in &tail.effect_counters {
+            match write.undo {
+                EffectCounterUndo::Publication { key, .. } => match write.after {
+                    Some(value) => {
+                        Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
+                            .insert(key, value);
+                    }
+                    None => {
+                        Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
+                            .remove(&key);
+                    }
+                },
+                EffectCounterUndo::Semantic { key, .. } => match write.after {
+                    Some(value) => {
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
+                            .insert(key, value);
+                    }
+                    None => {
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
+                            .remove(&key);
+                    }
+                },
+            }
+        }
+        Arc::make_mut(&mut self.effect_counter_journal)
+            .extend(tail.effect_counters.iter().map(|write| write.undo));
+        Arc::make_mut(&mut self.inputs).append(&mut tail.inputs);
+        for write in &tail.input_dependencies {
+            match &write.after {
+                Some(value) => {
+                    Arc::make_mut(&mut self.input_dependencies)
+                        .insert(Arc::clone(&write.path), value.clone());
+                }
+                None => {
+                    Arc::make_mut(&mut self.input_dependencies).remove(write.path.as_ref());
+                }
+            }
+        }
+        Arc::make_mut(&mut self.input_dependency_journal).extend(
+            tail.input_dependencies
+                .iter()
+                .map(|write| (Arc::clone(&write.path), write.previous.clone())),
+        );
+        self.shell_escapes.append(&mut tail.shell_escapes);
+        Arc::make_mut(&mut self.artifact_commits).append(&mut tail.artifact_commits);
+        Arc::make_mut(&mut self.committed_artifacts).append(&mut tail.committed_artifacts);
+        Arc::make_mut(&mut self.artifact_publications).append(&mut tail.artifact_publications);
+        Arc::make_mut(&mut self.stream_open_contexts).extend(tail.stream_open_contexts);
+        self.rollback(&tail.head);
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedWorldTail) {
+        self.input_identities
+            .accept_checkpoint_candidate(tail.input_identities);
+    }
+
     /// Installs a retained checkpoint into a new generation. Accepted effects
     /// become an immutable page-visible prefix, while the destination starts
     /// a fresh publishable suffix at the same absolute semantic position.
+    #[cfg(any(test, feature = "profiling"))]
     fn install_checkpoint_fork(&mut self, source: &Self, snapshot: &WorldSnapshot) {
         assert!(source.snapshot_is_forkable(snapshot));
         self.input_identities = source
@@ -5681,6 +5970,7 @@ impl World {
 
     /// Builds one isolated revision suffix from a retained mark without
     /// copying the accepted effect ledger.
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn fork_checkpoint(&self, snapshot: &WorldSnapshot) -> Self {
         assert!(self.snapshot_is_forkable(snapshot));
         let mut fork = self.clone();

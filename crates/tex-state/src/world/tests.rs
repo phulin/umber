@@ -204,6 +204,43 @@ fn repeated_checkpoint_forks_share_accepted_effect_blocks_and_isolate_suffixes()
 }
 
 #[test]
+fn checkpoint_candidate_rejects_or_promotes_one_flat_world_suffix() {
+    let mut world = World::memory();
+    world
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    world.record_special("root", vec![0]);
+    let mark = world.snapshot();
+    world.record_special("accepted", vec![1]);
+
+    let tail = world.begin_checkpoint_candidate(&mark);
+    world.record_special("rejected", vec![2]);
+    world.reject_checkpoint_candidate(&mark, tail);
+    let labels = world
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::Special { class, .. } => Some(class.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["root", "accepted"]);
+
+    let tail = world.begin_checkpoint_candidate(&mark);
+    world.record_special("promoted", vec![3]);
+    world.accept_checkpoint_candidate(tail);
+    let labels = world
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::Special { class, .. } => Some(class.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["root", "promoted"]);
+}
+
+#[test]
 fn effect_counter_marks_restore_exactly_and_continue_across_a_fork() {
     let mut source = World::memory();
     source
