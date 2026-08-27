@@ -777,9 +777,7 @@ fn rooted_candidate_uses_a_private_suffix_and_coordinate_tail_removal() {
     source.current_list_mutation().push(kern(-1));
     let checkpoint = source.checkpoint();
     for index in 0..4_096 {
-        source
-            .current_list_mutation()
-            .push(kern(i32::try_from(index).expect("test index fits i32")));
+        source.current_list_mutation().push(kern(index));
     }
 
     {
@@ -804,5 +802,28 @@ fn rooted_candidate_uses_a_private_suffix_and_coordinate_tail_removal() {
 
     assert_eq!(source.current_list().nodes().len(), 4_097);
     assert_eq!(source.current_list().nodes().first(), Some(&kern(-1)));
+    assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
+}
+
+#[test]
+fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
+    let mut source = ModeNest::new();
+    source.current_list_mutation().push(kern(-1));
+    let checkpoint = source.checkpoint();
+    for index in 0..4_096 {
+        source.current_list_mutation().push(kern(index));
+    }
+
+    {
+        let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
+        candidate.current_list_mutation().push(kern(-2));
+        assert_eq!(
+            candidate.current_list_mutation().take_nodes(),
+            [kern(-1), kern(-2)]
+        );
+        assert!(candidate.current_list().nodes().is_empty());
+    }
+
+    assert_eq!(source.current_list().nodes().len(), 4_097);
     assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
 }

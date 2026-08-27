@@ -167,6 +167,12 @@ impl ModeList {
     }
 
     pub fn take_nodes(&mut self) -> Vec<Node> {
+        if self.sequence.has_candidate() {
+            return self
+                .sequence
+                .take_candidate_semantic()
+                .expect("checked candidate sequence");
+        }
         std::mem::take(&mut self.sequence).into_semantic()
     }
 
@@ -351,6 +357,12 @@ impl ModeList {
         &mut self,
         range: std::ops::RangeInclusive<usize>,
     ) -> Vec<Node> {
+        if self.sequence.has_candidate() {
+            return self
+                .sequence
+                .mutate_candidate_semantic(|nodes| nodes.drain(range).collect())
+                .expect("checked candidate sequence");
+        }
         self.sequence
             .mutate_semantic(|nodes| nodes.drain(range).collect())
     }

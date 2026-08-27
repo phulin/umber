@@ -475,6 +475,45 @@ impl NodeSequence {
         Some(node)
     }
 
+    /// Detaches the candidate's complete logical semantic list while leaving
+    /// the accepted owner untouched for rejection. Only the checkpoint-root
+    /// region is copied; an arbitrarily distant accepted suffix is never
+    /// visited, and the private suffix is moved.
+    pub fn take_candidate_semantic(&mut self) -> Option<Vec<Node>> {
+        let candidate = self.candidate.as_mut()?;
+        let mut logical = self.semantic[..candidate.semantic_root].to_vec();
+        for (index, replacement) in candidate.replacements.drain(..) {
+            logical[index] = replacement;
+        }
+        logical.append(&mut candidate.semantic);
+        candidate.semantic_root = 0;
+        candidate.physical_root = 0;
+        candidate.physical.clear();
+        candidate.semantic_high_cell_lineages.clear();
+        candidate.physical_high_cell_lineages.clear();
+        candidate.page_node_root_count = 0;
+        Some(logical)
+    }
+
+    pub fn mutate_candidate_semantic<R>(
+        &mut self,
+        mutate: impl FnOnce(&mut Vec<Node>) -> R,
+    ) -> Option<R> {
+        let mut logical = self.take_candidate_semantic()?;
+        let result = mutate(&mut logical);
+        let candidate = self
+            .candidate
+            .as_mut()
+            .expect("candidate remains installed");
+        candidate.page_node_root_count = logical
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        candidate.physical = logical.clone();
+        candidate.semantic = logical;
+        Some(result)
+    }
+
     pub fn with_candidate_node_mut<R>(
         &mut self,
         index: usize,

@@ -829,7 +829,7 @@ impl PageBuilderState {
             .expect("page checkpoint identity space exhausted");
         let cursor = self.checkpoint_journal.applied;
         let scalars = self.scalar_snapshot();
-        let roots = PagePayloadRoots {
+        let direct_roots = PagePayloadRoots {
             contribution_start: 0,
             contribution_end: self.contribution.len(),
             current_page_end: self.current_page.len(),
@@ -849,6 +849,26 @@ impl PageBuilderState {
                 insertion_lane_len: self.insertion_lane.len(),
                 mark_lane_len: self.mark_lane.len(),
             })
+        });
+        // A checkpoint published by the candidate must remain meaningful
+        // after the prior retires and the candidate owner becomes ordinary.
+        // Store its normalized post-commit extents in `roots`; the separate
+        // candidate coordinates exist only for rollback while the fork loan
+        // is still active.
+        let roots = candidate_roots.map_or(direct_roots, |candidate| PagePayloadRoots {
+            contribution_start: 0,
+            contribution_end: candidate.contribution_front_len
+                + candidate
+                    .accepted
+                    .contribution_end
+                    .saturating_sub(candidate.accepted.contribution_start)
+                + candidate.contribution_back_len,
+            current_page_end: candidate.accepted.current_page_end + candidate.current_page_len,
+            page_discards_end: candidate.accepted.page_discards_end + candidate.page_discards_len,
+            split_discards_end: candidate.accepted.split_discards_end
+                + candidate.split_discards_len,
+            insertion_end: candidate.accepted.insertion_end + candidate.insertion_lane_len,
+            mark_end: candidate.accepted.mark_end + candidate.mark_lane_len,
         });
         self.checkpoint_journal
             .frames
@@ -892,7 +912,6 @@ impl PageBuilderState {
             && mark.cursor <= self.checkpoint_journal.inverses.len()
             && mark.frame != 0
             && mark.frame < self.checkpoint_journal.next_frame
-            && mark.candidate_roots.is_some() == self.checkpoint_journal.fork.is_some()
     }
 
     pub(crate) fn restore_checkpoint_mark(&mut self, mark: PageCheckpointMark) {
@@ -906,12 +925,9 @@ impl PageBuilderState {
             self.toggle_page_inverse(index);
             self.checkpoint_journal.applied += 1;
         }
-        if let Some(candidate) = mark.candidate_roots {
-            let fork = self
-                .checkpoint_journal
-                .fork
-                .as_mut()
-                .expect("candidate mark retains its fork owner");
+        if let (Some(candidate), Some(fork)) =
+            (mark.candidate_roots, self.checkpoint_journal.fork.as_mut())
+        {
             fork.target_roots = Some(candidate.accepted);
             fork.contribution_front
                 .truncate(candidate.contribution_front_len);
@@ -928,28 +944,25 @@ impl PageBuilderState {
         debug_assert!(self.validates_checkpoint_mark(mark));
         debug_assert!(self.checkpoint_journal.fork.is_none());
         let origin = self.checkpoint_journal.applied;
-        {
-            let origin_timeline = self.checkpoint_journal.timeline;
-            let origin_scalars = self.scalar_snapshot();
-            let flat_origin = Box::new(self.take_payload());
-            self.restore_scalars(mark.scalars);
-            let future = std::mem::take(&mut self.checkpoint_journal.inverses);
-            let future_frames = std::mem::take(&mut self.checkpoint_journal.frames);
-            self.checkpoint_journal.applied = 0;
-            self.checkpoint_journal.timeline = NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed);
-            self.checkpoint_journal.fork = Some(Box::new(PageForkJournal {
-                origin_timeline,
-                origin,
-                target: 0,
-                future,
-                future_frames,
-                flat_origin: Some(flat_origin),
-                origin_scalars: Some(origin_scalars),
-                target_roots: Some(mark.roots),
-                contribution_front: VecDeque::new(),
-            }));
-            return;
-        }
+        let origin_timeline = self.checkpoint_journal.timeline;
+        let origin_scalars = self.scalar_snapshot();
+        let flat_origin = Box::new(self.take_payload());
+        self.restore_scalars(mark.scalars);
+        let future = std::mem::take(&mut self.checkpoint_journal.inverses);
+        let future_frames = std::mem::take(&mut self.checkpoint_journal.frames);
+        self.checkpoint_journal.applied = 0;
+        self.checkpoint_journal.timeline = NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed);
+        self.checkpoint_journal.fork = Some(Box::new(PageForkJournal {
+            origin_timeline,
+            origin,
+            target: 0,
+            future,
+            future_frames,
+            flat_origin: Some(flat_origin),
+            origin_scalars: Some(origin_scalars),
+            target_roots: Some(mark.roots),
+            contribution_front: VecDeque::new(),
+        }));
     }
 
     pub(crate) fn reject_checkpoint_fork(&mut self) {
