@@ -204,6 +204,51 @@ fn repeated_checkpoint_forks_share_accepted_effect_blocks_and_isolate_suffixes()
 }
 
 #[test]
+fn effect_counter_marks_restore_exactly_and_continue_across_a_fork() {
+    let mut source = World::memory();
+    source
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    source.record_special("accepted-0", vec![0]);
+    source.record_special("accepted-1", vec![1]);
+    let publication = source.reserve_effect_publication();
+    source.claim_effect_publication(0..2, publication);
+    let checkpoint = source.snapshot();
+
+    source.record_special("abandoned", vec![9]);
+    source.claim_effect_publication(2..3, publication);
+    let abandoned_publication = source.effect_publication_record_ordinals()[2];
+    let abandoned_semantic = source.effect_semantic_record_ordinals()[2];
+    source.rollback(&checkpoint);
+    source.record_special("replayed", vec![2]);
+    source.claim_effect_publication(2..3, publication);
+    assert_eq!(
+        source.effect_publication_record_ordinals()[2],
+        abandoned_publication,
+        "rollback must restore the publication counter, not retain the abandoned value"
+    );
+    assert_eq!(
+        source.effect_semantic_record_ordinals()[2],
+        abandoned_semantic,
+        "rollback must restore the semantic counter, not retain the abandoned value"
+    );
+
+    let mut candidate = source.fork_checkpoint(&checkpoint);
+    candidate.record_special("candidate", vec![3]);
+    candidate.claim_effect_publication(0..1, publication);
+    assert_eq!(
+        candidate.effect_publication_record_ordinals()[0],
+        abandoned_publication,
+        "a fork must continue accepted publication numbering without copying its map"
+    );
+    assert_eq!(
+        candidate.effect_semantic_record_ordinals()[0],
+        abandoned_semantic,
+        "a fork must continue accepted semantic numbering without copying its map"
+    );
+}
+
+#[test]
 fn checkpoint_fork_shares_only_retained_input_records_and_opens_a_private_suffix() {
     let mut source = World::memory();
     source
@@ -212,7 +257,9 @@ fn checkpoint_fork_shares_only_retained_input_records_and_opens_a_private_suffix
     source
         .set_memory_file("accepted.tex", b"accepted".to_vec())
         .expect("accepted input is seeded");
-    source.read_file("accepted.tex").expect("accepted input is read");
+    source
+        .read_file("accepted.tex")
+        .expect("accepted input is read");
     let checkpoint = source.snapshot();
     source
         .set_memory_file("later.tex", b"later".to_vec())
@@ -221,8 +268,14 @@ fn checkpoint_fork_shares_only_retained_input_records_and_opens_a_private_suffix
 
     let mut candidate = source.fork_checkpoint(&checkpoint);
     assert_eq!(candidate.input_records().len(), 1);
-    assert_eq!(candidate.input_records()[0].path(), Path::new("accepted.tex"));
-    assert_eq!(candidate.input_content(candidate.input_records()[0].hash()), Some(&b"accepted"[..]));
+    assert_eq!(
+        candidate.input_records()[0].path(),
+        Path::new("accepted.tex")
+    );
+    assert_eq!(
+        candidate.input_content(candidate.input_records()[0].hash()),
+        Some(&b"accepted"[..])
+    );
 
     candidate
         .set_memory_file("candidate.tex", b"candidate".to_vec())

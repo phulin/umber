@@ -165,10 +165,7 @@ impl IdentityAllocator {
         let namespace = loop {
             let candidate = fresh_namespace();
             if candidate != self.active.namespace
-                && self
-                    .runs
-                    .iter()
-                    .all(|run| run.tag.namespace != candidate)
+                && self.runs.iter().all(|run| run.tag.namespace != candidate)
             {
                 break candidate;
             }

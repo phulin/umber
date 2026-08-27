@@ -1504,10 +1504,9 @@ pub struct WorldSnapshot {
     next_effect_sequence: u64,
     next_publication_sequence: u64,
     next_effect_publication_identity: u64,
-    next_effect_publication_record_ordinals: Arc<BTreeMap<EffectPublicationId, u64>>,
+    effect_counter_journal_len: usize,
     next_effect_domain: u64,
     next_effect_output_attempt_identity: u64,
-    next_effect_semantic_record_ordinals: Arc<BTreeMap<EffectDomain, u64>>,
     next_effect_placement_intra_order: u64,
     next_terminal_publication_identity: u64,
     effect_pos: EffectPos,
@@ -1584,9 +1583,7 @@ impl AcceptedEffectBlock {
             effects: Arc::clone(&source.effects),
             sequences: Arc::clone(&source.effect_sequences),
             publications: Arc::clone(&source.effect_publications),
-            publication_record_ordinals: Arc::clone(
-                &source.effect_publication_record_ordinals,
-            ),
+            publication_record_ordinals: Arc::clone(&source.effect_publication_record_ordinals),
             domains: Arc::clone(&source.effect_domains),
             semantic_record_ordinals: Arc::clone(&source.effect_semantic_record_ordinals),
             placement_intra_orders: Arc::clone(&source.effect_placement_intra_orders),
@@ -1594,6 +1591,44 @@ impl AcceptedEffectBlock {
             total_len: parent_len.saturating_add(len),
         }))
     }
+
+    fn publication_counter(&self, key: EffectPublicationId) -> Option<u64> {
+        self.publications[..self.len]
+            .iter()
+            .zip(&self.publication_record_ordinals[..self.len])
+            .rev()
+            .find_map(|(publication, ordinal)| {
+                (*publication == Some(key)).then(|| ordinal.as_ref().map(|ordinal| ordinal.0))?
+            })
+            .or_else(|| self.parent.as_ref()?.publication_counter(key))
+    }
+
+    fn semantic_counter(&self, key: EffectDomain) -> Option<u64> {
+        self.domains[..self.len]
+            .iter()
+            .zip(&self.semantic_record_ordinals[..self.len])
+            .rev()
+            .find_map(|(domain, ordinal)| {
+                let domain = match domain {
+                    EffectDomain::World(_) => EffectDomain::World(0),
+                    domain => *domain,
+                };
+                (domain == key).then_some(ordinal.0)
+            })
+            .or_else(|| self.parent.as_ref()?.semantic_counter(key))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EffectCounterUndo {
+    Publication {
+        key: EffectPublicationId,
+        previous: Option<u64>,
+    },
+    Semantic {
+        key: EffectDomain,
+        previous: Option<u64>,
+    },
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1625,7 +1660,9 @@ impl AcceptedInputBlock {
         if index < parent_len {
             return self.parent.as_ref()?.record(index);
         }
-        self.records.get(index - parent_len).filter(|_| index < self.total_len)
+        self.records
+            .get(index - parent_len)
+            .filter(|_| index < self.total_len)
     }
 
     fn content(&self, hash: ContentHash) -> Option<&[u8]> {
@@ -1686,7 +1723,8 @@ impl std::ops::Index<usize> for InputRecords<'_> {
     type Output = InputRecord;
 
     fn index(&self, index: usize) -> &Self::Output {
-        self.get(index).expect("World input-record index is in range")
+        self.get(index)
+            .expect("World input-record index is in range")
     }
 }
 
@@ -1738,6 +1776,7 @@ pub struct World {
     next_effect_domain: u64,
     next_effect_output_attempt_identity: u64,
     next_effect_semantic_record_ordinals: Arc<BTreeMap<EffectDomain, u64>>,
+    effect_counter_journal: Arc<Vec<EffectCounterUndo>>,
     next_effect_placement_intra_order: u64,
     active_effect_publication: Option<EffectPublicationId>,
     active_effect_output_attempt: Option<EffectOutputAttemptId>,
@@ -2181,6 +2220,7 @@ impl Clone for World {
             next_effect_domain: self.next_effect_domain,
             next_effect_output_attempt_identity: self.next_effect_output_attempt_identity,
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
+            effect_counter_journal: self.effect_counter_journal.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             active_effect_publication: self.active_effect_publication,
             active_effect_output_attempt: self.active_effect_output_attempt,
@@ -2392,6 +2432,7 @@ impl World {
             next_effect_domain: 0,
             next_effect_output_attempt_identity: 0,
             next_effect_semantic_record_ordinals: Arc::new(BTreeMap::new()),
+            effect_counter_journal: Arc::new(Vec::new()),
             next_effect_placement_intra_order: 0,
             active_effect_publication: None,
             active_effect_output_attempt: None,
@@ -4474,9 +4515,8 @@ impl World {
     ) {
         let start = range.start.min(self.effect_publications.len());
         let end = range.end.min(self.effect_publications.len());
-        let next = Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
-            .entry(publication)
-            .or_insert(0);
+        let mut next = self.publication_counter(publication);
+        self.journal_publication_counter(publication);
         let publications = Arc::make_mut(&mut self.effect_publications);
         let ordinals = Arc::make_mut(&mut self.effect_publication_record_ordinals);
         for index in start..end {
@@ -4484,11 +4524,12 @@ impl World {
                 continue;
             }
             publications[index] = Some(publication);
-            *next = next
+            next = next
                 .checked_add(1)
                 .expect("effect publication record ordinal exhausted");
-            ordinals[index] = Some(EffectPublicationRecordOrdinal::new(*next));
+            ordinals[index] = Some(EffectPublicationRecordOrdinal::new(next));
         }
+        Arc::make_mut(&mut self.next_effect_publication_record_ordinals).insert(publication, next);
     }
 
     /// Reserves a stable identity in the effect-publication ledger.
@@ -4548,7 +4589,8 @@ impl World {
         // execution of the same claim, but that retained counter is not part
         // of the claim's semantic identity. Restart its local namespace so
         // replay reproduces the same per-record identities.
-        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).remove(&domain);
+        self.journal_semantic_counter(domain);
+        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).insert(domain, 0);
         let ordinals = (start..end)
             .map(|_| self.allocate_effect_semantic_record_ordinal(domain))
             .collect::<Vec<_>>();
@@ -4578,6 +4620,14 @@ impl World {
     ) {
         let mut installed = ordinals[..ordinals.len().min(self.effects.len())].to_vec();
         installed.resize(self.effects.len(), None);
+        let existing = self
+            .next_effect_publication_record_ordinals
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for key in existing {
+            self.journal_publication_counter(key);
+        }
         Arc::make_mut(&mut self.next_effect_publication_record_ordinals).clear();
         for (publication, ordinal) in self
             .effect_publications
@@ -4635,6 +4685,14 @@ impl World {
         for index in installed.len()..self.effects.len() {
             let domain = self.effect_domains[index];
             installed.push(self.allocate_effect_semantic_record_ordinal(domain));
+        }
+        let existing = self
+            .next_effect_semantic_record_ordinals
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for key in existing {
+            self.journal_semantic_counter(key);
         }
         Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).clear();
         for (&domain, &ordinal) in self.effect_domains.iter().zip(&installed) {
@@ -5011,12 +5069,9 @@ impl World {
             next_effect_sequence: self.next_effect_sequence,
             next_publication_sequence: self.next_publication_sequence,
             next_effect_publication_identity: self.next_effect_publication_identity,
-            next_effect_publication_record_ordinals: self
-                .next_effect_publication_record_ordinals
-                .clone(),
+            effect_counter_journal_len: self.effect_counter_journal.len(),
             next_effect_domain: self.next_effect_domain,
             next_effect_output_attempt_identity: self.next_effect_output_attempt_identity,
-            next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_pos: self.effect_pos(),
@@ -5063,8 +5118,7 @@ impl World {
     /// generation after the source timeline has published its prefix.
     #[must_use]
     pub(crate) fn snapshot_is_forkable(&self, snapshot: &WorldSnapshot) -> bool {
-        snapshot.effect_pos
-            == EffectPos(snapshot.effect_base.raw() + snapshot.effect_len as u64)
+        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effect_len as u64)
     }
 
     fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
@@ -5091,8 +5145,7 @@ impl World {
             Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(snapshot.effect_len);
             Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(snapshot.effect_len);
         }
-        if self.effect_publication_dispositions.len()
-            != snapshot.effect_publication_disposition_len
+        if self.effect_publication_dispositions.len() != snapshot.effect_publication_disposition_len
         {
             Arc::make_mut(&mut self.effect_publication_dispositions)
                 .truncate(snapshot.effect_publication_disposition_len);
@@ -5100,12 +5153,9 @@ impl World {
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_publication_sequence = snapshot.next_publication_sequence;
         self.next_effect_publication_identity = snapshot.next_effect_publication_identity;
-        self.next_effect_publication_record_ordinals =
-            snapshot.next_effect_publication_record_ordinals.clone();
+        self.rollback_effect_counters(snapshot.effect_counter_journal_len);
         self.next_effect_domain = snapshot.next_effect_domain;
         self.next_effect_output_attempt_identity = snapshot.next_effect_output_attempt_identity;
-        self.next_effect_semantic_record_ordinals =
-            snapshot.next_effect_semantic_record_ordinals.clone();
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
         self.next_terminal_publication_identity = snapshot.next_terminal_publication_identity;
         self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
@@ -5156,12 +5206,12 @@ impl World {
             snapshot.effect_base.raw(),
             "accepted effect blocks align with the source live suffix"
         );
-        self.accepted_effects = AcceptedEffectBlock::extend(
-            source.accepted_effects.clone(),
-            source,
-            snapshot,
+        self.accepted_effects =
+            AcceptedEffectBlock::extend(source.accepted_effects.clone(), source, snapshot);
+        assert_eq!(
+            self.page_effect_prefix_len() as u64,
+            snapshot.effect_pos.raw()
         );
-        assert_eq!(self.page_effect_prefix_len() as u64, snapshot.effect_pos.raw());
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
 
         self.effect_base = snapshot.effect_pos;
@@ -5187,8 +5237,9 @@ impl World {
         self.active_terminal_publication = None;
         self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
         self.next_effect_sequence = snapshot.next_effect_sequence;
-        self.next_effect_publication_record_ordinals =
-            snapshot.next_effect_publication_record_ordinals.clone();
+        self.next_effect_publication_record_ordinals = Arc::new(BTreeMap::new());
+        self.next_effect_semantic_record_ordinals = Arc::new(BTreeMap::new());
+        self.effect_counter_journal = Arc::new(Vec::new());
         self.next_publication_sequence = self
             .next_publication_sequence
             .max(snapshot.next_publication_sequence);
@@ -5196,8 +5247,6 @@ impl World {
             .next_effect_publication_identity
             .max(snapshot.next_effect_publication_identity);
         self.next_effect_domain = snapshot.next_effect_domain;
-        self.next_effect_semantic_record_ordinals =
-            snapshot.next_effect_semantic_record_ordinals.clone();
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
@@ -5205,11 +5254,8 @@ impl World {
         self.pdf_time_micros = snapshot.pdf_time_micros;
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
-        self.accepted_inputs = AcceptedInputBlock::extend(
-            source.accepted_inputs.clone(),
-            source,
-            snapshot.input_len,
-        );
+        self.accepted_inputs =
+            AcceptedInputBlock::extend(source.accepted_inputs.clone(), source, snapshot.input_len);
         self.inputs = Arc::new(Vec::new());
         self.input_contents = Arc::new(BTreeMap::new());
         self.input_dependencies = snapshot.input_dependencies.clone();
@@ -5345,13 +5391,72 @@ impl World {
             EffectDomain::World(_) => EffectDomain::World(0),
             domain => domain,
         };
-        let next = Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
-            .entry(domain)
-            .or_default();
-        *next = next
+        let mut next = self.semantic_counter(domain);
+        self.journal_semantic_counter(domain);
+        next = next
             .checked_add(1)
             .expect("effect semantic record ordinal exhausted");
-        EffectSemanticRecordOrdinal(*next)
+        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).insert(domain, next);
+        EffectSemanticRecordOrdinal(next)
+    }
+
+    fn publication_counter(&self, key: EffectPublicationId) -> u64 {
+        self.next_effect_publication_record_ordinals
+            .get(&key)
+            .copied()
+            .or_else(|| self.accepted_effects.as_ref()?.publication_counter(key))
+            .unwrap_or(0)
+    }
+
+    fn semantic_counter(&self, key: EffectDomain) -> u64 {
+        self.next_effect_semantic_record_ordinals
+            .get(&key)
+            .copied()
+            .or_else(|| self.accepted_effects.as_ref()?.semantic_counter(key))
+            .unwrap_or(0)
+    }
+
+    fn journal_publication_counter(&mut self, key: EffectPublicationId) {
+        let previous = self
+            .next_effect_publication_record_ordinals
+            .get(&key)
+            .copied();
+        Arc::make_mut(&mut self.effect_counter_journal)
+            .push(EffectCounterUndo::Publication { key, previous });
+    }
+
+    fn journal_semantic_counter(&mut self, key: EffectDomain) {
+        let previous = self.next_effect_semantic_record_ordinals.get(&key).copied();
+        Arc::make_mut(&mut self.effect_counter_journal)
+            .push(EffectCounterUndo::Semantic { key, previous });
+    }
+
+    fn rollback_effect_counters(&mut self, mark: usize) {
+        let undo = Arc::make_mut(&mut self.effect_counter_journal);
+        for entry in undo[mark..].iter().rev() {
+            match *entry {
+                EffectCounterUndo::Publication { key, previous } => match previous {
+                    Some(value) => {
+                        Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
+                            .insert(key, value);
+                    }
+                    None => {
+                        Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
+                            .remove(&key);
+                    }
+                },
+                EffectCounterUndo::Semantic { key, previous } => match previous {
+                    Some(value) => {
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
+                            .insert(key, value);
+                    }
+                    None => {
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).remove(&key);
+                    }
+                },
+            }
+        }
+        undo.truncate(mark);
     }
 
     fn allocate_effect_placement_intra_order(&mut self) -> EffectPlacementIntraOrder {

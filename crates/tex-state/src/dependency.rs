@@ -432,7 +432,10 @@ impl DependencyRuntime {
     /// Existing observations fail closed against the new global stamp; no
     /// per-key payload crosses into the candidate lineage.
     pub(crate) fn fork_tracker(&self, snapshot: &DependencyTrackerSnapshot) -> Self {
-        assert!(self.active.is_none(), "a dependency recorder crossed a checkpoint");
+        assert!(
+            self.active.is_none(),
+            "a dependency recorder crossed a checkpoint"
+        );
         let revision = self
             .tracker
             .revision
