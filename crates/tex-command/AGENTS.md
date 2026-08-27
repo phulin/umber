@@ -129,9 +129,10 @@ collector (see `src/conditionals.rs`).
 - `src/input/tokenizer.rs`, `src/input/tokenizer/tests.rs`: canonical
   token-at-a-time exact-byte and separately identified UnicodeExtended M/N/S
   tokenization, semantic control-sequence spelling, production projection of a
-  transient name into packed identity plus direct provenance, profile-specific
-  superscript notation, invalid-character recovery steps, byte/scalar ranges,
-  and focused conformance tests.
+  borrowed untransformed control-word slice or owned superscript fallback into
+  packed identity plus direct provenance, profile-specific superscript notation,
+  invalid-character recovery steps, byte/scalar ranges, and focused conformance
+  tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
   source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level

@@ -1989,22 +1989,27 @@ the next command.
 
 `SourceToken` remains owned for tokenizer and CLI consumers that need the
 semantic name itself. Production source tokenization uses the same state
-machine with a destination projection: while a transient name is still live,
-the tokenizer's creating or non-creating boundary resolves it to a packed
-`TokenWord`, and only that compact identity plus direct-source provenance
-crosses into canonical command delivery. Delivery performs only
+machine with a destination projection. An untransformed multi-character
+control word scans byte boundaries in the current contiguous source backing
+and passes that `&str` slice directly to the creating or non-creating interner
+boundary. If `^^` reduction or exact-byte character encoding makes the
+semantic name differ from the raw bytes, one owned `ControlSequenceName`
+fallback accumulates the logical character codes instead. The boundary
+resolves either call-local spelling to a packed `TokenWord`, and only that
+compact identity plus direct-source provenance crosses into canonical command
+delivery. Delivery performs only
 `TokenWord`/control-sequence identity to current eqtb meaning resolution; it
 does not reconstruct a name, choose creation policy, or retain a fallback.
-The owned name therefore enters neither an input level nor a current command,
-snapshot, or suspension. `ControlSequenceName` keeps up to 24
+Neither the borrowed name nor the owned fallback therefore enters an input
+level, current command, snapshot, or suspension. `ControlSequenceName` keeps up to 24
 semantic character codes inline and spills longer names to an unbounded vector. A
 repository fixture census measured 9,770 control-word occurrences at median
 5, p95 15, p99 20, and maximum 31 characters; all registered primitive-name
 literals were at most 17, so the bound covers more than 99% of measured source
-names and every primitive without imposing a semantic length limit. Raw
-delivery encodes inline character codes into a fixed stack UTF-8 buffer for
-lookup or interning, rather than moving the former tokenizer allocation into
-a temporary `String`; an already-spilled pathological name may allocate that
+names and every primitive without imposing a semantic length limit. The common
+borrowed path performs no name construction or encoding. A fallback name still
+encodes inline character codes into a fixed stack UTF-8 buffer for lookup or
+interning; an already-spilled pathological fallback may allocate that
 temporary conversion.
 
 `get_token` temporarily enables creation only at the source-tokenization seam;
