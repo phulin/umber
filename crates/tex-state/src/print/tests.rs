@@ -1,8 +1,8 @@
 //! Direct semantic tests for tex.web's printer and error channel.
 
 use super::{
-    ErrorChannel, ErrorContextLevel, ErrorContextWidths, ErrorHistory, ErrorOutcome, JumpOut,
-    Printer, Selector, render_error_context,
+    ErrorChannel, ErrorContextLevel, ErrorContextWidths, ErrorHistory, ErrorOutcome,
+    ErrorRecoveryRequest, JumpOut, Printer, Selector, render_error_context,
 };
 use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
@@ -170,6 +170,28 @@ fn print_err_formats_message_help_and_history() {
 
 #[test]
 fn error_stop_answers_resume_or_quit_with_typed_outcomes() {
+    with_test_universe(|universe| {
+        universe
+            .world_mut()
+            .push_memory_terminal_line("12")
+            .expect("memory terminal line");
+        assert_eq!(
+            universe.print_err("Something anomalous").error(),
+            ErrorOutcome::Recovery(ErrorRecoveryRequest::Delete(12))
+        );
+    });
+
+    with_test_universe(|universe| {
+        universe
+            .world_mut()
+            .push_memory_terminal_line("I\\count0=17")
+            .expect("memory terminal line");
+        assert_eq!(
+            universe.print_err("Something anomalous").error(),
+            ErrorOutcome::Recovery(ErrorRecoveryRequest::Insert("\\count0=17".to_owned()))
+        );
+    });
+
     with_test_universe(|universe| {
         universe
             .world_mut()

@@ -426,6 +426,14 @@ the final command for one later backup. Internal recovery, ErrorStop deletion,
 math-shift lookahead, and output-list draining supply their local final or
 discard slots directly and create no returned command envelope.
 
+ErrorStop interaction is also an explicit ownership transition rather than a
+property polled by raw delivery. A command-side report applies its typed
+`Insert` or `Delete` outcome immediately through the live processor. An
+executor-side report places the same single outcome in the operation-local
+diagnostic handoff; the canonical executor/processor seam consumes it once
+before the operation commits. The world error channel owns prompting and
+rendering only, while the command machine remains the sole input-stack owner.
+
 Main control likewise owns one call-local `Option<CurrentCommand>` final slot
 for raw preflight, ordinary expansion, main-loop lookahead, alignment bodies,
 prefixes, leader handoff, and `goto reswitch`. Delivery writes the completed

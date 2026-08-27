@@ -46,6 +46,10 @@ in a private revision retain the one-operation aggregate adapter pending their
 narrow-mark migration. The closing brace of an active box is promoted to that
 adapter when packaging can run the page or explicit-shipout pipeline; ordinary
 groups nested inside the box remain on the direct path.
+ErrorStop prompting returns a typed interaction outcome. Command-side reports
+apply it immediately; executor-side reports carry one outcome in the existing
+operation-local diagnostic handoff to the canonical processor seam. Ordinary
+raw and expanded delivery never inspect world error state.
 `CanonicalStepRunner` and its `OutputLedger` are the shared native/incremental
 publication protocol above that transition. A typed resource need restores the matching `Universe`,
 command-state, mode-nest, execution, statistics, checkpoint-publisher, prepared
