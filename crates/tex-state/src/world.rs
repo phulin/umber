@@ -2124,6 +2124,20 @@ impl World {
     pub fn start_profiling_timer() -> ProfilingTimer {
         ProfilingTimer(Instant::now())
     }
+
+    /// Publishes one deterministic artifact for the aggregate-checkpoint
+    /// profiling fixture without exposing artifact-ledger internals.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_publish_artifact(&mut self, bytes: Vec<u8>) {
+        let artifact = VerifiedArtifact::new(bytes);
+        self.store_verified_artifact(&artifact)
+            .expect("profiling artifact stores in the memory backend");
+        let reservation = self.reserve_artifact_publication_at(0);
+        let hash = artifact.hash();
+        let (bytes, provenance, occurrences) = artifact.into_parts();
+        self.record_artifact_commit(hash, bytes, provenance, occurrences, reservation);
+    }
     /// Creates a deterministic in-memory world for tests and hermetic runs.
     #[must_use]
     pub fn memory() -> Self {

@@ -6141,7 +6141,7 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
         register_source(&mut control, source);
 
         let mut requested = Vec::new();
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
         let terminal = loop {
@@ -6563,7 +6563,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
             include_bytes!("../../../../tests/corpus/stabilization/latex-references/source.tex"),
         );
         let mut requested = Vec::new();
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
         let mut terminal_step = None;
@@ -6658,7 +6658,7 @@ fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() 
             &mut control,
             br"\message{[\pdffilesize{missing-resource}]}\end",
         );
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
         let terminal = loop {
@@ -6859,7 +6859,7 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
             let mut control = MainControl::tex82_initex(stores);
             register_cmr10_as(&mut control, stores, "cmr10.tfm");
             register_source(&mut control, source);
-            let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
             let mut checkpoints = Vec::new();
             let cancellation = crate::Cancellation::new();
 
@@ -6930,7 +6930,7 @@ fn named_checkpoints_require_root_main_file_and_level_zero() {
             br"\begingroup A\par\endgroup\input child \finish\shipout\vbox{}\end",
         );
 
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         ledger
             .commit_job_start(&mut control, stores, &mut checkpoints)
@@ -6977,7 +6977,7 @@ fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
             br"\begingroup\input child \input missing \endgroup\shipout\vbox{}\end",
         );
 
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         ledger
             .commit_job_start(&mut control, stores, &mut checkpoints)
@@ -7094,7 +7094,7 @@ fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
             &mut control,
             br"\def\finish#1{A\par#1}\finish{\count0=2}\end",
         );
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
@@ -7130,7 +7130,7 @@ fn named_boundary_queue_does_not_cross_a_resource_suspension() {
             &mut control,
             br"\def\finish{A\par\input child}\finish\count0=2\end",
         );
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
@@ -7189,7 +7189,7 @@ fn named_boundary_queue_drains_two_macro_paragraphs_in_order() {
         let mut control = MainControl::tex82_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(&mut control, br"\def\two{A\par B\par}\two\count0=3\end");
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
@@ -7223,7 +7223,7 @@ fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
             &mut control,
             br"\def\toc{A\par}\def\send{\shipout\vbox{\toc}}\send\count0=4\end",
         );
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
@@ -7263,7 +7263,7 @@ fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
             &mut control,
             br"\def\mixed{A\par\shipout\vbox{B\par}}\mixed\count0=5\end",
         );
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
@@ -15964,7 +15964,7 @@ fn unavailable_font_retry_preserves_batch_mode_for_later_diagnostics() {
             &mut control,
             br"\batchmode\font\missingfont=absent\missing\scrollmode\end",
         );
-        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
         loop {

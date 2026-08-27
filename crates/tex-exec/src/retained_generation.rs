@@ -1005,7 +1005,6 @@ mod tests {
                     &mut modes,
                     universe,
                     crate::ExecutionBudgetCounters::default(),
-                    true,
                 )
                 .expect("first checkpoint")
             };
@@ -1021,7 +1020,6 @@ mod tests {
                     &mut modes,
                     universe,
                     crate::ExecutionBudgetCounters::default(),
-                    true,
                 )
                 .expect("second checkpoint")
             };

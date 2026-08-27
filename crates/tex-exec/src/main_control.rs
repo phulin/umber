@@ -2436,28 +2436,6 @@ impl<G> MainControl<G> {
             &mut self.modes,
             stores,
             budget_counters,
-            false,
-        )
-    }
-
-    /// Captures a quiescent named checkpoint with the strong optional state
-    /// identity required by incremental suffix-adoption comparisons.
-    pub fn capture_checkpoint_with_exact_identity(
-        &mut self,
-        boundary: crate::EngineBoundary,
-        stores: &mut Universe<G>,
-        budget_counters: crate::ExecutionBudgetCounters,
-    ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
-        if self.has_external_attempt_owner() {
-            return Err(tex_command::CommandSummaryError::AttemptSuspended);
-        }
-        crate::EngineCheckpoint::capture_checkpoint(
-            boundary,
-            &mut self.command,
-            &mut self.modes,
-            stores,
-            budget_counters,
-            true,
         )
     }
 

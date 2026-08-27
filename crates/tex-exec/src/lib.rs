@@ -54,8 +54,8 @@ pub use assignments::{
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
 };
 pub use canonical_step::{
-    CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointIdentity,
-    OutputLedger, TerminalRevisionReceipt,
+    CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, OutputLedger,
+    TerminalRevisionReceipt,
 };
 pub use checkpoint::{
     CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary,

@@ -62,7 +62,6 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             &mut modes,
             universe,
             ExecutionBudgetCounters::default(),
-            true,
         )
         .expect("checkpoint captures");
 
@@ -148,7 +147,6 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
             &mut ModeNest::new(),
             universe,
             ExecutionBudgetCounters::default(),
-            true,
         )
         .expect("checkpoint captures");
         universe
@@ -193,7 +191,6 @@ fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
             &mut ModeNest::new(),
             universe,
             ExecutionBudgetCounters::default(),
-            true,
         )
         .expect("checkpoint captures");
         universe
@@ -234,7 +231,6 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
             &mut modes,
             universe,
             ExecutionBudgetCounters::default(),
-            false,
         )
         .expect("checkpoint captures");
 

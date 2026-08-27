@@ -22,7 +22,7 @@ use tex_command::{
 };
 use tex_exec::{
     Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner,
-    CheckpointIdentity, CheckpointSink, DetachedEngineCompletion, DetachedFormatDump,
+    CheckpointSink, DetachedEngineCompletion, DetachedFormatDump,
     DetachedPreparedPage, EngineBoundary, EngineCheckpoint, EngineCompletionDemand, MainControl,
     MainControlStep, OutputLedger, ResourceFulfillment, ResourceHost, ResourceNeed,
     ResourceOutcome, ResourceWorld, canonical_font_resource_path,
@@ -768,10 +768,6 @@ struct LiveHistorySink<'state, 'generation, G> {
 }
 
 impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
-    fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
-        true
-    }
-
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
         let position = checkpoint.root_anchor();
         let boundary = checkpoint.boundary();
@@ -838,7 +834,7 @@ fn initialize_candidate_runtime<G: 'static>(
         .expect("candidate fuel limit is positive");
     control.attach_pure_memo_capability(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision);
-    let mut ledger = OutputLedger::new(CheckpointIdentity::Exact);
+    let mut ledger = OutputLedger::new();
     ledger.commit_job_start(
         &mut control,
         universe,

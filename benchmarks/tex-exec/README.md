@@ -4,6 +4,31 @@ This standalone crate contains the focused execution-layer shipout benchmark
 and the canonical bounded-episode workload. It is excluded from the root
 workspace correctness gate.
 
+## Aggregate checkpoint baseline
+
+Build and run the representative aggregate checkpoint baseline with:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-exec/Cargo.toml \
+  --bin aggregate_checkpoint_baseline
+```
+
+The four rows cross minimal versus 64-unit accumulated state with one versus
+32 simultaneously retained boundaries. Each row measures capture, retained
+checkpoint clone, generation fork, and same-generation restore separately and
+prints allocation calls, requested bytes, component payload retention, elapsed
+nanoseconds, and a semantic checksum. Fixture construction is outside every
+measured region. The accumulated fixture has deep registered-source and stored
+token-list stacks at command quiescence, initialized patterns plus mutable
+exceptions and saved hyphenation codes, contribution/current/discard page
+lists, insertions and marks, nested mode lists, changed dependency cells, and
+World effects, an open stream, and a committed artifact.
+
+The component byte columns are exact fixture payload charges, excluding
+allocator headers and spare capacity; shared token/source payload is charged
+once to its sole fixture owner. Allocation `requested_bytes` is the allocator
+authority for physical bytes requested by each measured operation.
+
 Run the shipout lowering cases with:
 
 ```bash

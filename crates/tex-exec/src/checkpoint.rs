@@ -102,6 +102,18 @@ impl<G> EngineCheckpoint<G> {
         ))
     }
 
+    /// Runs the production aggregate fork path for the standalone profiling
+    /// gate. The returned generation and control remain generation-branded;
+    /// this feature-only seam exposes no checkpoint field or raw cursor.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_fork_state(
+        &self,
+        source: &mut Universe<G>,
+    ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
+        self.fork_state(source)
+    }
+
     /// Captures a named boundary. Command publication proves that no scanner,
     /// macro matcher, alignment delivery, or attempt arena remains live.
     pub fn capture_checkpoint(
@@ -110,7 +122,6 @@ impl<G> EngineCheckpoint<G> {
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
-        _exact_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
         let command = command.publish_summary(universe)?;
         let root_anchor = command
@@ -252,10 +263,6 @@ pub trait CheckpointSink<G> {
     }
 
     fn stop_requested(&self) -> bool {
-        false
-    }
-
-    fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
         false
     }
 

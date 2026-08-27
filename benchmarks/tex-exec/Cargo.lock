@@ -1048,6 +1048,7 @@ dependencies = [
  "tex-content",
  "tex-fonts",
  "thin-dst",
+ "umber-hot-core-allocator",
  "unicode-width",
 ]
 
@@ -1115,6 +1116,10 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "umber-hash"
 version = "0.1.0"
+
+[[package]]
+name = "umber-hot-core-allocator"
+version = "0.0.0"
 
 [[package]]
 name = "unicode-bidi"

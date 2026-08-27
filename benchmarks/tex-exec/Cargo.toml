@@ -16,14 +16,18 @@ criterion = "0.5"
 stats_alloc = "0.1"
 tex-arith = { path = "../../crates/tex-arith" }
 tex-command = { path = "../../crates/tex-command" }
-tex-exec = { path = "../../crates/tex-exec" }
+tex-exec = { path = "../../crates/tex-exec", features = ["profiling"] }
 tex-fonts = { path = "../../crates/tex-fonts" }
 tex-out = { path = "../../crates/tex-out" }
-tex-state = { path = "../../crates/tex-state" }
+tex-state = { path = "../../crates/tex-state", features = ["profiling"] }
 
 [[bin]]
 name = "canonical_episode"
 path = "src/bin/canonical_episode.rs"
+
+[[bin]]
+name = "aggregate_checkpoint_baseline"
+path = "src/bin/aggregate_checkpoint_baseline.rs"
 
 [[bench]]
 name = "shipout"

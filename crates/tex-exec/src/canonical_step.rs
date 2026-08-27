@@ -9,14 +9,6 @@ use crate::{
     canonical_font_resource_path,
 };
 
-/// Checkpoint identity policy retained by one revision/output transaction.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum CheckpointIdentity {
-    #[default]
-    Snapshot,
-    Exact,
-}
-
 /// Failure returned through the canonical step protocol.
 #[derive(Debug)]
 pub enum CanonicalStepFailure {
@@ -72,7 +64,6 @@ impl TerminalRevisionReceipt {
 /// monotonic suspension serial.
 #[derive(Debug, Default)]
 pub struct OutputLedger {
-    checkpoint_identity: CheckpointIdentity,
     job_start_committed: bool,
     suspension_serial: u64,
     terminal_step: Option<MainControlStep>,
@@ -81,9 +72,8 @@ pub struct OutputLedger {
 
 impl OutputLedger {
     #[must_use]
-    pub const fn new(checkpoint_identity: CheckpointIdentity) -> Self {
+    pub const fn new() -> Self {
         Self {
-            checkpoint_identity,
             job_start_committed: false,
             suspension_serial: 0,
             terminal_step: None,
@@ -93,9 +83,8 @@ impl OutputLedger {
 
     /// Creates a ledger resumed from an already retained `JobStart` record.
     #[must_use]
-    pub const fn resume(checkpoint_identity: CheckpointIdentity) -> Self {
+    pub const fn resume() -> Self {
         Self {
-            checkpoint_identity,
             job_start_committed: true,
             suspension_serial: 0,
             terminal_step: None,
@@ -270,14 +259,7 @@ impl OutputLedger {
                 continue;
             }
             let counters = ExecutionBudgetCounters::default();
-            let checkpoint = match self.checkpoint_identity {
-                CheckpointIdentity::Snapshot => {
-                    control.capture_checkpoint(boundary, universe, counters)?
-                }
-                CheckpointIdentity::Exact => {
-                    control.capture_checkpoint_with_exact_identity(boundary, universe, counters)?
-                }
-            };
+            let checkpoint = control.capture_checkpoint(boundary, universe, counters)?;
             sink.checkpoint(checkpoint);
         }
         Ok(())
