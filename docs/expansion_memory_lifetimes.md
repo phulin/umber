@@ -259,6 +259,14 @@ the same local slot at that phase and restores the child deepest-first. The
 slot ends with the scanner call and never becomes command-state storage,
 rollback state, or a searchable result channel.
 
+The canonical `scan_toks` replacement collector keeps one such destination
+for its complete synchronous loop. Raw delivery, expansion classification,
+observation, and token spelling all borrow the command in that slot; a
+successful iteration clears it in place for immediate reuse. Only semantic
+backup or resource suspension moves the command out, and suspension moves it
+directly into the typed collector continuation. The destination therefore
+does not retain commands across a generation or act as a hidden result cache.
+
 Multi-child primitives require a caller frame of their own. For example,
 `\pdfstrcmp` stores whether its left or right expanded scan owns the child; the
 right phase also retains the completed left attempt-list coordinate. A retry

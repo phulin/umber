@@ -2456,6 +2456,13 @@ For an expanded scan it follows the canonical structure:
 7. preserve compact `OutParameter` and escaped-parameter rules; and
 8. stop at the inaccessible collector boundary without reading caller input.
 
+The replacement loop supplies one caller-owned `Option<CurrentCommand<G>>`
+as the delivery destination. Classification, observation, and spelling borrow
+the resident command, then successful progress clears the option in place.
+Only TeX's real backup path or typed resource suspension consumes it. This
+keeps ordinary collection destination-directed without a returned-command
+handoff, a heap indirection, or generation-long retention.
+
 Tokens returned by `\unexpanded` or token-list `\the` have no permanent
 suppression metadata. If they later re-enter ordinary input, ordinary
 `get_x_token` expands them.
