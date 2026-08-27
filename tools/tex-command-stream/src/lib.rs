@@ -1469,6 +1469,7 @@ mod tests {
             command: &mut CommandState<G>,
             universe: &mut tex_state::Universe<G>,
             capabilities: &mut CommandHostCapabilities,
+            fuel: &mut tex_command::CommandFuelLedger,
             diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         ) -> Vec<(char, u64)> {
             let mut context = universe
@@ -1478,6 +1479,8 @@ mod tests {
                 command,
                 &mut context,
                 CommandHostContext::new(capabilities),
+                fuel.fuel_mut(),
+                None,
                 diagnostic_effects,
             );
             let mut delivered = Vec::new();
@@ -1500,6 +1503,7 @@ mod tests {
             command.open_registered_source(root).expect("root opens");
             tex_command::install_tex82_expandable_primitives(universe);
             let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = tex_command::CommandFuelLedger::default();
             let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::default();
             capabilities.register_input(
                 "child.tex",
@@ -1514,6 +1518,8 @@ mod tests {
                     &mut command,
                     &mut context,
                     CommandHostContext::new(&mut capabilities),
+                    fuel.fuel_mut(),
+                    None,
                     &mut diagnostic_effects,
                 );
                 assert!(matches!(
@@ -1532,6 +1538,7 @@ mod tests {
                 &mut command,
                 universe,
                 &mut capabilities,
+                &mut fuel,
                 &mut diagnostic_effects,
             );
             command
@@ -1541,6 +1548,7 @@ mod tests {
                 &mut command,
                 universe,
                 &mut capabilities,
+                &mut fuel,
                 &mut diagnostic_effects,
             );
 
