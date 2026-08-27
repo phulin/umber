@@ -2767,6 +2767,17 @@ impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
 }
 
 impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
+    fn compact_control_word(&mut self, name: &str) -> TokenWord {
+        let token = if self.create_control_sequences {
+            Token::Cs(self.state.intern_hash_control_sequence(name))
+        } else {
+            self.state
+                .known_control_sequence(name)
+                .map_or_else(Token::undefined_control_sequence, Token::Cs)
+        };
+        TokenWord::pack(token)
+    }
+
     /// Resolves a transient tokenizer spelling into the packed identity raw
     /// delivery keeps. `create_control_sequences` is TeX82's
     /// `no_new_control_sequence` inverted: §257 sets it, §365 clears it only

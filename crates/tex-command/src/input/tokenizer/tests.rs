@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
-use tex_state::token::Catcode;
+use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::{SourceControlSequenceKind, SourceToken, SourceTokenizationStep};
 use crate::{
@@ -847,4 +847,47 @@ fn production_source_step_does_not_carry_owned_control_sequence_names() {
             < std::mem::size_of::<SourceTokenizationStep>(),
         "production delivery must not inherit the owned tokenizer-name width"
     );
+}
+
+#[derive(Default)]
+struct CompactNameProbe {
+    borrowed_words: Vec<String>,
+    owned_words: Vec<String>,
+}
+
+impl super::SourceStepQueries for CompactNameProbe {
+    fn catcode(&mut self, code: CharacterCode) -> Catcode {
+        classic_catcode(code)
+    }
+}
+
+impl super::CompactSourceStepQueries for CompactNameProbe {
+    fn compact_source_token(&mut self, token: &SourceToken) -> TokenWord {
+        if let SourceToken::ControlSequence {
+            name,
+            kind: SourceControlSequenceKind::Word,
+            ..
+        } = token
+        {
+            name.with_text(|text| self.owned_words.push(text.to_owned()));
+        }
+        TokenWord::pack(Token::undefined_control_sequence())
+    }
+
+    fn compact_control_word(&mut self, name: &str) -> TokenWord {
+        self.borrowed_words.push(name.to_owned());
+        TokenWord::pack(Token::undefined_control_sequence())
+    }
+}
+
+#[test]
+fn compact_control_words_borrow_raw_text_and_own_superscript_fallbacks() {
+    let mut state = state(br"\alpha \^^61lpha");
+    let mut queries = CompactNameProbe::default();
+
+    let _ = state.next_compact_exact_source_step(-1, &mut queries);
+    let _ = state.next_compact_exact_source_step(-1, &mut queries);
+
+    assert_eq!(queries.borrowed_words, ["alpha"]);
+    assert_eq!(queries.owned_words, ["alpha"]);
 }

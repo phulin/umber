@@ -352,6 +352,142 @@ fn assert_warmed_single_character_control_sequence_is_allocation_free<G>(
     assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 }
 
+fn assert_superscript_control_word_identity(profile: crate::CommandProfile, source_text: &str) {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .assign_code(
+                tex_state::env::CodeTableKind::Catcode,
+                '^',
+                i64::from(Catcode::Superscript as u8),
+                tex_state::env::AssignmentScope::Global,
+            )
+            .expect("superscript catcode");
+        let mut command = CommandState::new(profile);
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                std::sync::Arc::<[u8]>::from(source_text.as_bytes()),
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let transformed_mutable = processor
+            .get_token()
+            .expect("mutable transformed delivery")
+            .expect("transformed control word")
+            .spelling()
+            .semantic_token();
+        let literal_mutable = processor
+            .get_token()
+            .expect("mutable literal delivery")
+            .expect("literal control word")
+            .spelling()
+            .semantic_token();
+        let transformed_readonly = processor
+            .get_next()
+            .expect("readonly transformed delivery")
+            .expect("transformed control word")
+            .spelling()
+            .semantic_token();
+        let literal_readonly = processor
+            .get_next()
+            .expect("readonly literal delivery")
+            .expect("literal control word")
+            .spelling()
+            .semantic_token();
+
+        assert_eq!(transformed_mutable, literal_mutable);
+        assert_eq!(transformed_readonly, transformed_mutable);
+        assert_eq!(literal_readonly, transformed_mutable);
+        assert!(matches!(transformed_mutable, Token::Cs(_)));
+    });
+}
+
+#[test]
+fn superscript_control_words_share_literal_identity_in_exact_and_unicode_paths() {
+    assert_superscript_control_word_identity(
+        crate::CommandProfile::TEX82,
+        r"\^^61bc \abc \^^61bc \abc",
+    );
+    assert_superscript_control_word_identity(
+        crate::CommandProfile::unicode_extended(crate::CommandDialect::Tex82),
+        r"\^^^^0061bc \abc \^^^^0061bc \abc",
+    );
+}
+
+#[cfg(feature = "profiling")]
+fn assert_warmed_control_word_delivery_allocates_zero(create: bool) {
+    crate::test_harness::with_universe(|universe| {
+        const WARMUP_DELIVERIES: usize = 1_025;
+        const MEASURED_DELIVERIES: usize = 257;
+        let source_text = r"\warmedname "
+            .repeat(WARMUP_DELIVERIES + MEASURED_DELIVERIES)
+            .into_bytes()
+            .into_boxed_slice();
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                std::sync::Arc::<[u8]>::from(source_text),
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let expected = Token::Cs(context.intern_hash_control_sequence("warmedname"));
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let deliver = |processor: &mut crate::CommandProcessor<'_, '_, _>| {
+            let delivered = if create {
+                processor.get_token()
+            } else {
+                processor.get_next()
+            }
+            .expect("source delivery")
+            .expect("control word");
+            assert_eq!(delivered.spelling().semantic_token(), expected);
+        };
+        for _ in 0..WARMUP_DELIVERIES {
+            deliver(&mut processor);
+        }
+
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 0..MEASURED_DELIVERIES {
+                deliver(&mut processor);
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    });
+}
+
 #[cfg(feature = "profiling")]
 #[test]
 fn warmed_ascii_single_character_control_sequence_lookup_is_allocation_free() {
@@ -369,6 +505,12 @@ fn warmed_ascii_single_character_control_sequence_lookup_is_allocation_free() {
 
 #[cfg(feature = "profiling")]
 #[test]
+fn warmed_mutable_multiletter_control_word_delivery_allocates_zero_heap() {
+    assert_warmed_control_word_delivery_allocates_zero(true);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
 fn warmed_unicode_single_character_control_sequence_lookup_is_allocation_free() {
     for create_control_sequences in [false, true] {
         crate::test_harness::with_universe(|universe| {
@@ -380,6 +522,12 @@ fn warmed_unicode_single_character_control_sequence_lookup_is_allocation_free() 
             );
         });
     }
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_readonly_multiletter_control_word_delivery_allocates_zero_heap() {
+    assert_warmed_control_word_delivery_allocates_zero(false);
 }
 
 #[test]
