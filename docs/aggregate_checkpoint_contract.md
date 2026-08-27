@@ -149,6 +149,38 @@ drop returns the exclusive command-root loan; fork restores the selected marks
 and gives the sole current candidate that root. A rejected candidate returns
 the same storage after discarding its current logical suffix.
 
+## Core state, node arena, and primitive ownership outcome
+
+`umber2-pei0.2.8` removes candidate-time reconstruction of dense state and
+node-coordinate prefixes. Each retained runtime checkpoint owns one exact,
+already materialized `StateCore` and page-node bank behind a singular
+thread-confined loan slot. Checkpoint clones alias the slot. Candidate fork
+moves that bank into the current lineage, rejection reverses only the
+candidate-private dense journal and generation/node suffixes before returning
+the same bank, and acceptance consumes the loan. Same-generation restore swaps
+the exact bank into the live Universe and retains at most one whole abandoned
+bank for lineage retirement. It never replays the accepted document suffix to
+reconstruct an early checkpoint.
+
+Dense reads remain direct. A candidate's first mutation writes the live bank
+and appends only compact inverse and publisher records. Definition and stored-
+token publishers reset their scalar serial frontiers on rejection; glue and
+provenance truncate exact private row suffixes. Durable and page node arenas
+retain branch-local generation frontiers, so rejection followed by retry
+reproduces exact row coordinates and ids without making source and candidate
+coordinates alias. The completed primitive registry is one immutable `Rc`
+root shared at the named boundary; registration after sharing is rejected
+rather than entering copy-on-write.
+
+The enforced `core_checkpoint_gate` compares one shallow unit with an early
+checkpoint surrounded by 256 dense writes, open save histories, glue and
+provenance rows, page-node coordinates, and primitive rows. Its recorded
+optimized result is allocation/requested-byte identical for every measured
+transition: fork 41 / 45,800; restore 1 / 48; reject 4 / 44,192; accept 0 / 0;
+and first mutation 4 / 10,624. Seventeen-sample medians remained within the
+gate's conservative four-times diagnostic bound, while semantic sentinels and
+rejection/retry coordinate equality were checked independently.
+
 ## Promotion thresholds
 
 Later ownership-family children must retain this baseline and meet these final

@@ -29,6 +29,10 @@ path = "src/bin/canonical_episode.rs"
 name = "aggregate_checkpoint_baseline"
 path = "src/bin/aggregate_checkpoint_baseline.rs"
 
+[[bin]]
+name = "core_checkpoint_gate"
+path = "src/bin/core_checkpoint_gate.rs"
+
 [[bench]]
 name = "shipout"
 harness = false
