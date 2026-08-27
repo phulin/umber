@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tex_command::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState, DeliveryStatus,
-    RegisteredSourceKind, SourceRegistration,
+    CommandFuelLedger, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
+    DeliveryStatus, RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::Universe;
 use tex_state::env::AssignmentScope;
@@ -229,10 +229,12 @@ fn source_known_creating_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let start = Instant::now();
@@ -259,10 +261,12 @@ fn source_known_probe_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let start = Instant::now();
@@ -288,10 +292,12 @@ fn source_new_creating_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let start = Instant::now();
@@ -317,10 +323,12 @@ fn source_unknown_probe_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let start = Instant::now();
@@ -358,10 +366,12 @@ fn stored_control_sequence_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut elapsed = Duration::ZERO;
@@ -406,10 +416,12 @@ fn warmed_backup_push_pop_throughput() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut delivered = processor.get_next().unwrap().unwrap();
@@ -442,10 +454,12 @@ fn warmed_keyword_mismatch_throughput() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let run = |processor: &mut CommandProcessor<'_, '_, _>| {
@@ -496,10 +510,12 @@ fn destination_directed_warm_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut destination = None;
@@ -563,10 +579,12 @@ fn ordinary_source_delivery() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         for _ in 0..3 {
@@ -585,10 +603,12 @@ fn packed_backup_and_replay() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         for _ in 0..2 {
@@ -624,10 +644,12 @@ fn stored_token_replay() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         let mut destination = None;
@@ -693,10 +715,12 @@ fn macro_argument_matching() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
         let mut processor = processor(
             &mut context,
             &mut command,
             &mut capabilities,
+            &mut fuel,
             &mut diagnostic_effects,
         );
         for _ in 0..48 {
@@ -751,12 +775,15 @@ fn processor<'episode, 'admission, G>(
     context: &'episode mut tex_state::CommandContext<'admission, G>,
     command: &'episode mut CommandState<G>,
     capabilities: &'episode mut CommandHostCapabilities,
+    fuel: &'episode mut CommandFuelLedger,
     diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
 ) -> CommandProcessor<'episode, 'admission, G> {
     CommandProcessor::new(
         command,
         context,
         CommandHostContext::new(capabilities),
+        fuel.fuel_mut(),
+        None,
         diagnostic_effects,
     )
 }
