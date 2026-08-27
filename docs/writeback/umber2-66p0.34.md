@@ -34,9 +34,10 @@ The candidate deletes `ProcessorFuel`, the owned constructor, and the
 `&mut CommandFuel` from its caller and charges it directly. Executor sessions
 still lend `MainControl::fuel`; standalone tests and the command-stream tool
 create one call-local ledger and lend it across the same delivery or replay
-episode. `CommandFuel::charge`, `charge_many`, exhaustion construction, and
-the six counters are unchanged, so no work can be refunded by rollback,
-retry, or suspension.
+episode. The standalone packed-cutover benchmark does the same; this is the
+only benchmark mechanical fallout. `CommandFuel::charge`, `charge_many`,
+exhaustion construction, and the six counters are unchanged, so no work can
+be refunded by rollback, retry, or suspension.
 
 ## Architecture simplicity
 
@@ -92,4 +93,8 @@ Focused `tex-command` and `tex-exec` suites pass 244 and 695 unit tests plus
 their 18, 4, and 23 integration/fixture groups. `cargo test -q --tests` passes
 the complete routine workspace suite. The architecture regression forbids
 `ProcessorFuel` and `with_fuel`, and pins one processor constructor.
+The complete warmed `packed_cutover_gate` passes; every measured delivery,
+replay, stored-cursor, macro, keyword, primitive-resolution, and
+destination-directed row retains zero allocation calls and zero requested
+bytes.
 `scripts/check.sh` passes dprint, Biome, rustfmt, and both clippy resolutions.
