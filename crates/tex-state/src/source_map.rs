@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ahash::AHashMap;
 
-use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
+use crate::identity::{
+    AcceptedIdentityTail, HandleIdentity, IdentityAllocator, IdentityMark,
+};
 use crate::input::SourceId;
 use crate::state_hash::{SemanticSequenceIdentity, semantic_scalar_root};
 use crate::token::OriginId;
@@ -422,6 +424,16 @@ pub(crate) struct SourceMap {
     reachable_state_identity: Option<SemanticSequenceIdentity>,
 }
 
+/// Source rows detached from the accepted head while one candidate owns the
+/// mutable map. The checkpoint itself retains only [`SourceMapMark`].
+pub(crate) struct AcceptedSourceMapTail {
+    regions: Vec<SourceRegion>,
+    registration_roots: Vec<SourceRegistrationRef>,
+    generated: Vec<GeneratedSource>,
+    next_pos: u64,
+    identities: AcceptedIdentityTail,
+}
+
 impl Default for SourceMap {
     fn default() -> Self {
         Self {
@@ -787,6 +799,61 @@ impl SourceMap {
         self.reachable_state_identity.map(|root| root.root())
     }
 
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        mark: SourceMapMark,
+    ) -> AcceptedSourceMapTail {
+        assert!(self.validates(mark));
+        let region_base = self.accepted_region_len();
+        let generated_base = self.accepted_generated_len();
+        let local_regions = mark.regions - region_base;
+        let local_generated = mark.generated - generated_base;
+        let regions = Arc::make_mut(&mut self.regions).split_off(local_regions);
+        let registration_roots =
+            Arc::make_mut(&mut self.registration_roots).split_off(local_regions);
+        let generated = Arc::make_mut(&mut self.generated).split_off(local_generated);
+        for region in &regions {
+            Arc::make_mut(&mut self.region_by_source).remove(&region.source);
+        }
+        let identities = self
+            .identities
+            .begin_checkpoint_candidate(mark.identities)
+            .expect("validated source identity mark remains rewindable");
+        let next_pos = std::mem::replace(&mut self.next_pos, mark.next_pos);
+        AcceptedSourceMapTail {
+            regions,
+            registration_roots,
+            generated,
+            next_pos,
+            identities,
+        }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        mark: SourceMapMark,
+        mut tail: AcceptedSourceMapTail,
+    ) {
+        self.truncate_to_inner(mark);
+        self.identities.reject_checkpoint_candidate(tail.identities);
+        let region_base = self.region_len();
+        for (offset, region) in tail.regions.iter().enumerate() {
+            assert_eq!(
+                Arc::make_mut(&mut self.region_by_source)
+                    .insert(region.source, region_base + offset),
+                None
+            );
+        }
+        Arc::make_mut(&mut self.regions).append(&mut tail.regions);
+        Arc::make_mut(&mut self.registration_roots).append(&mut tail.registration_roots);
+        Arc::make_mut(&mut self.generated).append(&mut tail.generated);
+        self.next_pos = tail.next_pos;
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedSourceMapTail) {
+        self.identities.accept_checkpoint_candidate(tail.identities);
+    }
+
     fn registration(&self, index: usize) -> Option<&SourceRegistrationRef> {
         let base = self.accepted_region_len();
         if index < base {
@@ -801,6 +868,7 @@ impl SourceMap {
             .map(|registration| registration.0.line_starts.as_ref())
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn fork_at(&self, mark: SourceMapMark) -> Self {
         assert!(self.validates(mark));
         let parent_regions = self.accepted_region_len();

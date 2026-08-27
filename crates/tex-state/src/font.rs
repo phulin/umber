@@ -1,6 +1,6 @@
 //! Stateful font handles and rollback storage.
 
-use crate::identity::{IdentityAllocator, IdentityMark};
+use crate::identity::{AcceptedIdentityTail, IdentityAllocator, IdentityMark};
 use crate::ids::FontId;
 use crate::interner::{ControlSequenceKind, SymbolId};
 use crate::scaled::Scaled;
@@ -208,10 +208,10 @@ struct AcceptedFontBlock {
     parent: Option<Arc<Self>>,
     fonts: Arc<Vec<LoadedFont>>,
     identifiers: Arc<Vec<Option<SymbolId>>>,
-    identifier_writes: Arc<Vec<(FontId, Option<SymbolId>, StateHashFragment)>>,
+    identifier_writes: Arc<Vec<IdentifierWrite>>,
     identifier_writes_len: usize,
     expansion_specs: Arc<Vec<Option<FontExpansion>>>,
-    expansion_writes: Arc<Vec<(FontId, Option<FontExpansion>)>>,
+    expansion_writes: Arc<Vec<ExpansionWrite>>,
     expansion_writes_len: usize,
     by_key: Arc<BTreeMap<FontKey, FontId>>,
     hash_fragments: Arc<Vec<StateHashFragment>>,
@@ -220,6 +220,22 @@ struct AcceptedFontBlock {
     complete_hash_fragments: Arc<Vec<StateHashFragment>>,
     len: usize,
     total_len: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IdentifierWrite {
+    id: FontId,
+    before: Option<SymbolId>,
+    before_fragment: StateHashFragment,
+    after: Option<SymbolId>,
+    after_fragment: StateHashFragment,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExpansionWrite {
+    id: FontId,
+    before: Option<FontExpansion>,
+    after: Option<FontExpansion>,
 }
 
 impl AcceptedFontBlock {
@@ -241,12 +257,9 @@ impl AcceptedFontBlock {
             return self.parent.as_ref()?.identifier(index);
         }
         let mut value = *self.identifiers.get(index - self.base())?;
-        for (id, previous, _) in self.identifier_writes[self.identifier_writes_len..]
-            .iter()
-            .rev()
-        {
-            if id.raw() as usize == index {
-                value = *previous;
+        for write in self.identifier_writes[self.identifier_writes_len..].iter().rev() {
+            if write.id.raw() as usize == index {
+                value = write.before;
             }
         }
         Some(value)
@@ -257,12 +270,9 @@ impl AcceptedFontBlock {
             return self.parent.as_ref()?.expansion(index);
         }
         let mut value = *self.expansion_specs.get(index - self.base())?;
-        for (id, previous) in self.expansion_writes[self.expansion_writes_len..]
-            .iter()
-            .rev()
-        {
-            if id.raw() as usize == index {
-                value = *previous;
+        for write in self.expansion_writes[self.expansion_writes_len..].iter().rev() {
+            if write.id.raw() as usize == index {
+                value = write.before;
             }
         }
         Some(value)
@@ -282,12 +292,9 @@ impl AcceptedFontBlock {
             return self.parent.as_ref()?.complete_fragment(index);
         }
         let mut value = *self.complete_hash_fragments.get(index - self.base())?;
-        for (id, _, previous) in self.identifier_writes[self.identifier_writes_len..]
-            .iter()
-            .rev()
-        {
-            if id.raw() as usize == index {
-                value = *previous;
+        for write in self.identifier_writes[self.identifier_writes_len..].iter().rev() {
+            if write.id.raw() as usize == index {
+                value = write.before_fragment;
             }
         }
         Some(value)
@@ -325,11 +332,11 @@ pub(crate) struct FontStore {
     non_parameter_font_info_words: usize,
     identifiers: Arc<Vec<Option<SymbolId>>>,
     identifier_overrides: BTreeMap<FontId, (Option<SymbolId>, StateHashFragment)>,
-    identifier_writes: Arc<Vec<(FontId, Option<SymbolId>, StateHashFragment)>>,
+    identifier_writes: Arc<Vec<IdentifierWrite>>,
     identifier_writes_base: usize,
     expansion_specs: Arc<Vec<Option<FontExpansion>>>,
     expansion_overrides: BTreeMap<FontId, Option<FontExpansion>>,
-    expansion_writes: Arc<Vec<(FontId, Option<FontExpansion>)>>,
+    expansion_writes: Arc<Vec<ExpansionWrite>>,
     expansion_writes_base: usize,
     by_key: Arc<BTreeMap<FontKey, FontId>>,
     /// Append-only derived fragments keyed by semantic content. Rollback only
@@ -341,6 +348,19 @@ pub(crate) struct FontStore {
     complete_hash_fragments: Arc<Vec<StateHashFragment>>,
     identities: IdentityAllocator,
     reachable_state_identity: Option<SemanticMapIdentity>,
+}
+
+pub(crate) struct AcceptedFontStoreTail {
+    fonts: Vec<LoadedFont>,
+    identifiers: Vec<Option<SymbolId>>,
+    identifier_writes: Vec<IdentifierWrite>,
+    expansion_specs: Vec<Option<FontExpansion>>,
+    expansion_writes: Vec<ExpansionWrite>,
+    by_key: Vec<(FontKey, FontId)>,
+    font_hash_fragments: Vec<StateHashFragment>,
+    complete_hash_fragments: Vec<StateHashFragment>,
+    non_parameter_font_info_words: usize,
+    identities: AcceptedIdentityTail,
 }
 
 impl Clone for FontStore {
@@ -775,7 +795,13 @@ impl FontStore {
             let previous_fragment = self.complete_fragment(id);
             let immutable = *self.hash_fragment(id);
             let expansion = self.expansion(id);
-            Arc::make_mut(&mut self.identifier_writes).push((id, previous, previous_fragment));
+            Arc::make_mut(&mut self.identifier_writes).push(IdentifierWrite {
+                id,
+                before: previous,
+                before_fragment: previous_fragment,
+                after: Some(symbol),
+                after_fragment: complete_hash_fragment,
+            });
             if let Some(local) = self.local_index(id) {
                 Arc::make_mut(&mut self.identifiers)[local] = Some(symbol);
                 Arc::make_mut(&mut self.complete_hash_fragments)[local] = complete_hash_fragment;
@@ -934,7 +960,11 @@ impl FontStore {
         let previous = self.expansion(id);
         let immutable = *self.hash_fragment(id);
         let complete = self.complete_fragment(id);
-        Arc::make_mut(&mut self.expansion_writes).push((id, previous));
+        Arc::make_mut(&mut self.expansion_writes).push(ExpansionWrite {
+            id,
+            before: previous,
+            after: Some(expansion),
+        });
         if let Some(index) = self.local_index(id) {
             Arc::make_mut(&mut self.expansion_specs)[index] = Some(expansion);
         } else {
@@ -1044,49 +1074,51 @@ impl FontStore {
             .rollback(mark.identities)
             .expect("font-store mark is not an ancestor");
         let identifier_mark = mark.identifier_writes_len as usize - self.identifier_writes_base;
-        for (id, identifier, fragment) in self.identifier_writes[identifier_mark..]
+        for write in self.identifier_writes[identifier_mark..]
             .iter()
             .rev()
             .copied()
         {
-            if id.raw() < mark.len {
-                if let Some(index) = self.local_index(id) {
-                    Arc::make_mut(&mut self.identifiers)[index] = identifier;
-                    Arc::make_mut(&mut self.complete_hash_fragments)[index] = fragment;
+            if write.id.raw() < mark.len {
+                if let Some(index) = self.local_index(write.id) {
+                    Arc::make_mut(&mut self.identifiers)[index] = write.before;
+                    Arc::make_mut(&mut self.complete_hash_fragments)[index] =
+                        write.before_fragment;
                 } else {
                     let accepted_identifier = self
                         .accepted
                         .as_ref()
-                        .and_then(|block| block.identifier(id.raw() as usize))
+                        .and_then(|block| block.identifier(write.id.raw() as usize))
                         .flatten();
-                    if identifier == accepted_identifier {
-                        self.identifier_overrides.remove(&id);
+                    if write.before == accepted_identifier {
+                        self.identifier_overrides.remove(&write.id);
                     } else {
-                        self.identifier_overrides.insert(id, (identifier, fragment));
+                        self.identifier_overrides
+                            .insert(write.id, (write.before, write.before_fragment));
                     }
                 }
             }
         }
         Arc::make_mut(&mut self.identifier_writes).truncate(identifier_mark);
         let expansion_mark = mark.expansion_writes_len as usize - self.expansion_writes_base;
-        for (id, previous) in self.expansion_writes[expansion_mark..]
+        for write in self.expansion_writes[expansion_mark..]
             .iter()
             .rev()
             .copied()
         {
-            if id.raw() < mark.len {
-                if let Some(index) = self.local_index(id) {
-                    Arc::make_mut(&mut self.expansion_specs)[index] = previous;
+            if write.id.raw() < mark.len {
+                if let Some(index) = self.local_index(write.id) {
+                    Arc::make_mut(&mut self.expansion_specs)[index] = write.before;
                 } else {
                     let accepted_expansion = self
                         .accepted
                         .as_ref()
-                        .and_then(|block| block.expansion(id.raw() as usize))
+                        .and_then(|block| block.expansion(write.id.raw() as usize))
                         .flatten();
-                    if previous == accepted_expansion {
-                        self.expansion_overrides.remove(&id);
+                    if write.before == accepted_expansion {
+                        self.expansion_overrides.remove(&write.id);
                     } else {
-                        self.expansion_overrides.insert(id, previous);
+                        self.expansion_overrides.insert(write.id, write.before);
                     }
                 }
             }
@@ -1103,6 +1135,147 @@ impl FontStore {
         self.reachable_state_identity = mark.reachable_state_identity;
     }
 
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        mark: FontStoreMark,
+    ) -> AcceptedFontStoreTail {
+        assert!(self.validates(mark));
+        let accepted_len = self.accepted_len();
+        let local_len = mark.len as usize - accepted_len;
+        let fonts = Arc::make_mut(&mut self.fonts).split_off(local_len);
+        let identifiers = Arc::make_mut(&mut self.identifiers).split_off(local_len);
+        let expansion_specs = Arc::make_mut(&mut self.expansion_specs).split_off(local_len);
+        let font_hash_fragments =
+            Arc::make_mut(&mut self.font_hash_fragments).split_off(local_len);
+        let complete_hash_fragments =
+            Arc::make_mut(&mut self.complete_hash_fragments).split_off(local_len);
+        let mut by_key = Vec::new();
+        Arc::make_mut(&mut self.by_key).retain(|key, id| {
+            if id.raw() < mark.len {
+                true
+            } else {
+                by_key.push((key.clone(), *id));
+                false
+            }
+        });
+
+        let identifier_mark = mark.identifier_writes_len as usize - self.identifier_writes_base;
+        for write in self.identifier_writes[identifier_mark..]
+            .iter()
+            .rev()
+            .copied()
+        {
+            if write.id.raw() < mark.len {
+                if let Some(index) = self.local_index(write.id) {
+                    Arc::make_mut(&mut self.identifiers)[index] = write.before;
+                    Arc::make_mut(&mut self.complete_hash_fragments)[index] =
+                        write.before_fragment;
+                } else {
+                    let accepted = self
+                        .accepted
+                        .as_ref()
+                        .and_then(|block| block.identifier(write.id.raw() as usize))
+                        .flatten();
+                    if write.before == accepted {
+                        self.identifier_overrides.remove(&write.id);
+                    } else {
+                        self.identifier_overrides
+                            .insert(write.id, (write.before, write.before_fragment));
+                    }
+                }
+            }
+        }
+        let identifier_writes =
+            Arc::make_mut(&mut self.identifier_writes).split_off(identifier_mark);
+
+        let expansion_mark = mark.expansion_writes_len as usize - self.expansion_writes_base;
+        for write in self.expansion_writes[expansion_mark..]
+            .iter()
+            .rev()
+            .copied()
+        {
+            if write.id.raw() < mark.len {
+                if let Some(index) = self.local_index(write.id) {
+                    Arc::make_mut(&mut self.expansion_specs)[index] = write.before;
+                } else {
+                    let accepted = self
+                        .accepted
+                        .as_ref()
+                        .and_then(|block| block.expansion(write.id.raw() as usize))
+                        .flatten();
+                    if write.before == accepted {
+                        self.expansion_overrides.remove(&write.id);
+                    } else {
+                        self.expansion_overrides.insert(write.id, write.before);
+                    }
+                }
+            }
+        }
+        let expansion_writes =
+            Arc::make_mut(&mut self.expansion_writes).split_off(expansion_mark);
+        let identities = self
+            .identities
+            .begin_checkpoint_candidate(mark.identities)
+            .expect("validated font identity mark remains rewindable");
+        let non_parameter_font_info_words = std::mem::replace(
+            &mut self.non_parameter_font_info_words,
+            mark.non_parameter_font_info_words,
+        );
+        AcceptedFontStoreTail {
+            fonts,
+            identifiers,
+            identifier_writes,
+            expansion_specs,
+            expansion_writes,
+            by_key,
+            font_hash_fragments,
+            complete_hash_fragments,
+            non_parameter_font_info_words,
+            identities,
+        }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        mark: FontStoreMark,
+        mut tail: AcceptedFontStoreTail,
+    ) {
+        self.truncate_to(mark);
+        self.identities.reject_checkpoint_candidate(tail.identities);
+        Arc::make_mut(&mut self.fonts).append(&mut tail.fonts);
+        Arc::make_mut(&mut self.identifiers).append(&mut tail.identifiers);
+        Arc::make_mut(&mut self.expansion_specs).append(&mut tail.expansion_specs);
+        Arc::make_mut(&mut self.font_hash_fragments).append(&mut tail.font_hash_fragments);
+        Arc::make_mut(&mut self.complete_hash_fragments)
+            .append(&mut tail.complete_hash_fragments);
+        Arc::make_mut(&mut self.by_key).extend(tail.by_key);
+        self.non_parameter_font_info_words = tail.non_parameter_font_info_words;
+
+        for write in &tail.identifier_writes {
+            if let Some(index) = self.local_index(write.id) {
+                Arc::make_mut(&mut self.identifiers)[index] = write.after;
+                Arc::make_mut(&mut self.complete_hash_fragments)[index] = write.after_fragment;
+            } else {
+                self.identifier_overrides
+                    .insert(write.id, (write.after, write.after_fragment));
+            }
+        }
+        Arc::make_mut(&mut self.identifier_writes).append(&mut tail.identifier_writes);
+        for write in &tail.expansion_writes {
+            if let Some(index) = self.local_index(write.id) {
+                Arc::make_mut(&mut self.expansion_specs)[index] = write.after;
+            } else {
+                self.expansion_overrides.insert(write.id, write.after);
+            }
+        }
+        Arc::make_mut(&mut self.expansion_writes).append(&mut tail.expansion_writes);
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedFontStoreTail) {
+        self.identities.accept_checkpoint_candidate(tail.identities);
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn fork_at(&self, mark: FontStoreMark) -> Self {
         assert!(self.validates(mark));
         let parent_len = self.accepted_len();
@@ -1333,6 +1506,46 @@ mod tests {
 
         fonts.truncate_to(mark);
         assert_eq!(fonts.expansion(NULL_FONT), None);
+    }
+
+    #[test]
+    fn checkpoint_candidate_rejects_or_promotes_font_values_and_rows() {
+        let mut fonts = FontStore::new();
+        let mark = fonts.watermark();
+        let accepted_expansion = FontExpansion {
+            stretch: 20,
+            shrink: 10,
+            step: 5,
+            auto_expand: true,
+        };
+        fonts
+            .set_expansion(NULL_FONT, accepted_expansion)
+            .expect("accepted expansion");
+        let accepted = fonts.intern(test_font()).expect("accepted font");
+
+        let tail = fonts.begin_checkpoint_candidate(mark);
+        let candidate_expansion = FontExpansion {
+            stretch: 30,
+            ..accepted_expansion
+        };
+        fonts
+            .set_expansion(NULL_FONT, candidate_expansion)
+            .expect("candidate expansion");
+        let rejected = fonts.intern(test_font()).expect("candidate font");
+        fonts.reject_checkpoint_candidate(mark, tail);
+        assert_eq!(fonts.expansion(NULL_FONT), Some(accepted_expansion));
+        assert!(fonts.contains(accepted));
+        assert!(!fonts.contains(rejected));
+
+        let tail = fonts.begin_checkpoint_candidate(mark);
+        fonts
+            .set_expansion(NULL_FONT, candidate_expansion)
+            .expect("sibling expansion");
+        let promoted = fonts.intern(test_font()).expect("sibling font");
+        fonts.accept_checkpoint_candidate(tail);
+        assert_eq!(fonts.expansion(NULL_FONT), Some(candidate_expansion));
+        assert!(!fonts.contains(accepted));
+        assert!(fonts.contains(promoted));
     }
 
     const TEST_DOMAIN: u64 = 0x666f_6e74_5f74_6573;

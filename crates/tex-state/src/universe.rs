@@ -10,7 +10,7 @@ use crate::dependency::{
 use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{AssignmentScope, CodeTableKind, DenseStateCursor, StateError};
-use crate::font::{FontStore, FontStoreMark};
+use crate::font::{AcceptedFontStoreTail, FontStore, FontStoreMark};
 use crate::generation::{GenerationBrand, GenerationCursor, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
 use crate::hyphenation::HyphenationCheckpoint;
@@ -35,7 +35,7 @@ use crate::session_epoch::{InternerLease, SessionEpochError, SessionInternerEpoc
 use crate::shipout_scratch::{
     ShipoutScratchArena, ShipoutScratchListId, ShipoutScratchMark, ShipoutScratchNode,
 };
-use crate::source_map::{SourceMap, SourceMapMark};
+use crate::source_map::{AcceptedSourceMapTail, SourceMap, SourceMapMark};
 use crate::stores::{AcceptedStateCoreTail, StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
@@ -205,6 +205,10 @@ struct CheckpointStateCandidate<G> {
     generation: GenerationCursor,
     core: AcceptedStateCoreTail<G>,
     page_nodes: AcceptedNodeArenaTail<PageLifetime>,
+    source_mark: SourceMapMark,
+    sources: AcceptedSourceMapTail,
+    font_mark: FontStoreMark,
+    fonts: AcceptedFontStoreTail,
     accepted_retained_page_bound: NodeArenaCursor<PageLifetime>,
     accepted_durable_page_bound: NodeArenaCursor<PageLifetime>,
 }
@@ -879,11 +883,15 @@ impl<G> Universe<G> {
                 checkpoint.generation,
             )?;
         let page_node_tail = self.page_nodes.begin_checkpoint_candidate(*mark.page())?;
+        let source_tail = self.sources.begin_checkpoint_candidate(checkpoint.sources);
+        let font_tail = self.fonts.begin_checkpoint_candidate(checkpoint.fonts);
         let core = self
             .core
             .take()
             .expect("validated source owns its state core");
         let page_nodes = std::mem::take(&mut self.page_nodes);
+        let sources = std::mem::take(&mut self.sources);
+        let fonts = std::mem::take(&mut self.fonts);
         let destination_owner = core.generation_owner();
         let pdf = self.pdf.take_candidate(&checkpoint.pdf);
         let mut page = std::mem::take(&mut self.page);
@@ -900,15 +908,19 @@ impl<G> Universe<G> {
                 generation: checkpoint.generation,
                 core: core_tail,
                 page_nodes: page_node_tail,
+                source_mark: checkpoint.sources,
+                sources: source_tail,
+                font_mark: checkpoint.fonts,
+                fonts: font_tail,
                 accepted_retained_page_bound: self.retained_page_bound,
                 accepted_durable_page_bound: self.durable_page_bound,
             }),
             shipout_scratch: ShipoutScratchArena::default(),
-            fonts: self.fonts.fork_at(checkpoint.fonts),
+            fonts,
             page,
             page_lent_to_candidate: false,
             pdf,
-            sources: self.sources.fork_at(checkpoint.sources),
+            sources,
             hyphenation: HyphenationTable::from_checkpoint(&checkpoint.hyphenation),
             world: self.world.fork_checkpoint(&checkpoint.world),
             dependencies: self.dependencies.fork_tracker(&checkpoint.dependencies),
@@ -952,8 +964,16 @@ impl<G> Universe<G> {
             .page_nodes
             .reject_checkpoint_candidate(*mark.page(), transaction.page_nodes)
             .expect("validated candidate page nodes can undo and redo");
+        candidate
+            .sources
+            .reject_checkpoint_candidate(transaction.source_mark, transaction.sources);
+        candidate
+            .fonts
+            .reject_checkpoint_candidate(transaction.font_mark, transaction.fonts);
         self.core = Some(core);
         self.page_nodes = std::mem::take(&mut candidate.page_nodes);
+        self.sources = std::mem::take(&mut candidate.sources);
+        self.fonts = std::mem::take(&mut candidate.fonts);
         self.retained_page_bound = transaction.accepted_retained_page_bound;
         self.durable_page_bound = transaction.accepted_durable_page_bound;
         self.pdf.return_rejected(&mut candidate.pdf);
@@ -975,6 +995,10 @@ impl<G> Universe<G> {
             .accept_checkpoint_candidate(transaction.core);
         self.page_nodes
             .accept_checkpoint_candidate(transaction.page_nodes);
+        self.sources
+            .accept_checkpoint_candidate(transaction.sources);
+        self.fonts
+            .accept_checkpoint_candidate(transaction.fonts);
         self.pdf.commit_candidate();
         self.page.commit_checkpoint_fork();
     }

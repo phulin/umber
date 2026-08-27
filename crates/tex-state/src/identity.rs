@@ -136,6 +136,16 @@ pub(crate) struct IdentityAllocator {
     builtin_slots: u32,
 }
 
+/// Accepted identity metadata detached while one candidate owns the mutable
+/// allocator. Payload owners use this token as one part of their aggregate
+/// rewind journal; checkpoints retain only [`IdentityMark`].
+pub(crate) struct AcceptedIdentityTail {
+    active: AllocationTag,
+    len: u32,
+    runs: Vec<AllocationRun>,
+    rooted_runs_len: usize,
+}
+
 impl IdentityAllocator {
     /// Creates a fresh identity timeline with `builtin_slots` universal,
     /// immutable prefix entries.
@@ -330,6 +340,70 @@ impl IdentityAllocator {
         Ok(())
     }
 
+    /// Rewinds to a rooted candidate mark while retaining the exact accepted
+    /// run suffix for forward replay on rejection.
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        mark: IdentityMark,
+    ) -> Result<AcceptedIdentityTail, IdentityError> {
+        self.validate_rollback(mark)?;
+        let head_active = self.active;
+        let head_len = self.len;
+        let accepted_len = self.accepted.as_ref().map_or(0, |runs| runs.total_len);
+        let mark_len = u32::try_from(mark.len).map_err(|_| IdentityError::InvalidatedMark)?;
+        let generation = if mark_len == head_len {
+            self.active.generation
+        } else {
+            self.active
+                .generation
+                .get()
+                .checked_add(1)
+                .and_then(NonZeroU32::new)
+                .ok_or(IdentityError::GenerationExhausted)?
+        };
+        let runs = Arc::make_mut(&mut self.runs);
+        let split = runs.partition_point(|run| run.end <= mark_len);
+        let suffix = runs.split_off(split);
+        if mark_len != accepted_len && runs.last().is_none_or(|run| run.end != mark_len) {
+            let tag = suffix
+                .first()
+                .map_or(head_active, |run| run.tag);
+            runs.push(AllocationRun {
+                end: mark_len,
+                tag,
+            });
+        }
+        let rooted_runs_len = runs.len();
+        self.len = mark_len;
+        self.active.generation = generation;
+        Ok(AcceptedIdentityTail {
+            active: head_active,
+            len: head_len,
+            runs: suffix,
+            rooted_runs_len,
+        })
+    }
+
+    /// Drops candidate identities and forward-replays the accepted run suffix.
+    pub(crate) fn reject_checkpoint_candidate(&mut self, tail: AcceptedIdentityTail) {
+        let runs = Arc::make_mut(&mut self.runs);
+        runs.truncate(tail.rooted_runs_len);
+        if let (Some(prefix), Some(suffix)) = (runs.last_mut(), tail.runs.first())
+            && prefix.tag == suffix.tag
+        {
+            prefix.end = suffix.end;
+            runs.extend_from_slice(&tail.runs[1..]);
+        } else {
+            runs.extend_from_slice(&tail.runs);
+        }
+        self.active = tail.active;
+        self.len = tail.len;
+    }
+
+    /// Promotes the candidate allocation run and releases the superseded
+    /// accepted suffix as one metadata chunk.
+    pub(crate) fn accept_checkpoint_candidate(&mut self, _tail: AcceptedIdentityTail) {}
+
     fn extend_with_active(&mut self, count: u32) {
         if count == 0 {
             return;
@@ -366,4 +440,35 @@ fn fresh_namespace() -> NonZeroU64 {
     static NEXT_NAMESPACE: AtomicU64 = AtomicU64::new(RESERVED_NAMESPACE_MAX + 1);
     let raw = NEXT_NAMESPACE.fetch_add(1, Ordering::Relaxed);
     NonZeroU64::new(raw).expect("identity namespace space exhausted")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_candidate_rejects_or_promotes_one_identity_suffix() {
+        let mut identities = IdentityAllocator::new(0);
+        let _root = identities.allocate().expect("root identity");
+        let mark = identities.watermark();
+        let accepted = identities.allocate().expect("accepted identity");
+
+        let tail = identities
+            .begin_checkpoint_candidate(mark)
+            .expect("rooted candidate");
+        let rejected = identities.allocate().expect("candidate identity");
+        assert_eq!(accepted.slot(), rejected.slot());
+        assert_ne!(accepted, rejected);
+        identities.reject_checkpoint_candidate(tail);
+        assert!(identities.contains(accepted));
+        assert!(!identities.contains(rejected));
+
+        let tail = identities
+            .begin_checkpoint_candidate(mark)
+            .expect("sibling candidate");
+        let promoted = identities.allocate().expect("promoted identity");
+        identities.accept_checkpoint_candidate(tail);
+        assert!(!identities.contains(accepted));
+        assert!(identities.contains(promoted));
+    }
 }

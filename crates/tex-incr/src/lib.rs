@@ -1399,7 +1399,7 @@ fn candidate_control<G>(
     options: &CandidateControlOptions<'_>,
     restored_control: Option<MainControl<G>>,
 ) -> Result<MainControl<G>, SessionError> {
-    if options.initex {
+    if restored_control.is_none() && options.initex {
         tex_command::install_tex82_expandable_primitives(universe);
         tex_exec::install_unexpandable_primitives(universe);
         if matches!(

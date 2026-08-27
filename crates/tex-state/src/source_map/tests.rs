@@ -303,6 +303,33 @@ fn checkpoint_fork_accepts_only_the_marked_prefix_and_opens_a_private_suffix() {
 }
 
 #[test]
+fn checkpoint_candidate_rejects_or_promotes_one_source_suffix() {
+    let mut map = SourceMap::default();
+    map.register(SourceId::new(0), generated(b"root"))
+        .expect("root registers");
+    let mark = map.watermark();
+    let accepted = map
+        .register(SourceId::new(1), generated(b"accepted"))
+        .expect("accepted source registers");
+
+    let tail = map.begin_checkpoint_candidate(mark);
+    let rejected = map
+        .register(SourceId::new(1), generated(b"rejected"))
+        .expect("candidate source registers");
+    map.reject_checkpoint_candidate(mark, tail);
+    assert_eq!(map.position(SourceId::new(1), 0), Ok(accepted));
+    assert!(map.region_for_position(rejected).is_none());
+
+    let tail = map.begin_checkpoint_candidate(mark);
+    let promoted = map
+        .register(SourceId::new(1), generated(b"promoted"))
+        .expect("sibling source registers");
+    map.accept_checkpoint_candidate(tail);
+    assert_eq!(map.position(SourceId::new(1), 0), Ok(promoted));
+    assert!(map.region_for_position(accepted).is_none());
+}
+
+#[test]
 fn checked_registration_rejects_logical_u64_exhaustion_without_mutation() {
     let mut map = SourceMap::default();
     map.set_next_position_for_test(u64::MAX);
