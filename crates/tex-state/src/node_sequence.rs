@@ -62,6 +62,7 @@ pub struct NodeSequence {
     projection: PhysicalProjection,
     semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
     next_sequence_lineage_row: u32,
+    page_node_root_count: usize,
 }
 
 /// Explicit physical-channel state. Mirrored sequences store no duplicate
@@ -94,11 +95,16 @@ impl NodeSequence {
     pub fn mirrored(nodes: Vec<Node>) -> Self {
         let (semantic_high_cell_lineages, next_sequence_lineage_row) =
             mirrored_high_cell_lineages(&nodes);
+        let page_node_root_count = nodes
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
         Self {
             semantic: nodes,
             projection: PhysicalProjection::Mirrored,
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
+            page_node_root_count,
         }
     }
 
@@ -125,6 +131,11 @@ impl NodeSequence {
         );
         let (semantic_high_cell_lineages, physical_high_cell_lineages, next_sequence_lineage_row) =
             projected_high_cell_lineages(&semantic, &physical, &physical_boundaries);
+        let page_node_root_count = semantic
+            .iter()
+            .chain(&physical)
+            .filter(|node| node_retains_page_handle(node))
+            .count();
         Self {
             semantic,
             projection: PhysicalProjection::Distinct {
@@ -134,6 +145,7 @@ impl NodeSequence {
             },
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
+            page_node_root_count,
         }
     }
 
@@ -233,6 +245,7 @@ impl NodeSequence {
     }
 
     pub fn push_mirrored(&mut self, node: Node) {
+        let retains_page_root = node_retains_page_handle(&node);
         let row = self.next_sequence_lineage_row;
         self.next_sequence_lineage_row = self
             .next_sequence_lineage_row
@@ -256,6 +269,12 @@ impl NodeSequence {
                 high_cell_lineages.push(lineages);
             }
         }
+        self.page_node_root_count += usize::from(retains_page_root)
+            * if matches!(self.projection, PhysicalProjection::Mirrored) {
+                1
+            } else {
+                2
+            };
     }
 
     pub fn extend_mirrored(&mut self, nodes: impl IntoIterator<Item = Node>) {
@@ -278,6 +297,11 @@ impl NodeSequence {
         let (semantic, next_sequence_lineage_row) = mirrored_high_cell_lineages(&self.semantic);
         self.semantic_high_cell_lineages = semantic;
         self.next_sequence_lineage_row = next_sequence_lineage_row;
+        self.page_node_root_count = self
+            .semantic
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
         result
     }
 
@@ -300,19 +324,57 @@ impl NodeSequence {
             boundaries.truncate(semantic_len + 1);
             high_cell_lineages.truncate(physical_len);
         }
+        self.page_node_root_count = self
+            .semantic
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count()
+            + match &self.projection {
+                PhysicalProjection::Mirrored => 0,
+                PhysicalProjection::Distinct { nodes, .. } => nodes
+                    .iter()
+                    .filter(|node| node_retains_page_handle(node))
+                    .count(),
+            };
+    }
+
+    /// Restores a checkpointed suffix cursor and its maintained root count.
+    /// The count is captured beside the cursor, so rollback never rescans the
+    /// retained prefix merely to rediscover page-arena reachability.
+    pub fn restore_checkpoint_lengths(
+        &mut self,
+        semantic_len: usize,
+        physical_len: usize,
+        page_node_root_count: usize,
+    ) {
+        if matches!(self.projection, PhysicalProjection::Mirrored) {
+            assert_eq!(semantic_len, physical_len);
+        }
+        self.semantic.truncate(semantic_len);
+        self.semantic_high_cell_lineages.truncate(semantic_len);
+        if let PhysicalProjection::Distinct {
+            nodes,
+            boundaries,
+            high_cell_lineages,
+        } = &mut self.projection
+        {
+            nodes.truncate(physical_len);
+            boundaries.truncate(semantic_len + 1);
+            high_cell_lineages.truncate(physical_len);
+        }
+        self.page_node_root_count = page_node_root_count;
+    }
+
+    #[must_use]
+    pub const fn page_node_root_count(&self) -> usize {
+        self.page_node_root_count
     }
 
     /// Whether this checkpointable sequence explicitly carries a page-arena
     /// coordinate in either its mutable channels or frozen sidecars.
     #[must_use]
     pub fn retains_page_node_handles(&self) -> bool {
-        self.semantic.iter().any(node_retains_page_handle)
-            || match &self.projection {
-                PhysicalProjection::Mirrored => false,
-                PhysicalProjection::Distinct { nodes, .. } => {
-                    nodes.iter().any(node_retains_page_handle)
-                }
-            }
+        self.page_node_root_count != 0
     }
 }
 

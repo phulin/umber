@@ -128,6 +128,74 @@ fn main() {
             .expect("aggregate benchmark universe");
         }
     }
+    run_early_suffix_gate();
+}
+
+fn run_early_suffix_gate() {
+    let mut observations = Vec::new();
+    for units in [1, 4_096] {
+        with_universe(budget(), |universe| {
+            let mut command = CommandState::new(CommandProfile::TEX82);
+            let mut modes = ModeNest::new();
+            modes.push_current_node(Node::Penalty(-1));
+            {
+                let mut context = universe.command_context().expect("root context");
+                context.append_page_contribution(Node::Penalty(-1));
+                context.push_current_page_node(Node::Penalty(-1));
+            }
+            let checkpoint = EngineCheckpoint::capture_checkpoint(
+                EngineBoundary::JobStart,
+                &mut command,
+                &mut modes,
+                universe,
+                ExecutionBudgetCounters::default(),
+            )
+            .expect("early rooted checkpoint");
+            let mark = NodeTokenList::new([TokenWord::pack(Token::Char {
+                ch: 'm',
+                cat: Catcode::Other,
+            })]);
+            for index in 0..units {
+                modes.push_current_node(Node::Penalty(index as i32));
+                let mut context = universe.command_context().expect("suffix context");
+                context.append_page_contribution(Node::Penalty(index as i32));
+                context.push_current_page_node(Node::Penalty(index as i32));
+                context.push_page_discard(Node::Penalty(index as i32));
+                context.upsert_page_insertion(PageInsertion::new(
+                    (index % 256) as u16,
+                    Scaled::from_raw(index as i32),
+                ));
+                context.set_page_mark_class(PageMark::Bot, index as u16, mark.clone());
+            }
+            let (_, measurement) = measure(|| {
+                let work = checkpoint
+                    .profile_mode_page_owner_cycle(universe)
+                    .expect("rooted owner cycle");
+                ((), work.0 ^ work.1.rotate_left(17))
+            });
+            assert_eq!(measurement.checksum, 0, "owner cycle replayed accepted history");
+            observations.push((
+                units,
+                measurement.stats.allocations,
+                measurement.stats.bytes_allocated,
+                measurement.elapsed,
+            ));
+        })
+        .expect("early suffix universe");
+    }
+    let small = observations[0];
+    let large = observations[1];
+    assert_eq!(small.1, large.1, "owner-cycle allocations depend on suffix depth");
+    assert_eq!(small.2, large.2, "owner-cycle bytes depend on suffix depth");
+    println!(
+        "MODE_PAGE_EARLY_SUFFIX_GATE small_units={} large_units={} allocations={} requested_bytes={} small_ns={} large_ns={} replay_work=0",
+        small.0,
+        large.0,
+        large.1,
+        large.2,
+        small.3.as_nanos(),
+        large.3.as_nanos(),
+    );
 }
 
 fn assert_mode_page_flat_gate(

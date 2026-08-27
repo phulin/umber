@@ -176,7 +176,7 @@ struct ShipoutRollback<G> {
     state: StateOperation<G>,
     durable: NodeArenaCursor<PageLifetime>,
     page_nodes: NodeArenaCursor<PageLifetime>,
-    page: PageBuilderState,
+    page: PageCheckpointMark,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
     prepared_mag: Option<i32>,
@@ -376,7 +376,7 @@ impl<G> std::ops::DerefMut for ShipoutTransaction<'_, G> {
 impl<G> Drop for ShipoutTransaction<'_, G> {
     fn drop(&mut self) {
         if let Some(rollback) = self.rollback.take() {
-            self.universe.page = rollback.page;
+            self.universe.page.rollback_transaction(rollback.page);
             self.universe.pdf.rollback(rollback.pdf);
             self.universe.world.rollback(&rollback.world);
             self.universe.prepared_mag = rollback.prepared_mag;
@@ -729,6 +729,26 @@ impl<G> Universe<G> {
         Ok(())
     }
 
+    /// Profiles the isolated page-owner fork/mutate/reject seam without
+    /// constructing the independently owned aggregate fork families.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_page_owner_cycle(
+        &mut self,
+        checkpoint: &RuntimeCheckpoint<G>,
+    ) -> Result<u64, UniverseError> {
+        if !self.page.validates_checkpoint_mark(checkpoint.page) {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        let before = self.page.checkpoint_replay_work();
+        let mut page = std::mem::take(&mut self.page);
+        page.begin_checkpoint_fork(checkpoint.page);
+        page.push_contribution(crate::node::Node::Penalty(19));
+        page.reject_checkpoint_fork();
+        let work = page.checkpoint_replay_work().saturating_sub(before);
+        self.page = page;
+        Ok(work)
+    }
     #[doc(hidden)]
     pub fn prune_pdf_history(&mut self, low_water: (u64, u64)) {
         self.pdf.prune_history(low_water);
@@ -2494,7 +2514,7 @@ impl<G> Universe<G> {
                 .expect("live shipout generation")
                 .durable_node_cursor(),
             page_nodes: self.page_nodes.cursor(),
-            page: self.page.clone(),
+            page: self.page.checkpoint_mark(),
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
             prepared_mag: self.prepared_mag,
@@ -2749,6 +2769,7 @@ impl<G> ShipoutTransaction<'_, G> {
         self.universe
             .commit_state_operation(rollback.state)
             .expect("shipout owns the active state operation");
+        self.universe.page.commit_transaction(rollback.page);
     }
 
     /// Atomically commits the staged artifact, effect prefix, and fixed PDF

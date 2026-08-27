@@ -35,6 +35,14 @@ ceilings sit below the checked-in pre-mode/page-migration baseline, so restoring
 an accumulated mode-list or page-builder clone makes the run fail rather than
 merely changing a diagnostic row.
 
+The final `MODE_PAGE_EARLY_SUFFIX_GATE` row captures a rootless checkpoint,
+then compares one versus 4,096 later mode nodes, page nodes, insertion writes,
+mark writes, and journal records. It isolates the mode/page owner fork, first
+mutation, and rejection seams from the command, core, and World ownership
+families. Allocation calls and requested bytes must be byte-for-byte equal;
+an explicit replay-work counter must remain zero, so a fast allocator result
+cannot conceal depth-dependent rewind or replay CPU work.
+
 Run the shipout lowering cases with:
 
 ```bash

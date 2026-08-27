@@ -288,3 +288,61 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
         drop(retry);
     });
 }
+
+#[test]
+fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        let checkpoint = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::JobStart,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("early checkpoint captures");
+
+        for index in 0..512 {
+            modes.push_current_node(tex_state::node::Node::Penalty(index));
+            universe
+                .command_context()
+                .expect("accepted context")
+                .append_page_contribution(tex_state::node::Node::Penalty(index));
+        }
+
+        let (mut rejected, mut branch) = checkpoint
+            .fork_state(universe)
+            .expect("early checkpoint forks");
+        assert!(
+            branch
+                .mode_nest_for_test()
+                .current_list()
+                .nodes()
+                .is_empty()
+        );
+        branch
+            .mode_nest_mut_for_test()
+            .push_current_node(tex_state::node::Node::Penalty(900));
+        universe.return_rejected_pdf_from(&mut rejected);
+        drop(branch);
+        drop(rejected);
+
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("restored source")
+                .page_contributions()
+                .len(),
+            512,
+            "rejection returns the untouched accepted page payload",
+        );
+        let (mut retried, retry) = checkpoint
+            .fork_state(universe)
+            .expect("returned early checkpoint forks again");
+        assert!(retry.mode_nest_for_test().current_list().nodes().is_empty());
+        universe.return_rejected_pdf_from(&mut retried);
+        drop(retry);
+        drop(retried);
+    });
+}

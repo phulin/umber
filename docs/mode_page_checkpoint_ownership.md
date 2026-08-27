@@ -10,18 +10,23 @@ mode and page marks name storage owned by that generation.
 
 ## Two-lineage sequence representation
 
-Every open mode list and page-builder list is a logical sequence over at most
-two contiguous spans:
+Every open mode list and page-builder list is owned by at most two generation
+lineages:
 
-1. an immutable span in the accepted prior lineage; and
-2. an append-only span in the current candidate lineage.
+1. immutable regions in the accepted prior lineage; and
+2. append-only regions in the current candidate lineage.
 
-The spans are coordinates into coarse generation storage. They are not owners,
-chunks, history entries, or values which can outlive that storage. Appending
-material extends only the current span. Front consumption, tail consumption,
-list transfer, and discard-list movement update scalar coordinates and do not
-copy either span. APIs which consume or inspect a complete logical list iterate
-the two spans in order; they do not materialize a contiguous `Vec`.
+The regions are coordinates into coarse generation storage. They are not
+owners, chunks, history entries, or values which can outlive that storage.
+Most lists need one prior region followed by one current region. The
+contribution deque may need a bounded three-region view--a current-lineage
+front lane, the immutable prior region, and a current-lineage back lane--so a
+candidate can implement both TeX prepend and append without adding an owner.
+Appending material extends only a current region. Front consumption, tail
+consumption, list transfer, and discard-list movement update scalar coordinates
+and do not copy a region. APIs which consume or inspect a complete logical list
+iterate the bounded view in semantic order; they do not materialize a
+contiguous `Vec`.
 
 Candidate rejection discards the private current suffix wholesale and restores
 the prior roots. Candidate acceptance makes that suffix the current accepted

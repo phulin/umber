@@ -30,6 +30,7 @@ struct ListProjection {
     id: u64,
     node_len: usize,
     physical_node_len: usize,
+    page_node_root_count: usize,
     inverse_positions: [usize; FIELD_COUNT],
 }
 
@@ -39,6 +40,7 @@ impl ListProjection {
             id,
             node_len: list.nodes().len(),
             physical_node_len: list.physical_nodes().len(),
+            page_node_root_count: list.sequence.page_node_root_count(),
             inverse_positions: [UNRECORDED; FIELD_COUNT],
         }
     }
@@ -172,9 +174,13 @@ pub(super) struct ModeJournal {
     frames: Vec<Frame>,
     projections: Vec<ListProjection>,
     inverses: Vec<Inverse>,
+    replay_work: u64,
 }
 
 impl ModeJournal {
+    pub(super) fn has_active_frame(&self) -> bool {
+        !self.frames.is_empty()
+    }
     pub(super) fn enabled(level_count: usize) -> Self {
         let mut level_ids = Vec::with_capacity(MAX_LIVE_LEVELS);
         level_ids.extend(1..=level_count as u64);
@@ -187,6 +193,7 @@ impl ModeJournal {
             frames: Vec::with_capacity(MAX_JOURNAL_FRAMES),
             projections: Vec::with_capacity(MAX_LIVE_LEVELS * MAX_JOURNAL_FRAMES),
             inverses: Vec::with_capacity(32),
+            replay_work: 0,
         }
     }
 
@@ -259,6 +266,9 @@ macro_rules! push_inverse_once {
 }
 
 impl ListJournal<'_> {
+    pub(super) const fn needs_nodes(&self) -> bool {
+        self.inverse_positions[NODES] == UNRECORDED
+    }
     pub(super) fn record_nodes(&mut self, old: &tex_state::node_sequence::NodeSequence) {
         if self.inverse_positions[NODES] == UNRECORDED {
             self.inverse_positions[NODES] = self.inverses.len();
@@ -505,6 +515,11 @@ impl ModeNestStorage {
         self.journal.inverses.len()
     }
 
+    #[cfg(feature = "profiling")]
+    pub(super) const fn replay_work(&self) -> u64 {
+        self.journal.replay_work
+    }
+
     pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.validate_cursor(cursor)?;
         let frame = self.journal.frames.pop().expect("validated frame exists");
@@ -519,6 +534,7 @@ impl ModeNestStorage {
         self.validate_cursor(cursor)?;
         let frame = self.journal.frames.pop().expect("validated frame exists");
         while self.journal.inverses.len() > frame.cursor {
+            self.journal.replay_work = self.journal.replay_work.saturating_add(1);
             let inverse = self.journal.inverses.pop().expect("cursor bounds inverses");
             match inverse {
                 Inverse::Nodes { level_id, old } => {
@@ -586,10 +602,11 @@ impl ModeNestStorage {
         for index in frame.projection_start..self.journal.projections.len() {
             let projection = self.journal.projections[index];
             let level = self.level_by_id_mut(projection.id);
-            level
-                .list
-                .sequence
-                .truncate(projection.node_len, projection.physical_node_len);
+            level.list.sequence.restore_checkpoint_lengths(
+                projection.node_len,
+                projection.physical_node_len,
+                projection.page_node_root_count,
+            );
         }
         self.journal.projections.truncate(frame.projection_start);
         Ok(())

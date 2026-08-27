@@ -115,6 +115,27 @@ impl<G> EngineCheckpoint<G> {
         self.fork_state(source)
     }
 
+    /// Exercises only the mode/page owner fork, first mutation, and rejection
+    /// seams.  The standalone gate uses this to distinguish their work from
+    /// the independently owned command, core, and World fork families.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_mode_page_owner_cycle(
+        &self,
+        source: &mut Universe<G>,
+    ) -> Result<(u64, u64), CheckpointRestoreError> {
+        let mode_before = self.modes.replay_work();
+        let mut modes =
+            ModeNest::fork_checkpoint(&self.modes).map_err(CheckpointRestoreError::Mode)?;
+        modes.push_current_node(tex_state::node::Node::Penalty(17));
+        drop(modes);
+        let mode_work = self.modes.replay_work().saturating_sub(mode_before);
+        let page_work = source
+            .profile_page_owner_cycle(&self.runtime)
+            .map_err(CheckpointRestoreError::Runtime)?;
+        Ok((mode_work, page_work))
+    }
+
     /// Captures a named boundary. Command publication proves that no scanner,
     /// macro matcher, alignment delivery, or attempt arena remains live.
     pub fn capture_checkpoint(
@@ -130,7 +151,7 @@ impl<G> EngineCheckpoint<G> {
             .and_then(|anchor| usize::try_from(anchor).ok())
             .unwrap_or(0);
         let modes = nest.checkpoint();
-        let mode_hash = modes.semantic_fingerprint(universe);
+        let mode_hash = modes.conservative_identity();
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();
@@ -214,13 +235,6 @@ impl<G> EngineCheckpoint<G> {
         let prepared_command = command
             .prepare_summary_restore(&self.command, universe)
             .map_err(CheckpointRestoreError::Command)?;
-        if !self.modes.font_roots_are_live(|font| {
-            universe.runtime_checkpoint_retains_font(&self.runtime, font)
-        }) {
-            return Err(CheckpointRestoreError::Runtime(UniverseError::State(
-                tex_state::StateError::InvalidCursor,
-            )));
-        }
         let maximum_saved_depth = nest.maximum_saved_depth();
         restore_validated_roots(
             command,

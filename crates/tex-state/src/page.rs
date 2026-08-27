@@ -335,15 +335,18 @@ pub(crate) struct PageBuilderState {
     mark_class_positions: Vec<Option<u16>>,
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
+    page_node_root_count: usize,
     checkpoint_journal: PageCheckpointJournal,
 }
 
 /// Bounded root of one page-builder state on its generation timeline.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct PageCheckpointMark {
     timeline: u64,
     frame: u64,
     cursor: usize,
+    scalars: PageScalars,
+    rootless: bool,
 }
 
 #[derive(Clone)]
@@ -360,14 +363,35 @@ struct PageCheckpointJournal {
     inverses: Vec<PageInverse>,
     applied: usize,
     fork: Option<Box<PageForkJournal>>,
+    replay_work: u64,
 }
 
 #[derive(Clone)]
 struct PageForkJournal {
+    origin_timeline: u64,
     origin: usize,
     target: usize,
     future: Vec<PageInverse>,
     future_frames: Vec<PageCheckpointFrame>,
+    flat_origin: Option<Box<PagePayload>>,
+    origin_scalars: Option<PageScalars>,
+}
+
+#[derive(Clone, Default)]
+struct PagePayload {
+    contribution: VecDeque<Node>,
+    current_page: PageNodeSequence,
+    page_discards: Vec<Node>,
+    split_discards: Vec<Node>,
+    insertions: Vec<PageInsertion>,
+    insertion_positions: Vec<Option<u16>>,
+    top_mark: Option<NodeTokenList>,
+    first_mark: Option<NodeTokenList>,
+    bot_mark: Option<NodeTokenList>,
+    split_first_mark: Option<NodeTokenList>,
+    split_bot_mark: Option<NodeTokenList>,
+    mark_classes: Vec<(u16, MarkClassState)>,
+    mark_class_positions: Vec<Option<u16>>,
 }
 
 #[derive(Clone)]
@@ -406,7 +430,7 @@ enum PageInverse {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
 struct PageScalars {
     dimensions: [Scaled; 8],
     page_max_depth: Scaled,
@@ -423,6 +447,7 @@ struct PageScalars {
     fire_up: Option<PageFireUp>,
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
+    page_node_root_count: usize,
 }
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,
@@ -489,13 +514,19 @@ impl Default for PageBuilderState {
             mark_class_positions: Vec::new(),
             tex82_dynamic_words: 0,
             etex_dynamic_words: 0,
+            page_node_root_count: 0,
             checkpoint_journal: PageCheckpointJournal {
                 timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
                 next_frame: 1,
                 frames: Vec::with_capacity(64),
-                inverses: Vec::with_capacity(256),
+                // Page inverses include move-only list carriers and are much
+                // larger than the journal's scalar records.  Grow this lane
+                // on demand instead of charging every page builder for a
+                // payload-sized speculative reserve.
+                inverses: Vec::new(),
                 applied: 0,
                 fork: None,
+                replay_work: 0,
             },
         }
     }
@@ -510,6 +541,8 @@ impl PageBuilderState {
             .checked_add(1)
             .expect("page checkpoint identity space exhausted");
         let cursor = self.checkpoint_journal.applied;
+        let scalars = self.scalar_snapshot();
+        let rootless = self.payload_is_empty();
         self.checkpoint_journal
             .frames
             .push(PageCheckpointFrame { id: frame, cursor });
@@ -517,17 +550,40 @@ impl PageBuilderState {
             timeline: self.checkpoint_journal.timeline,
             frame,
             cursor,
+            scalars,
+            rootless,
+        }
+    }
+
+    pub(crate) fn commit_transaction(&mut self, mark: PageCheckpointMark) {
+        debug_assert!(self.validates_checkpoint_mark(mark));
+        self.checkpoint_journal
+            .frames
+            .retain(|frame| frame.id != mark.frame);
+        if self.checkpoint_journal.frames.is_empty() {
+            self.checkpoint_journal.inverses.clear();
+            self.checkpoint_journal.applied = 0;
+        }
+    }
+
+    pub(crate) fn rollback_transaction(&mut self, mark: PageCheckpointMark) {
+        self.restore_checkpoint_mark(mark);
+        self.checkpoint_journal.inverses.truncate(mark.cursor);
+        self.checkpoint_journal.applied = mark.cursor;
+        self.checkpoint_journal
+            .frames
+            .retain(|frame| frame.id != mark.frame);
+        if self.checkpoint_journal.frames.is_empty() {
+            self.checkpoint_journal.inverses.clear();
+            self.checkpoint_journal.applied = 0;
         }
     }
 
     pub(crate) fn validates_checkpoint_mark(&self, mark: PageCheckpointMark) -> bool {
         mark.timeline == self.checkpoint_journal.timeline
             && mark.cursor <= self.checkpoint_journal.inverses.len()
-            && self
-                .checkpoint_journal
-                .frames
-                .iter()
-                .any(|frame| frame.id == mark.frame && frame.cursor == mark.cursor)
+            && mark.frame != 0
+            && mark.frame < self.checkpoint_journal.next_frame
     }
 
     pub(crate) fn restore_checkpoint_mark(&mut self, mark: PageCheckpointMark) {
@@ -547,6 +603,26 @@ impl PageBuilderState {
         debug_assert!(self.validates_checkpoint_mark(mark));
         debug_assert!(self.checkpoint_journal.fork.is_none());
         let origin = self.checkpoint_journal.applied;
+        if mark.rootless {
+            let origin_timeline = self.checkpoint_journal.timeline;
+            let origin_scalars = self.scalar_snapshot();
+            let flat_origin = Box::new(self.take_payload());
+            self.restore_scalars(mark.scalars);
+            let future = std::mem::take(&mut self.checkpoint_journal.inverses);
+            let future_frames = std::mem::take(&mut self.checkpoint_journal.frames);
+            self.checkpoint_journal.applied = 0;
+            self.checkpoint_journal.timeline = NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed);
+            self.checkpoint_journal.fork = Some(Box::new(PageForkJournal {
+                origin_timeline,
+                origin,
+                target: 0,
+                future,
+                future_frames,
+                flat_origin: Some(flat_origin),
+                origin_scalars: Some(origin_scalars),
+            }));
+            return;
+        }
         self.restore_checkpoint_mark(mark);
         let future = self.checkpoint_journal.inverses.split_off(mark.cursor);
         let mut future_frames = Vec::new();
@@ -559,10 +635,13 @@ impl PageBuilderState {
             }
         });
         self.checkpoint_journal.fork = Some(Box::new(PageForkJournal {
+            origin_timeline: self.checkpoint_journal.timeline,
             origin,
             target: mark.cursor,
             future,
             future_frames,
+            flat_origin: None,
+            origin_scalars: None,
         }));
     }
 
@@ -572,6 +651,19 @@ impl PageBuilderState {
             .fork
             .take()
             .expect("candidate page timeline owns one fork");
+        if let Some(origin) = fork.flat_origin {
+            let _candidate = self.take_payload();
+            self.install_payload(*origin);
+            self.restore_scalars(
+                fork.origin_scalars
+                    .expect("flat page fork retains origin scalars"),
+            );
+            self.checkpoint_journal.inverses = fork.future;
+            self.checkpoint_journal.frames = fork.future_frames;
+            self.checkpoint_journal.applied = fork.origin;
+            self.checkpoint_journal.timeline = fork.origin_timeline;
+            return;
+        }
         while self.checkpoint_journal.applied > fork.target {
             self.checkpoint_journal.applied -= 1;
             self.toggle_page_inverse(self.checkpoint_journal.applied);
@@ -638,7 +730,56 @@ impl PageBuilderState {
             fire_up: self.fire_up,
             tex82_dynamic_words: self.tex82_dynamic_words,
             etex_dynamic_words: self.etex_dynamic_words,
+            page_node_root_count: self.page_node_root_count,
         }
+    }
+
+    fn payload_is_empty(&self) -> bool {
+        self.contribution.is_empty()
+            && self.current_page.len() == 0
+            && self.page_discards.is_empty()
+            && self.split_discards.is_empty()
+            && self.insertions.is_empty()
+            && self.top_mark.is_none()
+            && self.first_mark.is_none()
+            && self.bot_mark.is_none()
+            && self.split_first_mark.is_none()
+            && self.split_bot_mark.is_none()
+            && self.mark_classes.is_empty()
+    }
+
+    fn take_payload(&mut self) -> PagePayload {
+        PagePayload {
+            contribution: std::mem::take(&mut self.contribution),
+            current_page: std::mem::take(&mut self.current_page),
+            page_discards: std::mem::take(&mut self.page_discards),
+            split_discards: std::mem::take(&mut self.split_discards),
+            insertions: std::mem::take(&mut self.insertions),
+            insertion_positions: std::mem::take(&mut self.insertion_positions),
+            top_mark: self.top_mark.take(),
+            first_mark: self.first_mark.take(),
+            bot_mark: self.bot_mark.take(),
+            split_first_mark: self.split_first_mark.take(),
+            split_bot_mark: self.split_bot_mark.take(),
+            mark_classes: std::mem::take(&mut self.mark_classes),
+            mark_class_positions: std::mem::take(&mut self.mark_class_positions),
+        }
+    }
+
+    fn install_payload(&mut self, payload: PagePayload) {
+        self.contribution = payload.contribution;
+        self.current_page = payload.current_page;
+        self.page_discards = payload.page_discards;
+        self.split_discards = payload.split_discards;
+        self.insertions = payload.insertions;
+        self.insertion_positions = payload.insertion_positions;
+        self.top_mark = payload.top_mark;
+        self.first_mark = payload.first_mark;
+        self.bot_mark = payload.bot_mark;
+        self.split_first_mark = payload.split_first_mark;
+        self.split_bot_mark = payload.split_bot_mark;
+        self.mark_classes = payload.mark_classes;
+        self.mark_class_positions = payload.mark_class_positions;
     }
 
     fn record_scalars(&mut self) {
@@ -649,6 +790,7 @@ impl PageBuilderState {
     }
 
     fn toggle_page_inverse(&mut self, index: usize) {
+        self.checkpoint_journal.replay_work = self.checkpoint_journal.replay_work.saturating_add(1);
         let inverse = std::mem::replace(
             &mut self.checkpoint_journal.inverses[index],
             PageInverse::Noop,
@@ -810,6 +952,12 @@ impl PageBuilderState {
         self.fire_up = old.fire_up;
         self.tex82_dynamic_words = old.tex82_dynamic_words;
         self.etex_dynamic_words = old.etex_dynamic_words;
+        self.page_node_root_count = old.page_node_root_count;
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) const fn checkpoint_replay_work(&self) -> u64 {
+        self.checkpoint_journal.replay_work
     }
 
     fn restore_insertion(&mut self, class: u16, old: Option<PageInsertion>) {
@@ -872,12 +1020,7 @@ impl PageBuilderState {
     /// page-arena coordinate. A rootless state contributes no retained-prefix
     /// demand merely because the arena cursor has advanced.
     pub(crate) fn retains_page_node_handles(&self) -> bool {
-        self.contribution
-            .iter()
-            .chain(self.current_page.iter())
-            .chain(self.page_discards.iter())
-            .chain(self.split_discards.iter())
-            .any(node_retains_page_handle)
+        self.page_node_root_count != 0
     }
 
     pub(crate) fn dynamic_memory_words(&self, etex_node_sizes: bool) -> usize {
@@ -1328,10 +1471,15 @@ impl PageBuilderState {
     ) {
         self.record_scalars();
         if !self.checkpoint_journal.frames.is_empty() {
+            let insertions = std::mem::take(&mut self.insertions);
+            let positions = std::mem::take(&mut self.insertion_positions);
             self.record_page_inverse(PageInverse::InsertionsReplace {
-                insertions: self.insertions.clone(),
-                positions: self.insertion_positions.clone(),
+                insertions,
+                positions,
             });
+        } else {
+            self.insertions.clear();
+            self.insertion_positions.clear();
         }
         self.contents = contents;
         self.page_goal = vsize;
@@ -1346,8 +1494,6 @@ impl PageBuilderState {
         self.least_page_cost = AWFUL_BAD;
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
-        self.insertions.clear();
-        self.insertion_positions.clear();
     }
 
     pub(crate) fn start_new_page(&mut self) {
@@ -1366,16 +1512,31 @@ impl PageBuilderState {
     /// freezes the next page's specifications.
     pub(crate) fn start_page_after_output(&mut self) {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::CurrentPageReplace(self.current_page.clone()));
-            self.record_page_inverse(PageInverse::InsertionsReplace {
-                insertions: self.insertions.clone(),
-                positions: self.insertion_positions.clone(),
-            });
-        }
         let released = dynamic_words(self.current_page.iter());
+        let released_page_roots = self
+            .current_page
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        if !self.checkpoint_journal.frames.is_empty() {
+            let current_page = std::mem::take(&mut self.current_page);
+            let insertions = std::mem::take(&mut self.insertions);
+            let positions = std::mem::take(&mut self.insertion_positions);
+            self.record_page_inverse(PageInverse::CurrentPageReplace(current_page));
+            self.record_page_inverse(PageInverse::InsertionsReplace {
+                insertions,
+                positions,
+            });
+        } else {
+            self.current_page.clear();
+            self.insertions.clear();
+            self.insertion_positions.clear();
+        }
         self.release_dynamic_word_totals(released);
-        self.current_page.clear();
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(released_page_roots)
+            .expect("released more page roots than were live");
         self.contents = PageContents::Empty;
         self.last_glue = None;
         self.last_penalty = 0;
@@ -1388,8 +1549,6 @@ impl PageBuilderState {
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
         self.fire_up = None;
-        self.insertions.clear();
-        self.insertion_positions.clear();
     }
 
     pub(crate) const fn contents(&self) -> PageContents {
@@ -1536,24 +1695,30 @@ impl PageBuilderState {
 
     pub(crate) fn clear_page_discards(&mut self) {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::PageDiscardsReplace(self.page_discards.clone()));
-        }
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::PageDiscardsReplace(nodes));
+        }
     }
 
     pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(
-                self.split_discards.clone(),
-            ));
-        }
         let added = dynamic_words(nodes.iter());
+        let added_page_roots = nodes
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
         let old = std::mem::replace(&mut self.split_discards, nodes);
         self.release_dynamic_nodes(&old);
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(old));
+        }
         self.allocate_dynamic_word_totals(added);
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_add(added_page_roots)
+            .expect("page root accounting overflow");
     }
 
     pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
@@ -1570,13 +1735,11 @@ impl PageBuilderState {
 
     pub(crate) fn clear_split_discards(&mut self) {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(
-                self.split_discards.clone(),
-            ));
-        }
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
+        if !self.checkpoint_journal.frames.is_empty() {
+            self.record_page_inverse(PageInverse::SplitDiscardsReplace(nodes));
+        }
     }
 
     pub(crate) fn current_page_tail(&self) -> Option<&Node> {
@@ -1667,6 +1830,10 @@ impl PageBuilderState {
             .etex_dynamic_words
             .checked_add(node.tex_memory_words(true).1)
             .expect("page dynamic-memory accounting overflow");
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_add(usize::from(node_retains_page_handle(node)))
+            .expect("page root accounting overflow");
     }
 
     fn release_dynamic_node(&mut self, node: &Node) {
@@ -1678,14 +1845,36 @@ impl PageBuilderState {
             .etex_dynamic_words
             .checked_sub(node.tex_memory_words(true).1)
             .expect("released more page dynamic memory than was live");
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(usize::from(node_retains_page_handle(node)))
+            .expect("released more page roots than were live");
     }
 
     fn allocate_dynamic_nodes(&mut self, nodes: &[Node]) {
         self.allocate_dynamic_word_totals(dynamic_words(nodes.iter()));
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_add(
+                nodes
+                    .iter()
+                    .filter(|node| node_retains_page_handle(node))
+                    .count(),
+            )
+            .expect("page root accounting overflow");
     }
 
     fn release_dynamic_nodes(&mut self, nodes: &[Node]) {
         self.release_dynamic_word_totals(dynamic_words(nodes.iter()));
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(
+                nodes
+                    .iter()
+                    .filter(|node| node_retains_page_handle(node))
+                    .count(),
+            )
+            .expect("released more page roots than were live");
     }
 
     fn allocate_dynamic_word_totals(&mut self, words: (usize, usize)) {
