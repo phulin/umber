@@ -233,11 +233,15 @@ pub struct DependencyTracker {
     changed: Arc<AHashMap<DependencyKey, ChangedAt>>,
 }
 
-/// O(1) rollback root for changed-at metadata.
-#[derive(Clone, Debug, Default)]
+/// Fixed invalidation epoch retained by an aggregate checkpoint.
+///
+/// Per-key stamps are validation telemetry rather than semantic state. A
+/// restore or fork which crossed this epoch invalidates conservatively instead
+/// of cloning the accumulated key map into another revision lineage.
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct DependencyTrackerSnapshot {
+    revision: u64,
     invalidated_at: ChangedAt,
-    changed: Arc<AHashMap<DependencyKey, ChangedAt>>,
 }
 
 /// Optional recording state installed around one interpreter computation.
@@ -415,13 +419,36 @@ impl DependencyRuntime {
 
     pub(crate) fn snapshot_tracker(&self) -> DependencyTrackerSnapshot {
         DependencyTrackerSnapshot {
+            revision: self.tracker.revision,
             invalidated_at: self.tracker.invalidated_at,
-            changed: Arc::clone(&self.tracker.changed),
         }
     }
 
     pub(crate) fn restore_tracker(&mut self, snapshot: &DependencyTrackerSnapshot) {
         self.tracker.restore(snapshot);
+    }
+
+    /// Opens a destination-private validation epoch for a revision fork.
+    /// Existing observations fail closed against the new global stamp; no
+    /// per-key payload crosses into the candidate lineage.
+    pub(crate) fn fork_tracker(&self, snapshot: &DependencyTrackerSnapshot) -> Self {
+        assert!(self.active.is_none(), "a dependency recorder crossed a checkpoint");
+        let revision = self
+            .tracker
+            .revision
+            .max(snapshot.revision)
+            .checked_add(1)
+            .expect("dependency revision exhausted");
+        Self {
+            tracker: DependencyTracker {
+                revision,
+                invalidated_at: ChangedAt(revision),
+                changed: Arc::new(AHashMap::new()),
+            },
+            active: None,
+            next_region_epoch: self.next_region_epoch,
+            tracking_enabled: self.tracking_enabled,
+        }
     }
 
     #[must_use]
@@ -504,43 +531,15 @@ impl DependencyTracker {
     }
 
     fn restore(&mut self, snapshot: &DependencyTrackerSnapshot) {
-        if Arc::ptr_eq(&self.changed, &snapshot.changed)
-            && self.invalidated_at == snapshot.invalidated_at
-        {
+        if self.revision == snapshot.revision && self.invalidated_at == snapshot.invalidated_at {
             return;
         }
-        let mut restored = (*snapshot.changed).clone();
-        let changed_keys = self
-            .changed
-            .iter()
-            .filter_map(|(&key, &stamp)| {
-                (snapshot.changed.get(&key).copied() != Some(stamp)).then_some(key)
-            })
-            .chain(
-                snapshot
-                    .changed
-                    .keys()
-                    .copied()
-                    .filter(|key| !self.changed.contains_key(key)),
-            )
-            .collect::<Vec<_>>();
-        let global_changed = self.invalidated_at != snapshot.invalidated_at;
-        let mut restored_invalidated_at = snapshot.invalidated_at;
-        if global_changed || !changed_keys.is_empty() {
-            self.revision = self
-                .revision
-                .checked_add(1)
-                .expect("dependency revision exhausted");
-            let stamp = ChangedAt(self.revision);
-            if global_changed {
-                restored_invalidated_at = stamp;
-            }
-            for key in changed_keys {
-                restored.insert(key, stamp);
-            }
-        }
-        self.invalidated_at = restored_invalidated_at;
-        self.changed = Arc::new(restored);
+        self.revision = self
+            .revision
+            .max(snapshot.revision)
+            .checked_add(1)
+            .expect("dependency revision exhausted");
+        self.invalidated_at = ChangedAt(self.revision);
     }
 
     /// Validates one observation, reading the current value only on a stamp miss.

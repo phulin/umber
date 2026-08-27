@@ -2089,13 +2089,11 @@ mod tests {
 
             assert!(result.terminal_text.contains("root"));
             assert!(result.terminal_text.contains("child"));
-            assert!(matches!(
-                stores.world().input_records(),
-                [root_record, child_record]
-                    if root_record.hash() == root_hash
-                        && root_record.path() == Path::new("/project/root.tex")
-                        && child_record.path() == Path::new("/project/child.tex")
-            ));
+            let records = stores.world().input_records();
+            assert_eq!(records.len(), 2);
+            assert_eq!(records[0].hash(), root_hash);
+            assert_eq!(records[0].path(), Path::new("/project/root.tex"));
+            assert_eq!(records[1].path(), Path::new("/project/child.tex"));
         })
         .expect("fresh universe");
     }

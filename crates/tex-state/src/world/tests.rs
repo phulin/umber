@@ -162,6 +162,80 @@ fn page_effect_interval_and_stream_open_context_survive_detachment_and_rollback(
 }
 
 #[test]
+fn repeated_checkpoint_forks_share_accepted_effect_blocks_and_isolate_suffixes() {
+    let mut source = World::memory();
+    source
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    source.record_special("accepted-0", vec![0]);
+    let first = source.snapshot();
+    source.record_special("source-only", vec![9]);
+
+    let mut candidate = source.fork_checkpoint(&first);
+    assert_eq!(source.effect_records().len(), 2);
+    assert_eq!(candidate.page_effect_prefix_len(), 1);
+    assert!(candidate.effect_records().is_empty());
+    candidate.record_special("candidate-1", vec![1]);
+
+    let mut labels = Vec::new();
+    candidate.visit_pending_page_effects(candidate.effect_records().len(), |_, effect| {
+        if let EffectRecord::Special { class, .. } = effect {
+            labels.push(class.clone());
+        }
+    });
+    assert_eq!(labels, ["accepted-0", "candidate-1"]);
+    assert_eq!(
+        source.effect_records().len(),
+        2,
+        "candidate mutation cannot alter the retained source suffix"
+    );
+
+    let second = candidate.snapshot();
+    let next = candidate.fork_checkpoint(&second);
+    assert_eq!(next.page_effect_prefix_len(), 2);
+    assert!(next.effect_records().is_empty());
+    let mut labels = Vec::new();
+    next.visit_pending_page_effects(0, |_, effect| {
+        if let EffectRecord::Special { class, .. } = effect {
+            labels.push(class.clone());
+        }
+    });
+    assert_eq!(labels, ["accepted-0", "candidate-1"]);
+}
+
+#[test]
+fn checkpoint_fork_shares_only_retained_input_records_and_opens_a_private_suffix() {
+    let mut source = World::memory();
+    source
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    source
+        .set_memory_file("accepted.tex", b"accepted".to_vec())
+        .expect("accepted input is seeded");
+    source.read_file("accepted.tex").expect("accepted input is read");
+    let checkpoint = source.snapshot();
+    source
+        .set_memory_file("later.tex", b"later".to_vec())
+        .expect("later input is seeded");
+    source.read_file("later.tex").expect("later input is read");
+
+    let mut candidate = source.fork_checkpoint(&checkpoint);
+    assert_eq!(candidate.input_records().len(), 1);
+    assert_eq!(candidate.input_records()[0].path(), Path::new("accepted.tex"));
+    assert_eq!(candidate.input_content(candidate.input_records()[0].hash()), Some(&b"accepted"[..]));
+
+    candidate
+        .set_memory_file("candidate.tex", b"candidate".to_vec())
+        .expect("candidate input is seeded");
+    candidate
+        .read_file("candidate.tex")
+        .expect("candidate input is read");
+    assert_eq!(candidate.input_records().len(), 2);
+    assert_eq!(source.input_records().len(), 2);
+    assert_eq!(source.input_records()[1].path(), Path::new("later.tex"));
+}
+
+#[test]
 fn committed_artifact_bytes_are_owned_and_rehash_on_preparation() {
     let original = VerifiedArtifact::new(vec![1, 2, 3]);
     let original_hash = original.hash();

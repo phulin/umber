@@ -94,6 +94,12 @@ struct AllocationTag {
     generation: NonZeroU32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct AllocationRun {
+    end: u32,
+    tag: AllocationTag,
+}
+
 /// Generation table shared by rollback-truncated store implementations.
 ///
 /// This owns only identity/liveness metadata; semantic store data remains in
@@ -101,7 +107,8 @@ struct AllocationTag {
 #[derive(Debug)]
 pub(crate) struct IdentityAllocator {
     active: AllocationTag,
-    slots: Vec<AllocationTag>,
+    runs: Vec<AllocationRun>,
+    len: u32,
     builtin_slots: u32,
 }
 
@@ -124,9 +131,7 @@ impl IdentityAllocator {
             "frozen identity prefix omits builtin slots"
         );
         let mut allocator = Self::with_namespace(builtin_slots, fresh_namespace());
-        allocator
-            .slots
-            .resize(total_slots as usize, allocator.active);
+        allocator.extend_with_active(total_slots - builtin_slots);
         allocator
     }
 
@@ -135,13 +140,19 @@ impl IdentityAllocator {
             namespace, BUILTIN_NAMESPACE,
             "the builtin identity namespace is reserved"
         );
-        let builtin_len = usize::try_from(builtin_slots).expect("u32 fits usize");
         Self {
             active: AllocationTag {
                 namespace,
                 generation: FIRST_GENERATION,
             },
-            slots: vec![HandleIdentity::builtin(0).tag(); builtin_len],
+            runs: (builtin_slots != 0)
+                .then_some(AllocationRun {
+                    end: builtin_slots,
+                    tag: HandleIdentity::builtin(0).tag(),
+                })
+                .into_iter()
+                .collect(),
+            len: builtin_slots,
             builtin_slots,
         }
     }
@@ -154,7 +165,10 @@ impl IdentityAllocator {
         let namespace = loop {
             let candidate = fresh_namespace();
             if candidate != self.active.namespace
-                && self.slots.iter().all(|tag| tag.namespace != candidate)
+                && self
+                    .runs
+                    .iter()
+                    .all(|run| run.tag.namespace != candidate)
             {
                 break candidate;
             }
@@ -164,35 +178,46 @@ impl IdentityAllocator {
                 namespace,
                 generation: FIRST_GENERATION,
             },
-            slots: self.slots.clone(),
+            runs: self.runs.clone(),
+            len: self.len,
             builtin_slots: self.builtin_slots,
         }
     }
 
     /// Allocates the next dense slot without exposing raw construction.
     pub(crate) fn allocate(&mut self) -> Result<HandleIdentity, IdentityError> {
-        let slot =
-            u32::try_from(self.slots.len()).map_err(|_| IdentityError::SlotCapacityExhausted)?;
+        let slot = self.len;
+        self.len = self
+            .len
+            .checked_add(1)
+            .ok_or(IdentityError::SlotCapacityExhausted)?;
         let id = HandleIdentity {
             namespace: self.active.namespace,
             generation: self.active.generation,
             slot,
         };
-        self.slots.push(self.active);
+        if let Some(run) = self.runs.last_mut().filter(|run| run.tag == self.active) {
+            run.end = self.len;
+        } else {
+            self.runs.push(AllocationRun {
+                end: self.len,
+                tag: self.active,
+            });
+        }
         Ok(id)
     }
 
     /// Returns whether `id` names the currently live allocation at its slot.
     #[must_use]
     pub(crate) fn contains(&self, id: HandleIdentity) -> bool {
-        self.slots.get(id.slot as usize).copied() == Some(id.tag())
+        self.tag_at(id.slot) == Some(id.tag())
     }
 
     /// Returns the live identity at a dense slot for aggregate decoding of a
     /// compact stored reference.
     #[must_use]
     pub(crate) fn identity_at(&self, slot: u32) -> Option<HandleIdentity> {
-        let tag = self.slots.get(slot as usize).copied()?;
+        let tag = self.tag_at(slot)?;
         Some(HandleIdentity {
             namespace: tag.namespace,
             generation: tag.generation,
@@ -204,8 +229,8 @@ impl IdentityAllocator {
     #[must_use]
     pub(crate) fn watermark(&self) -> IdentityMark {
         IdentityMark {
-            len: self.slots.len(),
-            frontier: self.slots.last().copied(),
+            len: self.len as usize,
+            frontier: self.len.checked_sub(1).and_then(|slot| self.tag_at(slot)),
         }
     }
 
@@ -217,13 +242,13 @@ impl IdentityAllocator {
     pub(crate) fn validate_rollback(&self, mark: IdentityMark) -> Result<(), IdentityError> {
         let len = mark.len;
         if len < self.builtin_slots as usize
-            || len > self.slots.len()
-            || (len != 0 && self.slots.get(len - 1).copied() != mark.frontier)
+            || len > self.len as usize
+            || (len != 0 && self.tag_at((len - 1) as u32) != mark.frontier)
             || (len == 0 && mark.frontier.is_some())
         {
             return Err(IdentityError::InvalidatedMark);
         }
-        if len != self.slots.len() && self.active.generation.get() == u32::MAX {
+        if len != self.len as usize && self.active.generation.get() == u32::MAX {
             return Err(IdentityError::GenerationExhausted);
         }
         Ok(())
@@ -237,7 +262,7 @@ impl IdentityAllocator {
     pub(crate) fn rollback(&mut self, mark: IdentityMark) -> Result<(), IdentityError> {
         self.validate_rollback(mark)?;
         let len = mark.len;
-        if len == self.slots.len() {
+        if len == self.len as usize {
             return Ok(());
         }
         let generation = self
@@ -248,8 +273,46 @@ impl IdentityAllocator {
             .and_then(NonZeroU32::new)
             .ok_or(IdentityError::GenerationExhausted)?;
         self.active.generation = generation;
-        self.slots.truncate(len);
+        self.len = u32::try_from(len).expect("validated identity length fits u32");
+        while self
+            .runs
+            .last()
+            .is_some_and(|_| self.runs.len() > 1 && self.runs[self.runs.len() - 2].end >= self.len)
+        {
+            self.runs.pop();
+        }
+        if self.len == 0 {
+            self.runs.clear();
+        } else if let Some(run) = self.runs.last_mut() {
+            run.end = self.len;
+        }
         Ok(())
+    }
+
+    fn extend_with_active(&mut self, count: u32) {
+        if count == 0 {
+            return;
+        }
+        self.len = self
+            .len
+            .checked_add(count)
+            .expect("frozen identity extent fits u32");
+        if let Some(run) = self.runs.last_mut().filter(|run| run.tag == self.active) {
+            run.end = self.len;
+        } else {
+            self.runs.push(AllocationRun {
+                end: self.len,
+                tag: self.active,
+            });
+        }
+    }
+
+    fn tag_at(&self, slot: u32) -> Option<AllocationTag> {
+        if slot >= self.len {
+            return None;
+        }
+        let index = self.runs.partition_point(|run| run.end <= slot);
+        self.runs.get(index).map(|run| run.tag)
     }
 }
 

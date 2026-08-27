@@ -1492,16 +1492,11 @@ impl fmt::Display for WorldError {
 
 impl std::error::Error for WorldError {}
 
-/// Snapshot-owned `World` state.
+/// Bounded World cursors plus genuinely small scalar/root metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldSnapshot {
-    /// Persistent root for the exact virtual-effect prefix at capture time.
-    ///
-    /// Eager publication may advance `World::effect_base` and drop its live
-    /// prefix, but a durable Universe checkpoint must still be able to
-    /// restore that virtual timeline for deterministic replay.  The Arc is
-    /// the ownership contract: publication detaches through COW while any
-    /// checkpoint retains the old root.
+    /// Absolute base plus aligned live-column cursors. The World lineage owns
+    /// the values; this mark does not retain another effect payload root.
     effect_base: EffectPos,
     page_effect_artifact_cursor: usize,
     effect_len: usize,
@@ -1530,8 +1525,6 @@ pub struct WorldSnapshot {
     shell_escape_len: usize,
     artifact_base: usize,
     artifact_commit_len: usize,
-    artifact_commits: Arc<Vec<ContentHash>>,
-    artifact_publications: Arc<Vec<ArtifactPublicationRecord>>,
     provisional_page_output_receipts:
         Arc<BTreeMap<PageOutputPublicationReceiptId, Arc<[ArtifactPublicationRecord]>>>,
     next_artifact_publication_identity: u64,
@@ -1603,6 +1596,122 @@ impl AcceptedEffectBlock {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct AcceptedInputBlock {
+    parent: Option<Arc<Self>>,
+    records: Arc<Vec<InputRecord>>,
+    contents: Arc<BTreeMap<ContentHash, Arc<[u8]>>>,
+    len: usize,
+    total_len: usize,
+}
+
+impl AcceptedInputBlock {
+    fn extend(parent: Option<Arc<Self>>, source: &World, len: usize) -> Option<Arc<Self>> {
+        if len == 0 {
+            return parent;
+        }
+        let parent_len = parent.as_ref().map_or(0, |block| block.total_len);
+        Some(Arc::new(Self {
+            parent,
+            records: Arc::clone(&source.inputs),
+            contents: Arc::clone(&source.input_contents),
+            len,
+            total_len: parent_len.saturating_add(len),
+        }))
+    }
+
+    fn record(&self, index: usize) -> Option<&InputRecord> {
+        let parent_len = self.parent.as_ref().map_or(0, |block| block.total_len);
+        if index < parent_len {
+            return self.parent.as_ref()?.record(index);
+        }
+        self.records.get(index - parent_len).filter(|_| index < self.total_len)
+    }
+
+    fn content(&self, hash: ContentHash) -> Option<&[u8]> {
+        self.contents
+            .get(&hash)
+            .map(AsRef::as_ref)
+            .or_else(|| self.parent.as_ref()?.content(hash))
+    }
+
+    fn content_root(&self, hash: ContentHash) -> Option<Arc<[u8]>> {
+        self.contents
+            .get(&hash)
+            .cloned()
+            .or_else(|| self.parent.as_ref()?.content_root(hash))
+    }
+}
+
+/// Borrowed logical view over accepted input blocks plus the current suffix.
+#[derive(Clone, Copy)]
+pub struct InputRecords<'a> {
+    world: &'a World,
+}
+
+impl<'a> InputRecords<'a> {
+    #[must_use]
+    pub fn len(self) -> usize {
+        self.world.accepted_input_len() + self.world.inputs.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<&'a InputRecord> {
+        let accepted = self.world.accepted_input_len();
+        if index < accepted {
+            return self.world.accepted_inputs.as_ref()?.record(index);
+        }
+        self.world.inputs.get(index - accepted)
+    }
+
+    #[must_use]
+    pub fn first(self) -> Option<&'a InputRecord> {
+        self.get(0)
+    }
+
+    pub fn iter(self) -> InputRecordIter<'a> {
+        InputRecordIter {
+            records: self,
+            index: 0,
+        }
+    }
+}
+
+impl std::ops::Index<usize> for InputRecords<'_> {
+    type Output = InputRecord;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).expect("World input-record index is in range")
+    }
+}
+
+pub struct InputRecordIter<'a> {
+    records: InputRecords<'a>,
+    index: usize,
+}
+
+impl<'a> Iterator for InputRecordIter<'a> {
+    type Item = &'a InputRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = self.records.get(self.index)?;
+        self.index += 1;
+        Some(record)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.records.len().saturating_sub(self.index);
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for InputRecordIter<'_> {}
+
 /// Engine capability object for all external effects.
 #[derive(Debug)]
 pub struct World {
@@ -1644,9 +1753,10 @@ pub struct World {
     pdf_timer_origin_micros: u64,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
-    inputs: Vec<InputRecord>,
+    accepted_inputs: Option<Arc<AcceptedInputBlock>>,
+    inputs: Arc<Vec<InputRecord>>,
     input_identities: IdentityAllocator,
-    input_contents: BTreeMap<ContentHash, Arc<[u8]>>,
+    input_contents: Arc<BTreeMap<ContentHash, Arc<[u8]>>>,
     input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
     terminal_inputs: Vec<String>,
     terminal_input_owner: u64,
@@ -2085,6 +2195,7 @@ impl Clone for World {
             pdf_timer_origin_micros: self.pdf_timer_origin_micros,
             job_clock: self.job_clock,
             shell_escape_policy: self.shell_escape_policy,
+            accepted_inputs: self.accepted_inputs.clone(),
             inputs: self.inputs.clone(),
             input_identities: self.input_identities.fork(),
             input_contents: self.input_contents.clone(),
@@ -2129,6 +2240,7 @@ impl PartialEq for World {
             && self.pdf_timer_origin_micros == other.pdf_timer_origin_micros
             && self.job_clock == other.job_clock
             && self.shell_escape_policy == other.shell_escape_policy
+            && self.accepted_inputs == other.accepted_inputs
             && self.inputs == other.inputs
             && self.input_contents == other.input_contents
             && self.input_dependencies == other.input_dependencies
@@ -2168,6 +2280,37 @@ impl World {
         let hash = artifact.hash();
         let (bytes, provenance, occurrences) = artifact.into_parts();
         self.record_artifact_commit(hash, bytes, provenance, occurrences, reservation);
+    }
+
+    /// Opaque World mark capture used by the standalone checkpoint gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub fn profile_checkpoint_capture(&self) -> WorldSnapshot {
+        self.snapshot()
+    }
+
+    /// Same-lineage World restore used by the standalone checkpoint gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_checkpoint_restore(&mut self, snapshot: &WorldSnapshot) {
+        self.rollback(snapshot);
+    }
+
+    /// Candidate-lineage World fork used by the standalone checkpoint gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub fn profile_checkpoint_fork(&self, snapshot: &WorldSnapshot) -> Self {
+        self.fork_checkpoint(snapshot)
+    }
+
+    /// Enables rollback-capable ownership for the standalone checkpoint gate.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_begin_retained_session(&mut self) {
+        self.begin_retained_session()
+            .expect("profiling World is rollback-capable");
     }
     /// Creates a deterministic in-memory world for tests and hermetic runs.
     #[must_use]
@@ -2263,9 +2406,10 @@ impl World {
             pdf_timer_origin_micros: monotonic_micros,
             job_clock,
             shell_escape_policy,
-            inputs: Vec::new(),
+            accepted_inputs: None,
+            inputs: Arc::new(Vec::new()),
             input_identities: IdentityAllocator::new(0),
-            input_contents: BTreeMap::new(),
+            input_contents: Arc::new(BTreeMap::new()),
             input_dependencies: Arc::new(BTreeMap::new()),
             terminal_inputs: Vec::new(),
             terminal_input_owner: fresh_terminal_input_owner(),
@@ -2513,10 +2657,10 @@ impl World {
         let record = self.allocate_input_record();
         let content =
             FileContent::from_shared(record, path.to_owned(), bytes, modification_date, origin);
-        self.input_contents
+        Arc::make_mut(&mut self.input_contents)
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
-        self.inputs.push(InputRecord {
+        Arc::make_mut(&mut self.inputs).push(InputRecord {
             path: content.path.clone(),
             hash: content.hash,
             len: content.bytes.len(),
@@ -2825,7 +2969,7 @@ impl World {
         let Some(target) = self.stream_bufs.read_streams[slot.index()].as_ref() else {
             return true;
         };
-        !self.input_contents.contains_key(&target.hash)
+        self.input_content(target.hash).is_none()
     }
 
     pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {
@@ -2833,14 +2977,14 @@ impl World {
             return Ok(None);
         };
         let (hash, path, next_byte) = (target.hash, target.path.clone(), target.next_byte);
-        let Some(bytes) = self.input_contents.get(&hash) else {
+        let Some(bytes) = self.input_content_root(hash) else {
             return Err(WorldError::new(
                 "read input stream",
                 Some(path),
                 "pinned input content is missing",
             ));
         };
-        let Some((line, next_byte)) = next_physical_line(bytes, next_byte) else {
+        let Some((line, next_byte)) = next_physical_line(&bytes, next_byte) else {
             self.stream_bufs_mut().read_streams[slot.index()] = None;
             return Ok(Some(String::new()));
         };
@@ -2882,10 +3026,10 @@ impl World {
         let bytes = line.as_bytes().to_vec();
         let record = self.allocate_input_record();
         let content = FileContent::new(record, PathBuf::from("<terminal>"), bytes);
-        self.input_contents
+        Arc::make_mut(&mut self.input_contents)
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
-        self.inputs.push(InputRecord {
+        Arc::make_mut(&mut self.inputs).push(InputRecord {
             path: content.path,
             hash: content.hash,
             len: content.bytes.len(),
@@ -2926,7 +3070,7 @@ impl World {
 
     pub fn recorded_input_content(&self, id: InputRecordId) -> Option<FileContent> {
         let record = self.input_record(id)?;
-        let bytes = self.input_contents.get(&record.hash)?.clone();
+        let bytes = self.input_content_root(record.hash)?;
         Some(FileContent {
             record: id,
             path: record.path.clone(),
@@ -4090,8 +4234,14 @@ impl World {
     }
 
     #[must_use]
-    pub fn input_records(&self) -> &[InputRecord] {
-        &self.inputs
+    pub fn input_records(&self) -> InputRecords<'_> {
+        InputRecords { world: self }
+    }
+
+    fn accepted_input_len(&self) -> usize {
+        self.accepted_inputs
+            .as_ref()
+            .map_or(0, |block| block.total_len)
     }
 
     /// Records one authoritative semantic observation of a canonical path.
@@ -4140,7 +4290,7 @@ impl World {
     /// Enumerates only immutable external dependencies, excluding files
     /// generated and reopened transactionally by this TeX run.
     pub fn external_input_records(&self) -> impl Iterator<Item = &InputRecord> {
-        self.inputs
+        self.input_records()
             .iter()
             .filter(|record| record.is_external_dependency())
     }
@@ -4186,13 +4336,23 @@ impl World {
         if !self.input_identities.contains(id.0) {
             return None;
         }
-        self.inputs.get(id.raw() as usize)
+        self.input_records().get(id.raw() as usize)
     }
 
     /// Returns the content-addressed bytes for a previously-read input.
     #[must_use]
     pub fn input_content(&self, hash: ContentHash) -> Option<&[u8]> {
-        self.input_contents.get(&hash).map(AsRef::as_ref)
+        self.input_contents
+            .get(&hash)
+            .map(AsRef::as_ref)
+            .or_else(|| self.accepted_inputs.as_ref()?.content(hash))
+    }
+
+    fn input_content_root(&self, hash: ContentHash) -> Option<Arc<[u8]>> {
+        self.input_contents
+            .get(&hash)
+            .cloned()
+            .or_else(|| self.accepted_inputs.as_ref()?.content_root(hash))
     }
 
     #[must_use]
@@ -4874,8 +5034,6 @@ impl World {
             shell_escape_len: self.shell_escapes.len(),
             artifact_base: self.artifact_base,
             artifact_commit_len: self.artifact_pos(),
-            artifact_commits: Arc::clone(&self.artifact_commits),
-            artifact_publications: Arc::clone(&self.artifact_publications),
             provisional_page_output_receipts: Arc::clone(&self.provisional_page_output_receipts),
             next_artifact_publication_identity: self.next_artifact_publication_identity,
             active_artifact_publication_group: self.active_artifact_publication_group,
@@ -4923,16 +5081,22 @@ impl World {
             .expect("World input identity mark must name a retained ancestor");
         self.effect_base = snapshot.effect_base;
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
-        Arc::make_mut(&mut self.effects).truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_sequences).truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_publications).truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_publication_record_ordinals)
-            .truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_domains).truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(snapshot.effect_len);
-        Arc::make_mut(&mut self.effect_publication_dispositions)
-            .truncate(snapshot.effect_publication_disposition_len);
+        if self.effects.len() != snapshot.effect_len {
+            Arc::make_mut(&mut self.effects).truncate(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_sequences).truncate(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_publications).truncate(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_publication_record_ordinals)
+                .truncate(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_domains).truncate(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(snapshot.effect_len);
+        }
+        if self.effect_publication_dispositions.len()
+            != snapshot.effect_publication_disposition_len
+        {
+            Arc::make_mut(&mut self.effect_publication_dispositions)
+                .truncate(snapshot.effect_publication_disposition_len);
+        }
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_publication_sequence = snapshot.next_publication_sequence;
         self.next_effect_publication_identity = snapshot.next_effect_publication_identity;
@@ -4956,7 +5120,9 @@ impl World {
         self.pdf_time_micros = snapshot.pdf_time_micros;
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
-        self.inputs.truncate(snapshot.input_len);
+        if self.inputs.len() != snapshot.input_len {
+            Arc::make_mut(&mut self.inputs).truncate(snapshot.input_len);
+        }
         self.input_dependencies = snapshot.input_dependencies.clone();
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
@@ -4964,9 +5130,11 @@ impl World {
                 .artifact_commit_len
                 .checked_sub(self.artifact_base)
                 .expect("World artifact snapshot precedes retained base");
-            Arc::make_mut(&mut self.artifact_commits).truncate(retained);
-            Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
-            Arc::make_mut(&mut self.artifact_publications).truncate(retained);
+            if self.artifact_commits.len() != retained {
+                Arc::make_mut(&mut self.artifact_commits).truncate(retained);
+                Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
+                Arc::make_mut(&mut self.artifact_publications).truncate(retained);
+            }
         }
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;
@@ -5037,7 +5205,13 @@ impl World {
         self.pdf_time_micros = snapshot.pdf_time_micros;
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
-        self.inputs.truncate(snapshot.input_len);
+        self.accepted_inputs = AcceptedInputBlock::extend(
+            source.accepted_inputs.clone(),
+            source,
+            snapshot.input_len,
+        );
+        self.inputs = Arc::new(Vec::new());
+        self.input_contents = Arc::new(BTreeMap::new());
         self.input_dependencies = snapshot.input_dependencies.clone();
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
@@ -5067,7 +5241,7 @@ impl World {
             .expect("World input record identity capacity exhausted");
         assert_eq!(
             identity.slot() as usize,
-            self.inputs.len(),
+            self.accepted_input_len().saturating_add(self.inputs.len()),
             "World input identities and records diverged"
         );
         InputRecordId(identity)
