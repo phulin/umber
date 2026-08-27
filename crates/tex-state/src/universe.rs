@@ -446,6 +446,7 @@ pub struct Universe<G> {
     shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
     pub(crate) page: PageBuilderState,
+    page_lent_to_candidate: bool,
     pub(crate) pdf: PdfStateSlot<G>,
     sources: SourceMap,
     pub(crate) hyphenation: HyphenationTable,
@@ -528,6 +529,7 @@ impl<G> Universe<G> {
             || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
             || !self.fonts.validates(checkpoint.fonts)
             || !self.sources.validates(checkpoint.sources)
+            || !self.page.validates_checkpoint_mark(checkpoint.page)
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
@@ -535,6 +537,9 @@ impl<G> Universe<G> {
         let core = self.core.as_ref().ok_or(UniverseError::Retired)?.fork();
         let destination_owner = core.generation_owner();
         let pdf = self.pdf.take_candidate(&checkpoint.pdf);
+        let mut page = std::mem::take(&mut self.page);
+        page.begin_checkpoint_fork(checkpoint.page);
+        self.page_lent_to_candidate = true;
         let mut fork = Self {
             interner: None,
             core: Some(core),
@@ -543,7 +548,8 @@ impl<G> Universe<G> {
             durable_page_bound: self.durable_page_bound,
             shipout_scratch: ShipoutScratchArena::default(),
             fonts: self.fonts.clone(),
-            page: self.page.clone(),
+            page,
+            page_lent_to_candidate: false,
             pdf,
             sources: self.sources.clone(),
             hyphenation: HyphenationTable::from_checkpoint(&checkpoint.hyphenation),
@@ -591,10 +597,16 @@ impl<G> Universe<G> {
     #[doc(hidden)]
     pub fn return_rejected_pdf_from(&mut self, candidate: &mut Self) {
         self.pdf.return_rejected(&mut candidate.pdf);
+        if candidate.page.has_checkpoint_fork() {
+            candidate.page.reject_checkpoint_fork();
+            self.page = std::mem::take(&mut candidate.page);
+            self.page_lent_to_candidate = false;
+        }
     }
 
     pub(crate) fn commit_pdf_candidate(&mut self) {
         self.pdf.commit_candidate();
+        self.page.commit_checkpoint_fork();
     }
 
     pub(crate) fn interner(&self) -> &Interner {
@@ -751,6 +763,7 @@ impl<G> Universe<G> {
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
             page: PageBuilderState::default(),
+            page_lent_to_candidate: false,
             pdf: PdfStateSlot::default(),
             sources: SourceMap::default(),
             hyphenation: HyphenationTable::new(),

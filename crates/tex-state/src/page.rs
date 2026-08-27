@@ -359,6 +359,15 @@ struct PageCheckpointJournal {
     frames: Vec<PageCheckpointFrame>,
     inverses: Vec<PageInverse>,
     applied: usize,
+    fork: Option<Box<PageForkJournal>>,
+}
+
+#[derive(Clone)]
+struct PageForkJournal {
+    origin: usize,
+    target: usize,
+    future: Vec<PageInverse>,
+    future_frames: Vec<PageCheckpointFrame>,
 }
 
 #[derive(Clone)]
@@ -486,6 +495,7 @@ impl Default for PageBuilderState {
                 frames: Vec::with_capacity(64),
                 inverses: Vec::with_capacity(256),
                 applied: 0,
+                fork: None,
             },
         }
     }
@@ -531,6 +541,60 @@ impl PageBuilderState {
             self.toggle_page_inverse(index);
             self.checkpoint_journal.applied += 1;
         }
+    }
+
+    pub(crate) fn begin_checkpoint_fork(&mut self, mark: PageCheckpointMark) {
+        debug_assert!(self.validates_checkpoint_mark(mark));
+        debug_assert!(self.checkpoint_journal.fork.is_none());
+        let origin = self.checkpoint_journal.applied;
+        self.restore_checkpoint_mark(mark);
+        let future = self.checkpoint_journal.inverses.split_off(mark.cursor);
+        let mut future_frames = Vec::new();
+        self.checkpoint_journal.frames.retain(|frame| {
+            if frame.cursor > mark.cursor {
+                future_frames.push(frame.clone());
+                false
+            } else {
+                true
+            }
+        });
+        self.checkpoint_journal.fork = Some(Box::new(PageForkJournal {
+            origin,
+            target: mark.cursor,
+            future,
+            future_frames,
+        }));
+    }
+
+    pub(crate) fn reject_checkpoint_fork(&mut self) {
+        let fork = self
+            .checkpoint_journal
+            .fork
+            .take()
+            .expect("candidate page timeline owns one fork");
+        while self.checkpoint_journal.applied > fork.target {
+            self.checkpoint_journal.applied -= 1;
+            self.toggle_page_inverse(self.checkpoint_journal.applied);
+        }
+        self.checkpoint_journal.inverses.truncate(fork.target);
+        self.checkpoint_journal.inverses.extend(fork.future);
+        self.checkpoint_journal.frames.extend(fork.future_frames);
+        while self.checkpoint_journal.applied < fork.origin {
+            let index = self.checkpoint_journal.applied;
+            self.toggle_page_inverse(index);
+            self.checkpoint_journal.applied += 1;
+        }
+    }
+
+    pub(crate) fn commit_checkpoint_fork(&mut self) {
+        let Some(fork) = self.checkpoint_journal.fork.take() else {
+            return;
+        };
+        debug_assert!(self.checkpoint_journal.applied >= fork.target);
+    }
+
+    pub(crate) const fn has_checkpoint_fork(&self) -> bool {
+        self.checkpoint_journal.fork.is_some()
     }
 
     fn record_page_inverse(&mut self, inverse: PageInverse) {

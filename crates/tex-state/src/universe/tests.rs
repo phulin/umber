@@ -827,6 +827,41 @@ fn rootless_runtime_checkpoint_truncates_to_monotonic_page_bound_and_partial_res
 }
 
 #[test]
+fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_head() {
+    with_universe(budget(), |universe| {
+        universe
+            .command_context()
+            .expect("context")
+            .append_page_contribution(Node::Penalty(1));
+        let first = universe.runtime_checkpoint().expect("first page mark");
+        universe
+            .command_context()
+            .expect("context")
+            .append_page_contribution(Node::Penalty(2));
+        let _head = universe.runtime_checkpoint().expect("source head mark");
+
+        let mut candidate = universe
+            .fork_runtime_checkpoint(&first)
+            .expect("older page mark forks");
+        assert_eq!(candidate.page.contribution().len(), 1);
+        candidate.page.push_contribution(Node::Penalty(3));
+        universe.return_rejected_pdf_from(&mut candidate);
+
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("restored source context")
+                .page_contributions()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [Node::Penalty(1), Node::Penalty(2)]
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn nested_shipout_scratch_resets_suffixes_and_reuses_high_water() {
     with_universe(budget(), |universe| {
         let outer_id;
