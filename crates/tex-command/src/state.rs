@@ -2198,6 +2198,40 @@ impl<G> CommandState<G> {
         Ok(id)
     }
 
+    /// Rebinds the bottom live generated source to edited immutable bytes.
+    ///
+    /// A retained editor checkpoint already owns the exact input stack and
+    /// cursor. Restart therefore replaces the root backing in place instead
+    /// of opening a second root level and replaying the job prologue. The new
+    /// source receives the candidate lineage's next source identity; all
+    /// nested input levels remain untouched.
+    #[doc(hidden)]
+    pub fn rebind_root_generated_source(
+        &mut self,
+        registration: SourceRegistration,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let id = self.register_source(registration)?;
+        let registered = self
+            .take_registered_source(id)
+            .expect("the just-registered edited root source remains pending");
+        let root = self
+            .input
+            .levels
+            .iter_mut()
+            .find_map(|level| match level {
+                crate::input::InputLevel::Source(source) => Some(source),
+                crate::input::InputLevel::Tokens(_) => None,
+            })
+            .expect("a rooted checkpoint retains its main source level");
+        let cursor = &mut root.cursor;
+        cursor.backing = registered;
+        cursor.backing_registered = false;
+        cursor.line_backing = None;
+        cursor.line_backing_registered = false;
+        root.frame = crate::input::PackedInputFrame::source(root.frame.identity(), id);
+        Ok(id)
+    }
+
     fn take_registered_source(
         &mut self,
         source: tex_state::SourceId,

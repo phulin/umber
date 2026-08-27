@@ -1636,6 +1636,7 @@ struct AcceptedEffectBlock {
     domains: Arc<Vec<EffectDomain>>,
     semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
     placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
+    stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
     len: usize,
     total_len: usize,
 }
@@ -1660,9 +1661,42 @@ impl AcceptedEffectBlock {
             domains: Arc::clone(&source.effect_domains),
             semantic_record_ordinals: Arc::clone(&source.effect_semantic_record_ordinals),
             placement_intra_orders: Arc::clone(&source.effect_placement_intra_orders),
+            stream_open_contexts: Arc::clone(&source.stream_open_contexts),
             len,
             total_len: parent_len.saturating_add(len),
         }))
+    }
+
+    fn append_detached_records(
+        &self,
+        records: &mut Vec<EffectRecord>,
+        contexts: &mut Vec<Option<String>>,
+    ) {
+        if let Some(parent) = &self.parent {
+            parent.append_detached_records(records, contexts);
+        }
+        let journal = crate::EffectJournal::from_parts(
+            self.effects[..self.len].to_vec(),
+            self.sequences[..self.len].to_vec(),
+            self.publications[..self.len].to_vec(),
+            self.publication_record_ordinals[..self.len].to_vec(),
+            self.domains[..self.len].to_vec(),
+            self.semantic_record_ordinals[..self.len].to_vec(),
+            self.placement_intra_orders[..self.len].to_vec(),
+        )
+        .expect("accepted effect columns remain aligned");
+        let base = self.total_len.saturating_sub(self.len);
+        for index in journal.materialized_record_indices() {
+            let record = self.effects[index].clone();
+            let context = matches!(record, EffectRecord::StreamOpen { .. })
+                .then(|| {
+                    let raw = u64::try_from(base.saturating_add(index).saturating_add(1)).ok()?;
+                    self.stream_open_contexts.get(&EffectPos(raw)).cloned()
+                })
+                .flatten();
+            records.push(record);
+            contexts.push(context);
+        }
     }
 
     fn publication_counter(&self, key: EffectPublicationId) -> Option<u64> {
@@ -4790,6 +4824,27 @@ impl World {
             records.push(record);
             contexts.push(context);
         }
+        (records, contexts)
+    }
+
+    /// Detaches the complete accepted prefix followed by the live private
+    /// suffix. Historical blocks are materialized only at this terminal cold
+    /// boundary; checkpoint capture, fork, restore, and mutation keep their
+    /// immutable owner roots.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached_complete_effect_records(&self) -> (Vec<EffectRecord>, Vec<Option<String>>) {
+        let mut records = Vec::with_capacity(
+            self.page_effect_prefix_len()
+                .saturating_add(self.effects.len()),
+        );
+        let mut contexts = Vec::with_capacity(records.capacity());
+        if let Some(accepted) = &self.accepted_effects {
+            accepted.append_detached_records(&mut records, &mut contexts);
+        }
+        let (mut suffix, mut suffix_contexts) = self.detached_effect_records();
+        records.append(&mut suffix);
+        contexts.append(&mut suffix_contexts);
         (records, contexts)
     }
 

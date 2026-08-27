@@ -932,6 +932,30 @@ fn repeated_revisions_match_fresh_cold_output() {
 }
 
 #[test]
+fn late_edit_restarts_from_a_retained_non_job_start_boundary() {
+    let source = "A\\par\nB\\par\nC\\par\\end";
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("baseline");
+    let edit_position = source.find('C').expect("third paragraph exists");
+    let output = incremental
+        .advance(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position, "\\relax "),
+        )
+        .expect("late edit");
+    let restart = output
+        .reuse
+        .restart_boundary
+        .expect("accepted history supplies a restart boundary");
+    assert_ne!(restart.boundary, EngineBoundary::JobStart);
+
+    let edited = format!("{}\\relax {}", &source[..edit_position], &source[edit_position..]);
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("cold comparison");
+    assert_detached_output_eq(&output, &expected);
+}
+
+#[test]
 fn zero_history_budget_retires_only_complete_old_generations() {
     let mut source = page_source(1);
     let mut incremental = Session::start(

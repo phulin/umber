@@ -151,12 +151,7 @@ impl OutputLedger {
             })
             .transpose()?;
         let world = universe.world();
-        if world.effect_pos().raw()
-            != u64::try_from(world.effect_records().len()).unwrap_or(u64::MAX)
-        {
-            return Err(crate::EngineCompletionError::MaterializedEffectBase);
-        }
-        let (effects, stream_open_contexts) = world.detached_effect_records();
+        let (effects, stream_open_contexts) = world.detached_complete_effect_records();
         let completion = crate::DetachedEngineCompletion::capture(
             effects,
             stream_open_contexts,
@@ -182,6 +177,24 @@ impl OutputLedger {
         }
         self.publish(control, universe, sink, &[EngineBoundary::JobStart])?;
         Ok(true)
+    }
+
+    /// Publishes the already-restored root of an editor candidate.
+    ///
+    /// A non-`JobStart` fork has already executed the job prologue and owns
+    /// the exact output/world prefix at the selected boundary. Marking the
+    /// ledger initialized and capturing that live root avoids reopening the
+    /// job merely to manufacture a first candidate checkpoint.
+    pub fn commit_restored_boundary<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        universe: &mut Universe<G>,
+        sink: &mut dyn CheckpointSink<G>,
+        boundary: EngineBoundary,
+    ) -> Result<(), CommandSummaryError> {
+        debug_assert!(!self.job_start_committed);
+        self.job_start_committed = true;
+        self.publish(control, universe, sink, &[boundary])
     }
 
     pub fn fulfill<G>(

@@ -413,6 +413,7 @@ struct CandidatePlan {
     layout: EditorLayout,
     old_history: Vec<BoundaryRecord>,
     execution_path: RevisionExecutionPath,
+    restart_boundary: Option<BoundaryKey>,
     revision_setup_latency: Duration,
 }
 
@@ -1014,9 +1015,16 @@ fn initialize_candidate_runtime<G: 'static>(
     candidate: &RevisionCandidate<'_>,
     restored_control: Option<MainControl<G>>,
 ) -> Result<CandidateRuntime<G>, SessionError> {
+    let rooted_restart = restored_control.is_some()
+        && candidate
+            .plan
+            .restart_boundary
+            .is_some_and(|key| key.boundary != EngineBoundary::JobStart);
     let (universe, checkpoints) = admitted.parts();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
-    universe.begin_retained_session()?;
+    if !rooted_restart {
+        universe.begin_retained_session()?;
+    }
     // Identity owners must see every job mutation, including fresh profile,
     // registered input, and JobStart setup. Batch execution never selects
     // this demand path and therefore performs none of the added hash work.
@@ -1052,15 +1060,33 @@ fn initialize_candidate_runtime<G: 'static>(
     control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
     let mut ledger = OutputLedger::new();
-    ledger.commit_job_start(
-        &mut control,
-        universe,
-        &mut LiveHistorySink {
-            state: &mut history,
-            retained: checkpoints,
-        },
-    )?;
-    start_candidate_job(universe, &mut control, options)?;
+    let mut sink = LiveHistorySink {
+        state: &mut history,
+        retained: checkpoints,
+    };
+    if rooted_restart {
+        let mut registration =
+            SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
+                .with_name(options.source_path)
+                .with_framing(options.root_framing);
+        if let Some(name) = options.root_framing_name {
+            registration = registration.with_framing_name(name);
+        }
+        control.rebind_root_source(registration)?;
+        ledger.commit_restored_boundary(
+            &mut control,
+            universe,
+            &mut sink,
+            candidate
+                .plan
+                .restart_boundary
+                .expect("a restored candidate records its selected boundary")
+                .boundary,
+        )?;
+    } else {
+        ledger.commit_job_start(&mut control, universe, &mut sink)?;
+        start_candidate_job(universe, &mut control, options)?;
+    }
     Ok(CandidateRuntime {
         control,
         ledger,
@@ -1931,6 +1957,7 @@ impl<'store> Session<'store> {
             layout: clone_layout(&self.layout, &self.fragments)?,
             old_history: Vec::new(),
             execution_path: RevisionExecutionPath::Cold,
+            restart_boundary: None,
             revision_setup_latency: Duration::ZERO,
         })
     }
@@ -1975,6 +2002,7 @@ impl<'store> Session<'store> {
             layout: clone_layout(&self.layout, &self.fragments)?,
             old_history: self.history.clone(),
             execution_path: RevisionExecutionPath::ExternalInputDelta,
+            restart_boundary: None,
             revision_setup_latency: Duration::ZERO,
         })
     }
@@ -2012,21 +2040,40 @@ impl<'store> Session<'store> {
             layout,
             old_history: self.history.clone(),
             execution_path,
+            restart_boundary: (execution_path == RevisionExecutionPath::SlowEdit)
+                .then_some(edit.range.start)
+                .and_then(|position| {
+                    self.history
+                        .iter()
+                        .rev()
+                        .find(|record| record.key.position <= position)
+                        .map(|record| record.key)
+                }),
             revision_setup_latency: started.elapsed(),
         })
     }
 
     fn candidate(
         &mut self,
-        plan: CandidatePlan,
+        mut plan: CandidatePlan,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
         let candidate_lease = self.candidate_lease.claim()?;
         let (generation, checkpoint_control_key) =
             if let Some(prior) = self.prior_generation.as_mut() {
+                let selected = plan
+                    .restart_boundary
+                    .filter(|_| self.history.len() == prior.checkpoint_keys.len())
+                    .and_then(|selected| {
+                        self.history
+                            .iter()
+                            .position(|record| record.key == selected)
+                    })
+                    .unwrap_or(0);
                 let checkpoint = prior
                     .checkpoint_keys
-                    .first()
-                    .expect("every accepted generation retains its JobStart checkpoint");
+                    .get(selected)
+                    .expect("the selected history record retains a checkpoint");
+                plan.restart_boundary = self.history.get(selected).map(|record| record.key);
                 let (generation, runtime, _budget_counters) = prior
                     .generation
                     .fork_checkpoint(checkpoint)
@@ -2083,7 +2130,7 @@ impl<'store> Session<'store> {
             .completed
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
-        let reuse = compare_histories(HistoryComparison {
+        let mut reuse = compare_histories(HistoryComparison {
             execution_path: candidate.plan.execution_path,
             old: &candidate.plan.old_history,
             new: &completion.history,
@@ -2094,6 +2141,7 @@ impl<'store> Session<'store> {
             revision_setup_latency: candidate.plan.revision_setup_latency,
             pages_retyped: completion.completion.pages().len(),
         });
+        reuse.restart_boundary = candidate.plan.restart_boundary;
         let generation = candidate
             .generation
             .take()

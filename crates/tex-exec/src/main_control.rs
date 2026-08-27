@@ -2905,6 +2905,18 @@ impl<G> MainControl<G> {
         Ok(id)
     }
 
+    /// Rebinds the root input retained by an editor checkpoint without
+    /// reopening the TeX job or adding another input level.
+    #[doc(hidden)]
+    pub fn rebind_root_source(
+        &mut self,
+        source: SourceRegistration,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let id = self.command.rebind_root_generated_source(source)?;
+        self.root_main_source = Some(id);
+        Ok(id)
+    }
+
     /// Renders the registered root's §537 opening at the driver's startup
     /// boundary without advancing input.
     pub fn open_registered_root_framing(&mut self, stores: &mut Universe<G>) {
