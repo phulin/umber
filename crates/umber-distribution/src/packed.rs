@@ -116,7 +116,11 @@ impl ValidatedPackedShard {
         }
         validate_sections(&bytes, header)?;
         let shard = Self { bytes, header };
-        shard.validate_records(root.shard_bits)?;
+        let key_blob = std::str::from_utf8(
+            &shard.bytes[shard.header.keys_offset as usize..shard.header.strings_offset as usize],
+        )
+        .map_err(|_| PackedShardError::new("packed key blob is not UTF-8"))?;
+        shard.validate_records(root.shard_bits, key_blob)?;
         Ok(shard)
     }
 
@@ -162,10 +166,54 @@ impl ValidatedPackedShard {
         (0..self.header.record_count).map(|index| PackedRecord { shard: self, index })
     }
 
-    fn validate_records(&self, shard_bits: u8) -> Result<(), PackedShardError> {
+    fn validate_records(&self, shard_bits: u8, key_blob: &str) -> Result<(), PackedShardError> {
+        self.validate_object_table()?;
+        self.validate_path_table()?;
+        self.validate_dependency_table(key_blob)?;
+
+        let mut hashes = Vec::with_capacity(self.header.record_count as usize);
+        let mut previous_key = None;
+        for index in 0..self.header.record_count {
+            let record = self.record(index)?;
+            let key = validated_key_span(key_blob, record.key_offset, record.key_len)?;
+            if key.is_empty()
+                || key.len() > crate::MAX_REQUEST_KEY_BYTES
+                || key.chars().any(char::is_control)
+            {
+                return Err(PackedShardError::new("invalid packed shard request key"));
+            }
+            if previous_key.is_some_and(|previous: &str| previous >= key) {
+                return Err(PackedShardError::new(
+                    "packed shard record keys are not strictly sorted",
+                ));
+            }
+            let hash = crate::ahash64::shard_key(key.as_bytes());
+            let shard_index = if shard_bits == 0 {
+                0
+            } else {
+                (hash >> (64 - shard_bits)) as u32
+            };
+            if shard_index != self.header.index {
+                return Err(PackedShardError::new(format!(
+                    "lookup key {key} is not in canonical shard {}",
+                    self.header.index
+                )));
+            }
+            self.validate_record(record, key, key_blob)?;
+            previous_key = Some(key);
+            hashes.push(hash);
+        }
+        self.validate_bucket_table(&hashes)
+    }
+
+    fn validate_object_table(&self) -> Result<(), PackedShardError> {
         let mut object_values = Vec::with_capacity(self.header.object_count as usize);
         for index in 0..self.header.object_count {
-            object_values.push(self.raw_object(index)?);
+            let value = self.raw_object(index)?;
+            if value.1 > 128 * 1024 * 1024 {
+                return Err(PackedShardError::new("packed object length is invalid"));
+            }
+            object_values.push(value);
         }
         object_values.sort_unstable();
         for pair in object_values.windows(2) {
@@ -177,9 +225,16 @@ impl ValidatedPackedShard {
                 }));
             }
         }
+        Ok(())
+    }
+
+    fn validate_path_table(&self) -> Result<(), PackedShardError> {
         let mut path_values = Vec::with_capacity(self.header.path_count as usize);
         for index in 0..self.header.path_count {
-            path_values.push(self.path(index)?);
+            let path = self.path(index)?;
+            crate::manifest::validate_path(path, "/texlive/", "packed virtual path")
+                .map_err(|error| PackedShardError::new(error.to_string()))?;
+            path_values.push(path);
         }
         path_values.sort_unstable();
         if path_values.windows(2).any(|pair| pair[0] == pair[1]) {
@@ -187,8 +242,32 @@ impl ValidatedPackedShard {
                 "packed path table contains a duplicate",
             ));
         }
+        Ok(())
+    }
+
+    fn validate_dependency_table(&self, key_blob: &str) -> Result<(), PackedShardError> {
+        for index in 0..self.header.dependency_count {
+            let offset =
+                self.header.dependencies_offset as usize + index as usize * DEPENDENCY_BYTES;
+            if read_u16(&self.bytes, offset + 6)? != 0 {
+                return Err(PackedShardError::new(
+                    "packed dependency reserved bits are nonzero",
+                ));
+            }
+            let dependency = self.dependency(index)?;
+            let key = validated_key_span(key_blob, dependency.0, dependency.1)?;
+            crate::manifest::validate_file_key(key)
+                .map_err(|error| PackedShardError::new(error.to_string()))?;
+            self.ensure_object_index(dependency.2)?;
+            self.ensure_path_index(dependency.3)?;
+        }
+        Ok(())
+    }
+
+    fn validate_bucket_table(&self, record_hashes: &[u64]) -> Result<(), PackedShardError> {
         let mut occupied = 0_u32;
         let mut seen = vec![false; self.header.record_count as usize];
+        let mut empty_bucket = None;
         for bucket in 0..self.header.bucket_count {
             let offset = self.header.buckets_offset as usize + bucket as usize * BUCKET_BYTES;
             let hash = read_u64(&self.bytes, offset)?;
@@ -205,6 +284,7 @@ impl ValidatedPackedShard {
                         "empty packed shard bucket has a hash",
                     ));
                 }
+                empty_bucket.get_or_insert(bucket);
                 continue;
             }
             let slot = seen.get_mut(index as usize).ok_or_else(|| {
@@ -217,57 +297,67 @@ impl ValidatedPackedShard {
             }
             *slot = true;
             occupied += 1;
-            let record = self.record(index)?;
-            let key = self.key(record)?;
-            if crate::ahash64::shard_key(key.as_bytes()) != hash {
+            if record_hashes[index as usize] != hash {
                 return Err(PackedShardError::new(
                     "packed shard bucket hash does not match its key",
                 ));
             }
-            let shard_index = if shard_bits == 0 {
-                0
-            } else {
-                (hash >> (64 - shard_bits)) as u32
-            };
-            if shard_index != self.header.index {
-                return Err(PackedShardError::new(format!(
-                    "lookup key {key} is not in canonical shard {}",
-                    self.header.index
-                )));
-            }
-            if self.lookup(key).map(|found| found.index) != Some(index) {
-                return Err(PackedShardError::new(
-                    "packed shard contains a duplicate lookup key or invalid probe chain",
-                ));
-            }
-            self.validate_record(record)?;
         }
         if occupied != self.header.record_count || seen.iter().any(|seen| !seen) {
             return Err(PackedShardError::new(
                 "packed shard table does not cover every record",
             ));
         }
+
+        // At <=80% load there is always an empty bucket. Start immediately
+        // after one such bucket and unwrap the circular table into a line.
+        // Every occupied slot's ideal bucket must lie inside its current
+        // uninterrupted cluster and at or before the stored slot; otherwise a
+        // normal lookup would stop at an earlier empty bucket.
+        let empty_bucket = empty_bucket.expect("validated packed load has an empty bucket");
+        let bucket_count = u64::from(self.header.bucket_count);
+        let mask = self.header.bucket_count - 1;
+        let mut cluster_start = u64::from(empty_bucket) + 1;
+        for distance in 1..self.header.bucket_count {
+            let bucket = (empty_bucket + distance) & mask;
+            let linear_bucket = u64::from(empty_bucket) + u64::from(distance);
+            let offset = self.header.buckets_offset as usize + bucket as usize * BUCKET_BYTES;
+            let index = read_u32(&self.bytes, offset + 8)?;
+            if index == EMPTY {
+                cluster_start = linear_bucket + 1;
+                continue;
+            }
+            let ideal_bucket = (record_hashes[index as usize] as u32) & mask;
+            let linear_ideal = if ideal_bucket <= empty_bucket {
+                u64::from(ideal_bucket) + bucket_count
+            } else {
+                u64::from(ideal_bucket)
+            };
+            if linear_ideal < cluster_start || linear_ideal > linear_bucket {
+                return Err(PackedShardError::new(
+                    "packed shard contains an invalid probe chain",
+                ));
+            }
+        }
         Ok(())
     }
 
-    fn validate_record(&self, record: Record) -> Result<(), PackedShardError> {
-        let key = self.key(record)?;
+    fn validate_record(
+        &self,
+        record: Record,
+        key: &str,
+        key_blob: &str,
+    ) -> Result<(), PackedShardError> {
         let extra = self.extra(record)?;
-        if key.is_empty()
-            || key.len() > crate::MAX_REQUEST_KEY_BYTES
-            || key.chars().any(char::is_control)
-        {
-            return Err(PackedShardError::new("invalid packed shard request key"));
-        }
         match record.kind {
             FILE => {
                 crate::manifest::validate_file_key(key)
                     .map_err(|error| PackedShardError::new(error.to_string()))?;
-                self.raw_object(record.object)?;
+                self.ensure_object_index(record.object)?;
                 if record.flags != 0 || record.path == EMPTY || !extra.is_empty() {
                     return Err(PackedShardError::new("invalid packed file record"));
                 }
-                self.path(record.path)?;
+                self.ensure_path_index(record.path)?;
                 let end = record
                     .dependency_start
                     .checked_add(u32::from(record.dependency_len))
@@ -278,22 +368,12 @@ impl ValidatedPackedShard {
                 let mut previous = None;
                 for index in record.dependency_start..end {
                     let dependency = self.dependency(index)?;
-                    let dependency_key = key_span(
-                        &self.bytes,
-                        self.header.keys_offset,
-                        self.header.strings_offset,
-                        dependency.0,
-                        dependency.1,
-                    )?;
-                    crate::manifest::validate_file_key(dependency_key)
-                        .map_err(|error| PackedShardError::new(error.to_string()))?;
+                    let dependency_key = validated_key_span(key_blob, dependency.0, dependency.1)?;
                     if previous.is_some_and(|value: &str| value >= dependency_key) {
                         return Err(PackedShardError::new(
                             "packed dependency keys are not strictly sorted",
                         ));
                     }
-                    self.raw_object(dependency.2)?;
-                    self.path(dependency.3)?;
                     previous = Some(dependency_key);
                 }
             }
@@ -301,6 +381,7 @@ impl ValidatedPackedShard {
                 if record.path != EMPTY || record.dependency_len != 0 || record.flags != 0 {
                     return Err(PackedShardError::new("invalid packed catalogue record"));
                 }
+                self.ensure_object_index(record.object)?;
                 if record.kind == FONT {
                     decode_font_extra(key, self.object(record.object)?, extra)?;
                 } else {
@@ -354,31 +435,35 @@ impl ValidatedPackedShard {
     }
 
     fn raw_object(&self, index: u32) -> Result<(u64, u64), PackedShardError> {
+        self.ensure_object_index(index)?;
+        let offset = self.header.objects_offset as usize + index as usize * OBJECT_BYTES;
+        let digest = read_u64(&self.bytes, offset)?;
+        let bytes = read_u64(&self.bytes, offset + 8)?;
+        Ok((digest, bytes))
+    }
+
+    fn ensure_object_index(&self, index: u32) -> Result<(), PackedShardError> {
         if index >= self.header.object_count {
             return Err(PackedShardError::new(
                 "packed object index is out of bounds",
             ));
         }
-        let offset = self.header.objects_offset as usize + index as usize * OBJECT_BYTES;
-        let digest = read_u64(&self.bytes, offset)?;
-        let bytes = read_u64(&self.bytes, offset + 8)?;
-        if bytes > 128 * 1024 * 1024 {
-            return Err(PackedShardError::new("packed object length is invalid"));
-        }
-        Ok((digest, bytes))
+        Ok(())
     }
 
     fn path(&self, index: u32) -> Result<&str, PackedShardError> {
-        if index >= self.header.path_count {
-            return Err(PackedShardError::new("packed path index is out of bounds"));
-        }
+        self.ensure_path_index(index)?;
         let offset = self.header.paths_offset as usize + index as usize * SPAN_BYTES;
         let start = read_u32(&self.bytes, offset)?;
         let len = read_u32(&self.bytes, offset + 4)?;
-        let path = string_span(&self.bytes, self.header.strings_offset, start, len)?;
-        crate::manifest::validate_path(path, "/texlive/", "packed virtual path")
-            .map_err(|error| PackedShardError::new(error.to_string()))?;
-        Ok(path)
+        string_span(&self.bytes, self.header.strings_offset, start, len)
+    }
+
+    fn ensure_path_index(&self, index: u32) -> Result<(), PackedShardError> {
+        if index >= self.header.path_count {
+            return Err(PackedShardError::new("packed path index is out of bounds"));
+        }
+        Ok(())
     }
 
     fn dependency(&self, index: u32) -> Result<(u32, u16, u32, u32), PackedShardError> {
@@ -388,12 +473,6 @@ impl ValidatedPackedShard {
             ));
         }
         let offset = self.header.dependencies_offset as usize + index as usize * DEPENDENCY_BYTES;
-        let reserved = read_u16(&self.bytes, offset + 6)?;
-        if reserved != 0 {
-            return Err(PackedShardError::new(
-                "packed dependency reserved bits are nonzero",
-            ));
-        }
         Ok((
             read_u32(&self.bytes, offset)?,
             read_u16(&self.bytes, offset + 4)?,
@@ -987,6 +1066,15 @@ fn key_span(
     }
     std::str::from_utf8(&bytes[start..stop])
         .map_err(|_| PackedShardError::new("packed key is not UTF-8"))
+}
+
+fn validated_key_span(blob: &str, offset: u32, len: u16) -> Result<&str, PackedShardError> {
+    let start = offset as usize;
+    let end = start
+        .checked_add(len as usize)
+        .ok_or_else(|| PackedShardError::new("packed key span overflows"))?;
+    blob.get(start..end)
+        .ok_or_else(|| PackedShardError::new("packed key span is out of bounds"))
 }
 
 struct ExtraWriter(Vec<u8>);

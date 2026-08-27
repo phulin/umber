@@ -662,5 +662,89 @@ fn packed_validator_rejects_offsets_tables_duplicates_and_wrong_identity() {
     duplicate[empty_offset..empty_offset + 16].copy_from_slice(&bucket);
     assert!(ValidatedPackedShard::new(duplicate, &catalog.root, 0).is_err());
 
+    let next_empty = (1..=bucket_count)
+        .map(|distance| (occupied + distance) & (bucket_count - 1))
+        .find(|bucket| {
+            let offset = bucket_offset as usize + *bucket as usize * 16 + 8;
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("bucket")) == u32::MAX
+        })
+        .expect("empty bucket after occupied bucket");
+    let next_empty_offset = bucket_offset as usize + next_empty as usize * 16;
+    let mut unreachable = bytes.clone();
+    let occupied_bytes = unreachable[occupied_offset..occupied_offset + 16].to_vec();
+    let empty_bytes = unreachable[next_empty_offset..next_empty_offset + 16].to_vec();
+    unreachable[occupied_offset..occupied_offset + 16].copy_from_slice(&empty_bytes);
+    unreachable[next_empty_offset..next_empty_offset + 16].copy_from_slice(&occupied_bytes);
+    assert!(ValidatedPackedShard::new(unreachable, &catalog.root, 0).is_err());
+
+    let mut duplicate_key = bytes.clone();
+    let first_key_span =
+        duplicate_key[records_offset as usize..records_offset as usize + 6].to_vec();
+    duplicate_key[records_offset as usize + 32..records_offset as usize + 38]
+        .copy_from_slice(&first_key_span);
+    assert!(ValidatedPackedShard::new(duplicate_key, &catalog.root, 0).is_err());
+
+    let objects_offset = u32::from_le_bytes(bytes[56..60].try_into().expect("object offset"));
+    let mut oversized_object = bytes.clone();
+    oversized_object[objects_offset as usize + 8..objects_offset as usize + 16]
+        .copy_from_slice(&(128_u64 * 1024 * 1024 + 1).to_le_bytes());
+    assert!(ValidatedPackedShard::new(oversized_object, &catalog.root, 0).is_err());
+
+    let paths_offset = u32::from_le_bytes(bytes[60..64].try_into().expect("path offset"));
+    let strings_offset = u32::from_le_bytes(bytes[72..76].try_into().expect("strings offset"));
+    let first_path_offset = u32::from_le_bytes(
+        bytes[paths_offset as usize..paths_offset as usize + 4]
+            .try_into()
+            .expect("path span"),
+    );
+    let mut invalid_path = bytes.clone();
+    invalid_path[strings_offset as usize + first_path_offset as usize] = b'x';
+    assert!(ValidatedPackedShard::new(invalid_path, &catalog.root, 0).is_err());
+
     assert!(ValidatedPackedShard::new(bytes, &catalog.root, 1).is_err());
+}
+
+#[test]
+fn packed_validator_accepts_wrapped_probe_clusters_across_table_sizes() {
+    for record_count in [0, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 256] {
+        let files = (0..record_count)
+            .map(|index| {
+                let ahash64 = format!("{index:016x}");
+                (
+                    format!("tex:probe-{index}.sty"),
+                    ShardFile {
+                        virtual_path: format!("/texlive/tex/probe-{index}.sty"),
+                        object: format!("ahash64-v1-{ahash64}"),
+                        ahash64,
+                        bytes: index as u64,
+                        dependencies: Vec::new(),
+                    },
+                )
+            })
+            .collect();
+        let shard = ManifestShard {
+            schema: INDEX_SHARD_SCHEMA,
+            distribution: "probe-clusters".to_owned(),
+            index: 0,
+            files,
+            fonts: Default::default(),
+            legacy_mappings: Default::default(),
+        };
+        let root = ShardedManifestRoot {
+            schema: SHARDED_ROOT_SCHEMA,
+            distribution: shard.distribution.clone(),
+            objects_base_url: "https://example.invalid/objects/".to_owned(),
+            shard_bits: 0,
+            shard_count: 1,
+            shards: vec!["0".repeat(16)],
+            formats: Default::default(),
+        };
+        let validated =
+            ValidatedPackedShard::new(pack_shard(&shard).expect("packed probe shard"), &root, 0)
+                .expect("valid wrapped probe clusters");
+        for key in shard.files.keys() {
+            let record = validated.lookup(key).expect("packed key lookup");
+            assert_eq!(record.key(), key);
+        }
+    }
 }
