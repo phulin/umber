@@ -16368,3 +16368,8 @@ fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
         },
     );
 }
+
+#[test]
+fn operation_frame_returns_only_a_payload_free_status() {
+    assert_eq!(std::mem::size_of::<OperationReadiness>(), 1);
+}

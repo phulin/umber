@@ -3,8 +3,8 @@
 //! These handlers are the single semantic owner for TeX82 §§1211--1234's
 //! definition, let, prefix-result, group, and catcode families. They scan into
 //! a family-sized typed operand and apply it immediately after the command
-//! processor releases its borrow. `ColdOperation` and
-//! `PreparedColdOperation` never exist on this path.
+//! processor releases its borrow. `ColdOperation` and the caller-owned cold
+//! [`OperationFrame`] never exist on this path.
 
 use super::*;
 

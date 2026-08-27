@@ -306,7 +306,12 @@ An ordinary function local cannot survive suspension. Every value needed on
 resume is moved into a typed pending state. For the resource path,
 `PendingCommandAttempt` owns the complete attempt, a non-`Copy`
 `CommandAttemptOperation` capability, a fixed resume point, the typed requested
-operation, and one coarse generation owner. `MainControl` owns one singular
+operation frame, and one coarse generation owner. Preparation writes the
+prepared or diagnostic payload into one caller-loop `OperationFrame` and
+returns only a compact readiness coordinate. Completion consumes its occupied
+fields and immediately reuses the empty slot; resource suspension moves that
+exact frame into the attempt instead of boxing a prepared operation or
+retaining completed operations in a generation-long lane. `MainControl` owns one singular
 direct-retry slot: the same operation capability moves together with exactly
 one preflight or alignment destination. A settled command discovered by
 alignment dispatch installs its command/cursor destination before operand

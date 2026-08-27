@@ -110,6 +110,7 @@ The following matrix is normative:
 | Immutable macro definition and its definition token lists     | Every live semantic carrier through one branded non-atomic shared handle            | Last exact carrier drop                                         | Rollback moves saved owners back and drops rejected/replaced owners           | Handle-free recipe at a cold boundary            |
 | Stored token list                                             | Every live eqtb, journal, input/expansion, checkpoint, PDF, or continuation carrier | Last exact carrier drop                                         | Moves transfer; true aliases explicitly clone; truncation/pruning drops       | Handle-free recipe at a cold boundary            |
 | Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch                                                          | Operation completion, rollback, or continuation disposal        | Reset the applicable lane lengths to saved cursors                            | None; surviving output is built in final storage |
+| Prepared cold operation or operation-local failure            | One caller-owned direct `OperationFrame`                                            | Application, rollback, typed suspension disposal, or reuse      | Completion consumes occupied fields; suspension moves the exact frame intact  | Typed in-process attempt continuation only       |
 | Pending mode material and page-builder nodes                  | Current generation storage                                                          | Mode close, rollback, setbox publication, or shipout            | Move-only nested-region truncation after promotion/detachment or root restore | Direct construction or shipout lowering          |
 | Box-register or checkpoint-surviving node                     | Store-owned revision slot                                                           | Slot retirement                                                 | Slot ownership restores before abandoned storage drops                        | Detached output or node recipe                   |
 | Source registration and compact provenance record             | Session or revision generation                                                      | Last owning generation, live input, or output recipe retirement | Cursor restoration and suffix discard                                         | Handle-free source recipe                        |
@@ -421,6 +422,13 @@ scope capability, ownership token, loan, mailbox, watermark row, or parent
 graph. Fixed synchronous state stays in ordinary Rust stack locals. State that
 can suspend or become too deep for the Rust stack uses explicit packed frames
 and direct indices carrying the invariant generation brand `G`.
+
+The executor's cold preparation boundary is one such fixed synchronous owner,
+not another scratch lane. One caller-loop `OperationFrame` holds the prepared,
+applied, or diagnostic payload while preparation returns only a compact status.
+Application consumes its fields directly and completion reuses the empty slot.
+A resource suspension moves that same frame into the singular typed attempt;
+there is no per-operation box and no append lane retaining completed commands.
 
 Construction is destination-directed. Ephemeral lookahead, matching, numeric
 text, delimiter prefixes, and incomplete builders use scratch. Any macro

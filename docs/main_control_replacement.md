@@ -604,10 +604,15 @@ stop, so one bounded episode may enter, mutate inside, and leave nested groups.
 
 The resource/effect/PDF/checkpoint cutover is also active. Expandable delivery
 settles in the same command-processor borrow as raw preflight, then operand
-scanning produces one typed prepared operation. Missing fonts, input streams,
-PDF images, and `\input` files retain that completed request across host
-acquisition; `\immediate` additionally retains the already-consumed nested PDF
-command. Observed retry moves its unpublished evidence buffer and opaque
+scanning writes one typed prepared operation into the caller's singular
+`OperationFrame`. Preparation returns only a payload-free readiness coordinate;
+application consumes the occupied fields at that same boundary, and completion
+leaves the frame empty for immediate reuse. There is no prepared aggregate
+return, box, generation-long operation lane, or whole-operation handoff.
+Missing fonts, input streams, PDF images, and `\input` files move that exact
+frame into the attempt's singular typed continuation across host acquisition;
+`\immediate` additionally retains the already-consumed nested PDF command.
+Observed retry moves its unpublished evidence buffer and opaque
 delivery-order cursor with the typed continuation, so it neither clones the
 observer root nor changes raw/expanded provenance. Retry therefore neither
 rewinds input nor rescans operands. Nested expanded token collectors retain

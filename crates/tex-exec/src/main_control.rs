@@ -798,7 +798,8 @@ enum OperationDelivery<G> {
     Hot(hot_apply::HotOperation<G>),
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
-    Prepared(Box<ColdOperation<G>>),
+    /// The caller-owned operation frame already contains the scanned payload.
+    Prepared,
 }
 
 #[derive(Debug)]
@@ -1154,7 +1155,7 @@ impl<G> PendingPreflightCommand<G> {
             | OperationDelivery::<G>::Alignment(_)
             | OperationDelivery::<G>::AlignmentRetry { .. }
             | OperationDelivery::<G>::Hot(_)
-            | OperationDelivery::<G>::Prepared(_) => None,
+            | OperationDelivery::<G>::Prepared => None,
         }
     }
 
@@ -1393,12 +1394,6 @@ fn preflight_delivery_from_retry<G>(command: PendingPreflightCommand<G>) -> Pref
     }
 }
 
-struct PreparedColdOperation<G> {
-    scanned: PreparedColdCommand<G>,
-    alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
-    output_start: OperationOutputStart,
-}
-
 #[derive(Clone, Copy)]
 struct OperationOutputStart {
     outer_paragraph_was_active: bool,
@@ -1416,13 +1411,91 @@ struct PreparedAlignmentPreamble<G> {
     repeat_start: Option<usize>,
 }
 
-/// The result of the unified dispatch seam.
+/// Compact result coordinate for the unified dispatch seam.
 ///
-/// Common unexpandable families are already applied when this value is
-/// returned. Cold and barrier families retain the existing prepared value.
-enum OperationReadiness<G> {
-    Applied(Result<ReplayStep, ExecError>),
-    Prepared(Box<PreparedColdOperation<G>>),
+/// Every payload lives in the caller-owned [`OperationFrame`]. Keeping this
+/// status payload-free prevents construction and application from transferring
+/// the complete cold operation merely to cross a borrow boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationReadiness {
+    Applied,
+    Prepared,
+    Failed,
+}
+
+/// Singular reusable output slot for one command attempt.
+///
+/// Preparation writes exactly one of `applied`, `prepared`, or `error` and
+/// returns only [`OperationReadiness`]. Ordinary completion consumes the
+/// occupied fields individually and leaves the frame empty for the next loop
+/// iteration. A resource suspension moves this exact frame into the attempt's
+/// singular continuation; it is never appended to generation-lived storage.
+struct OperationFrame<G> {
+    applied: Option<Result<ReplayStep, ExecError>>,
+    prepared: Option<PreparedColdCommand<G>>,
+    alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
+    output_start: Option<OperationOutputStart>,
+    error: Option<ExecError>,
+    unavailable: Option<ColdOperation<G>>,
+    cursor: Option<tex_command::CommandDeliveryCursor>,
+    retry: Option<PendingPreflightCommand<G>>,
+    alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
+}
+
+impl<G> Default for OperationFrame<G> {
+    fn default() -> Self {
+        Self {
+            applied: None,
+            prepared: None,
+            alignment_preamble: None,
+            output_start: None,
+            error: None,
+            unavailable: None,
+            cursor: None,
+            retry: None,
+            alignment_scanner: None,
+        }
+    }
+}
+
+impl<G> OperationFrame<G> {
+    fn assert_empty(&self) {
+        assert!(
+            self.applied.is_none()
+                && self.prepared.is_none()
+                && self.alignment_preamble.is_none()
+                && self.output_start.is_none()
+                && self.error.is_none()
+                && self.unavailable.is_none()
+                && self.cursor.is_none()
+                && self.retry.is_none()
+                && self.alignment_scanner.is_none(),
+            "one command attempt owns one empty operation frame"
+        );
+    }
+
+    fn write_retry_failure(
+        &mut self,
+        error: ExecError,
+        cursor: tex_command::CommandDeliveryCursor,
+        retry: Option<PendingPreflightCommand<G>>,
+        alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
+    ) {
+        assert!(
+            retry.is_none() || alignment_scanner.is_none(),
+            "one failed operation retains exactly one scanner destination"
+        );
+        self.error = Some(error);
+        self.cursor = Some(cursor);
+        self.retry = retry;
+        self.alignment_scanner = alignment_scanner;
+    }
+
+    fn take_error(&mut self) -> ExecError {
+        self.error
+            .take()
+            .expect("failed preparation writes its diagnostic into the frame")
+    }
 }
 
 /// One command after canonical delivery and operand scanning.
@@ -1445,7 +1518,7 @@ struct PendingResourceOperation<G> {
 }
 
 struct PreparedResourceResume<G> {
-    scanned: Box<ColdOperation<G>>,
+    frame: OperationFrame<G>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
@@ -1504,6 +1577,10 @@ struct PendingDiagnosticOperation<G> {
     destination: PendingDiagnosticDestination<G>,
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the singular suspended attempt retains its exact operation frame without boxing or an ordinary-path indirection"
+)]
 enum PendingDiagnosticDestination<G> {
     Assignment {
         command: tex_command::CurrentCommand<G>,
@@ -1512,7 +1589,7 @@ enum PendingDiagnosticDestination<G> {
         expanding: bool,
     },
     Prepared {
-        scanned: Box<ColdOperation<G>>,
+        frame: OperationFrame<G>,
     },
     Preflight(PendingPreflightCommand<G>),
 }
@@ -1542,19 +1619,6 @@ impl<G> std::fmt::Debug for PendingResourceOperation<G> {
     }
 }
 
-struct UnavailablePreparedResource<G> {
-    error: ExecError,
-    scanned: Box<ColdOperation<G>>,
-}
-
-struct PrepareOperationError<G> {
-    error: Box<ExecError>,
-    unavailable: Option<Box<ColdOperation<G>>>,
-    cursor: Option<tex_command::CommandDeliveryCursor>,
-    retry: Option<PendingPreflightCommand<G>>,
-    alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
-}
-
 struct PreflightDeliveryError<G> {
     error: ExecError,
     retry: Option<PendingPreflightCommand<G>>,
@@ -1563,27 +1627,6 @@ struct PreflightDeliveryError<G> {
 impl<G> From<ExecError> for PreflightDeliveryError<G> {
     fn from(error: ExecError) -> Self {
         Self { error, retry: None }
-    }
-}
-
-impl<G> PrepareOperationError<G> {
-    fn with_retry(
-        error: ExecError,
-        cursor: tex_command::CommandDeliveryCursor,
-        retry: Option<PendingPreflightCommand<G>>,
-        alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
-    ) -> Self {
-        assert!(
-            retry.is_none() || alignment_scanner.is_none(),
-            "one failed operation retains exactly one scanner destination"
-        );
-        Self {
-            error: Box::new(error),
-            unavailable: None,
-            cursor: Some(cursor),
-            retry,
-            alignment_scanner,
-        }
     }
 }
 
@@ -1605,31 +1648,6 @@ struct DirectOperationMark<G> {
     mode: crate::mode::ModeJournalCursor,
     attempt: tex_command::CommandAttemptOperation,
     page: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
-}
-
-impl<G> From<ExecError> for PrepareOperationError<G> {
-    fn from(error: ExecError) -> Self {
-        Self {
-            error: Box::new(error),
-            unavailable: None,
-            cursor: None,
-            retry: None,
-            alignment_scanner: None,
-        }
-    }
-}
-
-impl<G> From<Box<UnavailablePreparedResource<G>>> for PrepareOperationError<G> {
-    fn from(unavailable: Box<UnavailablePreparedResource<G>>) -> Self {
-        let unavailable = *unavailable;
-        Self {
-            error: Box::new(unavailable.error),
-            unavailable: Some(unavailable.scanned),
-            cursor: None,
-            retry: None,
-            alignment_scanner: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -2877,50 +2895,36 @@ impl<G> MainControl<G> {
 
     fn resolve_font_resource(
         &self,
-        scanned: ColdOperation<G>,
+        scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
-    ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
+    ) -> Result<(), ExecError> {
         let ColdOperation::<G>::FontDefinition {
-            request, global, ..
+            request, resource, ..
         } = scanned
         else {
-            return Ok(scanned);
+            return Ok(());
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
-        let Some(resource) = self.capabilities.font(&path) else {
-            return Err(Box::new(UnavailablePreparedResource::<G> {
-                error: ExecError::MissingFont {
-                    request: request.clone(),
-                },
-                scanned: Box::new(ColdOperation::<G>::FontDefinition {
-                    request,
-                    resource: Box::new(None),
-                    global,
-                }),
-            }));
+        let Some(resolved_resource) = self.capabilities.font(&path) else {
+            return Err(ExecError::MissingFont {
+                request: request.clone(),
+            });
         };
-        Ok(ColdOperation::<G>::FontDefinition {
-            request,
-            resource: Box::new(Some(resource)),
-            global,
-        })
+        **resource = Some(resolved_resource);
+        Ok(())
     }
 
     fn resolve_input_stream_resource(
         &self,
-        scanned: ColdOperation<G>,
+        scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
-    ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
-        let ColdOperation::<G>::InputStream {
-            mut request,
-            resource: _,
-        } = scanned
-        else {
-            return Ok(scanned);
+    ) -> Result<(), ExecError> {
+        let ColdOperation::<G>::InputStream { request, resource } = scanned else {
+            return Ok(());
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
-        let resource = match &mut request {
+        let resolved_source = match request {
             RootedInputStreamRequest::Open { file_name, .. } => {
                 // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
                 // pack_cur_name`. The packed name is what is opened, so it is
@@ -2941,43 +2945,36 @@ impl<G> MainControl<G> {
                             packed_name,
                             tex_command::FileEnquiryIntent::OpenInProbe,
                         );
-                        return Err(Box::new(UnavailablePreparedResource::<G> {
-                            error: ExecError::MissingInputProbe {
-                                request: error_request,
-                            },
-                            scanned: Box::new(ColdOperation::<G>::InputStream {
-                                request,
-                                resource: None,
-                            }),
-                        }));
+                        return Err(ExecError::MissingInputProbe {
+                            request: error_request,
+                        });
                     }
                 }
             }
             RootedInputStreamRequest::Close { .. } | RootedInputStreamRequest::Read { .. } => None,
         };
-        Ok(ColdOperation::<G>::InputStream { request, resource })
+        *resource = resolved_source;
+        Ok(())
     }
 
     fn resolve_pdf_image_resource(
         &self,
-        scanned: ColdOperation<G>,
+        scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
-    ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
-        let ColdOperation::<G>::PdfXImage { mut request, .. } = scanned else {
-            return Ok(scanned);
+    ) -> Result<(), ExecError> {
+        let ColdOperation::<G>::PdfXImage { request, resource } = scanned else {
+            return Ok(());
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
         let mut context = stores.command_context().expect("live generation");
         if context.int_param(IntParam::PDF_OUTPUT) <= 0 {
-            return Ok(ColdOperation::<G>::PdfXImage {
-                request,
-                resource: PdfImageResource::Unavailable,
-            });
+            *resource = PdfImageResource::Unavailable;
+            return Ok(());
         }
         apply_pdf_image_compatibility_policy(&mut context);
-        request.page_box = pdf_image_page_box(&context, &request);
+        request.page_box = pdf_image_page_box(&context, request);
         drop(context);
         let host_request = PdfImageRequest {
             name: request.name.clone(),
@@ -2990,18 +2987,13 @@ impl<G> MainControl<G> {
             page_box_explicit: request.page_box_explicit,
             attr: request.attr,
         };
-        let Some(resource) = self.capabilities.pdf_image(&host_request) else {
-            return Err(Box::new(UnavailablePreparedResource::<G> {
-                error: ExecError::MissingPdfImage {
-                    request: host_request,
-                },
-                scanned: Box::new(ColdOperation::<G>::PdfXImage {
-                    request,
-                    resource: PdfImageResource::Unavailable,
-                }),
-            }));
+        let Some(resolved_resource) = self.capabilities.pdf_image(&host_request) else {
+            return Err(ExecError::MissingPdfImage {
+                request: host_request,
+            });
         };
-        Ok(ColdOperation::<G>::PdfXImage { request, resource })
+        *resource = resolved_resource;
+        Ok(())
     }
 
     /// Registers and opens the one root source selected by the host before
@@ -4605,11 +4597,11 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &Universe<G>,
         operation: tex_command::CommandAttemptOperation,
-        scanned: Box<ColdOperation<G>>,
+        frame: OperationFrame<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
     ) {
         let pending = PreparedResourceResume::<G> {
-            scanned,
+            frame,
             capabilities,
         };
         let attempt = self
@@ -4631,14 +4623,18 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
-        scanned: Box<ColdOperation<G>>,
+        mut frame: OperationFrame<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
-        error: ExecError,
     ) -> Result<StepResult, ExecError> {
+        assert!(
+            frame.unavailable.is_some(),
+            "unavailable resource remains in its attempt-owned frame"
+        );
+        let error = frame.take_error();
         let result = self.finish_resource_preflight_failure(stores, error);
         if matches!(result, Ok(StepResult::Suspended(_))) {
             let operation = self.retain_direct_operation_for_retry(stores, mark);
-            self.suspend_prepared_resource_operation(stores, operation, scanned, capabilities);
+            self.suspend_prepared_resource_operation(stores, operation, frame, capabilities);
         } else {
             self.commit_direct_operation(stores, mark);
         }
@@ -4749,6 +4745,7 @@ impl<G> MainControl<G> {
         let mut operations = 0_usize;
         let mut last_step = ReplayStep::Continue;
         let mut direct_attempt_recorded = false;
+        let mut operation_frame = OperationFrame::default();
         let mut episode_tracked_mark = if tracked_region.is_some() {
             match stores.begin_dependency_region() {
                 Ok(mark) => Some(mark),
@@ -4812,15 +4809,19 @@ impl<G> MainControl<G> {
                 None => (None, None),
             };
             let (operation, resumed_resource) = match resumed_resource {
-                Some((operation, pending)) => (Some(operation), Some(pending)),
+                Some((operation, mut pending)) => {
+                    let _ = pending.frame.error.take();
+                    operation_frame = pending.frame;
+                    (Some(operation), Some(pending.capabilities))
+                }
                 None => (retained_operation, None),
             };
             let operation_mark = self.begin_direct_operation(stores, operation);
             let mut diagnostic_effects = DiagnosticEffects::new();
-            let preflight = if let Some(pending) = resumed_resource {
+            let preflight = if let Some(capabilities) = resumed_resource {
                 PreflightDelivery::<G> {
-                    delivery: OperationDelivery::<G>::Prepared(pending.scanned),
-                    capabilities: pending.capabilities,
+                    delivery: OperationDelivery::<G>::Prepared,
+                    capabilities,
                     scanner: None,
                 }
             } else if let Some(delivery) = initial_delivery.take() {
@@ -4850,45 +4851,48 @@ impl<G> MainControl<G> {
                     }
                 }
             } else {
-                let preflight =
-                    match self.preflight_replay_delivery(stores, &mut diagnostic_effects) {
-                        Ok(preflight) => preflight,
-                        Err(failure) => {
-                            let PreflightDeliveryError { error, retry } = failure;
-                            if let Some(mark) = episode_tracked_mark.take() {
-                                let _ = stores.abandon_dependency_region(mark);
-                            }
-                            if execution_error_is_fuel(&error) {
-                                self.episode_telemetry
-                                    .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
-                            }
-                            let result = self.finish_resource_preflight_failure(stores, error);
-                            if matches!(result, Ok(StepResult::Suspended(_))) {
-                                self.advance_telemetry.rollbacks += 1;
-                                #[cfg(feature = "profiling")]
-                                self.episode_telemetry
-                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
-                                #[cfg(not(feature = "profiling"))]
-                                self.episode_telemetry
-                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                            }
-                            if matches!(result, Ok(StepResult::Suspended(_))) {
-                                let destination = retry
-                                    .map(PendingDirectDestination::Preflight)
-                                    .expect("resource delivery retains its exact retry command");
-                                let operation =
-                                    self.retain_direct_operation_for_retry(stores, operation_mark);
-                                self.pending_direct_operation =
-                                    Some(PendingDirectOperation::Retained {
-                                        operation,
-                                        destination,
-                                    });
-                            } else {
-                                self.commit_direct_operation(stores, operation_mark);
-                            }
-                            return result;
+                let preflight = match self.preflight_replay_delivery(
+                    stores,
+                    &mut diagnostic_effects,
+                    &mut operation_frame,
+                ) {
+                    Ok(preflight) => preflight,
+                    Err(failure) => {
+                        let PreflightDeliveryError { error, retry } = failure;
+                        if let Some(mark) = episode_tracked_mark.take() {
+                            let _ = stores.abandon_dependency_region(mark);
                         }
-                    };
+                        if execution_error_is_fuel(&error) {
+                            self.episode_telemetry
+                                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
+                        }
+                        let result = self.finish_resource_preflight_failure(stores, error);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.advance_telemetry.rollbacks += 1;
+                            #[cfg(feature = "profiling")]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                            #[cfg(not(feature = "profiling"))]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                        }
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            let destination = retry
+                                .map(PendingDirectDestination::Preflight)
+                                .expect("resource delivery retains its exact retry command");
+                            let operation =
+                                self.retain_direct_operation_for_retry(stores, operation_mark);
+                            self.pending_direct_operation =
+                                Some(PendingDirectOperation::Retained {
+                                    operation,
+                                    destination,
+                                });
+                        } else {
+                            self.commit_direct_operation(stores, operation_mark);
+                        }
+                        return result;
+                    }
+                };
                 preflight.expect("alignment delivery has a direct preflight")
             };
 
@@ -4931,50 +4935,25 @@ impl<G> MainControl<G> {
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
                 let tracked_mark = episode_tracked_mark.take();
-                let prepared = match self.prepare_operation(
+                let prepared = self.prepare_operation(
                     stores,
                     preflight.delivery,
                     preflight.scanner,
                     &mut diagnostic_effects,
-                ) {
-                    Ok(prepared) => prepared,
-                    Err(failure) => {
-                        if let Some(mark) = tracked_mark {
-                            let _ = stores.abandon_dependency_region(mark);
-                        }
-                        if let Some(scanned) = failure.unavailable {
-                            let result = self.finish_unavailable_prepared_resource_operation(
-                                stores,
-                                operation_mark,
-                                scanned,
-                                preflight.capabilities,
-                                *failure.error,
-                            );
-                            if matches!(result, Ok(StepResult::Suspended(_))) {
-                                self.advance_telemetry.rollbacks += 1;
-                                #[cfg(feature = "profiling")]
-                                self.episode_telemetry
-                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
-                                #[cfg(not(feature = "profiling"))]
-                                self.episode_telemetry
-                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                            }
-                            return result;
-                        }
-                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
+                    &mut operation_frame,
+                );
+                if prepared == OperationReadiness::Failed {
+                    if let Some(mark) = tracked_mark {
+                        let _ = stores.abandon_dependency_region(mark);
+                    }
+                    if operation_frame.unavailable.is_some() {
+                        let result = self.finish_unavailable_prepared_resource_operation(
+                            stores,
+                            operation_mark,
+                            operation_frame,
+                            preflight.capabilities,
+                        );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
-                            let destination = own_alignment_retry_child(
-                                alignment_delivery,
-                                failure.cursor,
-                                failure.retry,
-                                failure.alignment_scanner,
-                            )
-                            .expect("resource suspension retains one direct caller destination");
-                            self.retain_direct_delivery_for_retry(
-                                stores,
-                                operation_mark,
-                                destination,
-                            );
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -4982,13 +4961,38 @@ impl<G> MainControl<G> {
                             #[cfg(not(feature = "profiling"))]
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                        } else {
-                            self.commit_direct_operation(stores, operation_mark);
                         }
                         return result;
                     }
-                };
-                let applied = self.apply_ready_operation(stores, prepared, &mut diagnostic_effects);
+                    let result = self
+                        .finish_resource_preflight_failure(stores, operation_frame.take_error());
+                    if matches!(result, Ok(StepResult::Suspended(_))) {
+                        let destination = own_alignment_retry_child(
+                            alignment_delivery,
+                            operation_frame.cursor.take(),
+                            operation_frame.retry.take(),
+                            operation_frame.alignment_scanner.take(),
+                        )
+                        .expect("resource suspension retains one direct caller destination");
+                        self.retain_direct_delivery_for_retry(stores, operation_mark, destination);
+                        self.advance_telemetry.rollbacks += 1;
+                        #[cfg(feature = "profiling")]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                        #[cfg(not(feature = "profiling"))]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                    } else {
+                        self.commit_direct_operation(stores, operation_mark);
+                    }
+                    return result;
+                }
+                let applied = self.apply_ready_operation(
+                    stores,
+                    prepared,
+                    &mut diagnostic_effects,
+                    &mut operation_frame,
+                );
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -5079,80 +5083,85 @@ impl<G> MainControl<G> {
                         .admit(transaction.projection())
                         .expect("preflight owns the exact narrow projection");
                 }
-                let prepared = match self.prepare_operation(
+                let prepared = self.prepare_operation(
                     stores,
                     preflight.delivery,
                     preflight.scanner,
                     &mut diagnostic_effects,
-                ) {
-                    Ok(prepared) => prepared,
-                    Err(failure) => {
-                        if let Some(mark) = tracked_mark {
-                            let _ = stores.abandon_dependency_region(mark);
-                        }
-                        if let Some(scanned) = failure.unavailable {
-                            let result = self.finish_unavailable_prepared_resource_operation(
+                    &mut operation_frame,
+                );
+                if prepared == OperationReadiness::Failed {
+                    if let Some(mark) = tracked_mark {
+                        let _ = stores.abandon_dependency_region(mark);
+                    }
+                    if operation_frame.unavailable.is_some() {
+                        let result = self.finish_unavailable_prepared_resource_operation(
+                            stores,
+                            operation_mark,
+                            operation_frame,
+                            preflight.capabilities,
+                        );
+                        return result;
+                    }
+                    let result = self
+                        .finish_resource_preflight_failure(stores, operation_frame.take_error());
+                    match result {
+                        Ok(step @ StepResult::Suspended(_)) => {
+                            let destination = own_alignment_retry_child(
+                                alignment_delivery,
+                                operation_frame.cursor.take(),
+                                operation_frame.retry.take(),
+                                operation_frame.alignment_scanner.take(),
+                            )
+                            .expect("resource suspension retains one direct caller destination");
+                            self.retain_direct_delivery_for_retry(
                                 stores,
                                 operation_mark,
-                                scanned,
-                                preflight.capabilities,
-                                *failure.error,
+                                destination,
                             );
-                            return result;
+                            return Ok(step);
                         }
-                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
-                        match result {
-                            Ok(step @ StepResult::Suspended(_)) => {
-                                let destination = own_alignment_retry_child(
-                                    alignment_delivery,
-                                    failure.cursor,
-                                    failure.retry,
-                                    failure.alignment_scanner,
-                                )
-                                .expect(
-                                    "resource suspension retains one direct caller destination",
-                                );
-                                self.retain_direct_delivery_for_retry(
-                                    stores,
-                                    operation_mark,
-                                    destination,
-                                );
-                                return Ok(step);
-                            }
-                            Ok(step) => {
-                                self.commit_direct_operation(stores, operation_mark);
-                                return Ok(step);
-                            }
-                            Err(error) => {
-                                let destination = own_alignment_retry_child(
-                                    alignment_delivery,
-                                    failure.cursor,
-                                    failure.retry,
-                                    failure.alignment_scanner,
-                                )
-                                .expect("retained failure owns one direct caller destination");
-                                self.retain_direct_delivery_for_retry(
-                                    stores,
-                                    operation_mark,
-                                    destination,
-                                );
-                                Self::publish_pdf_fatal_error(stores, &error)?;
-                                return Err(error);
-                            }
+                        Ok(step) => {
+                            self.commit_direct_operation(stores, operation_mark);
+                            return Ok(step);
+                        }
+                        Err(error) => {
+                            let destination = own_alignment_retry_child(
+                                alignment_delivery,
+                                operation_frame.cursor.take(),
+                                operation_frame.retry.take(),
+                                operation_frame.alignment_scanner.take(),
+                            )
+                            .expect("retained failure owns one direct caller destination");
+                            self.retain_direct_delivery_for_retry(
+                                stores,
+                                operation_mark,
+                                destination,
+                            );
+                            Self::publish_pdf_fatal_error(stores, &error)?;
+                            return Err(error);
                         }
                     }
-                };
-                if let OperationReadiness::<G>::Prepared(prepared) = &prepared
+                }
+                if prepared == OperationReadiness::Prepared
                     && let ColdOperation::ImmediateExtension(
                         RootedImmediateExtension::PdfExtensionInDviMode(primitive),
-                    ) = &prepared.scanned
+                    ) = operation_frame
+                        .prepared
+                        .as_ref()
+                        .expect("prepared readiness owns its operation payload")
                 {
                     retry_command =
                         Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive));
                 }
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
-                let applied = self.apply_ready_operation(stores, prepared, &mut diagnostic_effects);
+                let applied = self.apply_ready_operation(
+                    stores,
+                    prepared,
+                    &mut diagnostic_effects,
+                    &mut operation_frame,
+                );
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -5272,66 +5281,66 @@ impl<G> MainControl<G> {
             if saved_interaction.is_some() {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
-            let prepared = match self.prepare_operation(
+            let prepared = self.prepare_operation(
                 stores,
                 preflight.delivery,
                 preflight.scanner,
                 &mut diagnostic_effects,
-            ) {
-                Ok(prepared) => prepared,
-                Err(failure) => {
-                    if let Some(interaction) = saved_interaction {
-                        stores.set_interaction_mode(interaction);
-                    }
-                    if let Some(mark) = tracked_mark {
-                        let _ = stores.abandon_dependency_region(mark);
-                    }
-                    let result = if let Some(scanned) = failure.unavailable {
-                        self.finish_unavailable_prepared_resource_operation(
-                            stores,
-                            operation_mark,
-                            scanned,
-                            preflight.capabilities,
-                            *failure.error,
-                        )
-                    } else {
-                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
-                        if matches!(result, Ok(StepResult::Suspended(_))) {
-                            let destination = own_alignment_retry_child(
-                                alignment_delivery,
-                                failure.cursor,
-                                failure.retry,
-                                failure.alignment_scanner,
-                            )
-                            .expect("resource suspension retains one direct caller destination");
-                            self.retain_direct_delivery_for_retry(
-                                stores,
-                                operation_mark,
-                                destination,
-                            );
-                        } else {
-                            self.commit_direct_operation(stores, operation_mark);
-                        }
-                        result
-                    };
-                    return match result {
-                        Err(error) => {
-                            let error = {
-                                let mut context =
-                                    stores.command_context().expect("diagnostic admission");
-                                error.freeze_diagnostic_origin(
-                                    &mut context,
-                                    self.command.diagnostic_input_context(8),
-                                )
-                            };
-                            Self::publish_pdf_fatal_error(stores, &error)?;
-                            Err(error)
-                        }
-                        result => result,
-                    };
+                &mut operation_frame,
+            );
+            if prepared == OperationReadiness::Failed {
+                if let Some(interaction) = saved_interaction {
+                    stores.set_interaction_mode(interaction);
                 }
-            };
-            let applied = self.apply_ready_operation(stores, prepared, &mut diagnostic_effects);
+                if let Some(mark) = tracked_mark {
+                    let _ = stores.abandon_dependency_region(mark);
+                }
+                let result = if operation_frame.unavailable.is_some() {
+                    self.finish_unavailable_prepared_resource_operation(
+                        stores,
+                        operation_mark,
+                        operation_frame,
+                        preflight.capabilities,
+                    )
+                } else {
+                    let result = self
+                        .finish_resource_preflight_failure(stores, operation_frame.take_error());
+                    if matches!(result, Ok(StepResult::Suspended(_))) {
+                        let destination = own_alignment_retry_child(
+                            alignment_delivery,
+                            operation_frame.cursor.take(),
+                            operation_frame.retry.take(),
+                            operation_frame.alignment_scanner.take(),
+                        )
+                        .expect("resource suspension retains one direct caller destination");
+                        self.retain_direct_delivery_for_retry(stores, operation_mark, destination);
+                    } else {
+                        self.commit_direct_operation(stores, operation_mark);
+                    }
+                    result
+                };
+                return match result {
+                    Err(error) => {
+                        let error = {
+                            let mut context =
+                                stores.command_context().expect("diagnostic admission");
+                            error.freeze_diagnostic_origin(
+                                &mut context,
+                                self.command.diagnostic_input_context(8),
+                            )
+                        };
+                        Self::publish_pdf_fatal_error(stores, &error)?;
+                        Err(error)
+                    }
+                    result => result,
+                };
+            }
+            let applied = self.apply_ready_operation(
+                stores,
+                prepared,
+                &mut diagnostic_effects,
+                &mut operation_frame,
+            );
             if let Some(interaction) = saved_interaction {
                 stores.set_interaction_mode(interaction);
             }
@@ -5599,14 +5608,19 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
         let continuation = self.pending_diagnostic_operation.take();
+        let mut operation_frame = OperationFrame::default();
         let (retained_attempt, continuation) = match continuation {
             Some(PendingDiagnosticOperation {
                 operation,
-                destination: PendingDiagnosticDestination::<G>::Prepared { scanned },
-            }) => (
-                Some(operation),
-                Some((OperationDelivery::<G>::Prepared(scanned), None, None)),
-            ),
+                destination: PendingDiagnosticDestination::<G>::Prepared { mut frame },
+            }) => {
+                let _ = frame.error.take();
+                operation_frame = frame;
+                (
+                    Some(operation),
+                    Some((OperationDelivery::<G>::Prepared, None, None)),
+                )
+            }
             Some(PendingDiagnosticOperation {
                 operation,
                 destination:
@@ -5729,61 +5743,68 @@ impl<G> MainControl<G> {
         };
         let (delivery, retry, scanner) = assignment.expect("diagnostic assignment continuation");
         let mode_mark = self.modes.begin_journal();
-        let prepared =
-            match self.prepare_operation(stores, delivery, scanner, &mut diagnostic_effects) {
-                Ok(prepared) => prepared,
-                Err(failure) => {
-                    let PrepareOperationError {
-                        error,
-                        unavailable,
-                        cursor: failure_cursor,
-                        retry: failure_retry,
-                        alignment_scanner,
-                    } = failure;
-                    assert!(
-                        alignment_scanner.is_none(),
-                        "diagnostic retry cannot own an alignment scanner destination"
-                    );
-                    let destination = if let Some(scanned) = unavailable {
-                        Some(PendingDiagnosticDestination::<G>::Prepared { scanned })
-                    } else if let Some(retry) = failure_retry {
-                        Some(PendingDiagnosticDestination::<G>::Preflight(retry))
-                    } else if let Some((command, cursor)) = retry {
-                        Some(PendingDiagnosticDestination::<G>::Assignment {
-                            command,
-                            cursor: failure_cursor.unwrap_or(cursor),
-                            scanner: None,
-                            expanding: false,
-                        })
-                    } else {
-                        None
-                    };
-                    let result = self.finish_resource_preflight_failure(stores, *error);
-                    self.modes
-                        .rollback_journal(mode_mark)
-                        .expect("diagnostic assignment owns the mode mark");
-                    if matches!(result, Ok(StepResult::Suspended(_))) {
-                        let destination = destination
-                            .expect("diagnostic resource suspension owns an exact retry");
-                        let operation =
-                            self.retain_direct_operation_for_retry(stores, operation_mark);
-                        self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
-                            operation,
-                            destination,
-                        });
-                    } else {
-                        self.pending_diagnostic_operation = None;
-                        self.commit_direct_operation(stores, operation_mark);
+        let prepared = self.prepare_operation(
+            stores,
+            delivery,
+            scanner,
+            &mut diagnostic_effects,
+            &mut operation_frame,
+        );
+        if prepared == OperationReadiness::Failed {
+            assert!(
+                operation_frame.alignment_scanner.is_none(),
+                "diagnostic retry cannot own an alignment scanner destination"
+            );
+            let unavailable = operation_frame.unavailable.is_some();
+            let destination = if unavailable {
+                None
+            } else if let Some(retry) = operation_frame.retry.take() {
+                Some(PendingDiagnosticDestination::<G>::Preflight(retry))
+            } else if let Some((command, cursor)) = retry {
+                Some(PendingDiagnosticDestination::<G>::Assignment {
+                    command,
+                    cursor: operation_frame.cursor.take().unwrap_or(cursor),
+                    scanner: None,
+                    expanding: false,
+                })
+            } else {
+                None
+            };
+            let result =
+                self.finish_resource_preflight_failure(stores, operation_frame.take_error());
+            self.modes
+                .rollback_journal(mode_mark)
+                .expect("diagnostic assignment owns the mode mark");
+            if matches!(result, Ok(StepResult::Suspended(_))) {
+                let destination = if unavailable {
+                    PendingDiagnosticDestination::<G>::Prepared {
+                        frame: operation_frame,
                     }
-                    return match result? {
-                        StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
-                        StepResult::Progress(_) => {
-                            unreachable!("diagnostic assignment failure made progress")
-                        }
-                    };
+                } else {
+                    destination.expect("diagnostic resource suspension owns an exact retry")
+                };
+                let operation = self.retain_direct_operation_for_retry(stores, operation_mark);
+                self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
+                    operation,
+                    destination,
+                });
+            } else {
+                self.pending_diagnostic_operation = None;
+                self.commit_direct_operation(stores, operation_mark);
+            }
+            return match result? {
+                StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
+                StepResult::Progress(_) => {
+                    unreachable!("diagnostic assignment failure made progress")
                 }
             };
-        match self.apply_ready_operation(stores, prepared, &mut diagnostic_effects) {
+        }
+        match self.apply_ready_operation(
+            stores,
+            prepared,
+            &mut diagnostic_effects,
+            &mut operation_frame,
+        ) {
             Ok(_) => {
                 self.modes
                     .commit_journal(mode_mark)
@@ -7747,7 +7768,9 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        frame: &mut OperationFrame<G>,
     ) -> Result<Option<PreflightDelivery<G>>, PreflightDeliveryError<G>> {
+        frame.assert_empty();
         let mode = self.modes.current_mode();
         if self.active_alignment.is_some()
             || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
@@ -7994,19 +8017,17 @@ impl<G> MainControl<G> {
             || crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax);
         let command = match delivery_status {
             tex_command::DeliveryStatus::End => {
+                frame.unavailable = Some(ColdOperation::<G>::EndOfInput);
                 return Ok(Some(PreflightDelivery::<G> {
-                    delivery: OperationDelivery::<G>::Prepared(Box::new(
-                        ColdOperation::<G>::EndOfInput,
-                    )),
+                    delivery: OperationDelivery::<G>::Prepared,
                     capabilities: passive(),
                     scanner: None,
                 }));
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
+                frame.unavailable = Some(ColdOperation::<G>::ReplayCompleted(episode));
                 return Ok(Some(PreflightDelivery::<G> {
-                    delivery: OperationDelivery::<G>::Prepared(Box::new(
-                        ColdOperation::<G>::ReplayCompleted(episode),
-                    )),
+                    delivery: OperationDelivery::<G>::Prepared,
                     capabilities: passive(),
                     scanner: None,
                 }));
@@ -8057,12 +8078,11 @@ impl<G> MainControl<G> {
             )
             && self.operation_observations.is_none()
         {
+            frame.unavailable = Some(ColdOperation::<G>::NoBoundary {
+                suppress_right: true,
+            });
             return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Prepared(Box::new(
-                    ColdOperation::<G>::NoBoundary {
-                        suppress_right: true,
-                    },
-                )),
+                delivery: OperationDelivery::<G>::Prepared,
                 capabilities: crate::transaction_protocol::canonical_command_capabilities(
                     command.meaning(),
                 ),
@@ -8102,22 +8122,42 @@ impl<G> MainControl<G> {
         delivery: OperationDelivery<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
-        let readiness = self
-            .prepare_operation(stores, delivery, None, diagnostic_effects)
-            .map_err(|failure| *failure.error)?;
-        self.apply_ready_operation(stores, readiness, diagnostic_effects)
+        let mut frame = OperationFrame::default();
+        let readiness =
+            self.prepare_operation(stores, delivery, None, diagnostic_effects, &mut frame);
+        if readiness == OperationReadiness::Failed {
+            return Err(frame.take_error());
+        }
+        self.apply_ready_operation(stores, readiness, diagnostic_effects, &mut frame)
     }
 
     fn apply_ready_operation(
         &mut self,
         stores: &mut Universe<G>,
-        readiness: OperationReadiness<G>,
+        readiness: OperationReadiness,
         diagnostic_effects: &mut DiagnosticEffects,
+        frame: &mut OperationFrame<G>,
     ) -> Result<ReplayStep, ExecError> {
         match readiness {
-            OperationReadiness::<G>::Applied(result) => result,
-            OperationReadiness::<G>::Prepared(prepared) => {
-                self.apply_prepared_operation(stores, *prepared, diagnostic_effects)
+            OperationReadiness::Applied => frame
+                .applied
+                .take()
+                .expect("applied preparation writes its result into the frame"),
+            OperationReadiness::Prepared => self.apply_prepared_operation(
+                stores,
+                frame
+                    .prepared
+                    .take()
+                    .expect("cold preparation writes its operation into the frame"),
+                frame.alignment_preamble.take(),
+                frame
+                    .output_start
+                    .take()
+                    .expect("cold preparation writes its output cursor into the frame"),
+                diagnostic_effects,
+            ),
+            OperationReadiness::Failed => {
+                unreachable!("failed preparation is handled before application")
             }
         }
     }
@@ -8126,17 +8166,30 @@ impl<G> MainControl<G> {
     /// preflight. Common unexpandable families scan and apply here without a
     /// universal DTO; cold and barrier families return a prepared value after
     /// immutable resource resolution.
-    #[allow(
-        clippy::result_large_err,
-        reason = "resource suspension returns the complete move-only phase-typed retry without a lifecycle allocation"
-    )]
     fn prepare_operation(
         &mut self,
         stores: &mut Universe<G>,
         delivery: OperationDelivery<G>,
         scanner_resume: Option<tex_command::ScannerFrameKey<G>>,
         diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<OperationReadiness<G>, PrepareOperationError<G>> {
+        frame: &mut OperationFrame<G>,
+    ) -> OperationReadiness {
+        if matches!(&delivery, OperationDelivery::<G>::Prepared) {
+            assert!(
+                frame.unavailable.is_some()
+                    && frame.applied.is_none()
+                    && frame.prepared.is_none()
+                    && frame.alignment_preamble.is_none()
+                    && frame.output_start.is_none()
+                    && frame.error.is_none()
+                    && frame.cursor.is_none()
+                    && frame.retry.is_none()
+                    && frame.alignment_scanner.is_none(),
+                "prepared delivery resumes the exact occupied operation frame"
+            );
+        } else {
+            frame.assert_empty();
+        }
         let mode = self.modes.current_mode();
         let tracked_region_is_active = stores
             .command_context()
@@ -8565,7 +8618,11 @@ impl<G> MainControl<G> {
                     OperationDelivery::<G>::Hot(_) => {
                         unreachable!("pre-scanned hot delivery bypasses processor construction")
                     }
-                    OperationDelivery::<G>::Prepared(scanned) => (*scanned).into(),
+                    OperationDelivery::<G>::Prepared => frame
+                        .unavailable
+                        .take()
+                        .expect("prepared delivery owns its scanned frame payload")
+                        .into(),
                 })
             })();
             let cursor = processor.delivery_cursor();
@@ -8603,9 +8660,13 @@ impl<G> MainControl<G> {
             } else {
                 (None, scanner_resume)
             };
-            let scanned = scanned.map_err(|error| {
-                PrepareOperationError::<G>::with_retry(error, cursor, retry, alignment_scanner)
-            })?;
+            let scanned = match scanned {
+                Ok(scanned) => scanned,
+                Err(error) => {
+                    frame.write_retry_failure(error, cursor, retry, alignment_scanner);
+                    return OperationReadiness::Failed;
+                }
+            };
             #[cfg(feature = "profiling")]
             if matches!(scanned, ScannedOperation::<G>::Cold(_)) {
                 tex_state::measurement::record_hot_core_materialization(
@@ -8636,12 +8697,15 @@ impl<G> MainControl<G> {
             ));
         }
         self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
+        if let Err(error) = report_pending_diagnostics(stores, diagnostic_effects, diagnostics) {
+            frame.error = Some(error);
+            return OperationReadiness::Failed;
+        }
         self.drain_file_framing_events(stores);
         let scanned = match scanned {
             ScannedOperation::<G>::Cold(scanned) => scanned,
             ScannedOperation::<G>::Hot(operation) => {
-                return Ok(OperationReadiness::<G>::Applied(self.apply_hot_operation(
+                frame.applied = Some(self.apply_hot_operation(
                     stores,
                     diagnostic_effects,
                     operation,
@@ -8652,22 +8716,46 @@ impl<G> MainControl<G> {
                         effect_count: stores.world().effect_records().len(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
                     },
-                )));
+                ));
+                return OperationReadiness::Applied;
             }
         };
-        let scanned = self.resolve_font_resource(scanned, stores)?;
-        let scanned = self.resolve_input_stream_resource(scanned, stores)?;
-        let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
-        let completed_preamble = match &scanned {
-            ColdOperation::AlignmentPreambleStart { alignment } => Some((
-                *alignment,
-                self.command
+        frame.unavailable = Some(scanned);
+        let resource_result = {
+            let scanned = frame
+                .unavailable
+                .as_mut()
+                .expect("scanned operation occupies its caller-owned frame");
+            self.resolve_font_resource(scanned, stores)
+                .and_then(|()| self.resolve_input_stream_resource(scanned, stores))
+                .and_then(|()| self.resolve_pdf_image_resource(scanned, stores))
+        };
+        if let Err(error) = resource_result {
+            frame.error = Some(error);
+            return OperationReadiness::Failed;
+        }
+        let completed_preamble = match frame
+            .unavailable
+            .as_ref()
+            .expect("resolved operation remains in its caller-owned frame")
+        {
+            ColdOperation::AlignmentPreambleStart { alignment } => {
+                let alignment = *alignment;
+                let preamble = match self
+                    .command
                     .state_mut()
-                    .take_completed_alignment_preamble(*alignment)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "completed alignment preamble",
-                    })?,
-            )),
+                    .take_completed_alignment_preamble(alignment)
+                {
+                    Ok(preamble) => preamble,
+                    Err(_) => {
+                        frame.error = Some(ExecError::MissingToken {
+                            context: "completed alignment preamble",
+                        });
+                        return OperationReadiness::Failed;
+                    }
+                };
+                Some((alignment, preamble))
+            }
             _ => None,
         };
         let alignment_roots = completed_preamble
@@ -8681,12 +8769,20 @@ impl<G> MainControl<G> {
                 roots
             })
             .unwrap_or_default();
+        let scanned = frame
+            .unavailable
+            .take()
+            .expect("resolved operation remains in its caller-owned frame");
         let (scanned, promoted_alignment_roots) =
-            prepare_cold_operation(scanned, &self.command, stores, &alignment_roots).map_err(
-                |_| ExecError::MissingToken {
-                    context: "cold operation root preparation",
-                },
-            )?;
+            match prepare_cold_operation(scanned, &self.command, stores, &alignment_roots) {
+                Ok(prepared) => prepared,
+                Err(_) => {
+                    frame.error = Some(ExecError::MissingToken {
+                        context: "cold operation root preparation",
+                    });
+                    return OperationReadiness::Failed;
+                }
+            };
         let alignment_preamble = completed_preamble.map(|(alignment, preamble)| {
             let mut promoted = promoted_alignment_roots.into_iter();
             let columns = preamble
@@ -8712,19 +8808,16 @@ impl<G> MainControl<G> {
         tex_state::measurement::record_hot_core_materialization(
             tex_state::measurement::HotCoreMaterialization::PreparedOperation,
         );
-        Ok(OperationReadiness::<G>::Prepared(Box::new(
-            PreparedColdOperation::<G> {
-                scanned,
-                alignment_preamble,
-                output_start: OperationOutputStart {
-                    outer_paragraph_was_active,
-                    root_main_file_origin,
-                    artifact_count: stores.world().artifact_commits().len(),
-                    effect_count: stores.world().effect_records().len(),
-                    prepared_page_count: self.prepared_dvi_pages.len(),
-                },
-            },
-        )))
+        frame.prepared = Some(scanned);
+        frame.alignment_preamble = alignment_preamble;
+        frame.output_start = Some(OperationOutputStart {
+            outer_paragraph_was_active,
+            root_main_file_origin,
+            artifact_count: stores.world().artifact_commits().len(),
+            effect_count: stores.world().effect_records().len(),
+            prepared_page_count: self.prepared_dvi_pages.len(),
+        });
+        OperationReadiness::Prepared
     }
 
     /// Applies a measured common operation without constructing the universal
@@ -8859,14 +8952,11 @@ impl<G> MainControl<G> {
     fn apply_prepared_operation(
         &mut self,
         stores: &mut Universe<G>,
-        prepared: PreparedColdOperation<G>,
+        scanned: PreparedColdCommand<G>,
+        alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
+        output_start: OperationOutputStart,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
-        let PreparedColdOperation::<G> {
-            scanned,
-            alignment_preamble,
-            output_start,
-        } = prepared;
         let parking = self.suspend_main_control_parking(&scanned);
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(

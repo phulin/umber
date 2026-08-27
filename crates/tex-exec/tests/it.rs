@@ -384,6 +384,10 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     );
     assert!(!control.contains("enum ScannedStep"));
     assert!(!control.contains("struct PreparedOperation"));
+    assert!(control.contains("struct OperationFrame<G>"));
+    assert!(!control.contains("struct PreparedColdOperation"));
+    assert!(!control.contains("struct PrepareOperationError"));
+    assert!(!control.contains("Prepared(Box<ColdOperation"));
 
     assert!(cold.contains("mod operation;"));
     assert!(cold.contains("mod scan;"));
@@ -392,7 +396,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(cold_scan.contains("fn scan<"));
     assert!(cold_apply.contains("fn apply<"));
     assert!(!hot.contains("ColdOperation::"));
-    assert!(!hot.contains("PreparedColdOperation {"));
+    assert!(!hot.contains("OperationFrame {"));
 }
 
 #[test]
