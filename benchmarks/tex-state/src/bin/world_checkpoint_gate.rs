@@ -182,6 +182,13 @@ fn run_case(units: usize) -> CaseStats {
             .set_memory_file(&path, vec![index as u8; 96])
             .expect("profiling input is seeded");
         black_box(world.read_file(&path).expect("profiling input is read"));
+        world
+            .record_input_dependency(
+                &path,
+                tex_state::InputDependencyOutcome::Missing,
+                tex_state::InputDependencyAccess::AuthoritativeProbe,
+            )
+            .expect("profiling dependency is recorded");
         world.write_text(PrintSink::Stream(StreamSlot::new(0)), "bounded-line");
         world.record_special("checkpoint", vec![index as u8; 128]);
     }
@@ -191,7 +198,14 @@ fn run_case(units: usize) -> CaseStats {
     let (cloned, clone) = measure(|| checkpoint.clone());
     let (mut candidate, fork) = measure(|| world.profile_checkpoint_fork(&cloned));
     let ((), mutate) = measure(|| {
-        candidate.write_text(PrintSink::Stream(StreamSlot::new(0)), "candidate-line")
+        candidate.write_text(PrintSink::Stream(StreamSlot::new(0)), "candidate-line");
+        candidate
+            .record_input_dependency(
+                "candidate.tex",
+                tex_state::InputDependencyOutcome::Missing,
+                tex_state::InputDependencyAccess::AuthoritativeProbe,
+            )
+            .expect("candidate dependency is recorded");
     });
     let ((), restore) = measure(|| world.profile_checkpoint_restore(&checkpoint));
     let retained_payload_bytes = world.profile_retained_checkpoint_bytes();

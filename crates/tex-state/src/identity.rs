@@ -189,27 +189,36 @@ impl IdentityAllocator {
     /// timelines; handles subsequently minted by either side are foreign to
     /// the other.
     pub(crate) fn fork(&self) -> Self {
+        self.fork_at(self.watermark())
+            .expect("current identity watermark is forkable")
+    }
+
+    /// Forks exactly the retained prefix named by `mark`; later source slots
+    /// remain owned only by the source lineage.
+    pub(crate) fn fork_at(&self, mark: IdentityMark) -> Result<Self, IdentityError> {
+        self.validate_rollback(mark)?;
         let namespace = fresh_namespace();
         let accepted_len = self.accepted.as_ref().map_or(0, |runs| runs.total_len);
-        let accepted = if self.len == accepted_len {
+        let mark_len = u32::try_from(mark.len).map_err(|_| IdentityError::InvalidatedMark)?;
+        let accepted = if mark_len == accepted_len {
             self.accepted.clone()
         } else {
             Some(Arc::new(AcceptedIdentityRuns {
                 parent: self.accepted.clone(),
                 runs: Arc::clone(&self.runs),
-                total_len: self.len,
+                total_len: mark_len,
             }))
         };
-        Self {
+        Ok(Self {
             active: AllocationTag {
                 namespace,
                 generation: FIRST_GENERATION,
             },
             accepted,
             runs: Arc::new(Vec::new()),
-            len: self.len,
+            len: mark_len,
             builtin_slots: self.builtin_slots,
-        }
+        })
     }
 
     /// Allocates the next dense slot without exposing raw construction.

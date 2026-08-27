@@ -943,7 +943,7 @@ fn execute_plan<G>(
                     ));
                 }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                    let dependencies = universe.world().input_dependencies().cloned().collect();
+                    let dependencies = universe.world().input_dependencies().collect();
                     let format_dump = control
                         .take_format_dump(universe)
                         .map_err(SessionError::FormatDump)?;

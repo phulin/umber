@@ -289,6 +289,61 @@ fn checkpoint_fork_shares_only_retained_input_records_and_opens_a_private_suffix
 }
 
 #[test]
+fn input_dependency_mark_restores_exactly_and_fork_uses_a_private_delta() {
+    let mut source = World::memory();
+    source
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    source
+        .record_input_dependency(
+            "accepted.tex",
+            InputDependencyOutcome::Missing,
+            InputDependencyAccess::AuthoritativeProbe,
+        )
+        .expect("accepted dependency");
+    let checkpoint = source.snapshot();
+    source
+        .record_input_dependency(
+            "accepted.tex",
+            InputDependencyOutcome::Present(ContentHash::from_bytes(b"later")),
+            InputDependencyAccess::RequiredRead,
+        )
+        .expect("source override");
+    source
+        .record_input_dependency(
+            "source-only.tex",
+            InputDependencyOutcome::Missing,
+            InputDependencyAccess::AuthoritativeProbe,
+        )
+        .expect("source-only dependency");
+
+    let mut candidate = source.fork_checkpoint(&checkpoint);
+    let accepted = candidate.input_dependencies().collect::<Vec<_>>();
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].path(), Path::new("accepted.tex"));
+    assert_eq!(accepted[0].outcome(), InputDependencyOutcome::Missing);
+    candidate
+        .record_input_dependency(
+            "accepted.tex",
+            InputDependencyOutcome::Present(ContentHash::from_bytes(b"candidate")),
+            InputDependencyAccess::RequiredRead,
+        )
+        .expect("candidate override");
+    assert_eq!(candidate.input_dependencies().count(), 1);
+    assert_eq!(source.input_dependencies().count(), 2);
+
+    source.rollback(&checkpoint);
+    let restored = source.input_dependencies().collect::<Vec<_>>();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].path(), Path::new("accepted.tex"));
+    assert_eq!(restored[0].outcome(), InputDependencyOutcome::Missing);
+    assert_eq!(
+        restored[0].access(),
+        InputDependencyAccess::AuthoritativeProbe
+    );
+}
+
+#[test]
 fn committed_artifact_bytes_are_owned_and_rehash_on_preparation() {
     let original = VerifiedArtifact::new(vec![1, 2, 3]);
     let original_hash = original.hash();

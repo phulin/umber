@@ -774,9 +774,9 @@ impl SourceMap {
                 total_generated: mark.generated,
             }))
         };
-        let mut identities = self.identities.fork();
-        identities
-            .rollback(mark.identities)
+        let identities = self
+            .identities
+            .fork_at(mark.identities)
             .expect("source-map fork mark is an ancestor");
         Self {
             accepted,

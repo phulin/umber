@@ -1504,7 +1504,6 @@ pub struct WorldSnapshot {
     next_effect_placement_intra_order: u64,
     next_terminal_publication_identity: u64,
     effect_pos: EffectPos,
-    stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
     stream_bufs: Arc<StreamBufState>,
     rng: RngState,
     pdf_rng: PdfRandomState,
@@ -1514,12 +1513,11 @@ pub struct WorldSnapshot {
     shell_escape_policy: ShellEscapePolicy,
     input_len: usize,
     input_identities: IdentityMark,
-    input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
+    input_dependency_journal_len: usize,
+    input_dependency_len: usize,
     shell_escape_len: usize,
     artifact_base: usize,
     artifact_commit_len: usize,
-    provisional_page_output_receipts:
-        Arc<BTreeMap<PageOutputPublicationReceiptId, Arc<[ArtifactPublicationRecord]>>>,
     next_artifact_publication_identity: u64,
     active_artifact_publication_group: Option<ArtifactPublicationGroup>,
     active_terminal_publication: Option<TerminalPublication>,
@@ -1653,6 +1651,42 @@ struct AcceptedInputBlock {
     contents: Arc<BTreeMap<ContentHash, Arc<[u8]>>>,
     len: usize,
     total_len: usize,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct AcceptedInputDependencyBlock {
+    parent: Option<Arc<Self>>,
+    values: Arc<BTreeMap<Arc<Path>, InputDependency>>,
+    journal: Arc<Vec<(Arc<Path>, Option<InputDependency>)>>,
+    journal_len: usize,
+}
+
+impl AcceptedInputDependencyBlock {
+    fn get(&self, path: &Path) -> Option<&InputDependency> {
+        let mut value = self.values.get(path);
+        for (changed, previous) in self.journal[self.journal_len..].iter().rev() {
+            if changed.as_ref() == path {
+                value = previous.as_ref();
+            }
+        }
+        value.or_else(|| self.parent.as_ref()?.get(path))
+    }
+
+    fn merge_into(&self, merged: &mut BTreeMap<Arc<Path>, InputDependency>) {
+        if let Some(parent) = &self.parent {
+            parent.merge_into(merged);
+        }
+        for path in self.values.keys() {
+            match self.get(path) {
+                Some(value) => {
+                    merged.insert(Arc::clone(path), value.clone());
+                }
+                None => {
+                    merged.remove(path.as_ref());
+                }
+            }
+        }
+    }
 }
 
 impl AcceptedInputBlock {
@@ -1832,7 +1866,10 @@ pub struct World {
     inputs: Arc<Vec<InputRecord>>,
     input_identities: IdentityAllocator,
     input_contents: Arc<BTreeMap<ContentHash, Arc<[u8]>>>,
+    accepted_input_dependencies: Option<Arc<AcceptedInputDependencyBlock>>,
     input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
+    input_dependency_journal: Arc<Vec<(Arc<Path>, Option<InputDependency>)>>,
+    input_dependency_len: usize,
     terminal_inputs: Vec<String>,
     terminal_input_owner: u64,
     shell_escapes: Vec<ShellEscapeRecord>,
@@ -2275,7 +2312,10 @@ impl Clone for World {
             inputs: self.inputs.clone(),
             input_identities: self.input_identities.fork(),
             input_contents: self.input_contents.clone(),
+            accepted_input_dependencies: self.accepted_input_dependencies.clone(),
             input_dependencies: self.input_dependencies.clone(),
+            input_dependency_journal: self.input_dependency_journal.clone(),
+            input_dependency_len: self.input_dependency_len,
             terminal_inputs: self.terminal_inputs.clone(),
             terminal_input_owner: fresh_terminal_input_owner(),
             shell_escapes: self.shell_escapes.clone(),
@@ -2319,7 +2359,7 @@ impl PartialEq for World {
             && self.accepted_inputs == other.accepted_inputs
             && self.inputs == other.inputs
             && self.input_contents == other.input_contents
-            && self.input_dependencies == other.input_dependencies
+            && self.input_dependency_values() == other.input_dependency_values()
             && self.terminal_inputs == other.terminal_inputs
             && self.unavailable_memory_outputs == other.unavailable_memory_outputs
             && self.stream_open_contexts == other.stream_open_contexts
@@ -2528,7 +2568,10 @@ impl World {
             inputs: Arc::new(Vec::new()),
             input_identities: IdentityAllocator::new(0),
             input_contents: Arc::new(BTreeMap::new()),
+            accepted_input_dependencies: None,
             input_dependencies: Arc::new(BTreeMap::new()),
+            input_dependency_journal: Arc::new(Vec::new()),
+            input_dependency_len: 0,
             terminal_inputs: Vec::new(),
             terminal_input_owner: fresh_terminal_input_owner(),
             shell_escapes: Vec::new(),
@@ -4362,15 +4405,17 @@ impl World {
         access: InputDependencyAccess,
     ) -> Result<(), WorldError> {
         let path = path.into();
-        let dependencies = Arc::make_mut(&mut self.input_dependencies);
-        if let Some(existing) = dependencies.get_mut(path.as_path()) {
-            existing.outcome = outcome;
+        if let Some(existing) = self.input_dependency(path.as_path()).cloned() {
+            let mut updated = existing;
+            updated.outcome = outcome;
             if access == InputDependencyAccess::RequiredRead {
-                existing.access = access;
+                updated.access = access;
             }
+            self.journal_input_dependency(path.as_path());
+            Arc::make_mut(&mut self.input_dependencies).insert(updated.path.clone(), updated);
             return Ok(());
         }
-        if dependencies.len() == MAX_INPUT_DEPENDENCIES {
+        if self.input_dependency_len == MAX_INPUT_DEPENDENCIES {
             return Err(WorldError::new(
                 "record input dependency",
                 Some(path),
@@ -4378,7 +4423,8 @@ impl World {
             ));
         }
         let path: Arc<Path> = Arc::from(path.into_boxed_path());
-        dependencies.insert(
+        self.journal_input_dependency(path.as_ref());
+        Arc::make_mut(&mut self.input_dependencies).insert(
             Arc::clone(&path),
             InputDependency {
                 path,
@@ -4386,12 +4432,60 @@ impl World {
                 access,
             },
         );
+        self.input_dependency_len += 1;
         Ok(())
     }
 
     /// Enumerates reduced dependencies in canonical path order.
-    pub fn input_dependencies(&self) -> impl ExactSizeIterator<Item = &InputDependency> {
-        self.input_dependencies.values()
+    pub fn input_dependencies(&self) -> impl Iterator<Item = InputDependency> {
+        self.input_dependency_values().into_iter()
+    }
+
+    fn input_dependency(&self, path: &Path) -> Option<&InputDependency> {
+        self.input_dependencies
+            .get(path)
+            .or_else(|| self.accepted_input_dependencies.as_ref()?.get(path))
+    }
+
+    fn input_dependency_values(&self) -> Vec<InputDependency> {
+        let mut merged = BTreeMap::new();
+        if let Some(accepted) = &self.accepted_input_dependencies {
+            accepted.merge_into(&mut merged);
+        }
+        merged.extend(
+            self.input_dependencies
+                .iter()
+                .map(|(path, value)| (Arc::clone(path), value.clone())),
+        );
+        merged.into_values().collect()
+    }
+
+    fn journal_input_dependency(&mut self, path: &Path) {
+        let previous = self.input_dependencies.get(path).cloned();
+        let path = self
+            .input_dependencies
+            .get_key_value(path)
+            .map_or_else(|| Arc::from(path), |(path, _)| Arc::clone(path));
+        Arc::make_mut(&mut self.input_dependency_journal).push((path, previous));
+    }
+
+    fn rollback_input_dependencies(&mut self, mark: usize) {
+        if self.input_dependency_journal.len() == mark {
+            return;
+        }
+        let journal = Arc::make_mut(&mut self.input_dependency_journal);
+        for (path, previous) in journal[mark..].iter().rev() {
+            match previous {
+                Some(value) => {
+                    Arc::make_mut(&mut self.input_dependencies)
+                        .insert(Arc::clone(path), value.clone());
+                }
+                None => {
+                    Arc::make_mut(&mut self.input_dependencies).remove(path.as_ref());
+                }
+            }
+        }
+        journal.truncate(mark);
     }
 
     /// Enumerates only immutable external dependencies, excluding files
@@ -5127,6 +5221,10 @@ impl World {
 
     #[must_use]
     pub(crate) fn snapshot(&self) -> WorldSnapshot {
+        assert!(
+            self.provisional_page_output_receipts.is_empty(),
+            "a provisional page-output receipt crossed a World checkpoint"
+        );
         WorldSnapshot {
             effect_base: self.effect_base,
             page_effect_artifact_cursor: self.page_effect_artifact_cursor,
@@ -5141,7 +5239,6 @@ impl World {
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_pos: self.effect_pos(),
-            stream_open_contexts: Arc::clone(&self.stream_open_contexts),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
             pdf_rng: self.pdf_rng.clone(),
@@ -5151,11 +5248,11 @@ impl World {
             shell_escape_policy: self.shell_escape_policy,
             input_len: self.inputs.len(),
             input_identities: self.input_identities.watermark(),
-            input_dependencies: self.input_dependencies.clone(),
+            input_dependency_journal_len: self.input_dependency_journal.len(),
+            input_dependency_len: self.input_dependency_len,
             shell_escape_len: self.shell_escapes.len(),
             artifact_base: self.artifact_base,
             artifact_commit_len: self.artifact_pos(),
-            provisional_page_output_receipts: Arc::clone(&self.provisional_page_output_receipts),
             next_artifact_publication_identity: self.next_artifact_publication_identity,
             active_artifact_publication_group: self.active_artifact_publication_group,
             active_terminal_publication: self.active_terminal_publication,
@@ -5225,11 +5322,11 @@ impl World {
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
         self.next_terminal_publication_identity = snapshot.next_terminal_publication_identity;
         self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
-        self.provisional_page_output_receipts =
-            Arc::clone(&snapshot.provisional_page_output_receipts);
+        self.provisional_page_output_receipts = Arc::new(BTreeMap::new());
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
-        self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
+        Arc::make_mut(&mut self.stream_open_contexts)
+            .retain(|position, _| *position <= snapshot.effect_pos);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
@@ -5239,7 +5336,8 @@ impl World {
         if self.inputs.len() != snapshot.input_len {
             Arc::make_mut(&mut self.inputs).truncate(snapshot.input_len);
         }
-        self.input_dependencies = snapshot.input_dependencies.clone();
+        self.rollback_input_dependencies(snapshot.input_dependency_journal_len);
+        self.input_dependency_len = snapshot.input_dependency_len;
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
             let retained = snapshot
@@ -5262,8 +5360,9 @@ impl World {
     /// a fresh publishable suffix at the same absolute semantic position.
     fn install_checkpoint_fork(&mut self, source: &Self, snapshot: &WorldSnapshot) {
         assert!(source.snapshot_is_forkable(snapshot));
-        self.input_identities
-            .rollback(snapshot.input_identities)
+        self.input_identities = source
+            .input_identities
+            .fork_at(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
 
         let accepted_len = self.page_effect_prefix_len();
@@ -5291,8 +5390,7 @@ impl World {
         self.active_effect_publication = None;
         self.active_effect_output_attempt = None;
         self.active_effect_domain = None;
-        self.provisional_page_output_receipts =
-            Arc::clone(&snapshot.provisional_page_output_receipts);
+        self.provisional_page_output_receipts = Arc::new(BTreeMap::new());
         self.next_terminal_publication_identity = self
             .next_terminal_publication_identity
             .max(snapshot.next_terminal_publication_identity);
@@ -5301,7 +5399,7 @@ impl World {
             .max(snapshot.next_artifact_publication_identity);
         self.active_artifact_publication_group = None;
         self.active_terminal_publication = None;
-        self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
+        self.stream_open_contexts = Arc::new(BTreeMap::new());
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_effect_publication_record_ordinals = Arc::new(BTreeMap::new());
         self.next_effect_semantic_record_ordinals = Arc::new(BTreeMap::new());
@@ -5324,7 +5422,15 @@ impl World {
             AcceptedInputBlock::extend(source.accepted_inputs.clone(), source, snapshot.input_len);
         self.inputs = Arc::new(Vec::new());
         self.input_contents = Arc::new(BTreeMap::new());
-        self.input_dependencies = snapshot.input_dependencies.clone();
+        self.accepted_input_dependencies = Some(Arc::new(AcceptedInputDependencyBlock {
+            parent: source.accepted_input_dependencies.clone(),
+            values: Arc::clone(&source.input_dependencies),
+            journal: Arc::clone(&source.input_dependency_journal),
+            journal_len: snapshot.input_dependency_journal_len,
+        }));
+        self.input_dependencies = Arc::new(BTreeMap::new());
+        self.input_dependency_journal = Arc::new(Vec::new());
+        self.input_dependency_len = snapshot.input_dependency_len;
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
             self.artifact_base = snapshot.artifact_commit_len;
