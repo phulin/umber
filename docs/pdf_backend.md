@@ -39,6 +39,17 @@ roots; rollback removes allocations and mutations in the discarded suffix,
 so replay receives the same identities. An object number is not a content
 hash and is never reused on a live descendant timeline.
 
+Mutable keyed PDF scalars use canonical packed general and color version
+lanes. A fixed snapshot stores their roots. Opening an exclusive candidate at
+an early retained snapshot changes only roots and family row cutoffs; the
+candidate appends private result versions and persistent stack nodes.
+Rejection drops that suffix, and acceptance promotes it without replaying or
+swapping the accepted history. Current values resolve from the selected root;
+a historical keyed fallback uses a bounded 64-probe non-owning trie projection
+into the one event owner. This adds neither a second PDF authority nor a
+payload cache, and payload coordinates and object order remain stable across
+both outcomes.
+
 The implemented engine ledger begins at object 1, so the first user object or
 font enquiry observes the same identity as pdfTeX. An ordinary successful
 pdfTeX-mode shipout atomically reserves its resource dictionary, page

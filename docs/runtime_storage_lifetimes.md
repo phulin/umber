@@ -619,8 +619,8 @@ root into the sole current slot, while mutable banks and other runtime roots
 receive one destination-local representation.
 
 PDF state uses that rule directly. `PdfStateSnapshot` contains only inline
-scalars, canonical append-log lengths, one absolute general-undo position, one
-absolute color-undo position, and the coarse payload position. Capturing it
+scalars, canonical append-log lengths, fixed general/color version roots, two
+logical history coordinates, and the coarse payload position. Capturing it
 visits no row, clones no container or token owner, retains no new payload
 owner, and allocates nothing. Pages, font operations and resources, images,
 raw-object reservations, document fragments, page reservations, canonical
@@ -629,8 +629,9 @@ PK rows, and catalog-action rows retain insertion order in dense append logs;
 lookup sidecars never define serialization order. Raw-object initialization
 and reference, annotation initialization, match replacement, open-link
 push/pop, form-artifact replacement, destination definition, and thread-bead
-append carry exact inverse entries. Page and form color operations use a
-separate inverse lane, so a form traversal can restore only its color work.
+append publish result versions into one coarse packed general lane. Page and
+form color operations publish into the aligned color lane, so a form traversal
+can restore only its color work.
 
 PDF candidate creation is an exclusive transaction, not a state fork. The
 reachability store moves the unique `PdfState` authority from the accepted
@@ -652,15 +653,16 @@ table. Form artifacts use direct object-id dense tombstones, so deletion and
 restoration never allocate and lookup iteration cannot define serialization
 order.
 
-General and color undo entries above the selected mark are swapped in place
-into exact redo entries while candidate creation walks only the divergent
-history, not accumulated current tables. Rejection first rolls candidate
-history back to its base, reveals accepted rows, then swaps redo entries
-forward to reconstruct the accepted current values and original undo history.
-Acceptance drops prior-only redo entries, advances absolute low-water marks,
-and retains only candidate history needed by live checkpoints. Image and form
-payload boxes remain in the same dense row allocation throughout; neither
-capture, candidate creation, rejection, nor acceptance copies payload bytes.
+General and color mutations append result versions to candidate-private coarse
+lanes and advance fixed persistent-trie roots. A candidate pins the accepted
+roots and selects its early checkpoint roots without replaying the intervening
+accepted history. Current reads resolve through the selected root; historical
+keyed lookup is a bounded 64-probe trie walk and is not candidate lifecycle
+work. Rejection restores the accepted roots and drops the private suffix.
+Acceptance promotes that suffix at the named boundary without walking
+accepted events. Image and form payload boxes remain in the same dense row
+allocation throughout; neither capture, candidate creation, rejection, nor
+acceptance copies payload bytes.
 Payload ids remain internal direct indices and never affect PDF object
 numbering.
 
@@ -682,8 +684,8 @@ Restore is atomic and follows this order:
 3. Restore dense banks by loading the selected coarse packed image when one is
    present and replaying the exact journal suffix to its cursor; otherwise
    undo the live journal directly to the cursor.
-4. Reverse-replay PDF general and color undo entries, then restore its scalar
-   roots and transactional row selections. Remove candidate lookup suffixes
+4. Select the PDF general and color version roots, then restore its scalar
+   cursors and transactional row selections. Remove candidate lookup suffixes
    before resetting canonical row deltas; reset image/form payload deltas last.
 5. Restore input, condition, group, mode, page, source, resource, effect, and
    output cursors, transferring canonical roots before releasing replaced
@@ -696,18 +698,14 @@ Restore is atomic and follows this order:
 Any validation failure leaves the runtime unchanged. Reusing a physical arena
 slot requires a new generation key before another id can name it.
 
-PDF undo positions are absolute. After retained checkpoint slots are pruned,
-their existing live-index vector supplies the oldest surviving general and
-color positions. `Universe::prune_pdf_history` drops only entries before those
-positions from the two deque-backed lanes; it does not scan PDF rows or the
-rest of the engine and does not rewrite surviving marks. While a candidate is
-exclusive, pruning advances scalar low-water positions but retains the pruned
-candidate inverses until acceptance because rejection can still require them;
-acceptance releases that prefix in one bounded journal operation, while
-rejection restores the accepted journal unchanged. With no retained
-checkpoint, the low water advances to the live head. Thus the prior/current
-transaction retains only its rejection interval plus the candidate interval,
-never another PDF generation or copied current table.
+PDF history positions are absolute logical coordinates. The live-index vector
+still supplies the oldest retained general and color positions, while pruning
+advances scalar low-water coordinates without relocating packed event indices
+or rewriting surviving marks. The single accepted event owner retains the
+named version ancestry; an exclusive candidate adds only private event, trie,
+stack-node, and color-value suffixes. Rejection drops those suffixes and
+acceptance promotes them. There is no replay lane, copied current table, root
+registry, compaction pass, or additional PDF authority.
 
 The focused release gate in
 `benchmarks/tex-state/src/bin/pdf_checkpoint_gate.rs` measures the PDF mark in
@@ -766,10 +764,14 @@ image metadata 1.06, raw objects 0.74, annotations 0.52, destinations 0.49,
 threads 0.49, form-artifact index 0.50, space-font names 0.46, color stacks
 0.51, and match bytes 0.48. Before the exclusive transaction, the remaining
 10,000-row mutable families cost up to 2.31 milliseconds and 1,680,398 bytes
-per fork. The focused exact-redo allocation test additionally starts from an
-older mark with 10,000 accumulated rows and intervening match, raw-object,
-destination, thread, form-artifact, and color changes; begin plus rejection
-still performs zero allocations and restores exact current state.
+per fork. `pdf_undo_distance.rs` now starts from an early retained mark and
+compares 1,024 with 16,384 later accepted general/color versions. Open,
+rejection, and acceptance each perform zero allocations and request zero
+bytes. First mutation is identical at 18 allocations and 12,868 requested
+bytes. Every lifecycle phase reports zero replay work; the separately reported
+historical resolution bound is 128 probes for the two family lookups. The
+exact rollback test covers overwritten/deleted keyed values, PDF object order,
+and stable form-payload addresses across both rejection and acceptance.
 
 ## Incremental revisions and two-generation ownership
 
