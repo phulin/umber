@@ -2,21 +2,9 @@
 //!
 //! §82's `error` prints the location lines (`l.4␣\spacefactor`,
 //! `<to be read again>␣`, `<inserted text>␣`) after the message's closing
-//! period, from the live input stack. Two crates own an input stack -- the
-//! canonical command core and the gullet's replay stack -- so each projects
-//! its own levels into [`ErrorContextLevel`], and the pseudoprint arithmetic
-//! §316--§318 describes lives here exactly once.
-//!
-//! What a projection owes this module:
-//!
-//! - Levels ordered innermost first, so `levels[0]` is §312's `base_ptr =
-//!   input_ptr` current level and the last entry is §310's `bottom_line`.
-//!   §310 stops at the first real file level, so a projection that can see
-//!   file identity must truncate there rather than pass the whole stack.
-//! - §312's omission already applied: a `backed_up` list that is not the
-//!   current level and has been read to its end is not displayed at all.
-//!   [`token_list_replay_label`] still spells the current one
-//!   `<recently read>␣`.
+//! period, from the live input stack. The command core selects exactly the
+//! levels §310 displays while it walks that stack; this module owns only the
+//! shared §316--§318 pseudoprint arithmetic for each selected level.
 
 use super::ErrorContextWidths;
 use crate::input::TokenListReplayKind;
@@ -56,7 +44,7 @@ impl ErrorContextLevel {
         }
     }
 
-    /// Builds a level from an eagerly captured bounded pseudoprint projection.
+    /// Builds one selected level from a bounded pseudoprint projection.
     ///
     /// `before` is the retained tail of a read half whose full character count
     /// is `before_chars`. `after` is the retained head of an unread half whose
@@ -86,14 +74,17 @@ impl ErrorContextLevel {
     /// crops line 1 lands after it. The label therefore always survives
     /// truncation: the reference prints `l.11 ...box0=\vbox{`, never
     /// `... \setbox0=`.
-    fn render(&self, widths: ErrorContextWidths) -> String {
+    pub fn render_into(&self, widths: ErrorContextWidths, output: &mut String) {
         let label_width = self.label.chars().count();
         let read = self.before_chars;
         // §318's `if l+first_count<=half_error_line`, whose else branch fixes
         // line 1's width `n` at `half_error_line` rather than at whatever the
         // cropped text happens to measure.
-        let (line, indent) = if label_width + read <= widths.half_error_line() {
-            (format!("{}{}", self.label, self.before), label_width + read)
+        output.push('\n');
+        output.push_str(&self.label);
+        let indent = if label_width + read <= widths.half_error_line() {
+            output.push_str(&self.before);
+            label_width + read
         } else {
             let kept = widths
                 .half_error_line()
@@ -105,60 +96,23 @@ impl ErrorContextLevel {
             let retained = self.before.chars().count();
             let omitted = read.saturating_sub(retained);
             let skip = read.saturating_sub(kept).saturating_sub(omitted);
-            (
-                format!(
-                    "{}...{}",
-                    self.label,
-                    self.before.chars().skip(skip).collect::<String>()
-                ),
-                widths.half_error_line(),
-            )
+            output.push_str("...");
+            output.extend(self.before.chars().skip(skip));
+            widths.half_error_line()
         };
         // §318's `if m+n<=error_line then p:=first_count+m else
         // p:=first_count+(error_line-n-3)`, then its trailing `print("...")`.
         let unread = self.after_chars;
         let available = widths.error_line().saturating_sub(indent);
-        let rest = if unread <= available {
-            self.after.clone()
+        output.push('\n');
+        output.extend(std::iter::repeat_n(' ', indent));
+        if unread <= available {
+            output.push_str(&self.after);
         } else {
-            format!(
-                "{}...",
-                self.after
-                    .chars()
-                    .take(available.saturating_sub(3))
-                    .collect::<String>()
-            )
-        };
-        format!("\n{line}\n{}{rest}", " ".repeat(indent))
-    }
-}
-
-/// §310's `show_context` loop over already-projected levels.
-///
-/// `error_context_lines` is `\errorcontextlines` unclamped: §310 omits its
-/// `...` elision marker entirely when the parameter is negative, which a
-/// `usize` conversion would silently turn into "elide everything".
-#[must_use]
-pub fn render_error_context(
-    levels: &[ErrorContextLevel],
-    widths: ErrorContextWidths,
-    error_context_lines: i32,
-) -> String {
-    let bottom = levels.len().saturating_sub(1);
-    // §310's `nn`, which counts only the levels actually displayed, so an
-    // omitted level never consumes part of the `\errorcontextlines` budget.
-    let mut shown: i32 = -1;
-    let mut output = String::new();
-    for (index, level) in levels.iter().enumerate() {
-        if index == 0 || index == bottom || shown < error_context_lines {
-            output.push_str(&level.render(widths));
-            shown = shown.saturating_add(1);
-        } else if shown == error_context_lines {
-            output.push_str("\n...");
-            shown = shown.saturating_add(1);
+            output.extend(self.after.chars().take(available.saturating_sub(3)));
+            output.push_str("...");
         }
     }
-    output
 }
 
 /// §314's `<Print type of token list>`.

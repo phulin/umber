@@ -148,6 +148,11 @@ collector (see `src/conditionals.rs`).
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, `param_start` parameter replay ownership, and
   trace-independence tests.
+- `src/input/mod.rs` and `src/input/tests.rs`: tex.web §§310--318's live error-
+  context traversal and omission matrix. The traversal selects the current,
+  `\errorcontextlines`-budgeted, and bottom levels before pseudoprinting; it
+  retains only one deferred bottom coordinate and never materializes omitted
+  level strings.
 - `src/processor/`: public borrow-only processor facade with specialized raw
   and expanded delivery loops, expansion, scanner-status, and alignment
   orchestration. The loops share canonical token-to-current-meaning delivery;

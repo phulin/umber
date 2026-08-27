@@ -9,6 +9,55 @@ use crate::{
     SourceRegistration,
 };
 
+use super::ErrorContextSelection;
+
+fn selected_context_levels(level_count: usize, error_context_lines: i32) -> Vec<Option<usize>> {
+    let mut selection = ErrorContextSelection::new(error_context_lines);
+    let mut selected = Vec::new();
+    let mut deferred_bottom = None;
+    for index in 0..level_count {
+        if selection.display_immediately() {
+            selected.push(Some(index));
+        } else {
+            deferred_bottom = Some(index);
+        }
+    }
+    if selection.displays_elision_marker() {
+        selected.push(None);
+    }
+    if selection.has_deferred_bottom() {
+        selected.push(Some(
+            deferred_bottom.expect("a deferred count has a bottom candidate"),
+        ));
+    }
+    selected
+}
+
+#[test]
+fn error_context_selection_matches_tex310_omission_matrix() {
+    for level_count in 0_usize..=8 {
+        for error_context_lines in -3..=6 {
+            let bottom = level_count.saturating_sub(1);
+            let mut shown = -1_i32;
+            let mut expected = Vec::new();
+            for index in 0..level_count {
+                if index == 0 || index == bottom || shown < error_context_lines {
+                    expected.push(Some(index));
+                    shown = shown.saturating_add(1);
+                } else if shown == error_context_lines {
+                    expected.push(None);
+                    shown = shown.saturating_add(1);
+                }
+            }
+            assert_eq!(
+                selected_context_levels(level_count, error_context_lines),
+                expected,
+                "level_count={level_count}, error_context_lines={error_context_lines}",
+            );
+        }
+    }
+}
+
 #[test]
 fn registered_source_delivers_through_the_generation_typed_processor() {
     crate::test_harness::with_universe(|universe| {

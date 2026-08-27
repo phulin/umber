@@ -198,7 +198,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/primitive.rs`: generation-typed packed handles into a completely
   constructed immutable primitive registry; handles validate the registry
   extent before direct indexed dispatch and never name mutable eqtb cells.
-- `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
+- `src/print/error_context.rs`: tex.web §§316--318's `show_context` two-line pseudoprint for one command-selected level and §314's token-list labels. The command input owner applies §310's `\errorcontextlines` selection during its live stack traversal, before constructing bounded before/after strings.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
 - `src/provenance.rs`: Storage-independent provenance demand, budget, source,
   invocation, insertion, synthesis, related-location, and origin-record values;

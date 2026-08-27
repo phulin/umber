@@ -591,11 +591,10 @@ fn terminal_exhausted_context<G>(
     } else {
         startup_terminal_line
     };
-    tex_state::print::render_error_context(
-        &[tex_state::print::ErrorContextLevel::new("<*> ", line, "")],
-        stores.error_context_widths(),
-        stores.int_param(tex_state::env::banks::IntParam::new(54)),
-    )
+    let mut output = String::new();
+    tex_state::print::ErrorContextLevel::new("<*> ", line, "")
+        .render_into(stores.error_context_widths(), &mut output);
+    output
 }
 
 /// tex.web §360's `*` prompt loop -- reached when the last input file has

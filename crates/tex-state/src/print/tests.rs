@@ -2,7 +2,7 @@
 
 use super::{
     ErrorChannel, ErrorContextLevel, ErrorContextWidths, ErrorHistory, ErrorOutcome,
-    ErrorRecoveryRequest, JumpOut, Printer, Selector, render_error_context,
+    ErrorRecoveryRequest, JumpOut, Printer, Selector,
 };
 use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
@@ -98,7 +98,10 @@ fn error_context_projection_is_bounded_without_mutating_inputs() {
         ),
     ];
     let unchanged = levels.clone();
-    let rendered = render_error_context(&levels, widths, -1);
+    let mut rendered = String::new();
+    for level in &levels {
+        level.render_into(widths, &mut rendered);
+    }
 
     for line in rendered.lines().filter(|line| !line.is_empty()) {
         assert!(line.chars().count() <= widths.error_line(), "{line:?}");

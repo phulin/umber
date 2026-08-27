@@ -3282,6 +3282,15 @@ the project claims transcript parity. Host-specific paths, banners, terminal
 interaction, and display widths are normalized only through explicit fixture
 rules.
 
+TeX82 §310 error-context selection is part of the command input-stack walk,
+not a post-projection filter. The walk pseudoprints the current level and the
+nonnegative `\errorcontextlines` budget immediately, remembers only the newest
+remaining level as the possible `bottom_line`, and projects that level after
+the walk. It emits §310's ellipsis only when at least one level lies between
+the immediate prefix and the bottom. Thus §§312--315 never construct owned
+strings for an omitted level; `tex-state` retains only §§316--318's shared
+two-line renderer for each selected projection.
+
 The canonical hundred-error termination and explicit expansion/resource
 budgets prevent unbounded recovery. Limits are versioned engine policy and
 must not create an alternative successful result inside the reference domain.

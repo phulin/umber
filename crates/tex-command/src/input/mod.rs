@@ -173,6 +173,49 @@ enum ContextSink<'a> {
     Head(&'a mut ContextHead),
 }
 
+/// §310's scalar display budget while the live input stack is traversed.
+///
+/// The first visible level and the final visible bottom level are
+/// unconditional. A nonnegative `\errorcontextlines` admits that many levels
+/// between them. Once the immediate budget is exhausted, traversal remembers
+/// only the newest candidate coordinate: it can become the bottom level, while
+/// every older deferred candidate is known to be elided.
+struct ErrorContextSelection {
+    immediate_remaining: usize,
+    deferred: usize,
+    elision_marker_enabled: bool,
+}
+
+impl ErrorContextSelection {
+    fn new(error_context_lines: i32) -> Self {
+        Self {
+            immediate_remaining: usize::try_from(error_context_lines)
+                .unwrap_or(0)
+                .saturating_add(1),
+            deferred: 0,
+            elision_marker_enabled: error_context_lines >= 0,
+        }
+    }
+
+    fn display_immediately(&mut self) -> bool {
+        if self.immediate_remaining == 0 {
+            self.deferred = self.deferred.saturating_add(1);
+            false
+        } else {
+            self.immediate_remaining -= 1;
+            true
+        }
+    }
+
+    fn has_deferred_bottom(&self) -> bool {
+        self.deferred != 0
+    }
+
+    fn displays_elision_marker(&self) -> bool {
+        self.elision_marker_enabled && self.deferred > 1
+    }
+}
+
 impl ContextSink<'_> {
     fn push_str(&mut self, text: &str) {
         match self {
@@ -472,11 +515,10 @@ struct TokenContextStorage<'a, 'state, G> {
 impl<G> InputState<G> {
     /// tex.web §310's `show_context` display for the canonical input stack.
     ///
-    /// The two-line pseudoprint arithmetic (§316--§318) and §310's own
-    /// `\errorcontextlines` elision are
-    /// [`tex_state::print::render_error_context`]; this is §312--§314's
-    /// projection of the command core's levels onto it. Every other input
-    /// stack in the engine projects onto the same renderer.
+    /// The stack walk applies §310's `\errorcontextlines` selection before it
+    /// projects §312--§315's owned strings. [`tex_state::print::ErrorContextLevel`]
+    /// then applies the shared two-line pseudoprint arithmetic (§316--§318) to
+    /// each selected level.
     pub(crate) fn output_open_context(
         &self,
         stores: &tex_state::CommandContext<'_, G>,
@@ -584,111 +626,147 @@ impl<G> InputState<G> {
 
     fn render_context_for_levels(
         &self,
-        levels: &[InputLevel<G>],
+        input_levels: &[InputLevel<G>],
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
         let widths = stores.error_context_widths();
-        tex_state::print::render_error_context(
-            &self.error_context_levels_for(levels, stores, parameters, attempt, scratch, widths),
-            widths,
-            stores.untracked_int_param(tex_state::env::banks::IntParam::new(54)),
-        )
-    }
-
-    /// §312's `<Display the current context>`, innermost level first.
-    ///
-    /// §310 stops at the first level that sets `bottom_line` -- a non-token
-    /// level that is either a real file (`name>19` in e-TeX) or the bottom of
-    /// the stack -- so a scantokens pseudo-file (`name=18` or `19`) keeps
-    /// traversing while nothing below an `\input`ed file is projected.
-    fn error_context_levels_for(
-        &self,
-        input_levels: &[InputLevel<G>],
-        stores: &tex_state::CommandContext<'_, G>,
-        parameters: &crate::macro_call::ParameterState<G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        widths: tex_state::print::ErrorContextWidths,
-    ) -> Vec<tex_state::print::ErrorContextLevel> {
-        let mut levels = Vec::new();
+        let error_context_lines =
+            stores.untracked_int_param(tex_state::env::banks::IntParam::new(54));
+        let mut selection = ErrorContextSelection::new(error_context_lines);
+        let mut deferred_bottom = None;
+        let mut output = String::new();
         let newlinechar = char::from_u32(
             stores.untracked_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32,
         );
         let live_endlinechar = char::from_u32(
             stores.untracked_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32,
         );
+        let project_level = |index: usize| match input_levels.get(index)? {
+            InputLevel::Source(source) => Self::source_context_level(
+                source,
+                index == 0,
+                live_endlinechar,
+                newlinechar,
+                widths,
+            ),
+            InputLevel::Tokens(tokens) => Self::token_context_level(
+                TokenContextStorage {
+                    stores,
+                    replay_lane: &self.replay,
+                    parameters,
+                    attempt,
+                    scratch,
+                },
+                tokens,
+                index + 1 == input_levels.len(),
+                widths,
+            ),
+        };
         let mut reached_bottom_source = false;
         for (index, level) in input_levels.iter().enumerate().rev() {
-            let current = levels.is_empty() && index + 1 == input_levels.len();
-            match level {
-                InputLevel::Source(source) => {
-                    let bottom = index == 0
-                        || matches!(source.name_class, crate::input::SourceNameClass::File);
-                    let Some(rendered) = Self::source_context_level(
-                        source,
-                        index == 0,
-                        live_endlinechar,
-                        newlinechar,
-                        widths,
-                    ) else {
-                        // A source level with no live line has nothing to
-                        // pseudoprint, but §310 still stops here.
-                        if bottom {
-                            reached_bottom_source = true;
-                            break;
-                        }
-                        continue;
-                    };
-                    levels.push(rendered);
-                    if bottom {
-                        reached_bottom_source = true;
-                        break;
+            let current = index + 1 == input_levels.len();
+            let visible = Self::context_level_is_visible(level, parameters, current);
+            if let InputLevel::Source(source) = level {
+                reached_bottom_source =
+                    index == 0 || matches!(source.name_class, crate::input::SourceNameClass::File);
+            }
+            if visible {
+                if selection.display_immediately() {
+                    if let Some(rendered) = project_level(index) {
+                        rendered.render_into(widths, &mut output);
                     }
+                } else {
+                    deferred_bottom = Some(index);
                 }
-                InputLevel::Tokens(tokens) => {
-                    if let Some(rendered) = Self::token_context_level(
-                        TokenContextStorage {
-                            stores,
-                            replay_lane: &self.replay,
-                            parameters,
-                            attempt,
-                            scratch,
-                        },
-                        tokens,
-                        current,
-                        widths,
-                    ) {
-                        levels.push(rendered);
-                    }
-                }
+            }
+            if reached_bottom_source {
+                break;
             }
         }
         if !reached_bottom_source && let Some(line) = &self.terminal_context_line {
-            let mut before = ContextTail::new(widths.half_error_line());
-            let mut raw = String::new();
-            let mut rendered = String::new();
-            for ch in line.chars() {
-                raw.clear();
-                raw.push(ch);
-                rendered.clear();
-                stores.append_selector_string_text(&raw, &mut rendered);
-                before.push_str(&rendered);
+            if selection.display_immediately() {
+                Self::terminal_context_level(line, stores, widths).render_into(widths, &mut output);
+            } else {
+                deferred_bottom = Some(input_levels.len());
             }
-            let (before, before_chars) = before.finish();
-            levels.push(
-                tex_state::print::ErrorContextLevel::from_bounded_projection(
-                    "<*> ",
-                    before,
-                    before_chars,
-                    "",
-                    0,
-                ),
-            );
         }
-        levels
+        if selection.displays_elision_marker() {
+            output.push_str("\n...");
+        }
+        if selection.has_deferred_bottom()
+            && let Some(index) = deferred_bottom
+        {
+            let rendered = if index == input_levels.len() {
+                self.terminal_context_line
+                    .as_deref()
+                    .map(|line| Self::terminal_context_level(line, stores, widths))
+            } else {
+                project_level(index)
+            };
+            if let Some(rendered) = rendered {
+                rendered.render_into(widths, &mut output);
+            }
+        }
+        output
+    }
+
+    fn context_level_is_visible(
+        level: &InputLevel<G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        current: bool,
+    ) -> bool {
+        match level {
+            InputLevel::Source(source) => source.cursor.line.is_some(),
+            InputLevel::Tokens(tokens) => {
+                if matches!(tokens.trace, ReplayTrace::BackedUp)
+                    && tokens.position() >= tokens.span.frame_len()
+                    && !current
+                {
+                    return false;
+                }
+                if let ReplayTrace::MacroReplacement = tokens.trace {
+                    let TokenBehavior::MacroBody(activation) = tokens.behavior else {
+                        return false;
+                    };
+                    let PackedTokenSpanHandle::MacroReplacement { definition, .. } = &tokens.span
+                    else {
+                        return false;
+                    };
+                    return parameters.activations.iter().any(|candidate| {
+                        candidate.identity == activation && &candidate.definition == definition
+                    });
+                }
+                true
+            }
+        }
+    }
+
+    fn terminal_context_level(
+        line: &str,
+        stores: &tex_state::CommandContext<'_, G>,
+        widths: tex_state::print::ErrorContextWidths,
+    ) -> tex_state::print::ErrorContextLevel {
+        let mut before = ContextTail::new(widths.half_error_line());
+        let mut raw = String::new();
+        let mut rendered = String::new();
+        for ch in line.chars() {
+            raw.clear();
+            raw.push(ch);
+            rendered.clear();
+            stores.append_selector_string_text(&raw, &mut rendered);
+            before.push_str(&rendered);
+        }
+        let (before, before_chars) = before.finish();
+        tex_state::print::ErrorContextLevel::from_bounded_projection(
+            "<*> ",
+            before,
+            before_chars,
+            "",
+            0,
+        )
     }
 
     /// §313's `<Print location of current line>` and `<Pseudoprint the line>`.

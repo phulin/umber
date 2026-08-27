@@ -36,7 +36,7 @@
 
 mod error_context;
 
-pub use error_context::{ErrorContextLevel, render_error_context, token_list_replay_label};
+pub use error_context::{ErrorContextLevel, token_list_replay_label};
 
 /// Driver-selected widths for TeX82 §79's pseudoprinted error context.
 ///
