@@ -553,7 +553,7 @@ impl<G> Universe<G> {
             pdf,
             sources: self.sources.clone(),
             hyphenation: HyphenationTable::from_checkpoint(&checkpoint.hyphenation),
-            world: self.world.clone(),
+            world: self.world.fork_checkpoint(&checkpoint.world),
             dependencies: self.dependencies.clone(),
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
@@ -2158,9 +2158,7 @@ impl<G> Universe<G> {
         if !generation_fork {
             self.pdf.rollback(checkpoint.pdf.clone());
         }
-        if generation_fork {
-            self.world.install_checkpoint_fork(&checkpoint.world);
-        } else {
+        if !generation_fork {
             self.world.rollback(&checkpoint.world);
         }
         if !generation_fork {

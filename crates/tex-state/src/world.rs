@@ -1033,8 +1033,17 @@ pub struct EffectRootIdentity {
 impl EffectRootIdentity {
     #[must_use]
     pub fn is_mounted_in(&self, world: &World) -> bool {
-        *self == effect_root_identity_for(&world.effects)
-            || world.effect_root_ancestry.contains(self)
+        if *self == effect_root_identity_for(&world.effects) {
+            return true;
+        }
+        let mut block = world.accepted_effects.as_deref();
+        while let Some(current) = block {
+            if *self == effect_root_identity_for(&current.effects[..current.len]) {
+                return true;
+            }
+            block = current.parent.as_deref();
+        }
+        false
     }
 }
 
@@ -1495,24 +1504,17 @@ pub struct WorldSnapshot {
     /// checkpoint retains the old root.
     effect_base: EffectPos,
     page_effect_artifact_cursor: usize,
-    effects: Arc<Vec<EffectRecord>>,
-    effect_sequences: Arc<Vec<EffectSequence>>,
-    effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
-    effect_publication_record_ordinals: Arc<Vec<Option<EffectPublicationRecordOrdinal>>>,
-    effect_domains: Arc<Vec<EffectDomain>>,
-    effect_semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
-    effect_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
-    effect_publication_dispositions: Arc<Vec<EffectPublicationDisposition>>,
+    effect_len: usize,
+    effect_publication_disposition_len: usize,
     next_effect_sequence: u64,
     next_publication_sequence: u64,
     next_effect_publication_identity: u64,
-    next_effect_publication_record_ordinals: BTreeMap<EffectPublicationId, u64>,
+    next_effect_publication_record_ordinals: Arc<BTreeMap<EffectPublicationId, u64>>,
     next_effect_domain: u64,
     next_effect_output_attempt_identity: u64,
-    next_effect_semantic_record_ordinals: BTreeMap<EffectDomain, u64>,
+    next_effect_semantic_record_ordinals: Arc<BTreeMap<EffectDomain, u64>>,
     next_effect_placement_intra_order: u64,
     next_terminal_publication_identity: u64,
-    effect_root_ancestry: Arc<Vec<EffectRootIdentity>>,
     effect_pos: EffectPos,
     stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
     stream_bufs: Arc<StreamBufState>,
@@ -1551,20 +1553,63 @@ pub struct WorldSnapshot {
     error_channel: crate::print::ErrorChannel,
 }
 
+/// Immutable accepted effect blocks shared by successive revision lineages.
+///
+/// Each block owns one aligned set of publication columns and a logical
+/// prefix length. A fork adds at most one block for the selected source
+/// suffix and opens empty destination-local columns; it never concatenates or
+/// copies an older accepted prefix. Blocks are output history, not mutable
+/// revision generations, and their payload crosses into a detached artifact
+/// only through the existing shipout boundary.
+#[derive(Debug, Eq, PartialEq)]
+struct AcceptedEffectBlock {
+    parent: Option<Arc<Self>>,
+    effects: Arc<Vec<EffectRecord>>,
+    sequences: Arc<Vec<EffectSequence>>,
+    publications: Arc<Vec<Option<EffectPublicationId>>>,
+    publication_record_ordinals: Arc<Vec<Option<EffectPublicationRecordOrdinal>>>,
+    domains: Arc<Vec<EffectDomain>>,
+    semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
+    placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
+    len: usize,
+    total_len: usize,
+}
+
+impl AcceptedEffectBlock {
+    fn extend(
+        parent: Option<Arc<Self>>,
+        source: &World,
+        snapshot: &WorldSnapshot,
+    ) -> Option<Arc<Self>> {
+        let len = snapshot.effect_len;
+        if len == 0 {
+            return parent;
+        }
+        let parent_len = parent.as_ref().map_or(0, |block| block.total_len);
+        Some(Arc::new(Self {
+            parent,
+            effects: Arc::clone(&source.effects),
+            sequences: Arc::clone(&source.effect_sequences),
+            publications: Arc::clone(&source.effect_publications),
+            publication_record_ordinals: Arc::clone(
+                &source.effect_publication_record_ordinals,
+            ),
+            domains: Arc::clone(&source.effect_domains),
+            semantic_record_ordinals: Arc::clone(&source.effect_semantic_record_ordinals),
+            placement_intra_orders: Arc::clone(&source.effect_placement_intra_orders),
+            len,
+            total_len: parent_len.saturating_add(len),
+        }))
+    }
+}
+
 /// Engine capability object for all external effects.
 #[derive(Debug)]
 pub struct World {
     backend: WorldBackend,
     /// Accepted effects detached from publication but still preceding every
     /// page produced by a retained generation fork.
-    page_effect_prefix: Arc<Vec<EffectRecord>>,
-    page_effect_prefix_sequences: Arc<Vec<EffectSequence>>,
-    page_effect_prefix_publications: Arc<Vec<Option<EffectPublicationId>>>,
-    page_effect_prefix_publication_record_ordinals:
-        Arc<Vec<Option<EffectPublicationRecordOrdinal>>>,
-    page_effect_prefix_domains: Arc<Vec<EffectDomain>>,
-    page_effect_prefix_semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
-    page_effect_prefix_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
+    accepted_effects: Option<Arc<AcceptedEffectBlock>>,
     /// Number of prefix-or-live effects already embedded in a committed page.
     /// This is an in-session page-staging cursor, not detached identity.
     page_effect_artifact_cursor: usize,
@@ -1580,17 +1625,16 @@ pub struct World {
     next_effect_sequence: u64,
     next_publication_sequence: u64,
     next_effect_publication_identity: u64,
-    next_effect_publication_record_ordinals: BTreeMap<EffectPublicationId, u64>,
+    next_effect_publication_record_ordinals: Arc<BTreeMap<EffectPublicationId, u64>>,
     next_effect_domain: u64,
     next_effect_output_attempt_identity: u64,
-    next_effect_semantic_record_ordinals: BTreeMap<EffectDomain, u64>,
+    next_effect_semantic_record_ordinals: Arc<BTreeMap<EffectDomain, u64>>,
     next_effect_placement_intra_order: u64,
     active_effect_publication: Option<EffectPublicationId>,
     active_effect_output_attempt: Option<EffectOutputAttemptId>,
     active_effect_domain: Option<EffectDomain>,
     active_terminal_publication: Option<TerminalPublication>,
     next_terminal_publication_identity: u64,
-    effect_root_ancestry: Arc<Vec<EffectRootIdentity>>,
     stream_bufs: Arc<StreamBufState>,
     committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     committed_output_paths: BTreeSet<PathBuf>,
@@ -2007,19 +2051,7 @@ impl Clone for World {
     fn clone(&self) -> Self {
         Self {
             backend: self.backend.clone(),
-            page_effect_prefix: self.page_effect_prefix.clone(),
-            page_effect_prefix_sequences: self.page_effect_prefix_sequences.clone(),
-            page_effect_prefix_publications: self.page_effect_prefix_publications.clone(),
-            page_effect_prefix_publication_record_ordinals: self
-                .page_effect_prefix_publication_record_ordinals
-                .clone(),
-            page_effect_prefix_domains: self.page_effect_prefix_domains.clone(),
-            page_effect_prefix_semantic_record_ordinals: self
-                .page_effect_prefix_semantic_record_ordinals
-                .clone(),
-            page_effect_prefix_placement_intra_orders: self
-                .page_effect_prefix_placement_intra_orders
-                .clone(),
+            accepted_effects: self.accepted_effects.clone(),
             page_effect_artifact_cursor: self.page_effect_artifact_cursor,
             effect_base: self.effect_base,
             effects: self.effects.clone(),
@@ -2044,7 +2076,6 @@ impl Clone for World {
             active_effect_output_attempt: self.active_effect_output_attempt,
             active_effect_domain: self.active_effect_domain,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
-            effect_root_ancestry: self.effect_root_ancestry.clone(),
             stream_bufs: self.stream_bufs.clone(),
             committed_write_streams: self.committed_write_streams.clone(),
             committed_output_paths: self.committed_output_paths.clone(),
@@ -2085,7 +2116,7 @@ impl Clone for World {
 impl PartialEq for World {
     fn eq(&self, other: &Self) -> bool {
         self.backend == other.backend
-            && self.page_effect_prefix == other.page_effect_prefix
+            && self.accepted_effects == other.accepted_effects
             && self.page_effect_artifact_cursor == other.page_effect_artifact_cursor
             && self.effect_base == other.effect_base
             && self.effects == other.effects
@@ -2200,13 +2231,7 @@ impl World {
     ) -> Self {
         Self {
             backend,
-            page_effect_prefix: Arc::new(Vec::new()),
-            page_effect_prefix_sequences: Arc::new(Vec::new()),
-            page_effect_prefix_publications: Arc::new(Vec::new()),
-            page_effect_prefix_publication_record_ordinals: Arc::new(Vec::new()),
-            page_effect_prefix_domains: Arc::new(Vec::new()),
-            page_effect_prefix_semantic_record_ordinals: Arc::new(Vec::new()),
-            page_effect_prefix_placement_intra_orders: Arc::new(Vec::new()),
+            accepted_effects: None,
             page_effect_artifact_cursor: 0,
             effect_base: EffectPos::default(),
             effects: Arc::new(Vec::new()),
@@ -2220,16 +2245,15 @@ impl World {
             next_effect_sequence: 0,
             next_publication_sequence: 0,
             next_effect_publication_identity: 0,
-            next_effect_publication_record_ordinals: BTreeMap::new(),
+            next_effect_publication_record_ordinals: Arc::new(BTreeMap::new()),
             next_effect_domain: 0,
             next_effect_output_attempt_identity: 0,
-            next_effect_semantic_record_ordinals: BTreeMap::new(),
+            next_effect_semantic_record_ordinals: Arc::new(BTreeMap::new()),
             next_effect_placement_intra_order: 0,
             active_effect_publication: None,
             active_effect_output_attempt: None,
             active_effect_domain: None,
             next_terminal_publication_identity: 0,
-            effect_root_ancestry: Arc::new(Vec::new()),
             stream_bufs: Arc::new(StreamBufState::default()),
             committed_write_streams: Default::default(),
             committed_output_paths: BTreeSet::new(),
@@ -3972,7 +3996,6 @@ impl World {
                     Arc::make_mut(&mut self.effect_domains).drain(0..applied);
                     Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
                     Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
-                    self.effect_root_ancestry = Arc::new(Vec::new());
                     self.effect_base.0 += applied as u64;
                     Arc::make_mut(&mut self.stream_open_contexts)
                         .retain(|position, _| *position > self.effect_base);
@@ -4000,7 +4023,6 @@ impl World {
         Arc::make_mut(&mut self.effect_domains).drain(0..applied);
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
         Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
-        self.effect_root_ancestry = Arc::new(Vec::new());
         self.effect_base = effect_pos;
         Arc::make_mut(&mut self.stream_open_contexts)
             .retain(|position, _| *position > self.effect_base);
@@ -4292,8 +4314,7 @@ impl World {
     ) {
         let start = range.start.min(self.effect_publications.len());
         let end = range.end.min(self.effect_publications.len());
-        let next = self
-            .next_effect_publication_record_ordinals
+        let next = Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
             .entry(publication)
             .or_insert(0);
         let publications = Arc::make_mut(&mut self.effect_publications);
@@ -4367,7 +4388,7 @@ impl World {
         // execution of the same claim, but that retained counter is not part
         // of the claim's semantic identity. Restart its local namespace so
         // replay reproduces the same per-record identities.
-        self.next_effect_semantic_record_ordinals.remove(&domain);
+        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).remove(&domain);
         let ordinals = (start..end)
             .map(|_| self.allocate_effect_semantic_record_ordinal(domain))
             .collect::<Vec<_>>();
@@ -4397,7 +4418,7 @@ impl World {
     ) {
         let mut installed = ordinals[..ordinals.len().min(self.effects.len())].to_vec();
         installed.resize(self.effects.len(), None);
-        self.next_effect_publication_record_ordinals.clear();
+        Arc::make_mut(&mut self.next_effect_publication_record_ordinals).clear();
         for (publication, ordinal) in self
             .effect_publications
             .iter()
@@ -4407,7 +4428,7 @@ impl World {
             if let (Some(publication), Some(EffectPublicationRecordOrdinal(ordinal))) =
                 (publication, ordinal)
             {
-                self.next_effect_publication_record_ordinals
+                Arc::make_mut(&mut self.next_effect_publication_record_ordinals)
                     .entry(publication)
                     .and_modify(|next| *next = (*next).max(ordinal))
                     .or_insert(ordinal);
@@ -4455,7 +4476,7 @@ impl World {
             let domain = self.effect_domains[index];
             installed.push(self.allocate_effect_semantic_record_ordinal(domain));
         }
-        self.next_effect_semantic_record_ordinals.clear();
+        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).clear();
         for (&domain, &ordinal) in self.effect_domains.iter().zip(&installed) {
             let domain = match domain {
                 EffectDomain::World(_) => EffectDomain::World(0),
@@ -4469,7 +4490,7 @@ impl World {
                 EffectDomain::PublicationBoundary { .. } => continue,
                 domain => domain,
             };
-            self.next_effect_semantic_record_ordinals
+            Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
                 .entry(domain)
                 .and_modify(|next| *next = (*next).max(ordinal.0))
                 .or_insert(ordinal.0);
@@ -4525,12 +4546,48 @@ impl World {
         effect_root_identity_for(&self.effects)
     }
 
-    /// Effects already accepted before a generation fork's restart anchor.
-    /// They remain page-visible but are excluded from the publishable suffix.
+    /// Number of effects accepted before this revision's private suffix.
     #[doc(hidden)]
     #[must_use]
-    pub fn page_effect_prefix(&self) -> &[EffectRecord] {
-        self.page_effect_prefix.as_slice()
+    pub fn page_effect_prefix_len(&self) -> usize {
+        self.accepted_effects
+            .as_ref()
+            .map_or(0, |block| block.total_len)
+    }
+
+    /// Visits the page-visible effect interval in canonical prefix order.
+    ///
+    /// Building the short block spine is confined to shipout, where effects
+    /// cross into an artifact-owned value. Named checkpoint capture, clone,
+    /// restore, and fork never materialize or concatenate accepted blocks.
+    #[doc(hidden)]
+    pub fn visit_pending_page_effects(
+        &self,
+        pending_live_end: usize,
+        mut visit: impl FnMut(usize, &EffectRecord),
+    ) {
+        let pending = self.pending_page_effect_range(pending_live_end);
+        let mut blocks = Vec::new();
+        let mut block = self.accepted_effects.as_deref();
+        while let Some(current) = block {
+            blocks.push(current);
+            block = current.parent.as_deref();
+        }
+        let mut index = 0;
+        for block in blocks.into_iter().rev() {
+            for record in block.effects[..block.len].iter() {
+                if pending.contains(&index) {
+                    visit(index, record);
+                }
+                index += 1;
+            }
+        }
+        for record in self.effects[..pending_live_end.min(self.effects.len())].iter() {
+            if pending.contains(&index) {
+                visit(index, record);
+            }
+            index += 1;
+        }
     }
 
     /// Prefix-or-live indices not yet embedded in a committed page, bounded
@@ -4539,8 +4596,7 @@ impl World {
     #[must_use]
     pub fn pending_page_effect_range(&self, pending_live_end: usize) -> std::ops::Range<usize> {
         let end = self
-            .page_effect_prefix
-            .len()
+            .page_effect_prefix_len()
             .saturating_add(pending_live_end.min(self.effects.len()));
         self.page_effect_artifact_cursor.min(end)..end
     }
@@ -4549,13 +4605,12 @@ impl World {
     #[doc(hidden)]
     pub fn finish_page_effect_interval(&mut self) {
         self.page_effect_artifact_cursor = self
-            .page_effect_prefix
-            .len()
+            .page_effect_prefix_len()
             .saturating_add(self.effects.len());
     }
 
     fn drain_page_effect_interval_prefix(&mut self, count: usize) {
-        let prefix = self.page_effect_prefix.len();
+        let prefix = self.page_effect_prefix_len();
         if self.page_effect_artifact_cursor > prefix {
             self.page_effect_artifact_cursor = prefix
                 + self
@@ -4570,8 +4625,7 @@ impl World {
     #[must_use]
     pub fn page_effect_position(&self, index: usize) -> Option<EffectPos> {
         let len = self
-            .page_effect_prefix
-            .len()
+            .page_effect_prefix_len()
             .checked_add(self.effects.len())?;
         (index < len).then(|| {
             EffectPos::from_raw(u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1))
@@ -4792,16 +4846,8 @@ impl World {
         WorldSnapshot {
             effect_base: self.effect_base,
             page_effect_artifact_cursor: self.page_effect_artifact_cursor,
-            effects: Arc::clone(&self.effects),
-            effect_sequences: Arc::clone(&self.effect_sequences),
-            effect_publications: Arc::clone(&self.effect_publications),
-            effect_publication_record_ordinals: Arc::clone(
-                &self.effect_publication_record_ordinals,
-            ),
-            effect_domains: Arc::clone(&self.effect_domains),
-            effect_semantic_record_ordinals: Arc::clone(&self.effect_semantic_record_ordinals),
-            effect_placement_intra_orders: Arc::clone(&self.effect_placement_intra_orders),
-            effect_publication_dispositions: Arc::clone(&self.effect_publication_dispositions),
+            effect_len: self.effects.len(),
+            effect_publication_disposition_len: self.effect_publication_dispositions.len(),
             next_effect_sequence: self.next_effect_sequence,
             next_publication_sequence: self.next_publication_sequence,
             next_effect_publication_identity: self.next_effect_publication_identity,
@@ -4813,7 +4859,6 @@ impl World {
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
-            effect_root_ancestry: Arc::new(self.effect_root_ancestry.iter().cloned().collect()),
             effect_pos: self.effect_pos(),
             stream_open_contexts: Arc::clone(&self.stream_open_contexts),
             stream_bufs: self.stream_bufs.clone(),
@@ -4860,13 +4905,15 @@ impl World {
     /// generation after the source timeline has published its prefix.
     #[must_use]
     pub(crate) fn snapshot_is_forkable(&self, snapshot: &WorldSnapshot) -> bool {
-        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
+        snapshot.effect_pos
+            == EffectPos(snapshot.effect_base.raw() + snapshot.effect_len as u64)
     }
 
     fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
         snapshot.effect_pos >= self.effect_base
             && snapshot.effect_pos
-                == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
+                == EffectPos(snapshot.effect_base.raw() + snapshot.effect_len as u64)
+            && snapshot.effect_len <= self.effects.len()
     }
 
     pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
@@ -4876,17 +4923,16 @@ impl World {
             .expect("World input identity mark must name a retained ancestor");
         self.effect_base = snapshot.effect_base;
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
-        self.effects = Arc::clone(&snapshot.effects);
-        self.effect_sequences = Arc::clone(&snapshot.effect_sequences);
-        self.effect_publications = Arc::clone(&snapshot.effect_publications);
-        self.effect_publication_record_ordinals =
-            Arc::clone(&snapshot.effect_publication_record_ordinals);
-        self.effect_domains = Arc::clone(&snapshot.effect_domains);
-        self.effect_semantic_record_ordinals =
-            Arc::clone(&snapshot.effect_semantic_record_ordinals);
-        self.effect_placement_intra_orders = Arc::clone(&snapshot.effect_placement_intra_orders);
-        self.effect_publication_dispositions =
-            Arc::clone(&snapshot.effect_publication_dispositions);
+        Arc::make_mut(&mut self.effects).truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_sequences).truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_publications).truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_publication_record_ordinals)
+            .truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_domains).truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(snapshot.effect_len);
+        Arc::make_mut(&mut self.effect_publication_dispositions)
+            .truncate(snapshot.effect_publication_disposition_len);
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_publication_sequence = snapshot.next_publication_sequence;
         self.next_effect_publication_identity = snapshot.next_effect_publication_identity;
@@ -4903,8 +4949,6 @@ impl World {
             Arc::clone(&snapshot.provisional_page_output_receipts);
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
-        self.effect_root_ancestry =
-            Arc::new(snapshot.effect_root_ancestry.iter().cloned().collect());
         self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
@@ -4932,52 +4976,24 @@ impl World {
     /// Installs a retained checkpoint into a new generation. Accepted effects
     /// become an immutable page-visible prefix, while the destination starts
     /// a fresh publishable suffix at the same absolute semantic position.
-    pub(crate) fn install_checkpoint_fork(&mut self, snapshot: &WorldSnapshot) {
-        assert!(self.snapshot_is_forkable(snapshot));
+    fn install_checkpoint_fork(&mut self, source: &Self, snapshot: &WorldSnapshot) {
+        assert!(source.snapshot_is_forkable(snapshot));
         self.input_identities
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
 
-        let snapshot_base = usize::try_from(snapshot.effect_base.raw())
-            .expect("effect position must fit in memory address space");
-        let mut prefix = self.page_effect_prefix.as_ref().clone();
-        let mut sequences = self.page_effect_prefix_sequences.as_ref().clone();
-        let mut publications = self.page_effect_prefix_publications.as_ref().clone();
-        let mut publication_ordinals = self
-            .page_effect_prefix_publication_record_ordinals
-            .as_ref()
-            .clone();
-        let mut domains = self.page_effect_prefix_domains.as_ref().clone();
-        let mut semantic_ordinals = self
-            .page_effect_prefix_semantic_record_ordinals
-            .as_ref()
-            .clone();
-        let mut placement_orders = self
-            .page_effect_prefix_placement_intra_orders
-            .as_ref()
-            .clone();
-        prefix.truncate(snapshot_base);
-        sequences.truncate(snapshot_base);
-        publications.truncate(snapshot_base);
-        publication_ordinals.truncate(snapshot_base);
-        domains.truncate(snapshot_base);
-        semantic_ordinals.truncate(snapshot_base);
-        placement_orders.truncate(snapshot_base);
-        prefix.extend(snapshot.effects.iter().cloned());
-        sequences.extend(snapshot.effect_sequences.iter().copied());
-        publications.extend(snapshot.effect_publications.iter().copied());
-        publication_ordinals.extend(snapshot.effect_publication_record_ordinals.iter().copied());
-        domains.extend(snapshot.effect_domains.iter().copied());
-        semantic_ordinals.extend(snapshot.effect_semantic_record_ordinals.iter().copied());
-        placement_orders.extend(snapshot.effect_placement_intra_orders.iter().copied());
-        assert_eq!(prefix.len() as u64, snapshot.effect_pos.raw());
-        self.page_effect_prefix = Arc::new(prefix);
-        self.page_effect_prefix_sequences = Arc::new(sequences);
-        self.page_effect_prefix_publications = Arc::new(publications);
-        self.page_effect_prefix_publication_record_ordinals = Arc::new(publication_ordinals);
-        self.page_effect_prefix_domains = Arc::new(domains);
-        self.page_effect_prefix_semantic_record_ordinals = Arc::new(semantic_ordinals);
-        self.page_effect_prefix_placement_intra_orders = Arc::new(placement_orders);
+        let accepted_len = self.page_effect_prefix_len();
+        assert_eq!(
+            accepted_len as u64,
+            snapshot.effect_base.raw(),
+            "accepted effect blocks align with the source live suffix"
+        );
+        self.accepted_effects = AcceptedEffectBlock::extend(
+            source.accepted_effects.clone(),
+            source,
+            snapshot,
+        );
+        assert_eq!(self.page_effect_prefix_len() as u64, snapshot.effect_pos.raw());
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
 
         self.effect_base = snapshot.effect_pos;
@@ -5015,12 +5031,6 @@ impl World {
         self.next_effect_semantic_record_ordinals =
             snapshot.next_effect_semantic_record_ordinals.clone();
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
-        let mut ancestry = snapshot.effect_root_ancestry.as_ref().clone();
-        let root = effect_root_identity_for(&snapshot.effects);
-        if !ancestry.contains(&root) {
-            ancestry.push(root);
-        }
-        self.effect_root_ancestry = Arc::new(ancestry);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
@@ -5039,6 +5049,15 @@ impl World {
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;
         self.error_channel = snapshot.error_channel.clone();
+    }
+
+    /// Builds one isolated revision suffix from a retained mark without
+    /// copying the accepted effect ledger.
+    pub(crate) fn fork_checkpoint(&self, snapshot: &WorldSnapshot) -> Self {
+        assert!(self.snapshot_is_forkable(snapshot));
+        let mut fork = self.clone();
+        fork.install_checkpoint_fork(self, snapshot);
+        fork
     }
 
     fn allocate_input_record(&mut self) -> InputRecordId {
@@ -5152,8 +5171,7 @@ impl World {
             EffectDomain::World(_) => EffectDomain::World(0),
             domain => domain,
         };
-        let next = self
-            .next_effect_semantic_record_ordinals
+        let next = Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
             .entry(domain)
             .or_default();
         *next = next
@@ -5171,12 +5189,6 @@ impl World {
     }
 
     fn effects_mut(&mut self) -> &mut Vec<EffectRecord> {
-        let current_root = effect_root_identity_for(&self.effects);
-        let shared = Arc::strong_count(&self.effects) > 1;
-        let ancestry = Arc::make_mut(&mut self.effect_root_ancestry);
-        if shared && !ancestry.iter().any(|root| root == &current_root) {
-            ancestry.push(current_root);
-        }
         Arc::make_mut(&mut self.effects)
     }
 

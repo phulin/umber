@@ -976,8 +976,7 @@ fn append_whatsit_effect<G>(
                 .set_last_stream_open_context(output_open_context);
             let effect_ordinal = stores
                 .world()
-                .page_effect_prefix()
-                .len()
+                .page_effect_prefix_len()
                 .checked_add(stores.world().effect_records().len())
                 .and_then(|ordinal| u32::try_from(ordinal).ok())
                 .ok_or_else(|| {
