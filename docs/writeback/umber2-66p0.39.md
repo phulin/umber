@@ -31,9 +31,18 @@ indirection, compaction, or lifetime mechanism.
 ## Verification
 
 The focused `tex-exec` suite passes 695 unit tests, 4 fixture-parity tests, and
-23 integration tests. The complete `cargo test -q --tests` routine suite
-passes. `scripts/check.sh` reports dprint, Biome, rustfmt, and both clippy
-resolutions clean.
+23 integration tests. After rebasing onto the singular preflight-command
+architecture at `b718c696126d`, static inspection confirms that
+`OperationFrame` remains the only ordinary `PreflightCommand` owner,
+`OperationDelivery` remains payload-free, and no pending-command mirror or
+preflight clone was restored. The conflict resolution keeps the frame-based
+delivery API while retaining the call-local `CommandContext` reborrows.
+
+The post-rebase `scripts/check-and-test.sh` run passes the complete
+`cargo test -q --tests` routine suite and reports `check.sh: all 4 gates
+passed` for dprint, Biome, rustfmt, and both clippy resolutions. Production
+semantics changed only through the documented composition of the two deletion
+refactors, so the fixed queue override still excludes paired CPU profiling.
 
 The standalone `canonical_episode` allocation gate cannot build at this base:
 its pre-existing synthetic-font constructor supplies the new 32-byte
