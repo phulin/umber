@@ -120,6 +120,19 @@ across sizes 0, 24, and 48, and is absent from the candidate census.
 | `memcpy`   |     33,535,478 |      33,111,856 |  4,457,107,922 |   4,472,209,232 |
 | `memmove`  |         51,948 |          51,948 |      4,767,012 |       4,767,012 |
 
+## Post-rebase integration
+
+The issue branch was rebased onto current main
+`3a9d0f3d795e68ada0b42392de39a53eeaba7be0`. The final rebased implementation
+commit is `a167a427d`; the complete pre-rebase and post-rebase production diffs
+have the same stable patch ID
+`bc731a2cd168379ba6c78e7970e8422ed1dd2508`. The only rebase conflict was the
+lifetime-matrix documentation row: resolution retained current main's singular
+command-fuel and ErrorStop recovery architecture and replaced only the stale
+macro-scratch row with the one-frame, one-arena description. Because no
+production patch changed, the authenticated performance evidence above was not
+rerun.
+
 ## Semantic verification
 
 Focused coverage retains delimited and undelimited matching, overlapping
@@ -128,5 +141,6 @@ non-`\long` paragraph classification, runaway pseudoprint, tracing, nested
 activations, pending-child rollback, stale-frame rejection, strict LIFO
 retirement, multi-segment replay, and 8,192 warmed same-depth replacements.
 The focused `tex-command` suite passes 245 unit and 18 integration tests. The
-complete `cargo test -q --tests` routine suite passes. `scripts/check.sh`
-reports dprint, Biome, rustfmt, and both clippy-resolution passes clean.
+post-rebase `scripts/check-and-test.sh` combined gate passes the complete
+routine suite under its memory guard and reports dprint, Biome, rustfmt, and
+both clippy-resolution passes clean.
