@@ -2905,18 +2905,6 @@ impl<G> MainControl<G> {
         Ok(id)
     }
 
-    /// Rebinds the root input retained by an editor checkpoint without
-    /// reopening the TeX job or adding another input level.
-    #[doc(hidden)]
-    pub fn rebind_root_source(
-        &mut self,
-        source: SourceRegistration,
-    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
-        let id = self.command.rebind_root_generated_source(source)?;
-        self.root_main_source = Some(id);
-        Ok(id)
-    }
-
     /// Renders the registered root's §537 opening at the driver's startup
     /// boundary without advancing input.
     pub fn open_registered_root_framing(&mut self, stores: &mut Universe<G>) {
@@ -3893,9 +3881,7 @@ impl<G> MainControl<G> {
             }
             if published.boundary == crate::EngineBoundary::ShipoutComplete {
                 stores
-                    .release_page_suffix_if_rootless(
-                        self.modes.retains_page_node_handles(),
-                    )
+                    .release_page_suffix_if_rootless(self.modes.retains_page_node_handles())
                     .map_err(|_| ExecError::MissingToken {
                         context: "rootless shipout page release",
                     })?;

@@ -949,7 +949,11 @@ fn late_edit_restarts_from_a_retained_non_job_start_boundary() {
         .expect("accepted history supplies a restart boundary");
     assert_ne!(restart.boundary, EngineBoundary::JobStart);
 
-    let edited = format!("{}\\relax {}", &source[..edit_position], &source[edit_position..]);
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
     let mut cold = session(RevisionId::new(2), &edited);
     let expected = cold.cold().expect("cold comparison");
     assert_detached_output_eq(&output, &expected);

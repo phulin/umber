@@ -79,7 +79,7 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
             .expect("checkpoint fork");
         assert_eq!(definition.semantic_owner_count(), definition_owners);
         assert_eq!(tokens.semantic_owner_count(), token_owners);
-        universe.return_rejected_pdf_from(&mut fork);
+        universe.reject_checkpoint_candidate(&mut fork);
 
         assert_eq!(definition.semantic_owner_count(), definition_owners);
         assert_eq!(tokens.semantic_owner_count(), token_owners);
@@ -249,7 +249,7 @@ fn rejected_checkpoint_loan_returns_exact_private_suffix_coordinates_for_retry()
         candidate
             .assign_count(50_000, 91, AssignmentScope::Global)
             .expect("candidate dense suffix");
-        universe.return_rejected_pdf_from(&mut candidate);
+        universe.reject_checkpoint_candidate(&mut candidate);
 
         let mut retry = universe
             .fork_runtime_checkpoint(&checkpoint)
@@ -273,7 +273,7 @@ fn rejected_checkpoint_loan_returns_exact_private_suffix_coordinates_for_retry()
         );
         assert_eq!(retry.primitive_registry_len(), 16);
         assert_eq!(retry.count(50_000).expect("restored dense sentinel"), 0);
-        universe.return_rejected_pdf_from(&mut retry);
+        universe.reject_checkpoint_candidate(&mut retry);
     })
     .expect("universe allocation");
 }
@@ -1036,7 +1036,7 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
             .expect("older page mark forks");
         assert_eq!(candidate.page.contribution().len(), 1);
         candidate.page.push_contribution(Node::Penalty(3));
-        universe.return_rejected_pdf_from(&mut candidate);
+        universe.reject_checkpoint_candidate(&mut candidate);
 
         assert_eq!(
             universe

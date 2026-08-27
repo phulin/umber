@@ -1034,7 +1034,7 @@ impl<G> Universe<G> {
     }
 
     #[doc(hidden)]
-    pub fn return_rejected_pdf_from(&mut self, candidate: &mut Self) {
+    pub fn reject_checkpoint_candidate(&mut self, candidate: &mut Self) {
         candidate
             .restore_loan_to_slot()
             .expect("candidate-private state suffix rolls back to its loan mark");
@@ -1060,7 +1060,7 @@ impl<G> Universe<G> {
         }
     }
 
-    pub(crate) fn commit_pdf_candidate(&mut self) {
+    pub(crate) fn accept_checkpoint_candidate(&mut self) {
         self.checkpoint_state_loan = None;
         self.pdf.commit_candidate();
         self.page.commit_checkpoint_fork();
@@ -1069,7 +1069,7 @@ impl<G> Universe<G> {
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
     pub fn profile_commit_checkpoint_candidate(&mut self) {
-        self.commit_pdf_candidate();
+        self.accept_checkpoint_candidate();
     }
 
     pub(crate) fn interner(&self) -> &Interner {

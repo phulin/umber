@@ -1,21 +1,50 @@
 # Aggregate checkpoint component contract
 
-Status: normative target, measured pre-refactor baseline, and command-family
-promotion evidence, 2026-08-27.
+Status: normative rooted-lifecycle target and measured pre-refactor evidence,
+2026-08-27.
 
 ## Scope
 
 This document fixes the ownership and measurement boundary for
-`EngineCheckpoint`. It precedes the command, mode, page, hyphenation, and
-World ownership-family migrations. It does not authorize a cache, fast path,
-per-value owner, root registry, compaction, a third generation, or heap
-indirection. The completed PDF scalar mark is reused unchanged.
+`EngineCheckpoint`. It does not authorize a cache, fast path, per-value owner,
+root registry, compaction, a third generation, per-checkpoint state bank, or
+heap indirection. The completed PDF scalar mark is reused unchanged.
 
 One session owns an accepted prior generation and, only while executing an
 edit, one candidate current generation. A checkpoint contains bounded scalar
 cursors plus one coarse generation owner. Every live runtime value has one
 owner named below; a checkpoint is a reachability root, not another mutable
 state owner.
+
+## Aggregate transaction
+
+The accepted generation stays live at its physical head. Starting an edit is
+one aggregate transaction, never a collection of family-local restores:
+
+1. Validate every selected mark without mutation.
+2. In the fixed owner order below, inverse-rewind the accepted head to the
+   rooted mark. Retain every old/new journal entry needed to replay the saved
+   accepted delta; do not truncate that delta.
+3. Open an empty current suffix and enter `CandidateLive`. Execution is
+   forbidden before every owner reaches that state.
+4. On rejection, undo only the current suffix in reverse owner order, then
+   forward-redo the saved accepted delta in owner order. The source becomes
+   the exact accepted head again before it is admitted.
+5. On acceptance, discard the saved superseded accepted tail, splice or
+   promote the live current suffix, and publish only after every owner has
+   promoted. Pruning can then release whole obsolete journal/arena chunks.
+
+The protocol states are `AcceptedHead -> AcceptedRewound -> CandidateLive`,
+followed by either `CandidateUndo -> RejectionRedo -> AcceptedHead` or
+`AcceptedPromoted -> Published`. No component exposes an independently
+restored or independently committed state. Unwind cleanup uses the rejection
+path; it is not a second acceptance protocol.
+
+The fixed validation/rewind/redo/promotion order is core, command, mode, page,
+hyphenation, PDF, World, dependencies, and source/font. Candidate undo and
+partial-acquisition rollback use the exact reverse. Execution counters are
+copied only after the semantic owners reach `CandidateLive`, and publication
+metadata changes only after `AcceptedPromoted`.
 
 ## Component matrix
 
@@ -32,12 +61,11 @@ state owner.
 | Sources and fonts                                                             | `SourceMap` and `FontStore` inside `Universe`; command input owns its live source frames                | Existing scalar `SourceMapMark` and `FontStoreMark`; the historical command-root clone separately retained live backing   | Keep the fixed source/font watermarks and one coarse generation owner                                                                         | Validate all source/font coordinates and every command/mode/page/PDF font carrier; transfer roots; truncate font runtime, fonts, then sources before arena suffixes       | Charge immutable source/font payload once per generation or exact external carrier; charge only fixed marks per checkpoint                                             | Include reachable source descriptors/bytes and immutable font recipes plus mutable font-runtime state; exclude unused registered suffixes                                                   |
 | Execution and fuel counters                                                   | `MainControl`/session-owned `ExecutionBudgetCounters`, command fuel ledger, and TeX job-lifetime maxima | The two revision budget counters are copied into `EngineCheckpoint`; fuel and stack maxima remain outside semantic roots  | Keep the fixed revision counters only when restart must continue the same configured budget; no heap owner                                    | Restore counters at fork construction before execution resumes; same-generation semantic restore never refunds fuel or TeX high-water diagnostics                         | Exactly `size_of::<ExecutionBudgetCounters>()` per checkpoint; no payload charge                                                                                       | Excluded. These are monotonic operational evidence, not future TeX semantic state                                                                                                           |
 
-All validation is mutation-free. The normative application order is: validate
-every owner/cursor/root; acquire the target coarse owner; restore dense state;
-restore PDF; restore command, mode, page, hyphenation, World, dependency, and
-counter roots; truncate font/source and command/durable/page suffixes; then
-release replaced owners. A failed validation leaves source and destination
-unchanged.
+All validation is mutation-free. The normative owner order is the aggregate
+transaction order above. The accepted rewind retains its forward values and
+does not truncate command, durable-node, page-node, source, font, effect, or
+artifact storage. A failed validation leaves source and destination unchanged;
+a later failure reverses already-acquired owners before admission can resume.
 
 ## Optional identity outcome
 
@@ -114,11 +142,10 @@ accepted-generation transition only validates and prunes the already-bounded
 root set, so it no longer hides a larger pre-acceptance peak.
 
 Each observed `(owner, family)` pair also carries a restart-root reference
-count. Releasing one checkpoint removes a distinct exact core-bank charge when
-its count reaches zero, while a genuinely shared append/journal owner remains
-charged at its largest observed size until its final restart root is released.
-This prevents both multiplying shared storage and retaining charges for banks
-that publication pruning has physically dropped.
+count. Releasing the last mark into an obsolete lineage chunk releases that
+whole chunk, while a genuinely shared append/journal owner remains charged at
+its largest observed size until its final restart root is released. This
+prevents both multiplying shared storage and retaining charges after pruning.
 
 `RetentionMetrics` reports the shared-owner, per-root metadata, and detached
 evidence terms independently, with `checkpoint_root_bytes` equal to their sum.
@@ -226,37 +253,28 @@ drop returns the exclusive command-root loan; fork restores the selected marks
 and gives the sole current candidate that root. A rejected candidate returns
 the same storage after discarding its current logical suffix.
 
-## Core state, node arena, and primitive ownership outcome
+## Core state, node arena, and primitive ownership target
 
-`umber2-pei0.2.8` removes candidate-time reconstruction of dense state and
-node-coordinate prefixes. Each retained runtime checkpoint owns one exact,
-already materialized `StateCore` and page-node bank behind a singular
-thread-confined loan slot. Checkpoint clones alias the slot. Candidate fork
-moves that bank into the current lineage, rejection reverses only the
-candidate-private dense journal and generation/node suffixes before returning
-the same bank, and acceptance consumes the loan. Same-generation restore swaps
-the exact bank into the live Universe and retains at most one whole abandoned
-bank for lineage retirement. It never replays the accepted document suffix to
-reconstruct an early checkpoint.
+Dense state and node arenas remain direct mutable owners in one accepted
+lineage. A retained checkpoint stores only a journal cursor and reversible
+arena coordinates. It never owns a `StateCore`, `DenseState`, or
+`PageNodeArena` bank. Multiple sibling marks may name the same lineage without
+creating more mutable authorities.
 
-Dense reads remain direct. A candidate's first mutation writes the live bank
-and appends only compact inverse and publisher records. Definition and stored-
-token publishers reset their scalar serial frontiers on rejection; glue and
-provenance truncate exact private row suffixes. Durable and page node arenas
-retain branch-local generation frontiers, so rejection followed by retry
-reproduces exact row coordinates and ids without making source and candidate
-coordinates alias. The completed primitive registry is one immutable `Rc`
-root shared at the named boundary; registration after sharing is rejected
-rather than entering copy-on-write.
+Each dense journal record stores its cell coordinate and old/new durable value
+once. Rewinding the accepted suffix applies old values in reverse while
+retaining the records; rejection applies their new values forward after the
+candidate journal has been undone. Acceptance drops the superseded accepted
+suffix and promotes the candidate journal. Stack and arena journals use the
+same bidirectional rule with reversible logical coordinates. Durable values
+and node payloads are not copied into checkpoints or reconstructed by replaying
+page prefixes.
 
-The enforced `core_checkpoint_gate` compares one shallow unit with an early
-checkpoint surrounded by 256 dense writes, open save histories, glue and
-provenance rows, page-node coordinates, and primitive rows. Its recorded
-optimized result is allocation/requested-byte identical for every measured
-transition: fork 41 / 45,800; restore 1 / 48; reject 4 / 44,192; accept 0 / 0;
-and first mutation 4 / 10,624. Seventeen-sample medians remained within the
-gate's conservative four-times diagnostic bound, while semantic sentinels and
-rejection/retry coordinate equality were checked independently.
+The primitive registry remains immutable after initialization. Pruning drops
+whole unreachable journal and arena chunks once no sibling mark names them;
+it does not scan the engine, register roots, compact coordinates, or perform
+per-value ownership accounting. The former bank-loan allocation figures are
+historical diagnostic evidence only and are not a promoted representation.
 
 The rooted-lifecycle work in `umber2-pei0.2.13` replaces these independently
 materialized checkpoint banks with scalar marks plus one explicit edit-start

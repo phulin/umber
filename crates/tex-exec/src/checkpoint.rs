@@ -62,6 +62,21 @@ pub enum CheckpointOwnerFamily {
     Core,
 }
 
+/// The single order used to validate, rewind, and promote aggregate owners.
+/// Rejection undoes the current suffix in the reverse of this order and then
+/// redoes the saved accepted suffix in this order.
+pub(crate) const CANDIDATE_OWNER_ORDER: [CheckpointOwnerFamily; 9] = [
+    CheckpointOwnerFamily::Core,
+    CheckpointOwnerFamily::Command,
+    CheckpointOwnerFamily::Mode,
+    CheckpointOwnerFamily::Page,
+    CheckpointOwnerFamily::Hyphenation,
+    CheckpointOwnerFamily::Pdf,
+    CheckpointOwnerFamily::World,
+    CheckpointOwnerFamily::Dependency,
+    CheckpointOwnerFamily::SourceFont,
+];
+
 /// Opaque identity of one process-local owner participating in retention.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CheckpointOwnerKey(CheckpointOwnerKeyInner);
@@ -137,6 +152,7 @@ impl CheckpointRetention {
         modes: &ModeCheckpoint,
         runtime: tex_state::RuntimeCheckpointRetention,
     ) -> Self {
+        debug_assert_eq!(CANDIDATE_OWNER_ORDER.len(), 9);
         Self {
             shared_owners: [
                 CheckpointOwnerCharge::new(
@@ -402,7 +418,7 @@ impl<G> EngineCheckpoint<G> {
         let command = match CommandState::fork_summary(&self.command, source, &destination) {
             Ok(command) => command,
             Err(error) => {
-                source.return_rejected_pdf_from(&mut destination);
+                source.reject_checkpoint_candidate(&mut destination);
                 return Err(CheckpointRestoreError::Command(error));
             }
         };
@@ -410,7 +426,7 @@ impl<G> EngineCheckpoint<G> {
             Ok(modes) => modes,
             Err(error) => {
                 drop(command);
-                source.return_rejected_pdf_from(&mut destination);
+                source.reject_checkpoint_candidate(&mut destination);
                 return Err(CheckpointRestoreError::Mode(error));
             }
         };

@@ -443,7 +443,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
         branch
             .mode_nest_mut_for_test()
             .push_current_node(tex_state::node::Node::Penalty(22));
-        universe.return_rejected_pdf_from(&mut rejected);
+        universe.reject_checkpoint_candidate(&mut rejected);
         drop(branch);
         drop(rejected);
 
@@ -455,7 +455,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
             &[tex_state::node::Node::Penalty(11)],
             "candidate-only nodes must not escape the rejected coarse owner"
         );
-        universe.return_rejected_pdf_from(&mut retried);
+        universe.reject_checkpoint_candidate(&mut retried);
         drop(retry);
     });
 }
@@ -498,7 +498,7 @@ fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
         branch
             .mode_nest_mut_for_test()
             .push_current_node(tex_state::node::Node::Penalty(900));
-        universe.return_rejected_pdf_from(&mut rejected);
+        universe.reject_checkpoint_candidate(&mut rejected);
         drop(branch);
         drop(rejected);
 
@@ -515,7 +515,7 @@ fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
             .fork_state(universe)
             .expect("returned early checkpoint forks again");
         assert!(retry.mode_nest_for_test().current_list().nodes().is_empty());
-        universe.return_rejected_pdf_from(&mut retried);
+        universe.reject_checkpoint_candidate(&mut retried);
         drop(retry);
         drop(retried);
     });

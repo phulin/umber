@@ -334,7 +334,8 @@ impl<'store> RetainedStateGeneration<'store> {
                     RetainedStateForkError::IdentityExhausted
                 }
                 ReachabilityStoreError::StaleGeneration
-                | ReachabilityStoreError::CandidateTransactionActive => {
+                | ReachabilityStoreError::CandidateTransactionActive
+                | ReachabilityStoreError::CandidateTransactionMismatch => {
                     unreachable!("generation insertion preflight reports only capacity")
                 }
             })?;
@@ -374,8 +375,9 @@ impl<'store> RetainedStateGeneration<'store> {
                     ReachabilityStoreError::StaleGeneration => {
                         unreachable!("insertion cannot report a stale generation")
                     }
-                    ReachabilityStoreError::CandidateTransactionActive => {
-                        unreachable!("one source cannot start two PDF candidates")
+                    ReachabilityStoreError::CandidateTransactionActive
+                    | ReachabilityStoreError::CandidateTransactionMismatch => {
+                        unreachable!("one source cannot start two aggregate candidates")
                     }
                 })?;
         Ok((
@@ -406,11 +408,45 @@ impl<'store> RetainedStateGeneration<'store> {
     }
 
     #[must_use]
-    pub fn has_exclusive_pdf_candidate(&self) -> bool {
+    pub fn has_candidate_transaction(&self) -> bool {
         let key = self
             .key
             .expect("a live retained generation has a store slot");
-        self.store.generation_has_pdf_candidate(key)
+        self.store.generation_has_candidate_transaction(key)
+    }
+
+    #[must_use]
+    pub fn is_candidate_transaction_destination(&self) -> bool {
+        let key = self
+            .key
+            .expect("a live retained generation has a store slot");
+        self.store.generation_is_candidate(key)
+    }
+
+    #[doc(hidden)]
+    pub fn accept_candidate(&mut self, candidate: &mut Self) {
+        let source_key = self.key.expect("an accepted generation has a store slot");
+        let candidate_key = candidate
+            .key
+            .expect("a current generation has a store slot");
+        assert!(self.store.same_store(&candidate.store));
+        self.store
+            .accept_candidate(source_key, candidate_key)
+            .expect("the source and current slots own one candidate transaction");
+    }
+
+    #[doc(hidden)]
+    pub fn reject_candidate(mut self) {
+        let key = self.key.take().expect("a current generation rejects once");
+        if self.store.generation_is_candidate(key) {
+            self.store
+                .reject_candidate(key)
+                .expect("the current slot owns one candidate transaction");
+        }
+        let _ = self
+            .store
+            .take_generation(key)
+            .expect("the rejected current generation keeps its store slot");
     }
 
     /// Releases every engine sidecar before retiring the complete immutable,
@@ -449,7 +485,7 @@ impl Drop for RetainedStateGeneration<'_> {
         let Some(key) = self.key.take() else {
             return;
         };
-        let _ = self.store.take_generation(key);
+        self.store.drop_generation(key);
     }
 }
 
@@ -460,7 +496,8 @@ fn map_store_construction_error(error: ReachabilityStoreError) -> SessionEpochEr
         }
         ReachabilityStoreError::GenerationIdentityExhausted
         | ReachabilityStoreError::StaleGeneration
-        | ReachabilityStoreError::CandidateTransactionActive => SessionEpochError::Retired,
+        | ReachabilityStoreError::CandidateTransactionActive
+        | ReachabilityStoreError::CandidateTransactionMismatch => SessionEpochError::Retired,
     }
 }
 

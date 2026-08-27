@@ -296,7 +296,7 @@ impl<'store> RetainedEngineGeneration<'store> {
         &mut self,
         operation: O,
     ) -> Result<O::Output, RetainedEngineAccessError> {
-        if self.state.has_exclusive_pdf_candidate() {
+        if self.state.has_candidate_transaction() {
             return Err(RetainedEngineAccessError::CandidateTransactionActive);
         }
         self.state.with_admitted(EngineOperationAdapter {
@@ -320,7 +320,7 @@ impl<'store> RetainedEngineGeneration<'store> {
         ),
         RetainedEngineForkError,
     > {
-        if self.state.has_exclusive_pdf_candidate() {
+        if self.state.has_candidate_transaction() {
             return Err(RetainedEngineForkError::Access(
                 RetainedEngineAccessError::CandidateTransactionActive,
             ));
@@ -363,6 +363,20 @@ impl<'store> RetainedEngineGeneration<'store> {
     #[must_use]
     pub fn same_store(&self, other: &Self) -> bool {
         self.state.same_store(&other.state)
+    }
+
+    /// Explicitly settles the accepted/current owner transaction before the
+    /// prior generation retires. No individual component may commit itself.
+    #[doc(hidden)]
+    pub fn accept_candidate(&mut self, candidate: &mut Self) {
+        self.state.accept_candidate(&mut candidate.state);
+    }
+
+    /// Explicitly rejects every current owner before releasing the current
+    /// physical slot. `Drop` remains only an unwind safety net.
+    #[doc(hidden)]
+    pub fn reject_candidate(self) {
+        self.state.reject_candidate();
     }
 
     /// Mutation-free terminal preflight. Every retained root is statically
@@ -1153,6 +1167,7 @@ mod tests {
             })
             .expect("candidate admission");
         assert_eq!(before, 41);
+        accepted.accept_candidate(&mut accepted_candidate);
         accepted.retire().expect("old prior retires");
         assert!(!accepted_witness.is_live());
         assert_eq!(
@@ -1220,6 +1235,7 @@ mod tests {
             .with_admitted(SuspendFork(runtime))
             .expect("suspension admission");
 
+        accepted.accept_candidate(&mut current);
         accepted.retire().expect("accept current generation");
         let resumed = current
             .with_admitted(ResumeFork(suspension))

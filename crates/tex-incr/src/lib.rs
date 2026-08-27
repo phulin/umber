@@ -382,7 +382,9 @@ impl RevisionTransaction<'_> {
 
     /// Rejects this completed candidate, dropping its current generation and
     /// returning the session's candidate slot for immediate reuse.
-    pub fn reject(self) {}
+    pub fn reject(self) {
+        self.generation.reject_candidate();
+    }
 
     #[must_use]
     pub const fn completion(&self) -> &DetachedEngineCompletion {
@@ -647,7 +649,11 @@ impl<'store> RevisionCandidate<'store> {
 
     /// Rejects this candidate, dropping any current generation and returning
     /// the session's candidate slot for immediate reuse.
-    pub fn reject(self) {}
+    pub fn reject(mut self) {
+        if let Some(generation) = self.generation.take() {
+            generation.reject_candidate();
+        }
+    }
 }
 
 enum PlanExecution {
@@ -1060,33 +1066,15 @@ fn initialize_candidate_runtime<G: 'static>(
     control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
     let mut ledger = OutputLedger::new();
-    let mut sink = LiveHistorySink {
-        state: &mut history,
-        retained: checkpoints,
-    };
-    if rooted_restart {
-        let mut registration =
-            SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
-                .with_name(options.source_path)
-                .with_framing(options.root_framing);
-        if let Some(name) = options.root_framing_name {
-            registration = registration.with_framing_name(name);
-        }
-        control.rebind_root_source(registration)?;
-        ledger.commit_restored_boundary(
-            &mut control,
-            universe,
-            &mut sink,
-            candidate
-                .plan
-                .restart_boundary
-                .expect("a restored candidate records its selected boundary")
-                .boundary,
-        )?;
-    } else {
-        ledger.commit_job_start(&mut control, universe, &mut sink)?;
-        start_candidate_job(universe, &mut control, options)?;
-    }
+    ledger.commit_job_start(
+        &mut control,
+        universe,
+        &mut LiveHistorySink {
+            state: &mut history,
+            retained: checkpoints,
+        },
+    )?;
+    start_candidate_job(universe, &mut control, options)?;
     Ok(CandidateRuntime {
         control,
         ledger,
@@ -2204,19 +2192,20 @@ impl<'store> Session<'store> {
         // before either accepted metadata or the prior owner changes. The
         // current generation was constructed independently under its own
         // HRTB brand, so its checkpoint roots cannot contain a prior id.
-        let incoming = RetainedRevisionGeneration {
-            revision: transaction.revision,
-            generation,
-            checkpoint_keys: retained_checkpoint_keys,
-        };
         let previous = self.prior_generation.take();
-        if let Some(previous) = previous {
+        if let Some(mut previous) = previous {
+            previous.generation.accept_candidate(&mut generation);
             previous
                 .generation
                 .retire()
                 .map_err(SessionError::Universe)?;
             self.retired_generations = self.retired_generations.saturating_add(1);
         }
+        let incoming = RetainedRevisionGeneration {
+            revision: transaction.revision,
+            generation,
+            checkpoint_keys: retained_checkpoint_keys,
+        };
         let acceptance = Timer::start();
         self.revision = transaction.revision;
         self.source = transaction.source;
