@@ -31,6 +31,7 @@ use tex_state::diagnostic::DiagnosticEffects;
 /// input or source ownership itself.
 pub(crate) fn report_error<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     message: &str,
     help: &[&str],
     context: String,
@@ -38,7 +39,7 @@ pub(crate) fn report_error<G>(
     let mut report = stores.print_err(message);
     report.help(help);
     report.context(context);
-    Ok(report.error().jump_out()?)
+    Ok(report.error().defer_recovery(diagnostic_effects)?)
 }
 
 /// [`report_error`] after publishing the operation-local diagnostics that
@@ -51,5 +52,5 @@ pub(crate) fn report_ordered_error<G>(
     context: String,
 ) -> Result<(), crate::ExecError> {
     stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
-    report_error(stores, message, help, context)
+    report_error(stores, diagnostic_effects, message, help, context)
 }

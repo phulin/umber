@@ -588,7 +588,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Raw,
@@ -708,7 +707,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
         let delivery = self.delivery_driver(
@@ -731,8 +729,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Applies tex.web §§84/87's ErrorStop input mutation at the sole raw
     /// command/input ownership boundary.
     #[doc(hidden)]
-    pub fn apply_error_stop_recovery(&mut self) -> Result<(), CommandError> {
-        while let Some(request) = self.state.take_error_recovery_request() {
+    pub fn apply_error_stop_recovery(
+        &mut self,
+        mut request: tex_state::print::ErrorRecoveryRequest,
+    ) -> Result<(), CommandError> {
+        loop {
             match request {
                 tex_state::print::ErrorRecoveryRequest::Delete(count) => {
                     let mut deleted = None;
@@ -745,16 +746,35 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     let context = self.error_context();
                     self.state.printer().print_rendered(&context);
-                    self.state.continue_error_stop_dialog(&context).jump_out()?;
+                    match self.state.continue_error_stop_dialog(&context) {
+                        tex_state::print::ErrorOutcome::Continue => return Ok(()),
+                        tex_state::print::ErrorOutcome::Recovery(next) => request = next,
+                        tex_state::print::ErrorOutcome::JumpOut(jump) => return Err(jump.into()),
+                    }
                 }
                 tex_state::print::ErrorRecoveryRequest::Insert(line) => {
                     self.command
                         .open_error_insert_line(line.into_bytes())
                         .map_err(|_| CommandError::input_invariant())?;
+                    return Ok(());
                 }
             }
         }
-        Ok(())
+    }
+
+    /// Completes one synchronous error dialogue while this processor owns the
+    /// sole mutable command-input route.
+    pub(crate) fn finish_error_outcome(
+        &mut self,
+        outcome: tex_state::print::ErrorOutcome,
+    ) -> Result<(), CommandError> {
+        match outcome {
+            tex_state::print::ErrorOutcome::Continue => Ok(()),
+            tex_state::print::ErrorOutcome::Recovery(request) => {
+                self.apply_error_stop_recovery(request)
+            }
+            tex_state::print::ErrorOutcome::JumpOut(jump) => Err(jump.into()),
+        }
     }
 
     /// Restores the immediately preceding raw delivery to TeX's input.

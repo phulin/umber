@@ -558,7 +558,7 @@ pub(crate) fn report_output_loop<G>(
             "increase \\maxdeadcycles if you want me to be more patient!",
         ])
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
@@ -580,7 +580,7 @@ fn report_box255_not_void<G>(
             "Proceed, and I'll discard its present contents.",
         ])
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     report_deleted_box(stores, diagnostic_effects, deleted);
     Ok(())
 }
@@ -603,7 +603,7 @@ pub(crate) fn report_box255_not_emptied<G>(
             "Proceed; I'll discard its present contents.",
         ])
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     report_deleted_box(stores, diagnostic_effects, deleted);
     Ok(())
 }

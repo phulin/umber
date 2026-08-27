@@ -66,6 +66,7 @@ impl DetachedDiagnosticEffect {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticEffects {
     effects: Vec<DetachedDiagnosticEffect>,
+    error_stop_recovery: Option<crate::print::ErrorRecoveryRequest>,
 }
 
 impl DiagnosticEffects {
@@ -73,6 +74,7 @@ impl DiagnosticEffects {
     pub const fn new() -> Self {
         Self {
             effects: Vec::new(),
+            error_stop_recovery: None,
         }
     }
 
@@ -96,7 +98,7 @@ impl DiagnosticEffects {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.effects.is_empty()
+        self.effects.is_empty() && self.error_stop_recovery.is_none()
     }
 
     #[must_use]
@@ -106,6 +108,20 @@ impl DiagnosticEffects {
 
     pub fn drain(&mut self) -> impl Iterator<Item = DetachedDiagnosticEffect> + '_ {
         self.effects.drain(..)
+    }
+
+    /// Retains the synchronous ErrorStop input action until the enclosing
+    /// executor hands control back to the sole command-input owner.
+    pub fn request_error_stop_recovery(&mut self, request: crate::print::ErrorRecoveryRequest) {
+        assert!(
+            self.error_stop_recovery.replace(request).is_none(),
+            "one executor transition owns at most one ErrorStop response"
+        );
+    }
+
+    /// Transfers the synchronous response to the command/input transition.
+    pub fn take_error_stop_recovery(&mut self) -> Option<crate::print::ErrorRecoveryRequest> {
+        self.error_stop_recovery.take()
     }
 }
 

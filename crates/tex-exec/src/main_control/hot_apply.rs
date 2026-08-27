@@ -419,7 +419,7 @@ fn apply_catcode<G>(
             .print_int(15)
             .help(&["I changed this one to zero."])
             .context(context);
-        report.error().jump_out()?;
+        report.error().defer_recovery(command.diagnostic_effects)?;
         value = 0;
     }
     let catcode = catcode_from_value(value)?;

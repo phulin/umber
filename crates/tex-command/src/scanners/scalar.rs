@@ -2782,7 +2782,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 report
                     .help(&["I'm forgetting what you said and using zero instead."])
                     .context(context);
-                report.error().jump_out()?;
+                let outcome = report.error();
+                self.finish_error_outcome(outcome)?;
                 InternalValue::Integer(0)
             }
         };
@@ -3792,7 +3793,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         report
             .help(&["I'm going to assume that 1mu=1pt when they're mixed."])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3825,7 +3827,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "look up `weird error' in the index to The TeXbook.)",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3839,7 +3842,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "so I'm using that number instead of yours.",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3856,7 +3860,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "So I'm essentially inserting \\0 here.",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3885,7 +3890,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let mut report = self.state.print_err(&format!("Improper \\{name}"));
         report.help(IMPROPER_AUXILIARY_HELP).context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3902,7 +3908,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "two letters. (See Chapter 27 of The TeXbook.)",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3918,7 +3925,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         report
             .help(&["I dddon't go any higher than filll."])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3944,7 +3952,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "two letters. (See Chapter 27 of The TeXbook.)",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3958,7 +3967,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "Continue and I'll use the largest value I can.",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -3977,7 +3987,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 report
                     .help(&["The magnification ratio must be between 1 and 32768."])
                     .context(context);
-                report.int_error(attempted).jump_out()?;
+                let outcome = report.int_error(attempted);
+                self.finish_error_outcome(outcome)?;
             }
             PrepareMagDiagnostic::IncompatibleMagnification {
                 attempted,
@@ -3998,7 +4009,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "reverted to the magnification you used earlier on this run.",
                     ])
                     .context(context);
-                report.int_error(retained).jump_out()?;
+                let outcome = report.int_error(retained);
+                self.finish_error_outcome(outcome)?;
             }
         }
         Ok(())

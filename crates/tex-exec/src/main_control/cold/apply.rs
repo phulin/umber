@@ -126,6 +126,7 @@ pub(in crate::main_control) fn apply<G>(
                 let context = command.state.output_open_context(&**stores);
                 report_escaped_error(
                     stores,
+                    command.diagnostic_effects,
                     "Improper ",
                     name,
                     "",
@@ -153,6 +154,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
+                command.diagnostic_effects,
                 "Missing $ inserted",
                 &[
                     "I've inserted a begin-math/end-math symbol since I think",
@@ -170,6 +172,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
+                command.diagnostic_effects,
                 "Missing \\cr inserted",
                 &["I'm guessing that you meant to end an alignment here."],
                 context,
@@ -443,7 +446,10 @@ pub(in crate::main_control) fn apply<G>(
                 3 => tex_state::InteractionMode::ErrorStop,
                 value => {
                     crate::diagnostics::report_bad_interaction_mode_with_context(
-                        stores, value, context,
+                        stores,
+                        command.diagnostic_effects,
+                        value,
+                        context,
                     )?;
                     return Ok(ReplayStep::Continue);
                 }
@@ -486,6 +492,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -496,6 +503,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -507,6 +515,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             report_escaped_error(
                 stores,
+                command.diagnostic_effects,
                 "Extra ",
                 "endcsname",
                 "",
@@ -635,6 +644,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -663,7 +673,9 @@ pub(in crate::main_control) fn apply<G>(
                 report
                     .help(&["I allow only values in the range 1..32767 here."])
                     .context(context);
-                report.int_error(value).jump_out()?;
+                report
+                    .int_error(value)
+                    .defer_recovery(command.diagnostic_effects)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -671,6 +683,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -689,7 +702,9 @@ pub(in crate::main_control) fn apply<G>(
                     .print_esc("prevgraf")
                     .help(&["I allow only nonnegative values here."])
                     .context(context);
-                report.int_error(value).jump_out()?;
+                report
+                    .int_error(value)
+                    .defer_recovery(command.diagnostic_effects)?;
             } else {
                 AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
                     modes.set_enclosing_vertical_prev_graf(value);
@@ -1030,7 +1045,7 @@ pub(in crate::main_control) fn apply<G>(
                     .print_int(maximum)
                     .help(&["I changed this one to zero."])
                     .context(context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(command.diagnostic_effects)?;
                 value = 0;
             }
             match primitive {
@@ -1256,36 +1271,39 @@ pub(in crate::main_control) fn apply<G>(
             // control-sequence text.
             let identifier = font_identifier_for_definition(stores, request.target);
             let observe_font_definition = command.state.profile().capabilities().supports_etex();
-            let mut bind_null_font = |stores: &mut tex_state::CommandContext<'_, G>| {
-                let record = font_definition_mutation(
-                    stores,
-                    request.target,
-                    global,
-                    observe_font_definition,
-                );
-                AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
-                    record,
-                    |stores| {
-                        stores
-                            .assign_resolved_meaning(
-                                request.target,
-                                tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(
-                                    tex_state::font::NULL_FONT,
-                                )),
-                                assignment_scope(global),
-                            )
-                            .expect("font selector belongs to admitted state");
-                        stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
-                    },
-                )
-            };
             // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
             // continue with the replaced value; §1257 then loads the font
             // normally. The replacement is the scanner's, the report this
             // seam's.
             if let Some(recovery) = &request.size_recovery {
-                report_font_size_recovery(stores, recovery)?;
+                report_font_size_recovery(stores, command.diagnostic_effects, recovery)?;
             }
+            let bind_null_font =
+                |stores: &mut tex_state::CommandContext<'_, G>,
+                 diagnostic_effects: &mut DiagnosticEffects| {
+                    let record = font_definition_mutation(
+                        stores,
+                        request.target,
+                        global,
+                        observe_font_definition,
+                    );
+                    AssignmentCommitter::new(stores, diagnostic_effects).unscoped(
+                        record,
+                        |stores| {
+                            stores
+                                .assign_resolved_meaning(
+                                    request.target,
+                                    tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(
+                                        tex_state::font::NULL_FONT,
+                                    )),
+                                    assignment_scope(global),
+                                )
+                                .expect("font selector belongs to admitted state");
+                            stores
+                                .set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
+                        },
+                    )
+                };
             let resource =
                 (*resource).expect("font resource is resolved after the processor borrow");
             if matches!(resource, FontResource::Unavailable) {
@@ -1298,6 +1316,7 @@ pub(in crate::main_control) fn apply<G>(
                 let selector_kind = stores.control_sequence_kind(request.target);
                 report_font_not_loadable_with_context(
                     stores,
+                    command.diagnostic_effects,
                     selector_kind,
                     &selector,
                     &request.name,
@@ -1309,7 +1328,7 @@ pub(in crate::main_control) fn apply<G>(
                     },
                     request.error_context.clone(),
                 )?;
-                let receipt = bind_null_font(stores);
+                let receipt = bind_null_font(stores, command.diagnostic_effects);
                 command.retain_assignment_receipt(receipt);
                 return Ok(ReplayStep::Continue);
             }
@@ -1324,6 +1343,7 @@ pub(in crate::main_control) fn apply<G>(
                     let selector_kind = stores.control_sequence_kind(request.target);
                     report_font_not_loadable_with_context(
                         stores,
+                        command.diagnostic_effects,
                         selector_kind,
                         &selector,
                         &request.name,
@@ -1331,7 +1351,7 @@ pub(in crate::main_control) fn apply<G>(
                         FontLoadFailure::MalformedTfm,
                         request.error_context.clone(),
                     )?;
-                    let receipt = bind_null_font(stores);
+                    let receipt = bind_null_font(stores, command.diagnostic_effects);
                     command.retain_assignment_receipt(receipt);
                     return Ok(ReplayStep::Continue);
                 }
@@ -1344,13 +1364,14 @@ pub(in crate::main_control) fn apply<G>(
                     let selector_kind = stores.control_sequence_kind(request.target);
                     report_font_capacity(
                         stores,
+                        command.diagnostic_effects,
                         selector_kind,
                         &selector,
                         &request.name,
                         request.size,
                         request.error_context.clone(),
                     )?;
-                    let receipt = bind_null_font(stores);
+                    let receipt = bind_null_font(stores, command.diagnostic_effects);
                     command.retain_assignment_receipt(receipt);
                     return Ok(ReplayStep::Continue);
                 }
@@ -1585,9 +1606,13 @@ pub(in crate::main_control) fn apply<G>(
             stores.set_pdf_space_font_name(name);
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::PdfGraphics(request) => {
-            apply_pdf_graphics_request(request, stores, modes, command.state)
-        }
+        ColdOperation::PdfGraphics(request) => apply_pdf_graphics_request(
+            request,
+            stores,
+            modes,
+            command.state,
+            command.diagnostic_effects,
+        ),
         ColdOperation::PdfNavigation(request) => apply_pdf_navigation_request(
             request,
             stores,
@@ -1760,7 +1785,12 @@ pub(in crate::main_control) fn apply<G>(
             // The scan already made §578's decision and captured §579's
             // context there, so this only writes or reports.
             match recovery_context {
-                Some(context) => report_font_parameter_recovery(stores, font, context)?,
+                Some(context) => report_font_parameter_recovery(
+                    stores,
+                    command.diagnostic_effects,
+                    font,
+                    context,
+                )?,
                 None => {
                     let number = u32::try_from(number)
                         .expect("a writable parameter number is a positive u32");
@@ -1912,6 +1942,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -1946,7 +1977,7 @@ pub(in crate::main_control) fn apply<G>(
                         "since the result is out of range.",
                     ]);
                     report.context(context);
-                    report.error().jump_out()?;
+                    report.error().defer_recovery(command.diagnostic_effects)?;
                 }
                 Ok(receipt) => {
                     command.retain_assignment_receipt(receipt);
@@ -1972,7 +2003,7 @@ pub(in crate::main_control) fn apply<G>(
                 .print_esc(&primitive);
             report.help(&["I'm forgetting what you said and not changing anything."]);
             report.context(context);
-            report.error().jump_out()?;
+            report.error().defer_recovery(command.diagnostic_effects)?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::CharacterDefinition {
@@ -2099,14 +2130,14 @@ pub(in crate::main_control) fn apply<G>(
             if patterns && !command.initex {
                 let mut report = stores.print_err("Patterns can be loaded only by INITEX");
                 report.context(rejection_context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(command.diagnostic_effects)?;
                 return Ok(ReplayStep::Continue);
             }
             if trie_built {
                 let mut report = stores.print_err("Too late for \\patterns");
                 report.help(&["All patterns must be given before typesetting begins."]);
                 report.context(rejection_context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(command.diagnostic_effects)?;
                 return Ok(ReplayStep::Continue);
             }
             // Both halves of §§935/963's diagnostics were already reported by
@@ -2159,6 +2190,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             report_escaped_error(
                 stores,
+                command.diagnostic_effects,
                 "You can't use `",
                 "hrule",
                 "' here except with leaders",
@@ -2177,7 +2209,7 @@ pub(in crate::main_control) fn apply<G>(
             let text = message_tokens_text(stores, tokens);
             if error {
                 let context = command.state.output_open_context(&**stores);
-                issue_error_message(stores, &text, context)?;
+                issue_error_message(stores, command.diagnostic_effects, &text, context)?;
             } else {
                 issue_terminal_message(stores, &text);
             }
@@ -2391,7 +2423,7 @@ pub(in crate::main_control) fn apply<G>(
                     }
                     ScannedBoxShiftPayload::VSplit(split) => {
                         if let Some(context) = &split.missing_to_context {
-                            report_missing_vsplit_to(context, stores)?;
+                            report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
                         }
                         let diagnostic_context = command_diagnostic_context(command, stores);
                         let mut geometry = pack_geometry_sink(command.state, command.observations);
@@ -2422,7 +2454,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::VSplit(split) => {
             if let Some(context) = &split.missing_to_context {
-                report_missing_vsplit_to(context, stores)?;
+                report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
             }
             let diagnostic_context = command_diagnostic_context(command, stores);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
@@ -2532,7 +2564,7 @@ pub(in crate::main_control) fn apply<G>(
             // A leader payload is scanned by §1084's `scan_box` like any
             // other box context, so a non-box command there gets §1084's own
             // report, not a leader-specific one.
-            report_missing_box(command.state, stores)?;
+            report_missing_box(command.state, command.diagnostic_effects, stores)?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::LeadersNotFollowedByGlue => {
@@ -2542,6 +2574,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
+                command.diagnostic_effects,
                 "Leaders not followed by proper glue",
                 &[
                     "You should say `\\leaders <box or rule><hskip or vskip>'.",
@@ -2589,7 +2622,7 @@ pub(in crate::main_control) fn apply<G>(
                 if let Some(context) = construction.reserved_class_context {
                     report.context(context);
                 }
-                report.error().jump_out()?;
+                report.error().defer_recovery(command.diagnostic_effects)?;
                 class = 0;
             }
             let class = class as u16;
@@ -2624,6 +2657,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -2634,6 +2668,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -2644,6 +2679,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -2653,6 +2689,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::IllegalLastItem { token, context } => {
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -2660,7 +2697,12 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::MisplacedAlignmentDelimiter { token, context } => {
-            crate::diagnostics::report_misplaced_alignment_delimiter(stores, token, Some(context))?;
+            crate::diagnostics::report_misplaced_alignment_delimiter(
+                stores,
+                command.diagnostic_effects,
+                token,
+                Some(context),
+            )?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::MisplacedAlignmentCommand { omit } => {
@@ -2684,6 +2726,7 @@ pub(in crate::main_control) fn apply<G>(
             };
             crate::diagnostics::report_misplaced_alignment_command(
                 stores,
+                command.diagnostic_effects,
                 name,
                 &help,
                 Some(context),
@@ -2752,6 +2795,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -2813,6 +2857,7 @@ pub(in crate::main_control) fn apply<G>(
             if unbalanced {
                 crate::error_report::report_error(
                     stores,
+                    command.diagnostic_effects,
                     "Unbalanced output routine",
                     &[
                         "Your sneaky output routine has problematic {'s and/or }'s.",
@@ -2916,6 +2961,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
+                command.diagnostic_effects,
                 token,
                 modes.current_mode(),
                 Some(context),
@@ -2927,6 +2973,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
+                command.diagnostic_effects,
                 "Too many }'s",
                 &[
                     "You've closed more groups than you opened.",
@@ -2952,7 +2999,7 @@ pub(in crate::main_control) fn apply<G>(
                 "deleted material, e.g., by typing `I$}'.",
             ]);
             report.context(context);
-            report.error().jump_out()?;
+            report.error().defer_recovery(command.diagnostic_effects)?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::OffSave(closer) => {
@@ -2966,7 +3013,7 @@ pub(in crate::main_control) fn apply<G>(
                 .print(" inserted")
                 .help(&OFF_SAVE_HELP)
                 .context(context);
-            report.error().jump_out()?;
+            report.error().defer_recovery(command.diagnostic_effects)?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::OffSaveBottomDrop { token } => {
@@ -2977,6 +3024,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
+                command.diagnostic_effects,
                 &format!("Extra {name}"),
                 &["Things are pretty mixed up, but I think the worst is over."],
                 context,
@@ -3033,6 +3081,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
+                command.diagnostic_effects,
                 message,
                 &[
                     "I've put in what seems to be necessary to fix",
@@ -3287,7 +3336,7 @@ pub(in crate::main_control) fn apply<G>(
                         "So I've deleted the formulas that preceded this alignment.",
                     ]);
                     report.context(context);
-                    report.error().jump_out()?;
+                    report.error().defer_recovery(command.diagnostic_effects)?;
                     let mut list = modes.current_list_mutation();
                     list.take_nodes();
                     list.take_incomplete_fraction();

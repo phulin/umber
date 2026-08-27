@@ -72,13 +72,14 @@ pub(super) fn math_font_failure<G>(stores: &mut CommandContext<'_, G>) -> Option
 
 pub(crate) fn reject_invalid_math_fonts<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     context: String,
 ) -> Result<bool, crate::ExecError> {
     let Some(failure) = math_font_failure(stores) else {
         return Ok(false);
     };
     let (message, help) = failure.report();
-    crate::error_report::report_error(stores, message, &help, context)?;
+    crate::error_report::report_error(stores, diagnostic_effects, message, &help, context)?;
     Ok(true)
 }
 
@@ -108,6 +109,7 @@ pub(crate) fn reject_invalid_math_fonts_at_outer_barrier<G>(
         &mut stores
             .command_context()
             .expect("math-font report admission"),
+        diagnostic_effects,
         context,
     )
 }

@@ -150,8 +150,8 @@ pub enum CommandError {
 }
 
 impl From<tex_state::print::JumpOut> for CommandError {
-    /// Lets a scanner write `report.error().jump_out()?` and have `?` carry
-    /// §81's non-local exit the rest of the way to the driver.
+    /// Carries §81's non-local exit from the processor-owned interaction
+    /// transition to the driver.
     fn from(jump: tex_state::print::JumpOut) -> Self {
         Self::Fatal(jump.into())
     }

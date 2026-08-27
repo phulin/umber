@@ -2250,6 +2250,7 @@ impl<G> MainControl<G> {
         processor.retire();
         let result = crate::error_report::report_error(
             &mut command_context,
+            &mut diagnostic_effects,
             "Interruption",
             &[
                 "You rang?",
@@ -4208,6 +4209,7 @@ impl<G> MainControl<G> {
             command_context.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
             report_escaped_error(
                 &mut command_context,
+                diagnostic_effects,
                 "Illegal math ",
                 "discretionary",
                 "",
@@ -6244,6 +6246,7 @@ impl<G> MainControl<G> {
             let context = self.command.output_open_context(&command_context);
             report_escaped_error(
                 &mut command_context,
+                diagnostic_effects,
                 "Missing ",
                 "right.",
                 " inserted",
@@ -6401,8 +6404,12 @@ impl<G> MainControl<G> {
                 )?;
             }
             MathRequest::Script(script) => {
-                let target =
-                    reserve_script_target(self.modes.current_list_mutation(), stores, script.kind)?;
+                let target = reserve_script_target(
+                    self.modes.current_list_mutation(),
+                    stores,
+                    diagnostic_effects,
+                    script.kind,
+                )?;
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
                 self.accept_math_field(
                     episode,
@@ -6422,7 +6429,7 @@ impl<G> MainControl<G> {
                     let mut report = stores.print_err("Limit controls must follow a math operator");
                     report.help(&["I'm ignoring this misplaced \\limits or \\nolimits command."]);
                     report.context(context);
-                    report.error().jump_out()?;
+                    report.error().defer_recovery(diagnostic_effects)?;
                 }
             }
             MathRequest::Fraction(fraction) => {
@@ -6437,7 +6444,7 @@ impl<G> MainControl<G> {
                         "means `{x \\over y} \\over z' or `x \\over {y \\over z}'.",
                     ]);
                     report.context(context);
-                    report.error().jump_out()?;
+                    report.error().defer_recovery(diagnostic_effects)?;
                 }
             }
             MathRequest::Style(style) => {
@@ -6531,7 +6538,8 @@ impl<G> MainControl<G> {
                         "(Accents are not the same in formulas as they are in text.)",
                     ]);
                     report.context(context);
-                    report.error().jump_out()?;
+                    report.error().defer_recovery(diagnostic_effects)?;
+                    self.apply_error_stop_transition(stores, diagnostic_effects)?;
                     self.command_scan_math_character(stores, diagnostic_effects)?
                 };
                 let accent = math_char(
@@ -6591,6 +6599,7 @@ impl<G> MainControl<G> {
                     let context = self.command.output_open_context(&command_context);
                     crate::diagnostics::report_illegal_case_with_context(
                         &mut command_context,
+                        diagnostic_effects,
                         token,
                         mode,
                         Some(context),
@@ -6655,6 +6664,7 @@ impl<G> MainControl<G> {
             &mut stores
                 .command_context()
                 .expect("display diagnostic admission"),
+            diagnostic_effects,
             "Missing $$ inserted",
             &[
                 "Displays can use special alignments (like \\eqalignno)",
@@ -6711,7 +6721,7 @@ impl<G> MainControl<G> {
                     let eq = self.finish_equation_number_mlist(stores, diagnostic_effects)?;
                     let paired = self.scan_display_end(stores, diagnostic_effects)?;
                     if !paired {
-                        report_unpaired_display_end(&self.command, stores)?;
+                        report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
                     }
                     let (display, finished) =
                         self.finish_equation_number_group(stores, diagnostic_effects, eq, content)?;
@@ -6735,7 +6745,7 @@ impl<G> MainControl<G> {
                 {
                     let paired = self.scan_display_end(stores, diagnostic_effects)?;
                     if !paired {
-                        report_unpaired_display_end(&self.command, stores)?;
+                        report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
                     }
                     self.finish_display_alignment(
                         stores,
@@ -6752,7 +6762,7 @@ impl<G> MainControl<G> {
                     self.prepare_display_math_list(stores, diagnostic_effects)?;
                 let paired = self.scan_display_end(stores, diagnostic_effects)?;
                 if !paired {
-                    report_unpaired_display_end(&self.command, stores)?;
+                    report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
                 }
                 self.finish_display_math_content(
                     stores,
@@ -7486,6 +7496,7 @@ impl<G> MainControl<G> {
                     let context = self.command.output_open_context(&command_context);
                     report_escaped_error(
                         &mut command_context,
+                        diagnostic_effects,
                         "Extra ",
                         "middle",
                         "",
@@ -7502,6 +7513,7 @@ impl<G> MainControl<G> {
                     let context = self.command.output_open_context(&command_context);
                     report_escaped_error(
                         &mut command_context,
+                        diagnostic_effects,
                         "Extra ",
                         "right",
                         "",
@@ -7833,9 +7845,6 @@ impl<G> MainControl<G> {
                 &mut context,
             );
             processor.set_output_routine_active(self.boxes.output_routine_active);
-            processor
-                .apply_error_stop_recovery()
-                .map_err(command_error)?;
             let mut destination = None;
             let mut delivery_status = processor
                 .get_next_with_replay_completion_into(&mut destination)
@@ -8150,7 +8159,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
     ) -> Result<ReplayStep, ExecError> {
-        match readiness {
+        let result = match readiness {
             OperationReadiness::Applied => frame
                 .applied
                 .take()
@@ -8171,7 +8180,36 @@ impl<G> MainControl<G> {
             OperationReadiness::Failed => {
                 unreachable!("failed preparation is handled before application")
             }
+        };
+        if result.is_ok() {
+            self.apply_error_stop_transition(stores, diagnostic_effects)?;
         }
+        result
+    }
+
+    fn apply_error_stop_transition(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<(), ExecError> {
+        let Some(request) = diagnostic_effects.take_error_stop_recovery() else {
+            return Ok(());
+        };
+        let mut context = stores
+            .command_context()
+            .expect("error-stop transition has a live generation");
+        let mut processor = command_processor(
+            &mut self.command,
+            self.fuel.fuel_mut(),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            diagnostic_effects,
+            &mut context,
+        );
+        processor.set_output_routine_active(self.boxes.output_routine_active);
+        processor
+            .apply_error_stop_recovery(request)
+            .map_err(command_error)
     }
 
     /// Completes one canonical operation after mutation-free capability
@@ -9303,6 +9341,7 @@ impl<G> MainControl<G> {
                     .expect("show completion has a live generation");
                 crate::diagnostics::complete_show(
                     &mut context,
+                    command.diagnostic_effects,
                     completion.long,
                     Some(completion.context),
                 )
@@ -9735,7 +9774,7 @@ fn report_improper_discretionary<G>(
     report
         .help(&["Discretionary lists must contain only boxes and kerns."])
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
 
     let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
@@ -9938,6 +9977,7 @@ pub(crate) struct ScriptTarget {
 pub(crate) fn reserve_script_target<G>(
     mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     kind: MathScriptKind,
 ) -> Result<ScriptTarget, ExecError> {
     // `t<>empty`: the tail was eligible but already carries this script.
@@ -9980,7 +10020,7 @@ pub(crate) fn reserve_script_target<G>(
         };
         let mut report = stores.print_err(message);
         report.help(&[help]);
-        report.error().jump_out()?;
+        report.error().defer_recovery(diagnostic_effects)?;
     }
 
     Ok(ScriptTarget { node_index, kind })
@@ -10200,6 +10240,7 @@ const OFF_SAVE_HELP: [&str; 5] = [
 /// backslash is what keeps the report honest under a changed `\escapechar`.
 fn report_escaped_error<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     prefix: &str,
     escaped: &str,
     suffix: &str,
@@ -10209,7 +10250,7 @@ fn report_escaped_error<G>(
     let mut report = stores.print_err(prefix);
     report.print_esc(escaped).print(suffix);
     report.help(help).context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
@@ -10220,11 +10261,13 @@ fn report_escaped_error<G>(
 /// left.
 fn report_missing_box<G>(
     command: &CommandState<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(stores);
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         "A <box> was supposed to be here",
         &[
             "I was expecting to see \\hbox or \\vbox or \\copy or \\box or",
@@ -10248,6 +10291,7 @@ fn report_improper_setbox<G>(
     stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     report_escaped_error(
         stores,
+        diagnostic_effects,
         "Improper ",
         "setbox",
         "",
@@ -10262,10 +10306,12 @@ fn report_improper_setbox<G>(
 /// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
 fn report_missing_vsplit_to<G>(
     context: &str,
+    diagnostic_effects: &mut DiagnosticEffects,
     stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         "Missing `to' inserted",
         &[
             "I'm working on `\\vsplit<box number> to <dimen>';",
@@ -10283,6 +10329,7 @@ fn report_missing_vsplit_to<G>(
 /// so only the report itself is left to issue.
 fn report_unpaired_display_end<G>(
     command: &CommandState<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let mut stores = stores
@@ -10291,6 +10338,7 @@ fn report_unpaired_display_end<G>(
     let context = command.output_open_context(&stores);
     crate::error_report::report_error(
         &mut stores,
+        diagnostic_effects,
         "Display math should end with $$",
         &[
             "The `$' that I just saw supposedly matches a previous `$$'.",

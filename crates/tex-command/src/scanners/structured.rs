@@ -2074,7 +2074,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     "careful; see exercise 27.2 in The TeXbook.",
                 ])
                 .context(context);
-            report.error().jump_out()?;
+            let outcome = report.error();
+            self.finish_error_outcome(outcome)?;
         }
     }
 
@@ -4883,7 +4884,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let mut report = self.state.print_err("Missing delimiter (. inserted)");
         report.help(MISSING_DELIMITER_HELP).context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -5330,7 +5332,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "I'm going to look for the \\cs now.",
                     ]);
                     report.context(context);
-                    report.error().jump_out()?;
+                    let outcome = report.error();
+                    self.finish_error_outcome(outcome)?;
                 }
                 // §1215's `get_r_token` backs a rejected ordinary target up
                 // immediately. Its §325 stack-conservation step first retires

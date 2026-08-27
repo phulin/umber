@@ -635,7 +635,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
             // up by `scan_box_payload` for ordinary replay.
-            report_missing_box(command.state, stores)?;
+            report_missing_box(command.state, command.diagnostic_effects, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
@@ -657,7 +657,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
         }
         ScannedBoxShiftPayload::VSplit(split) => {
             if let Some(context) = &split.missing_to_context {
-                report_missing_vsplit_to(context, stores)?;
+                report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
             }
             let diagnostic_context = command_diagnostic_context(command, stores);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
@@ -1508,7 +1508,11 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
             }
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
-            ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?,
+            ) => crate::diagnostics::report_undefined_control_sequence(
+                stores,
+                diagnostic_effects,
+                Some(context),
+            )?,
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch {
                     macro_name: symbol,
@@ -1529,7 +1533,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                         "followed by the required stuff, so I'm ignoring it.",
                     ])
                     .context(context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(diagnostic_effects)?;
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Recoverable {
                 runaway,
@@ -1547,9 +1551,9 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 let mut report = stores.print_err(&message);
                 report.help(help).context(context);
                 if let Some(value) = integer_error {
-                    report.int_error(value).jump_out()?;
+                    report.int_error(value).defer_recovery(diagnostic_effects)?;
                 } else {
-                    report.error().jump_out()?;
+                    report.error().defer_recovery(diagnostic_effects)?;
                 }
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber {
@@ -1563,11 +1567,11 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                         "look up `weird error' in the index to The TeXbook.)",
                     ])
                     .context(context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(diagnostic_effects)?;
             }
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::FontDimenUnavailable { font, context },
-            ) => report_font_parameter_recovery(stores, font, context)?,
+            ) => report_font_parameter_recovery(stores, diagnostic_effects, font, context)?,
             PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(stores, command);
                 let mut report = stores.print_err("You can't use a prefix with `");
@@ -1578,7 +1582,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                     &["I'll pretend you didn't say \\long or \\outer or \\global."]
                 });
                 report.context(context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(diagnostic_effects)?;
             }
             PendingDiagnostic::IrrelevantLongOuterPrefix(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(stores, command);
@@ -1594,7 +1598,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                     &["I'll pretend you didn't say \\long or \\outer here."]
                 });
                 report.context(context);
-                report.error().jump_out()?;
+                report.error().defer_recovery(diagnostic_effects)?;
             }
         }
     }
@@ -1615,6 +1619,7 @@ pub(in crate::main_control) fn mode_text_for_command_trace(mode: Mode) -> &'stat
 /// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
 pub(in crate::main_control) fn report_font_size_recovery<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     recovery: &tex_command::FontSizeRecovery,
 ) -> Result<(), ExecError> {
     match recovery {
@@ -1627,14 +1632,16 @@ pub(in crate::main_control) fn report_font_size_recovery<G>(
                     "less than 2048pt, so I've changed what you said to 10pt.",
                 ])
                 .context(context.clone());
-            report.error().jump_out()?;
+            report.error().defer_recovery(diagnostic_effects)?;
         }
         tex_command::FontSizeRecovery::IllegalMagnification { value, context } => {
             let mut report = stores.print_err("Illegal magnification has been changed to 1000");
             report
                 .help(&["The magnification ratio must be between 1 and 32768."])
                 .context(context.clone());
-            report.int_error(*value).jump_out()?;
+            report
+                .int_error(*value)
+                .defer_recovery(diagnostic_effects)?;
         }
     }
     Ok(())
@@ -1743,6 +1750,7 @@ pub(in crate::main_control) fn issue_terminal_message<G>(
 /// TeX82 §1283's `<Print string s as an error message>`.
 pub(in crate::main_control) fn issue_error_message<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     text: &str,
     context: String,
 ) -> Result<(), ExecError> {
@@ -1771,7 +1779,7 @@ pub(in crate::main_control) fn issue_error_message<G>(
         }
     }
     report.context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
@@ -1783,6 +1791,7 @@ pub(in crate::main_control) fn issue_error_message<G>(
 /// report the same §579 message and leave the font untouched.
 pub(in crate::main_control) fn report_font_parameter_recovery<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     font: tex_state::ids::FontId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -1805,7 +1814,7 @@ pub(in crate::main_control) fn report_font_parameter_recovery<G>(
         "use \\fontdimen immediately after the \\font is loaded.",
     ]);
     report.context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 

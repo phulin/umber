@@ -332,7 +332,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "Proceed; I'll ignore the character I just read.",
             ]);
             report.context(context);
-            report.error().jump_out()?;
+            let outcome = report.error();
+            self.finish_error_outcome(outcome)?;
         }
         Ok(normalized)
     }
@@ -342,7 +343,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut report = self.state.print_err("Nonletter");
         report.help(&["(See Appendix H.)"]);
         report.context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -367,7 +369,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut report = self.state.print_err("Duplicate pattern");
             report.help(&["(See Appendix H.)"]);
             report.context(context);
-            report.error().jump_out()?;
+            let outcome = report.error();
+            self.finish_error_outcome(outcome)?;
         }
         Ok(())
     }
@@ -396,7 +399,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut report = self.state.print_err(message);
         report.help(help);
         report.context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 }

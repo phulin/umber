@@ -53,15 +53,15 @@ fn execute_scanned_unbox_impl<G>(
     // nonvoid box in math mode before testing its horizontal/vertical kind.
     // In particular, a matching hbox still cannot be opened in an mlist.
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
-        report_incompatible_unbox(stores, error_context)?;
+        report_incompatible_unbox(stores, diagnostic_effects, error_context)?;
         return Ok(());
     }
     let Some(node) = first_box_node(stores, Some(register)) else {
-        report_incompatible_unbox(stores, error_context)?;
+        report_incompatible_unbox(stores, diagnostic_effects, error_context)?;
         return Ok(());
     };
     if !unbox_kind_matches(primitive, &node) {
-        report_incompatible_unbox(stores, error_context)?;
+        report_incompatible_unbox(stores, diagnostic_effects, error_context)?;
         return Ok(());
     }
     let children = match node {
@@ -117,7 +117,7 @@ pub(crate) fn execute_delete_last<G>(
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     if is_outer_vertical(nest) {
-        execute_delete_last_outer_vertical(primitive, &error_context, stores)?;
+        execute_delete_last_outer_vertical(primitive, &error_context, stores, diagnostic_effects)?;
         return Ok(());
     }
     let Some(tail) = crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
@@ -141,6 +141,7 @@ fn execute_delete_last_outer_vertical<G>(
     primitive: UnexpandablePrimitive,
     error_context: &str,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<(), ExecError> {
     let Some(tail) = crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
     else {
@@ -155,7 +156,7 @@ fn execute_delete_last_outer_vertical<G>(
         // glue; otherwise it is `\unskip` "following non-glue" and silently
         // succeeds, matching the one case tex.web exempts from the apology.
         if primitive != UnexpandablePrimitive::UnSkip || stores.page_has_last_glue() {
-            report_cannot_delete_from_page(primitive, error_context, stores)?;
+            report_cannot_delete_from_page(primitive, error_context, stores, diagnostic_effects)?;
         }
         return Ok(());
     };
@@ -182,6 +183,7 @@ fn report_cannot_delete_from_page<G>(
     primitive: UnexpandablePrimitive,
     error_context: &str,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<(), ExecError> {
     let command = match primitive {
         UnexpandablePrimitive::UnSkip => "unskip",
@@ -204,7 +206,7 @@ fn report_cannot_delete_from_page<G>(
             last_help,
         ])
         .context(error_context.to_owned());
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
@@ -392,10 +394,12 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 /// The completed register scan owns the live §82 context for this command.
 fn report_incompatible_unbox<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     error_context: &str,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         "Incompatible list can't be unboxed",
         &[
             "Sorry, Pandora. (You sneaky devil.)",

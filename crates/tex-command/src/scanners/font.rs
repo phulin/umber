@@ -112,7 +112,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let context = self.command.output_open_context(self.state);
                 let mut report = self.state.resume_error_report(deferred);
                 report.context(context);
-                report.error().jump_out()?;
+                let outcome = report.error();
+                self.finish_error_outcome(outcome)?;
                 Ok(tex_state::font::NULL_FONT)
             }
         }

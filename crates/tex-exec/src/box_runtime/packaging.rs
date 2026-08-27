@@ -23,6 +23,7 @@ pub(crate) fn take_last_box<G>(
         Mode::Math | Mode::DisplayMath => {
             report_cannot_take_last_box(
                 stores,
+                diagnostic_effects,
                 "math mode",
                 &["Sorry; this \\lastbox will be void."],
                 error_context,
@@ -34,6 +35,7 @@ pub(crate) fn take_last_box<G>(
         {
             report_cannot_take_last_box(
                 stores,
+                diagnostic_effects,
                 "vertical mode",
                 &[
                     "Sorry...I usually can't take things from the current page.",
@@ -86,6 +88,7 @@ fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
 
 fn report_cannot_take_last_box<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     mode: &str,
     help: &[&str],
     context: String,
@@ -97,7 +100,7 @@ fn report_cannot_take_last_box<G>(
         .print(mode)
         .help(help)
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 

@@ -397,6 +397,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &CommandState<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<ReplayStep, ExecError> {
     use RootedPdfColorStackAction as Action;
 
@@ -458,6 +459,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
                 let context = command.output_open_context(stores);
                 crate::error_report::report_error(
                     stores,
+                    diagnostic_effects,
                     "Invalid negative color stack number",
                     &[
                         "I'll use default color stack 0 here.",
@@ -470,6 +472,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
                 let context = command.output_open_context(stores);
                 crate::error_report::report_error(
                     stores,
+                    diagnostic_effects,
                     &format!("Unknown color stack number {id}"),
                     &[
                         "Allocate and initialize a color stack with \\pdfcolorstackinit.",
@@ -486,6 +489,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
                 let context = command.output_open_context(stores);
                 crate::error_report::report_error(
                     stores,
+                    diagnostic_effects,
                     "Color stack action is missing",
                     &[
                         "The expected actions for \\pdfcolorstack:",
@@ -791,6 +795,7 @@ pub(in crate::main_control) fn replay_write<G>(
     if expanded.unbalanced {
         crate::error_report::report_error(
             &mut **stores,
+            command.diagnostic_effects,
             "Unbalanced write command",
             &[
                 "On this page there's a \\write with fewer real {'s than }'s.",
@@ -1700,6 +1705,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                 })?;
             crate::error_report::report_error(
                 &mut context,
+                diagnostic_effects,
                 "Unbalanced write command",
                 &[
                     "On this page there's a \\write with fewer real {'s than }'s.",

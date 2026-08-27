@@ -579,7 +579,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         report
             .help(&["I was expecting to see `+', `-', `*', `/', or `)'. Didn't."])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
@@ -592,7 +593,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "since the result is out of range.",
             ])
             .context(context);
-        report.error().jump_out()?;
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
         Ok(())
     }
 

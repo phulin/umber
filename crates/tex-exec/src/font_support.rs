@@ -11,8 +11,13 @@ pub(crate) enum FontLoadFailure {
     MalformedTfm,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the report spells one TeX font request plus its operation-local recovery handoff"
+)]
 pub(crate) fn report_font_not_loadable_with_context<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
@@ -50,12 +55,13 @@ pub(crate) fn report_font_not_loadable_with_context<G>(
             "e.g., type `I\\font<same font id>=<substitute font name>'.",
         ])
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
 pub(crate) fn report_font_capacity<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
@@ -77,7 +83,7 @@ pub(crate) fn report_font_capacity<G>(
             "Or maybe try `I\\font<same font id>=<name of loaded font>'.",
         ])
         .context(context);
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 

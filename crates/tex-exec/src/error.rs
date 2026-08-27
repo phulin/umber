@@ -1045,9 +1045,9 @@ const fn diagnostic_group_kind(kind: tex_state::GroupKind) -> &'static str {
 }
 
 impl From<tex_state::print::JumpOut> for ExecError {
-    /// Lets an executor site write `report.error().jump_out()?` and have `?`
-    /// carry tex.web §81's non-local exit up to the driver, which is the one
-    /// frame that corresponds to `end_of_TEX`.
+    /// Carries tex.web §81's non-local exit from the canonical interaction
+    /// transition to the driver, which is the one frame corresponding to
+    /// `end_of_TEX`.
     fn from(jump: tex_state::print::JumpOut) -> Self {
         Self::Fatal(jump.into())
     }

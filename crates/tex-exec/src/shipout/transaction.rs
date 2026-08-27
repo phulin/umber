@@ -87,7 +87,9 @@ pub(crate) fn shipout_node<G>(
     write_expander: &mut direct::WriteExpander<'_, G>,
     replay_expander: &mut direct::ReplayTextExpander<'_, G>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
-    if let Err(error) = prepare_pdf_output_policy(stores, &origin.output_open_context) {
+    if let Err(error) =
+        prepare_pdf_output_policy(stores, diagnostic_effects, &origin.output_open_context)
+    {
         retain_failed_page(stores, region);
         return Err(error);
     }
@@ -103,6 +105,7 @@ pub(crate) fn shipout_node<G>(
             let mut command = stores.command_context().expect("live generation");
             crate::error_report::report_error(
                 &mut command,
+                diagnostic_effects,
                 "Huge page cannot be shipped out",
                 &[
                     "The page just created is more than 18 feet tall or",
@@ -455,6 +458,7 @@ fn shipout_geometry<G>(
 
 fn prepare_pdf_output_policy<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     error_context: &str,
 ) -> Result<(), ExecError> {
     let current_output = stores.int_param(IntParam::PDF_OUTPUT);
@@ -482,6 +486,7 @@ fn prepare_pdf_output_policy<G>(
     if major < 1 {
         report_invalid_pdf_version(
             stores,
+            diagnostic_effects,
             "pdfTeX error (invalid pdfmajorversion)",
             &[
                 "The pdfmajorversion must be 1 or greater.",
@@ -502,6 +507,7 @@ fn prepare_pdf_output_policy<G>(
     if !(0..=9).contains(&minor) {
         report_invalid_pdf_version(
             stores,
+            diagnostic_effects,
             "pdfTeX error (invalid pdfminorversion)",
             &[
                 "The pdfminorversion must be between 0 and 9.",
@@ -544,6 +550,7 @@ fn prepare_pdf_output_policy<G>(
 /// by the shipout request.
 fn report_invalid_pdf_version<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     message: &str,
     help: &[&str],
     value: i32,
@@ -556,7 +563,7 @@ fn report_invalid_pdf_version<G>(
         .print_nl("")
         .help(help)
         .context(error_context.to_owned());
-    report.int_error(value).jump_out()?;
+    report.int_error(value).defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 

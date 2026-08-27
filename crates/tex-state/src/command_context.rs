@@ -4183,10 +4183,6 @@ impl<'a, G> CommandContext<'a, G> {
         )
     }
 
-    pub fn take_error_recovery_request(&mut self) -> Option<crate::print::ErrorRecoveryRequest> {
-        self.world.error_channel_mut().take_recovery_request()
-    }
-
     pub fn continue_error_stop_dialog(&mut self, context: &str) -> crate::print::ErrorOutcome {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);

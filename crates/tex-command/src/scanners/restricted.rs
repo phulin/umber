@@ -179,7 +179,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut report = self.state.print_err(class.message());
             report.help(class.help_lines()).context(context);
             // §81's `jump_out` never returns to the interrupted scan.
-            report.int_error(scanned.value).jump_out()?;
+            let outcome = report.int_error(scanned.value);
+            self.finish_error_outcome(outcome)?;
         }
         Ok(RestrictedInteger {
             value: if accepted { scanned.value } else { 0 },

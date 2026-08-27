@@ -56,7 +56,7 @@ pub(crate) fn split_vbox_register<G>(
                 "I can't split such a box, so I'll leave it alone.",
             ])
             .context(error_context.to_owned());
-        report.error().jump_out()?;
+        report.error().defer_recovery(diagnostic_effects)?;
         return Ok(None);
     };
 

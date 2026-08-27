@@ -508,10 +508,11 @@ pub enum JumpOut {
 /// forces: §82's `exit` and its `jump_out` are not interchangeable, and a
 /// dropped verdict silently turns the second into the first. That is what
 /// left 55 of Umber's 58 error sites unable to end a job (`umber2-er8c`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use = "§82's `jump_out` branch must be propagated, not dropped"]
 pub enum ErrorOutcome {
     Continue,
+    Recovery(ErrorRecoveryRequest),
     JumpOut(JumpOut),
 }
 
@@ -523,17 +524,18 @@ pub enum ErrorRecoveryRequest {
 }
 
 impl ErrorOutcome {
-    /// Splits §82's `exit` from its `jump_out` so a caller can write
-    /// `report.error().jump_out()?` and let `?` carry the fatal verdict into
-    /// its own error type.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`JumpOut`] when tex.web would leave through §81's
-    /// non-local `goto` rather than fall out of `error`.
-    pub const fn jump_out(self) -> Result<(), JumpOut> {
+    /// Completes an executor-side report without giving the executor a second
+    /// route to the command input stack.
+    pub fn defer_recovery(
+        self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+    ) -> Result<(), JumpOut> {
         match self {
             Self::Continue => Ok(()),
+            Self::Recovery(request) => {
+                effects.request_error_stop_recovery(request);
+                Ok(())
+            }
             Self::JumpOut(jump) => Err(jump),
         }
     }
@@ -651,10 +653,7 @@ impl<'a, G> ErrorReport<'a, G> {
             err_help: None,
             context: None,
         };
-        match report.users_advice(Some(context)) {
-            Some(jump) => ErrorOutcome::JumpOut(jump),
-            None => ErrorOutcome::Continue,
-        }
+        report.users_advice(Some(context))
     }
 
     /// tex.web §59's `print`, continuing the message text.
@@ -786,10 +785,7 @@ impl<'a, G> ErrorReport<'a, G> {
         // print, and continuing past the point tex.web ends the job
         // (`umber2-er8c`).
         if self.printer.interaction_mode() == InteractionMode::ErrorStop {
-            return match self.users_advice(context.as_deref()) {
-                Some(jump) => ErrorOutcome::JumpOut(jump),
-                None => ErrorOutcome::Continue,
-            };
+            return self.users_advice(context.as_deref());
         }
         let error_count = self
             .printer
@@ -841,10 +837,10 @@ impl<'a, G> ErrorReport<'a, G> {
     ///
     /// Returns §81's `jump_out` when the dialog ends the job rather than
     /// returning to `error`'s caller.
-    fn users_advice(&mut self, context: Option<&str>) -> Option<JumpOut> {
+    fn users_advice(&mut self, context: Option<&str>) -> ErrorOutcome {
         loop {
             if self.printer.interaction_mode() != InteractionMode::ErrorStop {
-                return None;
+                return ErrorOutcome::Continue;
             }
             // §330's `clear_for_error_prompt`. Its `clear_terminal` flushes
             // pending terminal input, which Umber's line-oriented terminal
@@ -856,9 +852,13 @@ impl<'a, G> ErrorReport<'a, G> {
             // §71's `term_input`: `if not input_ln(term_in,true) then
             // fatal_error("End of file on the terminal!")`.
             let Some(line) = self.terminal_input() else {
-                return Some(self.fatal_error("End of file on the terminal!", context));
+                return ErrorOutcome::JumpOut(
+                    self.fatal_error("End of file on the terminal!", context),
+                );
             };
-            let first = line.bytes().next()?;
+            let Some(first) = line.bytes().next() else {
+                return ErrorOutcome::Continue;
+            };
             let code = first.to_ascii_uppercase();
             match code {
                 b'0'..=b'9' => {
@@ -866,11 +866,7 @@ impl<'a, G> ErrorReport<'a, G> {
                     if let Some(second @ b'0'..=b'9') = line.as_bytes().get(1).copied() {
                         count = count * 10 + second - b'0';
                     }
-                    self.printer
-                        .world_mut()
-                        .error_channel_mut()
-                        .request_recovery(ErrorRecoveryRequest::Delete(count));
-                    return None;
+                    return ErrorOutcome::Recovery(ErrorRecoveryRequest::Delete(count));
                 }
                 b'I' => {
                     let insertion = if line.len() > 1 {
@@ -878,28 +874,26 @@ impl<'a, G> ErrorReport<'a, G> {
                     } else {
                         self.printer.print("insert> ");
                         let Some(line) = self.terminal_input() else {
-                            return Some(self.fatal_error("End of file on the terminal!", context));
+                            return ErrorOutcome::JumpOut(
+                                self.fatal_error("End of file on the terminal!", context),
+                            );
                         };
                         line
                     };
-                    self.printer
-                        .world_mut()
-                        .error_channel_mut()
-                        .request_recovery(ErrorRecoveryRequest::Insert(insertion));
-                    return None;
+                    return ErrorOutcome::Recovery(ErrorRecoveryRequest::Insert(insertion));
                 }
                 // §89's `<Print the help information and goto continue>`.
                 b'H' => self.show_help(),
                 // §86's `<Change the interaction level and return>`.
                 b'Q' | b'R' | b'S' => {
                     self.change_interaction(code);
-                    return None;
+                    return ErrorOutcome::Continue;
                 }
                 // §84's `X`: `interaction:=scroll_mode; jump_out`. It prints
                 // nothing on the way out.
                 b'X' => {
                     self.printer.set_interaction_mode(InteractionMode::Scroll);
-                    return Some(JumpOut::Quit);
+                    return ErrorOutcome::JumpOut(JumpOut::Quit);
                 }
                 // §84's `othercases do_nothing`, then §85's menu.
                 _ => self.show_menu(),
@@ -1050,7 +1044,6 @@ pub struct ErrorChannel {
     error_count: i32,
     long_help_seen: bool,
     history: ErrorHistory,
-    pending_recovery: Option<ErrorRecoveryRequest>,
 }
 
 /// tex.web §76's ordered `history` severities.
@@ -1064,23 +1057,6 @@ pub enum ErrorHistory {
 }
 
 impl ErrorChannel {
-    fn request_recovery(&mut self, request: ErrorRecoveryRequest) {
-        debug_assert!(self.pending_recovery.is_none());
-        self.pending_recovery = Some(request);
-    }
-
-    /// Transfers one ErrorStop input mutation to the canonical command owner.
-    pub fn take_recovery_request(&mut self) -> Option<ErrorRecoveryRequest> {
-        self.pending_recovery.take()
-    }
-
-    /// Whether canonical delivery must apply an ErrorStop input mutation
-    /// before it may preflight the next command.
-    #[must_use]
-    pub const fn has_pending_recovery(&self) -> bool {
-        self.pending_recovery.is_some()
-    }
-
     /// tex.web §82's `incr(error_count)`, returning the incremented count so
     /// the report owner can perform the 100-error terminal transition.
     pub const fn record_scrolled_error(&mut self) -> i32 {
@@ -1214,10 +1190,7 @@ impl<G> Universe<G> {
             err_help: None,
             context: None,
         };
-        match report.users_advice(Some(context)) {
-            Some(jump) => ErrorOutcome::JumpOut(jump),
-            None => ErrorOutcome::Continue,
-        }
+        report.users_advice(Some(context))
     }
 
     /// An ordinary print scope at the §75 selector the current interaction

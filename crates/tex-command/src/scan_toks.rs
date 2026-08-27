@@ -1013,7 +1013,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let context = self.command.output_open_context(self.state);
                     let mut report = self.state.resume_error_report(deferred);
                     report.context(context);
-                    report.error().jump_out()?;
+                    let outcome = report.error();
+                    self.finish_error_outcome(outcome)?;
                     // §403 assigns `cur_cmd=left_brace` and increments
                     // `align_state` exactly as raw delivery of that synthetic
                     // brace would have done. The token itself is not pushed:
@@ -1080,7 +1081,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "which I'm going to interpret as `\\def\\a{}'.",
                     ])
                     .context(context);
-                report.error().jump_out()?;
+                let outcome = report.error();
+                self.finish_error_outcome(outcome)?;
                 return Ok(ScannedParameterText {
                     tokens: self.finish_active_scan_toks_output(output)?,
                     highest_parameter: next_parameter - 1,
@@ -1562,7 +1564,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "Type `1' to delete what you did use.",
                     ])
                     .context(context);
-                report.error().jump_out()?;
+                let outcome = report.error();
+                self.finish_error_outcome(outcome)?;
             }
             MacroParameterDiagnostic::TooManyParameters => {
                 let mut report = self.state.print_err("You already have nine parameters");
@@ -1572,7 +1575,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "as well as the token that followed it.",
                     ])
                     .context(context);
-                report.error().jump_out()?;
+                let outcome = report.error();
+                self.finish_error_outcome(outcome)?;
             }
             MacroParameterDiagnostic::IllegalReplacementNumber { target } => {
                 let rendered_target = target.map(|target| {
@@ -1598,7 +1602,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "are all screwed up? I'm going to assume that you meant ##.",
                     ])
                     .context(context);
-                report.error().jump_out()?;
+                let outcome = report.error();
+                self.finish_error_outcome(outcome)?;
             }
         }
         Ok(())

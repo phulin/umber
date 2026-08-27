@@ -120,11 +120,13 @@ pub(crate) fn report_irrecoverable_error<G>(
 /// context carried across the scan/apply boundary.
 pub(crate) fn report_bad_interaction_mode_with_context<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     value: i32,
     context: String,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         &format!("Bad interaction mode ({value})"),
         &[
             "Modes are 0=batch, 1=nonstop, 2=scroll, and",
@@ -170,6 +172,7 @@ pub(crate) fn report_missing_character_warning<G>(
 /// TeX82 §1049's `you_cant` message followed by §1050's `report_illegal_case`.
 pub(crate) fn report_illegal_case_with_context<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     token: Token,
     mode: Mode,
     context: Option<String>,
@@ -190,7 +193,7 @@ pub(crate) fn report_illegal_case_with_context<G>(
     if let Some(context) = context {
         report.context(context);
     }
-    Ok(report.error().jump_out()?)
+    Ok(report.error().defer_recovery(diagnostic_effects)?)
 }
 
 const fn mode_name(mode: Mode) -> &'static str {
@@ -216,6 +219,7 @@ use crate::{Mode, ModeNest};
 /// one.
 pub(crate) fn report_undefined_control_sequence<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: Option<String>,
 ) -> Result<(), ExecError> {
     let mut report = stores.print_err("Undefined control sequence");
@@ -229,13 +233,14 @@ pub(crate) fn report_undefined_control_sequence<G>(
     if let Some(context) = context {
         report.context(context);
     }
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
 /// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
 pub(crate) fn report_misplaced_alignment_delimiter<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     token: Token,
     context: Option<String>,
 ) -> Result<(), ExecError> {
@@ -279,13 +284,14 @@ pub(crate) fn report_misplaced_alignment_delimiter<G>(
     if let Some(context) = context {
         report.context(context);
     }
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
 /// TeX82 §1129's misplaced `\noalign` and `\omit` diagnostics.
 pub(crate) fn report_misplaced_alignment_command<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     name: &str,
     help: &[&str],
     context: Option<String>,
@@ -295,7 +301,7 @@ pub(crate) fn report_misplaced_alignment_command<G>(
     if let Some(context) = context {
         report.context(context);
     }
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
@@ -411,6 +417,7 @@ pub(crate) fn execute_showbox<G>(
 /// to; `\show` and `\showthe` `goto common_ending` and skip it.
 pub(crate) fn complete_show<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     long: bool,
     context: Option<String>,
 ) -> Result<(), ExecError> {
@@ -461,7 +468,7 @@ pub(crate) fn complete_show<G>(
             "lists on your terminal as well as in the transcript file.",
         ]);
     }
-    report.error().jump_out()?;
+    report.error().defer_recovery(diagnostic_effects)?;
     Ok(())
 }
 
@@ -771,10 +778,12 @@ pub(crate) fn report_page_infinite_shrinkage<G>(
 /// TeX82 §825's once-per-paragraph infinite-shrink recovery.
 pub(crate) fn report_paragraph_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         "Infinite glue shrinkage found in a paragraph",
         &[
             "The paragraph just ended includes some glue that has",
@@ -807,6 +816,7 @@ pub(crate) fn report_split_infinite_shrinkage<G>(
     // context before crossing this diagnostic boundary.
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         "Infinite glue shrinkage found in box being split",
         &[
             "The box you are \\vsplitting contains some infinitely",

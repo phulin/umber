@@ -78,7 +78,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span
         );
     if extra_tab_recovery {
-        report_extra_alignment_tab(command.state, stores)?;
+        report_extra_alignment_tab(command.state, command.diagnostic_effects, stores)?;
     }
     // TeX82 §791's `if extra_info(cur_align)<>span_code then begin unsave;
     // new_save_level(align_group)`: every entry that does not continue through
@@ -187,11 +187,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
 /// TeX82 §792's exhausted-preamble diagnostic for a saved tab or span.
 pub(in crate::main_control) fn report_extra_alignment_tab<G>(
     command: &CommandState<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(stores);
     crate::error_report::report_error(
         stores,
+        diagnostic_effects,
         "Extra alignment tab has been changed to \\cr",
         &[
             "You have given more \\span or & marks than there were",

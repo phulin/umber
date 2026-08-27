@@ -338,7 +338,11 @@ fn normalize_paragraph_infinite_shrink<G>(
                 stores.begin_diagnostic(diagnostic_effects).end(true);
                 stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
             }
-            crate::diagnostics::report_paragraph_infinite_shrinkage(stores, diagnostic_context)?;
+            crate::diagnostics::report_paragraph_infinite_shrinkage(
+                stores,
+                diagnostic_effects,
+                diagnostic_context,
+            )?;
             reported = true;
         }
         glue.shrink_order = Order::Normal;

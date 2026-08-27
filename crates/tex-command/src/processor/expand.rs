@@ -351,7 +351,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         self.get_x_token_from_into(None, ExpandedFetch::GetXToken, destination)
     }
 
@@ -360,7 +359,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         let preserve = self.command.profile().capabilities().supports_etex();
         let result = self.delivery_driver(
             DeliveryPolicy {
@@ -396,7 +394,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn get_x_token_preserving_undefined(
         &mut self,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        self.apply_error_stop_recovery()?;
         let mut destination = None;
         let result = self.delivery_driver(
             DeliveryPolicy {
@@ -702,7 +699,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
@@ -755,7 +751,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         main_loop: bool,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         debug_assert!(destination.is_none());
         *destination = Some(command);
         let result = self.delivery_driver(
@@ -818,7 +813,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
