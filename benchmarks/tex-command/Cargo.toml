@@ -19,3 +19,7 @@ path = "src/bin/command_allocations.rs"
 [[bin]]
 name = "packed_cutover_gate"
 path = "src/bin/packed_cutover_gate.rs"
+
+[[bin]]
+name = "command_checkpoint_gate"
+path = "src/bin/command_checkpoint_gate.rs"

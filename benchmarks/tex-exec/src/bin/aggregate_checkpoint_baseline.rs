@@ -88,6 +88,7 @@ fn main() {
                     }
                     ((), checksum)
                 });
+                drop(command);
 
                 let fork = measure(|| {
                     let mut checksum = 0_u64;

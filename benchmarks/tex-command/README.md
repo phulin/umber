@@ -80,3 +80,17 @@ append-only provenance rows, so its timing loop relies on the separate
 nanoseconds per complete operation for local before/after comparisons. The
 time is diagnostic rather than a correctness ceiling; the allocation
 assertions and structural size gates are deterministic.
+
+Run the reversible command-timeline promotion gate with:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin command_checkpoint_gate
+```
+
+`command_checkpoint_gate` compares one live command unit with 64 accumulated
+source and stored-token units. It enforces identical zero allocation calls and
+requested bytes for warmed capture, checkpoint clone, same-generation restore,
+the first scalar mutation after capture, command-only candidate fork, and the
+first mutation after fork. It also rejects a candidate mutation and forks the
+same accepted mark again to prove exact rollback and lineage isolation.

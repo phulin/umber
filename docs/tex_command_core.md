@@ -3131,18 +3131,26 @@ The command component of such a retained boundary is generation-generic. A
 `CommandStateSnapshot<G>` and a live `CommandSummary<G>` each retain exactly
 one coarse `CommandGenerationOwner<G>` beside a fixed `CommandSnapshotCursor`
 of command-journal, arena-watermark, stack-length, and ordered-ledger
-positions. Named-boundary publication explicitly clones the aggregate command
-root once into that owner and binds it to the admitted state generation. The
-live root remains exclusively mutable before and after publication. The
-command timeline supplies only a monotonic identity serial; it owns no root or
-per-checkpoint row. Cloning a retained value shares its private thread-confined
-`Rc` owner and copies the cursor tuple; it does not clone the root again. The
-generation and timeline capabilities keep their independent atomic owners.
-Warmed delivery therefore performs no root admission, reference-count branch,
-or aggregate clone. Restore validates the complete aggregate without mutation,
-then explicitly clones the retained root into the live machine before
-truncation, following the owner-before-roots-before-truncation ordering in
-`runtime_storage_lifetimes.md`.
+positions. Named-boundary publication appends one reusable timeline frame and
+copies only those scalar coordinates; it does not clone `CommandStateRoots` or
+any accumulated command payload. Generation-owned input, parameter, condition,
+group, aftergroup, and alignment stacks retain physical append rows behind
+logical tops. Replacing a rollback-reachable row records a compact old element,
+while root scalars use compact generation-local undo entries. A logical pop
+therefore leaves its payload reachable until the named mark is rejected or
+sealed.
+
+The live root remains the sole mutable borrower before and after publication.
+Cloning a retained value increments the reusable frame's owner count and copies
+the fixed cursor tuple. Candidate handoff first drops `MainControl`, which moves
+the root back into the thread-confined timeline owner; fork then restores the
+named logical tops and undo positions and moves that same root into the sole
+current command machine. Rejection drops the current suffix and returns the
+root for another fork. No first-write COW, deferred aggregate clone, root
+registry, compactor, per-entry heap owner, or additional lineage participates.
+Restore validates the complete aggregate before replaying undo and truncating
+the unpublished logical suffix, following the owner-before-roots-before-
+truncation ordering in `runtime_storage_lifetimes.md`.
 
 ### 28.2 Durable summary
 
