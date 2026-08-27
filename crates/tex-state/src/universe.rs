@@ -26,7 +26,7 @@ use crate::node_arena::{
     AcceptedNodeArenaTail, DurableListId, NodeArenaCursor, NodeArenaError, NodeArenaRegion,
     NodeList, PageLifetime, PageListId, PageNodeArena,
 };
-use crate::page::{PageBuilderState, PageCheckpointMark};
+use crate::page::{AcceptedPageTail, PageBuilderState, PageCheckpointMark};
 use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
@@ -205,6 +205,7 @@ struct CheckpointStateCandidate<G> {
     generation: GenerationCursor,
     core: AcceptedStateCoreTail<G>,
     page_nodes: AcceptedNodeArenaTail<PageLifetime>,
+    page: AcceptedPageTail,
     source_mark: SourceMapMark,
     sources: AcceptedSourceMapTail,
     font_mark: FontStoreMark,
@@ -886,6 +887,7 @@ impl<G> Universe<G> {
                 checkpoint.generation,
             )?;
         let page_node_tail = self.page_nodes.begin_checkpoint_candidate(*mark.page())?;
+        let page_tail = self.page.begin_checkpoint_candidate(checkpoint.page);
         let world_tail = self.world.begin_checkpoint_candidate(&checkpoint.world);
         let dependency_tail = self
             .dependencies
@@ -903,8 +905,7 @@ impl<G> Universe<G> {
         let dependencies = std::mem::take(&mut self.dependencies);
         let destination_owner = core.generation_owner();
         let pdf = self.pdf.take_candidate(&checkpoint.pdf);
-        let mut page = std::mem::take(&mut self.page);
-        page.begin_checkpoint_fork(checkpoint.page);
+        let page = std::mem::take(&mut self.page);
         self.page_lent_to_candidate = true;
         let fork = Self {
             interner: None,
@@ -917,6 +918,7 @@ impl<G> Universe<G> {
                 generation: checkpoint.generation,
                 core: core_tail,
                 page_nodes: page_node_tail,
+                page: page_tail,
                 source_mark: checkpoint.sources,
                 sources: source_tail,
                 font_mark: checkpoint.fonts,
@@ -997,11 +999,9 @@ impl<G> Universe<G> {
         self.retained_page_bound = transaction.accepted_retained_page_bound;
         self.durable_page_bound = transaction.accepted_durable_page_bound;
         self.pdf.return_rejected(&mut candidate.pdf);
-        if candidate.page.has_checkpoint_fork() {
-            candidate.page.reject_checkpoint_fork();
-            self.page = std::mem::take(&mut candidate.page);
-            self.page_lent_to_candidate = false;
-        }
+        candidate.page.reject_checkpoint_candidate(transaction.page);
+        self.page = std::mem::take(&mut candidate.page);
+        self.page_lent_to_candidate = false;
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) {
@@ -1024,7 +1024,7 @@ impl<G> Universe<G> {
         self.fonts
             .accept_checkpoint_candidate(transaction.fonts);
         self.pdf.commit_candidate();
-        self.page.commit_checkpoint_fork();
+        self.page.accept_checkpoint_candidate(transaction.page);
     }
 
     #[doc(hidden)]

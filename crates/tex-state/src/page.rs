@@ -331,7 +331,7 @@ impl PageInsertionView<'_> {
             page: self.page,
             normal_index: 0,
             candidate_class: 0,
-            candidate: self.page.checkpoint_journal.fork.is_some(),
+            candidate: false,
         }
     }
 
@@ -609,7 +609,6 @@ pub(crate) struct PageCheckpointMark {
     cursor: usize,
     scalars: PageScalars,
     roots: PagePayloadRoots,
-    candidate_roots: Option<PageCandidateRoots>,
     semantic_roots: PageSemanticRoots,
     reachable_state_identity_root: Option<u64>,
 }
@@ -625,18 +624,6 @@ struct PagePayloadRoots {
     mark_end: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct PageCandidateRoots {
-    accepted: PagePayloadRoots,
-    contribution_front_len: usize,
-    contribution_back_len: usize,
-    current_page_len: usize,
-    page_discards_len: usize,
-    split_discards_len: usize,
-    insertion_lane_len: usize,
-    mark_lane_len: usize,
-}
-
 #[derive(Clone)]
 struct PageCheckpointFrame {
     id: u64,
@@ -650,21 +637,23 @@ struct PageCheckpointJournal {
     frames: Vec<PageCheckpointFrame>,
     inverses: Vec<PageInverse>,
     applied: usize,
-    fork: Option<Box<PageForkJournal>>,
+    candidate_root_frame: Option<u64>,
     replay_work: u64,
 }
 
-#[derive(Clone)]
-struct PageForkJournal {
+pub(crate) struct AcceptedPageTail {
     origin_timeline: u64,
     origin: usize,
-    target: usize,
     future: Vec<PageInverse>,
     future_frames: Vec<PageCheckpointFrame>,
-    flat_origin: Option<Box<PagePayload>>,
-    origin_scalars: Option<PageScalars>,
-    target_roots: Option<PagePayloadRoots>,
-    contribution_front: VecDeque<Node>,
+    origin_scalars: PageScalars,
+    contribution_before: VecDeque<Node>,
+    contribution_after: VecDeque<Node>,
+    current_page_after: Vec<Node>,
+    page_discards_after: Vec<Node>,
+    split_discards_after: Vec<Node>,
+    insertion_lane_after: Vec<InsertionLaneRecord>,
+    mark_lane_after: Vec<MarkLaneRecord>,
 }
 
 #[derive(Clone, Default)]
@@ -831,7 +820,7 @@ impl Default for PageBuilderState {
                 // payload-sized speculative reserve.
                 inverses: Vec::new(),
                 applied: 0,
-                fork: None,
+                candidate_root_frame: None,
                 replay_work: 0,
             },
         }
@@ -955,38 +944,6 @@ impl PageBuilderState {
             insertion_end: self.insertion_lane.len(),
             mark_end: self.mark_lane.len(),
         };
-        let candidate_roots = self.checkpoint_journal.fork.as_ref().and_then(|fork| {
-            Some(PageCandidateRoots {
-                accepted: fork.target_roots?,
-                contribution_front_len: fork.contribution_front.len(),
-                contribution_back_len: self.contribution.len(),
-                current_page_len: self.current_page.len(),
-                page_discards_len: self.page_discards.len(),
-                split_discards_len: self.split_discards.len(),
-                insertion_lane_len: self.insertion_lane.len(),
-                mark_lane_len: self.mark_lane.len(),
-            })
-        });
-        // A checkpoint published by the candidate must remain meaningful
-        // after the prior retires and the candidate owner becomes ordinary.
-        // Store its normalized post-commit extents in `roots`; the separate
-        // candidate coordinates exist only for rollback while the fork loan
-        // is still active.
-        let roots = candidate_roots.map_or(direct_roots, |candidate| PagePayloadRoots {
-            contribution_start: 0,
-            contribution_end: candidate.contribution_front_len
-                + candidate
-                    .accepted
-                    .contribution_end
-                    .saturating_sub(candidate.accepted.contribution_start)
-                + candidate.contribution_back_len,
-            current_page_end: candidate.accepted.current_page_end + candidate.current_page_len,
-            page_discards_end: candidate.accepted.page_discards_end + candidate.page_discards_len,
-            split_discards_end: candidate.accepted.split_discards_end
-                + candidate.split_discards_len,
-            insertion_end: candidate.accepted.insertion_end + candidate.insertion_lane_len,
-            mark_end: candidate.accepted.mark_end + candidate.mark_lane_len,
-        });
         self.checkpoint_journal
             .frames
             .push(PageCheckpointFrame { id: frame, cursor });
@@ -995,8 +952,7 @@ impl PageBuilderState {
             frame,
             cursor,
             scalars,
-            roots,
-            candidate_roots,
+            roots: direct_roots,
             semantic_roots: self.semantic_roots,
             reachable_state_identity_root: self.reachable_state_identity_root(),
         }
@@ -1044,129 +1000,115 @@ impl PageBuilderState {
             self.toggle_page_inverse(index);
             self.checkpoint_journal.applied += 1;
         }
-        if let (Some(candidate), Some(fork)) =
-            (mark.candidate_roots, self.checkpoint_journal.fork.as_mut())
-        {
-            fork.target_roots = Some(candidate.accepted);
-            fork.contribution_front
-                .truncate(candidate.contribution_front_len);
-            self.contribution.truncate(candidate.contribution_back_len);
-            self.current_page.truncate(candidate.current_page_len);
-            self.page_discards.truncate(candidate.page_discards_len);
-            self.split_discards.truncate(candidate.split_discards_len);
-            self.insertion_lane.truncate(candidate.insertion_lane_len);
-            self.mark_lane.truncate(candidate.mark_lane_len);
-        }
         self.semantic_roots = mark.semantic_roots;
     }
 
-    pub(crate) fn begin_checkpoint_fork(&mut self, mark: PageCheckpointMark) {
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        mark: PageCheckpointMark,
+    ) -> AcceptedPageTail {
         debug_assert!(self.validates_checkpoint_mark(mark));
-        debug_assert!(self.checkpoint_journal.fork.is_none());
+        debug_assert!(self.checkpoint_journal.candidate_root_frame.is_none());
         let origin = self.checkpoint_journal.applied;
         let origin_timeline = self.checkpoint_journal.timeline;
         let origin_scalars = self.scalar_snapshot();
-        let flat_origin = Box::new(self.take_payload());
+        let mut selected = self.take_payload();
+        let contribution_before = selected
+            .contribution
+            .drain(..mark.roots.contribution_start)
+            .collect();
+        let contribution_after = selected
+            .contribution
+            .split_off(mark.roots.contribution_end - mark.roots.contribution_start);
+        let (current_page_before, current_page_after) = selected
+            .current_page
+            .take_prefix(mark.roots.current_page_end);
+        selected.current_page = PageNodeSequence::from_nodes(current_page_before);
+        let page_discards_after = selected.page_discards.split_off(mark.roots.page_discards_end);
+        let split_discards_after = selected
+            .split_discards
+            .split_off(mark.roots.split_discards_end);
+        let insertion_lane_after = selected.insertion_lane.split_off(mark.roots.insertion_end);
+        let mark_lane_after = selected.mark_lane.split_off(mark.roots.mark_end);
+        selected.insertions.clear();
+        selected.insertion_positions.clear();
+        selected.top_mark = None;
+        selected.first_mark = None;
+        selected.bot_mark = None;
+        selected.split_first_mark = None;
+        selected.split_bot_mark = None;
+        selected.mark_classes.clear();
+        selected.mark_class_positions.clear();
+        self.install_payload(selected);
+        self.rebuild_canonical_lane_values();
         self.restore_scalars(mark.scalars);
         self.semantic_roots = mark.semantic_roots;
         let future = std::mem::take(&mut self.checkpoint_journal.inverses);
         let future_frames = std::mem::take(&mut self.checkpoint_journal.frames);
         self.checkpoint_journal.applied = 0;
         self.checkpoint_journal.timeline = NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed);
-        self.checkpoint_journal.fork = Some(Box::new(PageForkJournal {
+        let root_frame = self.checkpoint_journal.next_frame;
+        self.checkpoint_journal.next_frame = self
+            .checkpoint_journal
+            .next_frame
+            .checked_add(1)
+            .expect("page candidate frame space exhausted");
+        self.checkpoint_journal.frames.push(PageCheckpointFrame {
+            id: root_frame,
+            cursor: 0,
+        });
+        self.checkpoint_journal.candidate_root_frame = Some(root_frame);
+        AcceptedPageTail {
             origin_timeline,
             origin,
-            target: 0,
             future,
             future_frames,
-            flat_origin: Some(flat_origin),
-            origin_scalars: Some(origin_scalars),
-            target_roots: Some(mark.roots),
-            contribution_front: VecDeque::new(),
-        }));
+            origin_scalars,
+            contribution_before,
+            contribution_after,
+            current_page_after,
+            page_discards_after,
+            split_discards_after,
+            insertion_lane_after,
+            mark_lane_after,
+        }
     }
 
-    pub(crate) fn reject_checkpoint_fork(&mut self) {
-        let fork = self
-            .checkpoint_journal
-            .fork
-            .take()
-            .expect("candidate page timeline owns one fork");
-        if let Some(origin) = fork.flat_origin {
-            let _candidate = self.take_payload();
-            self.install_payload(*origin);
-            self.restore_scalars(
-                fork.origin_scalars
-                    .expect("flat page fork retains origin scalars"),
-            );
-            self.checkpoint_journal.inverses = fork.future;
-            self.checkpoint_journal.frames = fork.future_frames;
-            self.checkpoint_journal.applied = fork.origin;
-            self.checkpoint_journal.timeline = fork.origin_timeline;
-            return;
-        }
-        while self.checkpoint_journal.applied > fork.target {
+    pub(crate) fn reject_checkpoint_candidate(&mut self, mut tail: AcceptedPageTail) {
+        while self.checkpoint_journal.applied > 0 {
             self.checkpoint_journal.applied -= 1;
             self.toggle_page_inverse(self.checkpoint_journal.applied);
         }
-        self.checkpoint_journal.inverses.truncate(fork.target);
-        self.checkpoint_journal.inverses.extend(fork.future);
-        self.checkpoint_journal.frames.extend(fork.future_frames);
-        while self.checkpoint_journal.applied < fork.origin {
-            let index = self.checkpoint_journal.applied;
-            self.toggle_page_inverse(index);
-            self.checkpoint_journal.applied += 1;
-        }
+        self.checkpoint_journal.candidate_root_frame = None;
+        let mut restored = self.take_payload();
+        tail.contribution_before.append(&mut restored.contribution);
+        tail.contribution_before.append(&mut tail.contribution_after);
+        restored.contribution = tail.contribution_before;
+        let mut current_page = restored.current_page.into_nodes();
+        current_page.append(&mut tail.current_page_after);
+        restored.current_page = PageNodeSequence::from_nodes(current_page);
+        restored.page_discards.append(&mut tail.page_discards_after);
+        restored.split_discards.append(&mut tail.split_discards_after);
+        restored.insertion_lane.append(&mut tail.insertion_lane_after);
+        restored.mark_lane.append(&mut tail.mark_lane_after);
+        self.install_payload(restored);
+        self.rebuild_canonical_lane_values();
+        self.restore_scalars(tail.origin_scalars);
+        self.checkpoint_journal.inverses = tail.future;
+        self.checkpoint_journal.frames = tail.future_frames;
+        self.checkpoint_journal.applied = tail.origin;
+        self.checkpoint_journal.timeline = tail.origin_timeline;
     }
 
-    pub(crate) fn commit_checkpoint_fork(&mut self) {
-        let Some(fork) = self.checkpoint_journal.fork.take() else {
-            return;
-        };
-        let Some(mut accepted) = fork.flat_origin.map(|origin| *origin) else {
-            return;
-        };
-        let roots = fork.target_roots.expect("owner fork retains page roots");
-        let mut candidate = self.take_payload();
-
-        for _ in 0..roots.contribution_start {
-            let _ = accepted.contribution.pop_front();
-        }
-        accepted
-            .contribution
-            .truncate(roots.contribution_end - roots.contribution_start);
-        let mut contribution = fork.contribution_front;
-        contribution.append(&mut accepted.contribution);
-        contribution.append(&mut candidate.contribution);
-        candidate.contribution = contribution;
-
-        let (mut current_page, _) = accepted.current_page.take_prefix(roots.current_page_end);
-        current_page.extend(candidate.current_page.into_nodes());
-        let mut current_page = PageNodeSequence::from_nodes(current_page);
-        if self.identity_enabled {
-            current_page.enable_semantic_identity();
-        }
-        candidate.current_page = current_page;
-
-        accepted.page_discards.truncate(roots.page_discards_end);
-        accepted.page_discards.append(&mut candidate.page_discards);
-        candidate.page_discards = accepted.page_discards;
-        accepted.split_discards.truncate(roots.split_discards_end);
-        accepted
-            .split_discards
-            .append(&mut candidate.split_discards);
-        candidate.split_discards = accepted.split_discards;
-
-        accepted.insertion_lane.truncate(roots.insertion_end);
-        accepted
-            .insertion_lane
-            .append(&mut candidate.insertion_lane);
-        candidate.insertion_lane = accepted.insertion_lane;
-        accepted.mark_lane.truncate(roots.mark_end);
-        accepted.mark_lane.append(&mut candidate.mark_lane);
-        candidate.mark_lane = accepted.mark_lane;
-        self.install_payload(candidate);
-        self.rebuild_canonical_lane_values();
+    pub(crate) fn accept_checkpoint_candidate(&mut self, _tail: AcceptedPageTail) {
+        let root = self
+            .checkpoint_journal
+            .candidate_root_frame
+            .take()
+            .expect("candidate page timeline owns one root frame");
+        self.checkpoint_journal
+            .frames
+            .retain(|frame| frame.id != root);
     }
 
     fn rebuild_canonical_lane_values(&mut self) {
@@ -1207,10 +1149,6 @@ impl PageBuilderState {
                 }
             }
         }
-    }
-
-    pub(crate) const fn has_checkpoint_fork(&self) -> bool {
-        self.checkpoint_journal.fork.is_some()
     }
 
     fn record_page_inverse(&mut self, inverse: PageInverse) {
@@ -1877,23 +1815,6 @@ impl PageBuilderState {
     }
 
     pub(crate) fn mark_root(&self, mark: PageMark) -> Option<&NodeTokenList> {
-        if let Some(fork) = &self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, fork.target_roots)
-        {
-            return self
-                .mark_lane
-                .iter()
-                .rev()
-                .find(|record| record.class == 0 && record.mark == mark)
-                .map(|record| record.value.as_ref())
-                .unwrap_or_else(|| {
-                    origin.mark_lane[..roots.mark_end]
-                        .iter()
-                        .rev()
-                        .find(|record| record.class == 0 && record.mark == mark)
-                        .and_then(|record| record.value.as_ref())
-                });
-        }
         match mark {
             PageMark::Top => self.top_mark.as_ref(),
             PageMark::First => self.first_mark.as_ref(),
@@ -1973,23 +1894,6 @@ impl PageBuilderState {
         if class == 0 {
             return self.mark_value(mark);
         }
-        if let Some(fork) = &self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, fork.target_roots)
-        {
-            return self
-                .mark_lane
-                .iter()
-                .rev()
-                .find(|record| record.class == class && record.mark == mark)
-                .map(|record| record.value.as_ref())
-                .unwrap_or_else(|| {
-                    origin.mark_lane[..roots.mark_end]
-                        .iter()
-                        .rev()
-                        .find(|record| record.class == class && record.mark == mark)
-                        .and_then(|record| record.value.as_ref())
-                });
-        }
         self.mark_class_position(class)
             .and_then(|position| self.mark_classes[position].1.get(mark))
     }
@@ -2054,7 +1958,7 @@ impl PageBuilderState {
             page: self,
             normal_index: 0,
             candidate_class: 1,
-            candidate: self.checkpoint_journal.fork.is_some(),
+            candidate: false,
         }
     }
 
@@ -2301,30 +2205,10 @@ impl PageBuilderState {
                 .contribution
                 .push_front(semantic_node_identity(&node));
         }
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && fork.flat_origin.is_some()
-            && fork.target_roots.is_some()
-        {
-            fork.contribution_front.push_front(node);
-            return;
-        }
         self.contribution.push_front(node);
     }
 
     pub(crate) fn contribution(&self) -> PageContributionView<'_> {
-        if let Some(fork) = &self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, fork.target_roots)
-        {
-            return PageContributionView {
-                front: Some(&fork.contribution_front),
-                prior: Some((
-                    &origin.contribution,
-                    roots.contribution_start,
-                    roots.contribution_end,
-                )),
-                back: &self.contribution,
-            };
-        }
         PageContributionView {
             front: None,
             prior: None,
@@ -2341,42 +2225,6 @@ impl PageBuilderState {
     }
 
     pub(crate) fn pop_contribution_front(&mut self) -> Option<Node> {
-        if self
-            .checkpoint_journal
-            .fork
-            .as_ref()
-            .is_some_and(|fork| fork.flat_origin.is_some() && fork.target_roots.is_some())
-        {
-            let fork = self
-                .checkpoint_journal
-                .fork
-                .as_mut()
-                .expect("checked candidate page fork");
-            let node = if let Some(node) = fork.contribution_front.pop_front() {
-                node
-            } else {
-                let roots = fork.target_roots.as_mut().expect("checked page roots");
-                if roots.contribution_start < roots.contribution_end {
-                    let node = fork
-                        .flat_origin
-                        .as_ref()
-                        .expect("checked accepted page owner")
-                        .contribution[roots.contribution_start]
-                        .clone();
-                    roots.contribution_start += 1;
-                    node
-                } else {
-                    self.contribution.pop_front()?
-                }
-            };
-            self.release_dynamic_node(&node);
-            if self.identity_enabled {
-                self.semantic_roots
-                    .contribution
-                    .pop_front(semantic_node_identity(&node));
-            }
-            return Some(node);
-        }
         let node = self.contribution.pop_front()?;
         self.record_scalars();
         self.record_page_inverse(PageInverse::ContributionPoppedFront(Some(node.clone())));
@@ -2403,15 +2251,6 @@ impl PageBuilderState {
             let prefix = SemanticSequenceIdentity::from_nodes(&nodes);
             self.semantic_roots.contribution = prefix.concat(self.semantic_roots.contribution);
         }
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && fork.flat_origin.is_some()
-            && fork.target_roots.is_some()
-        {
-            let old_front = std::mem::take(&mut fork.contribution_front);
-            fork.contribution_front.extend(nodes);
-            fork.contribution_front.extend(old_front);
-            return;
-        }
         let mut queue = VecDeque::with_capacity(nodes.len() + self.contribution.len());
         queue.extend(nodes);
         queue.extend(self.contribution.iter().cloned());
@@ -2419,18 +2258,11 @@ impl PageBuilderState {
     }
 
     pub(crate) fn current_page(&self) -> PageCurrentIter<'_> {
-        let prior = self.checkpoint_journal.fork.as_ref().and_then(|fork| {
-            Some((
-                &fork.flat_origin.as_ref()?.current_page,
-                fork.target_roots?.current_page_end,
-            ))
-        });
-        let prior_len = prior.map_or(0, |(_, end)| end);
         PageCurrentIter {
-            prior,
+            prior: None,
             current: &self.current_page,
             front: 0,
-            back: prior_len + self.current_page.len(),
+            back: self.current_page.len(),
         }
     }
 
@@ -2448,16 +2280,6 @@ impl PageBuilderState {
 
     pub(crate) fn take_page_discards(&mut self) -> Vec<Node> {
         self.record_scalars();
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, &mut fork.target_roots)
-        {
-            let mut nodes = origin.page_discards[..roots.page_discards_end].to_vec();
-            roots.page_discards_end = 0;
-            nodes.append(&mut self.page_discards);
-            self.release_dynamic_nodes(&nodes);
-            self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
-            return nodes;
-        }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::PageDiscardsReplace(self.page_discards.clone()));
         }
@@ -2469,15 +2291,6 @@ impl PageBuilderState {
 
     pub(crate) fn clear_page_discards(&mut self) {
         self.record_scalars();
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && let Some(roots) = &mut fork.target_roots
-        {
-            roots.page_discards_end = 0;
-            let nodes = std::mem::take(&mut self.page_discards);
-            self.release_dynamic_nodes(&nodes);
-            self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
-            return;
-        }
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_dynamic_nodes(&nodes);
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2510,16 +2323,6 @@ impl PageBuilderState {
 
     pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
         self.record_scalars();
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, &mut fork.target_roots)
-        {
-            let mut nodes = origin.split_discards[..roots.split_discards_end].to_vec();
-            roots.split_discards_end = 0;
-            nodes.append(&mut self.split_discards);
-            self.release_dynamic_nodes(&nodes);
-            self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
-            return nodes;
-        }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::SplitDiscardsReplace(
                 self.split_discards.clone(),
@@ -2533,15 +2336,6 @@ impl PageBuilderState {
 
     pub(crate) fn clear_split_discards(&mut self) {
         self.record_scalars();
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && let Some(roots) = &mut fork.target_roots
-        {
-            roots.split_discards_end = 0;
-            let nodes = std::mem::take(&mut self.split_discards);
-            self.release_dynamic_nodes(&nodes);
-            self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
-            return;
-        }
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_dynamic_nodes(&nodes);
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2565,22 +2359,9 @@ impl PageBuilderState {
         self.current_page.push(node);
     }
 
-    /// Removes one logical current-page tail without materializing an
-    /// accepted prefix. During a checkpoint fork the accepted owner remains
-    /// immutable: a private suffix is moved, or the accepted coordinate is
-    /// retreated and only the returned node is copied.
+    /// Removes one logical current-page tail.
     #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn pop_current_page(&mut self) -> Option<Node> {
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, &mut fork.target_roots)
-        {
-            let node = self.current_page.pop().or_else(|| {
-                roots.current_page_end = roots.current_page_end.checked_sub(1)?;
-                origin.current_page.get(roots.current_page_end).cloned()
-            })?;
-            self.release_dynamic_node(&node);
-            return Some(node);
-        }
         let node = self.current_page.pop()?;
         self.record_scalars();
         if !self.checkpoint_journal.frames.is_empty() {
@@ -2595,23 +2376,6 @@ impl PageBuilderState {
     }
 
     pub(crate) fn page_insertion(&self, class: u16) -> Option<PageInsertion> {
-        if let Some(fork) = &self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, fork.target_roots)
-        {
-            return self
-                .insertion_lane
-                .iter()
-                .rev()
-                .find(|record| record.class == class)
-                .map(|record| record.value)
-                .unwrap_or_else(|| {
-                    origin.insertion_lane[..roots.insertion_end]
-                        .iter()
-                        .rev()
-                        .find(|record| record.class == class)
-                        .and_then(|record| record.value)
-                });
-        }
         self.insertion_positions
             .get(usize::from(class))
             .copied()
@@ -2672,24 +2436,6 @@ impl PageBuilderState {
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
         self.record_scalars();
-        if let Some(fork) = &mut self.checkpoint_journal.fork
-            && let (Some(origin), Some(roots)) = (&fork.flat_origin, &mut fork.target_roots)
-        {
-            let mut logical = origin
-                .current_page
-                .iter()
-                .take(roots.current_page_end)
-                .cloned()
-                .collect::<Vec<_>>();
-            logical.extend(self.current_page.iter().cloned());
-            roots.current_page_end = 0;
-            self.current_page.clear();
-            let split_index = split_index.min(logical.len());
-            let after = logical.split_off(split_index);
-            self.release_dynamic_nodes(&logical);
-            self.release_dynamic_nodes(&after);
-            return (logical, after);
-        }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::CurrentPageReplace(self.current_page.clone()));
         }

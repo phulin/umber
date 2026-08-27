@@ -75,13 +75,6 @@ impl PageNodeSequence {
         self.identity = SemanticSequenceIdentity::empty();
     }
 
-    pub(super) fn truncate(&mut self, len: usize) {
-        self.nodes.truncate(len);
-        if self.identity_enabled {
-            self.identity = SemanticSequenceIdentity::from_nodes(&self.nodes);
-        }
-    }
-
     pub(super) fn take_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
         let split_index = split_index.min(self.nodes.len());
         let after = self.nodes.split_off(split_index);

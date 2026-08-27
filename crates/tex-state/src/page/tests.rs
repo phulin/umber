@@ -223,7 +223,7 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     }
     let accepted_hash = hash_page(&page);
 
-    page.begin_checkpoint_fork(checkpoint);
+    let tail = page.begin_checkpoint_candidate(checkpoint);
     assert_eq!(page.contribution().to_vec(), [kern(-1)]);
     assert_eq!(page.current_page().cloned().collect::<Vec<_>>(), [kern(-2)]);
     assert_eq!(
@@ -238,7 +238,7 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     page.clear_split_discards();
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(99)));
     page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(8)]));
-    page.reject_checkpoint_fork();
+    page.reject_checkpoint_candidate(tail);
 
     assert_eq!(hash_page(&page), accepted_hash);
     assert_eq!(page.contribution().len(), 4_097);
@@ -258,7 +258,7 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
         page.push_page_discard(kern(index));
     }
 
-    page.begin_checkpoint_fork(checkpoint);
+    let tail = page.begin_checkpoint_candidate(checkpoint);
     let shipout = page.checkpoint_mark();
     assert_eq!(page.pop_contribution_front(), Some(kern(-1)));
     assert_eq!(page.pop_current_page(), Some(kern(-2)));
@@ -270,7 +270,7 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
     assert_eq!(page.current_page().cloned().collect::<Vec<_>>(), [kern(-2)]);
     assert_eq!(page.take_page_discards(), [kern(-3)]);
     assert_eq!(page.take_split_discards(), [kern(-4)]);
-    page.reject_checkpoint_fork();
+    page.reject_checkpoint_candidate(tail);
     assert_eq!(page.contribution().len(), 4_097);
 }
 
