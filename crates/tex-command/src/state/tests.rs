@@ -3,7 +3,7 @@ use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use super::{CommandGroupError, CommandState};
+use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
 use crate::processor::AlignmentIdentity;
 use crate::{AttemptError, AttemptPromotionRoots};
 
@@ -15,6 +15,62 @@ fn word(ch: char) -> TracedTokenWord {
         },
         OriginId::UNKNOWN,
     )
+}
+
+#[test]
+fn semantic_diagnostic_transfer_moves_the_ordered_allocation_without_allocating() {
+    let mut state = CommandState::<()>::default();
+    state
+        .semantic_diagnostics
+        .push(CommandSemanticDiagnostic::Trace {
+            text: "first".to_owned(),
+            force_newline: false,
+        });
+    state
+        .semantic_diagnostics
+        .push(CommandSemanticDiagnostic::MissingNumber {
+            context: "second".to_owned(),
+        });
+    state
+        .semantic_diagnostics
+        .push(CommandSemanticDiagnostic::PdfExpansionMessage {
+            text: "third".to_owned(),
+        });
+    let allocation = state.semantic_diagnostics.as_ptr();
+    let capacity = state.semantic_diagnostics.capacity();
+
+    #[cfg(feature = "profiling")]
+    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+    #[cfg(feature = "profiling")]
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let diagnostics;
+    {
+        #[cfg(feature = "profiling")]
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        diagnostics = state.take_semantic_diagnostics();
+    }
+    #[cfg(feature = "profiling")]
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+    #[cfg(feature = "profiling")]
+    assert_eq!(after.calls - before.calls, 0);
+    #[cfg(feature = "profiling")]
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    assert_eq!(diagnostics.as_ptr(), allocation);
+    assert_eq!(diagnostics.capacity(), capacity);
+    assert!(state.semantic_diagnostics.is_empty());
+    assert_eq!(state.semantic_diagnostics.capacity(), 0);
+    assert!(matches!(
+        &diagnostics[..],
+        [
+            CommandSemanticDiagnostic::Trace {
+                text,
+                force_newline: false,
+            },
+            CommandSemanticDiagnostic::MissingNumber { context },
+            CommandSemanticDiagnostic::PdfExpansionMessage { text: pdf_text },
+        ] if text == "first" && context == "second" && pdf_text == "third"
+    ));
 }
 
 #[test]

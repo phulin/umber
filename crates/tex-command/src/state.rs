@@ -1413,15 +1413,16 @@ impl<G> CommandState<G> {
             .collect()
     }
 
-    /// Takes semantic diagnostics committed by completed command episodes.
+    /// Transfers semantic diagnostics committed by completed command episodes.
     ///
-    /// The executor drains this inside the same aggregate operation that ran
-    /// the episode. If a later action suspends or fails, aggregate rollback
-    /// restores both this queue and the input cursor from the pre-step
-    /// snapshot, so retry reproduces the diagnostic exactly once.
+    /// The executor claims the existing ordered vector allocation inside the
+    /// same aggregate operation that ran the episode; command state retains a
+    /// fresh empty queue for later work. If a later action suspends or fails,
+    /// aggregate rollback restores both this queue and the input cursor from
+    /// the pre-step snapshot, so retry reproduces the diagnostic exactly once.
     #[must_use]
     pub fn take_semantic_diagnostics(&mut self) -> Vec<CommandSemanticDiagnostic> {
-        self.semantic_diagnostics.drain(..).collect()
+        std::mem::take(&mut self.semantic_diagnostics)
     }
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.
