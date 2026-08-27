@@ -181,6 +181,30 @@ impl ModeJournal {
     pub(super) fn has_active_frame(&self) -> bool {
         !self.frames.is_empty()
     }
+
+    pub(super) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.level_ids
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                self.frames
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Frame>()),
+            )
+            .saturating_add(
+                self.projections
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ListProjection>()),
+            )
+            .saturating_add(
+                self.inverses
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Inverse>()),
+            )
+    }
     pub(super) fn enabled(level_count: usize) -> Self {
         Self::with_capacities(
             level_count,

@@ -1565,7 +1565,6 @@ impl PageBuilderState {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(

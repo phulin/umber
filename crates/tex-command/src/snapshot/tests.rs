@@ -85,14 +85,18 @@ fn summary_is_a_coarse_owner_plus_fixed_restart_coordinates() {
         cursor(13),
         0xfeed_beef,
         Some(1_024),
+        None,
+        4_096,
     );
     let cloned = summary.clone();
-    let (_owner, restored, profile, anchor) = cloned.into_parts();
+    let (_owner, restored, profile, anchor, identity, retained_bytes) = cloned.into_parts();
 
     assert_eq!(clones.get(), 1);
     assert_eq!(restored, cursor(13));
     assert_eq!(profile, 0xfeed_beef);
     assert_eq!(anchor, Some(1_024));
+    assert_eq!(identity, None);
+    assert_eq!(retained_bytes, 4_096);
 }
 
 #[test]

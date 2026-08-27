@@ -330,6 +330,21 @@ pub(crate) struct SourceMapMark {
     identities: IdentityMark,
 }
 
+impl SourceMapMark {
+    pub(crate) fn checkpoint_retained_bytes(self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.regions
+                    .saturating_mul(std::mem::size_of::<SourceRegion>()),
+            )
+            .saturating_add(
+                self.generated
+                    .saturating_mul(std::mem::size_of::<GeneratedSource>()),
+            )
+            .saturating_add(usize::try_from(self.next_pos).unwrap_or(usize::MAX))
+    }
+}
+
 /// One immutable source-map prefix accepted at a revision boundary.
 ///
 /// Rows and their coarse indexes are shared as one block. A candidate opens

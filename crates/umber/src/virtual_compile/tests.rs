@@ -791,7 +791,13 @@ struct AcceptedSessionState {
     content_hash: ContentHash,
     output: MemoryRunOutput,
     generated: Option<Vec<u8>>,
-    history: Vec<(RevisionId, tex_incr::BoundaryKey, usize, usize, u64)>,
+    history: Vec<(
+        RevisionId,
+        tex_incr::BoundaryKey,
+        usize,
+        usize,
+        Option<tex_exec::ReachableStateIdentity>,
+    )>,
     observations: crate::AcceptedInputObservationLedger,
 }
 
@@ -821,7 +827,7 @@ fn accepted_session_state(session: &VirtualCompileSession) -> AcceptedSessionSta
                     record.key(),
                     record.effect_prefix(),
                     record.artifact_prefix(),
-                    record.state_hash(),
+                    record.reachable_state_identity(),
                 )
             })
             .collect(),

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use tex_exec::EngineBoundary;
+use tex_exec::{EngineBoundary, ReachableStateIdentity};
 
 use crate::{ReuseMetrics, RevisionExecutionPath, RevisionId, SameHistoryStop, Timer};
 
@@ -21,7 +21,7 @@ pub struct BoundaryRecord {
     pub(crate) key: BoundaryKey,
     pub(crate) effect_prefix: usize,
     pub(crate) artifact_prefix: usize,
-    pub(crate) state_hash: u64,
+    pub(crate) reachable_state_identity: Option<ReachableStateIdentity>,
 }
 
 impl BoundaryRecord {
@@ -46,8 +46,8 @@ impl BoundaryRecord {
     }
 
     #[must_use]
-    pub const fn state_hash(&self) -> u64 {
-        self.state_hash
+    pub const fn reachable_state_identity(&self) -> Option<ReachableStateIdentity> {
+        self.reachable_state_identity
     }
 }
 
@@ -109,10 +109,16 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
             continue;
         }
         attempts = attempts.saturating_add(1);
-        if old_record.key == new_record.key && old_record.state_hash == new_record.state_hash {
-            convergence.get_or_insert(new_record.key);
-        } else {
-            mismatches = mismatches.saturating_add(1);
+        match (
+            old_record.reachable_state_identity,
+            new_record.reachable_state_identity,
+        ) {
+            (Some(old_identity), Some(new_identity))
+                if old_record.key == new_record.key && old_identity == new_identity =>
+            {
+                convergence.get_or_insert(new_record.key);
+            }
+            _ => mismatches = mismatches.saturating_add(1),
         }
     }
     ReuseMetrics {
@@ -137,49 +143,6 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
         revision_setup_latency,
         trace_validation_latency: started.elapsed(),
         ..ReuseMetrics::default()
-    }
-}
-
-/// Prunes detached observations without retaining runtime generations.
-///
-/// Job start and the newest observation remain named durable roots. Paragraph
-/// checkpoints are selected first because they are the densest optional
-/// restart family. The surviving records contain semantic evidence and
-/// checkpoint descriptors only; the session's sole prior-generation owner is
-/// independent of their count and lifetime.
-pub(crate) struct PrunedHistory {
-    pub(crate) records: Vec<BoundaryRecord>,
-    pub(crate) retained_indices: Vec<usize>,
-}
-
-pub(crate) fn prune_history(mut history: Vec<BoundaryRecord>, budget: usize) -> PrunedHistory {
-    let mut retained_indices = (0..history.len()).collect::<Vec<_>>();
-    while std::mem::size_of_val(history.as_slice()) > budget && history.len() > 2 {
-        let newest = history.len() - 1;
-        let victim = history
-            .iter()
-            .enumerate()
-            .find(|(index, record)| {
-                *index != 0
-                    && *index != newest
-                    && record.key.boundary == EngineBoundary::OuterParagraphEnd
-            })
-            .or_else(|| {
-                history
-                    .iter()
-                    .enumerate()
-                    .find(|(index, _)| *index != 0 && *index != newest)
-            })
-            .map(|(index, _)| index);
-        let Some(victim) = victim else {
-            break;
-        };
-        history.remove(victim);
-        retained_indices.remove(victim);
-    }
-    PrunedHistory {
-        records: history,
-        retained_indices,
     }
 }
 

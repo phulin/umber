@@ -321,6 +321,15 @@ impl Clone for DependencyRuntime {
 }
 
 impl DependencyRuntime {
+    pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.tracker
+                .changed
+                .len()
+                .saturating_mul(std::mem::size_of::<(DependencyKey, ChangedAt)>()),
+        )
+    }
+
     /// Starts a region. Nested computations should instead record a bounded
     /// [`DependencyKey::Query`] in their parent.
     pub fn begin_region(&mut self) -> Result<DependencyRegionToken, DependencyRegionError> {

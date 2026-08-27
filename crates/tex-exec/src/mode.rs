@@ -1431,6 +1431,7 @@ pub(crate) struct ModeCheckpoint {
     flat_root: Option<ModeLevelSummary>,
     list_roots: Box<[ModeListRoot; 41]>,
     list_root_count: u8,
+    reachable_state_identity_root: Option<u64>,
 }
 
 impl Clone for ModeCheckpoint {
@@ -1441,6 +1442,7 @@ impl Clone for ModeCheckpoint {
             flat_root: self.flat_root.clone(),
             list_roots: self.list_roots.clone(),
             list_root_count: self.list_root_count,
+            reachable_state_identity_root: self.reachable_state_identity_root,
         }
     }
 }
@@ -1461,6 +1463,27 @@ impl ModeCheckpoint {
     pub(crate) fn replay_work(&self) -> u64 {
         self.owner.borrow().replay_work()
     }
+
+    pub(crate) fn retention_owner_address(&self) -> usize {
+        std::rc::Rc::as_ptr(&self.owner) as usize
+    }
+
+    pub(crate) const fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity_root
+    }
+
+    pub(crate) fn retained_owner_bytes(&self) -> usize {
+        let storage = self.owner.borrow();
+        std::mem::size_of::<ModeNestStorage>()
+            .saturating_add(
+                storage
+                    .levels
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ModeLevelSummary>()),
+            )
+            .saturating_add(storage.journal.retained_bytes())
+    }
+
     pub(crate) fn retains_page_node_handles(&self) -> bool {
         let storage = self.owner.borrow();
         storage.levels.iter().any(|level| {
@@ -1480,18 +1503,6 @@ impl ModeCheckpoint {
                     .as_ref()
                     .is_some_and(|eqno| !eqno.display.is_empty())
         })
-    }
-
-    /// Conservative checkpoint identity that never traverses mode payload.
-    ///
-    /// The retained incremental layer deliberately treats distinct boundary
-    /// publications as non-convergent until the optional complete reachable-
-    /// state identity exists.  Using the owner-relative frame identity avoids
-    /// both an eager node walk and an unsound mode-only equality claim.
-    pub(crate) const fn conservative_identity(&self) -> u64 {
-        self.cursor.generation.rotate_left(17)
-            ^ self.cursor.frame_id.rotate_left(37)
-            ^ (self.cursor.cursor as u64)
     }
 
     pub(crate) fn summary(&self) -> ModeNestSummary {
@@ -1686,6 +1697,10 @@ impl ModeNest {
             flat_root,
             list_roots,
             list_root_count,
+            // umber2-pei0.2.7 owns the maintained mode/page root. Absence is
+            // retained explicitly until that lineage lands; no traversal or
+            // cursor fingerprint substitutes for it.
+            reachable_state_identity_root: None,
         }
     }
 

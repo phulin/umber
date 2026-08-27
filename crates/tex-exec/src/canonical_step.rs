@@ -259,7 +259,12 @@ impl OutputLedger {
                 continue;
             }
             let counters = ExecutionBudgetCounters::default();
-            let checkpoint = control.capture_checkpoint(boundary, universe, counters)?;
+            let checkpoint = control.capture_checkpoint_with_identity_demand(
+                boundary,
+                universe,
+                counters,
+                sink.wants_reachable_state_identity(boundary),
+            )?;
             sink.checkpoint(checkpoint);
         }
         Ok(())

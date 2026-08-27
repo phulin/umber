@@ -2462,6 +2462,43 @@ impl World {
         )
     }
 
+    /// Constant-time carrier charge for the coarse World lineage retained by
+    /// an aggregate checkpoint. Variable effect/artifact bytes remain owned
+    /// by their separately accounted immutable output blocks; this charge
+    /// covers every live World row and index carrier without walking payload.
+    pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
+        let accepted_effects = self
+            .accepted_effects
+            .as_ref()
+            .map_or(0, |block| block.total_len);
+        let accepted_inputs = self
+            .accepted_inputs
+            .as_ref()
+            .map_or(0, |block| block.total_len);
+        let effect_rows = accepted_effects.saturating_add(self.effects.len());
+        let input_rows = accepted_inputs.saturating_add(self.inputs.len());
+        std::mem::size_of::<Self>()
+            .saturating_add(effect_rows.saturating_mul(
+                std::mem::size_of::<EffectRecord>()
+                    + std::mem::size_of::<EffectSequence>()
+                    + std::mem::size_of::<Option<EffectPublicationId>>()
+                    + std::mem::size_of::<EffectDomain>()
+                    + std::mem::size_of::<EffectSemanticRecordOrdinal>()
+                    + std::mem::size_of::<EffectPlacementIntraOrder>(),
+            ))
+            .saturating_add(input_rows.saturating_mul(std::mem::size_of::<InputRecord>()))
+            .saturating_add(
+                self.committed_artifacts
+                    .len()
+                    .saturating_mul(std::mem::size_of::<CommittedArtifact>()),
+            )
+            .saturating_add(
+                self.input_dependencies
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(Arc<Path>, InputDependency)>()),
+            )
+    }
+
     /// Enables rollback-capable ownership for the standalone checkpoint gate.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]

@@ -1826,6 +1826,96 @@ impl<G> PdfState<G> {
         self.payloads.bytes
     }
 
+    pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.payloads.bytes)
+            .saturating_add(
+                self.pages
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfPageRecord<G>>()),
+            )
+            .saturating_add(
+                self.font_operations
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfFontOperation>()),
+            )
+            .saturating_add(
+                self.font_resources
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfFontResourceRecord>()),
+            )
+            .saturating_add(
+                self.external_images
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfExternalImageEntry>()),
+            )
+            .saturating_add(
+                self.annotations
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfAnnotationRecord<G>>()),
+            )
+            .saturating_add(
+                self.links
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfLinkRecord<G>>()),
+            )
+            .saturating_add(
+                self.color_stacks
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfColorStack>()),
+            )
+            .saturating_add(
+                self.forms
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfFormRecord<G>>()),
+            )
+            .saturating_add(
+                self.destinations
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfDestinationRecord>()),
+            )
+            .saturating_add(
+                self.outlines
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfOutlineRecord<G>>()),
+            )
+            .saturating_add(
+                self.threads
+                    .len()
+                    .saturating_mul(std::mem::size_of::<PdfThreadRecord>()),
+            )
+            .saturating_add(
+                (self.general_index.accepted.len() + self.general_index.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfVersionIndexNode>()),
+            )
+            .saturating_add(
+                (self.color_index.accepted.len() + self.color_index.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfVersionIndexNode>()),
+            )
+            .saturating_add(
+                (self.general_versions.accepted.len() + self.general_versions.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfVersionValue<G>>()),
+            )
+            .saturating_add(
+                (self.open_link_nodes.accepted.len() + self.open_link_nodes.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfOpenLinkNode<G>>()),
+            )
+            .saturating_add(
+                (self.thread_bead_nodes.accepted.len()
+                    + self.thread_bead_nodes.candidate.len())
+                .saturating_mul(std::mem::size_of::<PdfThreadBeadNode>()),
+            )
+            .saturating_add(
+                (self.color_values.accepted.len() + self.color_values.candidate.len())
+                    .saturating_mul(std::mem::size_of::<Box<[u8]>>()),
+            )
+            .saturating_add(
+                (self.color_push_nodes.accepted.len()
+                    + self.color_push_nodes.candidate.len())
+                .saturating_mul(std::mem::size_of::<PdfColorPushNode>()),
+            )
+    }
+
     pub(crate) fn history_head(&self) -> (u64, u64) {
         if let Some(transaction) = &self.transaction {
             (

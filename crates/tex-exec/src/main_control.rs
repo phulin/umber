@@ -2439,6 +2439,26 @@ impl<G> MainControl<G> {
         )
     }
 
+    pub(crate) fn capture_checkpoint_with_identity_demand(
+        &mut self,
+        boundary: crate::EngineBoundary,
+        stores: &mut Universe<G>,
+        budget_counters: crate::ExecutionBudgetCounters,
+        wants_reachable_state_identity: bool,
+    ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
+        if self.has_external_attempt_owner() {
+            return Err(tex_command::CommandSummaryError::AttemptSuspended);
+        }
+        crate::EngineCheckpoint::capture_checkpoint_with_identity_demand(
+            boundary,
+            &mut self.command,
+            &mut self.modes,
+            stores,
+            budget_counters,
+            wants_reachable_state_identity,
+        )
+    }
+
     /// Restores a named checkpoint into this command processor.  The
     /// checkpoint is quiescent, so command-owned replay episodes are reset
     /// rather than serialized into a durable format or editor boundary.

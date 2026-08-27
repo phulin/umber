@@ -65,6 +65,7 @@ pub(super) struct HyphenationRuntime {
 #[derive(Clone)]
 pub(crate) struct HyphenationCheckpoint {
     patterns: PatternOwner,
+    pattern_retained_bytes: usize,
     runtime: HyphenationRuntime,
     trie_capacity: usize,
 }
@@ -93,6 +94,7 @@ impl Clone for HyphenationTable {
     fn clone(&self) -> Self {
         Self {
             patterns: self.patterns.clone(),
+            pattern_retained_bytes: self.pattern_retained_bytes,
             runtime: self.runtime.clone(),
             // This is only a derived lookup cache. A checkpoint owns semantic
             // roots, not a duplicate of warmed dependency evidence.
@@ -112,6 +114,7 @@ impl HyphenationTable {
     pub(crate) fn checkpoint(&self) -> HyphenationCheckpoint {
         HyphenationCheckpoint {
             patterns: self.patterns.clone(),
+            pattern_retained_bytes: self.pattern_retained_bytes,
             runtime: self.runtime.clone(),
             trie_capacity: self.trie_capacity,
         }
@@ -120,6 +123,7 @@ impl HyphenationTable {
     pub(crate) fn from_checkpoint(checkpoint: &HyphenationCheckpoint) -> Self {
         Self {
             patterns: checkpoint.patterns.clone(),
+            pattern_retained_bytes: checkpoint.pattern_retained_bytes,
             runtime: checkpoint.runtime.clone(),
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: checkpoint.trie_capacity,
@@ -128,6 +132,7 @@ impl HyphenationTable {
 
     pub(crate) fn restore_checkpoint(&mut self, checkpoint: &HyphenationCheckpoint) {
         self.patterns = checkpoint.patterns.clone();
+        self.pattern_retained_bytes = checkpoint.pattern_retained_bytes;
         self.runtime = checkpoint.runtime.clone();
         self.dependency_fingerprints = OnceLock::new();
         self.trie_capacity = checkpoint.trie_capacity;
@@ -180,8 +185,27 @@ impl<'de> Deserialize<'de> for HyphenationTable {
                 exceptions.insert(language, table.exceptions);
             }
         }
+        let pattern_retained_bytes = patterns
+            .values()
+            .map(|nodes| {
+                std::mem::size_of::<(u8, Vec<TrieNode>)>()
+                    .saturating_add(nodes.len().saturating_mul(std::mem::size_of::<TrieNode>()))
+                    .saturating_add(
+                        nodes
+                            .iter()
+                            .map(|node| {
+                                node.edges
+                                    .len()
+                                    .saturating_mul(std::mem::size_of::<(char, usize)>())
+                                    .saturating_add(node.values.len())
+                            })
+                            .sum::<usize>(),
+                    )
+            })
+            .sum();
         Ok(Self {
             patterns: PatternOwner::Initialized(Arc::new(patterns)),
+            pattern_retained_bytes,
             runtime: HyphenationRuntime {
                 exceptions,
                 hyphen_codes: rows.hyphen_codes,

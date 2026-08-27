@@ -150,7 +150,7 @@ pub use format::{
     FormatPublicationError, FormatStaging, with_format_destination, with_materialized_format,
     with_materialized_format_in_epoch,
 };
-pub use generation::GenerationOwner;
+pub use generation::{CheckpointOwnerId, GenerationOwner};
 pub use reachability_store::ReachabilityStore;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 pub use resource::{
@@ -226,7 +226,8 @@ pub use source_fragments::{
 };
 pub use universe::{
     DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError, PromotionError,
-    PromotionReceipt, RuntimeCheckpoint, ShipoutTransaction, StateCheckpoint, StateCheckpointMark,
+    PromotionReceipt, RuntimeCheckpoint, RuntimeCheckpointIdentityRoots,
+    RuntimeCheckpointRetention, ShipoutTransaction, StateCheckpoint, StateCheckpointMark,
     TokenListPromotion, Universe, UniverseError, UniverseRetirement, with_universe,
     with_universe_in_epoch,
 };

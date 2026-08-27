@@ -62,7 +62,8 @@ fn main() {
                             },
                         )
                         .expect("fixture is quiescent");
-                        checksum ^= checkpoint.mode_hash().rotate_left((ordinal % 63) as u32);
+                        checksum ^= (checkpoint.root_anchor() as u64)
+                            .rotate_left((ordinal % 63) as u32);
                         checkpoints.push(checkpoint);
                     }
                     (checkpoints, checksum)
@@ -74,7 +75,7 @@ fn main() {
                     let clones = (0..boundaries)
                         .map(|_| checkpoints[0].clone())
                         .collect::<Vec<_>>();
-                    (clones, checkpoints[0].mode_hash())
+                    (clones, checkpoints[0].root_anchor() as u64)
                 });
                 let clones = clone.0;
                 let clone_checksum = clone.1.checksum ^ clones.len() as u64;
@@ -85,7 +86,7 @@ fn main() {
                         checkpoint
                             .restore_state(&mut command, &mut modes, universe)
                             .expect("same-generation restore");
-                        checksum ^= modes.depth() as u64 ^ checkpoint.mode_hash();
+                        checksum ^= modes.depth() as u64 ^ checkpoint.root_anchor() as u64;
                     }
                     ((), checksum)
                 });

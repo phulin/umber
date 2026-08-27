@@ -43,7 +43,7 @@ mod trace;
 
 use candidate_lease::{CandidateLease, CandidateLeaseState};
 pub use history::{BoundaryKey, BoundaryRecord};
-use history::{HistoryComparison, compare_histories, prune_history};
+use history::{HistoryComparison, compare_histories};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 const SESSION_INTERNER_NAMES: u32 = 65_536;
@@ -90,7 +90,14 @@ pub struct Edit {
 /// Honest split between restart observations and detached accepted output.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetentionMetrics {
+    /// Total checkpoint-related retention, including detached boundary evidence.
     pub checkpoint_root_bytes: usize,
+    /// Coarse generation owners charged once regardless of restart-root count.
+    pub checkpoint_shared_owner_bytes: usize,
+    /// Fixed metadata charged once for every restart-capable checkpoint root.
+    pub checkpoint_metadata_bytes: usize,
+    /// Boundary evidence retained for comparison but incapable of restart.
+    pub detached_boundary_bytes: usize,
     pub memo_result_bytes: usize,
     pub diagnostic_bytes: usize,
     pub output_bytes: usize,
@@ -349,6 +356,11 @@ pub struct RevisionTransaction<'store> {
     expansion_stats: ExpansionStats,
     generation: tex_exec::RetainedEngineGeneration<'store>,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    checkpoint_retained_bytes: usize,
+    checkpoint_shared_owner_bytes: usize,
+    checkpoint_metadata_bytes: usize,
+    detached_boundary_bytes: usize,
+    checkpoint_protected_overage_bytes: usize,
     _candidate_lease: CandidateLease,
 }
 
@@ -411,6 +423,11 @@ struct CandidateCompletion {
     delivered_commands: usize,
     format_dump: Option<DetachedFormatDump>,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    checkpoint_retained_bytes: usize,
+    checkpoint_shared_owner_bytes: usize,
+    checkpoint_metadata_bytes: usize,
+    detached_boundary_bytes: usize,
+    checkpoint_protected_overage_bytes: usize,
 }
 
 /// Command spellings and fresh-state conventions layered over a canonical
@@ -448,6 +465,7 @@ pub struct RevisionCandidate<'store> {
     completed: Option<CandidateCompletion>,
     cumulative_fuel_limit: u64,
     execution_budgets: tex_exec::ExecutionBudgets,
+    checkpoint_budget: usize,
     provenance_demand: tex_state::ProvenanceDemand,
     provenance_budgets: tex_state::ProvenanceBudgets,
     suspension_serial: u64,
@@ -579,11 +597,28 @@ impl<'store> RevisionCandidate<'store> {
             detached_output_bytes(&completion.completion)
         });
         RetentionMetrics {
-            checkpoint_root_bytes: 0,
+            checkpoint_root_bytes: self
+                .completed
+                .as_ref()
+                .map_or(0, |completion| completion.checkpoint_retained_bytes),
+            checkpoint_shared_owner_bytes: self
+                .completed
+                .as_ref()
+                .map_or(0, |completion| completion.checkpoint_shared_owner_bytes),
+            checkpoint_metadata_bytes: self
+                .completed
+                .as_ref()
+                .map_or(0, |completion| completion.checkpoint_metadata_bytes),
+            detached_boundary_bytes: self
+                .completed
+                .as_ref()
+                .map_or(0, |completion| completion.detached_boundary_bytes),
             memo_result_bytes: 0,
             diagnostic_bytes,
             output_bytes,
-            protected_overage_bytes: 0,
+            protected_overage_bytes: self.completed.as_ref().map_or(0, |completion| {
+                completion.checkpoint_protected_overage_bytes
+            }),
         }
     }
 
@@ -747,18 +782,141 @@ struct LiveHistoryState {
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
     paragraphs: usize,
-    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    checkpoint_keys: Vec<Option<tex_exec::RetainedCheckpointKey>>,
+    checkpoint_budget: usize,
+    shared_owner_charges: BTreeMap<
+        (
+            tex_exec::CheckpointOwnerKey,
+            tex_exec::CheckpointOwnerFamily,
+        ),
+        usize,
+    >,
+    checkpoint_metadata_bytes: usize,
+    protected_overage_bytes: usize,
 }
 
 impl LiveHistoryState {
-    fn new(revision: RevisionId) -> Self {
+    fn new(revision: RevisionId, checkpoint_budget: usize) -> Self {
         Self {
             revision,
             records: Vec::new(),
             occurrences: HashMap::new(),
             paragraphs: 0,
             checkpoint_keys: Vec::new(),
+            checkpoint_budget,
+            shared_owner_charges: BTreeMap::new(),
+            checkpoint_metadata_bytes: 0,
+            protected_overage_bytes: 0,
         }
+    }
+
+    fn retained_restart_root_count(&self) -> usize {
+        self.checkpoint_keys.iter().flatten().count()
+    }
+
+    fn restart_metadata_bytes(&self) -> usize {
+        self.retained_restart_root_count()
+            .saturating_mul(self.checkpoint_metadata_bytes)
+    }
+
+    fn detached_boundary_bytes(&self) -> usize {
+        self.records
+            .len()
+            .saturating_mul(size_of::<BoundaryRecord>())
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.shared_owner_bytes()
+            .saturating_add(self.restart_metadata_bytes())
+            .saturating_add(self.detached_boundary_bytes())
+    }
+
+    fn shared_owner_bytes(&self) -> usize {
+        self.shared_owner_charges
+            .values()
+            .copied()
+            .fold(0_usize, usize::saturating_add)
+    }
+
+    fn observe_shared_owners(&mut self, retention: tex_exec::CheckpointRetention) {
+        for charge in retention.shared_owners() {
+            self.shared_owner_charges
+                .entry((charge.owner(), charge.family()))
+                .and_modify(|bytes| *bytes = (*bytes).max(charge.bytes()))
+                .or_insert(charge.bytes());
+        }
+    }
+
+    fn restart_victim(&self) -> Option<usize> {
+        self.records
+            .iter()
+            .enumerate()
+            .find(|(index, record)| {
+                *index != 0
+                    && self.checkpoint_keys[*index].is_some()
+                    && record.key.boundary == EngineBoundary::OuterParagraphEnd
+            })
+            .or_else(|| {
+                self.checkpoint_keys
+                    .iter()
+                    .enumerate()
+                    .find(|(index, key)| *index != 0 && key.is_some())
+                    .map(|(index, _)| (index, &self.records[index]))
+            })
+            .map(|(index, _)| index)
+    }
+
+    fn evidence_victim(&self) -> Option<usize> {
+        if self.records.len() <= 2 {
+            return None;
+        }
+        let newest = self.records.len() - 1;
+        self.records
+            .iter()
+            .enumerate()
+            .find(|(index, record)| {
+                *index != 0
+                    && *index != newest
+                    && record.key.boundary == EngineBoundary::OuterParagraphEnd
+            })
+            .or_else(|| {
+                self.records
+                    .iter()
+                    .enumerate()
+                    .find(|(index, _)| *index != 0 && *index != newest)
+            })
+            .map(|(index, _)| index)
+    }
+
+    fn enforce_publication_budget<G>(
+        &mut self,
+        retained: &mut tex_exec::RetainedCheckpointStore<'_, G>,
+    ) {
+        while self.retained_bytes() > self.checkpoint_budget {
+            if let Some(victim) = self.restart_victim() {
+                let key = self.checkpoint_keys[victim]
+                    .take()
+                    .expect("restart victim owns a retained key");
+                retained
+                    .release(key)
+                    .expect("publication owns the retained checkpoint key");
+                continue;
+            }
+            let Some(victim) = self.evidence_victim() else {
+                break;
+            };
+            debug_assert!(self.checkpoint_keys[victim].is_none());
+            self.records.remove(victim);
+            self.checkpoint_keys.remove(victim);
+        }
+        self.protected_overage_bytes = self.retained_bytes().saturating_sub(self.checkpoint_budget);
+    }
+
+    fn take_checkpoint_keys(&mut self) -> Vec<tex_exec::RetainedCheckpointKey> {
+        std::mem::take(&mut self.checkpoint_keys)
+            .into_iter()
+            .flatten()
+            .collect()
     }
 }
 
@@ -768,32 +926,45 @@ struct LiveHistorySink<'state, 'generation, G> {
 }
 
 impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
+    fn wants_reachable_state_identity(&self, _boundary: EngineBoundary) -> bool {
+        true
+    }
+
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
         let position = checkpoint.root_anchor();
         let boundary = checkpoint.boundary();
         if boundary == EngineBoundary::OuterParagraphEnd {
             self.state.paragraphs = self.state.paragraphs.saturating_add(1);
         }
-        let ordinal = self
+        let ordinal = *self
             .state
             .occurrences
             .entry((position, boundary))
             .or_default();
+        self.state
+            .occurrences
+            .insert((position, boundary), ordinal.saturating_add(1));
         self.state.records.push(BoundaryRecord {
             revision: self.state.revision,
             key: BoundaryKey {
                 position,
                 boundary,
-                ordinal: *ordinal,
+                ordinal,
             },
             effect_prefix: checkpoint.effect_prefix_len(),
             artifact_prefix: checkpoint.artifact_prefix_len(),
-            state_hash: checkpoint.mode_hash(),
+            reachable_state_identity: checkpoint.reachable_state_identity(),
         });
+        let retention = checkpoint.retention();
+        self.state.observe_shared_owners(retention);
+        self.state.checkpoint_metadata_bytes = self
+            .state
+            .checkpoint_metadata_bytes
+            .max(retention.checkpoint_metadata_bytes());
         self.state
             .checkpoint_keys
-            .push(self.retained.retain(checkpoint));
-        *ordinal = ordinal.saturating_add(1);
+            .push(Some(self.retained.retain(checkpoint)));
+        self.state.enforce_publication_budget(&mut self.retained);
     }
 }
 
@@ -833,7 +1004,7 @@ fn initialize_candidate_runtime<G: 'static>(
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
     control.attach_pure_memo_capability(universe);
-    let mut history = LiveHistoryState::new(candidate.plan.revision);
+    let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
     let mut ledger = OutputLedger::new();
     ledger.commit_job_start(
         &mut control,
@@ -965,6 +1136,12 @@ fn execute_plan<G>(
                             candidate.profile.dialect() == tex_command::CommandDialect::Pdftex14029,
                         ),
                     )?;
+                    let checkpoint_retained_bytes = sink.state.retained_bytes();
+                    let checkpoint_shared_owner_bytes = sink.state.shared_owner_bytes();
+                    let checkpoint_metadata_bytes = sink.state.restart_metadata_bytes();
+                    let detached_boundary_bytes = sink.state.detached_boundary_bytes();
+                    let checkpoint_protected_overage_bytes = sink.state.protected_overage_bytes;
+                    let checkpoint_keys = sink.state.take_checkpoint_keys();
                     return Ok(PlanExecution::Complete(
                         Box::new(CandidateCompletion {
                             completion,
@@ -972,7 +1149,12 @@ fn execute_plan<G>(
                             dependencies,
                             delivered_commands: *delivered_commands,
                             format_dump,
-                            checkpoint_keys: std::mem::take(&mut sink.state.checkpoint_keys),
+                            checkpoint_keys,
+                            checkpoint_retained_bytes,
+                            checkpoint_shared_owner_bytes,
+                            checkpoint_metadata_bytes,
+                            detached_boundary_bytes,
+                            checkpoint_protected_overage_bytes,
                         }),
                         control.fuel_burned(),
                     ));
@@ -1826,6 +2008,7 @@ impl<'store> Session<'store> {
             completed: None,
             cumulative_fuel_limit: MainControl::<GenerationBrand<'static>>::DEFAULT_FUEL_LIMIT,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
+            checkpoint_budget: self.checkpoint_budget,
             provenance_demand: tex_state::ProvenanceDemand::default(),
             provenance_budgets: tex_state::ProvenanceBudgets::default(),
             suspension_serial: 0,
@@ -1890,6 +2073,11 @@ impl<'store> Session<'store> {
             expansion_stats: ExpansionStats::default(),
             generation,
             checkpoint_keys: completion.checkpoint_keys,
+            checkpoint_retained_bytes: completion.checkpoint_retained_bytes,
+            checkpoint_shared_owner_bytes: completion.checkpoint_shared_owner_bytes,
+            checkpoint_metadata_bytes: completion.checkpoint_metadata_bytes,
+            detached_boundary_bytes: completion.detached_boundary_bytes,
+            checkpoint_protected_overage_bytes: completion.checkpoint_protected_overage_bytes,
             _candidate_lease: candidate_lease,
         })
     }
@@ -1910,21 +2098,7 @@ impl<'store> Session<'store> {
         if transaction.base_content_hash != self.content_hash {
             return Err(SessionError::ContentHashMismatch);
         }
-        let pruned = prune_history(transaction.history, self.checkpoint_budget);
-        let mut checkpoint_keys = transaction
-            .checkpoint_keys
-            .into_iter()
-            .map(Some)
-            .collect::<Vec<_>>();
-        let retained_checkpoint_keys = pruned
-            .retained_indices
-            .iter()
-            .map(|index| {
-                checkpoint_keys[*index]
-                    .take()
-                    .expect("boundary and checkpoint publication stay aligned")
-            })
-            .collect::<Vec<_>>();
+        let retained_checkpoint_keys = transaction.checkpoint_keys;
         let mut generation = transaction.generation;
         generation
             .preflight_terminal(&retained_checkpoint_keys)
@@ -1955,21 +2129,24 @@ impl<'store> Session<'store> {
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        self.history = pruned.records;
+        self.history = transaction.history;
         self.prior_generation = Some(incoming);
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
         let output_bytes = detached_output_bytes(&transaction.completion);
         let retention = RetentionMetrics {
-            checkpoint_root_bytes: std::mem::size_of_val(self.history.as_slice()),
+            checkpoint_root_bytes: transaction.checkpoint_retained_bytes,
+            checkpoint_shared_owner_bytes: transaction.checkpoint_shared_owner_bytes,
+            checkpoint_metadata_bytes: transaction.checkpoint_metadata_bytes,
+            detached_boundary_bytes: transaction.detached_boundary_bytes,
             memo_result_bytes: 0,
             diagnostic_bytes: self
                 .fragments
                 .retained_bytes()
                 .saturating_add(self.layout.retained_bytes()),
             output_bytes,
-            protected_overage_bytes: 0,
+            protected_overage_bytes: transaction.checkpoint_protected_overage_bytes,
         };
         self.accepted_retention = Some(retention);
         let mut reuse = transaction.reuse;

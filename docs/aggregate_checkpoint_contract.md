@@ -39,23 +39,66 @@ counter roots; truncate font/source and command/durable/page suffixes; then
 release replaced owners. A failed validation leaves source and destination
 unchanged.
 
-## Identity decision
+## Optional identity outcome
 
-Commit `fb81261388a608c16fe26f2cc44084d4574ac2eb` deletes the ignored
-ordinary-versus-exact selector, `CheckpointSink::wants_exact_state_identity`,
-and `capture_checkpoint_with_exact_identity`. Both paths previously captured
-the same state and stored only `ModeNestSummary::semantic_fingerprint` under
-the misleading `state_hash` name. That mode fingerprint remains explicitly
-mode-only evidence; it is not sufficient for suffix adoption.
+`EngineCheckpoint` schema 9 deletes the mode-only `mode_hash` and exposes an
+optional `ReachableStateIdentity` under its own schema version. Ordinary
+capture never asks for the identity. `CheckpointSink` makes demand explicit,
+and the incremental history sink is the sole production requester.
 
-A later implementation child must add one explicitly named optional
-`reachable_state_identity`, calculated only when the incremental sink requests
-it. It is a versioned, domain-separated, fixed-seed 64-bit identity over all
-future-reachable semantic components in the final matrix. Ordinary checkpoint
-capture omits it. Incremental convergence must fail closed while it is absent;
-it must never substitute the mode fingerprint. Identity computation may use
-journal-maintained component roots, but may not add a cache, root registry, or
-second ownership graph.
+The composer has one owner-bound typed input for every semantic component in
+the matrix: command summary, mode checkpoint, and runtime-published page,
+World, hyphenation, PDF, dependency, source, font, and core roots. It combines
+only journal-maintained scalar roots through a domain-framed fixed-seed stream.
+Missing any input returns `None`; no owner id, cursor, partial fingerprint, or
+traversal is accepted as a substitute. The aggregate layer contains no free
+placeholder functions that could later be filled from runtime coordinates.
+Until all owners populate their hooks, incremental convergence reports hash
+divergence and retains no suffix. This is the required fail-closed transition
+state, not a claim that a partial identity is complete.
+
+At this branch boundary the owner hooks deliberately remain absent. The
+mode/page hook depends on `umber2-pei0.2.7`, and the PDF hook depends on
+`umber2-pei0.2.9`; after those branches integrate, `umber2-pei0.2.10` must
+populate and perturb-test the command, World, hyphenation, dependency, source,
+font, and core owner roots as one rebased change before the identity can become
+`Some`. The issue remains open until that exact pass. No mode-only or
+coordinate-derived transition value is hashed in the meantime.
+
+The focused perturbation test changes each component root independently and
+checks that every resulting complete identity differs. A separate capture
+test proves that both ordinary capture and requested-but-incomplete capture
+perform zero mode semantic traversals. The profiling-only
+`checkpoint_identity_gate` compares the two paths after warmup at one and 32
+mode levels and requires identical allocation calls and requested bytes.
+
+## Publication-time retention outcome
+
+Every aggregate checkpoint carries an allocation-independent logical charge.
+The charge names command, mode, page, World, hyphenation, PDF, dependency,
+source/font, and core coarse owners, plus fixed checkpoint metadata containing
+the execution counters. Each charge pairs an opaque process-local owner id with
+its closed owner-family tag. The incremental publisher keeps the largest
+observed byte scalar for each exact `(owner, family)` pair, so a growing
+append/journal owner is charged once without merging distinct families or
+building a second ownership graph. Command and mode charges come from their
+authoritative timeline owners; the aggregate no longer charges only the size
+of their checkpoint handles. It charges fixed metadata once for each
+restart-capable checkpoint and every detached `BoundaryRecord` separately,
+because comparison evidence cannot itself seed restart.
+
+The budget is enforced immediately after each boundary is published. Pruning
+first releases restart roots, preferring paragraph roots, and then removes
+intermediate detached evidence while preserving JobStart and the newest
+observation. Protected JobStart retention and the first/newest evidence pair
+may exceed an impossible budget; that overage is reported explicitly. The
+accepted-generation transition only validates and prunes the already-bounded
+root set, so it no longer hides a larger pre-acceptance peak.
+
+`RetentionMetrics` reports the shared-owner, per-root metadata, and detached
+evidence terms independently, with `checkpoint_root_bytes` equal to their sum.
+The retained-owner test checks that multiplying the restart-root count never
+multiplies the shared coarse owner.
 
 ## Representative baseline
 

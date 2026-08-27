@@ -72,6 +72,30 @@ impl<G> fmt::Debug for CommandTimeline<G> {
 }
 
 impl<G> CommandTimeline<G> {
+    fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.frames
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<CommandTimelineFrame>()),
+            )
+            .saturating_add(
+                self.free_frames
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<usize>()),
+            )
+            .saturating_add(
+                self.root_undo
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<CommandRootUndo<G>>()),
+            )
+            .saturating_add(
+                self.returned_roots
+                    .as_ref()
+                    .map_or(0, CommandStateRoots::retained_bytes),
+            )
+    }
+
     #[cfg(test)]
     fn live_frame_count(&self) -> usize {
         self.frames.iter().filter(|frame| frame.serial != 0).count()
@@ -352,6 +376,10 @@ impl<G> CommandGenerationOwner<G> {
 
     pub(crate) fn addresses_generation(&self, generation: &GenerationOwner<G>) -> bool {
         self.generation.same_generation(generation)
+    }
+
+    fn checkpoint_owner_id(&self) -> tex_state::CheckpointOwnerId {
+        self.generation.checkpoint_owner_id()
     }
 
     pub(crate) fn resolve(&self, cursor: CommandSnapshotCursor) -> Option<AttemptMark> {
@@ -664,6 +692,8 @@ pub struct CommandSummary<G, Owner = CommandGenerationOwner<G>> {
     cursor: CommandSnapshotCursor,
     profile_fingerprint: u64,
     root_source_anchor: Option<u64>,
+    reachable_state_identity_root: Option<u64>,
+    retained_owner_bytes: usize,
     brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -674,6 +704,8 @@ impl<G, Owner: Clone> Clone for CommandSummary<G, Owner> {
             cursor: self.cursor,
             profile_fingerprint: self.profile_fingerprint,
             root_source_anchor: self.root_source_anchor,
+            reachable_state_identity_root: self.reachable_state_identity_root,
+            retained_owner_bytes: self.retained_owner_bytes,
             brand: PhantomData,
         }
     }
@@ -698,12 +730,16 @@ impl<G, Owner> CommandSummary<G, Owner> {
         cursor: CommandSnapshotCursor,
         profile_fingerprint: u64,
         root_source_anchor: Option<u64>,
+        reachable_state_identity_root: Option<u64>,
+        retained_owner_bytes: usize,
     ) -> Self {
         Self {
             generation,
             cursor,
             profile_fingerprint,
             root_source_anchor,
+            reachable_state_identity_root,
+            retained_owner_bytes,
             brand: PhantomData,
         }
     }
@@ -723,6 +759,20 @@ impl<G, Owner> CommandSummary<G, Owner> {
         self.root_source_anchor
     }
 
+    /// Returns the command owner's maintained future-state root, if the
+    /// command ownership lineage supports the complete identity contract.
+    #[must_use]
+    pub const fn reachable_state_identity_root(&self) -> Option<u64> {
+        self.reachable_state_identity_root
+    }
+
+    /// Returns the authoritative command-generation charge captured without
+    /// traversing semantic payloads.
+    #[must_use]
+    pub const fn retained_owner_bytes(&self) -> usize {
+        self.retained_owner_bytes
+    }
+
     #[must_use]
     pub(crate) const fn generation(&self) -> &Owner {
         &self.generation
@@ -730,13 +780,32 @@ impl<G, Owner> CommandSummary<G, Owner> {
 
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn into_parts(self) -> (Owner, CommandSnapshotCursor, u64, Option<u64>) {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Owner,
+        CommandSnapshotCursor,
+        u64,
+        Option<u64>,
+        Option<u64>,
+        usize,
+    ) {
         (
             self.generation,
             self.cursor,
             self.profile_fingerprint,
             self.root_source_anchor,
+            self.reachable_state_identity_root,
+            self.retained_owner_bytes,
         )
+    }
+}
+
+impl<G> CommandSummary<G> {
+    /// Returns the coarse generation id used only to deduplicate accounting.
+    #[must_use]
+    pub fn checkpoint_owner_id(&self) -> tex_state::CheckpointOwnerId {
+        self.generation.checkpoint_owner_id()
     }
 }
 
@@ -1242,11 +1311,17 @@ impl<G> CommandState<G> {
             };
             Some(source.cursor.next_physical_offset)
         });
+        let retained_owner_bytes = self
+            .roots
+            .retained_bytes()
+            .saturating_add(self.timeline.borrow().retained_bytes());
         Ok(CommandSummary::new(
             CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
             cursor,
             self.checkpoint_profile_fingerprint().get(),
             root_source_anchor,
+            None,
+            retained_owner_bytes,
         ))
     }
 

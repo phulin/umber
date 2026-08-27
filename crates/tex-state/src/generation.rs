@@ -69,6 +69,15 @@ pub struct GenerationOwner<G> {
     generation: Arc<RwLock<Generation<G>>>,
 }
 
+/// Process-local identity of one coarse retained-generation owner.
+///
+/// This value exists solely for checkpoint retention accounting. It is never
+/// semantic identity, never serialized, and never used to admit a runtime
+/// handle. Keeping construction beside the authoritative owner prevents
+/// downstream accounting from inventing ids from checkpoint cursors.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CheckpointOwnerId(usize);
+
 impl<G> Clone for GenerationOwner<G> {
     fn clone(&self) -> Self {
         Self {
@@ -93,6 +102,12 @@ impl<G> GenerationOwner<G> {
     #[must_use]
     pub fn same_generation(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.generation, &other.generation)
+    }
+
+    /// Returns the opaque process-local accounting identity of this owner.
+    #[must_use]
+    pub fn checkpoint_owner_id(&self) -> CheckpointOwnerId {
+        CheckpointOwnerId(Arc::as_ptr(&self.generation) as usize)
     }
 
     pub(crate) fn generation(&self) -> RwLockReadGuard<'_, Generation<G>> {
@@ -128,6 +143,12 @@ impl<G> GenerationOwner<G> {
                 .retire()),
             Err(generation) => Err(Self { generation }),
         }
+    }
+}
+
+impl CheckpointOwnerId {
+    pub(crate) fn from_owner<T>(owner: &T) -> Self {
+        Self(std::ptr::from_ref(owner).cast::<()>() as usize)
     }
 }
 

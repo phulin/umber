@@ -10,7 +10,7 @@ fn page_source(width: usize) -> String {
 
 fn session(revision: RevisionId, source: &str) -> Session<'static> {
     let store = Box::leak(Box::new(new_reachability_store()));
-    Session::start(store, "incremental-test", revision, source, 4096).expect("session starts")
+    Session::start(store, "incremental-test", revision, source, usize::MAX).expect("session starts")
 }
 
 fn edit(session: &Session, range: std::ops::Range<usize>, text: &str) -> Edit {
@@ -381,16 +381,26 @@ fn semantic_edit_matches_a_fresh_cold_execution() {
 }
 
 #[test]
-fn no_op_edit_reports_detached_history_convergence() {
+fn absent_complete_identity_fails_closed_for_no_op_convergence() {
     let source = page_source(12);
     let mut session = session(RevisionId::new(1), &source);
     session.cold().expect("baseline");
     let output = session
         .advance(RevisionId::new(2), edit(&session, 0..0, ""))
         .expect("no-op revision");
-    assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
-    assert!(output.reuse.convergence_boundary.is_some());
+    assert_eq!(
+        output.reuse.same_history_stop,
+        SameHistoryStop::HashesDiverged
+    );
+    assert!(output.reuse.convergence_boundary.is_none());
     assert!(output.reuse.same_history_attempts > 0);
+    assert!(
+        session
+            .history()
+            .iter()
+            .all(|record| record.reachable_state_identity().is_none()),
+        "a partial component projection must not become convergence identity"
+    );
 }
 
 #[test]
@@ -431,8 +441,11 @@ fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
     let output = session
         .advance(RevisionId::new(2), edit(&session, 0..0, ""))
         .expect("no-op revision");
-    assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
-    assert!(output.reuse.convergence_boundary.is_some());
+    assert_eq!(
+        output.reuse.same_history_stop,
+        SameHistoryStop::HashesDiverged
+    );
+    assert!(output.reuse.convergence_boundary.is_none());
     assert_eq!(
         session
             .history()
@@ -826,8 +839,54 @@ fn history_budget_keeps_job_start_and_newest_observation() {
     );
     assert_eq!(
         session.current_retained_checkpoint_count(),
-        session.history().len(),
-        "pruning releases every unnamed checkpoint root"
+        1,
+        "only protected JobStart remains restartable; newest evidence is detached"
+    );
+    assert!(session.retention_metrics().is_some_and(|retention| {
+        retention.protected_overage_bytes > 0
+            && retention.checkpoint_root_bytes >= size_of::<BoundaryRecord>() * 2
+    }));
+}
+
+#[test]
+fn retention_charges_one_shared_owner_and_distinguishes_detached_evidence() {
+    let mut source = String::new();
+    for width in 1..=8 {
+        source.push_str(&format!(
+            "\\shipout\\vbox{{\\hrule height1pt width{width}pt}}"
+        ));
+    }
+    source.push_str("\\end");
+    let mut session = Session::start(
+        Box::leak(Box::new(new_reachability_store())),
+        "retention-dedup",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session");
+    session.cold().expect("cold run");
+    let roots = session.current_retained_checkpoint_count();
+    assert!(roots > 4, "fixture must retain several restart roots");
+    let retention = session.retention_metrics().expect("accepted retention");
+    assert_eq!(
+        retention.checkpoint_root_bytes,
+        retention
+            .checkpoint_shared_owner_bytes
+            .saturating_add(retention.checkpoint_metadata_bytes)
+            .saturating_add(retention.detached_boundary_bytes)
+    );
+    assert!(retention.checkpoint_shared_owner_bytes > 0);
+    assert!(retention.detached_boundary_bytes > 0);
+    assert_eq!(retention.checkpoint_metadata_bytes % roots, 0);
+    assert_ne!(
+        retention.checkpoint_root_bytes,
+        retention
+            .checkpoint_shared_owner_bytes
+            .saturating_mul(roots)
+            .saturating_add(retention.checkpoint_metadata_bytes)
+            .saturating_add(retention.detached_boundary_bytes),
+        "the coarse generation owner must not be charged once per restart root"
     );
 }
 

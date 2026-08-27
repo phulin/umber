@@ -17,7 +17,7 @@ impl PageNodeSequence {
     pub(super) fn into_nodes(self) -> Vec<Node> {
         self.nodes
     }
-    #[cfg(test)]
+
     pub(super) fn retained_bytes(&self) -> usize {
         self.nodes
             .capacity()

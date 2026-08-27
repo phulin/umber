@@ -48,6 +48,7 @@ pub struct HyphenationCapacityError {
 #[derive(Debug)]
 pub struct HyphenationTable {
     patterns: PatternOwner,
+    pattern_retained_bytes: usize,
     runtime: HyphenationRuntime,
     dependency_fingerprints: OnceLock<BTreeMap<(u8, u8), u64>>,
     /// Runtime `trie_size`. This is configuration, not format-image state.
@@ -144,6 +145,7 @@ impl HyphenationTable {
     pub fn new() -> Self {
         Self {
             patterns: PatternOwner::Building(BTreeMap::new()),
+            pattern_retained_bytes: 0,
             runtime: HyphenationRuntime::default(),
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: default_trie_capacity(),
@@ -169,6 +171,22 @@ impl HyphenationTable {
 
     pub(crate) fn close_patterns(&mut self) {
         self.patterns.initialize();
+    }
+
+    pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.pattern_retained_bytes)
+            .saturating_add(
+                self.runtime.exception_occupied.saturating_mul(
+                    std::mem::size_of::<String>() + std::mem::size_of::<Vec<usize>>(),
+                ),
+            )
+            .saturating_add(
+                self.runtime
+                    .hyphen_codes
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(u8, BTreeMap<char, char>)>()),
+            )
     }
 
     pub(crate) fn validate_frozen(&self) -> Result<(), String> {
@@ -262,6 +280,7 @@ impl HyphenationTable {
             });
         }
         self.dependency_fingerprints = OnceLock::new();
+        let new_language = !self.patterns.languages().contains_key(&language);
         let nodes = self
             .patterns
             .building_languages()
@@ -273,7 +292,19 @@ impl HyphenationTable {
             node = edge_or_insert(nodes, node, ch);
         }
         let duplicate = !nodes[node].values.is_empty();
+        let old_value_bytes = nodes[node].values.len();
         nodes[node].values = pattern.values;
+        let missing_edges = missing_nodes.saturating_sub(usize::from(new_language));
+        self.pattern_retained_bytes = self
+            .pattern_retained_bytes
+            .saturating_add(
+                usize::from(new_language)
+                    .saturating_mul(std::mem::size_of::<(u8, Vec<TrieNode>)>()),
+            )
+            .saturating_add(missing_nodes.saturating_mul(std::mem::size_of::<TrieNode>()))
+            .saturating_add(missing_edges.saturating_mul(std::mem::size_of::<(char, usize)>()))
+            .saturating_sub(old_value_bytes)
+            .saturating_add(nodes[node].values.len());
         Ok(duplicate)
     }
 

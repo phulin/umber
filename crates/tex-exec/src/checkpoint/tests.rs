@@ -6,11 +6,182 @@ use tex_state::env::AssignmentScope;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TokenWord};
 
-use super::{CheckpointRestoreError, EngineBoundary, EngineCheckpoint};
+use super::{
+    CheckpointOwnerFamily, CheckpointRestoreError, EngineBoundary, EngineCheckpoint,
+    ReachableStateRoots,
+};
 use crate::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, ExecutionBudgetCounters, Mode,
     ModeNest,
 };
+
+#[test]
+fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        modes
+            .current_list_mutation()
+            .push(tex_state::node::Node::Penalty(17));
+        crate::mode::reset_semantic_fingerprint_calls_for_test();
+
+        let ordinary = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::JobStart,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("ordinary checkpoint");
+        assert_eq!(ordinary.reachable_state_identity(), None);
+        assert_eq!(crate::mode::semantic_fingerprint_calls_for_test(), 0);
+
+        let requested = EngineCheckpoint::capture_checkpoint_with_identity_demand(
+            EngineBoundary::OuterParagraphEnd,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+            true,
+        )
+        .expect("requested checkpoint");
+        assert_eq!(requested.reachable_state_identity(), None);
+        assert_eq!(
+            crate::mode::semantic_fingerprint_calls_for_test(),
+            0,
+            "missing component roots fail closed without a payload traversal"
+        );
+    });
+}
+
+#[test]
+fn complete_identity_is_versioned_and_every_component_is_semantic() {
+    let roots = ReachableStateRoots {
+        command: Some(1),
+        mode: Some(2),
+        page: Some(3),
+        world: Some(4),
+        hyphenation: Some(5),
+        pdf: Some(6),
+        dependency: Some(7),
+        source: Some(8),
+        font: Some(9),
+        core: Some(10),
+    };
+    let baseline = roots.complete().expect("all component roots are present");
+    assert_eq!(
+        baseline.schema_version(),
+        super::REACHABLE_STATE_IDENTITY_SCHEMA_VERSION
+    );
+    for component in 0..10 {
+        let mut changed = roots;
+        let root = match component {
+            0 => &mut changed.command,
+            1 => &mut changed.mode,
+            2 => &mut changed.page,
+            3 => &mut changed.world,
+            4 => &mut changed.hyphenation,
+            5 => &mut changed.pdf,
+            6 => &mut changed.dependency,
+            7 => &mut changed.source,
+            8 => &mut changed.font,
+            9 => &mut changed.core,
+            _ => unreachable!(),
+        };
+        *root = Some(root.expect("root exists") ^ 0x8000_0000_0000_0000);
+        assert_ne!(
+            changed.complete(),
+            Some(baseline),
+            "component {component} must perturb complete identity"
+        );
+    }
+    assert_eq!(
+        ReachableStateRoots { pdf: None, ..roots }.complete(),
+        None,
+        "one missing root prevents a partial identity"
+    );
+}
+
+#[test]
+fn retention_descriptor_covers_every_aggregate_owner_family() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        let checkpoint = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::JobStart,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("checkpoint");
+        let retention = checkpoint.retention();
+        assert!(
+            retention.command_bytes() > std::mem::size_of_val(&checkpoint.command),
+            "command charge must name its owner storage, not its summary handle"
+        );
+        assert!(
+            retention.mode_bytes() > std::mem::size_of_val(&checkpoint.modes),
+            "mode charge must name its owner storage, not its checkpoint handle"
+        );
+        for (component, bytes) in [
+            ("command", retention.command_bytes()),
+            ("mode", retention.mode_bytes()),
+            ("page", retention.page_bytes()),
+            ("World", retention.world_bytes()),
+            ("hyphenation", retention.hyphenation_bytes()),
+            ("PDF", retention.pdf_bytes()),
+            ("dependency", retention.dependency_bytes()),
+            ("source/font", retention.source_font_bytes()),
+            ("core", retention.core_bytes()),
+            ("counter", retention.execution_counter_bytes()),
+        ] {
+            assert!(bytes > 0, "{component} retention charge is absent");
+        }
+        assert!(
+            retention.checkpoint_metadata_bytes() >= retention.execution_counter_bytes(),
+            "fixed checkpoint metadata includes its execution counters"
+        );
+
+        let later = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::OuterParagraphEnd,
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("later checkpoint");
+        let owner = |retention: super::CheckpointRetention, family| {
+            retention
+                .shared_owners()
+                .iter()
+                .find(|charge| charge.family() == family)
+                .expect("every family publishes one charge")
+                .owner()
+        };
+        for family in [
+            CheckpointOwnerFamily::Command,
+            CheckpointOwnerFamily::Mode,
+            CheckpointOwnerFamily::Page,
+            CheckpointOwnerFamily::World,
+            CheckpointOwnerFamily::Hyphenation,
+            CheckpointOwnerFamily::Pdf,
+            CheckpointOwnerFamily::Dependency,
+            CheckpointOwnerFamily::SourceFont,
+        ] {
+            assert_eq!(
+                owner(retention, family),
+                owner(later.retention(), family),
+                "shared {family:?} owner must keep one accounting identity"
+            );
+        }
+        assert_ne!(
+            owner(retention, CheckpointOwnerFamily::Core),
+            owner(later.retention(), CheckpointOwnerFamily::Core),
+            "each exact checkpoint core bank is a distinct charged owner"
+        );
+    });
+}
 
 #[test]
 fn retained_checkpoint_restores_command_and_mode_token_roots() {
@@ -154,7 +325,7 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
             .expect("candidate count");
         let mut command = CommandState::default();
         let mut modes = ModeNest::new();
-        let mode_hash_before = modes.summary().semantic_fingerprint(universe);
+        let mode_fingerprint_before = modes.summary().semantic_fingerprint(universe);
 
         assert!(matches!(
             checkpoint.restore_state(&mut command, &mut modes, universe),
@@ -164,7 +335,7 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
         ));
         assert_eq!(
             modes.summary().semantic_fingerprint(universe),
-            mode_hash_before,
+            mode_fingerprint_before,
             "foreign-timeline validation must precede mode mutation"
         );
         assert_eq!(

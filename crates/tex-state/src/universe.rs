@@ -240,6 +240,146 @@ pub struct RuntimeCheckpoint<G> {
     interaction_mode: InteractionMode,
     prepared_mag: Option<i32>,
     engine_usage: crate::command_context::EngineUsageRuntime,
+    identity_roots: RuntimeCheckpointIdentityRoots,
+    retention: RuntimeCheckpointRetention,
+}
+
+/// Owner-published semantic roots for the state-layer checkpoint families.
+///
+/// Every field is optional independently so aggregate composition can fail
+/// closed while an ownership branch is being integrated. The aggregate layer
+/// cannot construct this value from cursors, owner ids, or payload scans.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeCheckpointIdentityRoots {
+    page: Option<u64>,
+    world: Option<u64>,
+    hyphenation: Option<u64>,
+    pdf: Option<u64>,
+    dependency: Option<u64>,
+    source: Option<u64>,
+    font: Option<u64>,
+    core: Option<u64>,
+}
+
+impl RuntimeCheckpointIdentityRoots {
+    #[must_use]
+    pub const fn page(self) -> Option<u64> {
+        self.page
+    }
+    #[must_use]
+    pub const fn world(self) -> Option<u64> {
+        self.world
+    }
+    #[must_use]
+    pub const fn hyphenation(self) -> Option<u64> {
+        self.hyphenation
+    }
+    #[must_use]
+    pub const fn pdf(self) -> Option<u64> {
+        self.pdf
+    }
+    #[must_use]
+    pub const fn dependency(self) -> Option<u64> {
+        self.dependency
+    }
+    #[must_use]
+    pub const fn source(self) -> Option<u64> {
+        self.source
+    }
+    #[must_use]
+    pub const fn font(self) -> Option<u64> {
+        self.font
+    }
+    #[must_use]
+    pub const fn core(self) -> Option<u64> {
+        self.core
+    }
+}
+
+/// Allocation-independent logical retained-byte charge for the runtime-owned
+/// component families captured by one aggregate checkpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeCheckpointRetention {
+    core_owner: crate::CheckpointOwnerId,
+    page_owner: crate::CheckpointOwnerId,
+    world_owner: crate::CheckpointOwnerId,
+    hyphenation_owner: crate::CheckpointOwnerId,
+    pdf_owner: crate::CheckpointOwnerId,
+    dependency_owner: crate::CheckpointOwnerId,
+    source_font_owner: crate::CheckpointOwnerId,
+    core: usize,
+    page: usize,
+    world: usize,
+    hyphenation: usize,
+    pdf: usize,
+    dependency: usize,
+    source_font: usize,
+}
+
+impl RuntimeCheckpointRetention {
+    #[must_use]
+    pub const fn core_owner(self) -> crate::CheckpointOwnerId {
+        self.core_owner
+    }
+    #[must_use]
+    pub const fn page_owner(self) -> crate::CheckpointOwnerId {
+        self.page_owner
+    }
+    #[must_use]
+    pub const fn world_owner(self) -> crate::CheckpointOwnerId {
+        self.world_owner
+    }
+    #[must_use]
+    pub const fn hyphenation_owner(self) -> crate::CheckpointOwnerId {
+        self.hyphenation_owner
+    }
+    #[must_use]
+    pub const fn pdf_owner(self) -> crate::CheckpointOwnerId {
+        self.pdf_owner
+    }
+    #[must_use]
+    pub const fn dependency_owner(self) -> crate::CheckpointOwnerId {
+        self.dependency_owner
+    }
+    #[must_use]
+    pub const fn source_font_owner(self) -> crate::CheckpointOwnerId {
+        self.source_font_owner
+    }
+
+    #[must_use]
+    pub const fn core_bytes(self) -> usize {
+        self.core
+    }
+
+    #[must_use]
+    pub const fn page_bytes(self) -> usize {
+        self.page
+    }
+
+    #[must_use]
+    pub const fn world_bytes(self) -> usize {
+        self.world
+    }
+
+    #[must_use]
+    pub const fn hyphenation_bytes(self) -> usize {
+        self.hyphenation
+    }
+
+    #[must_use]
+    pub const fn pdf_bytes(self) -> usize {
+        self.pdf
+    }
+
+    #[must_use]
+    pub const fn dependency_bytes(self) -> usize {
+        self.dependency
+    }
+
+    #[must_use]
+    pub const fn source_font_bytes(self) -> usize {
+        self.source_font
+    }
 }
 
 impl<G> Clone for RuntimeCheckpoint<G> {
@@ -257,6 +397,8 @@ impl<G> Clone for RuntimeCheckpoint<G> {
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
             engine_usage: self.engine_usage.clone(),
+            identity_roots: self.identity_roots,
+            retention: self.retention,
         }
     }
 }
@@ -265,6 +407,16 @@ impl<G> RuntimeCheckpoint<G> {
     #[doc(hidden)]
     pub fn pdf_history_position(&self) -> (u64, u64) {
         self.pdf.history_position()
+    }
+
+    #[must_use]
+    pub const fn retention(&self) -> RuntimeCheckpointRetention {
+        self.retention
+    }
+
+    #[must_use]
+    pub const fn reachable_state_identity_roots(&self) -> RuntimeCheckpointIdentityRoots {
+        self.identity_roots
     }
 }
 
@@ -2374,6 +2526,20 @@ impl<G> Universe<G> {
         let font_mark = self.fonts.watermark();
         let font_survives = |font| self.fonts.contains_at(font_mark, font);
         let live_core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        let core_retained_bytes = live_core
+            .checkpoint_retained_bytes()
+            .saturating_add(
+                self.primitive_registry
+                    .names
+                    .len()
+                    .saturating_mul(std::mem::size_of::<String>()),
+            )
+            .saturating_add(
+                self.primitive_registry
+                    .meanings
+                    .len()
+                    .saturating_mul(std::mem::size_of::<MeaningWord<G>>()),
+            );
         let font_roots_valid = self
             .primitive_registry
             .meanings
@@ -2399,7 +2565,27 @@ impl<G> Universe<G> {
             (),
         );
         let owner = core.generation_owner();
+        let core_owner = owner.checkpoint_owner_id();
         let generation = core.generation_cursor();
+        let source_mark = self.sources.watermark();
+        let retention = RuntimeCheckpointRetention {
+            core_owner,
+            page_owner: crate::CheckpointOwnerId::from_owner(&self.page),
+            world_owner: crate::CheckpointOwnerId::from_owner(&self.world),
+            hyphenation_owner: crate::CheckpointOwnerId::from_owner(&self.hyphenation),
+            pdf_owner: crate::CheckpointOwnerId::from_owner(&self.pdf),
+            dependency_owner: crate::CheckpointOwnerId::from_owner(&self.dependencies),
+            source_font_owner: crate::CheckpointOwnerId::from_owner(&self.sources),
+            core: core_retained_bytes,
+            page: self.page.retained_bytes(),
+            world: self.world.checkpoint_retained_bytes(),
+            hyphenation: self.hyphenation.checkpoint_retained_bytes(),
+            pdf: self.pdf.checkpoint_retained_bytes(),
+            dependency: self.dependencies.checkpoint_retained_bytes(),
+            source_font: source_mark
+                .checkpoint_retained_bytes()
+                .saturating_add(font_mark.checkpoint_retained_bytes()),
+        };
         let state_slot = Rc::new(CheckpointStateSlot {
             bundle: RefCell::new(Some(CheckpointStateBundle {
                 core,
@@ -2420,12 +2606,17 @@ impl<G> Universe<G> {
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
             fonts: font_mark,
-            sources: self.sources.watermark(),
+            sources: source_mark,
             hyphenation: self.hyphenation.checkpoint(),
             dependencies: self.dependencies.snapshot_tracker(),
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
             engine_usage: self.engine_usage.clone(),
+            // Component owners publish roots here. No aggregate fallback is
+            // allowed: missing hooks remain explicit until their mutation
+            // journals maintain a complete canonical semantic root.
+            identity_roots: RuntimeCheckpointIdentityRoots::default(),
+            retention,
         };
         Ok(checkpoint)
     }

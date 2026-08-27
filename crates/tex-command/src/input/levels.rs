@@ -616,6 +616,29 @@ impl<T: Hash> Hash for SegmentedReplayLane<T> {
 }
 
 impl<T> SegmentedReplayLane<T> {
+    fn retained_bytes(&self) -> usize {
+        let segment_bytes = self
+            .active
+            .len()
+            .saturating_add(self.spare.len())
+            .saturating_mul(
+                std::mem::size_of::<ReplaySegment<T>>()
+                    .saturating_add(REPLAY_SEGMENT_ITEMS.saturating_mul(std::mem::size_of::<T>())),
+            );
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.active
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ActiveReplaySegment<T>>()),
+            )
+            .saturating_add(
+                self.spare
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Arc<ReplaySegment<T>>>()),
+            )
+            .saturating_add(segment_bytes)
+    }
+
     fn mark(&self) -> ReplayLaneMark {
         ReplayLaneMark {
             segments: self.active.len() as u32,
@@ -802,6 +825,17 @@ impl<G> Hash for ReplayLane<G> {
 }
 
 impl<G> ReplayLane<G> {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ReplayEntry>()),
+            )
+            .saturating_add(self.words.retained_bytes())
+            .saturating_add(self.provenance.retained_bytes())
+    }
+
     fn push_words(
         &mut self,
         tokens: impl IntoIterator<Item = BackedUpToken>,

@@ -58,8 +58,9 @@ pub use canonical_step::{
     TerminalRevisionReceipt,
 };
 pub use checkpoint::{
-    CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary,
-    EngineCheckpoint,
+    CheckpointOwnerCharge, CheckpointOwnerFamily, CheckpointOwnerKey, CheckpointRestoreError,
+    CheckpointRetention, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary,
+    EngineCheckpoint, REACHABLE_STATE_IDENTITY_SCHEMA_VERSION, ReachableStateIdentity,
 };
 pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,

@@ -188,6 +188,20 @@ impl<T> LogicalStack<T> {
     pub(crate) fn as_slice(&self) -> &[T] {
         &self.rows[..self.top]
     }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.rows
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<T>()),
+            )
+            .saturating_add(
+                self.undo
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ElementUndo<T>>()),
+            )
+    }
 }
 
 #[cfg(test)]

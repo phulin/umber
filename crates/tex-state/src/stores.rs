@@ -27,6 +27,17 @@ pub(crate) struct StateCore<G> {
 }
 
 impl<G> StateCore<G> {
+    pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
+        let (variable, dynamic) = self.memory_accounting().words(false);
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                variable
+                    .saturating_add(dynamic)
+                    .saturating_mul(std::mem::size_of::<usize>()),
+            )
+            .saturating_add(self.state.journal_retained_bytes())
+    }
+
     /// Materializes one exact named-boundary bank. Candidate construction
     /// later moves this bank out of its checkpoint slot instead of copying it.
     pub(crate) fn checkpoint_copy(&self) -> Self {

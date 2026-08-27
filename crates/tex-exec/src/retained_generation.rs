@@ -109,6 +109,13 @@ impl<G> RetainedCheckpointStore<'_, G> {
     pub fn retain(&mut self, checkpoint: EngineCheckpoint<G>) -> RetainedCheckpointKey {
         self.checkpoints.retain(self.generation, checkpoint)
     }
+
+    /// Releases one restart root during publication-time budget enforcement.
+    /// Detached boundary evidence is owned by the incremental layer and is
+    /// intentionally unaffected.
+    pub fn release(&mut self, key: RetainedCheckpointKey) -> Result<(), RetainedEngineAccessError> {
+        self.checkpoints.release_key(self.generation, key)
+    }
 }
 
 /// Private owner-relative identity of one named retained checkpoint.
@@ -561,6 +568,16 @@ impl<G> RetainedCheckpointSlots<G> {
         row.checkpoint
             .as_ref()
             .ok_or(RetainedEngineAccessError::StaleCheckpoint)
+    }
+
+    fn release_key(
+        &mut self,
+        generation: u64,
+        key: RetainedCheckpointKey,
+    ) -> Result<(), RetainedEngineAccessError> {
+        self.get(generation, &key)?;
+        self.release(key.slot);
+        Ok(())
     }
 
     fn prune(

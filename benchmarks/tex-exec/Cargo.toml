@@ -33,6 +33,10 @@ path = "src/bin/aggregate_checkpoint_baseline.rs"
 name = "core_checkpoint_gate"
 path = "src/bin/core_checkpoint_gate.rs"
 
+[[bin]]
+name = "checkpoint_identity_gate"
+path = "src/bin/checkpoint_identity_gate.rs"
+
 [[bench]]
 name = "shipout"
 harness = false

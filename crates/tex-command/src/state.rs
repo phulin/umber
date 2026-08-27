@@ -164,6 +164,68 @@ impl<G> Clone for CommandStateRoots<G> {
     }
 }
 
+impl<G> CommandStateRoots<G> {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.input.retained_bytes())
+            .saturating_add(self.parameters.activations.retained_bytes())
+            .saturating_add(self.conditions.frames.retained_bytes())
+            .saturating_add(self.alignment.align_stack.retained_bytes())
+            .saturating_add(self.alignment.suspended.retained_bytes())
+            .saturating_add(
+                self.expansion
+                    .pending_diagnostics
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                self.expansion
+                    .observed_dependencies
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                self.expansion
+                    .semantic_barriers
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                self.replay_completions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<InputLevelId>()),
+            )
+            .saturating_add(
+                self.pending_replay_completions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<InputLevelId>()),
+            )
+            .saturating_add(
+                self.semantic_diagnostics
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<CommandSemanticDiagnostic>()),
+            )
+            .saturating_add(self.group_payloads.retained_bytes())
+            .saturating_add(self.aftergroup_payloads.retained_bytes())
+            .saturating_add(self.named_token_list_pushes.capacity().saturating_mul(
+                std::mem::size_of::<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>(
+                ),
+            ))
+            .saturating_add(
+                self.transient
+                    .builders
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<LiveTokenBuilder>()),
+            )
+            .saturating_add(
+                self.transient
+                    .rollback_roots
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+    }
+}
+
 /// Complete future-relevant state owned by the command machine.
 ///
 /// Named checkpoints retain explicitly forked immutable aggregate roots. The

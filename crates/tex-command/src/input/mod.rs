@@ -112,6 +112,24 @@ impl<G> Default for InputState<G> {
     }
 }
 
+impl<G> InputState<G> {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.levels.retained_bytes())
+            .saturating_add(self.replay.retained_bytes())
+            .saturating_add(
+                self.terminal_context_line
+                    .as_ref()
+                    .map_or(0, String::capacity),
+            )
+            .saturating_add(
+                self.pending_sources
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(u32, RegisteredSource)>()),
+            )
+    }
+}
+
 struct ContextTail {
     chars: VecDeque<char>,
     total: usize,

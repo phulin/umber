@@ -162,6 +162,25 @@ pub(crate) struct FontStoreMark {
     identities: IdentityMark,
 }
 
+impl FontStoreMark {
+    pub(crate) fn checkpoint_retained_bytes(self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add((self.len as usize).saturating_mul(std::mem::size_of::<LoadedFont>()))
+            .saturating_add(
+                self.non_parameter_font_info_words
+                    .saturating_mul(std::mem::size_of::<Scaled>()),
+            )
+            .saturating_add(
+                (self.identifier_writes_len as usize)
+                    .saturating_mul(std::mem::size_of::<(FontId, Option<SymbolId>)>()),
+            )
+            .saturating_add(
+                (self.expansion_writes_len as usize)
+                    .saturating_mul(std::mem::size_of::<(FontId, Option<FontExpansion>)>()),
+            )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct FontKey {
     name: String,
