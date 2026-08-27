@@ -1684,9 +1684,7 @@ impl ModeNest {
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
         let storage = self.storage.borrow_mut();
-        if storage.levels.get(index).is_none() {
-            return None;
-        }
+        storage.levels.get(index)?;
         let (levels, journal) = std::cell::RefMut::map_split(storage, |storage| {
             (&mut storage.levels, &mut storage.journal)
         });

@@ -185,7 +185,9 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
     page.restore_checkpoint_mark(mark);
     assert_eq!(hash_page(&page), expected);
     assert_eq!(
-        page.page_insertion(7).unwrap().height(),
+        page.page_insertion(7)
+            .expect("restored insertion class")
+            .height(),
         Scaled::from_raw(5)
     );
     assert_eq!(page.page_insertion(8), None);
