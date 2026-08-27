@@ -2,7 +2,7 @@
 
 use tex_state::interner::InternerBudget;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
-use tex_state::{GenerationBrand, Universe};
+use tex_state::{CommandContext, GenerationBrand, Universe};
 
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::{CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState};
@@ -36,17 +36,15 @@ pub(crate) fn push<G>(command: &mut CommandState<G>, tokens: impl IntoIterator<I
     );
 }
 
-pub(crate) fn processor<'a, G>(
-    command: &'a mut CommandState<G>,
-    universe: &'a mut Universe<G>,
-    capabilities: &'a mut CommandHostCapabilities,
-    diagnostic_effects: &'a mut tex_state::diagnostic::DiagnosticEffects,
-) -> CommandProcessor<'a, 'a, G> {
+pub(crate) fn processor<'episode, 'admission, G>(
+    command: &'episode mut CommandState<G>,
+    context: &'episode mut CommandContext<'admission, G>,
+    capabilities: &'episode mut CommandHostCapabilities,
+    diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
+) -> CommandProcessor<'episode, 'admission, G> {
     CommandProcessor::new(
         command,
-        universe
-            .command_context()
-            .expect("admitted command context"),
+        context,
         CommandHostContext::new(capabilities),
         diagnostic_effects,
     )

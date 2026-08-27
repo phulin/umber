@@ -553,7 +553,7 @@ pub(in crate::main_control) fn apply<G>(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                set_math_char(ch, origin, stores.take(), modes, command)?;
+                set_math_char(ch, origin, stores, modes, command)?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
@@ -2802,12 +2802,12 @@ pub(in crate::main_control) fn apply<G>(
                     command.capabilities,
                     command.observations,
                     command.diagnostic_effects,
-                    stores.take(),
+                    stores,
                 );
                 let result = processor
                     .finish_selected_output_routine()
                     .map_err(command_error);
-                stores.restore(processor.into_context());
+                processor.retire();
                 result?
             };
             if unbalanced {
@@ -3592,11 +3592,11 @@ pub(in crate::main_control) fn apply<G>(
                     command.fuel,
                 )?;
             }
-            let mut processor = command.processor(stores.take());
+            let mut processor = command.processor(stores);
             let finished = processor
                 .finish_alignment_cell(alignment)
                 .map_err(command_error);
-            stores.restore(processor.into_context());
+            processor.retire();
             let finished = finished?;
             begin_next_replay_alignment_cell(
                 alignment,
@@ -3723,7 +3723,7 @@ pub(in crate::main_control) fn apply<G>(
                 if !matches!(cat, Catcode::Space) {
                     // TeX82 §1154's `mmode+letter,mmode+other_char:
                     // set_math_char(ho(math_code(cur_chr)))`.
-                    set_math_char(ch, origin, stores.take(), modes, command)?;
+                    set_math_char(ch, origin, stores, modes, command)?;
                 }
                 return Ok(ReplayStep::Continue);
             }

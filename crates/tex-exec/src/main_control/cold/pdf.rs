@@ -719,7 +719,7 @@ pub(in crate::main_control) fn replay_text<G>(
     // cursor. This also gives a failing nested form replay an exact command
     // rollback boundary independent of the artifact/resource transaction.
     let expanded = {
-        let mut processor = command.processor(stores.take());
+        let mut processor = command.processor(stores);
         let result = processor
             .expand_output_replay(tokens)
             .map_err(command_error);
@@ -729,7 +729,7 @@ pub(in crate::main_control) fn replay_text<G>(
                 .into_iter()
                 .map(PendingDiagnostic::Command),
         );
-        stores.restore(processor.into_context());
+        processor.retire();
         result
     };
     let expanded = expanded?;
@@ -774,7 +774,7 @@ pub(in crate::main_control) fn replay_write<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
     let expanded = {
-        let mut processor = command.processor(stores.take());
+        let mut processor = command.processor(stores);
         let result = processor
             .expand_durable_write_text(tokens)
             .map_err(command_error);
@@ -784,7 +784,7 @@ pub(in crate::main_control) fn replay_write<G>(
                 .into_iter()
                 .map(PendingDiagnostic::Command),
         );
-        stores.restore(processor.into_context());
+        processor.retire();
         result
     };
     let expanded = expanded?;
@@ -1604,7 +1604,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                     .admit_shipout_tokens(tokens)
                     .expect("deferred write fits admitted durable storage");
                 let mut processor =
-                    command.processor_with_diagnostic_effects(context, diagnostic_effects);
+                    command.processor_with_diagnostic_effects(&mut context, diagnostic_effects);
                 processor.set_command_trace_mode_prefix(mode_prefix);
                 let result = processor
                     .expand_durable_write_text(durable)
@@ -1615,7 +1615,8 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                     .into_iter()
                     .map(PendingDiagnostic::Command)
                     .collect();
-                drop(processor.into_context());
+                processor.retire();
+                drop(context);
                 // TeX82 §1370 performs expansion and then writes the
                 // resulting token list on one live `write_out` call stack.
                 // Publish §367 traces and scanner diagnostics into the

@@ -41,9 +41,10 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -72,9 +73,10 @@ fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
         crate::test_harness::push(&mut command, [other(' '), other('='), other('7')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -90,9 +92,10 @@ fn failed_keyword_replays_the_matched_prefix_before_the_offender() {
         crate::test_harness::push(&mut command, [letter('e'), letter('x'), other('!')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -129,9 +132,10 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -173,9 +177,10 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -230,9 +235,10 @@ fn dimension_scanner_preserves_fractional_points_and_following_input() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -274,9 +280,10 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );

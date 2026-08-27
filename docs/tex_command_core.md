@@ -1432,15 +1432,19 @@ The input stack does not carry meaning-cache state or expansion-policy bits.
 `CommandProcessor` is an ephemeral capability facade:
 
 ```rust
-pub struct CommandProcessor<'a> {
-    command: &'a mut CommandState,
-    state: tex_state::CommandContext<'a>,
-    host: CommandHostContext<'a>,
-    observer: Option<&'a mut dyn CommandObserver>,
+pub struct CommandProcessor<'episode, 'admission> {
+    command: &'episode mut CommandState,
+    state: &'episode mut tex_state::CommandContext<'admission>,
+    host: CommandHostContext<'episode>,
+    observer: Option<&'episode mut dyn CommandObserver>,
 }
 ```
 
-It does not own state and cannot outlive one bounded executor operation.
+It does not own state and cannot outlive one bounded executor operation. The
+executor admits one call-local `CommandContext`, refreshes its transient mode
+and page capabilities through a borrow of that value, and lends the same
+context in place to the processor. Processor retirement ends the borrow; it
+does not move the complete admitted context out of and back into a facade.
 `CommandHostContext` contains only the capabilities installed for that
 operation, such as input resolution and optional read recording. Host
 capabilities never enter snapshots or formats.

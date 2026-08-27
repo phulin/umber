@@ -39,9 +39,10 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
         crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -90,9 +91,10 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
         crate::test_harness::push(&mut command, [noexpand, macro_token, macro_token]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -138,9 +140,10 @@ fn protected_replay_delivery_writes_the_terminal_macro_into_its_caller_slot() {
         crate::test_harness::push(&mut command, [macro_token]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -186,9 +189,10 @@ fn csname_relaxes_an_already_interned_undefined_name() {
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );

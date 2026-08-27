@@ -17,9 +17,10 @@ fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSele
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         )
@@ -91,9 +92,10 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -104,6 +106,7 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
         assert!(processor.take_semantic_diagnostics().is_empty());
         let target = scanned.target;
         drop(processor);
+        drop(context);
         assert_eq!(universe.resolve(target), Some("~"));
     });
 }

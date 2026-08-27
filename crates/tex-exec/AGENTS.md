@@ -110,8 +110,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.
 - `src/interpreter.rs`: session-lived canonical command-state ownership,
-  generation-typed borrow-scoped processor facades, and assertion-bearing
-  interpreter lifecycle accounting across semantic and host barriers.
+  generation-typed processor facades borrowing one stable call-local admitted
+  context in place, and assertion-bearing interpreter lifecycle accounting
+  across semantic and host barriers.
 - `src/retained_generation.rs`: Non-generic move-only external-store slot
   lease, universally generic admitted engine episodes, one singular typed
   same-thread suspension seam for non-atomic semantic owners, reusable

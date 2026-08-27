@@ -4,34 +4,18 @@ use super::super::*;
 use super::apply::enter_group;
 use super::operation::*;
 
-/// Move slot for the one admitted command context owned by semantic apply.
+/// Stable owner for the one admitted command context used by semantic apply.
 ///
-/// A short command-processor episode temporarily takes the context and must
-/// return that exact value through `into_context` before semantic work can
-/// continue. This wrapper adds no state API, guard, or ownership; it only
-/// makes the linear handoff expressible across the large cold dispatcher.
+/// Short command-processor episodes borrow this value in place. The wrapper
+/// adds no state API or ownership; it keeps one admission stable across the
+/// large cold dispatcher without moving the whole borrowed context.
 pub(in crate::main_control) struct LinearCommandContext<'a, G> {
-    context: Option<tex_state::CommandContext<'a, G>>,
+    context: tex_state::CommandContext<'a, G>,
 }
 
 impl<'a, G> LinearCommandContext<'a, G> {
     pub(in crate::main_control) const fn new(context: tex_state::CommandContext<'a, G>) -> Self {
-        Self {
-            context: Some(context),
-        }
-    }
-
-    pub(in crate::main_control) fn take(&mut self) -> tex_state::CommandContext<'a, G> {
-        self.context
-            .take()
-            .expect("the admitted apply context is not already lent")
-    }
-
-    pub(in crate::main_control) fn restore(&mut self, context: tex_state::CommandContext<'a, G>) {
-        assert!(
-            self.context.replace(context).is_none(),
-            "the admitted apply context is returned exactly once"
-        );
+        Self { context }
     }
 }
 
@@ -39,17 +23,13 @@ impl<'a, G> core::ops::Deref for LinearCommandContext<'a, G> {
     type Target = tex_state::CommandContext<'a, G>;
 
     fn deref(&self) -> &Self::Target {
-        self.context
-            .as_ref()
-            .expect("the admitted apply context is present outside a processor episode")
+        &self.context
     }
 }
 
 impl<'a, G> core::ops::DerefMut for LinearCommandContext<'a, G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
-            .as_mut()
-            .expect("the admitted apply context is present outside a processor episode")
+        &mut self.context
     }
 }
 
@@ -190,11 +170,11 @@ pub(in crate::main_control) fn schedule_aftergroup<G>(
     if tokens.is_empty() {
         return Ok(());
     }
-    let mut processor = command.processor(stores.take());
+    let mut processor = command.processor(stores);
     let result = processor
         .back_input_aftergroup_tokens(tokens)
         .map_err(command_error);
-    stores.restore(processor.into_context());
+    processor.retire();
     result
 }
 
@@ -209,9 +189,9 @@ pub(in crate::main_control) fn warn_cross_file_group_close<G>(
     let Some(frame) = frame else {
         return;
     };
-    let mut processor = command.processor(stores.take());
+    let mut processor = command.processor(stores);
     processor.warn_cross_file_group_close(level, frame.kind().group_text(), frame.entered_line());
-    stores.restore(processor.into_context());
+    processor.retire();
 }
 
 /// Releases the single pending after-assignment token only after the typed
@@ -223,7 +203,7 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
     diagnostic_effects: &mut DiagnosticEffects,
-    stores: tex_state::CommandContext<'_, G>,
+    mut stores: tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let token = {
         command
@@ -240,7 +220,7 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
         capabilities,
         observations,
         diagnostic_effects,
-        stores,
+        &mut stores,
     );
     let result = processor.back_input_token(token);
     result.map_err(command_error)

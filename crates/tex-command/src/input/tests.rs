@@ -22,9 +22,10 @@ fn registered_source_delivers_through_the_generation_typed_processor() {
         command.open_registered_source(source).expect("source open");
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -53,9 +54,10 @@ fn transient_replay_preserves_authored_token_categories() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -95,9 +97,10 @@ fn invalid_source_character_is_reported_once_and_delivery_restarts() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         {
+            let mut context = universe.command_context().expect("command context");
             let mut processor = crate::test_harness::processor(
                 &mut command,
-                universe,
+                &mut context,
                 &mut capabilities,
                 &mut diagnostic_effects,
             );

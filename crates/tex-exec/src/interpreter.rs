@@ -83,7 +83,7 @@ impl<G> PersistentInterpreter<G> {
     /// every facade is retired before a semantic, rollback, or host barrier.
     pub(crate) fn processor<'episode, 'admission>(
         &'episode mut self,
-        state: CommandContext<'admission, G>,
+        state: &'episode mut CommandContext<'admission, G>,
         host: CommandHostContext<'episode>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
@@ -107,10 +107,15 @@ impl<G> PersistentInterpreter<G> {
         lifecycle.live_processors = 1;
         lifecycle.maximum_live_processors = lifecycle.maximum_live_processors.max(1);
 
-        let processor =
-            CommandProcessor::borrowed(command, state, host, fuel, observer, diagnostic_effects);
         InterpreterProcessor {
-            processor: Some(processor),
+            processor: CommandProcessor::borrowed(
+                command,
+                state,
+                host,
+                fuel,
+                observer,
+                diagnostic_effects,
+            ),
             lifecycle,
         }
     }
@@ -142,22 +147,15 @@ impl<G> DerefMut for PersistentInterpreter<G> {
 
 /// One borrow-scoped facade over the persistent canonical interpreter.
 pub(crate) struct InterpreterProcessor<'episode, 'admission, G> {
-    processor: Option<CommandProcessor<'episode, 'admission, G>>,
+    processor: CommandProcessor<'episode, 'admission, G>,
     lifecycle: &'episode mut InterpreterLifecycle,
 }
 
 impl<'episode, 'admission, G> InterpreterProcessor<'episode, 'admission, G> {
-    /// Retires the processor while preserving its unique admitted context for
-    /// an immediately following state-only operation.
-    #[must_use]
-    pub(crate) fn into_context(mut self) -> CommandContext<'admission, G> {
-        let context = self
-            .processor
-            .take()
-            .expect("live interpreter processor")
-            .into_context();
+    /// Retires the processor before its caller resumes state-only work through
+    /// the stable admitted context that the facade borrowed.
+    pub(crate) fn retire(mut self) {
         self.complete();
-        context
     }
 
     fn complete(&mut self) {
@@ -175,19 +173,19 @@ impl<'episode, 'admission, G> Deref for InterpreterProcessor<'episode, 'admissio
     type Target = CommandProcessor<'episode, 'admission, G>;
 
     fn deref(&self) -> &Self::Target {
-        self.processor.as_ref().expect("live interpreter processor")
+        &self.processor
     }
 }
 
 impl<G> DerefMut for InterpreterProcessor<'_, '_, G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.processor.as_mut().expect("live interpreter processor")
+        &mut self.processor
     }
 }
 
 impl<G> Drop for InterpreterProcessor<'_, '_, G> {
     fn drop(&mut self) {
-        if self.processor.is_some() {
+        if self.lifecycle.live_processors != 0 {
             self.complete();
         }
     }
@@ -200,8 +198,8 @@ mod tests {
 
     fn round_trip_context<'admission, G>(
         interpreter: &mut PersistentInterpreter<G>,
-        context: CommandContext<'admission, G>,
-    ) -> CommandContext<'admission, G> {
+        context: &mut CommandContext<'admission, G>,
+    ) {
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -213,15 +211,15 @@ mod tests {
                 None,
                 &mut diagnostic_effects,
             )
-            .into_context()
+            .retire();
     }
 
     #[test]
     fn admission_survives_the_shorter_processor_episode() {
         crate::test_harness::with_nonstop_universe(|universe| {
             let mut interpreter = PersistentInterpreter::default();
-            let context = universe.command_context().expect("command admission");
-            let context = round_trip_context(&mut interpreter, context);
+            let mut context = universe.command_context().expect("command admission");
+            round_trip_context(&mut interpreter, &mut context);
 
             assert_eq!(context.execution_group_depth(), 0);
             drop(context);

@@ -91,9 +91,10 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             .expect("retained checkpoint restores into its owning timeline");
 
         let mut capabilities = CommandHostCapabilities::default();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = CommandProcessor::new(
             &mut command,
-            universe.command_context().expect("command context"),
+            &mut context,
             CommandHostContext::new(&mut capabilities),
             &mut diagnostic_effects,
         );

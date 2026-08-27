@@ -80,8 +80,9 @@ collector (see `src/conditionals.rs`).
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics.
   Production borrows use `CommandProcessor::borrowed`, which takes the
-  session-owned fuel, observer, and operation-local diagnostic-effects
-  collector directly and constructs no temporary owned ledger.
+  caller-owned admitted context, session-owned fuel, observer, and
+  operation-local diagnostic-effects collector directly and constructs no
+  temporary owned ledger or whole-context handoff.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.

@@ -1951,7 +1951,7 @@ impl<G> CommandMachine<'_, G> {
 
     fn processor<'episode, 'admission>(
         &'episode mut self,
-        context: tex_state::CommandContext<'admission, G>,
+        context: &'episode mut tex_state::CommandContext<'admission, G>,
     ) -> InterpreterProcessor<'episode, 'admission, G> {
         let observer = self
             .observations
@@ -1970,7 +1970,7 @@ impl<G> CommandMachine<'_, G> {
 
     fn processor_with_diagnostic_effects<'episode, 'admission>(
         &'episode mut self,
-        context: tex_state::CommandContext<'admission, G>,
+        context: &'episode mut tex_state::CommandContext<'admission, G>,
         diagnostic_effects: &'episode mut DiagnosticEffects,
     ) -> InterpreterProcessor<'episode, 'admission, G> {
         let observer = self
@@ -2042,7 +2042,7 @@ fn command_processor<'episode, 'admission, G>(
     capabilities: &'episode mut CommandHostCapabilities,
     observations: &'episode mut ObservationSlot,
     diagnostic_effects: &'episode mut DiagnosticEffects,
-    stores: CommandContext<'admission, G>,
+    stores: &'episode mut CommandContext<'admission, G>,
 ) -> InterpreterProcessor<'episode, 'admission, G> {
     let observer = observations
         .as_mut()
@@ -2234,18 +2234,20 @@ impl<G> MainControl<G> {
         // reports against the live canonical input cursor, and leaves that
         // cursor untouched when the dialog returns.
         stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
-        self.refresh_host_capabilities(stores);
+        self.ensure_primitive_handles(stores);
         let mut diagnostic_effects = DiagnosticEffects::new();
+        let mut command_context = stores.command_context().expect("live generation");
+        self.refresh_host_capabilities(&command_context);
         let processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             &mut diagnostic_effects,
-            stores.command_context().expect("live generation"),
+            &mut command_context,
         );
         let context = processor.error_context();
-        let mut command_context = processor.into_context();
+        processor.retire();
         let result = crate::error_report::report_error(
             &mut command_context,
             "Interruption",
@@ -3141,8 +3143,7 @@ impl<G> MainControl<G> {
     ///
     /// This is intentionally call-local capability state rather than part of
     /// a command snapshot or durable session summary.
-    pub fn refresh_host_capabilities(&mut self, stores: &mut Universe<G>) {
-        self.ensure_primitive_handles(stores);
+    fn refresh_host_capabilities(&mut self, stores: &CommandContext<'_, G>) {
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
         self.capabilities.set_space_factor(
@@ -3152,10 +3153,7 @@ impl<G> MainControl<G> {
             )
             .then(|| self.modes.current_list().space_factor()),
         );
-        let ignored_depth = {
-            let stores = stores.command_context().expect("live generation");
-            crate::mode::ignored_depth_with_handle(&stores, self.pdf_ignore_depth)
-        };
+        let ignored_depth = crate::mode::ignored_depth_with_handle(stores, self.pdf_ignore_depth);
         // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
         // readable only in vertical mode, where an unset `prev_depth` is
         // §215's `ignore_depth` initial value.
@@ -3180,8 +3178,6 @@ impl<G> MainControl<G> {
         self.capabilities
             .set_last_node_type(self.last_node_type_value(stores));
         let insertion_heights = stores
-            .command_context()
-            .expect("live generation")
             .page_insertions()
             .iter()
             .map(|insertion| (insertion.class(), insertion.height()))
@@ -3207,8 +3203,10 @@ impl<G> MainControl<G> {
     /// builder sweeps a node onto the page) exactly when the contribution
     /// list has been swept empty; while it is nonempty, the real
     /// contribution tail governs, just as it does for `\unskip`.
-    fn last_node_value(&self, stores: &mut Universe<G>) -> Option<tex_command::LastNodeItem> {
-        let context = stores.command_context().expect("live generation");
+    fn last_node_value(
+        &self,
+        context: &CommandContext<'_, G>,
+    ) -> Option<tex_command::LastNodeItem> {
         if is_outer_vertical(&self.modes) {
             return match crate::effective_tail::EffectiveTail::find(
                 context.page_contributions().iter(),
@@ -3235,9 +3233,8 @@ impl<G> MainControl<G> {
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
     /// `\lastnodetype`.
-    fn last_node_type_value(&self, stores: &mut Universe<G>) -> i32 {
+    fn last_node_type_value(&self, context: &CommandContext<'_, G>) -> i32 {
         if is_outer_vertical(&self.modes) {
-            let context = stores.command_context().expect("live generation");
             return crate::effective_tail::EffectiveTail::find(context.page_contributions().iter())
                 .map_or_else(
                     || context.page_last_node_type(),
@@ -3945,13 +3942,14 @@ impl<G> MainControl<G> {
             let mut diagnostic_effects = DiagnosticEffects::new();
             let attempt = self.command.begin_attempt_operation();
             let retirement = {
+                let mut context = stores.command_context().expect("named-boundary admission");
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     &mut diagnostic_effects,
-                    stores.command_context().expect("named-boundary admission"),
+                    &mut context,
                 );
                 processor.retire_exhausted_token_levels_for_named_boundary()
             };
@@ -4162,13 +4160,14 @@ impl<G> MainControl<G> {
         if part_count < 3 {
             let mut diagnostics = Vec::new();
             {
+                let mut context = stores.command_context().expect("live generation");
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     diagnostic_effects,
-                    stores.command_context().expect("live generation"),
+                    &mut context,
                 );
                 let _ = processor
                     .scan_discretionary_opening()
@@ -5663,15 +5662,17 @@ impl<G> MainControl<G> {
         let assignment = match continuation {
             Some(continuation) => Some(continuation),
             None => {
-                self.refresh_host_capabilities(stores);
+                self.ensure_primitive_handles(stores);
                 let (command, cursor, retry_command, scanner) = {
+                    let mut context = stores.command_context().expect("live generation");
+                    self.refresh_host_capabilities(&context);
                     let mut processor = command_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
                         &mut diagnostic_effects,
-                        stores.command_context().expect("live generation"),
+                        &mut context,
                     );
                     let command = processor
                         .get_x_token_preserving_undefined()
@@ -5984,13 +5985,14 @@ impl<G> MainControl<G> {
         self.main_loop_active = false;
         loop {
             let outcome = {
+                let mut context = stores.command_context().expect("live generation");
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     diagnostic_effects,
-                    stores.command_context().expect("live generation"),
+                    &mut context,
                 );
                 let outcome = processor.scan_accent_base();
                 outcome.map_err(command_error)?
@@ -6105,13 +6107,14 @@ impl<G> MainControl<G> {
                                     .map(CommandObservation::Input),
                             );
                     }
+                    let mut context = stores.command_context().expect("live generation");
                     let mut processor = command_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
                         diagnostic_effects,
-                        stores.command_context().expect("live generation"),
+                        &mut context,
                     );
                     processor
                         .retire_completed_right_brace_backup()
@@ -6123,6 +6126,7 @@ impl<G> MainControl<G> {
                     // persistent interpreter. Retire its borrow facade before
                     // opening the matching semantic group and mode barriers.
                     drop(processor);
+                    drop(context);
                     if enclosing.is_some() {
                         let mut deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
@@ -6821,14 +6825,15 @@ impl<G> MainControl<G> {
         // level. Publish that live nest before §1197's nested expansion
         // episode: capabilities were last sampled at the start of the outer
         // main-control step, when the current mode was still display math.
-        self.refresh_host_capabilities(stores);
+        self.ensure_primitive_handles(stores);
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
-        let context = stores
+        let mut context = stores
             .command_context()
             .expect("display-end scan requires a live generation");
+        self.refresh_host_capabilities(&context);
         let mut machine = self.command_machine(diagnostic_effects);
-        let mut processor = machine.processor(context);
+        let mut processor = machine.processor(&mut context);
         prepare_command_trace(&mut processor, mode, shown_mode);
         let paired = processor
             .scan_display_end_math_shift()
@@ -6838,6 +6843,8 @@ impl<G> MainControl<G> {
         if command_trace_printed {
             *machine.shown_mode = Some(mode);
         }
+        drop(machine);
+        drop(context);
         Ok(paired)
     }
 
@@ -7320,11 +7327,11 @@ impl<G> MainControl<G> {
     ) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
-        let context = stores
+        let mut context = stores
             .command_context()
             .expect("optional-space scan requires a live generation");
         let mut machine = self.command_machine(diagnostic_effects);
-        let mut processor = machine.processor(context);
+        let mut processor = machine.processor(&mut context);
         let mut diagnostics = Vec::new();
         // TeX82 §§299/1200: resume_after_display has already pushed the new
         // horizontal mode when its scanner expands this token. The expansion
@@ -7366,6 +7373,8 @@ impl<G> MainControl<G> {
         if command_trace_printed {
             *machine.shown_mode = Some(mode);
         }
+        drop(machine);
+        drop(context);
         // §1200 performs this expanded fetch synchronously before §1125's
         // page builder. Diagnostics produced by expansion therefore belong
         // to this nested scanner boundary; leaving them on CommandState<G> lets
@@ -7554,13 +7563,14 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
+        let mut context = stores.command_context().expect("live generation");
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             diagnostic_effects,
-            stores.command_context().expect("live generation"),
+            &mut context,
         );
         let scanned = processor.scan_math_field_episode();
         scanned.map_err(command_error)
@@ -7573,13 +7583,14 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
+        let mut context = stores.command_context().expect("live generation");
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             diagnostic_effects,
-            stores.command_context().expect("live generation"),
+            &mut context,
         );
         processor.scan_math_character().map_err(command_error)
     }
@@ -7592,13 +7603,14 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<bool, ExecError> {
+        let mut context = stores.command_context().expect("live generation");
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             diagnostic_effects,
-            stores.command_context().expect("live generation"),
+            &mut context,
         );
         let scanned = processor.scan_math_choice_group();
         scanned.map_err(command_error)
@@ -7797,12 +7809,10 @@ impl<G> MainControl<G> {
             self.observe_committed(entry_records);
         }
         self.drain_file_framing_events(stores);
-        self.refresh_host_capabilities(stores);
-
-        let innermost_group = stores
-            .command_context()
-            .expect("live generation")
-            .innermost_group_kind();
+        self.ensure_primitive_handles(stores);
+        let mut context = stores.command_context().expect("live generation");
+        self.refresh_host_capabilities(&context);
+        let innermost_group = context.innermost_group_kind();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
         let (
@@ -7820,7 +7830,7 @@ impl<G> MainControl<G> {
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 diagnostic_effects,
-                stores.command_context().expect("live generation"),
+                &mut context,
             );
             processor.set_output_routine_active(self.boxes.output_routine_active);
             processor
@@ -7995,6 +8005,7 @@ impl<G> MainControl<G> {
                 fused_error,
             )
         };
+        drop(context);
         if let Some(error) = fused_error {
             let retry = execution_error_needs_command_retry(&error)
                 .then_some(fused_retry)
@@ -8050,13 +8061,14 @@ impl<G> MainControl<G> {
                 )
             );
         if !continues_main_loop && !trace_reported {
+            let mut context = stores.command_context().expect("live generation");
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 diagnostic_effects,
-                stores.command_context().expect("live generation"),
+                &mut context,
             );
             prepare_command_trace(&mut processor, mode, self.shown_mode);
             report_main_control_command_trace(
@@ -8196,10 +8208,10 @@ impl<G> MainControl<G> {
             .is_ok_and(|context| context.tracked_region_is_active());
         if tracked_region_is_active {
             let mode_fingerprint = self.modes.summary().semantic_fingerprint(stores);
-            let last_node_type = self.last_node_type_value(stores);
             let mut context = stores
                 .command_context()
                 .expect("tracked region keeps its generation admitted");
+            let last_node_type = self.last_node_type_value(&context);
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
             let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
             let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);
@@ -8258,17 +8270,16 @@ impl<G> MainControl<G> {
             self.observe_committed(entry_records);
         }
         self.drain_file_framing_events(stores);
-        self.refresh_host_capabilities(stores);
+        self.ensure_primitive_handles(stores);
+        let mut context = stores.command_context().expect("live generation");
+        self.refresh_host_capabilities(&context);
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let root_main_file_origin = self.active_external_file_is_root_main();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
-        let (innermost_group, job_is_all_over) = {
-            let context = stores.command_context().expect("live generation");
-            (
-                context.innermost_group_kind(),
-                crate::page_output::job_is_all_over(&context),
-            )
-        };
+        let (innermost_group, job_is_all_over) = (
+            context.innermost_group_kind(),
+            crate::page_output::job_is_all_over(&context),
+        );
         let mut diagnostics = Vec::new();
         let mut retry_command = PendingPreflightCommand::for_delivery(&delivery);
         let scanned = if let OperationDelivery::<G>::Hot(operation) = delivery {
@@ -8288,7 +8299,7 @@ impl<G> MainControl<G> {
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 diagnostic_effects,
-                stores.command_context().expect("live generation"),
+                &mut context,
             );
             processor.install_scanner_resume(scanner_resume);
             processor.set_output_routine_active(self.boxes.output_routine_active);
@@ -8681,6 +8692,7 @@ impl<G> MainControl<G> {
             );
             scanned
         };
+        drop(context);
         // tex.web's `line` is maintained by `get_next` as it moves to a new
         // input line, so it is already the delivered command's own line by
         // the time that command is applied. Publish it here, after delivery,
@@ -9615,13 +9627,14 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<String, ExecError> {
         let filename = {
+            let mut context = stores.command_context().expect("live generation");
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 diagnostic_effects,
-                stores.command_context().expect("live generation"),
+                &mut context,
             );
             let mut destination = None;
             if processor
@@ -9673,13 +9686,14 @@ impl<G> MainControl<G> {
         // this one episode silent, and it is deliberate rather than an
         // omitted observer at the construction site.
         let silenced = self.operation_observations.take();
+        let mut context = stores.command_context().expect("live generation");
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             diagnostic_effects,
-            stores.command_context().expect("live generation"),
+            &mut context,
         );
         let mut destination = None;
         let exhausted = processor.get_x_token_into(&mut destination);
@@ -9836,7 +9850,7 @@ fn append_math_char<G>(
 fn set_math_char<G>(
     ch: char,
     origin: tex_state::token::OriginId,
-    mut stores: CommandContext<'_, G>,
+    stores: &mut CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
@@ -9854,7 +9868,7 @@ fn set_math_char<G>(
         treated.map_err(command_error)?;
         return Ok(());
     }
-    append_math_char(modes.current_list_mutation(), &stores, code, origin)
+    append_math_char(modes.current_list_mutation(), stores, code, origin)
 }
 
 fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {

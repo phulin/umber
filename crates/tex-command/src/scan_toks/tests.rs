@@ -28,9 +28,10 @@ fn balanced_collection_freezes_nested_tokens_in_the_attempt_arena() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -98,9 +99,10 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -154,9 +156,10 @@ fn macro_definition_scan_keeps_parameter_and_replacement_lists_separate() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );

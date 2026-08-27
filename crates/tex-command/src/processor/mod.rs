@@ -133,7 +133,7 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 #[allow(dead_code)] // later canonical command operations consume every capability
 pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) command: &'episode mut CommandState<G>,
-    pub(crate) state: CommandContext<'admission, G>,
+    pub(crate) state: &'episode mut CommandContext<'admission, G>,
     pub(crate) host: CommandHostContext<'episode>,
     observer: Option<&'episode mut dyn CommandObserver>,
     fuel: ProcessorFuel<'episode>,
@@ -355,16 +355,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub(crate) fn has_pending_diagnostic_effects(&self) -> bool {
         !self.diagnostic_effects.is_empty()
     }
-
-    /// Retires this borrow facade and returns its unique admitted state view.
-    ///
-    /// Callers use this linear handoff when one command episode must perform
-    /// a state-only mutation before resuming command delivery under the same
-    /// admission. No state owner or processor-local continuation is cloned.
-    #[must_use]
-    pub fn into_context(self) -> CommandContext<'admission, G> {
-        self.state
-    }
 }
 
 enum ProcessorFuel<'a> {
@@ -501,18 +491,39 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     #[must_use]
     pub fn new(
         command: &'episode mut CommandState<G>,
-        state: CommandContext<'admission, G>,
+        state: &'episode mut CommandContext<'admission, G>,
         host: CommandHostContext<'episode>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
-        Self::from_parts(
+        command.observe_tracked_dependencies(state);
+        Self {
             command,
             state,
             host,
-            ProcessorFuel::Owned(CommandFuelLedger::default()),
+            observer: None,
+            fuel: ProcessorFuel::Owned(CommandFuelLedger::default()),
             diagnostic_effects,
-            None,
-        )
+            immediate_write_retirement: None,
+            pending_file_warning_context: None,
+            last_delivery: None,
+            last_integer_terminator: None,
+            next_delivery_sequence: 0,
+            scanner_resume: None,
+            read_line_ended: false,
+            outer_recovered_while_matching: false,
+            outer_recovered_while_absorbing: false,
+            eof_recovered_while_matching: false,
+            expression_depth: 0,
+            is_in_csname: false,
+            output_routine_active: false,
+            scanned_glue_identity: None,
+            scanned_glue_register: None,
+            write_expansion_depth: 0,
+            command_trace_mode_prefix: None,
+            command_trace_printed: false,
+            command_trace_count: 0,
+            create_source_control_sequences: false,
+        }
     }
 
     /// Borrows a session-owned command interpreter without constructing an
@@ -524,37 +535,19 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     #[must_use]
     pub fn borrowed(
         command: &'episode mut CommandState<G>,
-        state: CommandContext<'admission, G>,
+        state: &'episode mut CommandContext<'admission, G>,
         host: CommandHostContext<'episode>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
-        Self::from_parts(
-            command,
-            state,
-            host,
-            ProcessorFuel::Shared(fuel),
-            diagnostic_effects,
-            observer,
-        )
-    }
-
-    fn from_parts(
-        command: &'episode mut CommandState<G>,
-        mut state: CommandContext<'admission, G>,
-        host: CommandHostContext<'episode>,
-        fuel: ProcessorFuel<'episode>,
-        diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
-        observer: Option<&'episode mut dyn CommandObserver>,
-    ) -> Self {
-        command.observe_tracked_dependencies(&mut state);
+        command.observe_tracked_dependencies(state);
         Self {
             command,
             state,
             host,
             observer,
-            fuel,
+            fuel: ProcessorFuel::Shared(fuel),
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,

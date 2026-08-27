@@ -147,9 +147,10 @@ fn active_character_operand_stays_in_the_caller_slot_for_conditional_treatment()
         crate::test_harness::push(&mut command, [no_expand, active]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -182,9 +183,10 @@ fn false_boolean_skips_to_else_and_matching_fi_retires_the_frame() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -226,9 +228,10 @@ fn ifx_compares_raw_operands_without_expanding_them() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
             &mut command,
-            universe,
+            &mut context,
             &mut capabilities,
             &mut diagnostic_effects,
         );
@@ -247,9 +250,10 @@ fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         {
+            let mut context = universe.command_context().expect("command context");
             let mut processor = crate::test_harness::processor(
                 &mut command,
-                universe,
+                &mut context,
                 &mut capabilities,
                 &mut diagnostic_effects,
             );

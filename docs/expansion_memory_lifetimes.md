@@ -104,6 +104,9 @@ does not authorize a smaller hidden arena.
 The command profile and compiled semantic dispatch are configuration, not
 revision history. Expansion borrows them. Host capabilities are also borrowed
 for an admitted episode; they are not smuggled into tokens or definitions.
+One call-local admitted `CommandContext` remains stable while the executor
+refreshes those capabilities and the command processor borrows it in place;
+processor retirement ends that borrow without an owned context handoff.
 
 `ReachabilityStore::new` creates the session's interning epoch and one coarse
 allocation containing its inline two-slot store. Its `Interner` holds an

@@ -292,8 +292,13 @@ fn rollback_restores_replay_lane_coordinates_after_candidate_admission() {
             .expect("replay coordinate rolls back");
         let mut capabilities = crate::CommandHostCapabilities::default();
         let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities, &mut effects);
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut effects,
+        );
         assert_eq!(
             processor
                 .get_next()
