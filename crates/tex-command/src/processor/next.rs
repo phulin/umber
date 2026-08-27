@@ -2788,18 +2788,24 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
                 | SourceControlSequenceKind::Symbol
                 | SourceControlSequenceKind::Paragraph
                 | SourceControlSequenceKind::Null => {
-                    let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
-                    name.with_text(|name| {
-                        if hashed && !self.create_control_sequences {
-                            self.state
-                                .known_control_sequence(name)
-                                .map_or_else(Token::undefined_control_sequence, Token::Cs)
-                        } else if hashed {
-                            Token::Cs(self.state.intern_hash_control_sequence(name))
-                        } else {
+                    if name.len() == 1 {
+                        with_single_character_text(name[0], |name| {
                             Token::Cs(self.state.intern_control_sequence(name))
-                        }
-                    })
+                        })
+                    } else {
+                        let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
+                        name.with_text(|name| {
+                            if hashed && !self.create_control_sequences {
+                                self.state
+                                    .known_control_sequence(name)
+                                    .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                            } else if hashed {
+                                Token::Cs(self.state.intern_hash_control_sequence(name))
+                            } else {
+                                Token::Cs(self.state.intern_control_sequence(name))
+                            }
+                        })
+                    }
                 }
             },
         };
@@ -2809,6 +2815,12 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
 
 fn character_from_code(code: CharacterCode) -> char {
     crate::profile::token_character(code)
+}
+
+/// Borrows one scalar's UTF-8 spelling without constructing an owned name.
+fn with_single_character_text<R>(code: CharacterCode, consume: impl FnOnce(&str) -> R) -> R {
+    let mut encoded = [0_u8; 4];
+    consume(character_from_code(code).encode_utf8(&mut encoded))
 }
 
 /// Whether a delivered command is TeX82's `math_shift` command code -- the

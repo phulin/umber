@@ -289,6 +289,99 @@ fn direct_source_control_sequences_preserve_creation_policy_after_compact_delive
     });
 }
 
+#[cfg(feature = "profiling")]
+fn assert_warmed_single_character_control_sequence_is_allocation_free<G>(
+    universe: &mut tex_state::Universe<G>,
+    name: &str,
+    profile: crate::CommandProfile,
+    create_control_sequences: bool,
+) {
+    let expected = universe
+        .command_context()
+        .expect("command context")
+        .intern_control_sequence(name);
+    let source_text = format!(r"\{name}\{name}");
+    let mut command = CommandState::new(profile);
+    let source = command
+        .register_source(crate::SourceRegistration::new(
+            crate::RegisteredSourceKind::Generated,
+            source_text.into_bytes(),
+        ))
+        .expect("source registration");
+    command
+        .open_registered_source(source)
+        .expect("source opening");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::default();
+    let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+    let mut context = universe.command_context().expect("command context");
+    let mut processor = crate::test_harness::processor(
+        &mut command,
+        &mut context,
+        &mut capabilities,
+        &mut fuel,
+        &mut diagnostic_effects,
+    );
+
+    let first = if create_control_sequences {
+        processor.get_token()
+    } else {
+        processor.get_next()
+    }
+    .expect("warm delivery")
+    .expect("first control sequence");
+    assert_eq!(first.spelling().semantic_token(), Token::Cs(expected));
+    drop(first);
+
+    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let second = {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        if create_control_sequences {
+            processor.get_token()
+        } else {
+            processor.get_next()
+        }
+    }
+    .expect("measured delivery")
+    .expect("second control sequence");
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+    assert_eq!(second.spelling().semantic_token(), Token::Cs(expected));
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_ascii_single_character_control_sequence_lookup_is_allocation_free() {
+    for create_control_sequences in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            assert_warmed_single_character_control_sequence_is_allocation_free(
+                universe,
+                "!",
+                crate::CommandProfile::TEX82,
+                create_control_sequences,
+            );
+        });
+    }
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_unicode_single_character_control_sequence_lookup_is_allocation_free() {
+    for create_control_sequences in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            assert_warmed_single_character_control_sequence_is_allocation_free(
+                universe,
+                "🦀",
+                crate::CommandProfile::unicode_extended(crate::CommandDialect::Tex82),
+                create_control_sequences,
+            );
+        });
+    }
+}
+
 #[test]
 fn frozen_macro_primitive_observation_retains_endwrite_identity() {
     crate::test_harness::with_universe(|universe| {
