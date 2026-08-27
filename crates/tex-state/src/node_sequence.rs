@@ -582,6 +582,51 @@ impl NodeSequence {
         self.candidate = None;
     }
 
+    /// Drops the superseded accepted tail and promotes the live candidate
+    /// suffix without materializing the accepted prefix.
+    pub fn accept_candidate(&mut self) {
+        let Some(mut candidate) = self.candidate.take() else {
+            return;
+        };
+        self.semantic.truncate(candidate.semantic_root);
+        self.semantic_high_cell_lineages
+            .truncate(candidate.semantic_root);
+        for (index, replacement) in candidate.replacements.drain(..) {
+            self.semantic[index] = replacement.clone();
+            if let PhysicalProjection::Distinct {
+                nodes, boundaries, ..
+            } = &mut self.projection
+            {
+                let physical = boundaries[index];
+                if boundaries[index + 1] == physical + 1 {
+                    nodes[physical] = replacement;
+                }
+            }
+        }
+        self.semantic.append(&mut candidate.semantic);
+        self.semantic_high_cell_lineages
+            .append(&mut candidate.semantic_high_cell_lineages);
+        match &mut self.projection {
+            PhysicalProjection::Mirrored => {}
+            PhysicalProjection::Distinct {
+                nodes,
+                boundaries,
+                high_cell_lineages,
+            } => {
+                nodes.truncate(candidate.physical_root);
+                high_cell_lineages.truncate(candidate.physical_root);
+                boundaries.truncate(candidate.semantic_root + 1);
+                nodes.append(&mut candidate.physical);
+                high_cell_lineages.append(&mut candidate.physical_high_cell_lineages);
+                while boundaries.len() <= self.semantic.len() {
+                    let next = boundaries.last().copied().unwrap_or(0).saturating_add(1);
+                    boundaries.push(next);
+                }
+            }
+        }
+        self.page_node_root_count = candidate.page_node_root_count;
+    }
+
     #[must_use]
     pub const fn has_candidate(&self) -> bool {
         self.candidate.is_some()

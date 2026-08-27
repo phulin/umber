@@ -9,7 +9,7 @@ use crate::dependency::{
 };
 use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
-use crate::env::{AssignmentScope, CodeTableKind, StateError};
+use crate::env::{AssignmentScope, CodeTableKind, DenseStateCursor, StateError};
 use crate::font::{FontStore, FontStoreMark};
 use crate::generation::{GenerationBrand, GenerationCursor, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
@@ -23,8 +23,8 @@ use crate::journal::{JournalCursor, StateOperation};
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_arena::{
-    DurableListId, NodeArenaCursor, NodeArenaError, NodeArenaRegion, NodeList, PageLifetime,
-    PageListId, PageNodeArena,
+    AcceptedNodeArenaTail, DurableListId, NodeArenaCursor, NodeArenaError, NodeArenaRegion,
+    NodeList, PageLifetime, PageListId, PageNodeArena,
 };
 use crate::page::{PageBuilderState, PageCheckpointMark};
 use crate::pdf::PdfStateSlot;
@@ -36,10 +36,9 @@ use crate::shipout_scratch::{
     ShipoutScratchArena, ShipoutScratchListId, ShipoutScratchMark, ShipoutScratchNode,
 };
 use crate::source_map::{SourceMap, SourceMapMark};
-use crate::stores::{StateCore, StateCoreRetirement};
+use crate::stores::{AcceptedStateCoreTail, StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 fn tex_memory_words(nodes: &[Node], etex_node_sizes: bool) -> (usize, usize) {
@@ -201,25 +200,13 @@ impl<G> Default for PrimitiveRegistry<G> {
     }
 }
 
-struct CheckpointStateBundle<G> {
-    core: StateCore<G>,
-    page_nodes: PageNodeArena,
-    retained_page_bound: NodeArenaCursor<PageLifetime>,
-    durable_page_bound: NodeArenaCursor<PageLifetime>,
-    primitive_registry: Rc<PrimitiveRegistry<G>>,
-}
-
-struct CheckpointStateSlot<G> {
-    bundle: RefCell<Option<CheckpointStateBundle<G>>>,
-    generation: GenerationCursor,
-    retained_page_bound: NodeArenaCursor<PageLifetime>,
-    durable_page_bound: NodeArenaCursor<PageLifetime>,
-    font_roots_valid: bool,
-}
-
-struct CheckpointStateLoan<G> {
-    slot: Rc<CheckpointStateSlot<G>>,
+struct CheckpointStateCandidate<G> {
     mark: StateCheckpointMark<G>,
+    generation: GenerationCursor,
+    core: AcceptedStateCoreTail<G>,
+    page_nodes: AcceptedNodeArenaTail<PageLifetime>,
+    accepted_retained_page_bound: NodeArenaCursor<PageLifetime>,
+    accepted_durable_page_bound: NodeArenaCursor<PageLifetime>,
 }
 
 /// Coarse generation owner plus every runtime root needed by an aggregate
@@ -229,7 +216,10 @@ struct CheckpointStateLoan<G> {
 /// but cannot extract arena marks or individual store owners.
 pub struct RuntimeCheckpoint<G> {
     state: StateCheckpoint<G>,
-    state_slot: Rc<CheckpointStateSlot<G>>,
+    generation: GenerationCursor,
+    retained_page_bound: NodeArenaCursor<PageLifetime>,
+    durable_page_bound: NodeArenaCursor<PageLifetime>,
+    font_roots_valid: bool,
     page: PageCheckpointMark,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
@@ -386,7 +376,10 @@ impl<G> Clone for RuntimeCheckpoint<G> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
-            state_slot: Rc::clone(&self.state_slot),
+            generation: self.generation,
+            retained_page_bound: self.retained_page_bound,
+            durable_page_bound: self.durable_page_bound,
+            font_roots_valid: self.font_roots_valid,
             page: self.page,
             pdf: self.pdf.clone(),
             world: self.world.clone(),
@@ -653,7 +646,7 @@ pub enum NodePromotionError {
 }
 
 /// Fixed-size tex-state portion of a retained aggregate checkpoint.
-pub type StateCheckpointMark<G, Input = ()> = BoundedStateMark<
+pub type StateCheckpointMark<G, Input = DenseStateCursor> = BoundedStateMark<
     JournalCursor<G>,
     NodeArenaCursor<PageLifetime>,
     NodeArenaCursor<PageLifetime>,
@@ -661,7 +654,7 @@ pub type StateCheckpointMark<G, Input = ()> = BoundedStateMark<
 >;
 
 /// Coarse generation owner plus bounded state cursors.
-pub type StateCheckpoint<G, Input = ()> =
+pub type StateCheckpoint<G, Input = DenseStateCursor> =
     GenerationCheckpoint<GenerationOwner<G>, StateCheckpointMark<G, Input>>;
 
 impl From<PromotionError> for NodePromotionError {
@@ -719,9 +712,7 @@ pub struct Universe<G> {
     pub(crate) page_nodes: PageNodeArena,
     retained_page_bound: NodeArenaCursor<PageLifetime>,
     durable_page_bound: NodeArenaCursor<PageLifetime>,
-    checkpoint_state_loan: Option<CheckpointStateLoan<G>>,
-    checkpoint_state_lent_to_candidate: Option<CheckpointStateLoan<G>>,
-    abandoned_checkpoint_state: Option<CheckpointStateBundle<G>>,
+    checkpoint_candidate: Option<CheckpointStateCandidate<G>>,
     shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
     pub(crate) page: PageBuilderState,
@@ -749,139 +740,33 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
-    fn checkpoint_slot_is_ready(&self, checkpoint: &RuntimeCheckpoint<G>) -> bool {
-        if self
-            .checkpoint_state_loan
-            .as_ref()
-            .is_some_and(|loan| Rc::ptr_eq(&loan.slot, &checkpoint.state_slot))
-        {
-            return checkpoint.state_slot.font_roots_valid;
-        }
-        let slot = checkpoint.state_slot.bundle.borrow();
-        let Some(bundle) = slot.as_ref() else {
+    fn checkpoint_state_is_ready(&self, checkpoint: &RuntimeCheckpoint<G>) -> bool {
+        let mark = checkpoint.state.mark();
+        let Some(core) = self.core.as_ref() else {
             return false;
         };
-        let mark = checkpoint.state.mark();
-        checkpoint.state_slot.font_roots_valid
-            && bundle.core.owns_generation(checkpoint.state.owner())
-            && bundle.core.checkpoint_is_exact_head(
-                *mark.journal(),
-                *mark.durable(),
-                checkpoint.state_slot.generation,
-            )
-            && bundle.page_nodes.cursor_is_head(*mark.page())
-    }
-
-    fn take_checkpoint_state(
-        &mut self,
-        checkpoint: &RuntimeCheckpoint<G>,
-    ) -> Result<CheckpointStateBundle<G>, UniverseError> {
-        if self
-            .checkpoint_state_loan
-            .as_ref()
-            .is_some_and(|loan| Rc::ptr_eq(&loan.slot, &checkpoint.state_slot))
-        {
-            let mark = *checkpoint.state.mark();
-            let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-            core.state_mut().restore(*mark.journal())?;
-            core.restore_durable_node_cursor(*mark.durable())?;
-            core.restore_generation_cursor(checkpoint.state_slot.generation);
-            self.page_nodes.restore_checkpoint_cursor(*mark.page())?;
-            self.checkpoint_state_lent_to_candidate = self.checkpoint_state_loan.take();
-            return Ok(CheckpointStateBundle {
-                core: self.core.take().expect("active checkpoint loan has a core"),
-                page_nodes: std::mem::take(&mut self.page_nodes),
-                retained_page_bound: checkpoint.state_slot.retained_page_bound,
-                durable_page_bound: checkpoint.state_slot.durable_page_bound,
-                primitive_registry: Rc::clone(&self.primitive_registry),
-            });
-        }
-        checkpoint
-            .state_slot
-            .bundle
-            .borrow_mut()
-            .take()
-            .ok_or(UniverseError::State(StateError::InvalidCursor))
-    }
-
-    fn restore_loan_to_slot(&mut self) -> Result<(), UniverseError> {
-        let Some(loan) = self.checkpoint_state_loan.take() else {
-            return Ok(());
-        };
-        let mark = loan.mark;
-        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        core.state_mut().restore(*mark.journal())?;
-        core.restore_durable_node_cursor(*mark.durable())?;
-        core.restore_generation_cursor(loan.slot.generation);
-        self.page_nodes.restore_checkpoint_cursor(*mark.page())?;
-        let bundle = CheckpointStateBundle {
-            core: self
-                .core
-                .take()
-                .expect("loaned checkpoint has a state core"),
-            page_nodes: std::mem::take(&mut self.page_nodes),
-            retained_page_bound: loan.slot.retained_page_bound,
-            durable_page_bound: loan.slot.durable_page_bound,
-            primitive_registry: Rc::clone(&self.primitive_registry),
-        };
-        assert!(
-            loan.slot.bundle.borrow_mut().replace(bundle).is_none(),
-            "one checkpoint bank has one borrower"
-        );
-        Ok(())
+        checkpoint.font_roots_valid
+            && core.owns_generation(checkpoint.state.owner())
+            && core.state().validate_restore(*mark.journal()).is_ok()
+            && core.state().validate_checkpoint_cursor(*mark.input())
+            && core.validate_durable_node_cursor(*mark.durable()).is_ok()
+            && core.validates_generation_cursor(checkpoint.generation)
+            && self.page_nodes.validate_cursor(*mark.page()).is_ok()
     }
 
     fn activate_checkpoint_state(
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
     ) -> Result<(), UniverseError> {
-        if self
-            .checkpoint_state_loan
-            .as_ref()
-            .is_some_and(|loan| Rc::ptr_eq(&loan.slot, &checkpoint.state_slot))
-        {
-            let mark = *checkpoint.state.mark();
-            let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-            core.state_mut().restore(*mark.journal())?;
-            core.restore_durable_node_cursor(*mark.durable())?;
-            core.restore_generation_cursor(checkpoint.state_slot.generation);
-            self.page_nodes.restore_checkpoint_cursor(*mark.page())?;
-            self.retained_page_bound = checkpoint.state_slot.retained_page_bound;
-            self.durable_page_bound = checkpoint.state_slot.durable_page_bound;
-            return Ok(());
-        }
-
-        if self.checkpoint_state_loan.is_some() {
-            self.restore_loan_to_slot()?;
-        } else {
-            let abandoned = CheckpointStateBundle {
-                core: self.core.take().ok_or(UniverseError::Retired)?,
-                page_nodes: std::mem::take(&mut self.page_nodes),
-                retained_page_bound: self.retained_page_bound,
-                durable_page_bound: self.durable_page_bound,
-                primitive_registry: Rc::clone(&self.primitive_registry),
-            };
-            assert!(
-                self.abandoned_checkpoint_state.replace(abandoned).is_none(),
-                "one live lineage abandons at most one unloaned state bank"
-            );
-        }
-
-        let bundle = checkpoint
-            .state_slot
-            .bundle
-            .borrow_mut()
-            .take()
-            .expect("checkpoint slot was validated before activation");
-        self.core = Some(bundle.core);
-        self.page_nodes = bundle.page_nodes;
-        self.retained_page_bound = bundle.retained_page_bound;
-        self.durable_page_bound = bundle.durable_page_bound;
-        self.primitive_registry = bundle.primitive_registry;
-        self.checkpoint_state_loan = Some(CheckpointStateLoan {
-            slot: Rc::clone(&checkpoint.state_slot),
-            mark: *checkpoint.state.mark(),
-        });
+        let mark = *checkpoint.state.mark();
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        core.state_mut().restore(*mark.journal())?;
+        core.state_mut().restore_checkpoint_cursor(*mark.input());
+        core.restore_durable_node_cursor(*mark.durable())?;
+        core.restore_generation_cursor(checkpoint.generation);
+        self.page_nodes.restore_checkpoint_cursor(*mark.page())?;
+        self.retained_page_bound = checkpoint.retained_page_bound;
+        self.durable_page_bound = checkpoint.durable_page_bound;
         Ok(())
     }
 
@@ -978,19 +863,27 @@ impl<G> Universe<G> {
             || !self.fonts.validates(checkpoint.fonts)
             || !self.sources.validates(checkpoint.sources)
             || !self.page.validates_checkpoint_mark(checkpoint.page)
-            || !self.checkpoint_slot_is_ready(checkpoint)
+            || !self.checkpoint_state_is_ready(checkpoint)
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
 
-        let bundle = self.take_checkpoint_state(checkpoint)?;
-        let CheckpointStateBundle {
-            core,
-            page_nodes,
-            retained_page_bound,
-            durable_page_bound,
-            primitive_registry,
-        } = bundle;
+        let core_tail = self
+            .core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .begin_checkpoint_candidate(
+                *mark.journal(),
+                *mark.input(),
+                *mark.durable(),
+                checkpoint.generation,
+            )?;
+        let page_node_tail = self.page_nodes.begin_checkpoint_candidate(*mark.page())?;
+        let core = self
+            .core
+            .take()
+            .expect("validated source owns its state core");
+        let page_nodes = std::mem::take(&mut self.page_nodes);
         let destination_owner = core.generation_owner();
         let pdf = self.pdf.take_candidate(&checkpoint.pdf);
         let mut page = std::mem::take(&mut self.page);
@@ -1000,14 +893,16 @@ impl<G> Universe<G> {
             interner: None,
             core: Some(core),
             page_nodes,
-            retained_page_bound,
-            durable_page_bound,
-            checkpoint_state_loan: Some(CheckpointStateLoan {
-                slot: Rc::clone(&checkpoint.state_slot),
+            retained_page_bound: checkpoint.retained_page_bound,
+            durable_page_bound: checkpoint.durable_page_bound,
+            checkpoint_candidate: Some(CheckpointStateCandidate {
                 mark: *mark,
+                generation: checkpoint.generation,
+                core: core_tail,
+                page_nodes: page_node_tail,
+                accepted_retained_page_bound: self.retained_page_bound,
+                accepted_durable_page_bound: self.durable_page_bound,
             }),
-            checkpoint_state_lent_to_candidate: None,
-            abandoned_checkpoint_state: None,
             shipout_scratch: ShipoutScratchArena::default(),
             fonts: self.fonts.fork_at(checkpoint.fonts),
             page,
@@ -1024,7 +919,7 @@ impl<G> Universe<G> {
             dynamic_memory_scratch: crate::stores::DynamicMemoryScratch::default(),
             provenance_demand: self.provenance_demand,
             provenance_budgets: self.provenance_budgets,
-            primitive_registry,
+            primitive_registry: Rc::clone(&self.primitive_registry),
             command_generation_owner: Some(destination_owner),
             pure_memo_config: self.pure_memo_config,
             pure_memo_capability: self.pure_memo_capability.clone(),
@@ -1035,23 +930,32 @@ impl<G> Universe<G> {
 
     #[doc(hidden)]
     pub fn reject_checkpoint_candidate(&mut self, candidate: &mut Self) {
+        let Some(transaction) = candidate.checkpoint_candidate.take() else {
+            // Emergency Drop can revisit a candidate after unwinding began.
+            // Normal settlement always arrives here exactly once.
+            return;
+        };
+        let mark = transaction.mark;
+        let mut core = candidate
+            .core
+            .take()
+            .expect("the current lineage owns the direct state core");
+        core.reject_checkpoint_candidate(
+            *mark.journal(),
+            *mark.input(),
+            *mark.durable(),
+            transaction.generation,
+            transaction.core,
+        )
+        .expect("validated candidate state can undo and redo");
         candidate
-            .restore_loan_to_slot()
-            .expect("candidate-private state suffix rolls back to its loan mark");
-        if let Some(loan) = self.checkpoint_state_lent_to_candidate.take() {
-            let bundle = loan
-                .slot
-                .bundle
-                .borrow_mut()
-                .take()
-                .expect("rejected candidate returned the source checkpoint bank");
-            self.core = Some(bundle.core);
-            self.page_nodes = bundle.page_nodes;
-            self.retained_page_bound = bundle.retained_page_bound;
-            self.durable_page_bound = bundle.durable_page_bound;
-            self.primitive_registry = bundle.primitive_registry;
-            self.checkpoint_state_loan = Some(loan);
-        }
+            .page_nodes
+            .reject_checkpoint_candidate(*mark.page(), transaction.page_nodes)
+            .expect("validated candidate page nodes can undo and redo");
+        self.core = Some(core);
+        self.page_nodes = std::mem::take(&mut candidate.page_nodes);
+        self.retained_page_bound = transaction.accepted_retained_page_bound;
+        self.durable_page_bound = transaction.accepted_durable_page_bound;
         self.pdf.return_rejected(&mut candidate.pdf);
         if candidate.page.has_checkpoint_fork() {
             candidate.page.reject_checkpoint_fork();
@@ -1061,7 +965,16 @@ impl<G> Universe<G> {
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) {
-        self.checkpoint_state_loan = None;
+        let transaction = self
+            .checkpoint_candidate
+            .take()
+            .expect("the current lineage owns one rooted state transaction");
+        self.core
+            .as_mut()
+            .expect("the current lineage owns the direct state core")
+            .accept_checkpoint_candidate(transaction.core);
+        self.page_nodes
+            .accept_checkpoint_candidate(transaction.page_nodes);
         self.pdf.commit_candidate();
         self.page.commit_checkpoint_fork();
     }
@@ -1224,9 +1137,7 @@ impl<G> Universe<G> {
             page_nodes,
             retained_page_bound,
             durable_page_bound,
-            checkpoint_state_loan: None,
-            checkpoint_state_lent_to_candidate: None,
-            abandoned_checkpoint_state: None,
+            checkpoint_candidate: None,
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
             page: PageBuilderState::default(),
@@ -2493,9 +2404,10 @@ impl<G> Universe<G> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
         let owner = core.generation_owner();
         let journal = core.state_mut().journal_cursor();
+        let dense = core.state().checkpoint_cursor();
         Ok(GenerationCheckpoint::new(
             owner,
-            BoundedStateMark::new(journal, core.durable_node_cursor(), page, ()),
+            BoundedStateMark::new(journal, core.durable_node_cursor(), page, dense),
         ))
     }
 
@@ -2579,21 +2491,15 @@ impl<G> Universe<G> {
             && self
                 .page_nodes
                 .font_roots_are_live(*live_mark.page(), font_survives)?;
-        let core = self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .checkpoint_copy();
-        let page_nodes = self.page_nodes.fork();
         let mark = BoundedStateMark::new(
             *live_mark.journal(),
-            core.durable_node_cursor(),
-            page_nodes.cursor(),
-            (),
+            *live_mark.durable(),
+            *live_mark.page(),
+            *live_mark.input(),
         );
-        let owner = core.generation_owner();
+        let owner = live_core.generation_owner();
         let core_owner = owner.checkpoint_owner_id();
-        let generation = core.generation_cursor();
+        let generation = live_core.generation_cursor();
         let source_mark = self.sources.watermark();
         let retention = RuntimeCheckpointRetention {
             core_owner,
@@ -2613,19 +2519,6 @@ impl<G> Universe<G> {
                 .checkpoint_retained_bytes()
                 .saturating_add(font_mark.checkpoint_retained_bytes()),
         };
-        let state_slot = Rc::new(CheckpointStateSlot {
-            bundle: RefCell::new(Some(CheckpointStateBundle {
-                core,
-                page_nodes,
-                retained_page_bound: self.retained_page_bound,
-                durable_page_bound: self.durable_page_bound,
-                primitive_registry: Rc::clone(&self.primitive_registry),
-            })),
-            generation,
-            retained_page_bound: self.retained_page_bound,
-            durable_page_bound: self.durable_page_bound,
-            font_roots_valid,
-        });
         let pdf = self.pdf.snapshot();
         let page = self.page.checkpoint_mark();
         let core_identity = live_core.reachable_state_identity_root().map(|core| {
@@ -2667,7 +2560,10 @@ impl<G> Universe<G> {
         };
         let checkpoint = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(owner, mark),
-            state_slot,
+            generation,
+            retained_page_bound: self.retained_page_bound,
+            durable_page_bound: self.durable_page_bound,
+            font_roots_valid,
             page,
             pdf,
             world: self.world.snapshot(),
@@ -2746,7 +2642,7 @@ impl<G> Universe<G> {
         }) || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
             || !self.fonts.validates(checkpoint.fonts)
             || !self.sources.validates(checkpoint.sources)
-            || !self.checkpoint_slot_is_ready(checkpoint)
+            || !self.checkpoint_state_is_ready(checkpoint)
             || !self.page.validates_checkpoint_mark(checkpoint.page)
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
@@ -2981,15 +2877,13 @@ impl<G> Universe<G> {
             .as_ref()
             .expect("live Universe has an admitted session epoch")
             .is_last_owner()
-            || !self
-                .core
-                .as_ref()
-                .ok_or(UniverseError::Retired)?
-                .can_retire_after_dropping(
+            || self.core.as_ref().is_some_and(|core| {
+                !core.can_retire_after_dropping(
                     self.command_generation_owner
                         .as_ref()
-                        .ok_or(UniverseError::Retired)?,
+                        .expect("live generation has command authority"),
                 )
+            })
         {
             return Err(UniverseError::State(StateError::GenerationInUse));
         }
@@ -3005,11 +2899,10 @@ impl<G> Universe<G> {
             .command_generation_owner
             .as_ref()
             .ok_or(UniverseError::Retired)?;
-        if !self
+        if self
             .core
             .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .can_retire_after_dropping(command_owner)
+            .is_some_and(|core| !core.can_retire_after_dropping(command_owner))
         {
             return Err(UniverseError::State(StateError::GenerationInUse));
         }
@@ -3018,13 +2911,10 @@ impl<G> Universe<G> {
                 .take()
                 .expect("live generation has one command authority"),
         );
-        self.checkpoint_state_loan = None;
-        self.abandoned_checkpoint_state = None;
-        self.core
-            .take()
-            .ok_or(UniverseError::Retired)?
-            .retire()
-            .map_err(UniverseError::State)
+        self.core.take().map_or_else(
+            || Ok(StateCoreRetirement::transferred()),
+            |core| core.retire().map_err(UniverseError::State),
+        )
     }
 
     #[must_use]
@@ -3035,7 +2925,10 @@ impl<G> Universe<G> {
 
 impl<G> Drop for Universe<G> {
     fn drop(&mut self) {
-        let _ = self.restore_loan_to_slot();
+        debug_assert!(
+            self.checkpoint_candidate.is_none(),
+            "reachability-store cleanup settles a candidate before dropping its Universe"
+        );
     }
 }
 
@@ -3113,6 +3006,9 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         core.state().validate_restore(*mark.journal())?;
+        if !core.state().validate_checkpoint_cursor(*mark.input()) {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
         core.validate_durable_node_cursor(*mark.durable())?;
         self.page_nodes.validate_cursor(*mark.page())?;
         Ok(())
@@ -3139,10 +3035,12 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
     }
 
     fn truncate_suffixes(&mut self, mark: &StateCheckpointMark<G>) {
-        self.core
+        let core = self
+            .core
             .as_mut()
-            .expect("restore plan validated a live state core")
-            .truncate_durable_nodes(*mark.durable())
+            .expect("restore plan validated a live state core");
+        core.state_mut().restore_checkpoint_cursor(*mark.input());
+        core.truncate_durable_nodes(*mark.durable())
             .expect("restore plan prevalidated durable-node suffix");
         self.page_nodes
             .truncate(*mark.page())

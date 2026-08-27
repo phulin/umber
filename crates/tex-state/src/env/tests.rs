@@ -80,22 +80,22 @@ fn borrowed_meaning_row_acquires_one_owner_only_when_resolved() {
                 AssignmentScope::Global,
             )
             .expect("assign macro");
-        assert_eq!(definition.semantic_owner_count(), 2);
+        assert_eq!(definition.semantic_owner_count(), 3);
 
         let word = state.meaning_word(selector.symbol()).expect("borrow row");
         assert_eq!(
             definition.semantic_owner_count(),
-            2,
+            3,
             "borrowing the dense row must not acquire the macro owner"
         );
         let resolved = word.resolve();
         assert_eq!(
             definition.semantic_owner_count(),
-            3,
+            4,
             "resolving into the owned delivery acquires exactly one owner"
         );
         drop(resolved);
-        assert_eq!(definition.semantic_owner_count(), 2);
+        assert_eq!(definition.semantic_owner_count(), 3);
     });
 }
 
@@ -128,8 +128,8 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token list");
-        assert_eq!(definition.semantic_owner_count(), 2);
-        assert_eq!(tokens.semantic_owner_count(), 2);
+        assert_eq!(definition.semantic_owner_count(), 3);
+        assert_eq!(tokens.semantic_owner_count(), 3);
 
         state.restore(before).expect("rollback");
         assert_eq!(definition.semantic_owner_count(), 1);
@@ -158,6 +158,34 @@ fn operation_rollback_is_exact_after_the_cell_was_already_written_in_the_interva
 
     state.restore(checkpoint).expect("checkpoint rollback");
     assert_eq!(state.count(0).expect("count"), 1);
+}
+
+#[test]
+fn checkpoint_values_rewind_and_redo_without_consuming_the_accepted_delta() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base assignment");
+    let checkpoint = state.journal_cursor();
+    state
+        .assign_count(0, 2, AssignmentScope::Global)
+        .expect("first accepted assignment");
+    state
+        .assign_count(0, 3, AssignmentScope::Global)
+        .expect("second accepted assignment");
+
+    let dense = state.checkpoint_cursor();
+    let accepted = state
+        .begin_checkpoint_candidate(checkpoint, dense)
+        .expect("accepted rewind");
+    assert_eq!(state.count(0).expect("rewound count"), 1);
+    state
+        .reject_checkpoint_candidate(checkpoint, dense, accepted)
+        .expect("candidate undo and accepted redo");
+    assert_eq!(state.count(0).expect("redone count"), 3);
+
+    state.restore(checkpoint).expect("the delta remained live");
+    assert_eq!(state.count(0).expect("restored count"), 1);
 }
 
 #[test]

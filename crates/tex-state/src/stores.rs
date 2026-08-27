@@ -4,12 +4,16 @@ use crate::definition_arena::{DefinitionAllocationError, DefinitionId, Definitio
 use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
-use crate::env::{DenseState, DynamicMemoryRoot, StateError};
-use crate::generation::{Generation, GenerationCursor, GenerationOwner, GenerationRetirement};
+use crate::env::{
+    AcceptedDenseStateTail, DenseState, DenseStateCursor, DynamicMemoryRoot, StateError,
+};
+use crate::generation::{
+    AcceptedGenerationTail, Generation, GenerationCursor, GenerationOwner, GenerationRetirement,
+};
 use crate::glue::GlueSpec;
 use crate::node_arena::{
-    DurableListId, NodeArenaCursor, NodeArenaError, NodeList, NodeMemoryScratch,
-    NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena,
+    AcceptedNodeArenaTail, DurableListId, NodeArenaCursor, NodeArenaError, NodeList,
+    NodeMemoryScratch, NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena,
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
@@ -24,6 +28,12 @@ pub(crate) struct StateCore<G> {
     generation: GenerationOwner<G>,
     nodes: PageNodeArena,
     state: DenseState<G>,
+}
+
+pub(crate) struct AcceptedStateCoreTail<G> {
+    dense: AcceptedDenseStateTail<G>,
+    nodes: AcceptedNodeArenaTail<PageLifetime>,
+    generation: AcceptedGenerationTail,
 }
 
 impl<G> StateCore<G> {
@@ -51,17 +61,6 @@ impl<G> StateCore<G> {
             .saturating_add(self.state.journal_retained_bytes())
     }
 
-    /// Materializes one exact named-boundary bank. Candidate construction
-    /// later moves this bank out of its checkpoint slot instead of copying it.
-    pub(crate) fn checkpoint_copy(&self) -> Self {
-        let generation = self.generation.generation().fork();
-        Self {
-            generation: GenerationOwner::new(generation),
-            nodes: self.nodes.fork(),
-            state: self.state.clone(),
-        }
-    }
-
     #[must_use]
     pub(crate) fn generation_cursor(&self) -> GenerationCursor {
         self.generation.generation().cursor()
@@ -71,15 +70,8 @@ impl<G> StateCore<G> {
         self.generation.generation_mut().restore_cursor(cursor);
     }
 
-    pub(crate) fn checkpoint_is_exact_head(
-        &self,
-        journal: crate::journal::JournalCursor<G>,
-        durable: NodeArenaCursor<PageLifetime>,
-        generation: GenerationCursor,
-    ) -> bool {
-        self.state.checkpoint_is_head(journal)
-            && self.nodes.cursor_is_head(durable)
-            && self.generation.generation().cursor() == generation
+    pub(crate) fn validates_generation_cursor(&self, cursor: GenerationCursor) -> bool {
+        self.generation.generation().validates_cursor(cursor)
     }
 
     pub(crate) fn capture_format_values(
@@ -201,6 +193,61 @@ impl<G> StateCore<G> {
         cursor: NodeArenaCursor<PageLifetime>,
     ) -> Result<(), NodeArenaError> {
         self.nodes.restore_checkpoint_cursor(cursor)
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        journal: crate::journal::JournalCursor<G>,
+        dense: DenseStateCursor,
+        durable: NodeArenaCursor<PageLifetime>,
+        generation: GenerationCursor,
+    ) -> Result<AcceptedStateCoreTail<G>, StateError> {
+        self.state.validate_restore(journal)?;
+        self.nodes
+            .validate_cursor(durable)
+            .map_err(|_| StateError::InvalidCursor)?;
+        if !self.generation.generation().validates_cursor(generation) {
+            return Err(StateError::InvalidCursor);
+        }
+        let generation_tail = self
+            .generation
+            .generation_mut()
+            .begin_checkpoint_candidate(generation);
+        let node_tail = self
+            .nodes
+            .begin_checkpoint_candidate(durable)
+            .map_err(|_| StateError::InvalidCursor)?;
+        let dense = self.state.begin_checkpoint_candidate(journal, dense)?;
+        Ok(AcceptedStateCoreTail {
+            dense,
+            nodes: node_tail,
+            generation: generation_tail,
+        })
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        journal: crate::journal::JournalCursor<G>,
+        dense: DenseStateCursor,
+        durable: NodeArenaCursor<PageLifetime>,
+        generation: GenerationCursor,
+        tail: AcceptedStateCoreTail<G>,
+    ) -> Result<(), StateError> {
+        self.state
+            .reject_checkpoint_candidate(journal, dense, tail.dense)?;
+        self.nodes
+            .reject_checkpoint_candidate(durable, tail.nodes)
+            .map_err(|_| StateError::InvalidCursor)?;
+        self.generation
+            .generation_mut()
+            .reject_checkpoint_candidate(generation, tail.generation);
+        Ok(())
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedStateCoreTail<G>) {
+        self.nodes.accept_checkpoint_candidate(tail.nodes);
+        drop(tail.dense);
+        drop(tail.generation);
     }
 
     /// Retires the complete generation after all admitted borrows end.
@@ -697,4 +744,20 @@ pub(crate) struct StateCoreRetirement {
     pub(crate) durable_node_lists: usize,
     pub(crate) journal_entries: usize,
     pub(crate) allocated_overflow_pages: usize,
+}
+
+impl StateCoreRetirement {
+    pub(crate) const fn transferred() -> Self {
+        Self {
+            generation: GenerationRetirement {
+                definitions: 0,
+                token_lists: 0,
+                glue_values: 0,
+                provenance_records: 0,
+            },
+            durable_node_lists: 0,
+            journal_entries: 0,
+            allocated_overflow_pages: 0,
+        }
+    }
 }

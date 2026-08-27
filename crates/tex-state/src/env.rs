@@ -12,14 +12,15 @@ use banks::{
 };
 pub(crate) use font_runtime::DerivedFontRuntimeRequest;
 pub(crate) use font_runtime::FontRuntimeCell;
-use font_runtime::{BankCellValue, FontRuntimeBank, PreparedFontRuntime};
+use font_runtime::{AcceptedFontRuntimeTail, BankCellValue, FontRuntimeBank, PreparedFontRuntime};
 use group::{GroupFrame, GroupKind, GroupMismatch};
 
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::ids::FontId;
 use crate::interner::Symbol;
 use crate::journal::{
-    JournalCursor, JournalEntry, Mutation, RestoredGroups, SaveJournal, StateOperation,
+    AcceptedJournalTail, JournalCursor, JournalEntry, Mutation, RestoredGroups, SaveJournal,
+    StateOperation,
 };
 use crate::meaning::{MeaningWord, ResolvedMeaning};
 use crate::node_arena::DurableListId;
@@ -465,6 +466,21 @@ pub(crate) struct DenseState<G> {
     reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
 }
 
+/// Accepted dense suffix retained while the current candidate mutates the
+/// same direct banks from a rooted mark.
+pub(crate) struct AcceptedDenseStateTail<G> {
+    journal: AcceptedJournalTail<G>,
+    font_runtime: AcceptedFontRuntimeTail,
+    groups: Vec<GroupFrame>,
+    next_group_lineage: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct DenseStateCursor {
+    font_runtime_rows: u32,
+}
+
 impl<G> Clone for DenseState<G> {
     fn clone(&self) -> Self {
         Self {
@@ -498,10 +514,23 @@ impl<G> Clone for DenseState<G> {
 }
 
 impl<G> DenseState<G> {
-    #[must_use]
-    pub(crate) fn checkpoint_is_head(&self, cursor: JournalCursor<G>) -> bool {
-        self.journal.cursor_is_head(cursor)
+    pub(crate) fn checkpoint_cursor(&self) -> DenseStateCursor {
+        DenseStateCursor {
+            font_runtime_rows: u32::try_from(self.font_runtime.cursor())
+                .expect("font runtime rows fit u32"),
+        }
     }
+
+    pub(crate) fn validate_checkpoint_cursor(&self, cursor: DenseStateCursor) -> bool {
+        cursor.font_runtime_rows as usize <= self.font_runtime.cursor()
+    }
+
+    pub(crate) fn restore_checkpoint_cursor(&mut self, cursor: DenseStateCursor) {
+        assert!(self.validate_checkpoint_cursor(cursor));
+        self.font_runtime
+            .truncate(cursor.font_runtime_rows as usize);
+    }
+
     pub(crate) fn visit_dynamic_memory_roots(&self, mut visit: impl FnMut(DynamicMemoryRoot<G>)) {
         for meaning in self.meanings.values() {
             if let MeaningWord::Macro { definition, .. } = meaning {
@@ -1421,12 +1450,11 @@ impl<G> DenseState<G> {
                 level: before.level,
             },
         )?;
-        self.journal.record_mutation(Mutation::new(
-            cell,
-            StateWord::NodeList(old),
+        self.journal.record_mutation(
+            Mutation::new(cell, StateWord::NodeList(old), before.level, None),
+            after,
             before.level,
-            None,
-        ));
+        );
         Ok(())
     }
 
@@ -1647,8 +1675,11 @@ impl<G> DenseState<G> {
                     level: saved.before_level,
                 },
             )?;
-            self.journal
-                .record_mutation(Mutation::new(cell, current.value, current.level, None));
+            self.journal.record_mutation(
+                Mutation::new(cell, current.value, current.level, None),
+                saved.before.clone(),
+                saved.before_level,
+            );
             (saved.before.clone(), GroupRestorationOutcome::Restored)
         };
         entries.push(GroupRestorationEntry {
@@ -1693,6 +1724,72 @@ impl<G> DenseState<G> {
             RestoredGroups::Replace(groups) => self.groups = groups,
         }
         self.journal.truncate_checkpoint(cursor);
+        Ok(())
+    }
+
+    /// Inverse-rewinds the accepted values and opens an empty candidate
+    /// journal at `cursor` without cloning the dense banks.
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        cursor: JournalCursor<G>,
+        dense_cursor: DenseStateCursor,
+    ) -> Result<AcceptedDenseStateTail<G>, StateError> {
+        self.validate_restore(cursor)?;
+        if !self.validate_checkpoint_cursor(dense_cursor) {
+            return Err(StateError::InvalidCursor);
+        }
+        let accepted_groups = std::mem::take(&mut self.groups);
+        let accepted_next_group_lineage = self.next_group_lineage;
+        let journal = self.journal.begin_checkpoint_candidate(cursor);
+        self.groups = self
+            .journal
+            .active_group_frames()
+            .collect::<Vec<GroupFrame>>();
+        for delta in journal.deltas().iter().rev() {
+            self.write_cell(
+                delta.cell,
+                BankCell {
+                    value: delta.before.clone(),
+                    level: delta.before_level,
+                },
+            )?;
+        }
+        let font_runtime = self
+            .font_runtime
+            .begin_checkpoint_candidate(dense_cursor.font_runtime_rows as usize);
+        Ok(AcceptedDenseStateTail {
+            journal,
+            font_runtime,
+            groups: accepted_groups,
+            next_group_lineage: accepted_next_group_lineage,
+        })
+    }
+
+    /// Undoes only candidate mutations, then forward-redoes the saved
+    /// accepted delta and restores the accepted group stack.
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        cursor: JournalCursor<G>,
+        dense_cursor: DenseStateCursor,
+        tail: AcceptedDenseStateTail<G>,
+    ) -> Result<(), StateError> {
+        self.restore(cursor)?;
+        self.font_runtime.reject_checkpoint_candidate(
+            dense_cursor.font_runtime_rows as usize,
+            tail.font_runtime,
+        );
+        for delta in tail.journal.deltas() {
+            self.write_cell(
+                delta.cell,
+                BankCell {
+                    value: delta.after.clone(),
+                    level: delta.after_level,
+                },
+            )?;
+        }
+        self.journal.reject_checkpoint_candidate(tail.journal);
+        self.groups = tail.groups;
+        self.next_group_lineage = tail.next_group_lineage;
         Ok(())
     }
 
@@ -1781,8 +1878,11 @@ impl<G> DenseState<G> {
                 level: after_level,
             },
         )?;
-        self.journal
-            .record_mutation(Mutation::new(cell, before.value, before.level, saved_at));
+        self.journal.record_mutation(
+            Mutation::new(cell, before.value, before.level, saved_at),
+            value,
+            after_level,
+        );
         Ok(())
     }
 
@@ -1919,12 +2019,9 @@ impl<G> DenseState<G> {
         if !self.journal.validate_cursor(cursor) {
             return Err(StateError::InvalidCursor);
         }
-        if self
-            .journal
-            .checkpoint_suffix(cursor)
-            .iter()
-            .any(|delta| !word_matches(delta.cell, &delta.before))
-        {
+        if self.journal.checkpoint_suffix(cursor).iter().any(|delta| {
+            !word_matches(delta.cell, &delta.before) || !word_matches(delta.cell, &delta.after)
+        }) {
             return Err(StateError::CellKindMismatch);
         }
         Ok(())

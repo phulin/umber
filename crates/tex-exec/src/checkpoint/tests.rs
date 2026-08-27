@@ -175,10 +175,10 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
                 "shared {family:?} owner must keep one accounting identity"
             );
         }
-        assert_ne!(
+        assert_eq!(
             owner(retention, CheckpointOwnerFamily::Core),
             owner(later.retention(), CheckpointOwnerFamily::Core),
-            "each exact checkpoint core bank is a distinct charged owner"
+            "fixed core marks share the one accepted lineage owner"
         );
     });
 }

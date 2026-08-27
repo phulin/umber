@@ -2025,6 +2025,17 @@ impl<G> MainControl<G> {
         }
     }
 
+    /// Returns command roots and promotes mode roots before aggregate state
+    /// acceptance. Consuming `self` makes terminal owner handoff explicit.
+    pub fn accept_checkpoint_candidate(mut self) {
+        self.modes.accept_checkpoint_candidate();
+    }
+
+    /// Returns command and mode roots through their rejection paths before
+    /// aggregate state rejection. Consuming `self` prevents later use of a
+    /// partially settled command machine.
+    pub fn reject_checkpoint_candidate(self) {}
+
     pub(crate) fn arm_terminal_revision(&mut self, step: MainControlStep) {
         debug_assert!(matches!(
             step,

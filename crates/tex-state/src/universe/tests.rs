@@ -292,6 +292,7 @@ fn runtime_checkpoint_fork_resets_newer_retained_page_bound() {
             .expect("older checkpoint fork");
         fork.runtime_checkpoint()
             .expect("forked retained bound addresses its truncated page arena");
+        universe.reject_checkpoint_candidate(&mut fork);
     })
     .expect("universe allocation");
 }
@@ -380,6 +381,7 @@ fn runtime_checkpoint_hyphenation_restore_and_fork_isolate_mutable_state() {
             universe.hyphenation.saved_hyphen_code(7, 'A'),
             Some(Some('a'))
         );
+        universe.reject_checkpoint_candidate(&mut fork);
     })
     .expect("universe allocation");
 }
@@ -1148,16 +1150,18 @@ fn runtime_checkpoint_validates_before_mutation() {
                 glue_order: crate::glue::Order::Normal,
                 children: retained,
             })));
-        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        let earlier = universe.runtime_checkpoint().expect("earlier checkpoint");
+        universe
+            .assign_count(0, 17, AssignmentScope::Global)
+            .expect("intermediate count");
+        let mut checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        universe
+            .restore_runtime_checkpoint_with_roots(&earlier, || {})
+            .expect("discard later checkpoint coordinates");
+        checkpoint.font_roots_valid = false;
         universe
             .assign_count(0, 41, AssignmentScope::Global)
             .expect("candidate count");
-        let borrowed = checkpoint
-            .state_slot
-            .bundle
-            .borrow_mut()
-            .take()
-            .expect("borrow checkpoint bank");
 
         assert!(
             universe
@@ -1174,14 +1178,6 @@ fn runtime_checkpoint_validates_before_mutation() {
                 .expect("count"),
             41,
             "runtime validation failure must leave dense state unchanged"
-        );
-        assert!(
-            checkpoint
-                .state_slot
-                .bundle
-                .borrow_mut()
-                .replace(borrowed)
-                .is_none()
         );
     })
     .expect("universe allocation");

@@ -521,20 +521,6 @@ pub(crate) struct TokenListArena<G> {
 }
 
 impl<G> TokenListArena<G> {
-    pub(crate) fn fork(&self, accounting: MemoryAccounting) -> Self {
-        Self {
-            next_serial: self.next_serial,
-            chunks: Vec::new(),
-            builder_slots: Vec::new(),
-            free_builder_slots: Vec::new(),
-            free_chunk_head: NO_CHUNK,
-            next_builder_serial: 1,
-            accounting,
-            semantic_identity_enabled: self.semantic_identity_enabled,
-            _brand: PhantomData,
-        }
-    }
-
     pub(crate) const fn cursor(&self) -> u32 {
         self.next_serial
     }
@@ -542,8 +528,22 @@ impl<G> TokenListArena<G> {
     pub(crate) fn restore_cursor(&mut self, cursor: u32) {
         assert!(
             cursor <= self.next_serial,
-            "token-list cursor is beyond the publisher"
+            "token-list cursor {cursor} is beyond publisher head {}",
+            self.next_serial
         );
+        assert!(self.builder_slots.iter().all(|slot| !slot.live));
+        self.next_serial = cursor;
+        self.chunks.clear();
+        self.builder_slots.clear();
+        self.free_builder_slots.clear();
+        self.free_chunk_head = NO_CHUNK;
+        self.next_builder_serial = 1;
+    }
+
+    /// Restores the saved accepted publisher coordinate after discarding a
+    /// candidate. Published payloads live in their durable handles rather
+    /// than this publisher, so rejection replays only the scalar coordinate.
+    pub(crate) fn restore_accepted_cursor(&mut self, cursor: u32) {
         assert!(self.builder_slots.iter().all(|slot| !slot.live));
         self.next_serial = cursor;
         self.chunks.clear();
@@ -936,6 +936,15 @@ impl<G> GlueArena<G> {
         self.rows.truncate(len);
     }
 
+    pub(crate) fn split_off(&mut self, len: usize) -> Vec<GlueSpec> {
+        assert!(len <= self.rows.len(), "glue cursor is beyond the arena");
+        self.rows.split_off(len)
+    }
+
+    pub(crate) fn append_rows(&mut self, rows: &mut Vec<GlueSpec>) {
+        self.rows.append(rows);
+    }
+
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
@@ -1028,6 +1037,18 @@ impl<G> ProvenanceArena<G> {
             "provenance cursor is beyond the arena"
         );
         self.rows.truncate(len);
+    }
+
+    pub(crate) fn split_off(&mut self, len: usize) -> Vec<OriginRecord> {
+        assert!(
+            len <= self.rows.len(),
+            "provenance cursor is beyond the arena"
+        );
+        self.rows.split_off(len)
+    }
+
+    pub(crate) fn append_rows(&mut self, rows: &mut Vec<OriginRecord>) {
+        self.rows.append(rows);
     }
 
     #[cfg(test)]

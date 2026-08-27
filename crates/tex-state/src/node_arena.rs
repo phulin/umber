@@ -512,6 +512,13 @@ pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     accounting: MemoryAccounting,
 }
 
+/// Physical accepted rows detached from the live logical suffix while a
+/// rooted candidate reuses their exact coordinates.
+pub(crate) struct AcceptedNodeArenaTail<L, Glue = GlueSpec, Tokens = NodeTokenList> {
+    rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
+    next_generation: u64,
+}
+
 struct NodeArenaRow<L, Glue, Tokens> {
     generation: u64,
     segment: u32,
@@ -548,32 +555,6 @@ impl<L, Glue, Tokens> Clone for NodeArenaRow<L, Glue, Tokens> {
             offset: self.offset,
             semantic_identity: self.semantic_identity,
             _lifetime: PhantomData,
-        }
-    }
-}
-
-impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
-    /// Forks the immutable published rows while preserving their stable
-    /// coordinates. The accepted arena is never mutated; subsequent
-    /// publication is confined to the destination arena.
-    pub(crate) fn fork(&self) -> Self {
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_node_checkpoint_share(self.rows.iter().flatten().count());
-        let mut rows = Vec::with_capacity(self.rows.len().saturating_add(NODE_ARENA_SEGMENT_ROWS));
-        rows.extend(self.rows.iter().cloned());
-        let mut segments = Vec::with_capacity(self.segments.len().saturating_add(1));
-        segments.extend(self.segments.iter().cloned());
-        let mut segment_live_rows =
-            Vec::with_capacity(self.segment_live_rows.len().saturating_add(1));
-        segment_live_rows.extend_from_slice(&self.segment_live_rows);
-        Self {
-            owner: self.owner,
-            next_generation: next_list_generation_namespace(),
-            rows,
-            segments,
-            segment_live_rows,
-            semantic_identity_enabled: self.semantic_identity_enabled,
-            accounting: self.accounting.clone(),
         }
     }
 }
@@ -657,6 +638,10 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         let Some(row) = self.rows[index].take() else {
             return;
         };
+        self.release_detached_row(row);
+    }
+
+    fn release_detached_row(&mut self, row: NodeArenaRow<L, Glue, Tokens>) {
         let segment_index = row.segment as usize;
         let live = &mut self.segment_live_rows[segment_index];
         *live -= 1;
@@ -853,11 +838,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         }
     }
 
-    #[must_use]
-    pub(crate) fn cursor_is_head(&self, cursor: NodeArenaCursor<L>) -> bool {
-        cursor.owner == self.owner && cursor.rows as usize == self.rows.len()
-    }
-
     /// Opens one nested suffix whose coordinates have one structural owner.
     #[must_use]
     pub fn begin_region(&self) -> NodeArenaRegion<L> {
@@ -940,6 +920,45 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         self.truncate(cursor)?;
         self.next_generation = cursor.next_generation;
         Ok(())
+    }
+
+    /// Opens an empty logical suffix at `cursor` while retaining the accepted
+    /// rows for exact rejection redo.
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        cursor: NodeArenaCursor<L>,
+    ) -> Result<AcceptedNodeArenaTail<L, Glue, Tokens>, NodeArenaError> {
+        self.validate_cursor(cursor)?;
+        let rows = self.rows.split_off(cursor.rows as usize);
+        let next_generation = self.next_generation;
+        self.next_generation = cursor.next_generation;
+        Ok(AcceptedNodeArenaTail {
+            rows,
+            next_generation,
+        })
+    }
+
+    /// Drops the candidate rows and reinstalls the saved accepted suffix.
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        cursor: NodeArenaCursor<L>,
+        mut tail: AcceptedNodeArenaTail<L, Glue, Tokens>,
+    ) -> Result<(), NodeArenaError> {
+        self.truncate(cursor)?;
+        self.rows.append(&mut tail.rows);
+        self.next_generation = tail.next_generation;
+        Ok(())
+    }
+
+    /// Releases the superseded accepted rows after candidate promotion.
+    pub(crate) fn accept_checkpoint_candidate(
+        &mut self,
+        tail: AcceptedNodeArenaTail<L, Glue, Tokens>,
+    ) {
+        for row in tail.rows.into_iter().flatten() {
+            self.release_detached_row(row);
+        }
+        self.trim_empty_tail_segments();
     }
 
     /// Publishes one complete list whose children already belong to this arena.

@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::definition_arena::DefinitionArena;
 use crate::durable_arena::{GlueArena, ProvenanceArena, TokenListArena};
 use crate::memory_accounting::MemoryAccounting;
+use crate::provenance::OriginRecord;
 
 #[cfg(test)]
 #[path = "generation/tests.rs"]
@@ -58,6 +59,12 @@ pub(crate) struct GenerationCursor {
     token_lists: u32,
     glue: usize,
     provenance: usize,
+}
+
+pub(crate) struct AcceptedGenerationTail {
+    head: GenerationCursor,
+    glue: Vec<crate::glue::GlueSpec>,
+    provenance: Vec<OriginRecord>,
 }
 
 /// Cloneable lifetime authority for one complete immutable generation.
@@ -173,21 +180,6 @@ impl<G> Generation<G> {
         }
     }
 
-    /// Creates the publisher bundle for an ordinary retained-generation
-    /// fork. Published definition and token-list payloads remain owned by
-    /// their exact semantic carriers; only destination-local publisher
-    /// cursors and compact direct-row stores are duplicated.
-    pub(crate) fn fork(&self) -> Self {
-        let accounting = self.accounting.clone();
-        Self {
-            accounting: accounting.clone(),
-            definitions: self.definitions.fork(accounting.clone()),
-            token_lists: self.token_lists.fork(accounting),
-            glue: self.glue.clone(),
-            provenance: self.provenance.clone(),
-        }
-    }
-
     pub(crate) fn cursor(&self) -> GenerationCursor {
         GenerationCursor {
             definitions: self.definitions.cursor(),
@@ -220,6 +212,44 @@ impl<G> Generation<G> {
         let token_lists = self.token_lists.enable_semantic_identity();
         let glue = self.glue.enable_semantic_identity();
         definitions && token_lists && glue
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        cursor: GenerationCursor,
+    ) -> AcceptedGenerationTail {
+        assert!(self.validates_cursor(cursor));
+        let head = self.cursor();
+        let glue = self.glue.split_off(cursor.glue);
+        let provenance = self.provenance.split_off(cursor.provenance);
+        self.definitions.restore_cursor(cursor.definitions);
+        self.token_lists.restore_cursor(cursor.token_lists);
+        AcceptedGenerationTail {
+            head,
+            glue,
+            provenance,
+        }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        cursor: GenerationCursor,
+        mut tail: AcceptedGenerationTail,
+    ) {
+        // Candidate-local publisher coordinates are disposable. They can be
+        // lower than the rooted coordinate when initialization abandoned an
+        // unpublished row, so rejection must not model this as an ordinary
+        // monotonic rewind. Inline arenas retain the rooted prefix in place.
+        assert!(cursor.glue <= self.glue.len());
+        assert!(cursor.provenance <= self.provenance.len());
+        self.glue.truncate(cursor.glue);
+        self.provenance.truncate(cursor.provenance);
+        self.glue.append_rows(&mut tail.glue);
+        self.provenance.append_rows(&mut tail.provenance);
+        self.definitions
+            .restore_accepted_cursor(tail.head.definitions);
+        self.token_lists
+            .restore_accepted_cursor(tail.head.token_lists);
     }
 
     #[must_use]

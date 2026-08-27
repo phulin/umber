@@ -977,7 +977,7 @@ impl<G> CommandState<G> {
         if !summary
             .generation()
             .addresses_generation(&source_generation)
-            || source_generation.same_generation(&destination_generation)
+            || !source_generation.same_generation(&destination_generation)
         {
             return Err(CommandRestoreError::ForeignGeneration);
         }

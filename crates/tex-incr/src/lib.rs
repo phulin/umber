@@ -355,6 +355,7 @@ pub struct RevisionTransaction<'store> {
     format_dump: Option<DetachedFormatDump>,
     expansion_stats: ExpansionStats,
     generation: tex_exec::RetainedEngineGeneration<'store>,
+    runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
     checkpoint_retained_bytes: usize,
     checkpoint_shared_owner_bytes: usize,
@@ -382,7 +383,9 @@ impl RevisionTransaction<'_> {
 
     /// Rejects this completed candidate, dropping its current generation and
     /// returning the session's candidate slot for immediate reuse.
-    pub fn reject(self) {
+    pub fn reject(mut self) {
+        settle_candidate_runtime(&mut self.generation, self.runtime_key.take(), false)
+            .expect("a completed candidate retains its terminal command/mode owner");
         self.generation.reject_candidate();
     }
 
@@ -650,7 +653,9 @@ impl<'store> RevisionCandidate<'store> {
     /// Rejects this candidate, dropping any current generation and returning
     /// the session's candidate slot for immediate reuse.
     pub fn reject(mut self) {
-        if let Some(generation) = self.generation.take() {
+        if let Some(mut generation) = self.generation.take() {
+            settle_candidate_runtime(&mut generation, self.runtime_key.take(), false)
+                .expect("a live candidate retains its command/mode owner");
             generation.reject_candidate();
         }
     }
@@ -724,8 +729,10 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 self.failed_attempt_fuel,
             )
         };
-        let runtime_key =
-            matches!(execution, Ok(PlanExecution::Suspended(_))).then(|| admitted.attach(runtime));
+        // Terminal command and mode owners remain attached until the
+        // aggregate accept/reject barrier explicitly settles them. Drop is
+        // reserved for unwinding before an attachment can be published.
+        let runtime_key = Some(admitted.attach(runtime));
         CandidateRunResult {
             execution,
             runtime_key,
@@ -736,6 +743,40 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
 struct CandidateRunResult {
     execution: Result<PlanExecution, SessionError>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
+}
+
+struct SettleCandidateRuntime {
+    key: tex_exec::RetainedEngineAttachmentKey,
+    accept: bool,
+}
+
+impl tex_exec::RetainedEngineOperation for SettleCandidateRuntime {
+    type Output = Result<(), tex_exec::RetainedEngineAccessError>;
+
+    fn run<G: 'static>(
+        self,
+        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
+    ) -> Self::Output {
+        let runtime = admitted.take_attachment::<CandidateRuntime<G>>(self.key)?;
+        if self.accept {
+            runtime.control.accept_checkpoint_candidate();
+        } else {
+            runtime.control.reject_checkpoint_candidate();
+        }
+        Ok(())
+    }
+}
+
+fn settle_candidate_runtime(
+    generation: &mut tex_exec::RetainedEngineGeneration<'_>,
+    key: Option<tex_exec::RetainedEngineAttachmentKey>,
+    accept: bool,
+) -> Result<(), tex_exec::RetainedEngineAccessError> {
+    let Some(key) = key else {
+        return Ok(());
+    };
+    generation.with_admitted(SettleCandidateRuntime { key, accept })??;
+    Ok(())
 }
 
 struct PublishInitialFormatCheckpoint {
@@ -2134,6 +2175,7 @@ impl<'store> Session<'store> {
             .generation
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
+        let runtime_key = candidate.runtime_key.take();
         let candidate_lease = candidate
             .candidate_lease
             .take()
@@ -2154,6 +2196,7 @@ impl<'store> Session<'store> {
             format_dump: completion.format_dump,
             expansion_stats: ExpansionStats::default(),
             generation,
+            runtime_key,
             checkpoint_keys: completion.checkpoint_keys,
             checkpoint_retained_bytes: completion.checkpoint_retained_bytes,
             checkpoint_shared_owner_bytes: completion.checkpoint_shared_owner_bytes,
@@ -2182,6 +2225,8 @@ impl<'store> Session<'store> {
         }
         let retained_checkpoint_keys = transaction.checkpoint_keys;
         let mut generation = transaction.generation;
+        settle_candidate_runtime(&mut generation, transaction.runtime_key, true)
+            .map_err(SessionError::RetainedEngine)?;
         generation
             .preflight_terminal(&retained_checkpoint_keys)
             .map_err(SessionError::RetainedEngine)?;

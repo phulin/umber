@@ -181,15 +181,6 @@ pub(crate) struct DefinitionArena<G> {
 }
 
 impl<G> DefinitionArena<G> {
-    pub(crate) fn fork(&self, accounting: MemoryAccounting) -> Self {
-        Self {
-            next_serial: self.next_serial,
-            accounting,
-            semantic_identity_enabled: self.semantic_identity_enabled,
-            _brand: PhantomData,
-        }
-    }
-
     pub(crate) const fn cursor(&self) -> u32 {
         self.next_serial
     }
@@ -199,6 +190,18 @@ impl<G> DefinitionArena<G> {
             cursor <= self.next_serial,
             "definition cursor is beyond the publisher"
         );
+        self.next_serial = cursor;
+    }
+
+    /// Restores the accepted publisher coordinate after a candidate has been
+    /// discarded.
+    ///
+    /// Unlike an ordinary rewind, rejection can observe a lower candidate
+    /// coordinate when candidate-local initialization abandoned unpublished
+    /// rows. The immutable payloads are owned by their durable handles, so the
+    /// publisher has no row storage to replay; restoring the saved accepted
+    /// coordinate is the complete forward operation.
+    pub(crate) fn restore_accepted_cursor(&mut self, cursor: u32) {
         self.next_serial = cursor;
     }
 

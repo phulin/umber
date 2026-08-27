@@ -2030,6 +2030,23 @@ impl Default for ModeNest {
 }
 
 impl ModeNest {
+    /// Promotes the current mode owner. This is called only by the aggregate
+    /// candidate barrier; ordinary `Drop` remains the emergency reject path.
+    pub(crate) fn accept_checkpoint_candidate(&mut self) {
+        let Some(loan) = self.loan.take() else {
+            return;
+        };
+        match loan {
+            ModeNestLoan::Flat { accepted, .. } => drop(accepted),
+            ModeNestLoan::Rooted { source_journal, .. } => {
+                drop(source_journal);
+                for level in &mut self.storage.borrow_mut().levels {
+                    level.list.sequence.accept_candidate();
+                }
+            }
+        }
+    }
+
     /// TeX82 §11's maximum number of simultaneously saved semantic levels.
     const TEX82_NEST_SIZE: usize = 40;
     const MAX_LIVE_LEVELS: usize = Self::TEX82_NEST_SIZE + 1;

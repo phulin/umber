@@ -75,12 +75,11 @@ fn packed_cells_round_trip_every_coordinate_family_at_accepted_bounds() {
 fn cursor_is_an_exact_position_in_ordered_history() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     let start = journal.checkpoint_cursor(0);
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(7),
-        StateWord::Integer(1),
+    journal.record_mutation(
+        Mutation::new(StateCell::Count(7), StateWord::Integer(1), 1, None),
+        StateWord::Integer(2),
         1,
-        None,
-    ));
+    );
     let end = journal.checkpoint_cursor(0);
     assert_ne!(start, end);
     assert!(journal.validate_cursor(start));
@@ -102,14 +101,21 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
     let _start = journal.checkpoint_cursor(0);
     let operation = journal.begin_operation();
     for before in [1, 2] {
-        journal.record_mutation(Mutation::new(
-            StateCell::Count(7),
-            StateWord::Integer(before),
+        journal.record_mutation(
+            Mutation::new(StateCell::Count(7), StateWord::Integer(before), 1, None),
+            StateWord::Integer(before + 1),
             1,
-            None,
-        ));
+        );
     }
     assert_eq!(journal.checkpoint_entries.len(), 1);
+    assert!(matches!(
+        journal.checkpoint_entries[0].before,
+        StateWord::Integer(1)
+    ));
+    assert!(matches!(
+        journal.checkpoint_entries[0].after,
+        StateWord::Integer(3)
+    ));
     assert_eq!(journal.operation_entries.len(), 2);
     assert!(journal.active_groups.is_empty());
 
@@ -117,12 +123,11 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
     assert!(journal.operation_entries.is_empty());
     assert!(journal.operation_entries.capacity() >= 2);
     let _interval = journal.checkpoint_cursor(0);
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(7),
-        StateWord::Integer(3),
+    journal.record_mutation(
+        Mutation::new(StateCell::Count(7), StateWord::Integer(3), 1, None),
+        StateWord::Integer(4),
         1,
-        None,
-    ));
+    );
     assert_eq!(journal.checkpoint_entries.len(), 2);
 }
 
@@ -130,19 +135,17 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
 fn nested_operations_share_one_ordered_lane_and_rollback_only_the_inner_suffix() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     let outer = journal.begin_operation();
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(7),
-        StateWord::Integer(1),
-        1,
-        None,
-    ));
-    let inner = journal.begin_operation();
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(8),
+    journal.record_mutation(
+        Mutation::new(StateCell::Count(7), StateWord::Integer(1), 1, None),
         StateWord::Integer(2),
         1,
-        None,
-    ));
+    );
+    let inner = journal.begin_operation();
+    journal.record_mutation(
+        Mutation::new(StateCell::Count(8), StateWord::Integer(2), 1, None),
+        StateWord::Integer(3),
+        1,
+    );
     assert_eq!(journal.operation_suffix(&inner).len(), 1);
     journal.finish_operation_rollback(inner);
     assert_eq!(journal.operation_suffix(&outer).len(), 1);

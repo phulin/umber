@@ -47,6 +47,10 @@ pub(crate) struct FontRuntimeBank {
     rows: Vec<FontRuntimeRow>,
 }
 
+pub(super) struct AcceptedFontRuntimeTail {
+    rows: Vec<FontRuntimeRow>,
+}
+
 impl FontRuntimeBank {
     pub(crate) const fn new() -> Self {
         Self { rows: Vec::new() }
@@ -237,6 +241,31 @@ impl FontRuntimeBank {
             .iter()
             .map(|row| usize::try_from(row.parameter_count.value).unwrap_or(usize::MAX))
             .fold(0, usize::saturating_add)
+    }
+
+    pub(super) fn cursor(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub(super) fn truncate(&mut self, cursor: usize) {
+        assert!(cursor <= self.rows.len());
+        self.rows.truncate(cursor);
+    }
+
+    pub(super) fn begin_checkpoint_candidate(&mut self, cursor: usize) -> AcceptedFontRuntimeTail {
+        assert!(cursor <= self.rows.len());
+        AcceptedFontRuntimeTail {
+            rows: self.rows.split_off(cursor),
+        }
+    }
+
+    pub(super) fn reject_checkpoint_candidate(
+        &mut self,
+        cursor: usize,
+        mut tail: AcceptedFontRuntimeTail,
+    ) {
+        self.truncate(cursor);
+        self.rows.append(&mut tail.rows);
     }
 
     pub(crate) fn prepare_dimen_growth(&mut self, font: u32, number: u32) -> Result<(), BankError> {
