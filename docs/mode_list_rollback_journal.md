@@ -90,6 +90,14 @@ and level operations add generation-checked inverses; append-only operations
 add none. Nested commit retains the inverse suffix required by its parent,
 while rollback validates the exact innermost frame before replay.
 
+First-write inverse construction is part of each typed journal operation. The
+operation checks its projection slot, constructs exactly its concrete tagged
+payload only when that slot is unrecorded, pushes it directly into the one
+ordered inverse log, and then publishes the log position. There is no generic
+maximum-enum argument between the producer and the log. This keeps rollback
+ordering and O(1) field marks in one representation without a side payload
+arena, boxing, whole-list snapshot, or retained cache.
+
 Every live `ModeNest` owns an enabled journal. Cloning or rehydrating a
 `ModeNest` creates a fresh operational journal over the cloned live levels;
 journal generation, cursors, log length, and capacity remain excluded from

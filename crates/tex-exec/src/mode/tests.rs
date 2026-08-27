@@ -516,6 +516,29 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
             side: EqNoSide::Right,
             display: tex_state::node_arena::PageListId::empty(),
         });
+
+        // Later writes in the same frame must preserve the first inverse for
+        // each field rather than append another tagged record.
+        list.set_space_factor(778);
+        list.set_no_boundary(false);
+        list.set_hyphen_language(10);
+        list.set_prev_depth(Scaled::from_raw(13));
+        list.set_prev_graf(14);
+        list.set_align_state(align_state());
+        list.set_incomplete_fraction(IncompleteFraction {
+            numerator: tex_state::node_arena::PageListId::empty(),
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        });
+        list.set_display_interrupt(DisplayInterrupt {
+            active_directions: vec![tex_state::node::Direction::BeginR],
+            prototype: None,
+        });
+        list.set_display_eq_no(DisplayEqNo {
+            side: EqNoSide::Left,
+            display: tex_state::node_arena::PageListId::empty(),
+        });
     }
 
     assert_eq!(nest.journal_inverse_len_for_test(), 10);

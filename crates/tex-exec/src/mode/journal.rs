@@ -240,14 +240,22 @@ pub(super) struct ListJournal<'a> {
     inverses: &'a mut Vec<Inverse>,
 }
 
-impl ListJournal<'_> {
-    fn record_once(&mut self, field: usize, inverse: Inverse) {
-        if self.inverse_positions[field] == UNRECORDED {
-            self.inverse_positions[field] = self.inverses.len();
-            self.inverses.push(inverse);
+/// Writes the concrete inverse variant at its producing call site.
+///
+/// This deliberately remains a macro: passing [`Inverse`] through a generic
+/// helper would transfer the enum's maximum-sized variant even when the
+/// mutation needs only a scalar payload.
+macro_rules! push_inverse_once {
+    ($journal:ident, $field:expr, $inverse:expr) => {
+        if $journal.inverse_positions[$field] == UNRECORDED {
+            let position = $journal.inverses.len();
+            $journal.inverses.push($inverse);
+            $journal.inverse_positions[$field] = position;
         }
-    }
+    };
+}
 
+impl ListJournal<'_> {
     pub(super) fn record_nodes(&mut self, old: &tex_state::node_sequence::NodeSequence) {
         if self.inverse_positions[NODES] == UNRECORDED {
             self.inverse_positions[NODES] = self.inverses.len();
@@ -260,72 +268,79 @@ impl ListJournal<'_> {
 
     #[cfg(test)]
     pub(super) fn record_align_state(&mut self, old: Option<AlignState>) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             ALIGN_STATE,
             Inverse::AlignState {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_incomplete_fraction(&mut self, old: Option<super::IncompleteFraction>) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             INCOMPLETE_FRACTION,
             Inverse::IncompleteFraction {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_display_interrupt(&mut self, old: Option<super::DisplayInterrupt>) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             DISPLAY_INTERRUPT,
             Inverse::DisplayInterrupt {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_display_eq_no(&mut self, old: Option<super::DisplayEqNo>) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             DISPLAY_EQ_NO,
             Inverse::DisplayEqNo {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_display_alignment(&mut self, old: bool) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             DISPLAY_ALIGNMENT,
             Inverse::DisplayAlignment {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_prev_depth(&mut self, old: Option<tex_state::scaled::Scaled>) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             PREV_DEPTH,
             Inverse::PrevDepth {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_prev_graf(&mut self, old: i32) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             PREV_GRAF,
             Inverse::PrevGraf {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
@@ -364,32 +379,35 @@ impl ListJournal<'_> {
     }
 
     pub(super) fn record_space_factor(&mut self, old: i32) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             SPACE_FACTOR,
             Inverse::SpaceFactor {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_no_boundary(&mut self, old: bool) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             NO_BOUNDARY,
             Inverse::NoBoundary {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 
     pub(super) fn record_hyphen_context(&mut self, old: (u8, u8, u8)) {
-        self.record_once(
+        push_inverse_once!(
+            self,
             HYPHEN_CONTEXT,
             Inverse::HyphenContext {
                 level_id: self.level_id,
                 old,
-            },
+            }
         );
     }
 }
