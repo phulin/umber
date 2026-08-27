@@ -1015,14 +1015,12 @@ impl<G> Universe<G> {
             .accept_checkpoint_candidate(transaction.core);
         self.page_nodes
             .accept_checkpoint_candidate(transaction.page_nodes);
-        self.world
-            .accept_checkpoint_candidate(transaction.world);
+        self.world.accept_checkpoint_candidate(transaction.world);
         self.dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
         self.sources
             .accept_checkpoint_candidate(transaction.sources);
-        self.fonts
-            .accept_checkpoint_candidate(transaction.fonts);
+        self.fonts.accept_checkpoint_candidate(transaction.fonts);
         self.pdf.commit_candidate();
         self.page.accept_checkpoint_candidate(transaction.page);
     }

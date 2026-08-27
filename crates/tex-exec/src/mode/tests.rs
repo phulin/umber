@@ -772,7 +772,7 @@ fn journal_fatal_commit_model_and_operational_invisibility_hold() {
 }
 
 #[test]
-fn rooted_candidate_uses_a_private_suffix_and_coordinate_tail_removal() {
+fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
     let mut source = ModeNest::new();
     source.current_list_mutation().push(kern(-1));
     let checkpoint = source.checkpoint();
@@ -803,6 +803,46 @@ fn rooted_candidate_uses_a_private_suffix_and_coordinate_tail_removal() {
     assert_eq!(source.current_list().nodes().len(), 4_097);
     assert_eq!(source.current_list().nodes().first(), Some(&kern(-1)));
     assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
+}
+
+#[test]
+fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
+    let mut source = ModeNest::new();
+    source.current_list_mutation().push(kern(1));
+    let checkpoint = source.checkpoint();
+    source.push(Mode::Horizontal).expect("accepted push");
+    source.current_list_mutation().push(kern(2));
+
+    let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
+    assert_eq!(candidate.depth(), 1);
+    assert_eq!(candidate.current_list().nodes(), &[kern(1)]);
+    candidate.push(Mode::Vertical).expect("candidate push");
+    candidate.current_list_mutation().push(kern(3));
+    candidate.accept_checkpoint_candidate();
+    assert_eq!(candidate.depth(), 2);
+    assert_eq!(candidate.current_list().nodes(), &[kern(3)]);
+
+    {
+        let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling fork");
+        assert_eq!(sibling.depth(), 1);
+        assert_eq!(sibling.current_list().nodes(), &[kern(1)]);
+    }
+    assert_eq!(candidate.depth(), 2);
+    assert_eq!(candidate.current_list().nodes(), &[kern(3)]);
+}
+
+#[test]
+fn accepted_candidate_keeps_its_published_mark_seedable() {
+    let mut source = ModeNest::new();
+    let root = source.checkpoint();
+    let mut candidate = ModeNest::fork_checkpoint(&root).expect("rooted fork");
+    candidate.current_list_mutation().push(kern(1));
+    let published = candidate.checkpoint();
+    candidate.current_list_mutation().push(kern(2));
+    candidate.accept_checkpoint_candidate();
+
+    let restarted = ModeNest::fork_checkpoint(&published).expect("published fork");
+    assert_eq!(restarted.current_list().nodes(), &[kern(1)]);
 }
 
 #[test]

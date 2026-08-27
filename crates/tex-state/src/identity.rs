@@ -365,13 +365,8 @@ impl IdentityAllocator {
         let split = runs.partition_point(|run| run.end <= mark_len);
         let suffix = runs.split_off(split);
         if mark_len != accepted_len && runs.last().is_none_or(|run| run.end != mark_len) {
-            let tag = suffix
-                .first()
-                .map_or(head_active, |run| run.tag);
-            runs.push(AllocationRun {
-                end: mark_len,
-                tag,
-            });
+            let tag = suffix.first().map_or(head_active, |run| run.tag);
+            runs.push(AllocationRun { end: mark_len, tag });
         }
         let rooted_runs_len = runs.len();
         self.len = mark_len;

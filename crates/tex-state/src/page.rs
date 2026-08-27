@@ -1024,7 +1024,9 @@ impl PageBuilderState {
             .current_page
             .take_prefix(mark.roots.current_page_end);
         selected.current_page = PageNodeSequence::from_nodes(current_page_before);
-        let page_discards_after = selected.page_discards.split_off(mark.roots.page_discards_end);
+        let page_discards_after = selected
+            .page_discards
+            .split_off(mark.roots.page_discards_end);
         let split_discards_after = selected
             .split_discards
             .split_off(mark.roots.split_discards_end);
@@ -1082,14 +1084,19 @@ impl PageBuilderState {
         self.checkpoint_journal.candidate_root_frame = None;
         let mut restored = self.take_payload();
         tail.contribution_before.append(&mut restored.contribution);
-        tail.contribution_before.append(&mut tail.contribution_after);
+        tail.contribution_before
+            .append(&mut tail.contribution_after);
         restored.contribution = tail.contribution_before;
         let mut current_page = restored.current_page.into_nodes();
         current_page.append(&mut tail.current_page_after);
         restored.current_page = PageNodeSequence::from_nodes(current_page);
         restored.page_discards.append(&mut tail.page_discards_after);
-        restored.split_discards.append(&mut tail.split_discards_after);
-        restored.insertion_lane.append(&mut tail.insertion_lane_after);
+        restored
+            .split_discards
+            .append(&mut tail.split_discards_after);
+        restored
+            .insertion_lane
+            .append(&mut tail.insertion_lane_after);
         restored.mark_lane.append(&mut tail.mark_lane_after);
         self.install_payload(restored);
         self.rebuild_canonical_lane_values();

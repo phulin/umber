@@ -5,9 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ahash::AHashMap;
 
-use crate::identity::{
-    AcceptedIdentityTail, HandleIdentity, IdentityAllocator, IdentityMark,
-};
+use crate::identity::{AcceptedIdentityTail, HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::input::SourceId;
 use crate::state_hash::{SemanticSequenceIdentity, semantic_scalar_root};
 use crate::token::OriginId;

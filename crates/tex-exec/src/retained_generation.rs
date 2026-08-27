@@ -793,6 +793,7 @@ mod tests {
     struct ConsumeFork {
         runtime: RetainedEngineAttachmentKey,
         replacement: i32,
+        accept_modes: bool,
     }
 
     impl RetainedEngineOperation for ConsumeFork {
@@ -819,6 +820,11 @@ mod tests {
                     crate::ExecutionBudgetCounters::default(),
                 )
                 .expect("candidate checkpoint");
+            if self.accept_modes {
+                control.accept_checkpoint_candidate();
+            } else {
+                control.reject_checkpoint_candidate();
+            }
             (before, admitted.retain_checkpoint(checkpoint))
         }
     }
@@ -1145,6 +1151,7 @@ mod tests {
             .with_admitted(ConsumeFork {
                 runtime,
                 replacement: 99,
+                accept_modes: false,
             })
             .expect("candidate admission");
         assert_eq!(before, 41);
@@ -1164,6 +1171,7 @@ mod tests {
             .with_admitted(ConsumeFork {
                 runtime,
                 replacement: 52,
+                accept_modes: true,
             })
             .expect("candidate admission");
         assert_eq!(before, 41);
@@ -1185,6 +1193,7 @@ mod tests {
             .with_admitted(ConsumeFork {
                 runtime,
                 replacement: 73,
+                accept_modes: false,
             })
             .expect("restart admission");
         assert_eq!(before, 52);
@@ -1213,6 +1222,7 @@ mod tests {
             .with_admitted(ConsumeFork {
                 runtime,
                 replacement: 271,
+                accept_modes: false,
             })
             .expect("first document admission");
         assert_eq!(before, 314);

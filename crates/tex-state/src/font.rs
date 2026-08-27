@@ -257,7 +257,10 @@ impl AcceptedFontBlock {
             return self.parent.as_ref()?.identifier(index);
         }
         let mut value = *self.identifiers.get(index - self.base())?;
-        for write in self.identifier_writes[self.identifier_writes_len..].iter().rev() {
+        for write in self.identifier_writes[self.identifier_writes_len..]
+            .iter()
+            .rev()
+        {
             if write.id.raw() as usize == index {
                 value = write.before;
             }
@@ -270,7 +273,10 @@ impl AcceptedFontBlock {
             return self.parent.as_ref()?.expansion(index);
         }
         let mut value = *self.expansion_specs.get(index - self.base())?;
-        for write in self.expansion_writes[self.expansion_writes_len..].iter().rev() {
+        for write in self.expansion_writes[self.expansion_writes_len..]
+            .iter()
+            .rev()
+        {
             if write.id.raw() as usize == index {
                 value = write.before;
             }
@@ -292,7 +298,10 @@ impl AcceptedFontBlock {
             return self.parent.as_ref()?.complete_fragment(index);
         }
         let mut value = *self.complete_hash_fragments.get(index - self.base())?;
-        for write in self.identifier_writes[self.identifier_writes_len..].iter().rev() {
+        for write in self.identifier_writes[self.identifier_writes_len..]
+            .iter()
+            .rev()
+        {
             if write.id.raw() as usize == index {
                 value = write.before_fragment;
             }
@@ -1082,8 +1091,7 @@ impl FontStore {
             if write.id.raw() < mark.len {
                 if let Some(index) = self.local_index(write.id) {
                     Arc::make_mut(&mut self.identifiers)[index] = write.before;
-                    Arc::make_mut(&mut self.complete_hash_fragments)[index] =
-                        write.before_fragment;
+                    Arc::make_mut(&mut self.complete_hash_fragments)[index] = write.before_fragment;
                 } else {
                     let accepted_identifier = self
                         .accepted
@@ -1145,8 +1153,7 @@ impl FontStore {
         let fonts = Arc::make_mut(&mut self.fonts).split_off(local_len);
         let identifiers = Arc::make_mut(&mut self.identifiers).split_off(local_len);
         let expansion_specs = Arc::make_mut(&mut self.expansion_specs).split_off(local_len);
-        let font_hash_fragments =
-            Arc::make_mut(&mut self.font_hash_fragments).split_off(local_len);
+        let font_hash_fragments = Arc::make_mut(&mut self.font_hash_fragments).split_off(local_len);
         let complete_hash_fragments =
             Arc::make_mut(&mut self.complete_hash_fragments).split_off(local_len);
         let mut by_key = Vec::new();
@@ -1168,8 +1175,7 @@ impl FontStore {
             if write.id.raw() < mark.len {
                 if let Some(index) = self.local_index(write.id) {
                     Arc::make_mut(&mut self.identifiers)[index] = write.before;
-                    Arc::make_mut(&mut self.complete_hash_fragments)[index] =
-                        write.before_fragment;
+                    Arc::make_mut(&mut self.complete_hash_fragments)[index] = write.before_fragment;
                 } else {
                     let accepted = self
                         .accepted
@@ -1211,8 +1217,7 @@ impl FontStore {
                 }
             }
         }
-        let expansion_writes =
-            Arc::make_mut(&mut self.expansion_writes).split_off(expansion_mark);
+        let expansion_writes = Arc::make_mut(&mut self.expansion_writes).split_off(expansion_mark);
         let identities = self
             .identities
             .begin_checkpoint_candidate(mark.identities)
@@ -1246,8 +1251,7 @@ impl FontStore {
         Arc::make_mut(&mut self.identifiers).append(&mut tail.identifiers);
         Arc::make_mut(&mut self.expansion_specs).append(&mut tail.expansion_specs);
         Arc::make_mut(&mut self.font_hash_fragments).append(&mut tail.font_hash_fragments);
-        Arc::make_mut(&mut self.complete_hash_fragments)
-            .append(&mut tail.complete_hash_fragments);
+        Arc::make_mut(&mut self.complete_hash_fragments).append(&mut tail.complete_hash_fragments);
         Arc::make_mut(&mut self.by_key).extend(tail.by_key);
         self.non_parameter_font_info_words = tail.non_parameter_font_info_words;
 

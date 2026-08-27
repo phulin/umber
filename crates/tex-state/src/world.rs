@@ -5649,14 +5649,11 @@ impl World {
         let effect_publication_record_ordinals =
             Arc::make_mut(&mut self.effect_publication_record_ordinals)
                 .split_off(snapshot.effect_len);
-        let effect_domains =
-            Arc::make_mut(&mut self.effect_domains).split_off(snapshot.effect_len);
+        let effect_domains = Arc::make_mut(&mut self.effect_domains).split_off(snapshot.effect_len);
         let effect_semantic_record_ordinals =
-            Arc::make_mut(&mut self.effect_semantic_record_ordinals)
-                .split_off(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_semantic_record_ordinals).split_off(snapshot.effect_len);
         let effect_placement_intra_orders =
-            Arc::make_mut(&mut self.effect_placement_intra_orders)
-                .split_off(snapshot.effect_len);
+            Arc::make_mut(&mut self.effect_placement_intra_orders).split_off(snapshot.effect_len);
         let effect_publication_dispositions =
             Arc::make_mut(&mut self.effect_publication_dispositions)
                 .split_off(snapshot.effect_publication_disposition_len);
@@ -5696,8 +5693,7 @@ impl World {
                             .insert(key, value);
                     }
                     None => {
-                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
-                            .remove(&key);
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).remove(&key);
                     }
                 },
             }
@@ -5746,7 +5742,10 @@ impl World {
             Arc::make_mut(&mut self.artifact_publications).split_off(artifact_mark);
         let context_keys = self
             .stream_open_contexts
-            .range((std::ops::Bound::Excluded(snapshot.effect_pos), std::ops::Bound::Unbounded))
+            .range((
+                std::ops::Bound::Excluded(snapshot.effect_pos),
+                std::ops::Bound::Unbounded,
+            ))
             .map(|(position, _)| *position)
             .collect::<Vec<_>>();
         let stream_open_contexts = context_keys
@@ -5840,8 +5839,7 @@ impl World {
                             .insert(key, value);
                     }
                     None => {
-                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals)
-                            .remove(&key);
+                        Arc::make_mut(&mut self.next_effect_semantic_record_ordinals).remove(&key);
                     }
                 },
             }

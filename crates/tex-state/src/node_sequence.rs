@@ -132,40 +132,17 @@ pub(crate) fn semantic_node_identity(node: &Node) -> u64 {
     hasher.finish()
 }
 
-/// Borrowed semantic view over one accepted region followed by one private
-/// current-lineage region.
-///
-/// The view deliberately exposes sequence operations instead of pretending
-/// the logical list is one contiguous slice.  Checkpoint forks can therefore
-/// retain an immutable accepted prefix while appending candidate nodes without
-/// materializing the prefix.
+/// Borrowed semantic view over at most two directly owned regions.
 #[derive(Clone, Copy, Debug)]
 pub struct NodeSequenceView<'a> {
     prior: &'a [Node],
     current: &'a [Node],
-    replacements: &'a [(usize, Node)],
 }
 
 impl<'a> NodeSequenceView<'a> {
     #[must_use]
     pub const fn new(prior: &'a [Node], current: &'a [Node]) -> Self {
-        Self {
-            prior,
-            current,
-            replacements: &[],
-        }
-    }
-
-    fn with_replacements(
-        prior: &'a [Node],
-        current: &'a [Node],
-        replacements: &'a [(usize, Node)],
-    ) -> Self {
-        Self {
-            prior,
-            current,
-            replacements,
-        }
+        Self { prior, current }
     }
 
     #[must_use]
@@ -180,14 +157,6 @@ impl<'a> NodeSequenceView<'a> {
 
     #[must_use]
     pub fn get(self, index: usize) -> Option<&'a Node> {
-        if let Some((_, node)) = self
-            .replacements
-            .iter()
-            .rev()
-            .find(|(replaced, _)| *replaced == index)
-        {
-            return Some(node);
-        }
         if index < self.prior.len() {
             self.prior.get(index)
         } else {
@@ -226,9 +195,7 @@ impl<'a> NodeSequenceView<'a> {
     /// Returns the backing slice only when this view occupies one region.
     #[must_use]
     pub fn contiguous(self) -> Option<&'a [Node]> {
-        if !self.replacements.is_empty() {
-            None
-        } else if self.current.is_empty() {
+        if self.current.is_empty() {
             Some(self.prior)
         } else if self.prior.is_empty() {
             Some(self.current)
@@ -371,20 +338,28 @@ pub struct NodeSequence {
     page_node_root_count: usize,
     semantic_identity_enabled: bool,
     semantic_identity: SemanticSequenceIdentity,
-    candidate: Option<CandidateProjection>,
 }
 
-#[derive(Clone, Debug)]
-struct CandidateProjection {
-    semantic_root: usize,
-    physical_root: usize,
+/// The detached accepted suffix of one directly mutable node sequence.
+///
+/// A rooted edit keeps this value only until the aggregate transaction is
+/// settled. Rejection appends it back to the selected prefix; acceptance
+/// drops it as one obsolete chunk.
+#[derive(Debug)]
+pub struct NodeSequenceAcceptedTail {
     semantic: Vec<Node>,
-    physical: Vec<Node>,
     semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
-    physical_high_cell_lineages: Vec<DirectHighCellLineages>,
+    physical: Option<DistinctAcceptedTail>,
+    next_sequence_lineage_row: u32,
     page_node_root_count: usize,
     semantic_identity: SemanticSequenceIdentity,
-    replacements: Vec<(usize, Node)>,
+}
+
+#[derive(Debug)]
+struct DistinctAcceptedTail {
+    nodes: Vec<Node>,
+    boundaries: Vec<usize>,
+    high_cell_lineages: Vec<DirectHighCellLineages>,
 }
 
 /// Explicit physical-channel state. Mirrored sequences store no duplicate
@@ -416,7 +391,6 @@ impl NodeSequence {
     /// Enables the inline semantic lane before a convergence session mutates it.
     pub fn enable_semantic_identity(&mut self) {
         if !self.semantic_identity_enabled {
-            assert!(self.candidate.is_none());
             self.semantic_identity = SemanticSequenceIdentity::from_nodes(&self.semantic);
             self.semantic_identity_enabled = true;
         }
@@ -438,7 +412,6 @@ impl NodeSequence {
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
             page_node_root_count,
-            candidate: None,
         }
     }
 
@@ -482,7 +455,6 @@ impl NodeSequence {
             semantic_high_cell_lineages,
             next_sequence_lineage_row,
             page_node_root_count,
-            candidate: None,
         }
     }
 
@@ -509,27 +481,16 @@ impl NodeSequence {
 
     #[must_use]
     pub fn semantic(&self) -> &[Node] {
-        debug_assert!(self.candidate.is_none(), "use semantic_view during a fork");
         &self.semantic
     }
 
     #[must_use]
     pub fn semantic_view(&self) -> NodeSequenceView<'_> {
-        self.candidate.as_ref().map_or_else(
-            || NodeSequenceView::new(&self.semantic, &[]),
-            |candidate| {
-                NodeSequenceView::with_replacements(
-                    &self.semantic[..candidate.semantic_root],
-                    &candidate.semantic,
-                    &candidate.replacements,
-                )
-            },
-        )
+        NodeSequenceView::new(&self.semantic, &[])
     }
 
     #[must_use]
     pub fn physical(&self) -> &[Node] {
-        debug_assert!(self.candidate.is_none(), "use physical_view during a fork");
         match &self.projection {
             PhysicalProjection::Mirrored => &self.semantic,
             PhysicalProjection::Distinct { nodes, .. } => nodes,
@@ -538,218 +499,80 @@ impl NodeSequence {
 
     #[must_use]
     pub fn physical_view(&self) -> NodeSequenceView<'_> {
-        let accepted = match &self.projection {
+        let physical = match &self.projection {
             PhysicalProjection::Mirrored => &self.semantic,
             PhysicalProjection::Distinct { nodes, .. } => nodes,
         };
-        self.candidate.as_ref().map_or_else(
-            || NodeSequenceView::new(accepted, &[]),
-            |candidate| {
-                NodeSequenceView::new(&accepted[..candidate.physical_root], &candidate.physical)
-            },
-        )
+        NodeSequenceView::new(physical, &[])
     }
 
-    /// Installs a candidate-private append lane over an immutable accepted
-    /// prefix. The accepted suffix remains owned in place for constant-time
-    /// rejection.
-    pub fn begin_candidate(
+    /// Rewinds this direct owner to a rooted prefix and returns the accepted
+    /// suffix without copying its node payload.
+    pub fn split_accepted_tail(
         &mut self,
         semantic_root: usize,
         physical_root: usize,
         page_node_root_count: usize,
         semantic_identity: SemanticSequenceIdentity,
-    ) {
-        assert!(self.candidate.is_none());
+    ) -> NodeSequenceAcceptedTail {
         assert!(semantic_root <= self.semantic.len());
         assert!(physical_root <= self.physical().len());
-        self.candidate = Some(CandidateProjection {
-            semantic_root,
-            physical_root,
-            semantic: Vec::new(),
-            physical: Vec::new(),
-            semantic_high_cell_lineages: Vec::new(),
-            physical_high_cell_lineages: Vec::new(),
-            page_node_root_count,
-            semantic_identity,
-            replacements: Vec::new(),
-        });
-    }
-
-    /// Discards only the private candidate lane. The accepted owner was never
-    /// mutated and is immediately usable again.
-    pub fn reject_candidate(&mut self) {
-        self.candidate = None;
-    }
-
-    /// Drops the superseded accepted tail and promotes the live candidate
-    /// suffix without materializing the accepted prefix.
-    pub fn accept_candidate(&mut self) {
-        let Some(mut candidate) = self.candidate.take() else {
-            return;
-        };
-        self.semantic.truncate(candidate.semantic_root);
-        self.semantic_high_cell_lineages
-            .truncate(candidate.semantic_root);
-        for (index, replacement) in candidate.replacements.drain(..) {
-            self.semantic[index] = replacement.clone();
-            if let PhysicalProjection::Distinct {
-                nodes, boundaries, ..
-            } = &mut self.projection
-            {
-                let physical = boundaries[index];
-                if boundaries[index + 1] == physical + 1 {
-                    nodes[physical] = replacement;
-                }
+        let next_sequence_lineage_row = self.next_sequence_lineage_row;
+        let accepted_page_node_root_count = self.page_node_root_count;
+        let accepted_semantic_identity = self.semantic_identity;
+        let semantic = self.semantic.split_off(semantic_root);
+        let semantic_high_cell_lineages = self.semantic_high_cell_lineages.split_off(semantic_root);
+        let physical = match &mut self.projection {
+            PhysicalProjection::Mirrored => {
+                assert_eq!(semantic_root, physical_root);
+                None
             }
-        }
-        self.semantic.append(&mut candidate.semantic);
-        self.semantic_high_cell_lineages
-            .append(&mut candidate.semantic_high_cell_lineages);
-        match &mut self.projection {
-            PhysicalProjection::Mirrored => {}
             PhysicalProjection::Distinct {
                 nodes,
                 boundaries,
                 high_cell_lineages,
-            } => {
-                nodes.truncate(candidate.physical_root);
-                high_cell_lineages.truncate(candidate.physical_root);
-                boundaries.truncate(candidate.semantic_root + 1);
-                nodes.append(&mut candidate.physical);
-                high_cell_lineages.append(&mut candidate.physical_high_cell_lineages);
-                while boundaries.len() <= self.semantic.len() {
-                    let next = boundaries.last().copied().unwrap_or(0).saturating_add(1);
-                    boundaries.push(next);
-                }
-            }
-        }
-        self.page_node_root_count = candidate.page_node_root_count;
-    }
-
-    #[must_use]
-    pub const fn has_candidate(&self) -> bool {
-        self.candidate.is_some()
-    }
-
-    /// Pops the logical tail of a candidate by moving a private suffix node or
-    /// retreating the accepted root. The accepted owner is never mutated.
-    pub fn pop_candidate(&mut self) -> Option<Node> {
-        let mirrored = matches!(self.projection, PhysicalProjection::Mirrored);
-        let candidate = self.candidate.as_mut()?;
-        if let Some(node) = candidate.semantic.pop() {
-            let _physical = candidate.physical.pop();
-            let _ = candidate.semantic_high_cell_lineages.pop();
-            let _ = candidate.physical_high_cell_lineages.pop();
-            candidate.page_node_root_count = candidate.page_node_root_count.saturating_sub(
-                usize::from(node_retains_page_handle(&node)) * if mirrored { 1 } else { 2 },
-            );
-            if self.semantic_identity_enabled {
-                candidate
-                    .semantic_identity
-                    .pop_back(semantic_node_identity(&node));
-            }
-            return Some(node);
-        }
-        let index = candidate.semantic_root.checked_sub(1)?;
-        let node = candidate
-            .replacements
-            .iter()
-            .rposition(|(replaced, _)| *replaced == index)
-            .map_or_else(
-                || self.semantic[index].clone(),
-                |position| candidate.replacements.remove(position).1,
-            );
-        candidate.semantic_root = index;
-        candidate.physical_root = match &self.projection {
-            PhysicalProjection::Mirrored => index,
-            PhysicalProjection::Distinct { boundaries, .. } => boundaries[index],
+            } => Some(DistinctAcceptedTail {
+                nodes: nodes.split_off(physical_root),
+                boundaries: boundaries.split_off(semantic_root + 1),
+                high_cell_lineages: high_cell_lineages.split_off(physical_root),
+            }),
         };
-        candidate.page_node_root_count = candidate.page_node_root_count.saturating_sub(
-            usize::from(node_retains_page_handle(&node)) * if mirrored { 1 } else { 2 },
-        );
-        if self.semantic_identity_enabled {
-            candidate
-                .semantic_identity
-                .pop_back(semantic_node_identity(&node));
+        self.page_node_root_count = page_node_root_count;
+        self.semantic_identity = semantic_identity;
+        NodeSequenceAcceptedTail {
+            semantic,
+            semantic_high_cell_lineages,
+            physical,
+            next_sequence_lineage_row,
+            page_node_root_count: accepted_page_node_root_count,
+            semantic_identity: accepted_semantic_identity,
         }
-        Some(node)
     }
 
-    /// Detaches the candidate's complete logical semantic list while leaving
-    /// the accepted owner untouched for rejection. Only the checkpoint-root
-    /// region is copied; an arbitrarily distant accepted suffix is never
-    /// visited, and the private suffix is moved.
-    pub fn take_candidate_semantic(&mut self) -> Option<Vec<Node>> {
-        let candidate = self.candidate.as_mut()?;
-        let mut logical = self.semantic[..candidate.semantic_root].to_vec();
-        for (index, replacement) in candidate.replacements.drain(..) {
-            logical[index] = replacement;
+    /// Reattaches a previously detached accepted suffix after candidate undo.
+    pub fn restore_accepted_tail(&mut self, mut tail: NodeSequenceAcceptedTail) {
+        self.semantic.append(&mut tail.semantic);
+        self.semantic_high_cell_lineages
+            .append(&mut tail.semantic_high_cell_lineages);
+        match (&mut self.projection, tail.physical) {
+            (PhysicalProjection::Mirrored, None) => {}
+            (
+                PhysicalProjection::Distinct {
+                    nodes,
+                    boundaries,
+                    high_cell_lineages,
+                },
+                Some(mut physical),
+            ) => {
+                nodes.append(&mut physical.nodes);
+                boundaries.append(&mut physical.boundaries);
+                high_cell_lineages.append(&mut physical.high_cell_lineages);
+            }
+            _ => panic!("node projection changed while accepted tail was detached"),
         }
-        logical.append(&mut candidate.semantic);
-        candidate.semantic_root = 0;
-        candidate.physical_root = 0;
-        candidate.physical.clear();
-        candidate.semantic_high_cell_lineages.clear();
-        candidate.physical_high_cell_lineages.clear();
-        candidate.page_node_root_count = 0;
-        candidate.semantic_identity = SemanticSequenceIdentity::empty();
-        Some(logical)
-    }
-
-    pub fn mutate_candidate_semantic<R>(
-        &mut self,
-        mutate: impl FnOnce(&mut Vec<Node>) -> R,
-    ) -> Option<R> {
-        let mut logical = self.take_candidate_semantic()?;
-        let result = mutate(&mut logical);
-        let candidate = self
-            .candidate
-            .as_mut()
-            .expect("candidate remains installed");
-        candidate.page_node_root_count = logical
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
-        candidate.physical = logical.clone();
-        if self.semantic_identity_enabled {
-            candidate.semantic_identity = SemanticSequenceIdentity::from_nodes(&logical);
-        }
-        candidate.semantic = logical;
-        Some(result)
-    }
-
-    pub fn with_candidate_node_mut<R>(
-        &mut self,
-        index: usize,
-        mutate: impl FnOnce(&mut Node) -> R,
-    ) -> Option<R> {
-        let candidate = self.candidate.as_mut()?;
-        if index >= candidate.semantic_root {
-            return candidate
-                .semantic
-                .get_mut(index - candidate.semantic_root)
-                .map(mutate);
-        }
-        let position = candidate
-            .replacements
-            .iter()
-            .rposition(|(replaced, _)| *replaced == index);
-        let position = position.unwrap_or_else(|| {
-            candidate
-                .replacements
-                .push((index, self.semantic[index].clone()));
-            candidate.replacements.len() - 1
-        });
-        let old = self
-            .semantic_identity_enabled
-            .then(|| semantic_node_identity(&candidate.replacements[position].1));
-        let result = mutate(&mut candidate.replacements[position].1);
-        if let Some(old) = old {
-            let new = semantic_node_identity(&candidate.replacements[position].1);
-            candidate.semantic_identity.replace(index, old, new);
-        }
-        Some(result)
+        self.next_sequence_lineage_row = tail.next_sequence_lineage_row;
+        self.page_node_root_count = tail.page_node_root_count;
+        self.semantic_identity = tail.semantic_identity;
     }
 
     #[must_use]
@@ -826,21 +649,6 @@ impl NodeSequence {
             .checked_add(1)
             .expect("node sequence lineage rows exceed u32");
         let lineages = direct_high_cell_lineages(&node, row);
-        if let Some(candidate) = &mut self.candidate {
-            candidate.semantic.push(node.clone());
-            candidate.physical.push(node);
-            candidate.semantic_high_cell_lineages.push(lineages.clone());
-            candidate.physical_high_cell_lineages.push(lineages);
-            candidate.page_node_root_count += usize::from(retains_page_root) * root_multiplier;
-            if self.semantic_identity_enabled {
-                candidate
-                    .semantic_identity
-                    .push_back(semantic_node_identity(
-                        candidate.semantic.last().expect("pushed node"),
-                    ));
-            }
-            return;
-        }
         match &mut self.projection {
             PhysicalProjection::Mirrored => {
                 self.semantic.push(node);
@@ -947,25 +755,6 @@ impl NodeSequence {
         page_node_root_count: usize,
         semantic_identity: SemanticSequenceIdentity,
     ) {
-        if let Some(candidate) = &mut self.candidate {
-            let semantic_suffix = semantic_len
-                .checked_sub(candidate.semantic_root)
-                .expect("candidate semantic root is retained");
-            let physical_suffix = physical_len
-                .checked_sub(candidate.physical_root)
-                .expect("candidate physical root is retained");
-            candidate.semantic.truncate(semantic_suffix);
-            candidate.physical.truncate(physical_suffix);
-            candidate
-                .semantic_high_cell_lineages
-                .truncate(semantic_suffix);
-            candidate
-                .physical_high_cell_lineages
-                .truncate(physical_suffix);
-            candidate.page_node_root_count = page_node_root_count;
-            candidate.semantic_identity = semantic_identity;
-            return;
-        }
         if matches!(self.projection, PhysicalProjection::Mirrored) {
             assert_eq!(semantic_len, physical_len);
         }
@@ -987,10 +776,7 @@ impl NodeSequence {
 
     #[must_use]
     pub const fn semantic_identity(&self) -> SemanticSequenceIdentity {
-        match &self.candidate {
-            Some(candidate) => candidate.semantic_identity,
-            None => self.semantic_identity,
-        }
+        self.semantic_identity
     }
 
     #[must_use]
