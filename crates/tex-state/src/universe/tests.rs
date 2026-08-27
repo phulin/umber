@@ -88,6 +88,35 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
 }
 
 #[test]
+fn runtime_identity_demand_publishes_only_available_owner_roots() {
+    with_universe(budget(), |universe| {
+        let ordinary = universe.runtime_checkpoint().expect("ordinary checkpoint");
+        assert_eq!(
+            ordinary.reachable_state_identity_roots(),
+            crate::RuntimeCheckpointIdentityRoots::default()
+        );
+
+        let demanded = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("identity-demanded checkpoint");
+        let roots = demanded.reachable_state_identity_roots();
+        assert!(roots.pdf().is_some(), "PDF publishes a maintained root");
+        assert_eq!(
+            roots.page(),
+            None,
+            "page restore coordinates are not hashes"
+        );
+        assert_eq!(roots.world(), None);
+        assert_eq!(roots.hyphenation(), None);
+        assert_eq!(roots.dependency(), None);
+        assert_eq!(roots.source(), None);
+        assert_eq!(roots.font(), None);
+        assert_eq!(roots.core(), None);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn rejected_checkpoint_loan_returns_exact_private_suffix_coordinates_for_retry() {
     with_universe(budget(), |universe| {
         for index in 0..16 {

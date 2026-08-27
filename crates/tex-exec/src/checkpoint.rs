@@ -529,7 +529,10 @@ impl<G> EngineCheckpoint<G> {
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();
         let runtime = universe
-            .runtime_checkpoint_with_page_roots(modes.retains_page_node_handles())
+            .runtime_checkpoint_with_page_roots_and_identity(
+                modes.retains_page_node_handles(),
+                wants_reachable_state_identity,
+            )
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
         let reachable_state_identity = wants_reachable_state_identity
             .then(|| ReachableStateRoots::capture(&command, &modes, &runtime).complete())

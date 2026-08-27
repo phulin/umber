@@ -83,9 +83,10 @@ pub(crate) struct PdfDocumentFragments<G> {
 
 impl<G> Default for PdfDocumentFragments<G> {
     fn default() -> Self {
+        let fragments = PdfRows::default();
         Self {
-            fragments: PdfRows::default(),
-            fingerprint: StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN).finish_fragment(),
+            fingerprint: fingerprint(&fragments),
+            fragments,
         }
     }
 }

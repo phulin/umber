@@ -2513,6 +2513,17 @@ impl<G> Universe<G> {
         &mut self,
         external_page_roots: bool,
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
+        self.runtime_checkpoint_with_page_roots_and_identity(external_page_roots, false)
+    }
+
+    /// Captures runtime roots and, only when explicitly requested, asks each
+    /// authoritative component owner for its maintained semantic root.
+    #[doc(hidden)]
+    pub fn runtime_checkpoint_with_page_roots_and_identity(
+        &mut self,
+        external_page_roots: bool,
+        wants_reachable_state_identity: bool,
+    ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
         #[cfg(feature = "profiling")]
         self.live_state_mut()?.record_journal_checkpoint();
         let carries_page_roots = external_page_roots || self.page.retains_page_node_handles();
@@ -2599,11 +2610,19 @@ impl<G> Universe<G> {
             durable_page_bound: self.durable_page_bound,
             font_roots_valid,
         });
+        let pdf = self.pdf.snapshot();
+        let identity_roots = RuntimeCheckpointIdentityRoots {
+            pdf: wants_reachable_state_identity.then(|| pdf.reachable_state_identity_root()),
+            // The remaining owners do not yet expose canonical maintained
+            // semantic roots. Their typed absence keeps aggregate identity
+            // fail-closed; restore cursors and owner ids are not substitutes.
+            ..RuntimeCheckpointIdentityRoots::default()
+        };
         let checkpoint = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(owner, mark),
             state_slot,
             page: self.page.checkpoint_mark(),
-            pdf: self.pdf.snapshot(),
+            pdf,
             world: self.world.snapshot(),
             fonts: font_mark,
             sources: source_mark,
@@ -2615,7 +2634,7 @@ impl<G> Universe<G> {
             // Component owners publish roots here. No aggregate fallback is
             // allowed: missing hooks remain explicit until their mutation
             // journals maintain a complete canonical semantic root.
-            identity_roots: RuntimeCheckpointIdentityRoots::default(),
+            identity_roots,
             retention,
         };
         Ok(checkpoint)

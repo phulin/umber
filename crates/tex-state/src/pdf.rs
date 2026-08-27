@@ -1300,7 +1300,7 @@ impl<G> PdfPageRecord<G> {
     }
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PdfStateCursor<G> {
     enabled: bool,
     next_object: u32,
@@ -1354,6 +1354,62 @@ pub(crate) struct PdfStateCursor<G> {
     thread_fingerprint: StateHashFragment,
     thread_count: usize,
     _generation: std::marker::PhantomData<fn(G) -> G>,
+}
+
+impl<G> Hash for PdfStateCursor<G> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.enabled.hash(state);
+        self.next_object.hash(state);
+        self.page_count.hash(state);
+        self.output_parameters.hash(state);
+        self.pk_mode_row.hash(state);
+        self.font_operation_count.hash(state);
+        self.font_resource_count.hash(state);
+        self.fingerprint.hash(state);
+        self.match_fingerprint.hash(state);
+        self.external_image_count.hash(state);
+        self.payload_count.hash(state);
+        self.payload_bytes.hash(state);
+        self.color_undo_pos.hash(state);
+        self.external_image_fingerprint.hash(state);
+        self.raw_object_fingerprint.hash(state);
+        self.raw_object_count.hash(state);
+        self.raw_last_object.hash(state);
+        self.document_fragment_fingerprint.hash(state);
+        self.document_fragment_count.hash(state);
+        self.document_objects.hash(state);
+        self.catalog_open_action_row.hash(state);
+        self.action_fingerprint.hash(state);
+        self.page_reservation_fingerprint.hash(state);
+        self.page_reservation_count.hash(state);
+        self.space_font_name_count.hash(state);
+        self.current_space_font_name.hash(state);
+        self.space_font_name_fingerprint.hash(state);
+        self.annotation_fingerprint.hash(state);
+        self.annotation_count.hash(state);
+        self.link_fingerprint.hash(state);
+        self.link_count.hash(state);
+        self.open_link_fingerprint.hash(state);
+        self.open_link_count.hash(state);
+        self.color_stack_fingerprint.hash(state);
+        self.color_stack_count.hash(state);
+        self.last_position.hash(state);
+        self.snap_reference.hash(state);
+        self.form_fingerprint.hash(state);
+        self.form_count.hash(state);
+        self.next_form_resource.hash(state);
+        self.form_artifact_fingerprint.hash(state);
+        self.form_artifact_count.hash(state);
+        self.return_value.hash(state);
+        self.destination_fingerprint.hash(state);
+        self.destination_count.hash(state);
+        self.structure_destination_fingerprint.hash(state);
+        self.structure_destination_count.hash(state);
+        self.outline_fingerprint.hash(state);
+        self.outline_count.hash(state);
+        self.thread_fingerprint.hash(state);
+        self.thread_count.hash(state);
+    }
 }
 
 impl<G> Clone for PdfStateCursor<G> {
@@ -1437,6 +1493,96 @@ impl<G> Clone for PdfStateSnapshot<G> {
 impl<G> PdfStateSnapshot<G> {
     pub(crate) fn history_position(&self) -> (u64, u64) {
         (self.undo_pos, self.cursor.color_undo_pos)
+    }
+
+    /// Canonical O(1) semantic root published by the PDF owner.
+    ///
+    /// `PdfStateCursor` contains only canonical scalars, counts, row-selection
+    /// frontiers, and mutation-maintained semantic fragments. The version-lane
+    /// roots and undo positions are restore coordinates and deliberately do
+    /// not participate.
+    pub(crate) fn reachable_state_identity_root(&self) -> u64 {
+        let mut hasher = StateHasher::new_exact(0x7064_665f_7273_6901);
+        self.cursor.apply_reachable_state_identity(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl<G> PdfStateCursor<G> {
+    fn apply_reachable_state_identity(&self, hasher: &mut StateHasher) {
+        hasher.bool(self.enabled);
+        hasher.u32(self.next_object);
+        hasher.usize(self.page_count);
+        hash_output_parameters(hasher, self.output_parameters);
+        hash_optional_usize(hasher, self.pk_mode_row);
+        hasher.usize(self.font_operation_count);
+        hasher.usize(self.font_resource_count);
+        self.fingerprint.apply(hasher);
+        self.match_fingerprint.apply(hasher);
+        hasher.usize(self.external_image_count);
+        hasher.usize(self.payload_count);
+        hasher.usize(self.payload_bytes);
+        self.external_image_fingerprint.apply(hasher);
+        self.raw_object_fingerprint.apply(hasher);
+        hasher.usize(self.raw_object_count);
+        hasher.u32(self.raw_last_object);
+        self.document_fragment_fingerprint.apply(hasher);
+        hasher.usize(self.document_fragment_count);
+        for object in [
+            self.document_objects.pages(),
+            self.document_objects.names(),
+            self.document_objects.catalog(),
+            self.document_objects.info(),
+        ] {
+            hash_optional_u32(hasher, object);
+        }
+        hash_optional_usize(hasher, self.catalog_open_action_row);
+        self.action_fingerprint.apply(hasher);
+        self.page_reservation_fingerprint.apply(hasher);
+        hasher.usize(self.page_reservation_count);
+        hasher.usize(self.space_font_name_count);
+        hasher.u32(self.current_space_font_name);
+        self.space_font_name_fingerprint.apply(hasher);
+        self.annotation_fingerprint.apply(hasher);
+        hasher.usize(self.annotation_count);
+        self.link_fingerprint.apply(hasher);
+        hasher.usize(self.link_count);
+        self.open_link_fingerprint.apply(hasher);
+        hasher.usize(self.open_link_count);
+        self.color_stack_fingerprint.apply(hasher);
+        hasher.usize(self.color_stack_count);
+        hasher.i32(self.last_position.0.raw());
+        hasher.i32(self.last_position.1.raw());
+        hasher.i32(self.snap_reference.0.raw());
+        hasher.i32(self.snap_reference.1.raw());
+        self.form_fingerprint.apply(hasher);
+        hasher.usize(self.form_count);
+        hasher.u32(self.next_form_resource);
+        self.form_artifact_fingerprint.apply(hasher);
+        hasher.usize(self.form_artifact_count);
+        hasher.i32(self.return_value);
+        self.destination_fingerprint.apply(hasher);
+        hasher.usize(self.destination_count);
+        self.structure_destination_fingerprint.apply(hasher);
+        hasher.usize(self.structure_destination_count);
+        self.outline_fingerprint.apply(hasher);
+        hasher.usize(self.outline_count);
+        self.thread_fingerprint.apply(hasher);
+        hasher.usize(self.thread_count);
+    }
+}
+
+fn hash_optional_usize(hasher: &mut StateHasher, value: Option<usize>) {
+    hasher.bool(value.is_some());
+    if let Some(value) = value {
+        hasher.usize(value);
+    }
+}
+
+fn hash_optional_u32(hasher: &mut StateHasher, value: Option<u32>) {
+    hasher.bool(value.is_some());
+    if let Some(value) = value {
+        hasher.u32(value);
     }
 }
 
@@ -1901,18 +2047,16 @@ impl<G> PdfState<G> {
                     .saturating_mul(std::mem::size_of::<PdfOpenLinkNode<G>>()),
             )
             .saturating_add(
-                (self.thread_bead_nodes.accepted.len()
-                    + self.thread_bead_nodes.candidate.len())
-                .saturating_mul(std::mem::size_of::<PdfThreadBeadNode>()),
+                (self.thread_bead_nodes.accepted.len() + self.thread_bead_nodes.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfThreadBeadNode>()),
             )
             .saturating_add(
                 (self.color_values.accepted.len() + self.color_values.candidate.len())
                     .saturating_mul(std::mem::size_of::<Box<[u8]>>()),
             )
             .saturating_add(
-                (self.color_push_nodes.accepted.len()
-                    + self.color_push_nodes.candidate.len())
-                .saturating_mul(std::mem::size_of::<PdfColorPushNode>()),
+                (self.color_push_nodes.accepted.len() + self.color_push_nodes.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfColorPushNode>()),
             )
     }
 

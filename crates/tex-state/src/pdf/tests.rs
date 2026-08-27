@@ -184,6 +184,27 @@ fn page_coordinates_are_generation_typed_and_checkpointed() {
 }
 
 #[test]
+fn checkpoint_identity_root_uses_maintained_pdf_semantics_not_version_coordinates() {
+    let mut state = PdfState::<()>::default();
+    let baseline = state.snapshot();
+    let baseline_root = baseline.reachable_state_identity_root();
+
+    state.enable();
+    assert_ne!(
+        state.snapshot().reachable_state_identity_root(),
+        baseline_root,
+        "a future-relevant PDF scalar perturbs the owner-published root"
+    );
+
+    state.rollback(baseline);
+    assert_eq!(
+        state.snapshot().reachable_state_identity_root(),
+        baseline_root,
+        "restoring the canonical PDF cursor restores its semantic root"
+    );
+}
+
+#[test]
 fn action_annotation_outline_and_raw_object_copy_without_brand_traits() {
     with_universe(budget(), |universe| {
         let id = universe
