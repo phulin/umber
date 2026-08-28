@@ -1270,6 +1270,64 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Appends one logical subrange of an immutable list by coordinates only.
+    ///
+    /// The source may already span several physical chunks and descriptor
+    /// entries. Intersections are appended directly to the open canonical
+    /// record; no intermediate list descriptor or payload is published.
+    pub fn append_active_list_range(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        list: ArenaListId<Lane>,
+        selected: Range<usize>,
+    ) -> Result<(), ForkArenaError> {
+        self.active_list_open_mut(builder)?;
+        self.validate_list(pool, list)?;
+        if selected.start > selected.end || selected.end > list.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        if selected.is_empty() {
+            return Ok(());
+        }
+        let mut logical_start = 0_usize;
+        for index in 0..list.count {
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let logical_end = entry.cumulative_end as usize;
+            let overlap_start = selected.start.max(logical_start);
+            let overlap_end = selected.end.min(logical_end);
+            if overlap_start < overlap_end {
+                let offset = u32::try_from(overlap_start - logical_start)
+                    .map_err(|_| ForkArenaError::CapacityOverflow)?;
+                let len = u32::try_from(overlap_end - overlap_start)
+                    .map_err(|_| ForkArenaError::CapacityOverflow)?;
+                self.append_active_range(
+                    pool,
+                    builder,
+                    ArenaRange {
+                        arena: self.owner,
+                        first: Some(ChunkId {
+                            arena: self.owner,
+                            raw: entry.range.first,
+                            _lane: PhantomData,
+                        }),
+                        start: entry
+                            .range
+                            .start
+                            .checked_add(offset)
+                            .ok_or(ForkArenaError::CapacityOverflow)?,
+                        len,
+                    },
+                )?;
+            }
+            if logical_end >= selected.end {
+                break;
+            }
+            logical_start = logical_end;
+        }
+        Ok(())
+    }
+
     /// Finalizes the active list into the canonical direct-range or flat
     /// range-sequence coordinate. Payload is never materialized.
     pub fn finalize_active_list(

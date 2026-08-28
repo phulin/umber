@@ -360,6 +360,36 @@ impl PageMaterialArena {
         Ok(())
     }
 
+    pub fn append_range_to_active_list(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+        list: PageListId,
+        selected: Range<usize>,
+    ) -> Result<(), ForkArenaError> {
+        let selected_identity = if self.semantic_identity_enabled {
+            let view = self.list(list)?;
+            Some(SemanticSequenceIdentity::from_nodes(
+                selected
+                    .clone()
+                    .map(|index| view.get(index).expect("validated list range")),
+            ))
+        } else {
+            None
+        };
+        self.arena.append_active_list_range(
+            &mut self.pool,
+            &mut builder.inner,
+            list.coordinate(),
+            selected,
+        )?;
+        if let (Some(identity), Some(selected_identity)) =
+            (&mut builder.identity, selected_identity)
+        {
+            *identity = identity.concat(selected_identity);
+        }
+        Ok(())
+    }
+
     pub fn finalize_active_list(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,

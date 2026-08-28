@@ -431,6 +431,42 @@ fn active_range_append_is_zero_copy_and_keeps_stable_source_references() {
 }
 
 #[test]
+fn active_logical_subrange_crosses_source_descriptors_without_copying_payload() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let left = list(&mut arena, &mut pool, [1, 2]);
+    let right = list(&mut arena, &mut pool, [3, 4, 5]);
+    let mut scratch = Vec::new();
+    let source = arena
+        .compose_lists(&mut pool, &[left, right], &mut scratch)
+        .expect("composed source");
+    let source_address = arena
+        .list(&pool, source)
+        .expect("source view")
+        .get(1)
+        .expect("source value") as *const u32;
+
+    let mut active = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut active)
+        .expect("open destination");
+    arena
+        .append_active_list_range(&mut pool, &mut active, source, 1..4)
+        .expect("append cross-descriptor range");
+    arena
+        .finalize_active_list(&mut pool, &mut active)
+        .expect("finalize destination");
+    let output = active.take_sealed().expect("sealed destination");
+    let output_view = arena.list(&pool, output).expect("output view");
+    assert_eq!(output_view.iter().copied().collect::<Vec<_>>(), vec![2, 3, 4]);
+    assert_eq!(
+        output_view.get(0).expect("retained source") as *const u32,
+        source_address
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
 fn rejected_candidate_truncates_detached_active_builder_output() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
