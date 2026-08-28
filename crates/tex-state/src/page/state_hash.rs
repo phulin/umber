@@ -1,8 +1,8 @@
 use super::{PageBreak, PageBuilderState, PageContents, PageDimension, PageInsertionStatus};
 use crate::glue::GlueSpec;
-use crate::node::{Node, NodeTokenList};
+use crate::node::NodeTokenList;
+use crate::node_arena::{NodeCursor, PageNodeArena};
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
-use std::collections::VecDeque;
 
 const PAGE_PROJECTION_DOMAIN: u64 = 0x7061_6765_5f70_726a;
 const PAGE_SCALARS_DOMAIN: u64 = 0x7061_6765_5f73_6361;
@@ -23,10 +23,10 @@ impl PageBuilderState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn hash_semantic(
         &self,
+        arena: &PageNodeArena,
         hasher: &mut StateHasher,
         _cache: &mut PageHashCache,
-        mut hash_queue: impl FnMut(&VecDeque<Node>, &mut StateHasher) -> usize,
-        mut hash_nodes: impl FnMut(&[Node], &mut StateHasher) -> usize,
+        mut hash_nodes: impl for<'a> FnMut(NodeCursor<'a>, &mut StateHasher) -> usize,
         mut hash_glue: impl FnMut(GlueSpec, &mut StateHasher),
         mut hash_tokens: impl FnMut(&NodeTokenList, &mut StateHasher),
     ) {
@@ -139,22 +139,50 @@ impl PageBuilderState {
         let contribution = StateHashFragment::from_measured_builder_counted(
             PAGE_CONTRIBUTION_DOMAIN,
             StateHashComponent::PageContribution,
-            |projection| hash_queue(&self.contribution, projection),
+            |projection| {
+                hash_nodes(
+                    arena
+                        .node_cursor(self.contribution)
+                        .expect("page contribution root belongs to its arena"),
+                    projection,
+                )
+            },
         );
         let current_page = StateHashFragment::from_measured_builder_counted(
             PAGE_CURRENT_DOMAIN,
             StateHashComponent::PageCurrent,
-            |projection| hash_nodes(self.current_page.as_slice(), projection),
+            |projection| {
+                hash_nodes(
+                    arena
+                        .node_cursor(self.current_page)
+                        .expect("current-page root belongs to its arena"),
+                    projection,
+                )
+            },
         );
         let page_discards = StateHashFragment::from_measured_builder_counted(
             PAGE_DISCARDS_DOMAIN,
             StateHashComponent::PageDiscards,
-            |projection| hash_nodes(&self.page_discards, projection),
+            |projection| {
+                hash_nodes(
+                    arena
+                        .node_cursor(self.page_discards)
+                        .expect("page-discard root belongs to its arena"),
+                    projection,
+                )
+            },
         );
         let split_discards = StateHashFragment::from_measured_builder_counted(
             SPLIT_DISCARDS_DOMAIN,
             StateHashComponent::PageDiscards,
-            |projection| hash_nodes(&self.split_discards, projection),
+            |projection| {
+                hash_nodes(
+                    arena
+                        .node_cursor(self.split_discards)
+                        .expect("split-discard root belongs to its arena"),
+                    projection,
+                )
+            },
         );
 
         StateHashFragment::from_exact_builder(PAGE_PROJECTION_DOMAIN, |projection| {

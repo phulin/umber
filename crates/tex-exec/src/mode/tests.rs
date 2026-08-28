@@ -972,25 +972,12 @@ fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
 }
 
 #[test]
-fn rooted_mode_candidate_identity_rejects_without_layout_dependence() {
+#[should_panic(expected = "restart checkpoint requires one quiescent empty outer vertical mode")]
+fn transient_mode_material_cannot_publish_a_retained_checkpoint() {
     with_context(|context| {
         let mut source = ModeNest::new();
         source.enable_reachable_state_identity();
         source.current_list_mutation().push(context, kern(1));
-        let root = source.checkpoint();
-        let expected = root.reachable_state_identity_root();
-        for index in 0..4_096 {
-            source.current_list_mutation().push(context, kern(index));
-        }
-        {
-            let mut candidate = ModeNest::fork_checkpoint(&root).expect("candidate fork");
-            assert_eq!(candidate.reachable_state_identity_root(), expected);
-            candidate.current_list_mutation().push(context, kern(9_001));
-            assert_ne!(candidate.reachable_state_identity_root(), expected);
-        }
-        assert_ne!(
-            source.checkpoint().reachable_state_identity_root(),
-            expected
-        );
+        let _ = source.checkpoint();
     });
 }

@@ -990,7 +990,11 @@ fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_c
                 children: retained,
             })));
         let partial = universe.runtime_checkpoint().expect("partial checkpoint");
-        assert_eq!(universe.page_node_rows(), 1);
+        assert_eq!(
+            universe.page_node_rows(),
+            2,
+            "the child and enclosing contribution are distinct canonical payloads"
+        );
 
         let detached = universe
             .command_context()
@@ -1003,11 +1007,11 @@ fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_c
             .discard_page_node(detached);
         let discarded_a = universe.publish_page_nodes(&[Node::Penalty(7)]);
         let discarded_b = universe.publish_page_nodes(&[Node::Penalty(9)]);
-        assert_eq!(universe.page_node_rows(), 3);
+        assert_eq!(universe.page_node_rows(), 4);
         let rootless = universe.runtime_checkpoint().expect("rootless checkpoint");
         assert_eq!(
             universe.page_node_rows(),
-            3,
+            4,
             "without a per-root registry, accepted whole chunks remain available to sibling marks"
         );
         assert!(universe.page_node_list(discarded_a).is_ok());
@@ -1055,8 +1059,10 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
         let mut candidate = universe
             .fork_runtime_checkpoint(&first)
             .expect("older page mark forks");
-        assert_eq!(candidate.page.contribution().len(), 1);
-        candidate.page.push_contribution(Node::Penalty(3));
+        assert_eq!(candidate.page.contribution(&candidate.page_nodes).len(), 1);
+        candidate
+            .page
+            .push_contribution(&mut candidate.page_nodes, Node::Penalty(3));
         universe.reject_checkpoint_candidate(&mut candidate);
 
         assert_eq!(

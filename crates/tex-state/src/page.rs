@@ -1305,7 +1305,7 @@ impl PageBuilderState {
     }
 
     #[cfg(test)]
-    pub(crate) fn memo_parts(&self) -> (Vec<Node>, PageMemoState) {
+    pub(crate) fn memo_parts(&self, arena: &PageNodeArena) -> (Vec<Node>, PageMemoState) {
         let mut nodes = Vec::with_capacity(
             self.contribution.len()
                 + self.current_page.len()
@@ -1313,10 +1313,20 @@ impl PageBuilderState {
                 + self.split_discards.len()
                 + usize::from(self.last_glue.is_some()),
         );
-        nodes.extend(self.contribution.iter().cloned());
-        nodes.extend(self.current_page.iter().cloned());
-        nodes.extend(self.page_discards.iter().cloned());
-        nodes.extend(self.split_discards.iter().cloned());
+        for root in [
+            self.contribution,
+            self.current_page,
+            self.page_discards,
+            self.split_discards,
+        ] {
+            nodes.extend(
+                arena
+                    .node_cursor(root)
+                    .expect("memo root belongs to the caller-owned page arena")
+                    .iter()
+                    .cloned(),
+            );
+        }
         if let Some(spec) = &self.last_glue {
             nodes.push(Node::Glue {
                 spec: *spec,
@@ -1365,6 +1375,7 @@ impl PageBuilderState {
     #[cfg(test)]
     pub(crate) fn install_memo_parts(
         &mut self,
+        arena: &mut PageNodeArena,
         nodes: Vec<Node>,
         state: PageMemoState,
     ) -> Result<(), crate::MemoValueError> {
@@ -1402,11 +1413,10 @@ impl PageBuilderState {
             *cursor += len;
             start..*cursor
         };
-        let contribution =
-            VecDeque::from(nodes[take(&mut cursor, state.contribution_len)].to_vec());
-        let current_nodes = nodes[take(&mut cursor, state.current_page_len)].to_vec();
-        let page_discards = nodes[take(&mut cursor, state.page_discards_len)].to_vec();
-        let split_discards = nodes[take(&mut cursor, state.split_discards_len)].to_vec();
+        let contribution_range = take(&mut cursor, state.contribution_len);
+        let current_page_range = take(&mut cursor, state.current_page_len);
+        let page_discards_range = take(&mut cursor, state.page_discards_len);
+        let split_discards_range = take(&mut cursor, state.split_discards_len);
         let last_glue = if state.has_last_glue {
             match &nodes[cursor] {
                 Node::Glue { spec, .. } => Some(*spec),
@@ -1415,15 +1425,19 @@ impl PageBuilderState {
         } else {
             None
         };
-        let mut current_page = PageNodeSequence::default();
-        for node in current_nodes {
-            current_page.push(node);
-        }
-        self.contribution = contribution;
-        self.current_page = current_page;
-        self.page_discards = page_discards;
-        self.split_discards = split_discards;
-        self.refresh_dynamic_memory_words();
+        self.contribution = arena
+            .publish_owned(nodes[contribution_range].iter().cloned())
+            .map_err(|_| crate::MemoValueError::Invalid("invalid contribution page nodes"))?;
+        self.current_page = arena
+            .publish_owned(nodes[current_page_range].iter().cloned())
+            .map_err(|_| crate::MemoValueError::Invalid("invalid current-page nodes"))?;
+        self.page_discards = arena
+            .publish_owned(nodes[page_discards_range].iter().cloned())
+            .map_err(|_| crate::MemoValueError::Invalid("invalid page discards"))?;
+        self.split_discards = arena
+            .publish_owned(nodes[split_discards_range].iter().cloned())
+            .map_err(|_| crate::MemoValueError::Invalid("invalid split discards"))?;
+        self.refresh_dynamic_memory_words(arena);
         self.page_goal = state.dimensions[0];
         self.page_total = state.dimensions[1];
         self.page_stretch = state.dimensions[2];
@@ -1453,11 +1467,10 @@ impl PageBuilderState {
     #[cfg(test)]
     fn rebuild_semantic_roots_from_values(&mut self) {
         let marks = self.current_marks_identity();
-        self.current_page.enable_semantic_identity();
         self.semantic_roots = PageSemanticRoots {
-            contribution: SemanticSequenceIdentity::from_nodes(self.contribution.iter()),
-            page_discards: SemanticSequenceIdentity::from_nodes(&self.page_discards),
-            split_discards: SemanticSequenceIdentity::from_nodes(&self.split_discards),
+            contribution: list_identity(self.contribution),
+            page_discards: list_identity(self.page_discards),
+            split_discards: list_identity(self.split_discards),
             insertions: self
                 .insertions
                 .iter()
@@ -2503,18 +2516,25 @@ impl PageBuilderState {
     }
 
     #[cfg(test)]
-    fn refresh_dynamic_memory_words(&mut self) {
-        let nodes = self
-            .contribution
-            .iter()
-            .chain(self.current_page.iter())
-            .chain(self.page_discards.iter())
-            .chain(self.split_discards.iter());
-        let (tex82, etex) = nodes.fold((0_usize, 0_usize), |words, node| {
-            (
-                words.0.saturating_add(node.tex_memory_words(false).1),
-                words.1.saturating_add(node.tex_memory_words(true).1),
-            )
+    fn refresh_dynamic_memory_words(&mut self, arena: &PageNodeArena) {
+        let (tex82, etex) = [
+            self.contribution,
+            self.current_page,
+            self.page_discards,
+            self.split_discards,
+        ]
+        .into_iter()
+        .fold((0_usize, 0_usize), |words, root| {
+            arena
+                .node_cursor(root)
+                .expect("dynamic-memory root belongs to the page arena")
+                .iter()
+                .fold(words, |words, node| {
+                    (
+                        words.0.saturating_add(node.tex_memory_words(false).1),
+                        words.1.saturating_add(node.tex_memory_words(true).1),
+                    )
+                })
         });
         self.tex82_dynamic_words = tex82;
         self.etex_dynamic_words = etex;
