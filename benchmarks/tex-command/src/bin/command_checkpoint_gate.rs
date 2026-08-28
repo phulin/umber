@@ -23,6 +23,7 @@ struct GateCounts {
     first_mutation: Counts,
     fork: Counts,
     fork_first_mutation: Counts,
+    release: Counts,
     repeated_scalar_mutations: Counts,
     repeated_input_frame_mutations: Counts,
     repeated_input_level_reuse: Counts,
@@ -52,6 +53,7 @@ fn main() {
         ("first_mutation", shallow.first_mutation),
         ("fork", shallow.fork),
         ("fork_first_mutation", shallow.fork_first_mutation),
+        ("release", shallow.release),
         (
             "repeated_scalar_mutations",
             shallow.repeated_scalar_mutations,
@@ -68,13 +70,14 @@ fn main() {
         assert_eq!(counts, Counts::ZERO, "{name} must remain allocation-free");
     }
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
         shallow.first_mutation,
         shallow.fork,
         shallow.fork_first_mutation,
+        shallow.release,
         shallow.repeated_scalar_mutations,
         shallow.repeated_input_frame_mutations,
         shallow.repeated_input_level_reuse,
@@ -239,6 +242,19 @@ fn run_fixture(units: usize) -> GateCounts {
         });
         let mut command = candidate;
         command.reject_checkpoint_candidate();
+        let released = command
+            .publish_summary(universe)
+            .expect("obsolete summary publishes");
+        let survivor = command
+            .publish_summary(universe)
+            .expect("surviving summary publishes");
+        let (receipt, release) = measure(|| {
+            command
+                .release_checkpoint_summary(&released, Some(&survivor))
+                .expect("obsolete command frame releases")
+        });
+        assert!(receipt.timeline_frames_live() < receipt.timeline_frame_capacity());
+        assert_ne!(receipt.timeline_frames_released(), 0);
         let isolated = CommandState::profile_fork_summary(command, &summary, universe)
             .expect("fork restores exactly");
         assert!(!isolated.profile_name_in_progress());
@@ -251,6 +267,7 @@ fn run_fixture(units: usize) -> GateCounts {
             first_mutation,
             fork,
             fork_first_mutation,
+            release,
             repeated_scalar_mutations,
             repeated_input_frame_mutations,
             repeated_input_level_reuse,

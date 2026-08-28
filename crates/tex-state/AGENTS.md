@@ -202,7 +202,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   atomic, direct node parent/child publication is same-region checked, and
   held-over evacuation uses the explicit semantic-copy boundary. One
   `PageRegionHistory`-owned `NodePool` physically backs current and retained
-  page regions, and every discarded region retires its envelopes and stale id.
+  page regions; aggregate checkpoint release removes the private row, and the
+  last row of a noncurrent region retires its envelopes and stale id.
   Succession preparation consumes the executor's move-only rootless-mode
   receipt; durable box/form carriers still keep the production tail on the
   existing region.

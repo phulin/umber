@@ -1045,23 +1045,25 @@ impl LiveHistoryState {
             .map(|(index, _)| index)
     }
 
-    fn enforce_publication_budget<G>(
+    fn take_budget_release<G>(
         &mut self,
         retained: &mut tex_exec::RetainedCheckpointStore<'_, G>,
-    ) {
+    ) -> Option<tex_exec::EngineCheckpointRelease<G>> {
         while self.retained_bytes() > self.checkpoint_budget {
             if let Some(victim) = self.restart_victim() {
                 let key = self.checkpoint_keys[victim]
                     .take()
                     .expect("restart victim owns a retained key");
-                retained
+                let release = retained
                     .release(key)
                     .expect("publication owns the retained checkpoint key");
                 let retention = self.checkpoint_retentions[victim]
                     .take()
                     .expect("restart victim owns a retention descriptor");
                 self.release_shared_owners(retention);
-                continue;
+                self.protected_overage_bytes =
+                    self.retained_bytes().saturating_sub(self.checkpoint_budget);
+                return Some(release);
             }
             let Some(victim) = self.evidence_victim() else {
                 break;
@@ -1073,6 +1075,7 @@ impl LiveHistoryState {
             debug_assert!(retention.is_none());
         }
         self.protected_overage_bytes = self.retained_bytes().saturating_sub(self.checkpoint_budget);
+        None
     }
 }
 
@@ -1130,7 +1133,10 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             .checkpoint_keys
             .push(Some(self.retained.retain_boundary(checkpoint, evidence)));
         self.state.checkpoint_retentions.push(Some(retention));
-        self.state.enforce_publication_budget(&mut self.retained);
+    }
+
+    fn take_checkpoint_release(&mut self) -> Option<tex_exec::EngineCheckpointRelease<G>> {
+        self.state.take_budget_release(&mut self.retained)
     }
 }
 
@@ -1187,7 +1193,9 @@ fn initialize_candidate_runtime<G: 'static>(
     if let Some(inherited) = candidate.inherited_boundary.take() {
         debug_assert!(rooted);
         history.inherit_boundary(inherited);
-        history.enforce_publication_budget(&mut checkpoints);
+        while let Some(release) = history.take_budget_release(&mut checkpoints) {
+            release.apply(&mut control, universe);
+        }
     }
     if !rooted_restart {
         if !rooted {

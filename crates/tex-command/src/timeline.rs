@@ -640,11 +640,11 @@ mod tests {
         stack.push(2);
         assert_eq!(stack.pop_copy(), Some(2));
 
-        assert_eq!(stack.as_slice(), &[]);
+        assert!(stack.as_slice().is_empty());
         assert_eq!(stack.counters().undo_records, 0);
         assert_eq!(stack.counters().displaced_payloads, 0);
         assert!(stack.restore(root));
-        assert_eq!(stack.as_slice(), &[]);
+        assert!(stack.as_slice().is_empty());
     }
 
     #[test]

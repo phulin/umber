@@ -8,9 +8,9 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tex_state::fork_arena::{ArenaListId, CheckpointMark, ChunkPool, ForkArena};
 use tex_state::{GenerationOwner, Universe};
 
 use crate::attempt::AttemptMark;
@@ -68,20 +68,36 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
 pub(crate) struct CommandTimeline<G> {
     owner: u64,
     next_serial: u32,
-    pool: ChunkPool<CommandTimelineFrame>,
-    arena: ForkArena<CommandTimelineFrame, CommandTimelineLane>,
+    frame_pages: Vec<CommandFramePage>,
+    free_frames: Vec<CommandFrameKey>,
+    accepted_frames: VecDeque<CommandFrameKey>,
     scalars: PackedJournal<CommandRootUndo<G>, 128>,
     pending_input: PackedJournal<PendingInputUndo, 8>,
     touched_scalars: u16,
     pending_input_touched: bool,
     coalesced_writes: u64,
     ordered_events: u64,
-    frames: usize,
-    head: Option<CheckpointMark<CommandTimelineLane>>,
     fork: Option<CommandTimelineFork>,
+    frames_released: u64,
+    frames_reused: u64,
 }
 
-enum CommandTimelineLane {}
+const COMMAND_FRAMES_PER_PAGE: usize = 128;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CommandFrameKey {
+    slot: u32,
+    generation: u32,
+}
+
+struct CommandFrameSlot {
+    generation: u32,
+    frame: Option<CommandTimelineFrame>,
+}
+
+struct CommandFramePage {
+    slots: Box<[CommandFrameSlot]>,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct CommandTimelineFrame {
@@ -92,16 +108,14 @@ struct CommandTimelineFrame {
 
 #[derive(Clone, Copy)]
 struct CommandTimelineMark {
-    frame: ArenaListId<CommandTimelineLane>,
-    boundary: CheckpointMark<CommandTimelineLane>,
+    frame: CommandFrameKey,
     scalars: PackedJournalMark,
     pending_input: PackedJournalMark,
-    frames: usize,
 }
 
 struct CommandTimelineFork {
-    prior_head: Option<CheckpointMark<CommandTimelineLane>>,
-    prior_frames: usize,
+    prefix_len: usize,
+    detached: VecDeque<CommandFrameKey>,
 }
 
 enum CommandRootUndo<G> {
@@ -172,17 +186,18 @@ impl<G> Default for CommandTimeline<G> {
         Self {
             next_serial: 0,
             owner: NEXT_COMMAND_TIMELINE_OWNER.fetch_add(1, Ordering::Relaxed),
-            pool: ChunkPool::default(),
-            arena: ForkArena::new(),
+            frame_pages: Vec::new(),
+            free_frames: Vec::new(),
+            accepted_frames: VecDeque::new(),
             scalars: PackedJournal::default(),
             pending_input: PackedJournal::default(),
             touched_scalars: 0,
             pending_input_touched: false,
             coalesced_writes: 0,
             ordered_events: 0,
-            frames: 0,
-            head: None,
             fork: None,
+            frames_released: 0,
+            frames_reused: 0,
         }
     }
 }
@@ -194,26 +209,142 @@ impl<G> fmt::Debug for CommandTimeline<G> {
 }
 
 impl<G> CommandTimeline<G> {
+    fn add_frame_page(&mut self) -> Result<(), CommandSummaryError> {
+        let start = self
+            .frame_pages
+            .len()
+            .checked_mul(COMMAND_FRAMES_PER_PAGE)
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        let end = start
+            .checked_add(COMMAND_FRAMES_PER_PAGE)
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        u32::try_from(end).map_err(|_| CommandSummaryError::TimelineCapacity)?;
+        let slots = std::iter::repeat_with(|| CommandFrameSlot {
+            generation: 1,
+            frame: None,
+        })
+        .take(COMMAND_FRAMES_PER_PAGE)
+        .collect::<Box<[_]>>();
+        self.frame_pages.push(CommandFramePage { slots });
+        self.free_frames
+            .extend((start..end).rev().map(|slot| CommandFrameKey {
+                slot: slot as u32,
+                generation: 1,
+            }));
+        Ok(())
+    }
+
+    fn frame_slot(&self, key: CommandFrameKey) -> Option<&CommandFrameSlot> {
+        let slot = key.slot as usize;
+        let page = self.frame_pages.get(slot / COMMAND_FRAMES_PER_PAGE)?;
+        let slot = page.slots.get(slot % COMMAND_FRAMES_PER_PAGE)?;
+        (slot.generation == key.generation && slot.frame.is_some()).then_some(slot)
+    }
+
+    fn frame(&self, key: CommandFrameKey) -> Option<&CommandTimelineFrame> {
+        self.frame_slot(key)?.frame.as_ref()
+    }
+
+    fn allocate_frame(
+        &mut self,
+        frame: CommandTimelineFrame,
+    ) -> Result<CommandFrameKey, CommandSummaryError> {
+        if self.free_frames.is_empty() {
+            self.add_frame_page()?;
+        } else {
+            self.frames_reused = self.frames_reused.saturating_add(1);
+        }
+        let key = self
+            .free_frames
+            .pop()
+            .expect("frame page publication supplied free rows");
+        let slot = key.slot as usize;
+        let page = &mut self.frame_pages[slot / COMMAND_FRAMES_PER_PAGE];
+        let slot = &mut page.slots[slot % COMMAND_FRAMES_PER_PAGE];
+        debug_assert_eq!(slot.generation, key.generation);
+        debug_assert!(slot.frame.is_none());
+        slot.frame = Some(frame);
+        Ok(key)
+    }
+
+    fn retire_frame(&mut self, key: CommandFrameKey) {
+        let index = key.slot as usize;
+        let page = &mut self.frame_pages[index / COMMAND_FRAMES_PER_PAGE];
+        let slot = &mut page.slots[index % COMMAND_FRAMES_PER_PAGE];
+        assert_eq!(
+            slot.generation, key.generation,
+            "retiring a live command frame"
+        );
+        assert!(slot.frame.take().is_some(), "retiring a live command frame");
+        slot.generation = slot.generation.wrapping_add(1).max(1);
+        self.free_frames.push(CommandFrameKey {
+            slot: key.slot,
+            generation: slot.generation,
+        });
+        self.frames_released = self.frames_released.saturating_add(1);
+    }
+
+    fn frame_position(&self, key: CommandFrameKey) -> Option<usize> {
+        self.frame(key)?;
+        self.accepted_frames
+            .iter()
+            .position(|candidate| *candidate == key)
+    }
+
+    fn release_frame(&mut self, mark: CommandTimelineMark) -> bool {
+        if self.fork.is_some() {
+            return false;
+        }
+        let Some(position) = self.frame_position(mark.frame) else {
+            return false;
+        };
+        let key = self
+            .accepted_frames
+            .remove(position)
+            .expect("validated frame position exists");
+        self.retire_frame(key);
+        true
+    }
+
     fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            .saturating_add(self.pool.allocated_heap_bytes())
+            .saturating_add(
+                self.frame_pages
+                    .iter()
+                    .map(|page| {
+                        page.slots
+                            .len()
+                            .saturating_mul(std::mem::size_of::<CommandFrameSlot>())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.free_frames
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<CommandFrameKey>()),
+            )
+            .saturating_add(
+                self.accepted_frames
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<CommandFrameKey>()),
+            )
             .saturating_add(self.scalars.retained_bytes())
             .saturating_add(self.pending_input.retained_bytes())
     }
 
-    #[cfg(test)]
     fn live_frame_count(&self) -> usize {
-        self.frames
+        self.accepted_frames.len()
     }
 
-    #[cfg(test)]
     fn frame_capacity(&self) -> usize {
-        self.pool.chunk_capacity()
+        self.frame_pages
+            .len()
+            .saturating_mul(COMMAND_FRAMES_PER_PAGE)
     }
 
     #[cfg(test)]
     fn source_cells_copied(&self) -> u64 {
-        self.arena.counters().source_nodes_copied
+        0
     }
 
     #[cfg(any(test, feature = "profiling"))]
@@ -263,38 +394,18 @@ impl<G> CommandTimeline<G> {
         let pending_input = self.pending_input.mark();
         self.touched_scalars = 0;
         self.pending_input_touched = false;
-        let mut builder = self
-            .arena
-            .begin_builder(&mut self.pool)
-            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
-        builder
-            .push(CommandTimelineFrame {
-                serial,
-                cursor,
-                attempt,
-            })
-            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
-        let frame = builder
-            .seal()
-            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
-        let boundary = self
-            .arena
-            .seal_boundary(&mut self.pool)
-            .and_then(|boundary| self.arena.checkpoint_mark(boundary))
-            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
-        self.frames = self
-            .frames
-            .checked_add(1)
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        self.head = Some(boundary);
+        let frame = self.allocate_frame(CommandTimelineFrame {
+            serial,
+            cursor,
+            attempt,
+        })?;
+        self.accepted_frames.push_back(frame);
         Ok((
             cursor,
             CommandTimelineMark {
                 frame,
-                boundary,
                 scalars,
                 pending_input,
-                frames: self.frames,
             },
         ))
     }
@@ -304,13 +415,8 @@ impl<G> CommandTimeline<G> {
         cursor: CommandSnapshotCursor,
         mark: CommandTimelineMark,
     ) -> Option<AttemptMark> {
-        if !self.arena.validates_checkpoint(mark.boundary) || mark.frames > self.frames {
-            return None;
-        }
-        let view = self.arena.list(&self.pool, mark.frame).ok()?;
-        let frame = view.get(0)?;
-        (view.len() == 1
-            && self.scalars.validates(mark.scalars)
+        let frame = self.frame(mark.frame)?;
+        (self.scalars.validates(mark.scalars)
             && self.pending_input.validates(mark.pending_input)
             && frame.serial == cursor.command_journal()
             && frame.cursor == cursor)
@@ -318,7 +424,7 @@ impl<G> CommandTimeline<G> {
     }
 
     fn has_live_frame(&self) -> bool {
-        self.frames != 0
+        !self.accepted_frames.is_empty()
     }
 
     fn record_scalar(&mut self, slot: CommandScalarSlot, undo: CommandRootUndo<G>) {
@@ -415,7 +521,10 @@ impl<G> CommandTimeline<G> {
         mark: CommandTimelineMark,
         roots: &mut CommandStateRoots<G>,
     ) -> bool {
-        if !self.arena.can_begin_checkpoint_candidate(mark.boundary)
+        let Some(position) = self.frame_position(mark.frame) else {
+            return false;
+        };
+        if self.fork.is_some()
             || !self.scalars.validates(mark.scalars)
             || !self.pending_input.validates(mark.pending_input)
         {
@@ -426,11 +535,10 @@ impl<G> CommandTimeline<G> {
         self.pending_input.restore(mark.pending_input, |inverse| {
             std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
         });
-        self.arena
-            .restore_accepted_checkpoint(&mut self.pool, mark.boundary)
-            .expect("prevalidated command boundary restores atomically");
-        self.frames = mark.frames;
-        self.head = Some(mark.boundary);
+        let mut suffix = self.accepted_frames.split_off(position + 1);
+        while let Some(frame) = suffix.pop_front() {
+            self.retire_frame(frame);
+        }
         self.touched_scalars = 0;
         self.pending_input_touched = false;
         true
@@ -438,7 +546,7 @@ impl<G> CommandTimeline<G> {
 
     fn can_begin_checkpoint_candidate(&self, mark: CommandTimelineMark) -> bool {
         self.fork.is_none()
-            && self.arena.can_begin_checkpoint_candidate(mark.boundary)
+            && self.frame_position(mark.frame).is_some()
             && self.scalars.validates(mark.scalars)
             && self.pending_input.validates(mark.pending_input)
     }
@@ -458,15 +566,14 @@ impl<G> CommandTimeline<G> {
             .begin_checkpoint_candidate(mark.pending_input, |inverse| {
                 std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
             });
-        self.arena
-            .begin_checkpoint_candidate(mark.boundary)
+        let position = self
+            .frame_position(mark.frame)
             .expect("prevalidated command mark begins the sole fork");
+        let detached = self.accepted_frames.split_off(position + 1);
         self.fork = Some(CommandTimelineFork {
-            prior_head: self.head,
-            prior_frames: self.frames,
+            prefix_len: position + 1,
+            detached,
         });
-        self.head = Some(mark.boundary);
-        self.frames = mark.frames;
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
@@ -476,38 +583,30 @@ impl<G> CommandTimeline<G> {
             .fork
             .take()
             .expect("command rejection requires a candidate fork");
-        let boundary = self
-            .arena
-            .seal_boundary(&mut self.pool)
-            .expect("command rejection seals its current suffix");
         self.scalars
             .reject_checkpoint_candidate(|inverse| inverse.swap(roots));
         self.pending_input.reject_checkpoint_candidate(|inverse| {
             std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
         });
-        self.arena
-            .reject_checkpoint_candidate(&mut self.pool, boundary)
-            .expect("command rejection reattaches its prior chunks");
-        self.head = fork.prior_head;
-        self.frames = fork.prior_frames;
+        let mut candidate = self.accepted_frames.split_off(fork.prefix_len);
+        while let Some(frame) = candidate.pop_front() {
+            self.retire_frame(frame);
+        }
+        self.accepted_frames.extend(fork.detached);
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
 
     fn accept_checkpoint_candidate(&mut self) {
-        let _fork = self
+        let mut fork = self
             .fork
             .take()
             .expect("command acceptance requires a candidate fork");
-        let boundary = self
-            .arena
-            .seal_boundary(&mut self.pool)
-            .expect("command acceptance seals its current suffix");
         self.scalars.accept_checkpoint_candidate();
         self.pending_input.accept_checkpoint_candidate();
-        self.arena
-            .accept_checkpoint_candidate(&mut self.pool, boundary)
-            .expect("command acceptance drops its detached prior chunks");
+        while let Some(frame) = fork.detached.pop_front() {
+            self.retire_frame(frame);
+        }
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
@@ -547,6 +646,7 @@ pub struct CommandTimelineCounters {
 pub struct CommandCheckpointReleaseReceipt {
     timeline_frames_live: usize,
     timeline_frame_capacity: usize,
+    timeline_frames_released: u64,
     command_journal_chunks_released: usize,
     logical_stack_chunks_released: usize,
 }
@@ -560,6 +660,11 @@ impl CommandCheckpointReleaseReceipt {
     #[must_use]
     pub const fn timeline_frame_capacity(self) -> usize {
         self.timeline_frame_capacity
+    }
+
+    #[must_use]
+    pub const fn timeline_frames_released(self) -> u64 {
+        self.timeline_frames_released
     }
 
     #[must_use]
@@ -627,7 +732,7 @@ impl<G> CommandGenerationOwner<G> {
     }
 
     fn addresses_cursor(&self, cursor: CommandSnapshotCursor) -> bool {
-        self.timeline.frames != 0 && cursor.command_journal() != 0
+        cursor.command_journal() != 0
     }
 }
 
@@ -1754,10 +1859,11 @@ impl<G> CommandState<G> {
     ///
     /// `oldest_nonprotected` is also validated when present so a stale or
     /// foreign aggregate low-water cannot be published. The protected
-    /// head-relative `JobStart` root currently prevents command-prefix
-    /// reclamation, so this hook deliberately releases zero journal/stack
-    /// chunks. Unobserved stack reuse is reclaimed independently at operation
-    /// time by [`crate::timeline::LogicalStack`]'s first-touch interval rule.
+    /// head-relative `JobStart` root currently prevents command-journal prefix
+    /// reclamation. The independently keyed packed timeline frame is returned
+    /// to its reusable row pool. Unobserved stack reuse is reclaimed at
+    /// operation time by [`crate::timeline::LogicalStack`]'s first-touch
+    /// interval rule.
     #[doc(hidden)]
     pub fn release_checkpoint_summary(
         &mut self,
@@ -1774,9 +1880,13 @@ impl<G> CommandState<G> {
         if let Some(oldest) = oldest_nonprotected {
             self.resolve_restore(oldest.generation(), oldest.cursor())?;
         }
+        if !self.timeline.release_frame(released.generation().timeline) {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
         Ok(CommandCheckpointReleaseReceipt {
-            timeline_frames_live: self.timeline.frames,
-            timeline_frame_capacity: self.timeline.pool.chunk_capacity(),
+            timeline_frames_live: self.timeline.live_frame_count(),
+            timeline_frame_capacity: self.timeline.frame_capacity(),
+            timeline_frames_released: self.timeline.frames_released,
             command_journal_chunks_released: 0,
             logical_stack_chunks_released: 0,
         })

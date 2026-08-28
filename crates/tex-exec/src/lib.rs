@@ -60,7 +60,8 @@ pub use canonical_step::{
 pub use checkpoint::{
     CheckpointOwnerCharge, CheckpointOwnerFamily, CheckpointOwnerKey, CheckpointRestoreError,
     CheckpointRetention, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary,
-    EngineCheckpoint, REACHABLE_STATE_IDENTITY_SCHEMA_VERSION, ReachableStateIdentity,
+    EngineCheckpoint, EngineCheckpointRelease, REACHABLE_STATE_IDENTITY_SCHEMA_VERSION,
+    ReachableStateIdentity,
 };
 pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,
@@ -97,10 +98,11 @@ pub use mode::{
 };
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_generation::{
-    AdmittedEngineGeneration, CheckpointPruningReceipt, RestoredCheckpointRuntime,
-    RetainedBoundaryEvidence, RetainedCheckpointKey, RetainedCheckpointStore,
-    RetainedEngineAccessError, RetainedEngineAttachmentKey, RetainedEngineForkError,
-    RetainedEngineGeneration, RetainedEngineOperation, RetainedEngineRetirement,
+    AdmittedEngineGeneration, BoundaryLaneStorage, CheckpointPruningReceipt,
+    RestoredCheckpointRuntime, RetainedBoundaryEvidence, RetainedCheckpointKey,
+    RetainedCheckpointStore, RetainedEngineAccessError, RetainedEngineAttachmentKey,
+    RetainedEngineForkError, RetainedEngineGeneration, RetainedEngineOperation,
+    RetainedEngineRetirement,
 };
 pub use retained_resource::{
     ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,

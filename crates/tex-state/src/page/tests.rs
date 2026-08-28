@@ -834,6 +834,33 @@ fn checkpoint_retains_old_page_region_until_last_row_is_pruned() {
 }
 
 #[test]
+fn page_history_release_drops_the_last_noncurrent_region_and_stales_its_id() {
+    let mut history = PageRegionHistory::default();
+    let old_id = history.current().id();
+    let held_over = publish_nodes(&mut history.nodes_mut(), [kern(7)]);
+    let checkpoint = history.seal_checkpoint().expect("old-page checkpoint");
+
+    history.finish_shipout(held_over).expect("page succession");
+    assert!(history.pool.validates_id(old_id));
+    assert!(history.validates_checkpoint(checkpoint));
+
+    let receipt = history
+        .release_checkpoint(checkpoint)
+        .expect("outer history releases private page row");
+    assert_eq!(receipt.rows_released, 1);
+    assert_eq!(receipt.regions_retired, 1);
+    assert_eq!(receipt.retained_regions, 1);
+    assert_eq!(receipt.retained_rows, 0);
+    assert!(!history.pool.validates_id(old_id));
+    assert!(!history.validates_checkpoint(checkpoint));
+    assert_eq!(history.current().counters().page_regions_dropped, 1);
+    assert_eq!(
+        history.release_checkpoint(checkpoint),
+        Err(crate::fork_arena::ForkArenaError::InvalidCheckpoint)
+    );
+}
+
+#[test]
 fn foreign_held_over_root_is_rejected_without_consuming_page_owner() {
     let mut old_pool = NodePool::new();
     let old = PageRegion::new(&mut old_pool);

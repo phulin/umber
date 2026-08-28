@@ -4,7 +4,7 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
-use tex_state::fork_arena::{ArenaListId, CheckpointMark, ChunkPool, ForkArena};
+use std::collections::VecDeque;
 use tex_state::{
     DetachedFormatImage, FormatError, ReachabilityStore, RetainedAttachmentKey,
     RetainedStateAccessError, RetainedStateAdmission, RetainedStateCandidateOperation,
@@ -16,6 +16,7 @@ use tex_state::{
 use crate::EngineCheckpoint;
 
 static NEXT_ENGINE_GENERATION: AtomicU64 = AtomicU64::new(1);
+static NEXT_BOUNDARY_LANE_OWNER: AtomicU64 = AtomicU64::new(1);
 
 /// One operation admitted against an opaque retained executor generation.
 pub trait RetainedEngineOperation {
@@ -197,8 +198,17 @@ impl<G> RetainedCheckpointStore<'_, G> {
     /// Releases one restart root during publication-time budget enforcement.
     /// Detached boundary evidence is owned by the incremental layer and is
     /// intentionally unaffected.
-    pub fn release(&mut self, key: RetainedCheckpointKey) -> Result<(), RetainedEngineAccessError> {
+    pub fn release(
+        &mut self,
+        key: RetainedCheckpointKey,
+    ) -> Result<crate::EngineCheckpointRelease<G>, RetainedEngineAccessError> {
         self.boundaries.release_key(key)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn storage(&self) -> BoundaryLaneStorage {
+        self.boundaries.storage()
     }
 }
 
@@ -283,22 +293,21 @@ impl RetainedBoundaryEvidence {
     }
 }
 
-pub enum BoundaryLaneKind {}
-
 /// Private owner-relative identity of one named retained checkpoint.
 ///
 /// The key is non-`Copy`, non-`Clone`, and non-serializable. Detached boundary
 /// identity remains in tex-incr's `BoundaryRecord` instead.
 #[derive(Debug)]
 pub struct RetainedCheckpointKey {
-    list: ArenaListId<BoundaryLaneKind>,
-    mark: CheckpointMark<BoundaryLaneKind>,
-    record: usize,
+    owner: u64,
+    slot: u32,
+    generation: u32,
+    record: u64,
 }
 
 impl PartialEq for RetainedCheckpointKey {
     fn eq(&self, other: &Self) -> bool {
-        self.list == other.list
+        self.owner == other.owner && self.slot == other.slot && self.generation == other.generation
     }
 }
 
@@ -319,6 +328,7 @@ pub enum RetainedEngineAccessError {
     StaleAttachment,
     AttachmentTypeMismatch,
     LiveAttachment,
+    ProtectedCheckpoint,
     State(RetainedStateAccessError),
 }
 
@@ -352,6 +362,17 @@ pub struct CheckpointPruningReceipt {
     released: usize,
     retained: usize,
     slots: usize,
+}
+
+/// Authoritative live/capacity gauges for the reusable retained-boundary row
+/// pool. Capacity is physical row capacity, not an inferred byte estimate.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BoundaryLaneStorage {
+    pub live_rows: usize,
+    pub row_capacity: usize,
+    pub live_restart_roots: usize,
+    pub rows_released: u64,
+    pub rows_reused: u64,
 }
 
 impl CheckpointPruningReceipt {
@@ -971,42 +992,85 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
 struct BoundaryCell<G> {
     evidence: RetainedBoundaryEvidence,
     checkpoint: Option<EngineCheckpoint<G>>,
-    previous_restart: Option<usize>,
+}
+
+const BOUNDARY_ROWS_PER_PAGE: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BoundarySlotKey {
+    slot: u32,
+    generation: u32,
+    record: u64,
+}
+
+struct BoundarySlot<G> {
+    generation: u32,
+    cell: Option<BoundaryCell<G>>,
+    free_next: Option<u32>,
+}
+
+impl<G> BoundarySlot<G> {
+    const fn vacant(free_next: Option<u32>) -> Self {
+        Self {
+            generation: 1,
+            cell: None,
+            free_next,
+        }
+    }
+}
+
+struct BoundaryPage<G> {
+    slots: Box<[BoundarySlot<G>]>,
+}
+
+enum BoundaryOwnership {
+    Accepted(VecDeque<BoundarySlotKey>),
+    Forked {
+        prefix: VecDeque<BoundarySlotKey>,
+        detached_prior: VecDeque<BoundarySlotKey>,
+        current: VecDeque<BoundarySlotKey>,
+    },
 }
 
 struct BoundaryLane<G> {
-    pool: ChunkPool<BoundaryCell<G>>,
-    arena: ForkArena<BoundaryCell<G>, BoundaryLaneKind>,
-    head: Option<CheckpointMark<BoundaryLaneKind>>,
-    prior_head: Option<CheckpointMark<BoundaryLaneKind>>,
-    prior_records: Option<usize>,
-    prior_live_roots: Option<usize>,
-    last_restart: Option<usize>,
-    prior_last_restart: Option<usize>,
-    records: usize,
+    owner: u64,
+    next_record: u64,
+    pages: Vec<BoundaryPage<G>>,
+    free_head: Option<u32>,
+    ownership: BoundaryOwnership,
+    protected_record: Option<u64>,
     live_roots: usize,
+    rows_released: u64,
+    rows_reused: u64,
 }
 
 impl<G> Default for BoundaryLane<G> {
     fn default() -> Self {
         Self {
-            pool: ChunkPool::with_chunk_bytes(
-                core::mem::size_of::<Option<BoundaryCell<G>>>().max(1),
-            ),
-            arena: ForkArena::new(),
-            head: None,
-            prior_head: None,
-            prior_records: None,
-            prior_live_roots: None,
-            last_restart: None,
-            prior_last_restart: None,
-            records: 0,
+            owner: NEXT_BOUNDARY_LANE_OWNER.fetch_add(1, Ordering::Relaxed),
+            next_record: 0,
+            pages: Vec::new(),
+            free_head: None,
+            ownership: BoundaryOwnership::Accepted(VecDeque::new()),
+            protected_record: None,
             live_roots: 0,
+            rows_released: 0,
+            rows_reused: 0,
         }
     }
 }
 
 impl<G> BoundaryLane<G> {
+    fn storage(&self) -> BoundaryLaneStorage {
+        BoundaryLaneStorage {
+            live_rows: self.visible_len(),
+            row_capacity: self.pages.len().saturating_mul(BOUNDARY_ROWS_PER_PAGE),
+            live_restart_roots: self.live_roots,
+            rows_released: self.rows_released,
+            rows_reused: self.rows_reused,
+        }
+    }
+
     fn append(
         &mut self,
         checkpoint: EngineCheckpoint<G>,
@@ -1026,50 +1090,116 @@ impl<G> BoundaryLane<G> {
         evidence: RetainedBoundaryEvidence,
     ) -> RetainedCheckpointKey {
         let has_restart = checkpoint.is_some();
-        let record = self.records;
-        let mut builder = self
-            .arena
-            .begin_builder(&mut self.pool)
-            .expect("boundary lane owns the sole cell builder");
-        builder
-            .push(BoundaryCell {
-                evidence,
-                checkpoint,
-                previous_restart: self.last_restart,
-            })
-            .expect("one boundary cell fits its logical chunk");
-        let list = builder.seal().expect("boundary cell seals canonically");
-        let boundary = self
-            .arena
-            .seal_boundary(&mut self.pool)
-            .expect("boundary cell retires its builder");
-        let mark = self
-            .arena
-            .checkpoint_mark(boundary)
-            .expect("boundary cell names its sealed whole-chunk mark");
-        self.head = Some(mark);
-        self.records = self.records.saturating_add(1);
+        let protects_job_start = self.protected_record.is_none()
+            && checkpoint
+                .as_ref()
+                .is_some_and(|checkpoint| checkpoint.boundary() == crate::EngineBoundary::JobStart);
+        let record = self.next_record;
+        self.next_record = self
+            .next_record
+            .checked_add(1)
+            .expect("boundary record identity space exhausted");
+        let key = self.allocate(BoundaryCell {
+            evidence,
+            checkpoint,
+        });
+        match &mut self.ownership {
+            BoundaryOwnership::Accepted(accepted) => accepted.push_back(key),
+            BoundaryOwnership::Forked { current, .. } => current.push_back(key),
+        }
         if has_restart {
             self.live_roots = self.live_roots.saturating_add(1);
-            self.last_restart = Some(record);
         }
-        RetainedCheckpointKey { list, mark, record }
+        if protects_job_start {
+            self.protected_record = Some(record);
+        }
+        RetainedCheckpointKey {
+            owner: self.owner,
+            slot: key.slot,
+            generation: key.generation,
+            record,
+        }
+    }
+
+    fn add_page(&mut self) {
+        let start = self.pages.len().saturating_mul(BOUNDARY_ROWS_PER_PAGE);
+        let mut free = self.free_head;
+        let slots = (0..BOUNDARY_ROWS_PER_PAGE)
+            .map(|offset| {
+                let slot = u32::try_from(start.saturating_add(offset))
+                    .expect("boundary row pool fits u32");
+                let row = BoundarySlot::vacant(free);
+                free = Some(slot);
+                row
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        self.pages.push(BoundaryPage { slots });
+        self.free_head = free;
+    }
+
+    fn allocate(&mut self, cell: BoundaryCell<G>) -> BoundarySlotKey {
+        if self.free_head.is_none() {
+            self.add_page();
+        }
+        let slot = self.free_head.expect("boundary page supplied a free row");
+        let reused = self.slot_by_index(slot).generation != 1;
+        let free_next = self.slot_by_index(slot).free_next;
+        self.free_head = free_next;
+        let generation = {
+            let row = self.slot_by_index_mut(slot);
+            row.free_next = None;
+            row.cell = Some(cell);
+            row.generation
+        };
+        if reused {
+            self.rows_reused = self.rows_reused.saturating_add(1);
+        }
+        BoundarySlotKey {
+            slot,
+            generation,
+            record: self.next_record.saturating_sub(1),
+        }
+    }
+
+    fn slot_by_index(&self, slot: u32) -> &BoundarySlot<G> {
+        let slot = slot as usize;
+        &self.pages[slot / BOUNDARY_ROWS_PER_PAGE].slots[slot % BOUNDARY_ROWS_PER_PAGE]
+    }
+
+    fn slot_by_index_mut(&mut self, slot: u32) -> &mut BoundarySlot<G> {
+        let slot = slot as usize;
+        &mut self.pages[slot / BOUNDARY_ROWS_PER_PAGE].slots[slot % BOUNDARY_ROWS_PER_PAGE]
+    }
+
+    fn raw_key(
+        &self,
+        key: &RetainedCheckpointKey,
+    ) -> Result<BoundarySlotKey, RetainedEngineAccessError> {
+        if key.owner != self.owner {
+            return Err(RetainedEngineAccessError::ForeignGeneration);
+        }
+        Ok(BoundarySlotKey {
+            slot: key.slot,
+            generation: key.generation,
+            record: key.record,
+        })
     }
 
     fn cell(
         &self,
         key: &RetainedCheckpointKey,
     ) -> Result<&BoundaryCell<G>, RetainedEngineAccessError> {
-        let view = self
-            .arena
-            .list(&self.pool, key.list)
-            .map_err(|error| match error {
-                tex_state::fork_arena::ForkArenaError::ForeignArena => {
-                    RetainedEngineAccessError::ForeignGeneration
-                }
-                _ => RetainedEngineAccessError::StaleCheckpoint,
-            })?;
-        view.get(0)
+        let raw = self.raw_key(key)?;
+        let row = self
+            .pages
+            .get(raw.slot as usize / BOUNDARY_ROWS_PER_PAGE)
+            .and_then(|page| page.slots.get(raw.slot as usize % BOUNDARY_ROWS_PER_PAGE))
+            .filter(|row| row.generation == raw.generation)
+            .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        row.cell
+            .as_ref()
+            .filter(|_| self.visible_contains(raw))
             .ok_or(RetainedEngineAccessError::StaleCheckpoint)
     }
 
@@ -1083,188 +1213,165 @@ impl<G> BoundaryLane<G> {
             .ok_or(RetainedEngineAccessError::StaleCheckpoint)
     }
 
-    fn release_key(&mut self, key: RetainedCheckpointKey) -> Result<(), RetainedEngineAccessError> {
+    fn release_key(
+        &mut self,
+        key: RetainedCheckpointKey,
+    ) -> Result<crate::EngineCheckpointRelease<G>, RetainedEngineAccessError> {
         self.get(&key)?;
-        let previous_restart = self.cell(&key)?.previous_restart;
-        let removed = self
-            .arena
-            .with_single_value_mut(&mut self.pool, key.list, |cell| cell.checkpoint.take())
-            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
-        drop(removed.expect("validated boundary cell owns its restart root"));
-        self.live_roots = self.live_roots.saturating_sub(1);
-        if self.last_restart == Some(key.record) {
-            self.last_restart = previous_restart;
+        if self.protected_record == Some(key.record) {
+            return Err(RetainedEngineAccessError::ProtectedCheckpoint);
         }
-        Ok(())
+        let raw = self.raw_key(&key)?;
+        if !self.remove_visible(raw) {
+            return Err(RetainedEngineAccessError::StaleCheckpoint);
+        }
+        let cell = self.release_slot(raw)?;
+        let removed = cell
+            .checkpoint
+            .expect("validated boundary row owns its restart root");
+        self.live_roots = self.live_roots.saturating_sub(1);
+        let mut oldest_nonprotected = None;
+        self.visit_visible_cells(|cell| {
+            if oldest_nonprotected.is_none()
+                && let Some(checkpoint) = cell.checkpoint.as_ref()
+                && checkpoint.boundary() != crate::EngineBoundary::JobStart
+            {
+                oldest_nonprotected = Some(crate::checkpoint::CheckpointReleaseFloor::capture(
+                    checkpoint,
+                ));
+            }
+        })?;
+        Ok(crate::EngineCheckpointRelease::new(
+            removed,
+            oldest_nonprotected,
+        ))
     }
 
     fn can_begin(&self, key: &RetainedCheckpointKey) -> bool {
-        self.get(key).is_ok() && self.arena.can_begin_checkpoint_candidate(key.mark)
+        matches!(self.ownership, BoundaryOwnership::Accepted(_)) && self.get(key).is_ok()
     }
 
     fn select(
         &self,
         selected: Option<(usize, crate::EngineBoundary, u32)>,
     ) -> Result<(RetainedCheckpointKey, RetainedBoundaryEvidence), RetainedEngineAccessError> {
-        let len = self
-            .arena
-            .sealed_single_len()
-            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
-        let index = if let Some((position, boundary, ordinal)) = selected {
-            let mut low = 0;
-            let mut high = len;
-            while low < high {
-                let middle = low + (high - low) / 2;
-                let (_, _, cell) = self
-                    .arena
-                    .sealed_single_at(&self.pool, middle)
-                    .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
-                if cell.evidence.position <= position {
-                    low = middle.saturating_add(1);
-                } else {
-                    high = middle;
+        let target = selected;
+        let mut first_restart = None;
+        let mut earlier_restart = None;
+        let mut last_restart = None;
+        let mut exact_seen = false;
+        let mut exact_selection = None;
+        self.visit_visible(|raw, cell| {
+            let Some((position, boundary, ordinal)) = target else {
+                if cell.checkpoint.is_some() {
+                    first_restart.get_or_insert((raw, cell.evidence));
                 }
+                return;
+            };
+            if cell.evidence.position == position
+                && cell.evidence.boundary == boundary
+                && cell.evidence.ordinal == ordinal
+            {
+                exact_seen = true;
+                exact_selection = cell
+                    .checkpoint
+                    .as_ref()
+                    .map(|_| (raw, cell.evidence))
+                    .or(last_restart);
             }
-            let mut exact = None;
-            while low != 0 {
-                low -= 1;
-                let (_, _, cell) = self
-                    .arena
-                    .sealed_single_at(&self.pool, low)
-                    .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
-                if cell.evidence.position != position {
-                    break;
-                }
-                if cell.evidence.boundary == boundary && cell.evidence.ordinal == ordinal {
-                    exact = Some(low);
-                    break;
-                }
-            }
-            exact.ok_or(RetainedEngineAccessError::StaleCheckpoint)?
-        } else {
-            0
-        };
-        let index = self.restart_at_or_before(index)?;
-        let (list, mark, cell) = self
-            .arena
-            .sealed_single_at(&self.pool, index)
-            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
-        Ok((
-            RetainedCheckpointKey {
-                list,
-                mark,
-                record: index,
-            },
-            cell.evidence,
-        ))
-    }
-
-    fn restart_at_or_before(&self, mut index: usize) -> Result<usize, RetainedEngineAccessError> {
-        loop {
-            let (_, _, cell) = self
-                .arena
-                .sealed_single_at(&self.pool, index)
-                .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
             if cell.checkpoint.is_some() {
-                return Ok(index);
+                first_restart.get_or_insert((raw, cell.evidence));
+                if cell.evidence.position < position {
+                    earlier_restart = Some((raw, cell.evidence));
+                }
+                last_restart = Some((raw, cell.evidence));
             }
-            index = cell
-                .previous_restart
-                .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        })?;
+        let (raw, evidence) = if target.is_none() {
+            first_restart
+        } else if exact_seen {
+            exact_selection
+        } else {
+            earlier_restart.or(first_restart)
         }
+        .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        Ok((self.public_key(raw), evidence))
     }
 
     fn validate_all(&self) -> Result<(), RetainedEngineAccessError> {
-        let Some(head) = self.head else {
-            return Ok(());
-        };
-        (self.arena.validates_checkpoint(head)
-            && self
-                .arena
-                .sealed_single_len()
-                .is_ok_and(|records| records == self.records))
-        .then_some(())
-        .ok_or(RetainedEngineAccessError::StaleCheckpoint)
+        self.visit_visible(|_, _| {})?;
+        Ok(())
     }
 
     fn begin(&mut self, key: &RetainedCheckpointKey) {
-        self.prior_head = self.head;
-        self.prior_records = Some(self.records);
-        self.prior_live_roots = Some(self.live_roots);
-        self.prior_last_restart = self.last_restart;
-        let mut detached_records = 0_usize;
-        let mut detached_live_roots = 0_usize;
-        self.arena
-            .visit_accepted_checkpoint_suffix(&self.pool, key.mark, |cell| {
-                detached_records = detached_records.saturating_add(1);
-                detached_live_roots =
-                    detached_live_roots.saturating_add(usize::from(cell.checkpoint.is_some()));
-            })
-            .expect("prevalidated boundary mark visits only its detached suffix");
-        self.arena
-            .begin_checkpoint_candidate(key.mark)
-            .expect("prevalidated boundary mark begins the sole metadata fork");
-        self.head = Some(key.mark);
-        self.records = self.records.saturating_sub(detached_records);
-        self.live_roots = self.live_roots.saturating_sub(detached_live_roots);
-        self.last_restart = Some(
-            self.restart_at_or_before(key.record)
-                .expect("selected boundary retains one restart root"),
-        );
+        let raw = self.raw_key(key).expect("prevalidated boundary key owner");
+        let BoundaryOwnership::Accepted(mut accepted) = std::mem::replace(
+            &mut self.ownership,
+            BoundaryOwnership::Accepted(VecDeque::new()),
+        ) else {
+            panic!("boundary lane already owns a candidate fork")
+        };
+        let selected = accepted
+            .iter()
+            .position(|candidate| *candidate == raw)
+            .expect("prevalidated boundary key remains in accepted order");
+        let detached_prior = accepted.split_off(selected.saturating_add(1));
+        self.ownership = BoundaryOwnership::Forked {
+            prefix: accepted,
+            detached_prior,
+            current: VecDeque::new(),
+        };
+        self.live_roots = self.visible_live_roots();
     }
 
     fn reject(&mut self) {
-        let prior_head = self
-            .prior_head
-            .take()
-            .expect("a rejected boundary lane retains its accepted head");
-        let boundary = self
-            .arena
-            .seal_boundary(&mut self.pool)
-            .expect("rejected boundary lane has no live builder");
-        self.arena
-            .reject_checkpoint_candidate(&mut self.pool, boundary)
-            .expect("rejected boundary lane reattaches its prior suffix");
-        self.head = Some(prior_head);
-        self.records = self
-            .prior_records
-            .take()
-            .expect("a rejected boundary lane retains its accepted record count");
-        self.live_roots = self
-            .prior_live_roots
-            .take()
-            .expect("a rejected boundary lane retains its accepted root count");
-        self.last_restart = self.prior_last_restart.take();
+        let BoundaryOwnership::Forked {
+            mut prefix,
+            mut detached_prior,
+            current,
+        } = std::mem::replace(
+            &mut self.ownership,
+            BoundaryOwnership::Accepted(VecDeque::new()),
+        )
+        else {
+            panic!("boundary rejection requires a candidate fork")
+        };
+        self.release_slots(current);
+        prefix.append(&mut detached_prior);
+        self.ownership = BoundaryOwnership::Accepted(prefix);
+        self.live_roots = self.visible_live_roots();
     }
 
     fn accept(&mut self) {
-        let boundary = self
-            .arena
-            .seal_boundary(&mut self.pool)
-            .expect("accepted boundary lane has no live builder");
-        self.arena
-            .accept_checkpoint_candidate(&mut self.pool, boundary)
-            .expect("accepted boundary lane drops its detached prior suffix");
-        self.prior_head = None;
-        self.prior_records = None;
-        self.prior_live_roots = None;
-        self.prior_last_restart = None;
+        let BoundaryOwnership::Forked {
+            mut prefix,
+            detached_prior,
+            mut current,
+        } = std::mem::replace(
+            &mut self.ownership,
+            BoundaryOwnership::Accepted(VecDeque::new()),
+        )
+        else {
+            panic!("boundary acceptance requires a candidate fork")
+        };
+        self.release_slots(detached_prior);
+        prefix.append(&mut current);
+        self.ownership = BoundaryOwnership::Accepted(prefix);
+        self.live_roots = self.visible_live_roots();
     }
 
     fn pdf_history_low_water(&self) -> Option<(u64, u64)> {
         let mut low_water: Option<(u64, u64)> = None;
-        let head = self.head?;
-        self.arena
-            .visit_checkpoint_values(&self.pool, head, |cell| {
-                let Some(checkpoint) = cell.checkpoint.as_ref() else {
-                    return;
-                };
-                let position = checkpoint.pdf_history_position();
-                low_water = Some(low_water.map_or(position, |left| {
-                    (left.0.min(position.0), left.1.min(position.1))
-                }));
-            })
-            .ok()?;
+        self.visit_visible_cells(|cell| {
+            let Some(checkpoint) = cell.checkpoint.as_ref() else {
+                return;
+            };
+            let position = checkpoint.pdf_history_position();
+            low_water = Some(low_water.map_or(position, |left| {
+                (left.0.min(position.0), left.1.min(position.1))
+            }));
+        })
+        .ok()?;
         low_water
     }
 
@@ -1278,8 +1385,122 @@ impl<G> BoundaryLane<G> {
         Ok(CheckpointPruningReceipt {
             released: 0,
             retained: self.live_roots,
-            slots: self.records,
+            slots: self.visible_len(),
         })
+    }
+
+    fn public_key(&self, raw: BoundarySlotKey) -> RetainedCheckpointKey {
+        RetainedCheckpointKey {
+            owner: self.owner,
+            slot: raw.slot,
+            generation: raw.generation,
+            record: raw.record,
+        }
+    }
+
+    fn visible_contains(&self, key: BoundarySlotKey) -> bool {
+        match &self.ownership {
+            BoundaryOwnership::Accepted(accepted) => accepted.contains(&key),
+            BoundaryOwnership::Forked {
+                prefix, current, ..
+            } => prefix.contains(&key) || current.contains(&key),
+        }
+    }
+
+    fn remove_visible(&mut self, key: BoundarySlotKey) -> bool {
+        let remove = |lane: &mut VecDeque<BoundarySlotKey>| {
+            lane.iter()
+                .position(|candidate| *candidate == key)
+                .and_then(|position| lane.remove(position))
+                .is_some()
+        };
+        match &mut self.ownership {
+            BoundaryOwnership::Accepted(accepted) => remove(accepted),
+            BoundaryOwnership::Forked {
+                prefix, current, ..
+            } => remove(prefix) || remove(current),
+        }
+    }
+
+    fn release_slot(
+        &mut self,
+        key: BoundarySlotKey,
+    ) -> Result<BoundaryCell<G>, RetainedEngineAccessError> {
+        let free_head = self.free_head;
+        let row = self.slot_by_index_mut(key.slot);
+        if row.generation != key.generation {
+            return Err(RetainedEngineAccessError::StaleCheckpoint);
+        }
+        let cell = row
+            .cell
+            .take()
+            .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        row.generation = row.generation.wrapping_add(1).max(1);
+        row.free_next = free_head;
+        self.free_head = Some(key.slot);
+        self.rows_released = self.rows_released.saturating_add(1);
+        Ok(cell)
+    }
+
+    fn release_slots(&mut self, mut keys: VecDeque<BoundarySlotKey>) {
+        while let Some(key) = keys.pop_front() {
+            drop(
+                self.release_slot(key)
+                    .expect("owned boundary suffix contains live rows"),
+            );
+        }
+    }
+
+    fn visit_visible(
+        &self,
+        mut visit: impl FnMut(BoundarySlotKey, &BoundaryCell<G>),
+    ) -> Result<(), RetainedEngineAccessError> {
+        let mut visit_lane = |lane: &VecDeque<BoundarySlotKey>| {
+            for key in lane {
+                let row = self.slot_by_index(key.slot);
+                let cell = row
+                    .cell
+                    .as_ref()
+                    .filter(|_| row.generation == key.generation)
+                    .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+                visit(*key, cell);
+            }
+            Ok(())
+        };
+        match &self.ownership {
+            BoundaryOwnership::Accepted(accepted) => visit_lane(accepted),
+            BoundaryOwnership::Forked {
+                prefix, current, ..
+            } => {
+                visit_lane(prefix)?;
+                visit_lane(current)
+            }
+        }
+    }
+
+    fn visit_visible_cells(
+        &self,
+        mut visit: impl FnMut(&BoundaryCell<G>),
+    ) -> Result<(), RetainedEngineAccessError> {
+        self.visit_visible(|_, cell| visit(cell))
+    }
+
+    fn visible_len(&self) -> usize {
+        match &self.ownership {
+            BoundaryOwnership::Accepted(accepted) => accepted.len(),
+            BoundaryOwnership::Forked {
+                prefix, current, ..
+            } => prefix.len().saturating_add(current.len()),
+        }
+    }
+
+    fn visible_live_roots(&self) -> usize {
+        let mut roots = 0_usize;
+        self.visit_visible_cells(|cell| {
+            roots = roots.saturating_add(usize::from(cell.checkpoint.is_some()));
+        })
+        .expect("boundary ownership contains only live rows");
+        roots
     }
 }
 
@@ -1620,7 +1841,7 @@ mod tests {
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
             let (_universe, _ledger, mut checkpoints) = admitted.parts();
-            checkpoints.release(self.0)
+            checkpoints.release(self.0).map(drop)
         }
     }
 
@@ -1953,7 +2174,7 @@ mod tests {
     }
 
     #[test]
-    fn boundary_lane_keeps_prefix_marks_and_indexes_evidence_only_fallbacks() {
+    fn boundary_lane_reuses_rows_and_indexes_evidence_only_fallbacks() {
         crate::test_harness::with_nonstop_universe(|universe| {
             let mut command = CommandState::default();
             let mut modes = crate::ModeNest::new();
@@ -1970,7 +2191,7 @@ mod tests {
                 job,
                 RetainedBoundaryEvidence::new(1, 0, crate::EngineBoundary::JobStart, 0, 0, 0, None),
             );
-            let job_list = job.list;
+            let job_slot = (job.owner, job.slot, job.generation);
 
             for ordinal in 1..=128 {
                 lane.append_evidence(RetainedBoundaryEvidence::new(
@@ -1983,15 +2204,7 @@ mod tests {
                     None,
                 ));
             }
-            let (_, _, newest_evidence) = lane
-                .arena
-                .sealed_single_at(&lane.pool, 128)
-                .expect("newest evidence cell");
-            assert_eq!(
-                newest_evidence.previous_restart,
-                Some(0),
-                "each evidence-only record stores the nearest restart coordinate at append"
-            );
+            assert_eq!(lane.visible_len(), 129);
             let (fallback, evidence) = lane
                 .select(Some((1, crate::EngineBoundary::ShipoutComplete, 128)))
                 .expect("completion evidence falls back to its restart");
@@ -2020,10 +2233,10 @@ mod tests {
                 ),
             );
             lane.accept();
-            assert_eq!(job.list, job_list);
-            assert!(lane.arena.validates_checkpoint(job.mark));
+            assert_eq!((job.owner, job.slot, job.generation), job_slot);
             assert!(lane.get(&job).is_ok());
             assert!(lane.get(&replacement).is_ok());
+            assert_eq!(lane.visible_len(), 2);
 
             lane.begin(&job);
             lane.append_evidence(RetainedBoundaryEvidence::new(
@@ -2038,7 +2251,69 @@ mod tests {
             lane.reject();
             assert!(lane.get(&job).is_ok());
             assert!(lane.get(&replacement).is_ok());
-            assert_eq!(lane.arena.counters().source_nodes_copied, 0);
+            assert_eq!(lane.visible_len(), 2);
+            assert_eq!(lane.rows_released, 129);
+            assert!(lane.pages.len() <= 9, "fixed row pages plateau and recycle");
+        });
+    }
+
+    #[test]
+    fn boundary_release_plateaus_over_thousands_of_named_boundaries() {
+        crate::test_harness::with_nonstop_universe(|universe| {
+            let mut control = crate::MainControl::tex82_initex(universe);
+            let mut lane = BoundaryLane::default();
+            let job = control
+                .capture_job_start_checkpoint(universe, crate::ExecutionBudgetCounters::default())
+                .expect("job-start checkpoint");
+            let _job = lane.append(
+                job,
+                RetainedBoundaryEvidence::new(1, 0, crate::EngineBoundary::JobStart, 0, 0, 0, None),
+            );
+            let mut previous = None;
+            let mut stale = None;
+            for ordinal in 0..4_096_u32 {
+                let checkpoint = control
+                    .capture_checkpoint(
+                        crate::EngineBoundary::OuterParagraphEnd,
+                        universe,
+                        crate::ExecutionBudgetCounters::default(),
+                    )
+                    .expect("quiescent paragraph checkpoint");
+                let current = lane.append(
+                    checkpoint,
+                    RetainedBoundaryEvidence::new(
+                        1,
+                        ordinal as usize + 1,
+                        crate::EngineBoundary::OuterParagraphEnd,
+                        ordinal,
+                        0,
+                        0,
+                        None,
+                    ),
+                );
+                if let Some(previous) = previous.replace(current) {
+                    stale = Some(RetainedCheckpointKey {
+                        owner: previous.owner,
+                        slot: previous.slot,
+                        generation: previous.generation,
+                        record: previous.record,
+                    });
+                    lane.release_key(previous)
+                        .expect("oldest ordinary boundary releases")
+                        .apply(&mut control, universe);
+                }
+            }
+
+            let storage = lane.storage();
+            assert_eq!(storage.live_rows, 2);
+            assert_eq!(storage.live_restart_roots, 2);
+            assert_eq!(storage.row_capacity, BOUNDARY_ROWS_PER_PAGE);
+            assert!(storage.rows_released >= 4_095);
+            assert!(storage.rows_reused >= 4_094);
+            assert!(matches!(
+                lane.get(stale.as_ref().expect("at least one released key")),
+                Err(RetainedEngineAccessError::StaleCheckpoint)
+            ));
         });
     }
 }

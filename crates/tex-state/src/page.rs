@@ -664,6 +664,18 @@ pub struct PageRegionCounters {
     pub held_over_envelopes_moved: u64,
     /// Foreign node roots rejected at a region boundary.
     pub cross_region_node_reference_rejections: u64,
+    /// Private retained checkpoint rows released by the outer history owner.
+    pub checkpoint_rows_released: u64,
+}
+
+/// Work and remaining storage after releasing one private page checkpoint row.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PageRegionReleaseReceipt {
+    pub rows_released: u64,
+    pub regions_retired: u64,
+    pub retained_regions: usize,
+    pub retained_rows: usize,
+    pub row_capacity: usize,
 }
 
 /// Exclusive owner for one page-building period.
@@ -796,6 +808,63 @@ impl PageRegionHistory {
     pub(crate) fn validates_checkpoint(&self, key: PageRegionCheckpointKey) -> bool {
         self.region(key)
             .is_some_and(|region| region.validates_checkpoint(&self.pool, key))
+    }
+
+    /// Releases the private row named by an outer retained checkpoint.
+    ///
+    /// The key's region/boundary pair identifies the row directly; node roots
+    /// are never traversed.  When a noncurrent region loses its final row, its
+    /// complete node-region envelopes are returned to the shared pool before
+    /// the region descriptor is removed, generation-invalidating every stale
+    /// coordinate into that owner.
+    pub(crate) fn release_checkpoint(
+        &mut self,
+        key: PageRegionCheckpointKey,
+    ) -> Result<PageRegionReleaseReceipt, ForkArenaError> {
+        if self.pending_successor.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        let region_index = self
+            .regions
+            .iter()
+            .position(|region| region.id() == key.region)
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        let builder_mark = self.regions[region_index].release_checkpoint_row(key)?;
+        self.regions[region_index]
+            .builder_mut()
+            .commit_transaction(builder_mark);
+        self.regions[region_index].counters.checkpoint_rows_released = self.regions[region_index]
+            .counters
+            .checkpoint_rows_released
+            .saturating_add(1);
+
+        let mut regions_retired = 0;
+        let current = self.regions.len().saturating_sub(1);
+        if region_index != current && self.regions[region_index].checkpoints.is_empty() {
+            let region = self.regions.remove(region_index);
+            region.retire(&mut self.pool)?;
+            regions_retired = 1;
+            self.current_mut().counters.page_regions_dropped = self
+                .current()
+                .counters
+                .page_regions_dropped
+                .saturating_add(1);
+        }
+        Ok(PageRegionReleaseReceipt {
+            rows_released: 1,
+            regions_retired,
+            retained_regions: self.regions.len(),
+            retained_rows: self
+                .regions
+                .iter()
+                .map(|region| region.checkpoints.len())
+                .sum(),
+            row_capacity: self
+                .regions
+                .iter()
+                .map(|region| region.checkpoints.capacity())
+                .sum(),
+        })
     }
 
     pub(crate) fn arena_checkpoint(
@@ -1050,6 +1119,20 @@ impl PageRegion {
                     .copied()
             })
             .flatten()
+    }
+
+    fn release_checkpoint_row(
+        &mut self,
+        key: PageRegionCheckpointKey,
+    ) -> Result<PageCheckpointMark, ForkArenaError> {
+        if key.region != self.id() {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        let position = self
+            .checkpoints
+            .binary_search_by_key(&key.boundary, |row| row.key.boundary)
+            .map_err(|_| ForkArenaError::InvalidCheckpoint)?;
+        Ok(self.checkpoints.remove(position).builder)
     }
 
     #[must_use]

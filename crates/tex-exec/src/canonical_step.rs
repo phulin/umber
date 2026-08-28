@@ -419,6 +419,9 @@ impl OutputLedger {
             )?;
             checkpoint.set_output_ledger(self.checkpoint());
             sink.checkpoint(checkpoint);
+            while let Some(release) = sink.take_checkpoint_release() {
+                release.apply(control, universe);
+            }
         }
         Ok(())
     }

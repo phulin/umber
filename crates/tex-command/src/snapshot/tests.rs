@@ -3,8 +3,8 @@ use std::rc::Rc;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use super::{
-    CommandArenaCursors, CommandRestoreError, CommandSnapshotCursor, CommandStackCursors,
-    CommandStateSnapshot, CommandSummary, CommandSummaryError,
+    COMMAND_FRAMES_PER_PAGE, CommandArenaCursors, CommandRestoreError, CommandSnapshotCursor,
+    CommandStackCursors, CommandStateSnapshot, CommandSummary, CommandSummaryError,
 };
 use crate::scalar_journal::PackedJournalMark;
 
@@ -420,7 +420,7 @@ fn dropping_a_summary_never_mutates_its_physical_timeline() {
 }
 
 #[test]
-fn checkpoint_release_validates_owners_and_reports_protected_zero_reclamation() {
+fn checkpoint_release_recycles_its_frame_and_preserves_protected_journals() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
         let protected = command
@@ -433,10 +433,15 @@ fn checkpoint_release_validates_owners_and_reports_protected_zero_reclamation() 
             .release_checkpoint_summary(&released, Some(&released))
             .expect("same-owner release validates");
 
-        assert_eq!(receipt.timeline_frames_live(), 2);
+        assert_eq!(receipt.timeline_frames_live(), 1);
         assert!(receipt.timeline_frame_capacity() >= receipt.timeline_frames_live());
+        assert_eq!(receipt.timeline_frames_released(), 1);
         assert_eq!(receipt.command_journal_chunks_released(), 0);
         assert_eq!(receipt.logical_stack_chunks_released(), 0);
+        assert!(matches!(
+            command.release_checkpoint_summary(&released, None),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
 
         let mut foreign = crate::CommandState::default();
         let foreign_summary = foreign
@@ -450,6 +455,36 @@ fn checkpoint_release_validates_owners_and_reports_protected_zero_reclamation() 
         command
             .restore_summary(&protected, universe)
             .expect("protected root remains exact after release observation");
+    });
+}
+
+#[test]
+fn released_command_frames_plateau_across_thousands_of_boundaries() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let protected = command
+            .publish_summary(universe)
+            .expect("protected summary publishes");
+        let mut prior = command
+            .publish_summary(universe)
+            .expect("first ordinary summary publishes");
+
+        for _ in 0..4_096 {
+            let next = command
+                .publish_summary(universe)
+                .expect("next ordinary summary publishes");
+            command
+                .release_checkpoint_summary(&prior, Some(&next))
+                .expect("obsolete command frame releases");
+            prior = next;
+        }
+
+        assert_eq!(command.timeline.live_frame_count(), 2);
+        assert_eq!(command.timeline.frame_capacity(), COMMAND_FRAMES_PER_PAGE);
+        assert!(command.timeline.frames_reused >= 4_000);
+        command
+            .restore_summary(&protected, universe)
+            .expect("protected root remains exact");
     });
 }
 
@@ -631,8 +666,6 @@ fn repeated_capture_keeps_one_physical_owner_and_append_only_marks() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
         let timeline_owner = command.timeline.owner;
-        let frame_capacity = command.timeline.frame_capacity();
-
         for _ in 0..64 {
             let summary = command
                 .publish_summary(universe)
@@ -643,7 +676,7 @@ fn repeated_capture_keeps_one_physical_owner_and_append_only_marks() {
         assert_eq!(command.timeline.owner, timeline_owner);
         assert_eq!(command.timeline.next_serial, 64);
         assert_eq!(command.timeline.live_frame_count(), 64);
-        assert_eq!(command.timeline.frame_capacity(), frame_capacity);
+        assert_eq!(command.timeline.frame_capacity(), 128);
     });
 }
 
@@ -710,17 +743,15 @@ fn packed_8192_capture_cycles_append_fixed_marks_without_copying_roots() {
             .publish_summary(universe)
             .expect("warm summary publishes");
         drop(warm);
-        let before = command.timeline.arena.counters();
+        let before_released = command.timeline.frames_released;
         for _ in 0..8_192 {
             let summary = command
                 .publish_summary(universe)
                 .expect("summary publishes");
             drop(summary);
         }
-        let after = command.timeline.arena.counters();
-
-        assert_eq!(after.new_semantic_nodes - before.new_semantic_nodes, 8_192);
-        assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 0);
+        assert_eq!(command.timeline.frames_released, before_released);
+        assert_eq!(command.timeline.source_cells_copied(), 0);
         assert_eq!(command.timeline.live_frame_count(), 8_193);
     });
 }

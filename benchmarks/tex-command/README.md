@@ -91,8 +91,9 @@ cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
 `command_checkpoint_gate` compares one live command unit with 64 accumulated
 source and stored-token units. It enforces identical zero allocation calls and
 requested bytes for warmed capture, checkpoint clone, same-generation restore,
-the first scalar mutation after capture, command-only candidate fork, and the
-first mutation after fork. It additionally performs 8,192 writes to one hot
+the first scalar mutation after capture, command-only candidate fork, the
+first mutation after fork, and one warmed obsolete-frame release. It
+additionally performs 8,192 writes to one hot
 scalar in a single interval and requires one packed record, 8,191 coalesced
 writes, zero scalar-list descriptor publications, at most 32 record bytes, and
 zero warmed heap allocation. A second 8,192-transition loop repeatedly pushes

@@ -52,10 +52,10 @@ metadata changes only after `AcceptedPromoted`.
 ### Boundary-record ownership
 
 The executor sidecar stores boundary evidence and its optional move-only
-`EngineCheckpoint` together in one typed `BoundaryLane`. The lane uses a
-caller-owned `ChunkPool` and one-cell `ForkArena` records. Each stable
-owner-relative key is the record's list coordinate plus its sealed
-whole-chunk mark; a logical revision number is evidence, never physical owner
+`EngineCheckpoint` together in one typed `BoundaryLane`. Fixed 16-row pages
+and a generation-checked free list keep cells stable and reusable without a
+descriptor allocation. Each stable owner-relative key is the row slot and its
+slot generation; a logical revision number is evidence, never physical owner
 identity.
 
 At edit start the selected prefix remains in the same physical arena. The
@@ -67,14 +67,18 @@ index from all boundary rows. A repeated acceptance therefore leaves every
 unchanged prefix key and the `EngineCheckpoint` marks stored in its cell
 physically valid.
 
-Lookup binary-searches the position-ordered one-cell lane and resolves an
-exact boundary/ordinal within that position. Evidence-only records store the
-nearest restart record coordinate when appended, so a long run of completion
-evidence such as `ShipoutComplete` falls back directly without a backward
-walk over the run. Releasing a restart root clears only the option in its
-existing cell; detached evidence remains addressable and no checkpoint
-payload moves. Fork-arena lifecycle counters require zero source-record
-copies through append, accept, reject, and retry.
+Lookup walks only the bounded live-row metadata and resolves an exact
+boundary/ordinal within that position. Evidence-only records fall back to the
+nearest prior live restart. Releasing a restart root consumes the whole row,
+increments its generation so stale keys fail deterministically, and returns
+the slot to the free list; detached evidence remains addressable in its own
+rows and no checkpoint payload is copied. The release produces one typed
+transaction that validates all owner-relative marks before it removes the
+command frame and page-history row. A command frame uses the same
+generation-checked reusable-row discipline. Protected `JobStart` remains an
+exact head-relative command and save-journal cursor, so those two journal
+prefixes conservatively report zero reclaimed chunks until that anchor is
+materialized independently.
 
 The page owner follows the same physical-prefix rule. Selecting a retained
 `PageMaterial` mark keeps the accepted prefix frames and list coordinates in

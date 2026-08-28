@@ -2602,6 +2602,48 @@ impl<G> Universe<G> {
         Ok(checkpoint)
     }
 
+    /// Releases the private runtime rows owned solely by one outer restart
+    /// checkpoint.
+    ///
+    /// `oldest_nonprotected` is validated as the next ordinary floor but does
+    /// not supersede protected JobStart. Head-relative dense journals remain
+    /// anchored until that protected root is materialized independently; the
+    /// page owner can still remove its keyed row immediately and retire a
+    /// noncurrent region when that was its final live owner.
+    #[doc(hidden)]
+    pub fn validate_runtime_checkpoint_release(
+        &self,
+        released: &RuntimeCheckpoint<G>,
+        oldest_nonprotected: Option<&RuntimeCheckpoint<G>>,
+    ) -> Result<(), UniverseError> {
+        let retained = |checkpoint: &RuntimeCheckpoint<G>| {
+            self.world.snapshot_is_retained(&checkpoint.world)
+                && self.pdf.snapshot_is_retained(&checkpoint.pdf)
+                && self.fonts.validates(checkpoint.fonts)
+                && self.sources.validates(checkpoint.sources)
+                && self.checkpoint_state_is_ready(checkpoint)
+                && self.page_region.validates_checkpoint(checkpoint.page)
+        };
+        if !retained(released)
+            || oldest_nonprotected.is_some_and(|checkpoint| !retained(checkpoint))
+        {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn release_runtime_checkpoint(
+        &mut self,
+        released: &RuntimeCheckpoint<G>,
+        oldest_nonprotected: Option<&RuntimeCheckpoint<G>>,
+    ) -> Result<crate::page::PageRegionReleaseReceipt, UniverseError> {
+        self.validate_runtime_checkpoint_release(released, oldest_nonprotected)?;
+        self.page_region
+            .release_checkpoint(released.page)
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))
+    }
+
     /// Releases only rootless page rows above the generation's monotonic
     /// retained checkpoint prefix.
     pub fn release_unretained_page_suffix(&mut self) -> Result<(), UniverseError> {

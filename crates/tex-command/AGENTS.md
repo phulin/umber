@@ -321,10 +321,12 @@ collector (see `src/conditionals.rs`).
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
-  snapshots and named summaries backed by one caller-owned typed fork arena and
-  containing one coarse generation owner plus fixed sealed timeline, arena,
-  stack, source-anchor, and profile coordinates. Capture appends a move-only
-  frame; retained-owner clone copies only scalar coordinates. Main control
+  snapshots and named summaries backed by generation-checked reusable frame
+  pages plus packed scalar journals, and containing one coarse generation owner
+  plus fixed timeline, arena, stack, source-anchor, and profile coordinates.
+  Capture appends a move-only frame; aggregate release returns that frame row
+  to its pool while protected JobStart keeps journal prefix reclamation
+  conservative. Retained-owner clone copies only scalar coordinates. Main control
   parks its exclusive physical command owner in the retained generation before
   candidate fork; the fork detaches the later accepted chunks, restores the
   named marks in place, and owns the only current suffix. Reject rewinds current

@@ -27,7 +27,9 @@ long-lived editor-session strategy over executor-named checkpoints.
   budgeted/evictable artifact-root/recipe queries, terminal recognition of
   complete-job and explicit-fragment outcomes, candidate acceptance, and
   detached accepted output views, and opaque coarse generation/checkpoint
-  ownership whose runtime coordinates remain inside generic admission. One
+  ownership whose runtime coordinates remain inside generic admission,
+  publication-time history-budget release propagated synchronously to every
+  private checkpoint owner, and protected-JobStart overage accounting. One
   external session reachability store owns the fixed prior/current physical
   slots across rejection, acceptance, and suspension; the admitted generation
   sidecar, not the revision runtime or retained checkpoint, owns the singular

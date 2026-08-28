@@ -412,6 +412,75 @@ pub struct EngineCheckpoint<G> {
     pub(crate) budget_counters: crate::ExecutionBudgetCounters,
 }
 
+/// Small owner coordinates for the earliest surviving ordinary restart root.
+///
+/// JobStart is deliberately not represented here: it remains an exact
+/// protected anchor and therefore cannot be used as a prefix-reclamation
+/// floor for head-relative journals.
+pub(crate) struct CheckpointReleaseFloor<G> {
+    runtime: RuntimeCheckpoint<G>,
+    command: CommandSummary<G>,
+}
+
+impl<G> CheckpointReleaseFloor<G> {
+    pub(crate) fn capture(checkpoint: &EngineCheckpoint<G>) -> Self {
+        Self {
+            runtime: checkpoint.runtime.clone(),
+            command: checkpoint.command.clone(),
+        }
+    }
+}
+
+/// Move-only aggregate release transaction produced by retained-history
+/// pruning while the live command, runtime, and output owners are borrowed.
+///
+/// The released checkpoint itself supplies every private owner-relative key;
+/// the optional floor is the earliest surviving non-JobStart root after that
+/// removal. Applying this transaction never discovers roots by traversal.
+#[doc(hidden)]
+pub struct EngineCheckpointRelease<G> {
+    released: EngineCheckpoint<G>,
+    oldest_nonprotected: Option<CheckpointReleaseFloor<G>>,
+}
+
+impl<G> EngineCheckpointRelease<G> {
+    pub(crate) fn new(
+        released: EngineCheckpoint<G>,
+        oldest_nonprotected: Option<CheckpointReleaseFloor<G>>,
+    ) -> Self {
+        Self {
+            released,
+            oldest_nonprotected,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn apply(self, control: &mut crate::MainControl<G>, universe: &mut Universe<G>) {
+        let oldest_runtime = self
+            .oldest_nonprotected
+            .as_ref()
+            .map(|floor| &floor.runtime);
+        universe
+            .validate_runtime_checkpoint_release(&self.released.runtime, oldest_runtime)
+            .expect("retained runtime release was owner-prevalidated");
+        // The command hook intentionally validates and reports a zero prefix
+        // advance while protected JobStart remains head-relative. The
+        // command-stack owner may reclaim only storage proven independent of
+        // that anchor.
+        let oldest_command = self
+            .oldest_nonprotected
+            .as_ref()
+            .map(|floor| &floor.command);
+        control
+            .command_mut()
+            .release_checkpoint_summary(&self.released.command, oldest_command)
+            .expect("retained command release was owner-prevalidated");
+        universe
+            .release_runtime_checkpoint(&self.released.runtime, oldest_runtime)
+            .expect("prevalidated runtime release is infallible");
+    }
+}
+
 impl<G> EngineCheckpoint<G> {
     pub(crate) fn pdf_history_position(&self) -> (u64, u64) {
         self.runtime.pdf_history_position()
@@ -747,6 +816,14 @@ pub trait CheckpointSink<G> {
     }
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>);
+
+    /// Returns one pruning transaction after publication. The executor drains
+    /// this hook synchronously while every mutable aggregate owner is still
+    /// borrowed, so no release coordinate escapes its generation.
+    #[doc(hidden)]
+    fn take_checkpoint_release(&mut self) -> Option<EngineCheckpointRelease<G>> {
+        None
+    }
 }
 
 impl<G> CheckpointSink<G> for Vec<EngineCheckpoint<G>> {
