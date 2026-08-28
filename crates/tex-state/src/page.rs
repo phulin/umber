@@ -2172,12 +2172,7 @@ impl PageBuilderState {
         self.page_discards = arena
             .compose_sequences(&[self.page_discards, carrier.list])
             .expect("page discard carrier belongs to the live arena");
-        let node = arena
-            .list(carrier.list)
-            .expect("carrier is live")
-            .get(0)
-            .unwrap();
-        self.allocate_dynamic_node(node);
+        self.allocate_list_dynamic_usage(arena, carrier.list);
         self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
 
@@ -2251,12 +2246,7 @@ impl PageBuilderState {
     ) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
-        let node = arena
-            .list(carrier.list)
-            .expect("carrier is live")
-            .get(0)
-            .unwrap();
-        self.allocate_dynamic_node(node);
+        self.allocate_list_dynamic_usage(arena, carrier.list);
         self.current_page = arena
             .compose_sequences(&[self.current_page, carrier.list])
             .expect("current page carrier belongs to the live arena");
