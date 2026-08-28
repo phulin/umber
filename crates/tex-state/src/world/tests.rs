@@ -241,6 +241,173 @@ fn checkpoint_candidate_rejects_or_promotes_one_flat_world_suffix() {
 }
 
 #[test]
+fn stream_checkpoints_are_fixed_marks_over_session_owned_paths() {
+    let mut world = World::memory();
+    world
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    for raw in 0..STREAM_SLOT_COUNT as u8 {
+        let input = format!("input-{raw}.tex");
+        world
+            .set_memory_file(&input, format!("first-{raw}\nsecond-{raw}\n").into_bytes())
+            .expect("stream input is seeded");
+        world
+            .open_in(StreamSlot::new(raw), &input)
+            .expect("stream input opens");
+        assert_eq!(
+            world
+                .read_stream_line(StreamSlot::new(raw))
+                .expect("stream read succeeds"),
+            Some(format!("first-{raw}"))
+        );
+        world.open_out(StreamSlot::new(raw), format!("output-{raw}.tex"));
+    }
+    world.write_text(PrintSink::Terminal, "terminal-prefix");
+    world.write_text(PrintSink::Log, "log-prefix");
+
+    let input_path = Arc::clone(
+        &world.stream_bufs.read_streams[0]
+            .as_ref()
+            .expect("input stream is open")
+            .path,
+    );
+    let output_path = Arc::clone(
+        &world.stream_bufs.write_streams[0]
+            .as_ref()
+            .expect("output stream is open")
+            .path,
+    );
+    let input_owners = Arc::strong_count(&input_path);
+    let output_owners = Arc::strong_count(&output_path);
+    let mark = world.snapshot();
+    let cloned = mark.clone();
+    assert_eq!(mark, cloned);
+    assert_eq!(Arc::strong_count(&input_path), input_owners);
+    assert_eq!(Arc::strong_count(&output_path), output_owners);
+
+    for raw in 0..STREAM_SLOT_COUNT as u8 {
+        assert_eq!(
+            world
+                .read_stream_line(StreamSlot::new(raw))
+                .expect("stream read succeeds"),
+            Some(format!("second-{raw}"))
+        );
+        assert!(world.close_out(StreamSlot::new(raw)));
+    }
+    world.write_text(PrintSink::TerminalAndLog, "\nmutated");
+    world.rollback(&mark);
+
+    assert_eq!(world.stream_bufs.terminal_offset, "terminal-prefix".len());
+    assert_eq!(world.stream_bufs.log_offset, "log-prefix".len());
+    assert!(Arc::ptr_eq(
+        &world.stream_bufs.read_streams[0]
+            .as_ref()
+            .expect("input stream is restored")
+            .path,
+        &input_path
+    ));
+    assert!(Arc::ptr_eq(
+        &world.stream_bufs.write_streams[0]
+            .as_ref()
+            .expect("output stream is restored")
+            .path,
+        &output_path
+    ));
+    assert_eq!(
+        world
+            .read_stream_line(StreamSlot::new(0))
+            .expect("restored stream read succeeds"),
+        Some("second-0".to_owned())
+    );
+
+    world.rollback(&mark);
+    let candidate = world.fork_checkpoint(&mark);
+    assert_eq!(
+        candidate.stream_bufs.terminal_offset,
+        "terminal-prefix".len()
+    );
+    assert!(Arc::ptr_eq(
+        &candidate.stream_bufs.read_streams[0]
+            .as_ref()
+            .expect("forked input stream is restored")
+            .path,
+        &input_path
+    ));
+}
+
+#[test]
+fn repeated_stream_candidate_accept_and_reject_restore_positions_and_scalars() {
+    let mut world = World::memory_with_pdftex_inputs(
+        JobClock {
+            time: 123,
+            second: 45,
+            day: 6,
+            month: 7,
+            year: 2026,
+        },
+        17,
+        1_000,
+        ShellEscapePolicy::Restricted,
+    );
+    world
+        .begin_retained_session()
+        .expect("restricted shell policy is rollback-capable");
+    world
+        .set_memory_file("stream.tex", b"one\ntwo\nthree\n".to_vec())
+        .expect("stream input is seeded");
+    world
+        .open_in(StreamSlot::new(0), "stream.tex")
+        .expect("stream opens");
+    assert_eq!(
+        world.read_stream_line(StreamSlot::new(0)).expect("read"),
+        Some("one".to_owned())
+    );
+    world.open_out(StreamSlot::new(0), "accepted.out");
+    world.write_text(PrintSink::TerminalAndLog, "accepted");
+    let root = world.snapshot();
+
+    let accepted_random = world.next_random_u64();
+    world.set_pdf_random_seed(91);
+    world.set_pdf_time_micros(9_000);
+    assert_eq!(
+        world.read_stream_line(StreamSlot::new(0)).expect("read"),
+        Some("two".to_owned())
+    );
+    let accepted_head = world.snapshot();
+
+    let tail = world.begin_checkpoint_candidate(&root);
+    assert_eq!(world.next_random_u64(), accepted_random);
+    assert_eq!(world.pdf_random_seed(), 17);
+    assert_eq!(
+        world.read_stream_line(StreamSlot::new(0)).expect("read"),
+        Some("two".to_owned())
+    );
+    world.open_out(StreamSlot::new(0), "candidate-rejected.out");
+    world.reject_checkpoint_candidate(&root, tail);
+    assert_eq!(world.snapshot(), accepted_head);
+
+    let tail = world.begin_checkpoint_candidate(&root);
+    assert_eq!(
+        world.read_stream_line(StreamSlot::new(0)).expect("read"),
+        Some("two".to_owned())
+    );
+    world.open_out(StreamSlot::new(0), "candidate-accepted.out");
+    world.set_pdf_random_seed(314);
+    world.set_pdf_time_micros(27_000);
+    world.accept_checkpoint_candidate(tail);
+    let promoted = world.snapshot();
+    assert_eq!(world.pdf_random_seed(), 314);
+
+    let tail = world.begin_checkpoint_candidate(&promoted);
+    assert_eq!(
+        world.read_stream_line(StreamSlot::new(0)).expect("read"),
+        Some("three".to_owned())
+    );
+    world.reject_checkpoint_candidate(&promoted, tail);
+    assert_eq!(world.snapshot(), promoted);
+}
+
+#[test]
 fn effect_counter_marks_restore_exactly_and_continue_across_a_fork() {
     let mut source = World::memory();
     source

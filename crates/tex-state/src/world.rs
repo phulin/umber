@@ -696,7 +696,7 @@ impl std::hash::Hash for InputRecordId {
 /// One recorded file read.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InputRecord {
-    path: PathBuf,
+    path: Arc<Path>,
     hash: ContentHash,
     len: usize,
     modification_date: Option<FileModificationDate>,
@@ -818,9 +818,24 @@ pub enum PrintSink {
 }
 
 /// Buffered write-stream target.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct WriteTarget {
-    path: PathBuf,
+    path: Arc<Path>,
+    path_id: StreamPathId,
+}
+
+impl PartialEq for WriteTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+
+impl Eq for WriteTarget {}
+
+impl std::hash::Hash for WriteTarget {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.path, state);
+    }
 }
 
 impl WriteTarget {
@@ -853,11 +868,28 @@ impl<'a> MemoryOutput<'a> {
 }
 
 /// Buffered read-stream target pinned to content read through `World`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ReadTarget {
-    path: PathBuf,
+    path: Arc<Path>,
+    record: InputRecordId,
     hash: ContentHash,
     next_byte: usize,
+}
+
+impl PartialEq for ReadTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path && self.hash == other.hash && self.next_byte == other.next_byte
+    }
+}
+
+impl Eq for ReadTarget {}
+
+impl std::hash::Hash for ReadTarget {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.path, state);
+        std::hash::Hash::hash(&self.hash, state);
+        std::hash::Hash::hash(&self.next_byte, state);
+    }
 }
 
 impl ReadTarget {
@@ -877,13 +909,34 @@ impl ReadTarget {
     }
 }
 
-/// Snapshot-ready state for all partial stream/log buffers.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct StreamPathId(u32);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ReadStreamMark {
+    record: InputRecordId,
+    next_byte: usize,
+}
+
+/// Fixed stream positions retained by a checkpoint. Immutable paths and input
+/// bytes stay in the World session owner; a mark never shares mutable stream
+/// state or a partial-line allocation.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+struct StreamBufMark {
+    read_streams: [Option<ReadStreamMark>; STREAM_SLOT_COUNT],
+    write_streams: [Option<StreamPathId>; STREAM_SLOT_COUNT],
+    log_offset: usize,
+    terminal_offset: usize,
+    terminal_input_next: usize,
+}
+
+/// Directly owned live state for stream positions and printable offsets.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct StreamBufState {
     read_streams: [Option<ReadTarget>; STREAM_SLOT_COUNT],
     write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
-    log_partial_line: String,
-    terminal_partial_line: String,
+    log_offset: usize,
+    terminal_offset: usize,
     terminal_input_next: usize,
 }
 
@@ -896,6 +949,27 @@ pub struct TerminalInputPosition {
 }
 
 impl StreamBufState {
+    fn mark(&self) -> StreamBufMark {
+        StreamBufMark {
+            read_streams: std::array::from_fn(|index| {
+                self.read_streams[index]
+                    .as_ref()
+                    .map(|target| ReadStreamMark {
+                        record: target.record,
+                        next_byte: target.next_byte,
+                    })
+            }),
+            write_streams: std::array::from_fn(|index| {
+                self.write_streams[index]
+                    .as_ref()
+                    .map(|target| target.path_id)
+            }),
+            log_offset: self.log_offset,
+            terminal_offset: self.terminal_offset,
+            terminal_input_next: self.terminal_input_next,
+        }
+    }
+
     #[must_use]
     pub fn read_stream_path(&self, slot: StreamSlot) -> Option<&Path> {
         self.read_streams[slot.index()]
@@ -914,13 +988,13 @@ impl StreamBufState {
     }
 
     #[must_use]
-    pub fn log_partial_line(&self) -> &str {
-        &self.log_partial_line
+    pub const fn log_offset(&self) -> usize {
+        self.log_offset
     }
 
     #[must_use]
-    pub fn terminal_partial_line(&self) -> &str {
-        &self.terminal_partial_line
+    pub const fn terminal_offset(&self) -> usize {
+        self.terminal_offset
     }
 
     #[must_use]
@@ -1006,10 +1080,11 @@ impl EffectRecord {
         else {
             return false;
         };
-        if *candidate != slot || target.path != failed {
+        if *candidate != slot || target.path.as_ref() != failed {
             return false;
         }
-        target.path = replacement;
+        target.path = Arc::from(replacement.into_boxed_path());
+        target.path_id = StreamPathId(u32::MAX);
         true
     }
 }
@@ -1060,7 +1135,7 @@ fn stable_hash(value: &impl std::hash::Hash) -> u64 {
 
 fn world_scalar_identities(world: &World) -> [(u64, u64); 7] {
     [
-        (0, stable_hash(world.stream_bufs.as_ref())),
+        (0, stable_hash(&world.stream_bufs)),
         (1, stable_hash(&world.rng)),
         (2, stable_hash(&world.pdf_rng)),
         (3, stable_hash(&world.pdf_time_micros)),
@@ -1523,7 +1598,7 @@ pub struct WorldSnapshot {
     next_effect_placement_intra_order: u64,
     next_terminal_publication_identity: u64,
     effect_pos: EffectPos,
-    stream_bufs: Arc<StreamBufState>,
+    stream_bufs: StreamBufMark,
     rng: RngState,
     pdf_rng: PdfRandomState,
     pdf_time_micros: u64,
@@ -1590,7 +1665,7 @@ impl WorldReachableStateIdentity {
 }
 
 struct StreamBufIdentityGuard<'a> {
-    bufs: &'a mut Arc<StreamBufState>,
+    bufs: &'a mut StreamBufState,
     identity: Option<&'a mut WorldReachableStateIdentity>,
     old: Option<u64>,
 }
@@ -1599,20 +1674,20 @@ impl std::ops::Deref for StreamBufIdentityGuard<'_> {
     type Target = StreamBufState;
 
     fn deref(&self) -> &Self::Target {
-        self.bufs.as_ref()
+        self.bufs
     }
 }
 
 impl std::ops::DerefMut for StreamBufIdentityGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::make_mut(self.bufs)
+        self.bufs
     }
 }
 
 impl Drop for StreamBufIdentityGuard<'_> {
     fn drop(&mut self) {
         if let (Some(identity), Some(old)) = (&mut self.identity, self.old) {
-            let new = stable_hash(self.bufs.as_ref());
+            let new = stable_hash(&*self.bufs);
             identity.scalars.replace(0, Some(old), Some(new));
         }
     }
@@ -1972,7 +2047,9 @@ pub struct World {
     active_effect_domain: Option<EffectDomain>,
     active_terminal_publication: Option<TerminalPublication>,
     next_terminal_publication_identity: u64,
-    stream_bufs: Arc<StreamBufState>,
+    stream_bufs: StreamBufState,
+    /// Immutable path spellings named by fixed checkpoint stream cursors.
+    stream_paths: Vec<Arc<Path>>,
     committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     committed_output_paths: BTreeSet<PathBuf>,
     rng: RngState,
@@ -2420,6 +2497,7 @@ impl Clone for World {
             active_effect_domain: self.active_effect_domain,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             stream_bufs: self.stream_bufs.clone(),
+            stream_paths: self.stream_paths.clone(),
             committed_write_streams: self.committed_write_streams.clone(),
             committed_output_paths: self.committed_output_paths.clone(),
             rng: self.rng,
@@ -2713,7 +2791,8 @@ impl World {
             active_effect_output_attempt: None,
             active_effect_domain: None,
             next_terminal_publication_identity: 0,
-            stream_bufs: Arc::new(StreamBufState::default()),
+            stream_bufs: StreamBufState::default(),
+            stream_paths: Vec::new(),
             committed_write_streams: Default::default(),
             committed_output_paths: BTreeSet::new(),
             rng: RngState::default(),
@@ -2982,7 +3061,7 @@ impl World {
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
         Arc::make_mut(&mut self.inputs).push(InputRecord {
-            path: content.path.clone(),
+            path: Arc::from(content.path.clone().into_boxed_path()),
             hash: content.hash,
             len: content.bytes.len(),
             modification_date: content.modification_date,
@@ -3264,7 +3343,7 @@ impl World {
                 "resolved input record is not live in this World",
             ));
         };
-        if record.path != content.path
+        if record.path.as_ref() != content.path
             || record.hash != content.hash
             || record.len != content.bytes.len()
         {
@@ -3275,7 +3354,8 @@ impl World {
             ));
         }
         self.stream_bufs_mut().read_streams[slot.index()] = Some(ReadTarget {
-            path: content.path.clone(),
+            path: Arc::clone(&record.path),
+            record: content.record,
             hash: content.hash,
             next_byte: 0,
         });
@@ -3302,7 +3382,7 @@ impl World {
         let Some(bytes) = self.input_content_root(hash) else {
             return Err(WorldError::new(
                 "read input stream",
-                Some(path),
+                Some(path.to_path_buf()),
                 "pinned input content is missing",
             ));
         };
@@ -3352,7 +3432,7 @@ impl World {
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
         Arc::make_mut(&mut self.inputs).push(InputRecord {
-            path: content.path,
+            path: Arc::from(content.path.into_boxed_path()),
             hash: content.hash,
             len: content.bytes.len(),
             modification_date: content.modification_date,
@@ -3396,7 +3476,7 @@ impl World {
         let bytes = self.input_content_root(record.hash)?;
         Some(FileContent {
             record: id,
-            path: record.path.clone(),
+            path: record.path.to_path_buf(),
             bytes,
             hash: record.hash,
             modification_date: record.modification_date,
@@ -3959,7 +4039,8 @@ impl World {
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
-        let target = WriteTarget { path: path.into() };
+        let (path_id, path) = self.retain_stream_path(path.into());
+        let target = WriteTarget { path, path_id };
         self.append_effect(EffectRecord::StreamOpen {
             slot,
             target: target.clone(),
@@ -4065,10 +4146,7 @@ impl World {
     pub fn publish_print_nl_text(&mut self, sink: PrintSink, text: &str, max_print_line: usize) {
         let (terminal_open, log_open) = {
             let bufs = self.stream_bufs();
-            (
-                !bufs.terminal_partial_line.is_empty(),
-                !bufs.log_partial_line.is_empty(),
-            )
+            (bufs.terminal_offset != 0, bufs.log_offset != 0)
         };
         let line_is_open = match sink {
             PrintSink::Terminal => terminal_open,
@@ -4091,10 +4169,7 @@ impl World {
     #[must_use]
     pub fn printable_lines_are_open(&self) -> (bool, bool) {
         let bufs = self.stream_bufs();
-        (
-            !bufs.terminal_partial_line.is_empty(),
-            !bufs.log_partial_line.is_empty(),
-        )
+        (bufs.terminal_offset != 0, bufs.log_offset != 0)
     }
 
     pub(crate) fn write_text_with_line_limit(
@@ -4105,10 +4180,7 @@ impl World {
     ) {
         let (terminal_offset, log_offset) = {
             let bufs = self.stream_bufs();
-            (
-                bufs.terminal_partial_line.chars().count(),
-                bufs.log_partial_line.chars().count(),
-            )
+            (bufs.terminal_offset, bufs.log_offset)
         };
         match sink {
             PrintSink::Terminal => {
@@ -4164,19 +4236,16 @@ impl World {
             return;
         };
         let max_print_line = effect.max_print_line();
-        let (terminal_line, log_line) = {
+        let (terminal_offset, log_offset) = {
             let bufs = self.stream_bufs();
-            (
-                bufs.terminal_partial_line.clone(),
-                bufs.log_partial_line.clone(),
-            )
+            (bufs.terminal_offset, bufs.log_offset)
         };
         let render =
-            |line: &str| render_detached_diagnostic(effect.operations(), line, max_print_line);
+            |offset| render_detached_diagnostic(effect.operations(), offset, max_print_line);
         let mut records = Vec::with_capacity(2);
         match sink {
             PrintSink::Terminal => {
-                let (text, _) = render(&terminal_line);
+                let (text, _) = render(terminal_offset);
                 if !text.is_empty() {
                     records.push(EffectRecord::StreamWrite {
                         sink: PrintSink::Terminal,
@@ -4185,7 +4254,7 @@ impl World {
                 }
             }
             PrintSink::Log => {
-                let (text, _) = render(&log_line);
+                let (text, _) = render(log_offset);
                 if !text.is_empty() {
                     records.push(EffectRecord::StreamWrite {
                         sink: PrintSink::Log,
@@ -4203,8 +4272,8 @@ impl World {
                 // change 17.516's forced-online missing-character report).
                 let (terminal, log) = render_detached_diagnostic_pair(
                     effect.operations(),
-                    &terminal_line,
-                    &log_line,
+                    terminal_offset,
+                    log_offset,
                     max_print_line,
                 );
                 if terminal == log {
@@ -4244,11 +4313,11 @@ impl World {
             };
             let mut bufs = self.stream_bufs_mut();
             match sink {
-                PrintSink::Terminal => append_partial_line(&mut bufs.terminal_partial_line, text),
-                PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, text),
+                PrintSink::Terminal => advance_print_offset(&mut bufs.terminal_offset, text),
+                PrintSink::Log => advance_print_offset(&mut bufs.log_offset, text),
                 PrintSink::TerminalAndLog => {
-                    append_partial_line(&mut bufs.terminal_partial_line, text);
-                    append_partial_line(&mut bufs.log_partial_line, text);
+                    advance_print_offset(&mut bufs.terminal_offset, text);
+                    advance_print_offset(&mut bufs.log_offset, text);
                 }
                 PrintSink::Stream(_) => {
                     unreachable!("a diagnostic batch contains printable writes only")
@@ -4287,10 +4356,7 @@ impl World {
     ) {
         let (terminal_offset, log_offset) = {
             let bufs = self.stream_bufs();
-            (
-                bufs.terminal_partial_line.chars().count(),
-                bufs.log_partial_line.chars().count(),
-            )
+            (bufs.terminal_offset, bufs.log_offset)
         };
         match sink {
             PrintSink::Terminal => {
@@ -4333,7 +4399,7 @@ impl World {
     /// while the transcript shows the prompt, the answer, and the message on
     /// three.
     pub fn echo_terminal_input(&mut self, line: &str) {
-        self.stream_bufs_mut().terminal_partial_line.clear();
+        self.stream_bufs_mut().terminal_offset = 0;
         self.write_text(PrintSink::Log, line);
         self.write_text(PrintSink::Log, "\n");
     }
@@ -4367,11 +4433,11 @@ impl World {
         });
         let mut bufs = self.stream_bufs_mut();
         match sink {
-            PrintSink::Terminal => append_partial_line(&mut bufs.terminal_partial_line, &text),
-            PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &text),
+            PrintSink::Terminal => advance_print_offset(&mut bufs.terminal_offset, &text),
+            PrintSink::Log => advance_print_offset(&mut bufs.log_offset, &text),
             PrintSink::TerminalAndLog => {
-                append_partial_line(&mut bufs.terminal_partial_line, &text);
-                append_partial_line(&mut bufs.log_partial_line, &text);
+                advance_print_offset(&mut bufs.terminal_offset, &text);
+                advance_print_offset(&mut bufs.log_offset, &text);
             }
             PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
         }
@@ -4382,16 +4448,13 @@ impl World {
             sink,
             bytes: bytes.clone(),
         });
-        let projection = bytes_to_partial_line_projection(&bytes);
         let mut bufs = self.stream_bufs_mut();
         match sink {
-            PrintSink::Terminal => {
-                append_partial_line(&mut bufs.terminal_partial_line, &projection)
-            }
-            PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &projection),
+            PrintSink::Terminal => advance_byte_print_offset(&mut bufs.terminal_offset, &bytes),
+            PrintSink::Log => advance_byte_print_offset(&mut bufs.log_offset, &bytes),
             PrintSink::TerminalAndLog => {
-                append_partial_line(&mut bufs.terminal_partial_line, &projection);
-                append_partial_line(&mut bufs.log_partial_line, &projection);
+                advance_byte_print_offset(&mut bufs.terminal_offset, &bytes);
+                advance_byte_print_offset(&mut bufs.log_offset, &bytes);
             }
             PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
         }
@@ -5247,6 +5310,7 @@ impl World {
         replacement: impl Into<PathBuf>,
     ) -> Result<(), WorldError> {
         let replacement = replacement.into();
+        let (path_id, path) = self.retain_stream_path(replacement.clone());
         let next_effect_position = self.effect_base.0 + 1;
         let slot = {
             let Some(EffectRecord::StreamOpen { slot, target }) = self.effects_mut().first_mut()
@@ -5259,7 +5323,7 @@ impl World {
             };
             if next_effect_position != failed.position.0
                 || *slot != failed.slot
-                || target.path != failed.path
+                || target.path.as_ref() != failed.path
             {
                 return Err(WorldError::new(
                     "retarget stream open",
@@ -5267,11 +5331,13 @@ impl World {
                     "the pending stream open identity, slot, or target is stale",
                 ));
             }
-            target.path = replacement.clone();
+            target.path = Arc::clone(&path);
+            target.path_id = path_id;
             *slot
         };
         if let Some(live) = self.stream_bufs_mut().write_streams[slot.index()].as_mut() {
-            live.path = replacement;
+            live.path = path;
+            live.path_id = path_id;
         }
         Ok(())
     }
@@ -5431,12 +5497,55 @@ impl World {
         let old = self
             .reachable_state_identity
             .as_ref()
-            .map(|_| stable_hash(self.stream_bufs.as_ref()));
+            .map(|_| stable_hash(&self.stream_bufs));
         StreamBufIdentityGuard {
             bufs: &mut self.stream_bufs,
             identity: self.reachable_state_identity.as_mut(),
             old,
         }
+    }
+
+    fn retain_stream_path(&mut self, path: PathBuf) -> (StreamPathId, Arc<Path>) {
+        let raw = u32::try_from(self.stream_paths.len())
+            .expect("World stream path identity capacity exhausted");
+        let path: Arc<Path> = Arc::from(path.into_boxed_path());
+        self.stream_paths.push(Arc::clone(&path));
+        (StreamPathId(raw), path)
+    }
+
+    fn restore_stream_bufs(&mut self, mark: StreamBufMark) {
+        let path = |id: StreamPathId| {
+            Arc::clone(
+                self.stream_paths
+                    .get(id.0 as usize)
+                    .expect("World stream checkpoint path remains retained"),
+            )
+        };
+        let read_streams = std::array::from_fn(|index| {
+            mark.read_streams[index].map(|stream| {
+                let record = self
+                    .input_record(stream.record)
+                    .expect("World stream checkpoint input remains retained");
+                ReadTarget {
+                    path: Arc::clone(&record.path),
+                    record: stream.record,
+                    hash: record.hash,
+                    next_byte: stream.next_byte,
+                }
+            })
+        });
+        self.stream_bufs = StreamBufState {
+            read_streams,
+            write_streams: std::array::from_fn(|index| {
+                mark.write_streams[index].map(|path_id| WriteTarget {
+                    path: path(path_id),
+                    path_id,
+                })
+            }),
+            log_offset: mark.log_offset,
+            terminal_offset: mark.terminal_offset,
+            terminal_input_next: mark.terminal_input_next,
+        };
     }
 
     #[must_use]
@@ -5464,7 +5573,7 @@ impl World {
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_pos: self.effect_pos(),
-            stream_bufs: self.stream_bufs.clone(),
+            stream_bufs: self.stream_bufs.mark(),
             rng: self.rng,
             pdf_rng: self.pdf_rng.clone(),
             pdf_time_micros: self.pdf_time_micros,
@@ -5599,7 +5708,7 @@ impl World {
         self.active_terminal_publication = snapshot.active_terminal_publication;
         Arc::make_mut(&mut self.stream_open_contexts)
             .retain(|position, _| *position <= snapshot.effect_pos);
-        self.stream_bufs = snapshot.stream_bufs.clone();
+        self.restore_stream_bufs(snapshot.stream_bufs);
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
         self.pdf_time_micros = snapshot.pdf_time_micros;
@@ -5768,7 +5877,7 @@ impl World {
         self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
-        self.stream_bufs = Arc::clone(&snapshot.stream_bufs);
+        self.restore_stream_bufs(snapshot.stream_bufs);
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
         self.pdf_time_micros = snapshot.pdf_time_micros;
@@ -5935,15 +6044,15 @@ impl World {
             .max(snapshot.next_effect_publication_identity);
         self.next_effect_domain = snapshot.next_effect_domain;
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
-        self.stream_bufs = snapshot.stream_bufs.clone();
+        self.accepted_inputs =
+            AcceptedInputBlock::extend(source.accepted_inputs.clone(), source, snapshot.input_len);
+        self.inputs = Arc::new(Vec::new());
+        self.restore_stream_bufs(snapshot.stream_bufs);
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
         self.pdf_time_micros = snapshot.pdf_time_micros;
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
-        self.accepted_inputs =
-            AcceptedInputBlock::extend(source.accepted_inputs.clone(), source, snapshot.input_len);
-        self.inputs = Arc::new(Vec::new());
         self.input_contents = Arc::new(BTreeMap::new());
         self.accepted_input_dependencies = Some(Arc::new(AcceptedInputDependencyBlock {
             parent: source.accepted_input_dependencies.clone(),
@@ -6429,28 +6538,27 @@ fn wrap_print_lines_at(text: &str, offset: usize, limit: usize) -> String {
 /// maintain distinct offsets for those sinks.
 fn render_detached_diagnostic(
     operations: &[crate::diagnostic::DiagnosticPrintOperation],
-    initial_partial_line: &str,
+    initial_offset: usize,
     max_print_line: usize,
-) -> (String, String) {
+) -> (String, usize) {
     let mut output = String::new();
-    let mut partial_line = initial_partial_line.to_owned();
+    let mut offset = initial_offset;
     for operation in operations {
         match operation {
             crate::diagnostic::DiagnosticPrintOperation::Rendered(text) => {
-                let wrapped =
-                    wrap_print_lines_at(text, partial_line.chars().count(), max_print_line);
-                append_partial_line(&mut partial_line, &wrapped);
+                let wrapped = wrap_print_lines_at(text, offset, max_print_line);
+                advance_print_offset(&mut offset, &wrapped);
                 output.push_str(&wrapped);
             }
             crate::diagnostic::DiagnosticPrintOperation::EnsureLineStart => {
-                if !partial_line.is_empty() {
-                    partial_line.clear();
+                if offset != 0 {
+                    offset = 0;
                     output.push('\n');
                 }
             }
         }
     }
-    (output, partial_line)
+    (output, offset)
 }
 
 /// Replays a §245 diagnostic selected for both terminal and transcript.
@@ -6460,29 +6568,28 @@ fn render_detached_diagnostic(
 /// resulting §57 newline visible in both sinks.
 fn render_detached_diagnostic_pair(
     operations: &[crate::diagnostic::DiagnosticPrintOperation],
-    initial_terminal_line: &str,
-    initial_log_line: &str,
+    initial_terminal_offset: usize,
+    initial_log_offset: usize,
     max_print_line: usize,
 ) -> (String, String) {
     let mut terminal_output = String::new();
     let mut log_output = String::new();
-    let mut terminal_line = initial_terminal_line.to_owned();
-    let mut log_line = initial_log_line.to_owned();
+    let mut terminal_offset = initial_terminal_offset;
+    let mut log_offset = initial_log_offset;
     for operation in operations {
         match operation {
             crate::diagnostic::DiagnosticPrintOperation::Rendered(text) => {
-                let terminal =
-                    wrap_print_lines_at(text, terminal_line.chars().count(), max_print_line);
-                let log = wrap_print_lines_at(text, log_line.chars().count(), max_print_line);
-                append_partial_line(&mut terminal_line, &terminal);
-                append_partial_line(&mut log_line, &log);
+                let terminal = wrap_print_lines_at(text, terminal_offset, max_print_line);
+                let log = wrap_print_lines_at(text, log_offset, max_print_line);
+                advance_print_offset(&mut terminal_offset, &terminal);
+                advance_print_offset(&mut log_offset, &log);
                 terminal_output.push_str(&terminal);
                 log_output.push_str(&log);
             }
             crate::diagnostic::DiagnosticPrintOperation::EnsureLineStart => {
-                if !terminal_line.is_empty() || !log_line.is_empty() {
-                    terminal_line.clear();
-                    log_line.clear();
+                if terminal_offset != 0 || log_offset != 0 {
+                    terminal_offset = 0;
+                    log_offset = 0;
                     terminal_output.push('\n');
                     log_output.push('\n');
                 }
@@ -6516,18 +6623,18 @@ fn wrap_print_bytes_at(bytes: &[u8], offset: usize, limit: usize) -> Vec<u8> {
     wrapped
 }
 
-fn bytes_to_partial_line_projection(bytes: &[u8]) -> String {
-    bytes.iter().map(|&byte| char::from(byte)).collect()
+fn advance_byte_print_offset(offset: &mut usize, bytes: &[u8]) {
+    *offset = bytes.iter().rposition(|byte| *byte == b'\n').map_or_else(
+        || offset.saturating_add(bytes.len()),
+        |newline| bytes.len().saturating_sub(newline + 1),
+    );
 }
 
-fn append_partial_line(buffer: &mut String, text: &str) {
-    for chunk in text.split_inclusive('\n') {
-        if chunk.ends_with('\n') {
-            buffer.clear();
-        } else {
-            buffer.push_str(chunk);
-        }
-    }
+fn advance_print_offset(offset: &mut usize, text: &str) {
+    *offset = text.rsplit_once('\n').map_or_else(
+        || offset.saturating_add(text.chars().count()),
+        |(_, suffix)| suffix.chars().count(),
+    );
 }
 
 fn next_physical_line(bytes: &[u8], start: usize) -> Option<(String, usize)> {

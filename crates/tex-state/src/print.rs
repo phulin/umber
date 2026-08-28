@@ -433,17 +433,13 @@ impl<'a, G> Printer<'a, G> {
     /// tex.web §54's `term_offset`.
     #[must_use]
     pub fn terminal_offset(&self) -> usize {
-        self.world
-            .stream_bufs()
-            .terminal_partial_line()
-            .chars()
-            .count()
+        self.world.stream_bufs().terminal_offset()
     }
 
     /// tex.web §54's `file_offset`.
     #[must_use]
     pub fn log_offset(&self) -> usize {
-        self.world.stream_bufs().log_partial_line().chars().count()
+        self.world.stream_bufs().log_offset()
     }
 
     /// The process-selected tex.web §3 `max_print_line`.

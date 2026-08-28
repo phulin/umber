@@ -296,10 +296,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/world.rs`: External-effect boundary for files, atomic downstream
   file-set publication, streams, clocks, randomness, shell policy, printing,
   handle-free deferred-write memos, artifact-owned detached rendered-source
-  recipes, value-stamped snapshot-root mounts, and field/key-specific
+  recipes, value-stamped snapshot-root mounts, direct stream state with fixed
+  input/path cursors and scalar printer offsets, and field/key-specific
   allocation-independent dependency projections.
 - `src/world/tests.rs`: Focused detached effect, owned artifact/provenance,
-  input cloning, snapshot rollback, and effect-root tests.
+  input cloning, fixed stream-mark capture, repeated candidate settlement,
+  snapshot rollback, and effect-root tests.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/structural_node_lifecycle.rs`: Focused success, committed-failure, rollback, retry, rejection, checkpoint, and generation-fork controls for structural node-list ownership.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.

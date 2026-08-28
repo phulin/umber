@@ -1500,8 +1500,8 @@ fn direction_permutation_from(
 /// log_only))`. A `\write` to a real file has no column to break.
 pub(super) fn write_line_is_open<G>(stores: &Universe<G>, sink: tex_state::PrintSink) -> bool {
     let bufs = stores.world().stream_bufs();
-    let terminal = !bufs.terminal_partial_line().is_empty();
-    let log = !bufs.log_partial_line().is_empty();
+    let terminal = bufs.terminal_offset() != 0;
+    let log = bufs.log_offset() != 0;
     match sink {
         tex_state::PrintSink::Terminal => terminal,
         tex_state::PrintSink::Log => log,

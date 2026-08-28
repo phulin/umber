@@ -487,7 +487,11 @@ document because they are externally observable output, then end with the
 world/output owner. Queue capacities may remain as bounded high water.
 
 World checkpoints now own only scalar effect/input/artifact positions, fixed
-stream and clock state, and undo-journal marks. Effect rows, aligned
+stream cursor/offset and clock state, and undo-journal marks. Read streams name
+immutable input records plus byte cursors, write streams name immutable
+session path ids, and terminal/log state is the scalar column offset TeX
+actually consults. A checkpoint owns no shared mutable stream buffer and
+causes no first-mutation COW. Effect rows, aligned
 publication sidecars, input records/content, and reduced dependency facts live
 in coarse immutable accepted blocks; a candidate appends into private suffixes
 and private counter/dependency journals. Source registrations use that same
@@ -506,7 +510,7 @@ cannot cross a quiescent
 checkpoint; committed artifact bytes have already crossed exactly once to the
 durable artifact ledger. Numbered write streams do not retain a redundant
 partial-line mirror because TeX never consults it for wrapping or any later
-semantic decision; terminal and log partial lines remain exact live state.
+semantic decision; terminal and log offsets remain exact direct live state.
 
 A TeX group is a save-and-restoration boundary. The save journal records old
 packed values and exact group entry/exit order. On group exit it restores local
