@@ -1,7 +1,8 @@
 use tex_fonts::CharMetrics;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
-use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node, Sign};
+use tex_state::node::{GlueKind, KernKind, LeaderPayload, Sign};
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::metrics::{ListMetrics, MetricEvent, MetricOverflow};
@@ -187,8 +188,11 @@ pub enum MathNode {
     },
     HList(MathBox),
     VList(MathBox),
-    /// A canonical native node carried unchanged to the executor commit.
-    Native(Box<Node>),
+    /// A canonical native source node retained by page-arena coordinate.
+    NativeSource {
+        list: PageListId,
+        index: u32,
+    },
     /// Transparent concatenation of an already-built earlier span.
     #[doc(hidden)]
     Sequence(FrozenHList),
@@ -545,12 +549,11 @@ impl NativeNodeTransaction {
                         MetricOverflow::APPENDIX_G,
                     );
                 }
-                MathNode::Native(node) => {
+                MathNode::NativeSource { .. } => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
-                    measure_opaque_hnode(node, meas);
                 }
             }
         }
@@ -597,7 +600,7 @@ impl NativeNodeTransaction {
                         MetricOverflow::APPENDIX_G,
                     );
                 }
-                MathNode::Native(node) => measure_native_vnode(node, meas),
+                MathNode::NativeSource { .. } => {}
                 MathNode::Penalty(_) | MathNode::Char { .. } => {}
             }
         }
@@ -619,52 +622,6 @@ pub(crate) fn boxed_node(boxed: MathBox) -> MathNode {
 
 pub(crate) fn node_is_char(node: &MathNode) -> bool {
     matches!(node, MathNode::Char { .. })
-}
-
-fn measure_opaque_hnode(node: &Node, meas: &mut Measurement) {
-    let event = match node {
-        Node::Kern { amount, .. } => MetricEvent::Kern(*amount),
-        Node::Rule {
-            width,
-            height,
-            depth,
-        } => MetricEvent::Rule {
-            width: width.unwrap_or(Scaled::from_raw(0)),
-            height: height.unwrap_or(Scaled::from_raw(0)),
-            depth: depth.unwrap_or(Scaled::from_raw(0)),
-        },
-        Node::HList(boxed) | Node::VList(boxed) => MetricEvent::Box {
-            width: boxed.width,
-            height: boxed.height,
-            depth: boxed.depth,
-            shift: boxed.shift,
-        },
-        _ => MetricEvent::Ignored,
-    };
-    meas.observe_horizontal(event, MetricOverflow::APPENDIX_G);
-}
-
-fn measure_native_vnode(node: &Node, meas: &mut Measurement) {
-    let event = match node {
-        Node::HList(boxed) | Node::VList(boxed) => MetricEvent::Box {
-            width: boxed.width,
-            height: boxed.height,
-            depth: boxed.depth,
-            shift: boxed.shift,
-        },
-        Node::Kern { amount, .. } => MetricEvent::Kern(*amount),
-        Node::Rule {
-            width,
-            height,
-            depth,
-        } => MetricEvent::Rule {
-            width: width.unwrap_or(Scaled::from_raw(0)),
-            height: height.unwrap_or(Scaled::from_raw(0)),
-            depth: depth.unwrap_or(Scaled::from_raw(0)),
-        },
-        _ => MetricEvent::Ignored,
-    };
-    meas.observe_vertical(event, MetricOverflow::APPENDIX_G);
 }
 
 #[derive(Clone, Copy, Debug)]

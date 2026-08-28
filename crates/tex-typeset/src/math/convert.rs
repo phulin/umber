@@ -153,11 +153,8 @@ impl<T> Replay<T> {
         }
     }
 
-    fn sequence(parts: Vec<Self>) -> Self {
-        let mut parts = parts
-            .into_iter()
-            .filter(|part| part.0.is_some())
-            .collect::<Vec<_>>();
+    fn sequence(mut parts: Vec<Self>) -> Self {
+        parts.retain(|part| part.0.is_some());
         match parts.len() {
             0 => Self::default(),
             1 => parts.pop().expect("single replay part exists"),
@@ -224,7 +221,7 @@ fn convert_mlist_uncached<S: MathTypesetState>(
     let mut max_depth = Scaled::from_raw(0);
     first_pass(
         ctx,
-        &input_view,
+        &mut input_view,
         style,
         &mut work,
         &mut max_height,
@@ -264,21 +261,18 @@ enum WorkItem {
 
 fn first_pass<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    view: &ExpandedMathView,
+    view: &mut ExpandedMathView,
     base_style: Style,
     out: &mut Vec<WorkItem>,
     max_height: &mut Scaled,
     max_depth: &mut Scaled,
 ) {
-    let original = view.nodes.as_slice();
-    let marker_styles = view.marker_styles.as_slice();
-    let mut rewritten = None::<Vec<Node>>;
     let mut style_marker = 0;
     let mut r_type = Some(NoadClass::Op);
     let mut index = 0;
-    while index < rewritten.as_deref().unwrap_or(original).len() {
+    while index < view.len() {
         if matches!(
-            rewritten.as_deref().unwrap_or(original).get(index),
+            view.node(ctx.state, index),
             Some(Node::MathNoad(MathNoad {
                 kind: NoadKind::Normal(NoadClass::Bin),
                 ..
@@ -292,26 +286,26 @@ fn first_pass<S: MathTypesetState>(
                     | NoadClass::Open
                     | NoadClass::Punct
             )
-        ) {
-            let input = rewritten.get_or_insert_with(|| original.to_vec());
-            if let Node::MathNoad(noad) = &mut input[index] {
-                noad.kind = NoadKind::Normal(NoadClass::Ord);
-            }
-        }
-        let input = rewritten.as_deref().unwrap_or(original);
-        if matches!(
-            &input[index],
-            Node::MathNoad(noad) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
-        ) && operators::ord_pair_may_change(input, index)
+        ) && let Some(noad) = view.noad_mut(ctx.state, index)
         {
-            let input = rewritten.get_or_insert_with(|| original.to_vec());
-            operators::make_ord(ctx, input, index);
+            noad.kind = NoadKind::Normal(NoadClass::Ord);
         }
-        let input = rewritten.as_deref().unwrap_or(original);
-        match &input[index] {
+        if matches!(
+            view.node(ctx.state, index),
+            Some(Node::MathNoad(noad)) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
+        ) && operators::ord_pair_may_change(ctx, view, index)
+        {
+            operators::make_ord(ctx, view, index);
+        }
+        let state = ctx.state;
+        match view
+            .node(state, index)
+            .expect("expanded math index remains in range")
+        {
             Node::MathStyle(style) => {
                 // AppG rule 3
-                let full_style = marker_styles
+                let full_style = view
+                    .marker_styles
                     .get(style_marker)
                     .copied()
                     .unwrap_or_else(|| Style::from_math_style(*style));
@@ -324,8 +318,8 @@ fn first_pass<S: MathTypesetState>(
                 // AppG rule 2
                 if matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
-                    && input
-                        .get(index + 1)
+                    && view
+                        .node(state, index + 1)
                         .is_some_and(|next| matches!(next, Node::Glue { .. } | Node::Kern { .. }))
                 {
                     index += 1;
@@ -452,7 +446,12 @@ fn first_pass<S: MathTypesetState>(
             }
             other => {
                 // AppG rule 1
-                out.push(WorkItem::Node(source_node(ctx, other.clone())));
+                out.push(WorkItem::Node(source_node(
+                    ctx.state,
+                    &ctx.source_lists,
+                    view.source(index),
+                    other,
+                )));
             }
         }
         index += 1;
@@ -462,8 +461,8 @@ fn first_pass<S: MathTypesetState>(
 /// Builds the immutable node view selected by Appendix G rule 4 without
 /// recursively descending through nested `\mathchoice` lists.
 #[derive(Default)]
-struct ExpandedMathView {
-    nodes: Vec<Node>,
+pub(super) struct ExpandedMathView {
+    nodes: Vec<ExpandedMathNode>,
     marker_styles: Vec<Style>,
     stack: Vec<ExpansionFrame>,
 }
@@ -474,6 +473,72 @@ impl ExpandedMathView {
         self.marker_styles.clear();
         self.stack.clear();
     }
+
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    fn source(&self, index: usize) -> Option<(PageListId, usize)> {
+        match self.nodes.get(index)? {
+            ExpandedMathNode::Source { list, index } => Some((*list, *index)),
+            ExpandedMathNode::Owned(_) => None,
+        }
+    }
+
+    pub(super) fn node<'a>(
+        &'a self,
+        state: &'a impl MathTypesetState,
+        index: usize,
+    ) -> Option<&'a Node> {
+        match self.nodes.get(index)? {
+            ExpandedMathNode::Source { list, index } => state.page_nodes(*list).owned_node(*index),
+            ExpandedMathNode::Owned(node) => Some(node),
+        }
+    }
+
+    pub(super) fn noad_mut<'a>(
+        &'a mut self,
+        state: &impl MathTypesetState,
+        index: usize,
+    ) -> Option<&'a mut MathNoad> {
+        if let ExpandedMathNode::Source {
+            list,
+            index: source_index,
+        } = self.nodes[index]
+        {
+            let Node::MathNoad(noad) = state
+                .page_nodes(list)
+                .owned_node(source_index)
+                .expect("expanded math source remains live")
+            else {
+                return None;
+            };
+            self.nodes[index] = ExpandedMathNode::Owned(Node::MathNoad(MathNoad {
+                kind: noad.kind.clone(),
+                nucleus: noad.nucleus,
+                subscript: noad.subscript,
+                superscript: noad.superscript,
+            }));
+        }
+        match &mut self.nodes[index] {
+            ExpandedMathNode::Owned(Node::MathNoad(noad)) => Some(noad),
+            ExpandedMathNode::Owned(_) => None,
+            ExpandedMathNode::Source { .. } => unreachable!("source was detached for mutation"),
+        }
+    }
+
+    pub(super) fn insert_owned(&mut self, index: usize, node: Node) {
+        self.nodes.insert(index, ExpandedMathNode::Owned(node));
+    }
+
+    pub(super) fn remove(&mut self, index: usize) {
+        self.nodes.remove(index);
+    }
+}
+
+enum ExpandedMathNode {
+    Source { list: PageListId, index: usize },
+    Owned(Node),
 }
 
 #[derive(Clone)]
@@ -495,30 +560,33 @@ fn expand_math_choices_into(
         index: 0,
     });
     while let Some(frame) = view.stack.last_mut() {
-        let Some(node) = state
-            .page_nodes(frame.list)
-            .owned_node(frame.index)
-            .cloned()
-        else {
+        let Some(node) = state.page_nodes(frame.list).owned_node(frame.index) else {
             view.stack.pop();
             continue;
         };
+        let source_list = frame.list;
+        let source_index = frame.index;
         frame.index += 1;
         match node {
             Node::MathStyle(next) => {
-                style = Style::from_math_style(next);
-                view.nodes.push(Node::MathStyle(next));
+                style = Style::from_math_style(*next);
+                view.nodes.push(ExpandedMathNode::Source {
+                    list: source_list,
+                    index: source_index,
+                });
                 view.marker_styles.push(style);
             }
             Node::MathChoice(choice) => {
                 // The style marker is semantically observable by the first
                 // pass even though the choice itself disappears.
-                view.nodes.push(Node::MathStyle(match style.family() {
-                    StyleFamily::Display => tex_state::math::MathStyle::Display,
-                    StyleFamily::Text => tex_state::math::MathStyle::Text,
-                    StyleFamily::Script => tex_state::math::MathStyle::Script,
-                    StyleFamily::ScriptScript => tex_state::math::MathStyle::ScriptScript,
-                }));
+                view.nodes.push(ExpandedMathNode::Owned(Node::MathStyle(
+                    match style.family() {
+                        StyleFamily::Display => tex_state::math::MathStyle::Display,
+                        StyleFamily::Text => tex_state::math::MathStyle::Text,
+                        StyleFamily::Script => tex_state::math::MathStyle::Script,
+                        StyleFamily::ScriptScript => tex_state::math::MathStyle::ScriptScript,
+                    },
+                )));
                 view.marker_styles.push(style);
                 let selected = match style.family() {
                     StyleFamily::Display => choice.display,
@@ -539,7 +607,10 @@ fn expand_math_choices_into(
                         ..
                     })
                 );
-                view.nodes.push(node);
+                view.nodes.push(ExpandedMathNode::Source {
+                    list: source_list,
+                    index: source_index,
+                });
                 if resets_style {
                     style = starting_style;
                 }
@@ -652,7 +723,10 @@ fn nested_mlist_requests(
     let mut markers = view.marker_styles.iter().copied();
     out.clear();
     seen.clear();
-    for node in &view.nodes {
+    for index in 0..view.len() {
+        let node = view
+            .node(state, index)
+            .expect("expanded math request remains in range");
         match node {
             Node::MathStyle(_) => {
                 style = markers
@@ -872,11 +946,7 @@ fn second_pass<S: MathTypesetState>(
 }
 
 fn work_item_is_penalty(item: &WorkItem) -> bool {
-    match item {
-        WorkItem::Node(MathNode::Penalty(_)) => true,
-        WorkItem::Node(MathNode::Native(node)) => matches!(node.as_ref(), Node::Penalty(_)),
-        _ => false,
-    }
+    matches!(item, WorkItem::Node(MathNode::Penalty(_)))
 }
 
 fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {
@@ -1099,16 +1169,33 @@ fn convert_source_list(
         }
         if expanded {
             visiting.remove(&key);
-            let nodes = ctx
-                .state
-                .page_nodes(current)
-                .iter()
-                .cloned()
-                .map(|node| source_node(ctx, node))
-                .collect::<Vec<_>>();
             let converted = match current_role {
-                SourceListRole::HorizontalField => ctx.layout.hlist(nodes),
-                SourceListRole::BoxPayload => ctx.layout.box_payload(nodes),
+                SourceListRole::HorizontalField => {
+                    ctx.layout
+                        .hlist(ctx.state.page_nodes(current).iter().enumerate().map(
+                            |(index, node)| {
+                                source_node(
+                                    ctx.state,
+                                    &ctx.source_lists,
+                                    Some((current, index)),
+                                    node,
+                                )
+                            },
+                        ))
+                }
+                SourceListRole::BoxPayload => {
+                    ctx.layout
+                        .box_payload(ctx.state.page_nodes(current).iter().enumerate().map(
+                            |(index, node)| {
+                                source_node(
+                                    ctx.state,
+                                    &ctx.source_lists,
+                                    Some((current, index)),
+                                    node,
+                                )
+                            },
+                        ))
+                }
             };
             ctx.source_lists.insert(key, converted);
             continue;
@@ -1118,19 +1205,15 @@ fn convert_source_list(
             "source box lists must not contain structural cycles"
         );
         stack.push((current, current_role, true));
-        let mut children = ctx
-            .state
-            .page_nodes(current)
-            .iter()
-            .filter_map(|node| match node {
-                Node::HList(boxed) | Node::VList(boxed) => Some(boxed.children),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        children.reverse();
         stack.extend(
-            children
-                .into_iter()
+            ctx.state
+                .page_nodes(current)
+                .iter()
+                .rev()
+                .filter_map(|node| match node {
+                    Node::HList(boxed) | Node::VList(boxed) => Some(boxed.children),
+                    _ => None,
+                })
                 .map(|child| (child, SourceListRole::BoxPayload, false)),
         );
     }
@@ -1139,35 +1222,57 @@ fn convert_source_list(
         .expect("source-list postorder conversion must produce its root")
 }
 
-pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: Node) -> MathNode {
+pub(crate) fn source_node(
+    state: &impl MathTypesetState,
+    source_lists: &AHashMap<(PageListId, SourceListRole), FrozenHList>,
+    source: Option<(PageListId, usize)>,
+    node: &Node,
+) -> MathNode {
     match node {
         Node::Char { font, ch, origin } => {
-            let code = u8::try_from(u32::from(ch)).ok();
+            let code = u8::try_from(u32::from(*ch)).ok();
             if let Some(metrics) =
-                code.and_then(|code| ctx.state.classic_math_char_metrics(font, code))
+                code.and_then(|code| state.classic_math_char_metrics(*font, code))
             {
                 MathNode::Char {
-                    font,
-                    ch,
+                    font: *font,
+                    ch: *ch,
                     glyph_id: None,
                     metrics,
-                    origin,
+                    origin: *origin,
                 }
             } else {
-                MathNode::Native(Box::new(Node::Char { font, ch, origin }))
+                native_source(source)
             }
         }
-        node @ Node::Kern { .. } | node @ Node::Penalty(_) | node @ Node::Rule { .. } => {
-            MathNode::Native(Box::new(node))
-        }
-        Node::Glue { spec, kind, leader } => MathNode::Glue { spec, kind, leader },
+        Node::Kern { amount, kind } => MathNode::Kern {
+            amount: *amount,
+            kind: *kind,
+        },
+        Node::Penalty(penalty) => MathNode::Penalty(*penalty),
+        Node::Rule {
+            width,
+            height,
+            depth,
+        } => MathNode::Rule {
+            width: *width,
+            height: *height,
+            depth: *depth,
+        },
+        Node::Glue { spec, kind, leader } => MathNode::Glue {
+            spec: *spec,
+            kind: *kind,
+            leader: *leader,
+        },
         node @ (Node::HList(_) | Node::VList(_)) => {
             let horizontal = matches!(node, Node::HList(_));
             let box_node = match node {
                 Node::HList(boxed) | Node::VList(boxed) => boxed,
                 _ => unreachable!(),
             };
-            let list = source_box_payload(ctx, box_node.children);
+            let list = *source_lists
+                .get(&(box_node.children, SourceListRole::BoxPayload))
+                .expect("source box payload was prepared in postorder");
             let boxed = MathBox {
                 width: box_node.width,
                 height: box_node.height,
@@ -1190,7 +1295,15 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: No
                 MathNode::VList(boxed)
             }
         }
-        node => MathNode::Native(Box::new(node)),
+        _ => native_source(source),
+    }
+}
+
+fn native_source(source: Option<(PageListId, usize)>) -> MathNode {
+    let (list, index) = source.expect("opaque native math nodes retain a source coordinate");
+    MathNode::NativeSource {
+        list,
+        index: u32::try_from(index).expect("math source index fits u32"),
     }
 }
 

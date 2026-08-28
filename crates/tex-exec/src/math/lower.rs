@@ -15,6 +15,9 @@ use tex_typeset::math::{
     MathParams, MathTypesetState, Style, mlist_to_hlist,
 };
 
+#[cfg(test)]
+mod tests;
+
 /// Detached TeX82 §82 input context for an error raised while converting
 /// an already-complete math list.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,7 +35,7 @@ pub(crate) fn finish_math_list_node<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
-) -> Vec<Node> {
+) -> PageListId {
     finish_math_list_node_with_reads(
         stores,
         diagnostic_effects,
@@ -94,7 +97,7 @@ pub(crate) fn finish_inline_math_list_node<G>(
     list: MathListNode,
     insert_penalties: bool,
     error_context: MathConversionErrorContext,
-) -> (Vec<Node>, u64) {
+) -> (PageListId, u64) {
     finish_math_list_node_with_reads(
         stores,
         diagnostic_effects,
@@ -112,7 +115,7 @@ fn finish_math_list_node_with_reads<G>(
     list: MathListNode,
     insert_penalties: bool,
     error_context: Option<&MathConversionErrorContext>,
-) -> (Vec<Node>, u64) {
+) -> (PageListId, u64) {
     let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     let params = MathParams::read(&sink);
     let style = if list.display {
@@ -128,18 +131,24 @@ fn finish_math_list_node_with_reads<G>(
         &params,
     );
     let family_mask = sink.family_mask.get();
-    let mut nodes = Vec::new();
+    let mut nodes = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+    sink.stores.open_page_active_list(&mut nodes);
     if !list.display {
         let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
-        nodes.push(Node::MathOn(surround));
+        sink.stores
+            .push_page_active_list(&mut nodes, Node::MathOn(surround));
     }
-    nodes.extend(hlist);
+    sink.stores.append_page_active_list(&mut nodes, hlist);
     if !list.display {
         // AppG rule 22
         let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
-        nodes.push(Node::MathOff(surround));
+        sink.stores
+            .push_page_active_list(&mut nodes, Node::MathOff(surround));
     }
-    (nodes, family_mask)
+    (
+        sink.stores.finalize_page_active_list(&mut nodes),
+        family_mask,
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // Math lowering keeps style, penalties, params, and error context independent.
@@ -152,7 +161,7 @@ pub(super) fn convert_math_hlist_with_error_context<G>(
     penalties: bool,
     params: &MathParams,
     error_context: Option<&MathConversionErrorContext>,
-) -> Vec<Node> {
+) -> PageListId {
     let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
 }
@@ -163,7 +172,7 @@ fn convert_math_hlist_with_sink<G>(
     style: Style,
     penalties: bool,
     params: &MathParams,
-) -> Vec<Node> {
+) -> PageListId {
     let transaction = mlist_to_hlist(&*sink, input, style, penalties, params);
     sink.commit_math_transaction(&transaction);
     sink.take_root_nodes()
@@ -174,7 +183,7 @@ struct LoweredMathSink<'a, 'ctx, G> {
     diagnostic_effects: &'a mut DiagnosticEffects,
     geometry: &'a mut dyn crate::geometry::PackGeometrySink,
     error_context: Option<&'a MathConversionErrorContext>,
-    root_nodes: Vec<Node>,
+    root_nodes: PageListId,
     glue_cache: Vec<(GlueSpec, GlueSpec)>,
     family_mask: Cell<u64>,
 }
@@ -191,69 +200,56 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
             diagnostic_effects,
             geometry,
             error_context,
-            root_nodes: Vec::new(),
+            root_nodes: PageListId::empty(),
             glue_cache: Vec::with_capacity(8),
             family_mask: Cell::new(0),
         }
     }
 
-    fn append_span(&mut self, list: FrozenHList, layout: &MathLayout, scratch: &mut Vec<Node>) {
-        enum Task {
-            Span(FrozenHList, usize),
-            FinishBox {
-                boxed: MathBox,
-                vertical: bool,
-                start: usize,
-            },
-        }
-
-        let mut tasks = vec![Task::Span(list, 0)];
-        while let Some(task) = tasks.pop() {
-            let Task::Span(list, index) = task else {
-                let Task::FinishBox {
-                    boxed,
-                    vertical,
-                    start,
-                } = task
-                else {
-                    unreachable!()
-                };
-                let children = self.stores.publish_page_nodes(scratch[start..].to_vec());
-                scratch.truncate(start);
-                let boxed_node = lower_math_box(&boxed, children);
-                scratch.push(if vertical {
-                    Node::VList(boxed_node)
-                } else {
-                    Node::HList(boxed_node)
-                });
-                continue;
-            };
-            let Some(node) = layout.nodes(list).get(index) else {
-                continue;
-            };
-            tasks.push(Task::Span(list, index + 1));
+    fn lower_span(&mut self, list: FrozenHList, layout: &MathLayout) -> PageListId {
+        let mut target = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        self.stores.open_page_active_list(&mut target);
+        for node in layout.nodes(list) {
             match node {
-                MathNode::Sequence(child) => tasks.push(Task::Span(*child, 0)),
+                MathNode::Sequence(child) => {
+                    let result = self.stores.finalize_page_active_list(&mut target);
+                    let child = self.lower_span(*child, layout);
+                    self.stores.open_page_active_list(&mut target);
+                    self.stores.append_page_active_list(&mut target, result);
+                    self.stores.append_page_active_list(&mut target, child);
+                }
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
-                    let start = scratch.len();
-                    tasks.push(Task::FinishBox {
-                        boxed: boxed.clone(),
-                        vertical: matches!(node, MathNode::VList(_)),
-                        start,
-                    });
-                    tasks.push(Task::Span(boxed.list, 0));
+                    let result = self.stores.finalize_page_active_list(&mut target);
+                    let children = self.lower_span(boxed.list, layout);
+                    let boxed_node = lower_math_box(boxed, children);
+                    self.stores.open_page_active_list(&mut target);
+                    self.stores.append_page_active_list(&mut target, result);
+                    self.stores.push_page_active_list(
+                        &mut target,
+                        if matches!(node, MathNode::VList(_)) {
+                            Node::VList(boxed_node)
+                        } else {
+                            Node::HList(boxed_node)
+                        },
+                    );
                 }
                 MathNode::Char {
                     font, ch, origin, ..
-                } => scratch.push(Node::Char {
-                    font: *font,
-                    ch: *ch,
-                    origin: *origin,
-                }),
-                MathNode::Kern { amount, kind } => scratch.push(Node::Kern {
-                    amount: *amount,
-                    kind: *kind,
-                }),
+                } => self.stores.push_page_active_list(
+                    &mut target,
+                    Node::Char {
+                        font: *font,
+                        ch: *ch,
+                        origin: *origin,
+                    },
+                ),
+                MathNode::Kern { amount, kind } => self.stores.push_page_active_list(
+                    &mut target,
+                    Node::Kern {
+                        amount: *amount,
+                        kind: *kind,
+                    },
+                ),
                 MathNode::Glue { spec, kind, leader } => {
                     let value = if let Some((_, value)) =
                         self.glue_cache.iter().find(|(cached, _)| cached == spec)
@@ -263,25 +259,40 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                         self.glue_cache.push((*spec, *spec));
                         *spec
                     };
-                    scratch.push(Node::Glue {
-                        spec: value,
-                        kind: lower_math_glue_kind(*kind),
-                        leader: *leader,
-                    });
+                    self.stores.push_page_active_list(
+                        &mut target,
+                        Node::Glue {
+                            spec: value,
+                            kind: lower_math_glue_kind(*kind),
+                            leader: *leader,
+                        },
+                    );
                 }
-                MathNode::Penalty(penalty) => scratch.push(Node::Penalty(*penalty)),
+                MathNode::Penalty(penalty) => self
+                    .stores
+                    .push_page_active_list(&mut target, Node::Penalty(*penalty)),
                 MathNode::Rule {
                     width,
                     height,
                     depth,
-                } => scratch.push(Node::Rule {
-                    width: *width,
-                    height: *height,
-                    depth: *depth,
-                }),
-                MathNode::Native(node) => scratch.push(node.as_ref().clone()),
+                } => self.stores.push_page_active_list(
+                    &mut target,
+                    Node::Rule {
+                        width: *width,
+                        height: *height,
+                        depth: *depth,
+                    },
+                ),
+                MathNode::NativeSource { list, index } => {
+                    self.stores.append_page_active_list_range(
+                        &mut target,
+                        *list,
+                        *index as usize..*index as usize + 1,
+                    );
+                }
             }
         }
+        self.stores.finalize_page_active_list(&mut target)
     }
 
     fn append_span_to_shipout(
@@ -404,19 +415,24 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 depth: *depth,
                             },
                         ),
-                        MathNode::Native(node) => self.stores.push_shipout_scratch_node(
-                            target,
-                            node.as_ref()
+                        MathNode::NativeSource { list, index } => {
+                            let node = self
+                                .stores
+                                .page_node_list(*list)
+                                .expect("math native source belongs to the page arena")
+                                .owned_node(*index as usize)
+                                .expect("math native source index remains live")
                                 .clone()
-                                .map_lists(tex_state::ShipoutListId::Page),
-                        ),
+                                .map_lists(tex_state::ShipoutListId::Page);
+                            self.stores.push_shipout_scratch_node(target, node);
+                        }
                     }
                 }
             }
         }
     }
 
-    fn take_root_nodes(&mut self) -> Vec<Node> {
+    fn take_root_nodes(&mut self) -> PageListId {
         std::mem::take(&mut self.root_nodes)
     }
 }
@@ -635,7 +651,7 @@ impl<G> LoweredMathSink<'_, '_, G> {
             }
         }
         if layout.recovered() {
-            self.root_nodes.clear();
+            self.root_nodes = PageListId::empty();
             return;
         }
         for packed in layout.pack_observations() {
@@ -650,11 +666,7 @@ impl<G> LoweredMathSink<'_, '_, G> {
                 }
             }
         }
-        let mut root = std::mem::take(&mut self.root_nodes);
-        root.clear();
-        root.reserve(list.node_count());
-        self.append_span(list, layout, &mut root);
-        self.root_nodes = root;
+        self.root_nodes = self.lower_span(list, layout);
     }
 }
 
@@ -665,40 +677,41 @@ pub(crate) fn finish_math_lists_owned<G>(
     nodes: tex_state::node_arena::PageListId,
     insert_penalties: bool,
 ) -> tex_state::node_arena::PageListId {
-    let math_indexes = stores
-        .page_node_list(nodes)
-        .expect("math-list source belongs to the live page arena")
-        .nodes()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, node)| matches!(node, Node::MathList(_)).then_some(index))
-        .collect::<Vec<_>>();
-    if math_indexes.is_empty() {
-        return nodes;
-    }
     let source_len = nodes.len();
-    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut output);
+    let mut result = PageListId::empty();
     let mut copied_through = 0;
-    for index in math_indexes {
-        stores.append_page_active_list_range(&mut output, nodes, copied_through..index);
+    for index in 0..source_len {
         let list = match stores
             .page_node_list(nodes)
             .expect("math-list source remains live")
             .nodes()
             .owned_node(index)
-            .expect("recorded math-list index remains in range")
         {
-            Node::MathList(list) => list.clone(),
-            _ => unreachable!("recorded index is a math-list node"),
+            Some(Node::MathList(list)) => Some(*list),
+            _ => None,
         };
-        for node in
-            finish_math_list_node(stores, diagnostic_effects, geometry, list, insert_penalties)
-        {
-            stores.push_page_active_list(&mut output, node);
-        }
+        let Some(list) = list else {
+            continue;
+        };
+        let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut output);
+        stores.append_page_active_list(&mut output, result);
+        stores.append_page_active_list_range(&mut output, nodes, copied_through..index);
+        result = stores.finalize_page_active_list(&mut output);
+        let lowered =
+            finish_math_list_node(stores, diagnostic_effects, geometry, list, insert_penalties);
+        stores.open_page_active_list(&mut output);
+        stores.append_page_active_list(&mut output, result);
+        stores.append_page_active_list(&mut output, lowered);
+        result = stores.finalize_page_active_list(&mut output);
         copied_through = index + 1;
     }
+    if copied_through == 0 {
+        return nodes;
+    }
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+    stores.open_page_active_list(&mut output);
+    stores.append_page_active_list(&mut output, result);
     stores.append_page_active_list_range(&mut output, nodes, copied_through..source_len);
     stores.finalize_page_active_list(&mut output)
 }

@@ -52,7 +52,6 @@ pub(crate) enum MetricEvent {
     Kern(Scaled),
     Glue(GlueSpec),
     Math(Scaled),
-    Ignored,
 }
 
 /// A cursor over a domain-specific projection into the common metric IR.
@@ -132,7 +131,6 @@ impl ListMetrics {
                 self.width = add(self.width, spec.width, overflow);
                 self.add_glue(spec, overflow);
             }
-            MetricEvent::Ignored => {}
         }
     }
 
@@ -166,7 +164,7 @@ impl ListMetrics {
             MetricEvent::Glue(spec) => {
                 self.try_append_vertical_spacing(spec.width)?;
             }
-            MetricEvent::Glyph { .. } | MetricEvent::Math(_) | MetricEvent::Ignored => {}
+            MetricEvent::Glyph { .. } | MetricEvent::Math(_) => {}
         }
         Some(())
     }
@@ -240,7 +238,6 @@ impl WideMetricTotals {
                     wide_add_scaled(self.shrink[spec.shrink_order as usize], spec.shrink);
                 spec.width
             }
-            MetricEvent::Ignored => return,
         };
         self.natural = wide_add_scaled(self.natural, width);
     }

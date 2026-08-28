@@ -350,8 +350,8 @@ fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
 #[test]
 fn explicit_penalty_suppresses_preceding_bin_penalty() {
     // TeX82 §767: rule 21 inspects the physical node following a noad. A
-    // source penalty remains an opaque native node during the detached math
-    // transaction, but it must still suppress the automatic bin-op penalty.
+    // source penalty remains canonical during the detached math transaction,
+    // and it must still suppress the automatic bin-op penalty.
     let mut stores = setup_universe();
     stores.set_int_param(IntParam::BIN_OP_PENALTY, -3333);
     let input = stores.publish_page_nodes(&[
@@ -367,10 +367,6 @@ fn explicit_penalty_suppresses_preceding_bin_penalty() {
         .into_iter()
         .filter_map(|node| match node {
             MathNode::Penalty(value) => Some(*value),
-            MathNode::Native(node) => match node.as_ref() {
-                Node::Penalty(value) => Some(*value),
-                _ => None,
-            },
             _ => None,
         })
         .collect::<Vec<_>>();

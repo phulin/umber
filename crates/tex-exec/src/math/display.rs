@@ -57,7 +57,7 @@ pub(crate) fn finish_eq_no<G>(
     error_context: Option<&MathConversionErrorContext>,
 ) -> FinishedEqNo {
     let params = MathParams::read(&crate::typeset_context::TypesetContext::new(stores));
-    let nodes = convert_math_hlist_with_error_context(
+    let list = convert_math_hlist_with_error_context(
         stores,
         diagnostic_effects,
         geometry,
@@ -67,7 +67,6 @@ pub(crate) fn finish_eq_no<G>(
         &params,
         error_context,
     );
-    let list = stores.publish_page_nodes(nodes);
     let mut boxed = hpack_nodes(
         stores,
         diagnostic_effects,
@@ -115,7 +114,6 @@ pub(crate) fn finish_display_math<G>(
     // adjustments before §663's `short_display` examines an overfull
     // formula. Keep the migrated material beside the display instead of
     // leaving zero-dimensional wrappers inside its packed hlist.
-    let display_nodes = stores.publish_page_nodes(display_nodes);
     let (display_list, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
     let display_view = stores
         .page_node_list(display_list)
@@ -339,16 +337,29 @@ pub(crate) fn finish_display_alignment<G>(
     // glue around the rows §799 already separated.
     let mut aligned = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut aligned);
+    let mut unchanged_start = 0;
     for index in 0..finished.nodes.len() {
-        let node = stores
-            .page_node_list(finished.nodes)
-            .expect("display alignment belongs to the live page arena")
-            .nodes()
-            .owned_node(index)
-            .expect("display alignment index remains in range")
-            .clone();
-        stores.push_page_active_list(&mut aligned, display_alignment_node(node));
+        let replacement = {
+            let node = stores
+                .page_node_list(finished.nodes)
+                .expect("display alignment belongs to the live page arena")
+                .nodes()
+                .owned_node(index)
+                .expect("display alignment index remains in range");
+            display_alignment_replacement(node)
+        };
+        let Some(replacement) = replacement else {
+            continue;
+        };
+        stores.append_page_active_list_range(&mut aligned, finished.nodes, unchanged_start..index);
+        stores.push_page_active_list(&mut aligned, replacement);
+        unchanged_start = index + 1;
     }
+    stores.append_page_active_list_range(
+        &mut aligned,
+        finished.nodes,
+        unchanged_start..finished.nodes.len(),
+    );
     let aligned = stores.finalize_page_active_list(&mut aligned);
     append_display_list(nest, stores, aligned);
     if let Some(prev_depth) = finished.aux_prev_depth {
@@ -380,11 +391,20 @@ pub(crate) fn finish_display_alignment<G>(
 /// once as `o` and §806/§807 apply it while the unset boxes and running rules
 /// are being set, which is the only place a rule -- a node with no
 /// `shift_amount` field -- can receive it at all.
-fn display_alignment_node(mut node: Node) -> Node {
-    if let Node::HList(box_node) | Node::VList(box_node) = &mut node {
-        box_node.box_lr = tex_state::node::BoxLr::DList;
+fn display_alignment_replacement(node: &Node) -> Option<Node> {
+    match node {
+        Node::HList(boxed) if boxed.box_lr != tex_state::node::BoxLr::DList => {
+            let mut boxed = *boxed;
+            boxed.box_lr = tex_state::node::BoxLr::DList;
+            Some(Node::HList(boxed))
+        }
+        Node::VList(boxed) if boxed.box_lr != tex_state::node::BoxLr::DList => {
+            let mut boxed = *boxed;
+            boxed.box_lr = tex_state::node::BoxLr::DList;
+            Some(Node::VList(boxed))
+        }
+        _ => None,
     }
-    node
 }
 
 fn above_display_glue_kind(param: GlueParam) -> GlueKind {

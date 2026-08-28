@@ -39,11 +39,17 @@ pub(crate) fn display_line_prototype<G>(
             }
         }
     };
-    let children = [
+    let mut children = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+    stores.open_page_active_list(&mut children);
+    stores.push_page_active_list(
+        &mut children,
         boundary(stores, GlueParam::LEFT_SKIP, GlueKind::LeftSkip),
+    );
+    stores.push_page_active_list(
+        &mut children,
         boundary(stores, GlueParam::RIGHT_SKIP, GlueKind::RightSkip),
-    ];
-    let children = stores.publish_page_nodes(children.into());
+    );
+    let children = stores.finalize_page_active_list(&mut children);
     BoxNode::new(BoxNodeFields {
         width: last_line.width,
         height: Scaled::from_raw(0),
@@ -84,29 +90,29 @@ pub(super) fn package_directed_display_line<G>(
     };
 
     let payload = if display_line.box_lr == BoxLr::DList {
-        stores.publish_page_nodes(vec![Node::HList(display_line.clone())])
+        let mut payload = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut payload);
+        stores.push_page_active_list(&mut payload, Node::HList(display_line));
+        stores.finalize_page_active_list(&mut payload)
     } else {
         let children = stores
             .page_node_list(display_line.children)
             .expect("display line belongs to the live page arena")
             .nodes();
         let len = children.len();
-        drop(children);
         if pre_display_direction >= 0 {
             display_line.children
         } else {
-            let mut slices = Vec::new();
-            let pieces = (0..len)
-                .rev()
-                .map(|index| {
-                    stores.slice_page_node_sequence(
-                        display_line.children,
-                        index..index + 1,
-                        &mut slices,
-                    )
-                })
-                .collect::<Vec<_>>();
-            stores.compose_page_node_sequences(&pieces)
+            let mut reversed = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+            stores.open_page_active_list(&mut reversed);
+            for index in (0..len).rev() {
+                stores.append_page_active_list_range(
+                    &mut reversed,
+                    display_line.children,
+                    index..index + 1,
+                );
+            }
+            stores.finalize_page_active_list(&mut reversed)
         }
     };
     if let Some(mut prototype) = prototype {
@@ -155,58 +161,80 @@ pub(super) fn package_directed_display_line<G>(
             Node::Kern { kind, .. } => PrototypeBoundary::Kern(*kind),
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         };
-        drop(boundaries);
 
-        let mut slices = Vec::new();
-        let mut pieces = Vec::with_capacity(5);
-        let mut prefix = Vec::with_capacity(2);
+        let mut replacement = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut replacement);
         if let PrototypeBoundary::Glue(spec, kind) = left {
-            pieces.push(stores.slice_page_node_sequence(prototype.children, 0..1, &mut slices));
-            prefix.push(Node::Direction(tex_state::node::Direction::BeginM));
-            prefix.push(cancel_display_skip(stores, &spec, kind, displacement));
+            stores.append_page_active_list_range(&mut replacement, prototype.children, 0..1);
+            stores.push_page_active_list(
+                &mut replacement,
+                Node::Direction(tex_state::node::Direction::BeginM),
+            );
+            let cancelled = cancel_display_skip(stores, &spec, kind, displacement);
+            stores.push_page_active_list(&mut replacement, cancelled);
         } else if let PrototypeBoundary::Kern(kind) = left {
-            prefix.push(Node::Direction(tex_state::node::Direction::BeginM));
-            prefix.push(Node::Kern {
-                amount: displacement,
-                kind,
-            });
+            stores.push_page_active_list(
+                &mut replacement,
+                Node::Direction(tex_state::node::Direction::BeginM),
+            );
+            stores.push_page_active_list(
+                &mut replacement,
+                Node::Kern {
+                    amount: displacement,
+                    kind,
+                },
+            );
         }
-        pieces.push(stores.publish_page_nodes(prefix));
-        pieces.push(payload);
+        stores.append_page_active_list(&mut replacement, payload);
 
-        let mut suffix = Vec::with_capacity(2);
         if let PrototypeBoundary::Glue(spec, kind) = right {
-            suffix.push(cancel_display_skip(stores, &spec, kind, end_displacement));
-            suffix.push(Node::Direction(tex_state::node::Direction::EndM));
-            pieces.push(stores.publish_page_nodes(suffix));
-            pieces.push(stores.slice_page_node_sequence(prototype.children, 1..2, &mut slices));
+            let cancelled = cancel_display_skip(stores, &spec, kind, end_displacement);
+            stores.push_page_active_list(&mut replacement, cancelled);
+            stores.push_page_active_list(
+                &mut replacement,
+                Node::Direction(tex_state::node::Direction::EndM),
+            );
+            stores.append_page_active_list_range(&mut replacement, prototype.children, 1..2);
         } else if let PrototypeBoundary::Kern(kind) = right {
-            suffix.push(Node::Kern {
-                amount: end_displacement,
-                kind,
-            });
-            suffix.push(Node::Direction(tex_state::node::Direction::EndM));
-            pieces.push(stores.publish_page_nodes(suffix));
+            stores.push_page_active_list(
+                &mut replacement,
+                Node::Kern {
+                    amount: end_displacement,
+                    kind,
+                },
+            );
+            stores.push_page_active_list(
+                &mut replacement,
+                Node::Direction(tex_state::node::Direction::EndM),
+            );
         }
-        prototype.children = stores.compose_page_node_sequences(&pieces);
+        prototype.children = stores.finalize_page_active_list(&mut replacement);
         return prototype;
     }
 
-    let prefix = stores.publish_page_nodes(vec![
+    let mut list = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+    stores.open_page_active_list(&mut list);
+    stores.push_page_active_list(
+        &mut list,
         Node::Direction(tex_state::node::Direction::BeginM),
+    );
+    stores.push_page_active_list(
+        &mut list,
         Node::Kern {
             amount: displacement,
             kind: KernKind::Font,
         },
-    ]);
-    let suffix = stores.publish_page_nodes(vec![
+    );
+    stores.append_page_active_list(&mut list, payload);
+    stores.push_page_active_list(
+        &mut list,
         Node::Kern {
             amount: end_displacement,
             kind: KernKind::Font,
         },
-        Node::Direction(tex_state::node::Direction::EndM),
-    ]);
-    let list = stores.compose_page_node_sequences(&[prefix, payload, suffix]);
+    );
+    stores.push_page_active_list(&mut list, Node::Direction(tex_state::node::Direction::EndM));
+    let list = stores.finalize_page_active_list(&mut list);
     let mut boxed = hpack_nodes(
         stores,
         diagnostic_effects,

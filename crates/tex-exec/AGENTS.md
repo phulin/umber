@@ -95,7 +95,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   resolution over borrowed page-arena cursors. Setting retains unchanged
   source ranges and appends only replacement nodes through detached active
   builders; no production alignment path owns a `Vec<Node>`.
-- `src/math/`: source-free math validation, mlist lowering, and display packaging.
+- `src/math/`: source-free math validation, coordinate-backed mlist lowering,
+  and display packaging. Appendix G output streams directly into detached
+  page-material builders; unchanged native leaves and display-prototype ranges
+  retain their original arena addresses.
 - `src/math/display/prototype.rs`: e-TeX saved display-line prototype and
   directed `app_display` list replacement.
 - `src/math/display/tests.rs`: focused display-prototype reuse and

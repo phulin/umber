@@ -7069,7 +7069,7 @@ impl<G> MainControl<G> {
         );
         self.modes
             .current_list_mutation()
-            .append(&mut context, nodes);
+            .append_list(&mut context, nodes);
         self.modes.current_list_mutation().set_space_factor(1000);
         let aftergroup = leave_group_payloads(
             &mut context,

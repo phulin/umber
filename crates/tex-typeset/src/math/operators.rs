@@ -5,7 +5,7 @@ use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadK
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
-use super::convert::convert_mlist;
+use super::convert::{ExpandedMathView, convert_mlist};
 use super::rebox::rebox;
 use super::{
     BoxAxis, Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, char_box,
@@ -52,12 +52,12 @@ pub(super) fn make_op(
 
 pub(super) fn make_ord(
     ctx: &Context<'_, impl MathTypesetState>,
-    nodes: &mut Vec<Node>,
+    nodes: &mut ExpandedMathView,
     index: usize,
 ) {
     // AppG rule 14
     loop {
-        let Some((current, next)) = adjacent_math_chars(nodes, index) else {
+        let Some((current, next)) = adjacent_math_chars(ctx, nodes, index) else {
             return;
         };
         let current_code = match u8::try_from(u32::from(current.character)) {
@@ -68,13 +68,13 @@ pub(super) fn make_ord(
             Ok(code) => code,
             Err(_) => return,
         };
-        set_current_nucleus(nodes, index, MathField::MathTextChar(current));
+        set_current_nucleus(ctx, nodes, index, MathField::MathTextChar(current));
         let Some(fetched) = fetch(ctx, current, ctx.style) else {
             // TeX82 §§722/751: `fetch` diagnoses an unavailable character
             // and sets the current nucleus to `empty`.  Leaving the text-char
             // rewrite live makes ordinary translation fetch and diagnose the
             // same field a second time before advancing to its neighbor.
-            set_current_nucleus(nodes, index, MathField::Empty);
+            set_current_nucleus(ctx, nodes, index, MathField::Empty);
             return;
         };
         let Some(command) = ctx.state.lig_kern_command(
@@ -86,7 +86,7 @@ pub(super) fn make_ord(
         };
         match command {
             LigKernCommand::Kern(amount) => {
-                nodes.insert(
+                nodes.insert_owned(
                     index + 1,
                     Node::Kern {
                         amount,
@@ -96,7 +96,7 @@ pub(super) fn make_ord(
                 return;
             }
             LigKernCommand::Ligature(ligature) => {
-                let restart = apply_math_ligature(nodes, index, ligature);
+                let restart = apply_math_ligature(ctx, nodes, index, ligature);
                 if !restart {
                     return;
                 }
@@ -105,8 +105,12 @@ pub(super) fn make_ord(
     }
 }
 
-pub(super) fn ord_pair_may_change(nodes: &[Node], index: usize) -> bool {
-    adjacent_math_chars(nodes, index).is_some()
+pub(super) fn ord_pair_may_change(
+    ctx: &Context<'_, impl MathTypesetState>,
+    nodes: &ExpandedMathView,
+    index: usize,
+) -> bool {
+    adjacent_math_chars(ctx, nodes, index).is_some()
 }
 
 fn operator_nucleus(
@@ -269,8 +273,12 @@ fn displayed_limits(
     ctx.layout.hlist([MathNode::VList(limits)])
 }
 
-fn adjacent_math_chars(nodes: &[Node], index: usize) -> Option<(MathChar, MathChar)> {
-    let Node::MathNoad(current) = nodes.get(index)? else {
+fn adjacent_math_chars(
+    ctx: &Context<'_, impl MathTypesetState>,
+    nodes: &ExpandedMathView,
+    index: usize,
+) -> Option<(MathChar, MathChar)> {
+    let Node::MathNoad(current) = nodes.node(ctx.state, index)? else {
         return None;
     };
     if !matches!(current.kind, NoadKind::Normal(NoadClass::Ord))
@@ -280,7 +288,7 @@ fn adjacent_math_chars(nodes: &[Node], index: usize) -> Option<(MathChar, MathCh
         return None;
     }
     let current_char = math_char_field(&current.nucleus)?;
-    let Node::MathNoad(next) = nodes.get(index + 1)? else {
+    let Node::MathNoad(next) = nodes.node(ctx.state, index + 1)? else {
         return None;
     };
     if !can_follow_ord_for_lig_kern(next) {
@@ -307,17 +315,27 @@ fn can_follow_ord_for_lig_kern(noad: &MathNoad) -> bool {
     )
 }
 
-fn set_current_nucleus(nodes: &mut [Node], index: usize, field: MathField) {
-    let Some(Node::MathNoad(noad)) = nodes.get_mut(index) else {
+fn set_current_nucleus(
+    ctx: &Context<'_, impl MathTypesetState>,
+    nodes: &mut ExpandedMathView,
+    index: usize,
+    field: MathField,
+) {
+    let Some(noad) = nodes.noad_mut(ctx.state, index) else {
         return;
     };
     noad.nucleus = field;
 }
 
-fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCommand) -> bool {
+fn apply_math_ligature(
+    ctx: &Context<'_, impl MathTypesetState>,
+    nodes: &mut ExpandedMathView,
+    index: usize,
+    ligature: LigatureCommand,
+) -> bool {
     let replacement = char::from(ligature.replacement);
     let restart = ligature.pass_over == 0;
-    let Some(Node::MathNoad(current)) = nodes.get(index).cloned() else {
+    let Some(Node::MathNoad(current)) = nodes.node(ctx.state, index).cloned() else {
         return false;
     };
     let Some(current_char) = math_char_field(&current.nucleus).or(match current.nucleus {
@@ -341,10 +359,10 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
 
     match (ligature.delete_current, ligature.delete_next) {
         (true, true) => {
-            let Some(Node::MathNoad(next)) = nodes.get(index + 1).cloned() else {
+            let Some(Node::MathNoad(next)) = nodes.node(ctx.state, index + 1).cloned() else {
                 return false;
             };
-            if let Some(Node::MathNoad(current)) = nodes.get_mut(index) {
+            if let Some(current) = nodes.noad_mut(ctx.state, index) {
                 current.nucleus = replacement_field(current_char.family);
                 current.subscript = next.subscript;
                 current.superscript = next.superscript;
@@ -352,12 +370,12 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
             nodes.remove(index + 1);
         }
         (true, false) => {
-            if let Some(Node::MathNoad(current)) = nodes.get_mut(index) {
+            if let Some(current) = nodes.noad_mut(ctx.state, index) {
                 current.nucleus = replacement_field(current_char.family);
             }
         }
         (false, true) => {
-            let Some(Node::MathNoad(next)) = nodes.get_mut(index + 1) else {
+            let Some(next) = nodes.noad_mut(ctx.state, index + 1) else {
                 return false;
             };
             next.nucleus = MathField::MathChar(MathChar {
@@ -366,7 +384,7 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
                 origin: current_char.origin,
             });
             if restart {
-                set_current_nucleus(nodes, index, MathField::MathChar(current_char));
+                set_current_nucleus(ctx, nodes, index, MathField::MathChar(current_char));
             }
         }
         (false, false) => {
@@ -386,9 +404,9 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
                     })
                 },
             );
-            nodes.insert(index + 1, Node::MathNoad(inserted));
+            nodes.insert_owned(index + 1, Node::MathNoad(inserted));
             if restart {
-                set_current_nucleus(nodes, index, MathField::MathChar(current_char));
+                set_current_nucleus(ctx, nodes, index, MathField::MathChar(current_char));
             }
         }
     }

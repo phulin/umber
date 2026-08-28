@@ -410,25 +410,9 @@ fn math_layout_projection(layouts: &[MathLayout]) -> String {
                     span(layout, boxed.list, out);
                 }
                 MathNode::Sequence(child) => span(layout, *child, out),
-                MathNode::Native(node) => match node.as_ref() {
-                    Node::Kern { amount, kind } => {
-                        write!(out, "k{}/{kind:?};", amount.raw()).expect("write native kern")
-                    }
-                    Node::Penalty(value) => write!(out, "p{value};").expect("write native penalty"),
-                    Node::Rule {
-                        width,
-                        height,
-                        depth,
-                    } => write!(
-                        out,
-                        "r{:?}/{:?}/{:?};",
-                        width.map(Scaled::raw),
-                        height.map(Scaled::raw),
-                        depth.map(Scaled::raw)
-                    )
-                    .expect("write native rule"),
-                    node => write!(out, "o{node:?};").expect("write native"),
-                },
+                MathNode::NativeSource { list, index } => {
+                    write!(out, "o{list:?}/{index};").expect("write native source")
+                }
             }
         }
         out.push(']');

@@ -121,6 +121,15 @@ tabskip ranges at their original addresses. Display and ordinary handoff move
 the finished `PageListId`; lifecycle diagnostics retain row/cell counts, not a
 parallel root or node container.
 
+Math lists are also transient and ineligible at retained boundaries. The pure
+choice/noad pass stores borrowed page coordinates for unchanged source leaves
+and owns only genuinely rewritten or generated drafts. Execution lowers those
+drafts through detached active builders, retains native source ranges at their
+original addresses, and hands inline, display, equation-number, and packaged
+box results onward as the canonical `PageListId`. `source_nodes_copied` remains
+unchanged while generated math boundaries and layout nodes advance
+`new_semantic_nodes`.
+
 ### Process and session state
 
 The command profile and compiled semantic dispatch are configuration, not

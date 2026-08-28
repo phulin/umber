@@ -382,6 +382,16 @@ source ranges while appending only genuinely new set boxes and running rules.
 The final ordinary or display handoff moves the same typed root. No alignment
 root, node buffer, or clone fallback participates in checkpoint publication.
 
+Math construction is likewise candidate-only. Choice expansion and Appendix G
+passes borrow source nodes through `(PageListId, index)` coordinates; only a
+noad actually changed by ligature processing becomes an owned draft. Runtime
+lowering streams generated nodes into detached page-material builders and
+retains opaque native leaves as source ranges. Inline/display/eqno completion,
+fraction and middle-math transfer, display reversal, prototype replacement,
+packing, and mode/page handoff all carry the canonical `PageListId`. No
+production `Vec<Node>`, native-node clone carrier, or math checkpoint root is
+created.
+
 The primitive registry remains immutable after initialization. Pruning drops
 whole unreachable journal and arena chunks once no sibling mark names them;
 it does not scan the engine, register roots, compact coordinates, or perform
