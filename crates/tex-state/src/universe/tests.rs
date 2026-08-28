@@ -984,10 +984,15 @@ fn rootless_runtime_checkpoint_truncates_to_monotonic_page_bound_and_partial_res
         let partial = universe.runtime_checkpoint().expect("partial checkpoint");
         assert_eq!(universe.page_node_rows(), 1);
 
+        let detached = universe
+            .command_context()
+            .expect("context")
+            .pop_page_contribution_front()
+            .expect("page contribution");
         universe
             .command_context()
             .expect("context")
-            .pop_page_contribution_front();
+            .discard_page_node(detached);
         let discarded_a = universe.publish_page_nodes(&[Node::Penalty(7)]);
         let discarded_b = universe.publish_page_nodes(&[Node::Penalty(9)]);
         assert_eq!(universe.page_node_rows(), 3);

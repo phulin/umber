@@ -667,6 +667,7 @@ impl PageNodeStream {
 /// coordinate. The coordinate is meaningful only to the page generation that
 /// produced it; callers may inspect the node but must return the carrier to a
 /// page destination or explicitly discard it through [`CommandContext`].
+#[must_use = "a detached page node must be returned to a page destination or explicitly discarded"]
 #[derive(Debug)]
 pub struct PageNodeCarrier {
     node: Node,
