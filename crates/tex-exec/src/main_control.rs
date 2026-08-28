@@ -2070,9 +2070,51 @@ impl<G> MainControl<G> {
         self.command.state_mut().accept_checkpoint_candidate();
     }
 
-    /// Rejects a quiescent command/mode candidate and returns its physical
-    /// command owner for source-side reattachment.
-    pub(crate) fn into_rejected_checkpoint_command(self) -> CommandState<G> {
+    /// Discards any candidate-only direct-operation continuation before the
+    /// command timeline returns to its accepted checkpoint lineage.
+    ///
+    /// Resource suspension deliberately keeps the sole command-attempt owner
+    /// live while committing the state and mode operation journals. Aggregate
+    /// rejection must therefore return the moved attempt arena and roll back
+    /// that exact operation before rejecting the command checkpoint fork.
+    pub(crate) fn cancel_external_attempt_for_checkpoint_settlement(
+        &mut self,
+        stores: &Universe<G>,
+    ) {
+        let operation = if let Some(pending) = self.pending_resource_operation.take() {
+            let (operation, resume, _pending) = self
+                .command
+                .resume_attempt(stores, pending.attempt)
+                .unwrap_or_else(|_| {
+                    panic!("resource continuation belongs to the rejected generation")
+                });
+            debug_assert_eq!(resume, PREPARED_RESOURCE_RESUME);
+            Some(operation)
+        } else if let Some(pending) = self.pending_direct_operation.take() {
+            match pending {
+                PendingDirectOperation::Fresh(_) => None,
+                PendingDirectOperation::Retained {
+                    operation,
+                    destination: _,
+                } => Some(operation),
+            }
+        } else {
+            self.pending_diagnostic_operation
+                .take()
+                .map(|pending| pending.operation)
+        };
+        if let Some(operation) = operation {
+            self.command
+                .rollback_attempt_operation(operation)
+                .expect("rejected continuation owns its command-attempt operation");
+        }
+    }
+
+    pub(crate) fn into_rejected_checkpoint_command_with_state(
+        mut self,
+        stores: &Universe<G>,
+    ) -> CommandState<G> {
+        self.cancel_external_attempt_for_checkpoint_settlement(stores);
         let (mut command, control) = self.into_checkpoint_candidate_parts();
         control.reject();
         command.reject_checkpoint_candidate();

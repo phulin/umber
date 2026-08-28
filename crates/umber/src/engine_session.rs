@@ -275,6 +275,10 @@ pub struct EngineSession<'a, G> {
     headline_printed: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
     terminated: bool,
+    /// Whether the terminal ledger has been detached into its exact-once
+    /// result. Later polls observe the latched process outcome without
+    /// reopening or republishing that consumed output revision.
+    finished: bool,
     terminal_step: Option<tex_exec::MainControlStep>,
     artifact_cursor: usize,
     effect_cursor: usize,
@@ -335,6 +339,7 @@ impl<'a, G> EngineSession<'a, G> {
             started: false,
             headline_printed: false,
             terminated: false,
+            finished: false,
             terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
@@ -367,6 +372,7 @@ impl<'a, G> EngineSession<'a, G> {
             started: false,
             headline_printed: false,
             terminated: false,
+            finished: false,
             terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
@@ -398,6 +404,7 @@ impl<'a, G> EngineSession<'a, G> {
             started: false,
             headline_printed: false,
             terminated: false,
+            finished: false,
             terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
@@ -1007,6 +1014,21 @@ impl<'a, G> EngineSession<'a, G> {
     }
 
     fn finish(&mut self) -> Result<SessionState, SessionError> {
+        if self.finished {
+            return Ok(SessionState::Complete(Box::new(RunResult {
+                terminal_text: String::new(),
+                status: TexRunStatus::from_error_history(
+                    self.stores.world().error_channel().history(),
+                ),
+                mode_transitions: self.mode_transitions.clone(),
+                fatal: self.control.fatal_error(),
+                artifacts: Vec::new(),
+                dvi_pages: Vec::new(),
+                committed_artifacts: Vec::new(),
+                effects: Vec::new(),
+                format_dump: None,
+            })));
+        }
         self.control.finalize_pdf_navigation(self.stores);
         let terminal_step = self.terminal_step.ok_or_else(|| {
             SessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(
@@ -1112,7 +1134,7 @@ impl<'a, G> EngineSession<'a, G> {
             .control
             .take_format_dump(self.stores)
             .map_err(SessionError::FormatDump)?;
-        Ok(SessionState::Complete(Box::new(RunResult {
+        let result = RunResult {
             terminal_text,
             status: TexRunStatus::from_error_history(self.stores.world().error_channel().history()),
             mode_transitions: self.mode_transitions.clone(),
@@ -1122,7 +1144,9 @@ impl<'a, G> EngineSession<'a, G> {
             committed_artifacts,
             effects,
             format_dump,
-        })))
+        };
+        self.finished = true;
+        Ok(SessionState::Complete(Box::new(result)))
     }
 }
 
@@ -1973,12 +1997,15 @@ mod tests {
                 SessionState::Complete(_)
             ));
             let mut observations = ObservationRecorder::default();
-            assert!(matches!(
-                session
-                    .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
-                    .expect("completion remains latched"),
-                SessionState::Complete(_)
-            ));
+            let repeated = session
+                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                .expect("completion remains latched");
+            let SessionState::Complete(repeated) = repeated else {
+                unreachable!("latched terminal state is complete")
+            };
+            assert!(repeated.effects.is_empty());
+            assert!(repeated.artifacts.is_empty());
+            assert!(repeated.committed_artifacts.is_empty());
             assert!(observations.0.is_empty());
         });
     }

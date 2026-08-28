@@ -142,7 +142,8 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     pub fn prepare_live_checkpoint_control(
         &mut self,
     ) -> Result<crate::PreparedCheckpointControl, RetainedEngineAccessError> {
-        let control = self.take_checkpoint_control()?;
+        let mut control = self.take_checkpoint_control()?;
+        control.cancel_external_attempt_for_checkpoint_settlement(self.universe);
         self.prepare_checkpoint_control(control)
     }
 
@@ -704,14 +705,14 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
         mut source: RetainedStateAdmission<'_, G>,
         mut candidate: RetainedStateAdmission<'_, G>,
     ) -> Self::Output {
-        let source = source.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
-        let candidate = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
-        let ledger = candidate
-            .ledger
-            .as_mut()
-            .ok_or(RetainedStateAccessError::StaleAttachment)?;
         match self {
             Self::Accept => {
+                let candidate =
+                    candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                let ledger = candidate
+                    .ledger
+                    .as_mut()
+                    .ok_or(RetainedStateAccessError::StaleAttachment)?;
                 if let Some(command) = candidate.command.as_mut() {
                     command.accept_checkpoint_candidate();
                 } else {
@@ -729,22 +730,32 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
                 ledger.accept_checkpoint_candidate();
             }
             Self::Reject => {
-                let command = if let Some(mut command) = candidate.command.take() {
+                let (parked_command, control) = {
+                    let sidecars =
+                        candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                    (sidecars.command.take(), sidecars.control.take())
+                };
+                let command = if let Some(mut command) = parked_command {
                     command.reject_checkpoint_candidate();
                     command
                 } else {
-                    candidate
-                        .control
-                        .take()
+                    control
                         .ok_or(RetainedStateAccessError::StaleAttachment)?
-                        .into_rejected_checkpoint_command()
+                        .into_rejected_checkpoint_command_with_state(candidate.universe())
                 };
+                let candidate =
+                    candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                let ledger = candidate
+                    .ledger
+                    .as_mut()
+                    .ok_or(RetainedStateAccessError::StaleAttachment)?;
                 candidate
                     .boundaries
                     .as_mut()
                     .ok_or(RetainedStateAccessError::StaleAttachment)?
                     .reject();
                 ledger.reject_checkpoint_candidate();
+                let source = source.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
                 source.boundaries = candidate.boundaries.take();
                 source.command = Some(command);
                 source.ledger = candidate.ledger.take();
@@ -1842,6 +1853,32 @@ mod tests {
             resumed,
             crate::StepResult::Progress(crate::MainControlStep::End)
         );
+    }
+
+    #[test]
+    fn dropping_a_resource_suspension_returns_the_attempt_before_reforking() {
+        let store = store();
+        let mut accepted =
+            RetainedEngineGeneration::new(&store, World::memory()).expect("accepted generation");
+        let checkpoint = accepted
+            .with_admitted(CaptureResourceInput)
+            .expect("resource checkpoint admission");
+        let (mut current, runtime, _) = accepted
+            .fork_checkpoint(&checkpoint)
+            .expect("first resource candidate fork");
+        let _suspension = current
+            .with_admitted(SuspendFork(runtime))
+            .expect("first suspension admission");
+
+        drop(current);
+
+        let (mut retry, runtime, _) = accepted
+            .fork_checkpoint(&checkpoint)
+            .expect("rejection returned the command and state owners");
+        let _suspension = retry
+            .with_admitted(SuspendFork(runtime))
+            .expect("retry suspension does not nest the discarded attempt");
+        drop(retry);
     }
 
     #[test]
