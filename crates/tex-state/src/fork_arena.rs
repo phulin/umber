@@ -10,6 +10,8 @@ use core::marker::PhantomData;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::node_sequence::SemanticSequenceIdentity;
+
 #[cfg(test)]
 #[path = "fork_arena/tests.rs"]
 mod tests;
@@ -37,6 +39,7 @@ struct ChunkMeta {
     used: u32,
     live: bool,
     sealed: bool,
+    sequence_summary: Option<SemanticSequenceIdentity>,
 }
 
 struct ChunkPage<T> {
@@ -131,6 +134,7 @@ impl<T> ChunkStorage<T> {
             used: 0,
             live: false,
             sealed: false,
+            sequence_summary: None,
         }));
         self.free.extend((start..end).rev().map(|slot| slot as u32));
         Ok(())
@@ -199,18 +203,34 @@ impl<T> ChunkStorage<T> {
         Ok((page, index))
     }
 
-    fn append(&mut self, key: RawChunkKey, arena: u32, value: T) -> Result<u32, ForkArenaError> {
+    fn append(
+        &mut self,
+        key: RawChunkKey,
+        arena: u32,
+        value: T,
+        item_identity: Option<u64>,
+    ) -> Result<u32, ForkArenaError> {
         let used = {
             let meta = self.validate(key, arena)?;
             if meta.sealed || meta.used as usize == self.slots_per_chunk {
                 return Err(ForkArenaError::ChunkSealed);
+            }
+            if meta.used != 0 && meta.sequence_summary.is_some() != item_identity.is_some() {
+                return Err(ForkArenaError::IdentityModeMismatch);
             }
             meta.used
         };
         let (page, index) = self.slot_index(key, used as usize)?;
         debug_assert!(self.pages[page].slots[index].is_none());
         self.pages[page].slots[index] = Some(value);
-        self.validate_mut(key, arena)?.used += 1;
+        let meta = self.validate_mut(key, arena)?;
+        meta.used += 1;
+        if let Some(item_identity) = item_identity {
+            let summary = meta
+                .sequence_summary
+                .get_or_insert(SemanticSequenceIdentity::empty());
+            summary.push_back(item_identity);
+        }
         Ok(used)
     }
 
@@ -236,6 +256,14 @@ impl<T> ChunkStorage<T> {
         Ok(self.validate(key, arena)?.used)
     }
 
+    fn sequence_summary(
+        &self,
+        key: RawChunkKey,
+        arena: u32,
+    ) -> Result<Option<SemanticSequenceIdentity>, ForkArenaError> {
+        Ok(self.validate(key, arena)?.sequence_summary)
+    }
+
     fn is_sealed(&self, key: RawChunkKey, arena: u32) -> Result<bool, ForkArenaError> {
         Ok(self.validate(key, arena)?.sealed)
     }
@@ -247,10 +275,23 @@ impl<T> ChunkStorage<T> {
         Ok(capacity.saturating_sub(meta.used as usize))
     }
 
-    fn truncate(&mut self, key: RawChunkKey, arena: u32, used: u32) -> Result<(), ForkArenaError> {
+    fn truncate(
+        &mut self,
+        key: RawChunkKey,
+        arena: u32,
+        used: u32,
+        sequence_summary: Option<SemanticSequenceIdentity>,
+    ) -> Result<(), ForkArenaError> {
         let old_used = self.validate(key, arena)?.used;
         if used > old_used {
             return Err(ForkArenaError::InvalidOperationMark);
+        }
+        if sequence_summary.is_some_and(|summary| summary.len() != used as usize)
+            || (used != 0
+                && self.validate(key, arena)?.sequence_summary.is_some()
+                    != sequence_summary.is_some())
+        {
+            return Err(ForkArenaError::IdentityModeMismatch);
         }
         if used == old_used {
             return Ok(());
@@ -262,6 +303,7 @@ impl<T> ChunkStorage<T> {
         let capacity = self.slots_per_chunk;
         let meta = self.validate_mut(key, arena)?;
         meta.used = used;
+        meta.sequence_summary = sequence_summary;
         if used as usize != capacity {
             meta.sealed = false;
         }
@@ -279,6 +321,7 @@ impl<T> ChunkStorage<T> {
         meta.sealed = false;
         meta.arena = 0;
         meta.used = 0;
+        meta.sequence_summary = None;
         meta.generation = meta
             .generation
             .checked_add(1)
@@ -313,6 +356,7 @@ struct RawRange {
 struct RangeEntry {
     range: RawRange,
     cumulative_end: u32,
+    sequence_summary: Option<SemanticSequenceIdentity>,
 }
 
 /// The single caller-owned physical allocation pool shared by typed arenas.
@@ -398,6 +442,7 @@ pub struct ArenaRange<Lane> {
     first: Option<ChunkId<Lane>>,
     start: u32,
     len: u32,
+    sequence_summary: Option<SemanticSequenceIdentity>,
 }
 
 impl<Lane> Clone for ArenaRange<Lane> {
@@ -430,6 +475,7 @@ impl<Lane> ArenaRange<Lane> {
             first: None,
             start: 0,
             len: 0,
+            sequence_summary: None,
         }
     }
 
@@ -564,6 +610,7 @@ pub struct OperationMark<Lane> {
     arena: u32,
     payload_chunks: u32,
     payload_tail_used: u32,
+    payload_tail_summary: Option<SemanticSequenceIdentity>,
     descriptor_chunks: u32,
     descriptor_tail_used: u32,
     _lane: PhantomData<fn(Lane) -> Lane>,
@@ -683,12 +730,30 @@ pub struct BatchMark<Lane> {
 pub struct ForkArenaCounters {
     pub new_semantic_nodes: u64,
     pub source_nodes_copied: u64,
+    pub identity_nodes_hashed: u64,
+    pub identity_summaries_combined: u64,
     pub chunks_sealed: u64,
     pub unused_sealed_bytes: u64,
     pub chunks_promoted: u64,
     pub candidate_chunks_truncated: u64,
     pub accepted_chunks_reattached: u64,
     pub obsolete_chunks_pruned: u64,
+}
+
+/// Exact work performed while recovering an identity from stored summaries.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SequenceSummaryWork {
+    pub hashed_values: u64,
+    pub combined_summaries: u64,
+}
+
+impl SequenceSummaryWork {
+    fn add(&mut self, other: Self) {
+        self.hashed_values = self.hashed_values.saturating_add(other.hashed_values);
+        self.combined_summaries = self
+            .combined_summaries
+            .saturating_add(other.combined_summaries);
+    }
 }
 
 /// Storage/lifecycle failures detected before mutating ownership.
@@ -702,6 +767,7 @@ pub enum ForkArenaError {
     ForeignArena,
     InvalidCheckpoint,
     InvalidChunk,
+    IdentityModeMismatch,
     InvalidOperationMark,
     InvalidRange,
     InvalidRegion,
@@ -856,6 +922,17 @@ impl<T, Lane> ForkArena<T, Lane> {
             .counters
             .source_nodes_copied
             .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
+
+    pub(crate) fn record_identity_work(&mut self, work: SequenceSummaryWork) {
+        self.counters.identity_nodes_hashed = self
+            .counters
+            .identity_nodes_hashed
+            .saturating_add(work.hashed_values);
+        self.counters.identity_summaries_combined = self
+            .counters
+            .identity_summaries_combined
+            .saturating_add(work.combined_summaries);
     }
 
     fn bind_pool(&mut self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
@@ -1084,6 +1161,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         value: T,
+        item_identity: Option<u64>,
     ) -> Result<(RawChunkKey, u32), ForkArenaError> {
         let last = self
             .current_chunks_mut()
@@ -1102,7 +1180,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             Some(key) => key,
             None => self.allocate_chunk(pool, false)?,
         };
-        let offset = pool.payload.append(key, self.owner, value)?;
+        let offset = pool.payload.append(key, self.owner, value, item_identity)?;
         let became_full =
             pool.payload.used(key, self.owner)? as usize == pool.payload.chunk_capacity();
         if became_full {
@@ -1118,6 +1196,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         entry: RangeEntry,
     ) -> Result<(RawChunkKey, u32), ForkArenaError> {
+        if entry
+            .sequence_summary
+            .is_some_and(|summary| summary.len() != entry.range.len as usize)
+        {
+            return Err(ForkArenaError::IdentityModeMismatch);
+        }
         let last = self
             .current_chunks_mut()
             .descriptors
@@ -1135,7 +1219,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             Some(key) => key,
             None => self.allocate_chunk(pool, true)?,
         };
-        let offset = pool.descriptors.append(key, self.owner, entry)?;
+        let offset = pool.descriptors.append(key, self.owner, entry, None)?;
         let became_full =
             pool.descriptors.used(key, self.owner)? as usize == pool.descriptors.chunk_capacity();
         if became_full {
@@ -1151,6 +1235,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             .live_key_at(false, self.live_payload_len().saturating_sub(1))
             .and_then(|key| pool.payload.used(key, self.owner).ok())
             .unwrap_or(0);
+        let payload_tail_summary = self
+            .live_key_at(false, self.live_payload_len().saturating_sub(1))
+            .and_then(|key| pool.payload.sequence_summary(key, self.owner).ok())
+            .flatten();
         let descriptor_tail_used = self
             .live_key_at(true, self.live_descriptor_len().saturating_sub(1))
             .and_then(|key| pool.descriptors.used(key, self.owner).ok())
@@ -1159,6 +1247,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             arena: self.owner,
             payload_chunks: self.live_payload_len() as u32,
             payload_tail_used,
+            payload_tail_summary,
             descriptor_chunks: self.live_descriptor_len() as u32,
             descriptor_tail_used,
             _lane: PhantomData,
@@ -1179,12 +1268,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             false,
             mark.payload_chunks as usize,
             mark.payload_tail_used,
+            mark.payload_tail_summary,
         )?;
         self.truncate_lane(
             pool,
             true,
             mark.descriptor_chunks as usize,
             mark.descriptor_tail_used,
+            None,
         )?;
         Ok(())
     }
@@ -1195,6 +1286,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         descriptor: bool,
         chunks: usize,
         tail_used: u32,
+        tail_summary: Option<SemanticSequenceIdentity>,
     ) -> Result<(), ForkArenaError> {
         let live_len = if descriptor {
             self.live_descriptor_len()
@@ -1232,9 +1324,11 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .live_key_at(descriptor, chunks - 1)
                 .ok_or(ForkArenaError::InvalidOperationMark)?;
             if descriptor {
-                pool.descriptors.truncate(key, self.owner, tail_used)?;
+                pool.descriptors
+                    .truncate(key, self.owner, tail_used, None)?;
             } else {
-                pool.payload.truncate(key, self.owner, tail_used)?;
+                pool.payload
+                    .truncate(key, self.owner, tail_used, tail_summary)?;
             }
         } else if tail_used != 0 {
             return Err(ForkArenaError::InvalidOperationMark);
@@ -1261,6 +1355,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             operation,
             first: None,
             len: 0,
+            sequence_summary: None,
             finished: false,
         })
     }
@@ -1332,6 +1427,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             RangeEntry {
                 range: raw,
                 cumulative_end,
+                sequence_summary: range.sequence_summary,
             },
         )?;
         let open = self.active_list_open_mut(builder)?;
@@ -1351,6 +1447,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         builder: &mut ActiveListBuilder<T, Lane>,
         value: T,
     ) -> Result<(), ForkArenaError> {
+        self.push_active_list_with_identity(pool, builder, value, None)
+    }
+
+    pub(crate) fn push_active_list_summarized(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        value: T,
+        item_identity: u64,
+    ) -> Result<(), ForkArenaError> {
+        self.push_active_list_with_identity(pool, builder, value, Some(item_identity))
+    }
+
+    fn push_active_list_with_identity(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        value: T,
+        item_identity: Option<u64>,
+    ) -> Result<(), ForkArenaError> {
         let should_flush = {
             let open = self.active_list_open_mut(builder)?;
             open.pending.is_some() && !open.pending_extendable
@@ -1358,7 +1474,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if should_flush {
             self.flush_active_list_pending(pool, builder)?;
         }
-        let (first, start) = self.append_payload(pool, value)?;
+        let (first, start) = self.append_payload(pool, value, item_identity)?;
         let open = self.active_list_open_mut(builder)?;
         open.len = open
             .len
@@ -1373,6 +1489,11 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .len
                 .checked_add(1)
                 .ok_or(ForkArenaError::CapacityOverflow)?;
+            match (&mut pending.sequence_summary, item_identity) {
+                (Some(summary), Some(item_identity)) => summary.push_back(item_identity),
+                (None, None) => {}
+                _ => return Err(ForkArenaError::IdentityModeMismatch),
+            }
         } else {
             open.pending = Some(ArenaRange {
                 arena: self.owner,
@@ -1383,6 +1504,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 }),
                 start,
                 len: 1,
+                sequence_summary: item_identity
+                    .map(|item| SemanticSequenceIdentity::from_raw(item, 1)),
             });
             open.pending_extendable = true;
         }
@@ -1422,9 +1545,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.active_list_open_mut(builder)?;
         self.validate_list(pool, list)?;
         for index in 0..list.count {
-            let raw = self
-                .descriptor_entry(pool, list.first, list.start, index)?
-                .range;
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let raw = entry.range;
             self.append_active_range(
                 pool,
                 builder,
@@ -1437,6 +1559,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     }),
                     start: raw.start,
                     len: raw.len,
+                    sequence_summary: entry.sequence_summary,
                 },
             )?;
         }
@@ -1479,6 +1602,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     }),
                     start: entry.range.start,
                     len: entry.range.len,
+                    sequence_summary: entry.sequence_summary,
                 };
                 let overlap = self.slice_range(
                     pool,
@@ -1494,6 +1618,64 @@ impl<T, Lane> ForkArena<T, Lane> {
             logical_start = logical_end;
         }
         Ok(())
+    }
+
+    pub(crate) fn append_active_list_range_summarized(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        list: ArenaListId<Lane>,
+        selected: Range<usize>,
+        mut item_identity: impl FnMut(&T) -> u64,
+    ) -> Result<(SemanticSequenceIdentity, SequenceSummaryWork), ForkArenaError> {
+        self.active_list_open_mut(builder)?;
+        self.validate_list(pool, list)?;
+        if selected.start > selected.end || selected.end > list.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        if selected.is_empty() {
+            return Ok((
+                SemanticSequenceIdentity::empty(),
+                SequenceSummaryWork::default(),
+            ));
+        }
+        let mut logical_start = 0_usize;
+        let mut summary = SemanticSequenceIdentity::empty();
+        let mut work = SequenceSummaryWork::default();
+        for index in 0..list.count {
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let logical_end = entry.cumulative_end as usize;
+            let overlap_start = selected.start.max(logical_start);
+            let overlap_end = selected.end.min(logical_end);
+            if overlap_start < overlap_end {
+                let source = ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
+                        arena: self.owner,
+                        raw: entry.range.first,
+                        _lane: PhantomData,
+                    }),
+                    start: entry.range.start,
+                    len: entry.range.len,
+                    sequence_summary: entry.sequence_summary,
+                };
+                let (overlap, overlap_summary, overlap_work) = self.slice_range_summarized(
+                    pool,
+                    source,
+                    overlap_start - logical_start,
+                    overlap_end - overlap_start,
+                    &mut item_identity,
+                )?;
+                self.append_active_range(pool, builder, overlap)?;
+                summary = summary.concat(overlap_summary);
+                work.add(overlap_work);
+            }
+            if logical_end >= selected.end {
+                break;
+            }
+            logical_start = logical_end;
+        }
+        Ok((summary, work))
     }
 
     /// Finalizes the active list into the canonical direct-range or flat
@@ -2575,6 +2757,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     }),
                     start: entry.range.start,
                     len: entry.range.len,
+                    sequence_summary: entry.sequence_summary,
                 };
                 scratch.push(self.slice_range(
                     pool,
@@ -2589,6 +2772,73 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
         }
         self.compose_ranges(pool, scratch)
+    }
+
+    pub(crate) fn slice_list_summarized(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        selected: Range<usize>,
+        scratch: &mut Vec<ArenaRange<Lane>>,
+        mut item_identity: impl FnMut(&T) -> u64,
+    ) -> Result<
+        (
+            ArenaListId<Lane>,
+            SemanticSequenceIdentity,
+            SequenceSummaryWork,
+        ),
+        ForkArenaError,
+    > {
+        self.validate_list(pool, list)?;
+        if selected.start > selected.end || selected.end > list.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        scratch.clear();
+        if selected.is_empty() {
+            return Ok((
+                self.empty_list(),
+                SemanticSequenceIdentity::empty(),
+                SequenceSummaryWork::default(),
+            ));
+        }
+        let mut prior_end = 0_usize;
+        let mut summary = SemanticSequenceIdentity::empty();
+        let mut work = SequenceSummaryWork::default();
+        for index in 0..list.count {
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let entry_end = entry.cumulative_end as usize;
+            let overlap_start = selected.start.max(prior_end);
+            let overlap_end = selected.end.min(entry_end);
+            if overlap_start < overlap_end {
+                let range = ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
+                        arena: self.owner,
+                        raw: entry.range.first,
+                        _lane: PhantomData,
+                    }),
+                    start: entry.range.start,
+                    len: entry.range.len,
+                    sequence_summary: entry.sequence_summary,
+                };
+                let (range, range_summary, range_work) = self.slice_range_summarized(
+                    pool,
+                    range,
+                    overlap_start - prior_end,
+                    overlap_end - overlap_start,
+                    &mut item_identity,
+                )?;
+                scratch.push(range);
+                summary = summary.concat(range_summary);
+                work.add(range_work);
+            }
+            prior_end = entry_end;
+            if prior_end >= selected.end {
+                break;
+            }
+        }
+        let list = self.compose_ranges(pool, scratch)?;
+        Ok((list, summary, work))
     }
 
     fn compose_ranges(
@@ -2616,6 +2866,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 RangeEntry {
                     range: raw,
                     cumulative_end: cumulative,
+                    sequence_summary: range.sequence_summary,
                 },
             )?;
             if first.is_none() {
@@ -2663,7 +2914,123 @@ impl<T, Lane> ForkArena<T, Lane> {
             }),
             start: (absolute % capacity) as u32,
             len: u32::try_from(len).map_err(|_| ForkArenaError::CapacityOverflow)?,
+            sequence_summary: (start == 0 && len == range.len())
+                .then_some(range.sequence_summary)
+                .flatten(),
         })
+    }
+
+    fn slice_range_summarized(
+        &self,
+        pool: &ChunkPool<T>,
+        range: ArenaRange<Lane>,
+        start: usize,
+        len: usize,
+        item_identity: &mut impl FnMut(&T) -> u64,
+    ) -> Result<
+        (
+            ArenaRange<Lane>,
+            SemanticSequenceIdentity,
+            SequenceSummaryWork,
+        ),
+        ForkArenaError,
+    > {
+        let mut selected = self.slice_range(pool, range, start, len)?;
+        if selected.is_empty() {
+            return Ok((
+                selected,
+                SemanticSequenceIdentity::empty(),
+                SequenceSummaryWork::default(),
+            ));
+        }
+        let end = start + len;
+        let (summary, work) = if start == 0 && len == range.len() {
+            (
+                range
+                    .sequence_summary
+                    .ok_or(ForkArenaError::IdentityModeMismatch)?,
+                SequenceSummaryWork {
+                    combined_summaries: 1,
+                    ..SequenceSummaryWork::default()
+                },
+            )
+        } else if start == 0 {
+            let suffix = self.slice_range(pool, range, end, range.len() - end)?;
+            let (suffix_summary, mut work) = self.summarize_range(pool, suffix, item_identity)?;
+            work.combined_summaries = work.combined_summaries.saturating_add(1);
+            (
+                range
+                    .sequence_summary
+                    .ok_or(ForkArenaError::IdentityModeMismatch)?
+                    .without_suffix(suffix_summary),
+                work,
+            )
+        } else if end == range.len() {
+            let prefix = self.slice_range(pool, range, 0, start)?;
+            let (prefix_summary, mut work) = self.summarize_range(pool, prefix, item_identity)?;
+            work.combined_summaries = work.combined_summaries.saturating_add(1);
+            (
+                range
+                    .sequence_summary
+                    .ok_or(ForkArenaError::IdentityModeMismatch)?
+                    .without_prefix(prefix_summary),
+                work,
+            )
+        } else {
+            self.summarize_range(pool, selected, item_identity)?
+        };
+        selected.sequence_summary = Some(summary);
+        Ok((selected, summary, work))
+    }
+
+    fn summarize_range(
+        &self,
+        pool: &ChunkPool<T>,
+        range: ArenaRange<Lane>,
+        item_identity: &mut impl FnMut(&T) -> u64,
+    ) -> Result<(SemanticSequenceIdentity, SequenceSummaryWork), ForkArenaError> {
+        self.validate_range(pool, range)?;
+        let first = range.first.ok_or(ForkArenaError::InvalidRange)?;
+        let first_position = self
+            .resolved_position(false, first.raw)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let mut remaining = range.len();
+        let mut position = first_position;
+        let mut offset = range.start as usize;
+        let mut summary = SemanticSequenceIdentity::empty();
+        let mut work = SequenceSummaryWork::default();
+        while remaining != 0 {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            let used = pool.payload.used(key, self.owner)? as usize;
+            if offset >= used {
+                return Err(ForkArenaError::InvalidRange);
+            }
+            let selected = (used - offset).min(remaining);
+            let part = if offset == 0 && selected == used {
+                work.combined_summaries = work.combined_summaries.saturating_add(1);
+                pool.payload
+                    .sequence_summary(key, self.owner)?
+                    .ok_or(ForkArenaError::IdentityModeMismatch)?
+            } else {
+                let mut part = SemanticSequenceIdentity::empty();
+                for local in offset..offset + selected {
+                    let value = pool
+                        .payload
+                        .get(key, self.owner, local as u32)
+                        .ok_or(ForkArenaError::InvalidRange)?;
+                    part.push_back(item_identity(value));
+                    work.hashed_values = work.hashed_values.saturating_add(1);
+                }
+                part
+            };
+            summary = summary.concat(part);
+            remaining -= selected;
+            position += 1;
+            offset = 0;
+        }
+        Ok((summary, work))
     }
 
     pub fn list<'a>(
@@ -2727,6 +3094,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
             cumulative_end = entry.cumulative_end;
             self.validate_raw_range(pool, entry.range)?;
+            if entry
+                .sequence_summary
+                .is_some_and(|summary| summary.len() != entry.range.len as usize)
+            {
+                return Err(ForkArenaError::IdentityModeMismatch);
+            }
         }
         if cumulative_end != list.len {
             return Err(ForkArenaError::InvalidRange);
@@ -2825,9 +3198,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         scratch: &mut Vec<ArenaRange<Lane>>,
     ) -> Result<(), ForkArenaError> {
         for index in 0..list.count {
-            let raw = self
-                .descriptor_entry(pool, list.first, list.start, index)?
-                .range;
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let raw = entry.range;
             scratch.push(ArenaRange {
                 arena: self.owner,
                 first: Some(ChunkId {
@@ -2837,6 +3209,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 }),
                 start: raw.start,
                 len: raw.len,
+                sequence_summary: entry.sequence_summary,
             });
         }
         Ok(())
@@ -2862,17 +3235,42 @@ pub struct ForkArenaBuilder<'a, T, Lane> {
     operation: OperationMark<Lane>,
     first: Option<(RawChunkKey, u32)>,
     len: u32,
+    sequence_summary: Option<SemanticSequenceIdentity>,
     finished: bool,
 }
 
 impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
     pub fn push(&mut self, value: T) -> Result<(), ForkArenaError> {
-        let coordinate = self.arena.append_payload(self.pool, value)?;
+        self.push_with_identity(value, None)
+    }
+
+    pub(crate) fn push_summarized(
+        &mut self,
+        value: T,
+        item_identity: u64,
+    ) -> Result<(), ForkArenaError> {
+        self.push_with_identity(value, Some(item_identity))
+    }
+
+    fn push_with_identity(
+        &mut self,
+        value: T,
+        item_identity: Option<u64>,
+    ) -> Result<(), ForkArenaError> {
+        let coordinate = self.arena.append_payload(self.pool, value, item_identity)?;
         self.first.get_or_insert(coordinate);
         self.len = self
             .len
             .checked_add(1)
             .ok_or(ForkArenaError::CapacityOverflow)?;
+        match (&mut self.sequence_summary, item_identity) {
+            (Some(summary), Some(item_identity)) => summary.push_back(item_identity),
+            (None, Some(item_identity)) if self.len == 1 => {
+                self.sequence_summary = Some(SemanticSequenceIdentity::from_raw(item_identity, 1));
+            }
+            (None, None) => {}
+            _ => return Err(ForkArenaError::IdentityModeMismatch),
+        }
         Ok(())
     }
 
@@ -2887,6 +3285,7 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
                 }),
                 start,
                 len: self.len,
+                sequence_summary: self.sequence_summary,
             },
             None => ArenaRange::empty(self.arena.owner),
         };
@@ -2990,6 +3389,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             }),
             start: entry.range.start,
             len: entry.range.len,
+            sequence_summary: entry.sequence_summary,
         };
         let local = index - prior;
         self.range_get(range, local)

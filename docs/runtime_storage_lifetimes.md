@@ -553,6 +553,19 @@ page-material counters distinguish actual appends from published-source copies,
 and address-stability tests exercise both the zero-copy route and a nonzero
 negative control.
 
+Demand-enabled page identity uses the existing composable polynomial sequence
+root. Original appends maintain one whole-used-chunk summary in coarse payload
+metadata, while canonical range publication stores one exact range summary in
+the descriptor entry. A long direct subrange hashes only its two partial
+boundary chunks and combines summaries for its interior; a range-sequence
+subrange combines whole entry summaries and handles only its two partial entry
+boundaries. Prefix/suffix subtraction keeps identity independent of range and
+chunk layout. Partial operation marks retain the payload-tail summary, and
+whole-chunk promotion or accepted/candidate settlement moves summaries with the
+same envelopes. No per-node prefix table, root registry, or source payload copy
+participates. Without explicit identity demand, these paths do no hash or
+summary work.
+
 The page builder publishes four independent page-material roots for its
 contribution list, current page, page discards, and split discards. The
 aggregate checkpoint records those roots directly; it never composes them into

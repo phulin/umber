@@ -3254,19 +3254,6 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page sequence range belongs to the live page arena")
     }
 
-    /// Borrows an immutable logical subrange using the identity accumulated
-    /// by the caller while it was already traversing that range.
-    pub fn slice_page_node_sequence_with_identity(
-        &mut self,
-        sequence: crate::node_arena::PageNodeSequenceId,
-        range: core::ops::Range<usize>,
-        identity: Option<crate::node_sequence::SemanticSequenceIdentity>,
-    ) -> crate::node_arena::PageNodeSequenceId {
-        self.page_nodes
-            .slice_with_identity(sequence, range, identity)
-            .expect("page sequence range belongs to the live page arena")
-    }
-
     #[must_use]
     pub fn page_node_semantic_identity_enabled(&self) -> bool {
         self.page_nodes.semantic_identity_enabled()

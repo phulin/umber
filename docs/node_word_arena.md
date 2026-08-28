@@ -19,6 +19,19 @@ The page-semantic wrapper adds one niche-packed maintained identity scalar and
 is capped at 32 bytes, preserving the recursive-node and dense-journal width
 budgets.
 
+When incremental convergence requests semantic identity before publication,
+the existing version-1 polynomial sequence algebra is maintained during the
+original node append. Each payload chunk keeps one whole-used-chunk summary in
+its coarse metadata, and every canonical range entry keeps the exact summary
+of that range. Slicing a long range combines whole-chunk summaries and hashes
+payload only in its two partial boundary chunks; slicing a range sequence uses
+stored summaries for every whole entry. Prefix and suffix subtraction preserve
+the same identity when the selected boundary aligns with a range entry, so the
+answer does not depend on descriptor or physical chunk layout. This adds no
+per-node prefix table, alternate list topology, or root registry. When identity
+is disabled, append, slice, compose, and active-range retention perform zero
+node hashing and zero summary combination.
+
 `ArenaListView` is a copy-only direct borrow of both the coordinate lane and
 the physical pool. Its returned node references carry the pool borrow rather
 than the temporary view borrow. The existing `NodeCursor` therefore retains
@@ -107,6 +120,10 @@ restricted to local failure. It cannot convert into a retained mark.
 Consuming every builder and sealing both tails yields an opaque
 `SealedBoundary<L>`, which alone can construct `CheckpointMark<L>`. A retained
 mark therefore contains only whole-chunk counts and stable terminal keys.
+The operation mark also carries the optional scalar summary of its partial
+payload tail, so truncation restores payload and identity metadata atomically.
+Whole-chunk detach, reattach, acceptance, pruning, and typed-lane promotion move
+the summary-bearing chunk and descriptor envelopes with their payload.
 Operation and page restore follows this order:
 
 1. validate the state journal, mode/page roots, and arena cursor without
@@ -207,6 +224,13 @@ Node semantic equality hashes logical node kind, semantic scalar and payload
 values, and recursively resolved child content. Arena row number, allocation
 order, cursor, capacity, diagnostic origin, and coarse owner identity are not
 semantic.
+
+`identity_nodes_hashed` and `identity_summaries_combined` distinguish boundary
+payload work from stored-summary work. The long-middle-range gate bounds the
+former by two chunk capacities, requires the latter to cover the interior, and
+keeps `source_nodes_copied` at zero. Disabled-demand coverage requires both
+identity counters to remain zero across publication, slicing, composition, and
+active-range retention.
 
 Formats, memos, output DTOs, and process or thread messages use their own dense
 local indices. Cold detachment assigns those indices from explicit roots;

@@ -21,7 +21,9 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     let mut keys = Vec::new();
     for value in 0..17_u64 {
         let key = pool.payload.allocate(7).expect("chunk allocation");
-        pool.payload.append(key, 7, value).expect("chunk append");
+        pool.payload
+            .append(key, 7, value, None)
+            .expect("chunk append");
         keys.push(key);
     }
     assert_eq!(pool.page_count(), 2);
@@ -644,6 +646,47 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
         ForkArenaError::InvalidRange
     );
     assert!(page.counters().chunks_promoted > 0);
+    assert_eq!(page.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn sequence_summaries_move_atomically_with_promoted_chunks_and_descriptors() {
+    const CHUNK_VALUES: usize = 8;
+    let mut pool =
+        ChunkPool::<u64>::with_chunk_bytes(std::mem::size_of::<Option<u64>>() * CHUNK_VALUES);
+    let mut active = ForkArena::<u64, ActiveLane>::new();
+    let mut page = active.empty_lane::<PageLane>();
+    let region = active.begin_batch(&mut pool).expect("batch region");
+    let source = {
+        let mut builder = active.begin_builder(&mut pool).expect("builder");
+        for value in 0..64_u64 {
+            builder
+                .push_summarized(value, value.wrapping_add(100))
+                .expect("summarized append");
+        }
+        builder.seal().expect("source list")
+    };
+    let batch = active
+        .seal_batch(&mut pool, region, vec![source])
+        .expect("sealed batch");
+    let promoted = active
+        .promote_batch_into(&mut pool, &mut page, batch)
+        .expect("promote summary storage")[0];
+    let mut scratch = Vec::new();
+    let (middle, summary, work) = page
+        .slice_list_summarized(&mut pool, promoted, 3..61, &mut scratch, |value| {
+            value.wrapping_add(100)
+        })
+        .expect("summarized promoted slice");
+    let mut expected = crate::node_sequence::SemanticSequenceIdentity::empty();
+    for value in 3..61_u64 {
+        expected.push_back(value.wrapping_add(100));
+    }
+
+    assert_eq!(summary, expected);
+    assert_eq!(page.list(&pool, middle).expect("middle").len(), 58);
+    assert!(work.hashed_values <= (2 * CHUNK_VALUES) as u64);
+    assert!(work.combined_summaries > 0);
     assert_eq!(page.counters().source_nodes_copied, 0);
 }
 

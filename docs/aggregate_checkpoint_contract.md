@@ -148,6 +148,14 @@ Enabled ordered lanes compose accepted/current and contribution
 front/prior/back roots in bounded scalar work. Checkpoint capture copies the
 mode root and publishes the page root only under exact-identity demand; neither
 path hashes a timeline, frame, cursor, owner, arena row, or payload scan.
+Page-material publication maintains the same version-1 composable sequence
+identity in coarse payload-chunk summaries and canonical range descriptors.
+Arbitrary list slices and active retained ranges combine whole stored summaries
+and hash only values in partial boundary chunks; list composition combines
+already maintained roots. The metadata detaches, reattaches, promotes, accepts,
+rejects, and prunes in the same chunk or descriptor envelope as its canonical
+payload. It is neither a per-node prefix index nor a registered root. Disabled
+batch owners perform zero identity-node hashes and zero summary combinations.
 Command, World, hyphenation, dependency, source, font, and core now publish
 demand-enabled canonical roots beside the existing mode, page, and PDF roots.
 Selection occurs before incremental JobStart setup; ordinary batch owners do

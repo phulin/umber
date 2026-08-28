@@ -271,7 +271,6 @@ pub struct PageMaterialArena {
     range_scratch: Vec<ArenaRange<PageMaterialLane>>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: bool,
-    semantic_hash_work: u64,
 }
 
 impl Default for PageMaterialArena {
@@ -298,7 +297,6 @@ impl PageMaterialArena {
             range_scratch: Vec::new(),
             coordinate_scratch: Vec::new(),
             semantic_identity_enabled: false,
-            semantic_hash_work: 0,
         }
     }
 
@@ -313,7 +311,16 @@ impl PageMaterialArena {
 
     #[must_use]
     pub const fn semantic_hash_work(&self) -> u64 {
-        self.semantic_hash_work
+        self.region.pub_arena.counters().identity_nodes_hashed
+    }
+
+    /// Stored whole-range and whole-chunk summaries combined for identity.
+    #[must_use]
+    pub const fn semantic_summary_work(&self) -> u64 {
+        self.region
+            .pub_arena
+            .counters()
+            .identity_summaries_combined
     }
 
     #[must_use]
@@ -345,7 +352,6 @@ impl PageMaterialArena {
         let mut identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
-        let mut semantic_hash_work = 0_u64;
         let arena = self.region.pub_arena.region_identity();
         let mut builder = self.region.pub_arena.begin_builder(&mut self.pool.chunks)?;
         for node in nodes {
@@ -353,13 +359,22 @@ impl PageMaterialArena {
                 return Err(ForkArenaError::InvalidRegion);
             }
             if let Some(identity) = &mut identity {
-                identity.push_back(semantic_node_identity(&node));
-                semantic_hash_work = semantic_hash_work.saturating_add(1);
+                let item_identity = semantic_node_identity(&node);
+                identity.push_back(item_identity);
+                builder.push_summarized(node, item_identity)?;
+            } else {
+                builder.push(node)?;
             }
-            builder.push(node)?;
         }
         let coordinate = builder.seal()?;
-        self.semantic_hash_work = self.semantic_hash_work.saturating_add(semantic_hash_work);
+        if let Some(identity) = identity {
+            self.region
+                .pub_arena
+                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                    hashed_values: identity.len() as u64,
+                    ..crate::fork_arena::SequenceSummaryWork::default()
+                });
+        }
         Ok(PageListId::from_parts(coordinate, identity))
     }
 
@@ -399,12 +414,30 @@ impl PageMaterialArena {
             return Err(ForkArenaError::InvalidRegion);
         }
         if let Some(identity) = &mut builder.identity {
-            identity.push_back(semantic_node_identity(&node));
-            self.semantic_hash_work = self.semantic_hash_work.saturating_add(1);
+            let item_identity = semantic_node_identity(&node);
+            identity.push_back(item_identity);
+            let result = self.region.pub_arena.push_active_list_summarized(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                node,
+                item_identity,
+            );
+            if result.is_ok() {
+                self.region
+                    .pub_arena
+                    .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                        hashed_values: 1,
+                        ..crate::fork_arena::SequenceSummaryWork::default()
+                    });
+            }
+            result
+        } else {
+            self.region.pub_arena.push_active_list(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                node,
+            )
         }
-        self.region
-            .pub_arena
-            .push_active_list(&mut self.pool.chunks, &mut builder.inner, node)
     }
 
     pub fn append_to_active_list(
@@ -422,6 +455,12 @@ impl PageMaterialArena {
                 list.sequence_identity()
                     .expect("demand-enabled page list carries identity"),
             );
+            self.region
+                .pub_arena
+                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                    combined_summaries: 1,
+                    ..crate::fork_arena::SequenceSummaryWork::default()
+                });
         }
         Ok(())
     }
@@ -433,21 +472,24 @@ impl PageMaterialArena {
         selected: Range<usize>,
     ) -> Result<(), ForkArenaError> {
         let selected_identity = if self.semantic_identity_enabled {
-            let view = self.list(list)?;
-            Some(SemanticSequenceIdentity::from_nodes(
-                selected
-                    .clone()
-                    .map(|index| view.get(index).expect("validated list range")),
-            ))
+            let (identity, work) = self.region.pub_arena.append_active_list_range_summarized(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                list.coordinate(),
+                selected,
+                semantic_node_identity,
+            )?;
+            self.region.pub_arena.record_identity_work(work);
+            Some(identity)
         } else {
+            self.region.pub_arena.append_active_list_range(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                list.coordinate(),
+                selected,
+            )?;
             None
         };
-        self.region.pub_arena.append_active_list_range(
-            &mut self.pool.chunks,
-            &mut builder.inner,
-            list.coordinate(),
-            selected,
-        )?;
         if let (Some(identity), Some(selected_identity)) =
             (&mut builder.identity, selected_identity)
         {
@@ -501,50 +543,6 @@ impl PageMaterialArena {
         } else {
             None
         };
-        self.compose_with_identity(lists, identity)
-    }
-
-    pub fn slice_sequence(
-        &mut self,
-        list: PageListId,
-        selected: Range<usize>,
-        _scratch: &mut Vec<PageListId>,
-    ) -> Result<PageListId, ForkArenaError> {
-        let identity = if self.semantic_identity_enabled {
-            let view = self.list(list)?;
-            Some(SemanticSequenceIdentity::from_nodes(
-                selected
-                    .clone()
-                    .map(|index| view.get(index).expect("validated list range")),
-            ))
-        } else {
-            None
-        };
-        self.slice_with_identity(list, selected, identity)
-    }
-
-    pub fn slice_with_identity(
-        &mut self,
-        list: PageListId,
-        selected: Range<usize>,
-        identity: Option<SemanticSequenceIdentity>,
-    ) -> Result<PageListId, ForkArenaError> {
-        assert_eq!(self.semantic_identity_enabled, identity.is_some());
-        let coordinate = self.region.pub_arena.slice_list(
-            &mut self.pool.chunks,
-            list.coordinate(),
-            selected,
-            &mut self.range_scratch,
-        )?;
-        Ok(PageListId::from_parts(coordinate, identity))
-    }
-
-    pub fn compose_with_identity(
-        &mut self,
-        lists: &[PageListId],
-        identity: Option<SemanticSequenceIdentity>,
-    ) -> Result<PageListId, ForkArenaError> {
-        assert_eq!(self.semantic_identity_enabled, identity.is_some());
         self.coordinate_scratch.clear();
         self.coordinate_scratch
             .extend(lists.iter().map(|list| list.coordinate()));
@@ -553,7 +551,42 @@ impl PageMaterialArena {
             &self.coordinate_scratch,
             &mut self.range_scratch,
         )?;
+        if identity.is_some() {
+            self.region
+                .pub_arena
+                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                    combined_summaries: lists.len() as u64,
+                    ..crate::fork_arena::SequenceSummaryWork::default()
+                });
+        }
         Ok(PageListId::from_parts(coordinate, identity))
+    }
+
+    pub fn slice_sequence(
+        &mut self,
+        list: PageListId,
+        selected: Range<usize>,
+        _scratch: &mut Vec<PageListId>,
+    ) -> Result<PageListId, ForkArenaError> {
+        if self.semantic_identity_enabled {
+            let (coordinate, identity, work) = self.region.pub_arena.slice_list_summarized(
+                &mut self.pool.chunks,
+                list.coordinate(),
+                selected,
+                &mut self.range_scratch,
+                semantic_node_identity,
+            )?;
+            self.region.pub_arena.record_identity_work(work);
+            Ok(PageListId::from_parts(coordinate, Some(identity)))
+        } else {
+            let coordinate = self.region.pub_arena.slice_list(
+                &mut self.pool.chunks,
+                list.coordinate(),
+                selected,
+                &mut self.range_scratch,
+            )?;
+            Ok(PageListId::from_parts(coordinate, None))
+        }
     }
 
     pub fn list(

@@ -96,6 +96,30 @@ impl SemanticSequenceIdentity {
     }
 
     #[must_use]
+    pub(crate) fn without_prefix(self, prefix: Self) -> Self {
+        assert!(prefix.len <= self.len);
+        Self {
+            hash: self
+                .hash
+                .wrapping_sub(prefix.hash)
+                .wrapping_mul(sequence_inverse_power(prefix.len)),
+            len: self.len - prefix.len,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn without_suffix(self, suffix: Self) -> Self {
+        assert!(suffix.len <= self.len);
+        let retained_len = self.len - suffix.len;
+        Self {
+            hash: self
+                .hash
+                .wrapping_sub(suffix.hash.wrapping_mul(sequence_power(retained_len))),
+            len: retained_len,
+        }
+    }
+
+    #[must_use]
     pub const fn len(self) -> usize {
         self.len
     }
@@ -113,6 +137,19 @@ impl SemanticSequenceIdentity {
 
 fn sequence_power(mut exponent: usize) -> u64 {
     let mut base = SEQUENCE_MULTIPLIER;
+    let mut power = 1_u64;
+    while exponent != 0 {
+        if exponent & 1 != 0 {
+            power = power.wrapping_mul(base);
+        }
+        base = base.wrapping_mul(base);
+        exponent >>= 1;
+    }
+    power
+}
+
+fn sequence_inverse_power(mut exponent: usize) -> u64 {
+    let mut base = SEQUENCE_MULTIPLIER_INVERSE;
     let mut power = 1_u64;
     while exponent != 0 {
         if exponent & 1 != 0 {
@@ -917,6 +954,26 @@ mod tests {
             right_hit: false,
             origins: vec![OriginId::UNKNOWN; orig.len()],
         }
+    }
+
+    #[test]
+    fn sequence_identity_prefix_and_suffix_subtraction_preserve_middle() {
+        let mut whole = SemanticSequenceIdentity::empty();
+        let mut prefix = SemanticSequenceIdentity::empty();
+        let mut middle = SemanticSequenceIdentity::empty();
+        let mut suffix = SemanticSequenceIdentity::empty();
+        for item in 10..80_u64 {
+            whole.push_back(item);
+            match item {
+                10..20 => prefix.push_back(item),
+                20..70 => middle.push_back(item),
+                _ => suffix.push_back(item),
+            }
+        }
+
+        assert_eq!(whole.without_prefix(prefix).without_suffix(suffix), middle);
+        assert_eq!(whole.without_suffix(suffix).without_prefix(prefix), middle);
+        assert_eq!(prefix.concat(middle).concat(suffix), whole);
     }
 
     #[test]

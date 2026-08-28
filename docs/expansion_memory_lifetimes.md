@@ -112,6 +112,16 @@ the canonical ranges directly. `ParagraphTape`, alignment setting, and
 `LineMaterializer` carry only list roots and compact scalar/index scratch; they
 never own or materialize the source node lane.
 
+If convergence identity is enabled before publication, original node append
+also maintains one composable whole-chunk summary and descriptor publication
+stores the exact summary of each canonical range. Slice and retained-range
+identity combine those summaries, hashing payload only in bounded partial
+boundary chunks; compose uses the already maintained list roots. Operation
+rollback restores the partial-tail summary, while promotion and checkpoint
+settlement move summary metadata in the same coarse envelopes. The exposed
+identity node-hash and summary-combine counters prove this sublinear source
+work, disabled-demand zero work, and unchanged `source_nodes_copied`.
+
 Alignment rows and cells are transient candidate material and cannot occur at
 an eligible retained boundary. Cell packaging moves the completed mode-list
 root into the unset child, row packaging moves that child root into the

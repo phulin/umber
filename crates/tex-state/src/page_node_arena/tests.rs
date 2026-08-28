@@ -29,6 +29,7 @@ fn disabled_demand_performs_no_semantic_hash_work() {
         .expect("publish");
 
     assert_eq!(arena.semantic_hash_work(), 0);
+    assert_eq!(arena.semantic_summary_work(), 0);
     assert_eq!(list.semantic_identity(), None);
     assert_eq!(arena.counters().source_nodes_copied, 0);
     assert_eq!(arena.counters().new_semantic_nodes, 3);
@@ -62,6 +63,33 @@ fn parent_nodes_reject_foreign_region_children_without_partial_publication() {
     assert_eq!(local.len(), 0);
     assert_eq!(local.counters().source_nodes_copied, 0);
     assert_eq!(local.semantic_hash_work(), before_hash_work);
+}
+
+#[test]
+fn disabled_demand_keeps_range_and_composition_identity_work_at_zero() {
+    let mut arena =
+        PageMaterialArena::with_chunk_bytes(std::mem::size_of::<Option<PageMaterialNode>>() * 8);
+    let whole = arena
+        .publish_owned(penalties(&(0..128).collect::<Vec<_>>()))
+        .expect("publish");
+    let middle = arena
+        .slice_sequence(whole, 3..125, &mut Vec::new())
+        .expect("middle slice");
+    let composed = arena.compose_sequences(&[middle, middle]).expect("compose");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .append_range_to_active_list(&mut builder, composed, 5..239)
+        .expect("append range");
+    let _ = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize builder");
+
+    assert_eq!(arena.semantic_hash_work(), 0);
+    assert_eq!(arena.semantic_summary_work(), 0);
+    assert_eq!(arena.counters().identity_nodes_hashed, 0);
+    assert_eq!(arena.counters().identity_summaries_combined, 0);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 
 #[test]
@@ -201,14 +229,12 @@ fn identity_is_preserved_across_build_split_and_compose() {
     let left_nodes = &nodes[..2];
     let right_nodes = &nodes[2..];
     let left = arena
-        .slice_with_identity(whole, 0..2, Some(identity(left_nodes)))
+        .slice_sequence(whole, 0..2, &mut Vec::new())
         .expect("split left");
     let right = arena
-        .slice_with_identity(whole, 2..4, Some(identity(right_nodes)))
+        .slice_sequence(whole, 2..4, &mut Vec::new())
         .expect("split right");
-    let recomposed = arena
-        .compose_with_identity(&[left, right], Some(identity(&nodes)))
-        .expect("compose");
+    let recomposed = arena.compose_sequences(&[left, right]).expect("compose");
 
     assert_eq!(whole.semantic_identity(), Some(identity(&nodes).raw()));
     assert_eq!(left.semantic_identity(), Some(identity(left_nodes).raw()));
@@ -216,6 +242,129 @@ fn identity_is_preserved_across_build_split_and_compose() {
     assert_eq!(recomposed.semantic_identity(), whole.semantic_identity());
     assert_eq!(resolved(&arena, recomposed), nodes);
     assert_eq!(arena.semantic_hash_work(), 4);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn long_middle_subrange_hashes_only_two_bounded_chunk_edges() {
+    const CHUNK_VALUES: usize = 8;
+    let mut arena = PageMaterialArena::with_chunk_bytes(
+        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES,
+    );
+    arena.enable_semantic_identity();
+    let nodes = penalties(&(0..1024).collect::<Vec<_>>());
+    let whole = arena
+        .publish_owned(nodes.clone())
+        .expect("publish long list");
+    let hash_before = arena.semantic_hash_work();
+    let summaries_before = arena.semantic_summary_work();
+
+    let middle = arena
+        .slice_sequence(whole, 3..1021, &mut Vec::new())
+        .expect("slice long middle");
+
+    let hashed = arena.semantic_hash_work() - hash_before;
+    let summaries = arena.semantic_summary_work() - summaries_before;
+    assert_eq!(
+        middle.semantic_identity(),
+        Some(identity(&nodes[3..1021]).raw())
+    );
+    assert!(
+        hashed <= (2 * CHUNK_VALUES) as u64,
+        "only two partial boundary chunks may hash payload: {hashed}"
+    );
+    assert!(hashed < middle.len() as u64);
+    assert!(summaries > 100, "long interior must use chunk summaries");
+
+    let append_hash_before = arena.semantic_hash_work();
+    let append_summaries_before = arena.semantic_summary_work();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .append_range_to_active_list(&mut builder, whole, 3..1021)
+        .expect("append long middle");
+    let appended = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize retained range");
+    assert_eq!(appended.semantic_identity(), middle.semantic_identity());
+    assert!(
+        arena.semantic_hash_work() - append_hash_before <= (2 * CHUNK_VALUES) as u64,
+        "active range append may hash only its boundary chunks"
+    );
+    assert!(arena.semantic_summary_work() > append_summaries_before);
+
+    let compose_hash_before = arena.semantic_hash_work();
+    let doubled = arena
+        .compose_sequences(&[middle, appended])
+        .expect("compose summarized lists");
+    let mut expected = nodes[3..1021].to_vec();
+    expected.extend_from_slice(&nodes[3..1021]);
+    assert_eq!(doubled.semantic_identity(), Some(identity(&expected).raw()));
+    assert_eq!(arena.semantic_hash_work(), compose_hash_before);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn multi_range_slice_identity_is_independent_of_descriptor_boundaries() {
+    const CHUNK_VALUES: usize = 8;
+    let mut arena = PageMaterialArena::with_chunk_bytes(
+        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES,
+    );
+    arena.enable_semantic_identity();
+    let nodes = penalties(&(0..1024).collect::<Vec<_>>());
+    let whole = arena.publish_owned(nodes.clone()).expect("publish");
+    let left = arena
+        .slice_sequence(whole, 0..300, &mut Vec::new())
+        .expect("left");
+    let right = arena
+        .slice_sequence(whole, 700..1024, &mut Vec::new())
+        .expect("right");
+    let composite = arena.compose_sequences(&[left, right]).expect("composite");
+    let hash_before = arena.semantic_hash_work();
+    let selected = arena
+        .slice_sequence(composite, 2..622, &mut Vec::new())
+        .expect("cross-range selection");
+    let mut expected = nodes[2..300].to_vec();
+    expected.extend_from_slice(&nodes[700..1022]);
+
+    assert_eq!(resolved(&arena, selected), expected);
+    assert_eq!(
+        selected.semantic_identity(),
+        Some(identity(&expected).raw())
+    );
+    assert!(
+        arena.semantic_hash_work() - hash_before <= (2 * CHUNK_VALUES) as u64,
+        "only the two physical boundary chunks may be rehashed"
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn partial_operation_restore_restores_payload_chunk_summary() {
+    let mut arena =
+        PageMaterialArena::with_chunk_bytes(std::mem::size_of::<Option<PageMaterialNode>>() * 8);
+    arena.enable_semantic_identity();
+    let retained_nodes = penalties(&[1, 2, 3]);
+    let retained = arena
+        .publish_owned(retained_nodes.clone())
+        .expect("retained prefix");
+    let operation = arena.operation_mark();
+    let rejected = arena
+        .publish_owned(penalties(&[8, 9]))
+        .expect("operation suffix");
+    assert!(arena.contains(rejected));
+
+    arena
+        .restore_operation(operation)
+        .expect("restore partial payload tail");
+    assert!(!arena.contains(rejected));
+    let restored = arena
+        .slice_sequence(retained, 1..3, &mut Vec::new())
+        .expect("slice restored prefix");
+    assert_eq!(
+        restored.semantic_identity(),
+        Some(identity(&retained_nodes[1..]).raw())
+    );
     assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 
