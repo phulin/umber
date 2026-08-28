@@ -14,7 +14,10 @@ use crate::fork_arena::{
     ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
 };
 use crate::node::Node;
-use crate::node_region::{NodePool, NodeRegion, PageRole};
+use crate::node_region::{
+    DurableRole, NodePool, NodeRegion, OwnedNodeClosure, PageRole, copy_closure_into,
+    copy_region_root_into, transfer_closure_into,
+};
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
 type PageMaterialNode = Node<PageListId>;
@@ -271,6 +274,20 @@ pub struct PageMaterialArena {
     range_scratch: Vec<ArenaRange<PageMaterialLane>>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: bool,
+    durable_transitions: DurableTransitionCounters,
+}
+
+/// Move-only durable node closure owned by an eqtb or PDF carrier.
+pub(crate) type DurableNodeClosure = OwnedNodeClosure<DurableRole>;
+
+/// Demand-free observations of explicit durable lifetime transitions.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DurableTransitionCounters {
+    pub(crate) page_to_durable_nodes_copied: u64,
+    pub(crate) tex_copy_nodes_copied: u64,
+    pub(crate) history_preservation_nodes_copied: u64,
+    pub(crate) nested_closure_nodes_copied: u64,
+    pub(crate) node_closure_scan_nodes: u64,
 }
 
 impl Default for PageMaterialArena {
@@ -297,6 +314,7 @@ impl PageMaterialArena {
             range_scratch: Vec::new(),
             coordinate_scratch: Vec::new(),
             semantic_identity_enabled: false,
+            durable_transitions: DurableTransitionCounters::default(),
         }
     }
 
@@ -335,6 +353,11 @@ impl PageMaterialArena {
     #[must_use]
     pub(crate) const fn region_id(&self) -> crate::node_region::NodeRegionId {
         self.region.id()
+    }
+
+    #[must_use]
+    pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
+        self.durable_transitions
     }
 
     #[cfg(test)]
@@ -387,6 +410,148 @@ impl PageMaterialArena {
             .pub_arena
             .record_source_nodes_copied(nodes.len());
         self.publish_owned(nodes)
+    }
+
+    /// Cold-copies a page root into a fresh self-contained durable region.
+    ///
+    /// Page-region carrier migration will replace this explicit transition
+    /// with whole-envelope movement when the selected closure is independently
+    /// transferable. The current compatibility page region is larger than one
+    /// box, so treating this as a move would create a cross-owner coordinate.
+    pub(crate) fn copy_page_root_to_durable(
+        &mut self,
+        root: PageListId,
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
+        let source = self.region.root(&self.pool, root)?;
+        let mut durable = self.pool.start_region::<DurableRole>()?;
+        let copied = match copy_region_root_into(&mut self.pool, &self.region, source, &mut durable) {
+            Ok(root) => root,
+            Err(error) => {
+                assert!(
+                    self.pool.retire_region(durable).is_ok(),
+                    "empty durable copy destination retires"
+                );
+                return Err(error);
+            }
+        };
+        let copied_nodes = durable.counters().source_nodes_copied;
+        let closure = durable
+            .into_closure(&self.pool, copied)
+            .map_err(|(error, region)| {
+                assert!(
+                    self.pool.retire_region(region).is_ok(),
+                    "validated durable copy destination retires"
+                );
+                error
+            })?;
+        self.durable_transitions.page_to_durable_nodes_copied = self
+            .durable_transitions
+            .page_to_durable_nodes_copied
+            .saturating_add(copied_nodes);
+        self.durable_transitions.node_closure_scan_nodes = self
+            .durable_transitions
+            .node_closure_scan_nodes
+            .saturating_add(copied_nodes);
+        Ok(closure)
+    }
+
+    /// Consumes a unique durable owner and transfers its exact addresses into
+    /// the current page region.
+    pub(crate) fn move_durable_to_page(
+        &mut self,
+        closure: DurableNodeClosure,
+    ) -> Result<PageListId, (ForkArenaError, DurableNodeClosure)> {
+        transfer_closure_into(&mut self.pool, closure, &mut self.region)
+            .map(|root| root.list())
+            .map_err(|failure| (failure.error, failure.closure))
+    }
+
+    /// Implements TeX's explicit recursive copy while retaining the source
+    /// durable owner.
+    pub(crate) fn copy_durable_to_page(
+        &mut self,
+        closure: &DurableNodeClosure,
+    ) -> Result<PageListId, ForkArenaError> {
+        let before = self.region.counters().source_nodes_copied;
+        let root = copy_closure_into(&mut self.pool, closure, &mut self.region)?;
+        let copied = self
+            .region
+            .counters()
+            .source_nodes_copied
+            .saturating_sub(before);
+        self.durable_transitions.tex_copy_nodes_copied = self
+            .durable_transitions
+            .tex_copy_nodes_copied
+            .saturating_add(copied);
+        self.durable_transitions.node_closure_scan_nodes = self
+            .durable_transitions
+            .node_closure_scan_nodes
+            .saturating_add(copied);
+        Ok(root.list())
+    }
+
+    /// Copies one durable closure into a fresh independently owned durable
+    /// region for a semantically required historical or nested owner.
+    pub(crate) fn copy_durable_owner(
+        &mut self,
+        closure: &DurableNodeClosure,
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
+        let mut destination = self.pool.start_region::<DurableRole>()?;
+        let copied = match copy_closure_into(&mut self.pool, closure, &mut destination) {
+            Ok(root) => root,
+            Err(error) => {
+                assert!(
+                    self.pool.retire_region(destination).is_ok(),
+                    "empty durable copy destination retires"
+                );
+                return Err(error);
+            }
+        };
+        let copied_nodes = destination.counters().source_nodes_copied;
+        let closure = destination
+            .into_closure(&self.pool, copied)
+            .map_err(|(error, region)| {
+                assert!(
+                    self.pool.retire_region(region).is_ok(),
+                    "validated durable copy destination retires"
+                );
+                error
+            })?;
+        self.durable_transitions.history_preservation_nodes_copied = self
+            .durable_transitions
+            .history_preservation_nodes_copied
+            .saturating_add(copied_nodes);
+        self.durable_transitions.node_closure_scan_nodes = self
+            .durable_transitions
+            .node_closure_scan_nodes
+            .saturating_add(copied_nodes);
+        Ok(closure)
+    }
+
+    /// Borrows one durable closure under the matching pool owner.
+    pub(crate) fn durable_list<'a>(
+        &'a self,
+        closure: &'a DurableNodeClosure,
+    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+        closure.list(&self.pool)
+    }
+
+    pub(crate) fn durable_child_list<'a>(
+        &'a self,
+        closure: &'a DurableNodeClosure,
+        child: PageListId,
+    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+        closure.child_list(&self.pool, child)
+    }
+
+    /// Drops one exact durable owner and returns its envelopes to the pool.
+    pub(crate) fn retire_durable(
+        &mut self,
+        closure: DurableNodeClosure,
+    ) -> Result<(), ForkArenaError> {
+        self.pool
+            .retire_region(closure.into_region())
+            .map_err(|(error, _)| error)
     }
 
     pub fn open_active_list(

@@ -298,6 +298,10 @@ impl<Role> Hash for RegionRoot<Role> {
 }
 
 impl<Role> RegionRoot<Role> {
+    pub(crate) const fn list(self) -> PageListId {
+        self.list
+    }
+
     #[must_use]
     pub const fn region_id(self) -> NodeRegionId {
         self.region
@@ -359,6 +363,27 @@ impl<Role> OwnedNodeClosure<Role> {
         pool: &'region NodePool,
     ) -> Result<RegionList<'region, Role>, ForkArenaError> {
         self.region.list(pool, self.root)
+    }
+
+    pub(crate) fn child_list<'region>(
+        &'region self,
+        pool: &'region NodePool,
+        list: PageListId,
+    ) -> Result<RegionList<'region, Role>, ForkArenaError> {
+        let root = self.region.root(pool, list)?;
+        self.region.list(pool, root)
+    }
+
+    pub(crate) fn into_region(self) -> NodeRegion<Role> {
+        self.region
+    }
+
+    pub(crate) const fn root(&self) -> RegionRoot<Role> {
+        self.root
+    }
+
+    pub(crate) const fn counters(&self) -> ForkArenaCounters {
+        self.region.counters()
     }
 }
 
@@ -433,6 +458,48 @@ pub(crate) fn copy_closure_into<Source, Destination>(
         &mut destination.pub_arena,
         source.root.list,
         &mut stack,
+    );
+    let (list, count) = match copied {
+        Ok(copied) => copied,
+        Err(error) => {
+            destination
+                .pub_arena
+                .restore_operation(&mut pool.chunks, operation)
+                .expect("copy destination rollback mark remains valid");
+            return Err(error);
+        }
+    };
+    destination.pub_arena.record_source_nodes_copied(count);
+    Ok(RegionRoot {
+        region: destination.id,
+        list,
+        _role: PhantomData,
+    })
+}
+
+/// Recursively copies one owner-relative root between live regions.
+///
+/// This is the cold transition seam used while a source carrier still owns a
+/// larger coarse region than the selected closure. Unlike [`copy_closure_into`],
+/// it does not pretend that the source root is independently movable.
+pub(crate) fn copy_region_root_into<Source, Destination>(
+    pool: &mut NodePool,
+    source: &NodeRegion<Source>,
+    root: RegionRoot<Source>,
+    destination: &mut NodeRegion<Destination>,
+) -> Result<RegionRoot<Destination>, ForkArenaError> {
+    pool.validate_region(source)?;
+    pool.validate_region(destination)?;
+    if root.region != source.id {
+        return Err(ForkArenaError::InvalidRegion);
+    }
+    let operation = destination.pub_arena.operation_mark(&pool.chunks);
+    let copied = copy_list_recursive::<Source, Destination>(
+        &mut pool.chunks,
+        &source.pub_arena,
+        &mut destination.pub_arena,
+        root.list,
+        &mut Vec::new(),
     );
     let (list, count) = match copied {
         Ok(copied) => copied,
