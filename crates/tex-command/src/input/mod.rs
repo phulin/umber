@@ -13,11 +13,11 @@ mod tokenizer;
 mod tests;
 
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame,
-    PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource,
-    RawDeliverySlot, ReplayLane, ReplayPayloadId, ReplayTrace, RetirementBehavior, SourceLevel,
-    SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor,
-    packed_token_frame,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroArgumentCursor,
+    PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
+    PackedTokenSpanSource, RawDeliverySlot, ReplayLane, ReplayPayloadId, ReplayTrace,
+    RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason,
+    TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -311,6 +311,7 @@ pub(crate) fn tracked_input_projection<G>(
                 }
                 project_token_cursor(&mut stack, cursor, &input.replay, state)?;
             }
+            InputLevel::MacroArgument(_) => return None,
         }
     }
     Some((line.finish(), stack.finish()))
@@ -424,9 +425,7 @@ fn project_token_cursor<G>(
     });
     if matches!(
         cursor.span,
-        PackedTokenSpanHandle::MacroReplacement { .. }
-            | PackedTokenSpanHandle::AttemptList { .. }
-            | PackedTokenSpanHandle::MacroArgument { .. }
+        PackedTokenSpanHandle::MacroReplacement { .. } | PackedTokenSpanHandle::AttemptList { .. }
     ) {
         return None;
     }
@@ -442,8 +441,7 @@ fn project_token_cursor<G>(
             }
         }
         PackedTokenSpanHandle::MacroReplacement { .. }
-        | PackedTokenSpanHandle::AttemptList { .. }
-        | PackedTokenSpanHandle::MacroArgument { .. } => {
+        | PackedTokenSpanHandle::AttemptList { .. } => {
             unreachable!("packed macro payloads fail closed above")
         }
     }
@@ -582,6 +580,13 @@ impl<G> InputState<G> {
                         return !matches!(tokens.trace, ReplayTrace::BackedUp);
                     }
                 }
+                InputLevel::MacroArgument(argument) => {
+                    if Self::macro_argument_context_level(stores, scratch, argument, widths)
+                        .is_some()
+                    {
+                        return true;
+                    }
+                }
             }
         }
         false
@@ -673,6 +678,9 @@ impl<G> InputState<G> {
                 index + 1 == input_levels.len(),
                 widths,
             ),
+            InputLevel::MacroArgument(argument) => {
+                Self::macro_argument_context_level(stores, scratch, argument, widths)
+            }
         };
         let mut reached_bottom_source = false;
         for (index, level) in input_levels.iter().enumerate().rev() {
@@ -685,6 +693,7 @@ impl<G> InputState<G> {
                     .line
                     .is_some(),
                 InputLevel::Tokens(_) => Self::context_level_is_visible(level, parameters, current),
+                InputLevel::MacroArgument(_) => true,
             };
             if let InputLevel::Source(source) = level {
                 let source = retiring_source
@@ -761,6 +770,7 @@ impl<G> InputState<G> {
                 }
                 true
             }
+            InputLevel::MacroArgument(_) => true,
         }
     }
 
@@ -1010,9 +1020,9 @@ impl<G> InputState<G> {
             index: usize,
             _parameters: &crate::macro_call::ParameterState<G>,
             attempt: &crate::attempt::AttemptArena<G>,
-            scratch: &crate::execution_scratch::ExecutionScratch<G>,
+            _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
-            PackedTokenSources::new(replay_lane, attempt, scratch)
+            PackedTokenSources::new(replay_lane, attempt)
                 .token_at(&tokens.span, index)
                 .map(|(word, _, _)| word.semantic_token())
         }
@@ -1209,6 +1219,72 @@ impl<G> InputState<G> {
         )
     }
 
+    fn macro_argument_context_level(
+        stores: &tex_state::CommandContext<'_, G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+        argument: &MacroArgumentCursor<G>,
+        widths: tex_state::print::ErrorContextWidths,
+    ) -> Option<tex_state::print::ErrorContextLevel> {
+        fn render_token<G>(
+            stores: &tex_state::CommandContext<'_, G>,
+            token: tex_state::token::Token,
+            raw: &mut String,
+            rendered: &mut String,
+        ) {
+            raw.clear();
+            rendered.clear();
+            crate::processor::expand::append_token_list_token_text(stores, token, raw);
+            stores.append_selector_string_text(raw, rendered);
+        }
+
+        let count = argument.range.len() as usize;
+        let split = argument.position().min(count);
+        let mut raw = String::new();
+        let mut rendered = String::new();
+        let mut before = ContextTail::new(widths.half_error_line());
+        for index in (0..split).rev() {
+            if before.is_complete() {
+                break;
+            }
+            let token = scratch
+                .argument_word(argument.range, index)
+                .ok()?
+                .semantic_token();
+            render_token(stores, token, &mut raw, &mut rendered);
+            before.prepend_str(&rendered);
+        }
+        let (before, before_chars) = before.finish();
+        let label = "<argument> ".to_owned();
+        let indent =
+            if label.chars().count().saturating_add(before_chars) <= widths.half_error_line() {
+                label.chars().count().saturating_add(before_chars)
+            } else {
+                widths.half_error_line()
+            };
+        let mut after = ContextHead::new(widths.error_line().saturating_sub(indent));
+        for index in split..count {
+            if after.is_complete() {
+                break;
+            }
+            let token = scratch
+                .argument_word(argument.range, index)
+                .ok()?
+                .semantic_token();
+            render_token(stores, token, &mut raw, &mut rendered);
+            after.push_str(&rendered);
+        }
+        let (after, after_chars) = after.finish();
+        Some(
+            tex_state::print::ErrorContextLevel::from_bounded_projection(
+                label,
+                before,
+                before_chars,
+                after,
+                after_chars,
+            ),
+        )
+    }
+
     /// TeX82's current `line` value for e-TeX's `\inputlineno`.
     ///
     /// Token-list levels retain the source line they interrupted; terminal and
@@ -1237,7 +1313,7 @@ impl<G> InputState<G> {
                     )
                 }
                 InputLevel::Source(_) => Some(0),
-                InputLevel::Tokens(_) => None,
+                InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
             })
             .unwrap_or(self.retained_file_line_number)
     }
@@ -1280,7 +1356,7 @@ impl<G> InputState<G> {
                 Some(source.cursor.current_backing().id)
             }
             InputLevel::Source(_) => None,
-            InputLevel::Tokens(_) => None,
+            InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
         })
     }
 }

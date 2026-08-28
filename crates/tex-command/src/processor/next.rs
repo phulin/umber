@@ -190,20 +190,29 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<usize, CommandError> {
         let mut retired = 0_usize;
         loop {
-            let Some(identity) = self.command.input.levels.last().and_then(|level| {
-                let InputLevel::Tokens(cursor) = level else {
-                    return None;
-                };
-                (!matches!(cursor.behavior, TokenBehavior::VTemplate)
-                    && cursor
-                        .token_at(PackedTokenSources::new(
-                            &self.command.input.replay,
-                            self.command.attempt.arena(),
-                            &self.command.scratch,
-                        ))
-                        .is_none())
-                .then(|| cursor.identity())
-            }) else {
+            let Some(identity) = self
+                .command
+                .input
+                .levels
+                .last()
+                .and_then(|level| match level {
+                    InputLevel::Tokens(cursor) => {
+                        (!matches!(cursor.behavior, TokenBehavior::VTemplate)
+                            && cursor
+                                .token_at(PackedTokenSources::new(
+                                    &self.command.input.replay,
+                                    self.command.attempt.arena(),
+                                ))
+                                .is_none())
+                        .then(|| cursor.identity())
+                    }
+                    InputLevel::MacroArgument(cursor) => cursor
+                        .token_at(&self.command.scratch)
+                        .is_none()
+                        .then(|| cursor.identity()),
+                    InputLevel::Source(_) => None,
+                })
+            else {
                 return Ok(retired);
             };
             match self.retire_and_restart(identity)? {
@@ -370,7 +379,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_at(PackedTokenSources::new(
                     &self.command.input.replay,
                     self.command.attempt.arena(),
-                    &self.command.scratch,
                 ))
                 .is_some()
             {
@@ -1210,10 +1218,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_at(PackedTokenSources::new(
                     &self.command.input.replay,
                     self.command.attempt.arena(),
-                    &self.command.scratch,
                 ))
                 .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
+            InputLevel::MacroArgument(_) => unreachable!("output replay is not an argument"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
             .iter()
@@ -1226,7 +1234,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .token_at(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
-                                    &self.command.scratch,
                                 ))
                             .is_none()
                 )
@@ -1246,6 +1253,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             == match &self.command.input.levels[output_index] {
                                 InputLevel::Tokens(output) => output.identity(),
                                 InputLevel::Source(_) => unreachable!("output token level"),
+                                InputLevel::MacroArgument(_) => {
+                                    unreachable!("output token level is not an argument")
+                                }
                             } =>
                     {
                         Some(
@@ -1253,12 +1263,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .token_at(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
-                                    &self.command.scratch,
                                 ))
                                 .is_some(),
                         )
                     }
-                    InputLevel::Source(_) | InputLevel::Tokens(_) => None,
+                    InputLevel::Source(_)
+                    | InputLevel::Tokens(_)
+                    | InputLevel::MacroArgument(_) => None,
                 })
                 .unwrap_or(false)
             {
@@ -1293,7 +1304,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_at(PackedTokenSources::new(
                     &self.command.input.replay,
                     self.command.attempt.arena(),
-                    &self.command.scratch,
                 ))
                 .is_some()
             || !matches!(
@@ -1884,6 +1894,42 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                 }
+            } else if matches!(
+                self.command.input.levels.last(),
+                Some(InputLevel::MacroArgument(_))
+            ) {
+                let (identity, index) = {
+                    let Some(InputLevel::MacroArgument(cursor)) = self.command.input.levels.last()
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    (cursor.identity(), cursor.frame.position())
+                };
+                let delivered = {
+                    let scratch = &self.command.scratch;
+                    let roots = &mut self.command.roots;
+                    let Some(InputLevel::MacroArgument(cursor)) = roots.input.levels.last_mut()
+                    else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    if cursor.identity() != identity || cursor.frame.position() != index {
+                        return Err(CommandError::input_invariant());
+                    }
+                    cursor
+                        .deliver_into(scratch, destination)
+                        .map_err(|()| CommandError::input_invariant())?
+                };
+                if !delivered {
+                    match self.retire_and_restart(identity)? {
+                        RetirementRestart::Stop | RetirementRestart::Completed => {
+                            return Ok(RawInputStatus::End);
+                        }
+                        RetirementRestart::Continue => continue,
+                        RetirementRestart::EndV(_) => {
+                            return Err(CommandError::input_invariant());
+                        }
+                    }
+                }
             } else {
                 let (identity, index) = {
                     let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last() else {
@@ -1893,7 +1939,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 };
                 let delivered = {
                     let attempt = self.command.attempt.arena();
-                    let scratch = &self.command.scratch;
                     let roots = &mut self.command.roots;
                     let replay_lane = &roots.input.replay;
                     let Some(InputLevel::Tokens(cursor)) = roots.input.levels.last_mut() else {
@@ -1903,10 +1948,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Err(CommandError::input_invariant());
                     }
                     cursor
-                        .deliver_into(
-                            PackedTokenSources::new(replay_lane, attempt, scratch),
-                            destination,
-                        )
+                        .deliver_into(PackedTokenSources::new(replay_lane, attempt), destination)
                         .map_err(|()| CommandError::input_invariant())?
                 };
                 if !delivered {
@@ -2147,13 +2189,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .token_at(PackedTokenSources::new(
                                 &self.command.input.replay,
                                 self.command.attempt.arena(),
-                                &self.command.scratch,
                             ))
                             .is_none() =>
                 {
                     Some(cursor.identity())
                 }
-                Some(InputLevel::Tokens(_)) | Some(InputLevel::Source(_)) | None => None,
+                Some(InputLevel::MacroArgument(cursor))
+                    if cursor.token_at(&self.command.scratch).is_none() =>
+                {
+                    Some(cursor.identity())
+                }
+                Some(InputLevel::Tokens(_))
+                | Some(InputLevel::MacroArgument(_))
+                | Some(InputLevel::Source(_))
+                | None => None,
             };
             let Some(identity) = depleted else {
                 return Ok(());

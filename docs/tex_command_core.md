@@ -1717,16 +1717,20 @@ enum PackedTokenSpanHandle {
         definition: MacroDefinitionId,
         len: u32,
     },
-    MacroArgument { range: MacroArgumentRange, len: u32 },
     DurableList { cursor: TokenListCursor, len: u32 },
     AttemptList { list: AttemptTokenListId, len: u32 },
+}
+
+struct MacroArgumentCursor {
+    range: MacroArgumentRange,
+    slot: u8,
+    frame: PackedInputFrame,
 }
 
 enum TokenBehavior {
     Ordinary,
     Recovery,
     MacroBody(MacroActivation),
-    Parameter,
     BackedUp(BackupTreatment),
     UTemplate(TemplateId),
     VTemplate(TemplateId),
@@ -1906,27 +1910,30 @@ struct MacroArguments {
 }
 ```
 
-`MacroArguments` is fixed at 16 bytes, `MacroActivation` at 48 bytes, and each
-live scratch frame stores nine relative ranges plus the exact §394 paragraph
+`MacroArguments` is one compact frame id, and each live scratch frame stores
+nine absolute ranges plus the exact §394 paragraph
 and removable-outer-group facts established during their first scan, beside
-one segmented traced-word suffix. The paragraph fact records only
+one traced-word suffix in the generation's fixed-chunk lane. The paragraph fact records only
 the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
 prefix and later committed after a mismatch is not reclassified. The scalar
 matcher admits the one live frame before collection and updates its direct
 current-argument slot in definition order. It consumes those facts for the
 non-`\long` decision and outer-pair removal without rereading stored words.
 Sealing advances the live depth of that same metadata frame without moving its
-physical words because admission already appended to the frame's segment chain;
-no segment owner, argument table, range, fact, or word moves.
+physical words because admission already appended to the shared lane. No
+chunk owner, argument table, range, fact, or sealed word moves.
 Empty arguments retain empty half-open ranges. A compact
 `OutParameter(u8)` remains distinct from a literal parameter character emitted
 by the canonical `##` escape, so replay can substitute only the former without
-rewriting immutable macro definition token lists. Argument segments hold 4,096
-words. A sealed `(frame, argument slot)` selects its physical range directly,
-with no range search or second argument-local cursor. Sequential iterators
-follow each segment link once. Exact LIFO frame retirement returns its disjoint
-chain to the generation's intrusive reusable free head, so an older active
-frame can retire beneath a pending child without moving either frame's words.
+rewriting immutable macro definition token lists. Physical chunks hold 4,096
+words, and an absolute index maps directly to chunk and offset. Parameter
+admission resolves `(frame, argument slot)` once into a first-class
+`MacroArgumentCursor`; replay never enters the generic packed-span dispatch,
+searches the input stack, searches activations, or walks chunk links. Exact
+LIFO retirement truncates to the frame mark and returns suffix chunks to the
+reusable stack. If an older frame retires beneath a pending child, the child
+inherits its reclaim mark; only that unpublished suffix may rebase after the
+last active ancestor retires, so no admitted cursor or sealed word moves.
 Quiescent top-level calls clear lengths but retain every
 warmed allocation. The processor appends one fixed-width invocation provenance
 record using the active activation's invocation coordinate as parent; no rooted
@@ -1935,9 +1942,9 @@ materialize a structural root on demand. The activation is installed before
 its immutable replacement-body span becomes visible.
 
 An `OutParameter` read directly from a macro body pushes a parameter range.
-An `OutParameter` read from other nested token input resolves against the
-nearest live macro activation when canonical TeX semantics require
-`param_start`. A parameter level replays its already materialized range
+Nested token input inherits one packed macro-lineage flag, while a source level
+clears it. Resolution therefore uses the active scratch frame directly, without
+an input-stack or activation search. A parameter level replays its already materialized range
 literally and cannot recursively substitute itself.
 
 ### 12.4 Backup and `\noexpand`

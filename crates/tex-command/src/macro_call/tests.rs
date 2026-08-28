@@ -303,6 +303,13 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
         assert_eq!(actual[expected.len()..], expected);
         assert_eq!(
             processor
+                .retire_exhausted_token_levels_for_named_boundary()
+                .expect("named-boundary retirement"),
+            2,
+        );
+        assert!(processor.command.scratch.is_quiescent());
+        assert_eq!(
+            processor
                 .get_x_token_into(&mut destination)
                 .expect("following source"),
             DeliveryStatus::Command
@@ -315,7 +322,6 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
                 .semantic_token(),
             letter('z')
         );
-        assert!(processor.command.scratch.is_quiescent());
     });
 }
 

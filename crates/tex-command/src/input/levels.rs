@@ -87,6 +87,8 @@ pub(crate) fn packed_token_frame(
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
     Tokens(TokenCursor<G>),
+    /// Literal replay of one directly indexed macro-argument lane range.
+    MacroArgument(MacroArgumentCursor<G>),
 }
 
 /// One registered-source level and its exact delivery identity.
@@ -156,6 +158,60 @@ pub(crate) struct TokenCursor<G> {
     pub(crate) frame: PackedInputFrame,
 }
 
+/// First-class input cursor over one admitted absolute macro-argument range.
+///
+/// Unlike a generic packed-token cursor, delivery has no storage-domain
+/// dispatch: it validates the frame serial and indexes the fixed-chunk lane
+/// directly. The same frame is the lineage inherited by child token lists.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MacroArgumentCursor<G> {
+    pub(crate) range: crate::execution_scratch::MacroArgumentRange<G>,
+    pub(crate) slot: u8,
+    pub(crate) frame: PackedInputFrame,
+}
+
+impl<G> MacroArgumentCursor<G> {
+    pub(crate) fn identity(&self) -> InputLevelId {
+        InputLevelId(self.frame.identity())
+    }
+
+    pub(crate) fn position(&self) -> usize {
+        self.frame.position() as usize
+    }
+
+    pub(crate) fn macro_frame(&self) -> crate::execution_scratch::MacroFrameId<G> {
+        self.range.frame()
+    }
+
+    pub(crate) fn token_at(
+        &self,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+    ) -> Option<PackedTokenAt> {
+        scratch
+            .argument_word(self.range, self.position())
+            .ok()
+            .map(|word| (word.token_word(), word.origin(), None))
+    }
+
+    #[inline(always)]
+    pub(crate) fn deliver_into(
+        &mut self,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+        destination: &mut RawDeliverySlot,
+    ) -> Result<bool, ()> {
+        let frame = self.frame;
+        let position = frame.position();
+        let Ok(word) = scratch.argument_word(self.range, position as usize) else {
+            return Ok(false);
+        };
+        destination.write_stored(frame, position, word.token_word(), word.origin(), None);
+        if self.frame.advance() != Some(position) {
+            return Err(());
+        }
+        Ok(true)
+    }
+}
+
 impl<G> TokenCursor<G> {
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
@@ -214,11 +270,6 @@ pub(crate) enum PackedTokenSpanHandle<G> {
         definition: DefinitionId<G>,
         len: u32,
     },
-    /// One literal macro-argument replay range in generation-owned scratch.
-    MacroArgument {
-        range: crate::execution_scratch::MacroArgumentRange<G>,
-        len: u32,
-    },
     /// One generation-durable immutable token list.
     DurableList {
         list: tex_state::TokenListId<G>,
@@ -237,10 +288,6 @@ impl<G> Clone for PackedTokenSpanHandle<G> {
             },
             Self::MacroReplacement { definition, len } => Self::MacroReplacement {
                 definition: definition.clone(),
-                len: *len,
-            },
-            Self::MacroArgument { range, len } => Self::MacroArgument {
-                range: *range,
                 len: *len,
             },
             Self::DurableList { list, len } => Self::DurableList {
@@ -375,20 +422,14 @@ const _: () = assert!(core::mem::size_of::<RawDeliverySlot>() == 88);
 pub(crate) struct PackedTokenSources<'a, G> {
     replay: &'a ReplayLane<G>,
     attempt: &'a crate::attempt::AttemptArena<G>,
-    scratch: &'a crate::execution_scratch::ExecutionScratch<G>,
 }
 
 impl<'a, G> PackedTokenSources<'a, G> {
     pub(crate) const fn new(
         replay: &'a ReplayLane<G>,
         attempt: &'a crate::attempt::AttemptArena<G>,
-        scratch: &'a crate::execution_scratch::ExecutionScratch<G>,
     ) -> Self {
-        Self {
-            replay,
-            attempt,
-            scratch,
-        }
+        Self { replay, attempt }
     }
 
     /// Peeks through an admitted span without advancing its input frame.
@@ -405,11 +446,6 @@ impl<'a, G> PackedTokenSources<'a, G> {
             PackedTokenSpanHandle::MacroReplacement { definition, .. } => definition
                 .replacement_word(index)
                 .map(|word| (word, OriginId::UNKNOWN, None)),
-            PackedTokenSpanHandle::MacroArgument { range, .. } => self
-                .scratch
-                .argument_word(*range, index)
-                .ok()
-                .map(|word| (word.token_word(), word.origin(), None)),
             PackedTokenSpanHandle::AttemptList { list, .. } => self
                 .attempt
                 .token_word(*list, index)
@@ -453,12 +489,6 @@ impl<'a, G> PackedTokenSources<'a, G> {
                     return false;
                 };
                 destination.write_stored(frame, position, word, OriginId::UNKNOWN, None);
-            }
-            PackedTokenSpanHandle::MacroArgument { range, .. } => {
-                let Ok(word) = self.scratch.argument_word(*range, index) else {
-                    return false;
-                };
-                destination.write_stored(frame, position, word.token_word(), word.origin(), None);
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => {
                 let Ok(word) = self.attempt.token_word(*list, index) else {
@@ -523,6 +553,12 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
                     retirement: tokens.retirement,
                 })
             }
+            Self::MacroArgument(argument) => {
+                crate::timeline::CapturedStackState::Inline(InputLevelInlineState {
+                    frame: argument.frame,
+                    retirement: RetirementBehavior::Pop,
+                })
+            }
         }
     }
 
@@ -531,6 +567,12 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
             Self::Tokens(tokens) => {
                 std::mem::swap(&mut tokens.frame, &mut state.frame);
                 std::mem::swap(&mut tokens.retirement, &mut state.retirement);
+            }
+            Self::MacroArgument(argument) => {
+                if state.retirement != RetirementBehavior::Pop {
+                    unreachable!("a macro argument always pops at exhaustion");
+                }
+                std::mem::swap(&mut argument.frame, &mut state.frame);
             }
             Self::Source(_) => unreachable!("a source frame uses the stored state lane"),
         }
@@ -545,7 +587,7 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
                 std::mem::swap(&mut source.retirement, &mut state.retirement);
                 std::mem::swap(&mut source.every_eof, &mut state.every_eof);
             }
-            Self::Tokens(_) => {
+            Self::Tokens(_) | Self::MacroArgument(_) => {
                 unreachable!("a token frame uses the inline state lane")
             }
         }
@@ -1160,7 +1202,6 @@ impl<G> PackedTokenSpanHandle<G> {
         match self {
             Self::Replay { len, .. } => *len as usize,
             Self::MacroReplacement { len, .. } => *len as usize,
-            Self::MacroArgument { len, .. } => *len as usize,
             Self::DurableList { len, .. } => *len as usize,
             Self::AttemptList { len, .. } => *len as usize,
         }
@@ -1175,7 +1216,8 @@ impl<G> PackedTokenSpanHandle<G> {
 /// command-delivery semantics.
 #[cfg(any(test, feature = "profiling"))]
 pub struct MixedPackedCursorBenchmark<G> {
-    spans: [PackedTokenSpanHandle<G>; 5],
+    spans: [PackedTokenSpanHandle<G>; 4],
+    macro_argument: crate::execution_scratch::MacroArgumentRange<G>,
     positions: [u32; 5],
     replay: ReplayLane<G>,
     attempt: crate::attempt::AttemptArena<G>,
@@ -1265,16 +1307,13 @@ impl<G> MixedPackedCursorBenchmark<G> {
                     definition,
                     len: semantic.len() as u32,
                 },
-                PackedTokenSpanHandle::MacroArgument {
-                    range,
-                    len: semantic.len() as u32,
-                },
                 PackedTokenSpanHandle::AttemptList {
                     list: attempt_list,
                     len: semantic.len() as u32,
                 },
                 durable,
             ],
+            macro_argument: range,
             // Keep the rollback mark nonzero so restoration proves an exact
             // cursor rather than merely resetting empty spans.
             positions: [1; 5],
@@ -1288,11 +1327,11 @@ impl<G> MixedPackedCursorBenchmark<G> {
     /// scalar cursors after every source has crossed real span ends.
     pub fn run(&mut self, rounds: u32) -> MixedPackedCursorReceipt {
         let opening = self.positions;
-        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.scratch);
+        let sources = PackedTokenSources::new(&self.replay, &self.attempt);
         let mut checksum = 0_u64;
         let mut retirements = 0_u64;
         for _ in 0..rounds {
-            for (span, position) in self.spans.iter().zip(&mut self.positions) {
+            for (span, position) in self.spans.iter().zip(&mut self.positions[..4]) {
                 let (word, origin, provenance) = sources
                     .token_at(span, *position as usize)
                     .expect("mixed packed cursor remains within its span");
@@ -1305,15 +1344,30 @@ impl<G> MixedPackedCursorBenchmark<G> {
                     retirements += 1;
                 }
             }
+            let position = &mut self.positions[4];
+            let word = self
+                .scratch
+                .argument_word(self.macro_argument, *position as usize)
+                .expect("mixed direct macro cursor remains within its span");
+            checksum = checksum.wrapping_add(u64::from(word.token_word().raw()));
+            *position += 1;
+            if *position == self.macro_argument.len() {
+                *position = 0;
+                retirements += 1;
+            }
         }
         self.positions = opening;
-        for (span, position) in self.spans.iter().zip(self.positions) {
+        for (span, position) in self.spans.iter().zip(self.positions[..4].iter().copied()) {
             let _ = sources
                 .token_at(span, position as usize)
                 .expect("rollback restores the exact packed cursor");
         }
+        let _ = self
+            .scratch
+            .argument_word(self.macro_argument, self.positions[4] as usize)
+            .expect("rollback restores the exact direct macro cursor");
         MixedPackedCursorReceipt {
-            calls: u64::from(rounds) * self.spans.len() as u64,
+            calls: u64::from(rounds) * 5,
             retirements,
             rollbacks: 1,
             checksum,
@@ -1323,15 +1377,12 @@ impl<G> MixedPackedCursorBenchmark<G> {
 
 /// Focused profiling harness for one long sealed macro-argument span.
 ///
-/// The span crosses several coarse execution-scratch segments. [`Self::run`]
-/// exercises only the packed input frame's scalar position and the ordinary
-/// [`PackedTokenSources::token_at`] boundary used by production delivery.
+/// The span crosses several fixed execution-scratch chunks. [`Self::run`]
+/// exercises only direct absolute range lookup and scalar cursor restoration.
 #[cfg(any(test, feature = "profiling"))]
 pub struct LongMacroArgumentCursorBenchmark<G> {
-    span: PackedTokenSpanHandle<G>,
+    range: crate::execution_scratch::MacroArgumentRange<G>,
     position: u32,
-    replay: ReplayLane<G>,
-    attempt: crate::attempt::AttemptArena<G>,
     scratch: crate::execution_scratch::ExecutionScratch<G>,
 }
 
@@ -1347,7 +1398,7 @@ pub struct LongMacroArgumentCursorReceipt {
 
 #[cfg(any(test, feature = "profiling"))]
 impl<G> LongMacroArgumentCursorBenchmark<G> {
-    /// Seals one 16,385-word argument, crossing four 4,096-word segments.
+    /// Seals one 16,385-word argument, crossing five 4,096-word chunks.
     pub fn new() -> Self {
         const WORDS: u32 = 16_385;
         let mut scratch = crate::execution_scratch::ExecutionScratch::default();
@@ -1381,11 +1432,9 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
             .expect("long-argument live frame")
             .expect("long-argument first range");
         Self {
-            span: PackedTokenSpanHandle::MacroArgument { range, len: WORDS },
+            range,
             // A nonzero opening proves exact scalar restoration.
             position: 1,
-            replay: ReplayLane::default(),
-            attempt: crate::attempt::AttemptArena::default(),
             scratch,
         }
     }
@@ -1393,25 +1442,24 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
     /// Performs `calls` bounded indexed reads and restores the opening scalar.
     pub fn run(&mut self, calls: u32) -> LongMacroArgumentCursorReceipt {
         let opening = self.position;
-        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.scratch);
         let mut checksum = 0_u64;
         let mut retirements = 0_u64;
         for _ in 0..calls {
-            let (word, origin, provenance) = sources
-                .token_at(&self.span, self.position as usize)
+            let word = self
+                .scratch
+                .argument_word(self.range, self.position as usize)
                 .expect("long macro-argument cursor remains within its span");
-            debug_assert_eq!(origin, OriginId::UNKNOWN);
-            debug_assert!(provenance.is_none());
-            checksum = checksum.wrapping_add(u64::from(word.raw()));
+            checksum = checksum.wrapping_add(u64::from(word.token_word().raw()));
             self.position += 1;
-            if self.position as usize == self.span.frame_len() {
+            if self.position == self.range.len() {
                 self.position = 0;
                 retirements += 1;
             }
         }
         self.position = opening;
-        let _ = sources
-            .token_at(&self.span, self.position as usize)
+        let _ = self
+            .scratch
+            .argument_word(self.range, self.position as usize)
             .expect("rollback restores the exact long-argument cursor");
         LongMacroArgumentCursorReceipt {
             calls: u64::from(calls),

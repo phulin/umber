@@ -37,6 +37,10 @@ impl InputFrameFlags {
     pub const SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE: Self = Self(1 << 0);
     pub const STOP_AT_END: Self = Self(1 << 1);
     pub const RETAIN_AT_END: Self = Self(1 << 2);
+    /// This token level was admitted inside the currently active macro frame.
+    /// The frame itself stays in command execution scratch; this bit preserves
+    /// source barriers without widening every token cursor.
+    pub const HAS_MACRO_LINEAGE: Self = Self(1 << 3);
 
     #[must_use]
     pub const fn empty() -> Self {

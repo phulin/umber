@@ -164,8 +164,17 @@ fn stored_and_transient_payloads_have_the_same_semantic_words() {
 
 #[test]
 fn replay_coordinates_keep_input_frames_compact() {
+    assert_eq!(
+        std::mem::size_of::<crate::execution_scratch::MacroFrameId<()>>(),
+        8
+    );
+    assert_eq!(
+        std::mem::size_of::<crate::execution_scratch::MacroArgumentRange<()>>(),
+        16
+    );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
     assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 96);
+    assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 56);
     assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 96);
 }
 
@@ -182,7 +191,7 @@ fn mixed_sources_share_one_cursor_and_restore_exact_nonzero_positions() {
 }
 
 #[test]
-fn long_macro_argument_crosses_segments_with_one_scalar_cursor() {
+fn long_macro_argument_crosses_fixed_chunks_with_one_scalar_cursor() {
     let mut benchmark = super::LongMacroArgumentCursorBenchmark::<()>::new();
     let receipt = benchmark.run(16_390);
     assert_eq!(receipt.calls, 16_390);

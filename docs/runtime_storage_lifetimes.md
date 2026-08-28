@@ -391,8 +391,7 @@ and survival patterns differ:
 ```rust
 struct ExecutionScratch<G> {
     macro_frames: Vec<PackedMacroFrame<G>>,
-    macro_argument_segments: Vec<MacroWordSegment>,
-    free_macro_segment: u32,
+    macro_words: FixedChunkLifoLane<TracedTokenWord, 4096>,
     scanner_frames: Vec<PackedScannerFrame<G>>,
     scanner_words: Vec<TracedTokenWord>,
     scanner_builders: Vec<PackedScannerBuilder<G>>,
@@ -402,7 +401,7 @@ struct ExecutionScratch<G> {
 
 struct ScratchCursors {
     macro_frames: u32,
-    macro_argument_segments: u32,
+    macro_words: u32,
     scanner_frames: u32,
     scanner_words: u32,
     scanner_builders: u32,
@@ -422,12 +421,15 @@ argument-word length while the scanner destination is untouched.
 
 Macro and scanner nesting is ordinary push/pop over lane lengths. Match
 admission initializes the next macro frame in place. That frame records its
-segment-chain endpoints and up to nine direct word ranges; one direct
+absolute lane and reclaim marks plus up to nine direct word ranges; one direct
 current-argument slot owns collection facts and its cursor until completion.
-The pending frame appends directly to its chain in the stable segment arena.
-An older active frame may retire beneath it and return its disjoint chain
-immediately; commit changes only the pending frame's role, while discard or
-later frame retirement returns that frame's chain to the intrusive free head.
+The pending frame appends directly to the logically contiguous fixed-chunk
+lane. Commit changes only the pending frame's role, while discard or later
+frame retirement truncates to its mark and returns suffix chunks to reuse. If
+an older active frame retires beneath a pending child, it transfers the earlier
+reclaim mark. Only the still-unpublished child suffix may rebase, and only once
+the last active ancestor has retired; sealed ranges and admitted cursors never
+move.
 A scanner frame records the opening lengths of its
 temporary-word and builder lanes. No push creates an arena,
 scope capability, ownership token, loan, mailbox, watermark row, or parent

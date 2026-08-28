@@ -72,6 +72,13 @@ impl<G> RetiredInputLevel<G> {
                     _ => None,
                 },
             },
+            InputLevel::MacroArgument(cursor) => Self::Tokens {
+                identity: cursor.identity(),
+                behavior: TokenBehavior::Parameter,
+                retirement: RetirementBehavior::Pop,
+                trace: ReplayTrace::MacroParameter { slot: cursor.slot },
+                replay: None,
+            },
         }
     }
 
@@ -97,6 +104,13 @@ impl<G> RetiredInputLevel<G> {
                     PackedTokenSpanHandle::Replay { replay, .. } => Some(replay),
                     _ => None,
                 },
+            },
+            InputLevel::MacroArgument(cursor) => Self::Tokens {
+                identity: cursor.identity(),
+                behavior: TokenBehavior::Parameter,
+                retirement: RetirementBehavior::Pop,
+                trace: ReplayTrace::MacroParameter { slot: cursor.slot },
+                replay: None,
             },
         }
     }
@@ -175,13 +189,10 @@ pub(crate) enum ParameterReplayError {
     },
     InvalidSlot(u8),
     NoMacroOwner,
-    MissingActivation(MacroActivationId),
     MissingArgument {
-        activation: MacroActivationId,
         slot: u8,
     },
     ArgumentRangeOutsideBuffer {
-        activation: MacroActivationId,
         slot: u8,
     },
 }
@@ -259,7 +270,7 @@ impl<G> CommandState<G> {
         let activation =
             self.parameters
                 .push_activation(name, definition.clone(), arguments, invocation);
-        self.push_token_level(
+        self.push_token_level_with_macro_lineage(
             PackedTokenSpanHandle::MacroReplacement {
                 definition,
                 len: u32::try_from(replacement_len).expect("macro replacement exceeds u32"),
@@ -267,6 +278,7 @@ impl<G> CommandState<G> {
             TokenBehavior::MacroBody(activation),
             RetirementBehavior::Pop,
             ReplayTrace::MacroReplacement,
+            true,
         )
     }
 
@@ -277,12 +289,40 @@ impl<G> CommandState<G> {
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
+        let has_macro_lineage = match self.input.levels.last() {
+            Some(InputLevel::Tokens(cursor)) => cursor
+                .frame
+                .flags()
+                .contains(tex_state::packed_input::InputFrameFlags::HAS_MACRO_LINEAGE),
+            Some(InputLevel::MacroArgument(_)) => true,
+            Some(InputLevel::Source(_)) | None => false,
+        };
+        self.push_token_level_with_macro_lineage(
+            source,
+            behavior,
+            retirement,
+            trace,
+            has_macro_lineage,
+        )
+    }
+
+    fn push_token_level_with_macro_lineage<P: super::PackedTokenSpanSource<G>>(
+        &mut self,
+        source: P,
+        behavior: TokenBehavior,
+        retirement: RetirementBehavior,
+        trace: ReplayTrace,
+        has_macro_lineage: bool,
+    ) -> InputLevelId {
         let span = source
             .admit(&mut self.input.replay)
             .expect("generation replay lane admission");
         let identity = self.allocate_input_level_identity();
-        let frame =
+        let mut frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
+        if has_macro_lineage {
+            frame.add_flags(tex_state::packed_input::InputFrameFlags::HAS_MACRO_LINEAGE);
+        }
         self.push_input_level(InputLevel::Tokens(TokenCursor {
             span,
             behavior,
@@ -339,64 +379,50 @@ impl<G> CommandState<G> {
                 actual,
             });
         }
-        if matches!(
-            self.input.levels.last(),
-            Some(InputLevel::Tokens(TokenCursor {
-                behavior: TokenBehavior::Parameter,
-                ..
-            }))
-        ) {
+        if matches!(self.input.levels.last(), Some(InputLevel::MacroArgument(_))) {
             return Ok(OutParameterReplay::Literal);
         }
         if !(1..=9).contains(&slot) {
             return Err(ParameterReplayError::InvalidSlot(slot));
         }
 
-        let mut owner = None;
-        for level in self.input.levels.iter().rev() {
-            match level {
-                InputLevel::Tokens(TokenCursor {
-                    behavior: TokenBehavior::MacroBody(candidate),
-                    ..
-                }) => {
-                    owner = Some(*candidate);
-                    break;
-                }
-                InputLevel::Tokens(_) => {}
-                InputLevel::Source(_) => break,
-            }
+        let has_macro_lineage = match self.input.levels.last() {
+            Some(InputLevel::Tokens(cursor)) => cursor
+                .frame
+                .flags()
+                .contains(tex_state::packed_input::InputFrameFlags::HAS_MACRO_LINEAGE),
+            Some(InputLevel::Source(_)) | Some(InputLevel::MacroArgument(_)) | None => false,
+        };
+        if !has_macro_lineage {
+            return Err(ParameterReplayError::NoMacroOwner);
         }
-        let owner = owner.ok_or(ParameterReplayError::NoMacroOwner)?;
-        let activation = self
-            .parameters
-            .activations
-            .iter()
-            .find(|activation| activation.identity == owner)
-            .ok_or(ParameterReplayError::MissingActivation(owner))?;
+        let owner = self
+            .scratch
+            .active_macro_frame()
+            .ok_or(ParameterReplayError::NoMacroOwner)?;
         let range = self
             .scratch
-            .argument_range(activation.arguments.frame(), slot)
+            .argument_range(owner, slot)
             .ok()
             .flatten()
-            .ok_or(ParameterReplayError::MissingArgument {
-                activation: owner,
-                slot,
-            })?;
-        let len = self.scratch.argument_len(range).map_err(|_| {
-            ParameterReplayError::ArgumentRangeOutsideBuffer {
-                activation: owner,
-                slot,
-            }
-        })?;
-        let identity = self.push_token_level(
-            PackedTokenSpanHandle::MacroArgument {
-                range,
-                len: u32::try_from(len).expect("macro argument length exceeds u32"),
-            },
-            TokenBehavior::Parameter,
+            .ok_or(ParameterReplayError::MissingArgument { slot })?;
+        self.scratch
+            .argument_len(range)
+            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer { slot })?;
+        let identity = self.allocate_input_level_identity();
+        let trace = ReplayTrace::MacroParameter { slot };
+        let frame = super::packed_token_frame(
+            identity,
+            range.len() as usize,
+            &TokenBehavior::Parameter,
             RetirementBehavior::Pop,
-            ReplayTrace::MacroParameter { slot },
+            &trace,
         );
+        self.push_input_level(InputLevel::MacroArgument(super::MacroArgumentCursor {
+            range,
+            slot,
+            frame,
+        }));
         Ok(OutParameterReplay::Pushed(identity))
     }
 
@@ -432,6 +458,31 @@ impl<G> CommandState<G> {
         let actual = input_level_identity(level);
         if actual != expected {
             return Err(InputRetirementError::LevelChanged { expected, actual });
+        }
+
+        if matches!(level, InputLevel::MacroArgument(_)) {
+            let RetiredInputLevel::Tokens {
+                behavior,
+                trace,
+                replay,
+                ..
+            } = self
+                .pop_retired_input_level()
+                .expect("the inspected macro-argument level remains live")
+            else {
+                unreachable!("macro-argument retirement is token retirement");
+            };
+            debug_assert!(replay.is_none());
+            return Ok(InputRetirement {
+                identity: expected,
+                action: InputRetirementAction::TokenListPopped,
+                reason: input_retirement_reason(&behavior, &trace),
+                name_class: None,
+                source: None,
+                trace: Some(trace),
+                source_open_depths: None,
+                closes_file_frame: false,
+            });
         }
 
         let InputLevel::Tokens(cursor) = level else {
@@ -719,6 +770,7 @@ pub(crate) fn input_level_identity<G>(level: &InputLevel<G>) -> InputLevelId {
     match level {
         InputLevel::Source(level) => level.identity(),
         InputLevel::Tokens(level) => level.identity(),
+        InputLevel::MacroArgument(level) => level.identity(),
     }
 }
 

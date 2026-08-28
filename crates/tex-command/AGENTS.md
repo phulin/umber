@@ -43,10 +43,12 @@ collector (see `src/conditionals.rs`).
   capabilities. Macro invocation storage does not use this arena.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
   The admitted macro frame's fixed nine-slot metadata owns the current argument
-  cursor and first-scan facts while words append to its intrusive chain in one
-  stable segment arena. Sealing changes only the frame role, retirement returns
-  that chain to the arena free head, and physical segments remain reusable high
-  water; activations never own a heap buffer or arena scope.
+  cursor and first-scan facts while words append to one logically contiguous
+  fixed-chunk LIFO lane. Sealing changes only the frame role; retirement
+  truncates to its absolute mark and returns suffix chunks to a reusable high
+  water. A pending child can inherit a retiring parent's earlier reclaim mark,
+  and its unpublished suffix may rebase only after the last active ancestor
+  retires. Activations never own a heap buffer or arena scope.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine

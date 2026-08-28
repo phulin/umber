@@ -1106,6 +1106,7 @@ impl<G> CommandState<G> {
                     ReplayTrace::Stored(_) => "stored-token-list",
                     ReplayTrace::Transient(_) => "transient-token-list",
                 },
+                InputLevel::MacroArgument(_) => "macro-argument",
             })
             .collect();
         (self.input.levels.len(), tail)
@@ -2523,7 +2524,7 @@ impl<G> CommandState<G> {
             .rev()
             .find_map(|level| match level {
                 InputLevel::Source(level) => Some(level),
-                InputLevel::Tokens(_) => None,
+                InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
             })
             .is_some();
         if has_source {
@@ -2790,7 +2791,7 @@ impl<G> CommandState<G> {
                 .rev()
                 .find_map(|level| match level {
                     InputLevel::Source(source) => Some(source.name_class == SourceNameClass::File),
-                    InputLevel::Tokens(_) => None,
+                    InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
                 })
                 == Some(true)
     }
@@ -2836,7 +2837,7 @@ impl<G> CommandState<G> {
             .saturating_add(occupied_below_active);
         let name_class = self.input.levels.last().and_then(|level| match level {
             InputLevel::Source(source) => Some(source.name_class),
-            InputLevel::Tokens(_) => None,
+            InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
         });
         let usage = &mut self.stack_usage;
         let input = &mut self.roots.input;
