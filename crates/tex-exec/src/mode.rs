@@ -7,6 +7,7 @@ use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node, NodeTokenList};
 use tex_state::node_arena::{NodeCursor, PageListId};
+use tex_state::node_region::NodeRegionId;
 use tex_state::page_node_arena::PageMaterialActiveListBuilder;
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
@@ -134,6 +135,9 @@ impl ModeNest {
 /// The list-under-construction owned by one mode level.
 #[derive(Default)]
 pub struct ModeList {
+    /// Region admitting every nonempty raw coordinate below this carrier.
+    /// `None` is valid only while the complete mode-list closure is rootless.
+    page_region: Option<NodeRegionId>,
     nodes: PageListId,
     active: PageMaterialActiveListBuilder,
     align_state: Option<AlignState>,
@@ -154,10 +158,11 @@ pub struct ModeList {
     semantic_identity_root: u64,
 }
 
-impl Clone for ModeList {
-    fn clone(&self) -> Self {
+impl ModeList {
+    fn clone_operation_projection(&self) -> Self {
         assert!(self.active.is_vacant(), "mode clone requires a sealed list");
         Self {
+            page_region: self.page_region,
             nodes: self.nodes,
             active: PageMaterialActiveListBuilder::vacant(),
             align_state: self.align_state.clone(),
@@ -178,12 +183,21 @@ impl Clone for ModeList {
             semantic_identity_root: self.semantic_identity_root,
         }
     }
+
+    fn clone_rootless(&self) -> Self {
+        assert!(
+            self.is_checkpoint_rootless() && self.page_region.is_none(),
+            "retained mode clones require a rootless list"
+        );
+        self.clone_operation_projection()
+    }
 }
 
 impl core::fmt::Debug for ModeList {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("ModeList")
+            .field("page_region", &self.page_region)
             .field("nodes", &self.nodes)
             .field("prev_depth", &self.prev_depth)
             .field("prev_graf", &self.prev_graf)
@@ -221,6 +235,75 @@ struct ModeComponentRoots {
 }
 
 impl ModeList {
+    fn node_roots(&self) -> [PageListId; 4] {
+        [
+            self.nodes,
+            self.incomplete_fraction
+                .as_ref()
+                .map_or(PageListId::empty(), |fraction| fraction.numerator),
+            self.display_interrupt
+                .as_ref()
+                .and_then(|interrupt| interrupt.prototype.as_ref())
+                .map_or(PageListId::empty(), |prototype| prototype.children),
+            self.display_eq_no
+                .as_ref()
+                .map_or(PageListId::empty(), |eqno| eqno.display),
+        ]
+    }
+
+    fn has_node_roots(&self) -> bool {
+        self.node_roots().into_iter().any(|root| !root.is_empty())
+    }
+
+    fn validate_page_region<G>(&self, stores: &CommandContext<'_, G>) -> bool {
+        let roots = self.node_roots();
+        if roots.into_iter().all(PageListId::is_empty) {
+            return self.page_region.is_none();
+        }
+        self.page_region == Some(stores.page_node_region_id())
+            && roots
+                .into_iter()
+                .all(|root| stores.admits_page_node_closure(root))
+    }
+
+    fn admit_page_region<G>(&mut self, stores: &CommandContext<'_, G>) -> bool {
+        if !self.has_node_roots() {
+            self.page_region = None;
+            return true;
+        }
+        let region = stores.page_node_region_id();
+        if self.page_region.is_some_and(|owner| owner != region)
+            || !self
+                .node_roots()
+                .into_iter()
+                .all(|root| stores.admits_page_node_closure(root))
+        {
+            return false;
+        }
+        self.page_region = Some(region);
+        true
+    }
+
+    fn admit_new_root<G>(&mut self, stores: &CommandContext<'_, G>, root: PageListId) -> bool {
+        if root.is_empty() {
+            return self.admit_page_region(stores);
+        }
+        let region = stores.page_node_region_id();
+        if self.page_region.is_some_and(|owner| owner != region)
+            || !stores.admits_page_node_closure(root)
+        {
+            return false;
+        }
+        self.page_region = Some(region);
+        true
+    }
+
+    fn release_page_region_if_rootless(&mut self) {
+        if !self.has_node_roots() {
+            self.page_region = None;
+        }
+    }
+
     fn refresh_semantic_identity_root(&mut self) {
         if self.identity_enabled {
             self.semantic_identity_root = mode_list_semantic_identity(self);
@@ -267,6 +350,13 @@ impl ModeList {
     }
     #[must_use]
     pub fn nodes<'a, G>(&self, stores: &'a CommandContext<'_, G>) -> NodeCursor<'a> {
+        assert!(
+            self.validate_page_region(stores),
+            "mode list root belongs to a foreign page region: stored={:?}, current={:?}, admitted={}",
+            self.page_region,
+            stores.page_node_region_id(),
+            stores.admits_page_node_closure(self.nodes),
+        );
         stores
             .page_nodes(self.nodes)
             .expect("mode list belongs to the live page arena")
@@ -278,7 +368,9 @@ impl ModeList {
     }
 
     pub fn take_nodes(&mut self) -> PageListId {
-        std::mem::take(&mut self.nodes)
+        let nodes = std::mem::take(&mut self.nodes);
+        self.release_page_region_if_rootless();
+        nodes
     }
 
     #[must_use]
@@ -287,10 +379,12 @@ impl ModeList {
     }
 
     pub fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
+        assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
         stores.append_page_active_list(&mut self.active, self.nodes);
         stores.push_page_active_list(&mut self.active, node);
         self.nodes = stores.finalize_page_active_list(&mut self.active);
+        assert!(self.admit_page_region(stores));
     }
 
     pub fn append<G>(
@@ -298,19 +392,24 @@ impl ModeList {
         stores: &mut CommandContext<'_, G>,
         nodes: impl IntoIterator<Item = Node>,
     ) {
+        assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
         stores.append_page_active_list(&mut self.active, self.nodes);
         for node in nodes {
             stores.push_page_active_list(&mut self.active, node);
         }
         self.nodes = stores.finalize_page_active_list(&mut self.active);
+        assert!(self.admit_page_region(stores));
     }
 
     pub fn append_list<G>(&mut self, stores: &mut CommandContext<'_, G>, nodes: PageListId) {
+        assert!(self.admit_page_region(stores));
+        assert!(self.admit_new_root(stores, nodes));
         stores.open_page_active_list(&mut self.active);
         stores.append_page_active_list(&mut self.active, self.nodes);
         stores.append_page_active_list(&mut self.active, nodes);
         self.nodes = stores.finalize_page_active_list(&mut self.active);
+        assert!(self.admit_page_region(stores));
     }
 
     /// Mutates one pre-existing node without allowing the mutable reference to
@@ -321,6 +420,9 @@ impl ModeList {
         index: usize,
         mutate: impl FnOnce(&mut Node) -> R,
     ) -> Option<R> {
+        if !self.admit_page_region(stores) {
+            return None;
+        }
         let mut node = stores
             .page_nodes(self.nodes)
             .ok()?
@@ -336,6 +438,7 @@ impl ModeList {
             index + 1..self.nodes.len(),
         );
         self.nodes = stores.finalize_page_active_list(&mut self.active);
+        assert!(self.admit_page_region(stores));
         Some(result)
     }
 
@@ -484,6 +587,9 @@ impl ModeList {
     /// removed box also loses any raise/lower shift before it is used in its
     /// new box context, matching TeX82's `shift_amount(cur_box) := 0`.
     pub fn take_last_box<G>(&mut self, stores: &mut CommandContext<'_, G>) -> Option<Node> {
+        if !self.admit_page_region(stores) {
+            return None;
+        }
         match stores.page_nodes(self.nodes).ok()?.last() {
             Some(Node::HList(_)) | Some(Node::VList(_)) => {}
             _ => return None,
@@ -497,13 +603,18 @@ impl ModeList {
             }
             _ => unreachable!("tail was checked to be a box"),
         }
+        self.release_page_region_if_rootless();
         Some(node)
     }
 
     pub fn pop_last_node<G>(&mut self, stores: &mut CommandContext<'_, G>) -> Option<Node> {
+        if !self.admit_page_region(stores) {
+            return None;
+        }
         let node = stores.page_nodes(self.nodes).ok()?.last()?.clone();
         self.nodes =
             stores.slice_page_node_sequence(self.nodes, 0..self.nodes.len() - 1, &mut Vec::new());
+        self.release_page_region_if_rootless();
         Some(node)
     }
 
@@ -512,6 +623,7 @@ impl ModeList {
         stores: &mut CommandContext<'_, G>,
         range: std::ops::RangeInclusive<usize>,
     ) -> PageListId {
+        assert!(self.admit_page_region(stores));
         let start = *range.start();
         let end = range.end().saturating_add(1);
         let removed = stores.slice_page_node_sequence(self.nodes, start..end, &mut Vec::new());
@@ -519,6 +631,7 @@ impl ModeList {
         stores.append_page_active_list_range(&mut self.active, self.nodes, 0..start);
         stores.append_page_active_list_range(&mut self.active, self.nodes, end..self.nodes.len());
         self.nodes = stores.finalize_page_active_list(&mut self.active);
+        self.release_page_region_if_rootless();
         removed
     }
 
@@ -566,7 +679,7 @@ impl ModeList {
         self.incomplete_fraction.as_ref()
     }
 
-    pub fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
+    fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
         if self.identity_enabled {
             self.component_roots.incomplete_fraction = incomplete_fraction_identity(&fraction);
         }
@@ -576,10 +689,11 @@ impl ModeList {
     pub fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
         let value = self.incomplete_fraction.take();
         self.component_roots.incomplete_fraction = 0;
+        self.release_page_region_if_rootless();
         value
     }
 
-    pub fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
+    fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
         if self.identity_enabled {
             self.component_roots.display_interrupt = display_interrupt_identity(&interrupt);
         }
@@ -594,10 +708,11 @@ impl ModeList {
     pub fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
         let value = self.display_interrupt.take();
         self.component_roots.display_interrupt = 0;
+        self.release_page_region_if_rootless();
         value
     }
 
-    pub fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
+    fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
         if self.identity_enabled {
             self.component_roots.display_eq_no = display_eq_no_identity(&eq_no);
         }
@@ -612,10 +727,11 @@ impl ModeList {
     pub fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
         let value = self.display_eq_no.take();
         self.component_roots.display_eq_no = 0;
+        self.release_page_region_if_rootless();
         value
     }
 
-    pub fn set_display_alignment(&mut self, nodes: PageListId, prev_depth: Option<Scaled>) {
+    fn set_display_alignment(&mut self, nodes: PageListId, prev_depth: Option<Scaled>) {
         // A display alignment owns the whole display-mode list: §1206 permits
         // assignments before the closing `$$`, but no additional material.
         debug_assert!(!self.display_alignment);
@@ -633,7 +749,9 @@ impl ModeList {
         if !std::mem::take(&mut self.display_alignment) {
             return None;
         }
-        Some((self.take_nodes(), self.prev_depth))
+        let result = (self.take_nodes(), self.prev_depth);
+        self.release_page_region_if_rootless();
+        Some(result)
     }
 }
 
@@ -964,12 +1082,18 @@ impl ModeListMutation<'_> {
         self.list.take_align_state()
     }
 
-    pub(crate) fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
+    pub(crate) fn set_incomplete_fraction<G>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        fraction: IncompleteFraction,
+    ) {
+        assert!(self.list.admit_new_root(stores, fraction.numerator));
         let old = self.list.take_incomplete_fraction();
         if let Some(mut journal) = self.list_journal() {
             journal.record_incomplete_fraction(old);
         }
         self.list.set_incomplete_fraction(fraction);
+        assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
@@ -984,12 +1108,20 @@ impl ModeListMutation<'_> {
         self.list.incomplete_fraction()
     }
 
-    pub(crate) fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
+    pub(crate) fn set_display_interrupt<G>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        interrupt: DisplayInterrupt,
+    ) {
+        if let Some(prototype) = &interrupt.prototype {
+            assert!(self.list.admit_new_root(stores, prototype.children));
+        }
         let old = self.list.take_display_interrupt();
         if let Some(mut journal) = self.list_journal() {
             journal.record_display_interrupt(old);
         }
         self.list.set_display_interrupt(interrupt);
+        assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
@@ -1000,12 +1132,18 @@ impl ModeListMutation<'_> {
         self.list.take_display_interrupt()
     }
 
-    pub(crate) fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
+    pub(crate) fn set_display_eq_no<G>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        eq_no: DisplayEqNo,
+    ) {
+        assert!(self.list.admit_new_root(stores, eq_no.display));
         let old = self.list.take_display_eq_no();
         if let Some(mut journal) = self.list_journal() {
             journal.record_display_eq_no(old);
         }
         self.list.set_display_eq_no(eq_no);
+        assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
@@ -1016,7 +1154,13 @@ impl ModeListMutation<'_> {
         self.list.take_display_eq_no()
     }
 
-    pub(crate) fn set_display_alignment(&mut self, nodes: PageListId, prev_depth: Option<Scaled>) {
+    pub(crate) fn set_display_alignment<G>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        nodes: PageListId,
+        prev_depth: Option<Scaled>,
+    ) {
+        assert!(self.list.admit_new_root(stores, nodes));
         self.record_nodes();
         let old_prev_depth = self.list.prev_depth;
         let old_display_alignment = self.list.display_alignment;
@@ -1025,6 +1169,7 @@ impl ModeListMutation<'_> {
             journal.record_display_alignment(old_display_alignment);
         }
         self.list.set_display_alignment(nodes, prev_depth);
+        assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_display_alignment(&mut self) -> Option<(PageListId, Option<Scaled>)> {
@@ -1049,8 +1194,9 @@ impl ModeListMutation<'_> {
                 return;
             }
             let old = self.list.nodes;
+            let old_region = self.list.page_region;
             if let Some(mut journal) = self.list_journal() {
-                journal.record_nodes(old);
+                journal.record_nodes(old_region, old);
             }
         }
     }
@@ -1066,8 +1212,9 @@ impl ModeListMutation<'_> {
             return;
         }
         let old = self.list.nodes;
+        let old_region = self.list.page_region;
         if let Some(mut journal) = self.list_journal() {
-            journal.record_nodes(old);
+            journal.record_nodes(old_region, old);
         }
     }
 }
@@ -1411,7 +1558,7 @@ pub enum EqNoSide {
 }
 
 /// Snapshot-summary state for one mode level.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ModeLevelSummary {
     mode: Mode,
     entry_line: i32,
@@ -1419,6 +1566,22 @@ pub struct ModeLevelSummary {
 }
 
 impl ModeLevelSummary {
+    fn clone_operation_projection(&self) -> Self {
+        Self {
+            mode: self.mode,
+            entry_line: self.entry_line,
+            list: self.list.clone_operation_projection(),
+        }
+    }
+
+    fn clone_rootless(&self) -> Self {
+        Self {
+            mode: self.mode,
+            entry_line: self.entry_line,
+            list: self.list.clone_rootless(),
+        }
+    }
+
     #[must_use]
     pub fn new(mode: Mode) -> Self {
         Self {
@@ -1465,7 +1628,7 @@ impl ModeLevelSummary {
 }
 
 /// Snapshot-coverable summary of the whole mode nest.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ModeNestSummary {
     levels: Vec<ModeLevelSummary>,
 }
@@ -1476,8 +1639,30 @@ impl ModeNestSummary {
         &self.levels
     }
 
+    #[cfg(test)]
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
         semantic_fingerprint_levels(&self.levels, universe)
+    }
+}
+
+impl Clone for ModeNestSummary {
+    fn clone(&self) -> Self {
+        Self {
+            levels: self
+                .levels
+                .iter()
+                .map(|level| {
+                    #[cfg(test)]
+                    {
+                        level.clone_operation_projection()
+                    }
+                    #[cfg(not(test))]
+                    {
+                        level.clone_rootless()
+                    }
+                })
+                .collect(),
+        }
     }
 }
 
@@ -1898,7 +2083,7 @@ impl Clone for ModeCheckpoint {
     fn clone(&self) -> Self {
         Self {
             owner: self.owner,
-            outer: self.outer.clone(),
+            outer: self.outer.clone_rootless(),
             reachable_state_identity_root: self.reachable_state_identity_root,
         }
     }
@@ -1937,7 +2122,7 @@ impl ModeCheckpoint {
 
     pub(crate) fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
-            levels: vec![self.outer.clone()],
+            levels: vec![self.outer.clone_rootless()],
         }
     }
 }
@@ -1947,20 +2132,6 @@ pub struct ModeNest {
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
     max_nest_stack: usize,
-}
-
-impl Clone for ModeNest {
-    fn clone(&self) -> Self {
-        let levels = self.storage.levels.clone();
-        Self {
-            storage: ModeNestStorage {
-                journal: journal::ModeJournal::enabled(levels.len()),
-                levels,
-                identity_enabled: self.storage.identity_enabled,
-            },
-            max_nest_stack: self.max_nest_stack,
-        }
-    }
 }
 
 impl std::fmt::Debug for ModeNest {
@@ -2039,8 +2210,30 @@ impl ModeNest {
     #[must_use]
     pub fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
-            levels: self.storage.levels.clone(),
+            levels: self
+                .storage
+                .levels
+                .iter()
+                .map(|level| {
+                    #[cfg(test)]
+                    {
+                        level.clone_operation_projection()
+                    }
+                    #[cfg(not(test))]
+                    {
+                        level.clone_rootless()
+                    }
+                })
+                .collect(),
         }
+    }
+
+    pub(crate) fn levels(&self) -> &[ModeLevelSummary] {
+        &self.storage.levels
+    }
+
+    pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
+        semantic_fingerprint_levels(&self.storage.levels, universe)
     }
 
     #[must_use]
@@ -2083,7 +2276,7 @@ impl ModeNest {
         assert_ne!(owner, 0, "mode checkpoint owner identity exhausted");
         ModeCheckpoint {
             owner,
-            outer: self.storage.levels[0].clone(),
+            outer: self.storage.levels[0].clone_rootless(),
             reachable_state_identity_root,
         }
     }
@@ -2114,12 +2307,28 @@ impl ModeNest {
         })
     }
 
+    /// Preflights the mode half of page succession without cloning a mode
+    /// level or scanning arena payload. Every level is checked against the
+    /// admitted current region; succession is permitted only after the exact
+    /// mode-list closure has become rootless.
+    pub(crate) fn preflight_page_region_succession<G>(
+        &self,
+        stores: &CommandContext<'_, G>,
+    ) -> Option<tex_state::page::ModeListRegionPreflight> {
+        self.storage
+            .levels
+            .iter()
+            .all(|level| level.list.validate_page_region(stores))
+            .then_some(())?;
+        (!self.retains_page_node_handles()).then(|| stores.seal_mode_list_region_preflight())
+    }
+
     pub(crate) fn restore_checkpoint(
         &mut self,
         checkpoint: &ModeCheckpoint,
     ) -> Result<(), ExecError> {
         self.storage.levels.clear();
-        self.storage.levels.push(checkpoint.outer.clone());
+        self.storage.levels.push(checkpoint.outer.clone_rootless());
         self.storage.journal = journal::ModeJournal::enabled(1);
         self.storage.identity_enabled = checkpoint.reachable_state_identity_root.is_some();
         Ok(())
@@ -2127,7 +2336,7 @@ impl ModeNest {
 
     pub(crate) fn fork_checkpoint(checkpoint: &ModeCheckpoint) -> Result<Self, ExecError> {
         let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
-        levels.push(checkpoint.outer.clone());
+        levels.push(checkpoint.outer.clone_rootless());
         Ok(Self {
             storage: ModeNestStorage {
                 levels,
@@ -2209,7 +2418,9 @@ impl ModeNest {
             .levels
             .pop()
             .expect("length checked before popping mode level");
-        storage.journal.record_level_pop(popped.clone());
+        storage
+            .journal
+            .record_level_pop(popped.clone_operation_projection());
         Ok(popped)
     }
 

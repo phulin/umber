@@ -517,20 +517,29 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
                 tex_state::token::OriginId::UNKNOWN,
             );
             list.set_align_state(align_state());
-            list.set_incomplete_fraction(IncompleteFraction {
-                numerator: tex_state::node_arena::PageListId::empty(),
-                thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
-                left_delimiter: Some(5),
-                right_delimiter: Some(6),
-            });
-            list.set_display_interrupt(DisplayInterrupt {
-                active_directions: Vec::new(),
-                prototype: None,
-            });
-            list.set_display_eq_no(DisplayEqNo {
-                side: EqNoSide::Right,
-                display: tex_state::node_arena::PageListId::empty(),
-            });
+            list.set_incomplete_fraction(
+                context,
+                IncompleteFraction {
+                    numerator: tex_state::node_arena::PageListId::empty(),
+                    thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
+                    left_delimiter: Some(5),
+                    right_delimiter: Some(6),
+                },
+            );
+            list.set_display_interrupt(
+                context,
+                DisplayInterrupt {
+                    active_directions: Vec::new(),
+                    prototype: None,
+                },
+            );
+            list.set_display_eq_no(
+                context,
+                DisplayEqNo {
+                    side: EqNoSide::Right,
+                    display: tex_state::node_arena::PageListId::empty(),
+                },
+            );
 
             // Later writes in the same frame must preserve the first inverse for
             // each field rather than append another tagged record.
@@ -540,20 +549,29 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
             list.set_prev_depth(Scaled::from_raw(13));
             list.set_prev_graf(14);
             list.set_align_state(align_state());
-            list.set_incomplete_fraction(IncompleteFraction {
-                numerator: tex_state::node_arena::PageListId::empty(),
-                thickness: FractionThickness::Default,
-                left_delimiter: None,
-                right_delimiter: None,
-            });
-            list.set_display_interrupt(DisplayInterrupt {
-                active_directions: vec![tex_state::node::Direction::BeginR],
-                prototype: None,
-            });
-            list.set_display_eq_no(DisplayEqNo {
-                side: EqNoSide::Left,
-                display: tex_state::node_arena::PageListId::empty(),
-            });
+            list.set_incomplete_fraction(
+                context,
+                IncompleteFraction {
+                    numerator: tex_state::node_arena::PageListId::empty(),
+                    thickness: FractionThickness::Default,
+                    left_delimiter: None,
+                    right_delimiter: None,
+                },
+            );
+            list.set_display_interrupt(
+                context,
+                DisplayInterrupt {
+                    active_directions: vec![tex_state::node::Direction::BeginR],
+                    prototype: None,
+                },
+            );
+            list.set_display_eq_no(
+                context,
+                DisplayEqNo {
+                    side: EqNoSide::Left,
+                    display: tex_state::node_arena::PageListId::empty(),
+                },
+            );
         }
 
         assert_eq!(
@@ -655,20 +673,29 @@ fn journal_math_and_display_ownership_transfers_restore() {
         let mut nest = ModeNest::new();
         {
             let mut list = nest.current_list_mutation();
-            list.set_incomplete_fraction(IncompleteFraction {
-                numerator: tex_state::node_arena::PageListId::empty(),
-                thickness: FractionThickness::Default,
-                left_delimiter: None,
-                right_delimiter: Some(9),
-            });
-            list.set_display_interrupt(DisplayInterrupt {
-                active_directions: vec![tex_state::node::Direction::BeginR],
-                prototype: None,
-            });
-            list.set_display_eq_no(DisplayEqNo {
-                side: EqNoSide::Left,
-                display: tex_state::node_arena::PageListId::empty(),
-            });
+            list.set_incomplete_fraction(
+                context,
+                IncompleteFraction {
+                    numerator: tex_state::node_arena::PageListId::empty(),
+                    thickness: FractionThickness::Default,
+                    left_delimiter: None,
+                    right_delimiter: Some(9),
+                },
+            );
+            list.set_display_interrupt(
+                context,
+                DisplayInterrupt {
+                    active_directions: vec![tex_state::node::Direction::BeginR],
+                    prototype: None,
+                },
+            );
+            list.set_display_eq_no(
+                context,
+                DisplayEqNo {
+                    side: EqNoSide::Left,
+                    display: tex_state::node_arena::PageListId::empty(),
+                },
+            );
         }
         let before = nest.summary();
         nest.reset_journal_for_test();
@@ -684,9 +711,11 @@ fn journal_math_and_display_ownership_transfers_restore() {
 
         let mut display = ModeNest::new();
         let display_nodes = context.publish_page_nodes(vec![kern(7), kern(8)]);
-        display
-            .current_list_mutation()
-            .set_display_alignment(display_nodes, Some(Scaled::from_raw(9)));
+        display.current_list_mutation().set_display_alignment(
+            context,
+            display_nodes,
+            Some(Scaled::from_raw(9)),
+        );
         let before = display.summary();
         display.reset_journal_for_test();
         let cursor = display.begin_journal();
@@ -809,14 +838,12 @@ fn journal_fatal_commit_model_and_operational_invisibility_hold() {
         let mut nest = ModeNest::new();
         nest.reset_journal_for_test();
         let cursor = nest.begin_journal();
-        let semantic_before = nest.clone();
         let debug_before = format!("{nest:?}");
         nest.current_list_mutation().push(context, kern(42));
         nest.commit_journal(cursor)
             .expect("fatal path commits partial semantic state");
 
-        assert_ne!(nest, semantic_before);
-        assert_eq!(format!("{semantic_before:?}"), debug_before);
+        assert_ne!(format!("{nest:?}"), debug_before);
         assert_eq!(nest_nodes(&nest, context), [kern(42)]);
         assert_eq!(nest.journal_inverse_len_for_test(), 0);
     });
@@ -974,4 +1001,132 @@ fn nested_mode_cannot_publish_a_retained_checkpoint() {
     let mut source = ModeNest::new();
     source.push(Mode::Horizontal).expect("nested mode");
     let _ = source.checkpoint();
+}
+
+#[test]
+fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(context, kern(11));
+        let owner = nest.storage.levels[0]
+            .list
+            .page_region
+            .expect("outer list is owner-relative");
+        let address = context
+            .page_node_address_for_test(nest.current_list().nodes, 0)
+            .expect("outer node address") as usize;
+        let counters = context.page_material_counters();
+
+        nest.push(Mode::Horizontal).expect("nested horizontal mode");
+        nest.current_list_mutation().push(context, kern(17));
+        assert_eq!(
+            nest.storage.levels[1].list.page_region,
+            Some(owner),
+            "nested and parent lists are admitted by the same region"
+        );
+        let mut nested = nest.pop().expect("pop nested mode");
+        let nested_nodes = nested.list_mutation().take_nodes();
+        nest.current_list_mutation()
+            .append_list(context, nested_nodes);
+
+        assert_eq!(nest_nodes(&nest, context), [kern(11), kern(17)]);
+        assert_eq!(
+            context
+                .page_node_address_for_test(nest.current_list().nodes, 0)
+                .expect("unchanged outer address") as usize,
+            address
+        );
+        assert_eq!(
+            context.page_material_counters().source_nodes_copied,
+            counters.source_nodes_copied,
+            "mode nesting moves exact same-region ranges without copying payload"
+        );
+    });
+}
+
+#[test]
+fn mode_operation_rollback_restores_owner_relative_root_after_failure() {
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(context, kern(23));
+        let owner = nest.storage.levels[0].list.page_region;
+        let address = context
+            .page_node_address_for_test(nest.current_list().nodes, 0)
+            .expect("accepted node") as usize;
+        let counters = context.page_material_counters();
+        nest.reset_journal_for_test();
+        let operation = nest.begin_journal();
+
+        let _consumed = nest.current_list_mutation().take_nodes();
+        nest.push(Mode::Math).expect("candidate nested mode");
+        nest.current_list_mutation().push(context, kern(29));
+        nest.rollback_journal(operation)
+            .expect("operation failure rolls back exact mode roots");
+
+        assert_eq!(nest.depth(), 1);
+        assert_eq!(nest.storage.levels[0].list.page_region, owner);
+        assert_eq!(nest_nodes(&nest, context), [kern(23)]);
+        assert_eq!(
+            context
+                .page_node_address_for_test(nest.current_list().nodes, 0)
+                .expect("restored accepted node") as usize,
+            address
+        );
+        assert_eq!(
+            context.page_material_counters().source_nodes_copied,
+            counters.source_nodes_copied
+        );
+    });
+}
+
+#[test]
+fn foreign_page_region_mode_root_is_rejected_before_succession() {
+    let (foreign_root, foreign_region) = with_context(|context| {
+        (
+            context.publish_page_nodes(vec![kern(31)]),
+            context.page_node_region_id(),
+        )
+    });
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.storage.levels[0].list.nodes = foreign_root;
+        nest.storage.levels[0].list.page_region = Some(foreign_region);
+
+        assert!(
+            nest.preflight_page_region_succession(context).is_none(),
+            "foreign owner-relative roots fail before any region transition"
+        );
+    });
+}
+
+#[test]
+fn eligible_checkpoint_has_no_independent_live_mode_list_owner() {
+    let mut nest = ModeNest::new();
+    nest.current_list_mutation().set_prev_graf(7);
+    let checkpoint = nest.checkpoint();
+
+    assert!(checkpoint.outer.list.page_region.is_none());
+    assert!(checkpoint.outer.list.is_checkpoint_rootless());
+    assert!(!checkpoint.retains_page_node_handles());
+}
+
+#[test]
+fn page_region_succession_preflight_succeeds_after_mode_roots_are_consumed() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut nest = ModeNest::new();
+        let held_over = {
+            let mut context = universe.command_context().expect("live generation");
+            nest.current_list_mutation().push(&mut context, kern(37));
+            let held_over = nest.current_list_mutation().take_nodes();
+            let receipt = nest
+                .preflight_page_region_succession(&context)
+                .expect("consumed mode roots no longer block succession");
+            (held_over, receipt)
+        };
+
+        universe
+            .prepare_page_region_after_output(held_over.1, held_over.0)
+            .expect("mode-list/page-region combined preflight");
+        universe.cancel_page_region_after_output();
+    });
 }

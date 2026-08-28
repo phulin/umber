@@ -28,6 +28,7 @@ const HYPHEN_CONTEXT: usize = 11;
 #[derive(Clone, Copy)]
 struct ListProjection {
     id: u64,
+    page_region: Option<tex_state::node_region::NodeRegionId>,
     root: tex_state::node_arena::PageListId,
     list_semantic_identity_root: u64,
     component_roots: super::ModeComponentRoots,
@@ -38,6 +39,7 @@ impl ListProjection {
     fn capture(id: u64, list: &ModeList) -> Self {
         Self {
             id,
+            page_region: list.page_region,
             root: list.nodes,
             list_semantic_identity_root: list.semantic_identity_root,
             component_roots: list.component_roots,
@@ -95,6 +97,7 @@ struct Frame {
 enum Inverse {
     ListRoot {
         level_id: u64,
+        old_region: Option<tex_state::node_region::NodeRegionId>,
         old: tex_state::node_arena::PageListId,
     },
     #[cfg(test)]
@@ -163,8 +166,14 @@ impl Inverse {
     /// needs a forward-redo payload.
     fn restore(self, storage: &mut ModeNestStorage) {
         match self {
-            Self::ListRoot { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.nodes = old;
+            Self::ListRoot {
+                level_id,
+                old_region,
+                old,
+            } => {
+                let list = &mut storage.level_by_id_mut(level_id).list;
+                list.page_region = old_region;
+                list.nodes = old;
             }
             #[cfg(test)]
             Self::AlignState { level_id, old } => {
@@ -358,11 +367,16 @@ impl ListJournal<'_> {
     pub(super) const fn needs_nodes(&self) -> bool {
         self.inverse_positions[NODES] == UNRECORDED
     }
-    pub(super) fn record_nodes(&mut self, old: tex_state::node_arena::PageListId) {
+    pub(super) fn record_nodes(
+        &mut self,
+        old_region: Option<tex_state::node_region::NodeRegionId>,
+        old: tex_state::node_arena::PageListId,
+    ) {
         if self.inverse_positions[NODES] == UNRECORDED {
             self.inverse_positions[NODES] = self.inverses.len();
             self.inverses.push(Inverse::ListRoot {
                 level_id: self.level_id,
+                old_region,
                 old,
             });
         }
@@ -608,6 +622,7 @@ impl ModeNestStorage {
         for index in frame.projection_start..self.journal.projections.len() {
             let projection = self.journal.projections[index];
             let level = self.level_by_id_mut(projection.id);
+            level.list.page_region = projection.page_region;
             level.list.nodes = projection.root;
             level.list.semantic_identity_root = projection.list_semantic_identity_root;
             level.list.component_roots = projection.component_roots;

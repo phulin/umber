@@ -479,11 +479,11 @@ pub(crate) fn execute_showlists<G>(
     profile: tex_command::CommandProfile,
 ) -> Result<(), ExecError> {
     let mut text = String::new();
-    let summary = nest.summary();
-    let output_routine_active = summary.levels().iter().any(|level| level.entry_line() < 0);
+    let levels = nest.levels();
+    let output_routine_active = levels.iter().any(|level| level.entry_line() < 0);
     let page = page_activity_snapshot(stores, output_routine_active)?;
     let ignored_depth = ignored_depth(stores);
-    for (index, level) in summary.levels().iter().enumerate().rev() {
+    for (index, level) in levels.iter().enumerate().rev() {
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
         text.push_str(" mode entered at line ");
@@ -537,7 +537,7 @@ pub(crate) fn execute_showlists<G>(
                     DumpConfig::read(stores).for_profile(profile),
                 ));
             }
-        } else if let Some(nodes) = showlists_level_nodes(stores, summary.levels(), index) {
+        } else if let Some(nodes) = showlists_level_nodes(stores, levels, index) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }

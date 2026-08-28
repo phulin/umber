@@ -91,18 +91,33 @@ rooted component cannot use a one-shot accept/reject API or settle itself.
 
 ## Mode marks
 
-A mode checkpoint records the mode-timeline lineage and serial, the semantic
-journal position, the bounded mode depth, and one pair of list-span coordinates
-per live TeX nest level. TeX's semantic nest is bounded by the existing 40-save
-limit, so the complete root record has a fixed maximum size. Entry lines,
-pending-character state, paragraph and display scalars, alignment state, and
-the roots of any immutable token or page-node values are restored by the same
-generation-owned reversible journal. The job-lifetime maximum nest depth is
-operational telemetry and is never rolled back.
+A live `ModeList` pairs every nonempty page-list coordinate it carries with the
+identity of the one admitting `PageRegion`. Node publication validates each
+direct parent/child edge against that region; admission can therefore validate
+the top-level coordinate in constant time without walking payload or building a
+root census. Nested horizontal, vertical, math, and alignment levels are
+move-only operation-local state. Popping or packaging a level transfers its
+exact list root, and the private rollback journal records the owner identity and
+coordinate together. No production summary clones a rooted mode level.
+
+A retained mode checkpoint is legal only at a quiescent root-main-file
+paragraph boundary with one empty outer vertical level. It stores that fixed
+rootless scalar level, the mode-timeline lineage and serial, and the semantic
+journal position; it does not retain the live nest or any page-list root. Entry
+lines, pending-character state, paragraph and display scalars, and alignment
+state are restored by the same generation-owned reversible journal. The
+job-lifetime maximum nest depth is operational telemetry and is never rolled
+back.
 
 Append-only list changes restore by resetting span ends. A mutation which
 cannot be expressed as range movement records exactly one first-before value in
 the active semantic interval. It does not clone an accumulated node prefix.
+
+After shipout has consumed all mode-list roots, the executor issues a move-only
+same-region preflight receipt which `Universe` must consume before preparing
+page-region succession. The combined seam deliberately remains outside the
+production shipout tail until durable box and form carriers have the same
+owner-relative lifecycle; mode lists no longer block that later cutover.
 
 ## Page marks
 

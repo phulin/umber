@@ -593,7 +593,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
         // has run §§1206–1207's assignment and delimiter scan.
         modes
             .current_list_mutation()
-            .set_display_alignment(finished, aux_prev_depth);
+            .set_display_alignment(stores, finished, aux_prev_depth);
     } else {
         crate::align::append_finished_alignment(
             modes,

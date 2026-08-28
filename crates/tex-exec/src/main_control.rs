@@ -2025,6 +2025,27 @@ impl<G> Default for MainControl<G> {
 }
 
 impl<G> MainControl<G> {
+    /// Combined executor/state seam for the eventual production page-region
+    /// cutover. Mode ownership is preflighted first and its move-only receipt
+    /// is consumed by `Universe`; durable box/form ownership remains the only
+    /// reason this seam is not installed in the shipout tail yet.
+    #[allow(dead_code)]
+    pub(crate) fn prepare_page_region_succession(
+        &self,
+        stores: &mut Universe<G>,
+        held_over: tex_state::node_arena::PageListId,
+    ) -> Result<(), tex_state::UniverseError> {
+        let modes = {
+            let context = stores.command_context()?;
+            self.modes
+                .preflight_page_region_succession(&context)
+                .ok_or(tex_state::UniverseError::State(
+                    tex_state::StateError::InvalidCursor,
+                ))?
+        };
+        stores.prepare_page_region_after_output(modes, held_over)
+    }
+
     pub(crate) fn from_checkpoint_fork(command: CommandState<G>, modes: ModeNest) -> Self {
         Self {
             command: PersistentInterpreter::from_state(command),
@@ -6654,7 +6675,7 @@ impl<G> MainControl<G> {
                     self.active_math_shifts.push(shift);
                     self.modes
                         .current_list_mutation()
-                        .set_display_eq_no(crate::mode::DisplayEqNo { side, display });
+                        .set_display_eq_no(&context, crate::mode::DisplayEqNo { side, display });
                 }
             }
             MathRequest::Family(_) => {}
@@ -6994,12 +7015,13 @@ impl<G> MainControl<G> {
                 .expect("display direction parameter is admitted");
         }
         schedule_everymath(&mut self.command, &mut context, true);
-        self.modes
-            .current_list_mutation()
-            .set_display_interrupt(crate::mode::DisplayInterrupt {
+        self.modes.current_list_mutation().set_display_interrupt(
+            &context,
+            crate::mode::DisplayInterrupt {
                 active_directions: paragraph.active_directions,
                 prototype,
-            });
+            },
+        );
         Ok(())
     }
 
@@ -8269,7 +8291,7 @@ impl<G> MainControl<G> {
             .command_context()
             .is_ok_and(|context| context.tracked_region_is_active());
         if tracked_region_is_active {
-            let mode_fingerprint = self.modes.summary().semantic_fingerprint(stores);
+            let mode_fingerprint = self.modes.semantic_fingerprint(stores);
             let mut context = stores
                 .command_context()
                 .expect("tracked region keeps its generation admitted");
@@ -9979,15 +10001,19 @@ fn start_fraction<G>(
         return false;
     }
     let numerator = list.take_nodes();
-    list.set_incomplete_fraction(crate::mode::IncompleteFraction {
-        numerator,
-        thickness: match fraction.thickness {
-            Some(value) => FractionThickness::Explicit(value),
-            None => FractionThickness::Default,
+    let context = stores.command_context().expect("live generation");
+    list.set_incomplete_fraction(
+        &context,
+        crate::mode::IncompleteFraction {
+            numerator,
+            thickness: match fraction.thickness {
+                Some(value) => FractionThickness::Explicit(value),
+                None => FractionThickness::Default,
+            },
+            left_delimiter: fraction.left_delimiter.map(|value| value.code),
+            right_delimiter: fraction.right_delimiter.map(|value| value.code),
         },
-        left_delimiter: fraction.left_delimiter.map(|value| value.code),
-        right_delimiter: fraction.right_delimiter.map(|value| value.code),
-    });
+    );
     true
 }
 
