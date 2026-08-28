@@ -10,10 +10,11 @@ use core::num::NonZeroU64;
 use std::ops::Range;
 
 use crate::fork_arena::{
-    ActiveListBuilder, ArenaListId, ArenaListView, ArenaRange, CheckpointMark, ChunkPool,
-    ForkArena, ForkArenaCounters, ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
+    ActiveListBuilder, ArenaListId, ArenaListView, ArenaRange, CheckpointMark, ForkArenaCounters,
+    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
 };
 use crate::node::Node;
+use crate::node_region::{NodePool, NodeRegion, PageRole};
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
 type PageMaterialNode = Node<PageListId>;
@@ -66,7 +67,7 @@ impl PageListId {
         }
     }
 
-    fn from_parts(
+    pub(crate) fn from_parts(
         coordinate: ArenaListId<PageMaterialLane>,
         identity: Option<SemanticSequenceIdentity>,
     ) -> Self {
@@ -96,6 +97,20 @@ impl PageListId {
     #[must_use]
     pub(crate) const fn coordinate(self) -> ArenaListId<PageMaterialLane> {
         self.coordinate
+    }
+
+    pub(crate) fn rebrand_arena(self, arena: u32) -> Self {
+        Self {
+            coordinate: self.coordinate.rebrand_arena(arena),
+            semantic_identity: self.semantic_identity,
+        }
+    }
+
+    pub(crate) fn with_coordinate(self, coordinate: ArenaListId<PageMaterialLane>) -> Self {
+        Self {
+            coordinate,
+            semantic_identity: self.semantic_identity,
+        }
     }
 
     #[must_use]
@@ -246,8 +261,8 @@ impl<G> Hash for DurableListId<G> {
 
 /// Runtime page payload owner. Every `Node` is appended exactly once.
 pub struct PageMaterialArena {
-    pool: ChunkPool<PageMaterialNode>,
-    arena: ForkArena<PageMaterialNode, PageMaterialLane>,
+    pool: NodePool,
+    region: NodeRegion<PageRole>,
     range_scratch: Vec<ArenaRange<PageMaterialLane>>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: bool,
@@ -268,9 +283,13 @@ impl PageMaterialArena {
 
     #[must_use]
     pub fn with_chunk_bytes(chunk_bytes: usize) -> Self {
+        let mut pool = NodePool::with_chunk_bytes(chunk_bytes);
+        let region = pool
+            .start_region()
+            .expect("page-material region identity capacity");
         Self {
-            pool: ChunkPool::with_chunk_bytes(chunk_bytes),
-            arena: ForkArena::new(),
+            pool,
+            region,
             range_scratch: Vec::new(),
             coordinate_scratch: Vec::new(),
             semantic_identity_enabled: false,
@@ -280,7 +299,8 @@ impl PageMaterialArena {
 
     pub fn enable_semantic_identity(&mut self) {
         assert!(
-            self.arena.counters().new_semantic_nodes == 0 || self.semantic_identity_enabled,
+            self.region.pub_arena.counters().new_semantic_nodes == 0
+                || self.semantic_identity_enabled,
             "semantic identity demand starts before page-node publication"
         );
         self.semantic_identity_enabled = true;
@@ -298,12 +318,12 @@ impl PageMaterialArena {
 
     #[must_use]
     pub const fn counters(&self) -> ForkArenaCounters {
-        self.arena.counters()
+        self.region.pub_arena.counters()
     }
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.arena.live_payload_values(&self.pool)
+        self.region.pub_arena.live_payload_values(&self.pool.chunks)
     }
 
     pub fn publish_owned(
@@ -313,7 +333,7 @@ impl PageMaterialArena {
         let mut identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
-        let mut builder = self.arena.begin_builder(&mut self.pool)?;
+        let mut builder = self.region.pub_arena.begin_builder(&mut self.pool.chunks)?;
         for node in nodes {
             if let Some(identity) = &mut identity {
                 identity.push_back(semantic_node_identity(&node));
@@ -329,8 +349,9 @@ impl PageMaterialArena {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<(), ForkArenaError> {
-        self.arena
-            .open_active_list(&self.pool, &mut builder.inner)?;
+        self.region
+            .pub_arena
+            .open_active_list(&self.pool.chunks, &mut builder.inner)?;
         builder.identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
@@ -346,8 +367,9 @@ impl PageMaterialArena {
             identity.push_back(semantic_node_identity(&node));
             self.semantic_hash_work = self.semantic_hash_work.saturating_add(1);
         }
-        self.arena
-            .push_active_list(&mut self.pool, &mut builder.inner, node)
+        self.region
+            .pub_arena
+            .push_active_list(&mut self.pool.chunks, &mut builder.inner, node)
     }
 
     pub fn append_to_active_list(
@@ -355,8 +377,11 @@ impl PageMaterialArena {
         builder: &mut PageMaterialActiveListBuilder,
         list: PageListId,
     ) -> Result<(), ForkArenaError> {
-        self.arena
-            .append_active_list(&mut self.pool, &mut builder.inner, list.coordinate())?;
+        self.region.pub_arena.append_active_list(
+            &mut self.pool.chunks,
+            &mut builder.inner,
+            list.coordinate(),
+        )?;
         if let Some(identity) = &mut builder.identity {
             *identity = identity.concat(
                 list.sequence_identity()
@@ -382,8 +407,8 @@ impl PageMaterialArena {
         } else {
             None
         };
-        self.arena.append_active_list_range(
-            &mut self.pool,
+        self.region.pub_arena.append_active_list_range(
+            &mut self.pool.chunks,
             &mut builder.inner,
             list.coordinate(),
             selected,
@@ -400,8 +425,9 @@ impl PageMaterialArena {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<PageListId, ForkArenaError> {
-        self.arena
-            .finalize_active_list(&mut self.pool, &mut builder.inner)?;
+        self.region
+            .pub_arena
+            .finalize_active_list(&mut self.pool.chunks, &mut builder.inner)?;
         let coordinate = builder.inner.take_sealed()?;
         Ok(PageListId::from_parts(coordinate, builder.identity.take()))
     }
@@ -410,8 +436,9 @@ impl PageMaterialArena {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<(), ForkArenaError> {
-        self.arena
-            .rollback_active_list(&mut self.pool, &mut builder.inner)?;
+        self.region
+            .pub_arena
+            .rollback_active_list(&mut self.pool.chunks, &mut builder.inner)?;
         builder.identity = None;
         Ok(())
     }
@@ -468,8 +495,8 @@ impl PageMaterialArena {
         identity: Option<SemanticSequenceIdentity>,
     ) -> Result<PageListId, ForkArenaError> {
         assert_eq!(self.semantic_identity_enabled, identity.is_some());
-        let coordinate = self.arena.slice_list(
-            &mut self.pool,
+        let coordinate = self.region.pub_arena.slice_list(
+            &mut self.pool.chunks,
             list.coordinate(),
             selected,
             &mut self.range_scratch,
@@ -486,8 +513,8 @@ impl PageMaterialArena {
         self.coordinate_scratch.clear();
         self.coordinate_scratch
             .extend(lists.iter().map(|list| list.coordinate()));
-        let coordinate = self.arena.compose_lists(
-            &mut self.pool,
+        let coordinate = self.region.pub_arena.compose_lists(
+            &mut self.pool.chunks,
             &self.coordinate_scratch,
             &mut self.range_scratch,
         )?;
@@ -498,7 +525,9 @@ impl PageMaterialArena {
         &self,
         list: PageListId,
     ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.arena.list(&self.pool, list.coordinate())
+        self.region
+            .pub_arena
+            .list(&self.pool.chunks, list.coordinate())
     }
 
     pub fn get(
@@ -530,49 +559,53 @@ impl PageMaterialArena {
 
     #[must_use]
     pub fn operation_mark(&self) -> OperationMark<PageMaterialLane> {
-        self.arena.operation_mark(&self.pool)
+        self.region.pub_arena.operation_mark(&self.pool.chunks)
     }
 
     pub fn restore_operation(
         &mut self,
         mark: OperationMark<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.arena.restore_operation(&mut self.pool, mark)
+        self.region
+            .pub_arena
+            .restore_operation(&mut self.pool.chunks, mark)
     }
 
     pub fn seal_boundary(&mut self) -> Result<SealedBoundary<PageMaterialLane>, ForkArenaError> {
-        self.arena.seal_boundary(&mut self.pool)
+        self.region.pub_arena.seal_boundary(&mut self.pool.chunks)
     }
 
     pub fn checkpoint_mark(
         &self,
         boundary: SealedBoundary<PageMaterialLane>,
     ) -> Result<CheckpointMark<PageMaterialLane>, ForkArenaError> {
-        self.arena.checkpoint_mark(boundary)
+        self.region.pub_arena.checkpoint_mark(boundary)
     }
 
     pub fn begin_checkpoint_candidate(
         &mut self,
         mark: CheckpointMark<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.arena.begin_checkpoint_candidate(mark)
+        self.region.pub_arena.begin_checkpoint_candidate(mark)
     }
 
     #[must_use]
     pub fn validates_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
-        self.arena.validates_checkpoint(mark)
+        self.region.pub_arena.validates_checkpoint(mark)
     }
 
     #[must_use]
     pub fn can_restore_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
-        self.arena.can_begin_checkpoint_candidate(mark)
+        self.region.pub_arena.can_begin_checkpoint_candidate(mark)
     }
 
     pub fn restore_checkpoint(
         &mut self,
         mark: CheckpointMark<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.arena.restore_accepted_checkpoint(&mut self.pool, mark)
+        self.region
+            .pub_arena
+            .restore_accepted_checkpoint(&mut self.pool.chunks, mark)
     }
 
     pub fn font_roots_are_live(
@@ -581,8 +614,9 @@ impl PageMaterialArena {
         mut is_live: impl FnMut(crate::ids::FontId) -> bool,
     ) -> Result<bool, ForkArenaError> {
         let mut all_live = true;
-        self.arena
-            .visit_checkpoint_values(&self.pool, mark, |node| {
+        self.region
+            .pub_arena
+            .visit_checkpoint_values(&self.pool.chunks, mark, |node| {
                 node.visit_fonts(|font| all_live &= is_live(font));
             })?;
         Ok(all_live)
@@ -592,16 +626,18 @@ impl PageMaterialArena {
         &mut self,
         boundary: SealedBoundary<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.arena
-            .reject_checkpoint_candidate(&mut self.pool, boundary)
+        self.region
+            .pub_arena
+            .reject_checkpoint_candidate(&mut self.pool.chunks, boundary)
     }
 
     pub fn accept_checkpoint_candidate(
         &mut self,
         boundary: SealedBoundary<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.arena
-            .accept_checkpoint_candidate(&mut self.pool, boundary)
+        self.region
+            .pub_arena
+            .accept_checkpoint_candidate(&mut self.pool.chunks, boundary)
     }
 }
 

@@ -180,6 +180,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.
+- `src/node_region.rs` and `src/node_region/tests.rs`: Exclusive move-only node
+  regions above the shared fixed-chunk pool, generation-checked owner-relative
+  roots and borrows, atomic nested-coordinate transfer/rebranding, and explicit
+  recursive closure copy; production page and durable carrier cutovers remain
+  separate migration stages.
 - `src/page.rs`: Page-lifetime builder state with directly owned contribution,
   current-page, discard, insertion, and mark buffers; active insertion classes
   and sparse mark classes retain canonical iteration order beside dense direct

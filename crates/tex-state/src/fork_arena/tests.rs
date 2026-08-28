@@ -5,6 +5,12 @@ use crate::node_arena::NodeCursor;
 enum ActiveLane {}
 enum PageLane {}
 
+impl super::RegionValue<ActiveLane> for u32 {
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 #[test]
 fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     let mut pool = ChunkPool::<u64>::with_chunk_bytes(32);

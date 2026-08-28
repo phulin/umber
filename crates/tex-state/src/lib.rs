@@ -87,6 +87,7 @@ pub mod memo;
 mod memory_accounting;
 pub mod node;
 pub mod node_arena;
+pub mod node_region;
 pub mod node_sequence;
 pub mod packed_input;
 pub mod page;

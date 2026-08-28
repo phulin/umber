@@ -519,6 +519,11 @@ impl<Lane> ArenaListId<Lane> {
         self.len() == 0
     }
 
+    #[must_use]
+    pub(crate) fn rebrand_arena(self, arena: u32) -> Self {
+        rebrand_list(self, arena)
+    }
+
     const fn from_record(arena: u32, first: RawChunkKey, start: u32, count: u32, len: u32) -> Self {
         Self {
             arena,
@@ -633,6 +638,32 @@ pub struct SealedBatch<Lane> {
     descriptor_start: u32,
     descriptor_end: u32,
     lists: Vec<ArenaListId<Lane>>,
+}
+
+/// Failed transfer which returns the still-exclusive sealed suffix token.
+pub(crate) struct BatchTransferError<Lane> {
+    pub(crate) error: ForkArenaError,
+    pub(crate) batch: SealedBatch<Lane>,
+}
+
+impl<Lane> core::fmt::Debug for BatchTransferError<Lane> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("BatchTransferError")
+            .field("error", &self.error)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Payload hook used by coarse-region transfers.
+///
+/// A transfer validates every embedded coordinate before changing either
+/// arena, then rewrites those coordinates in place while the fixed chunk
+/// addresses remain stable. Implementations must visit every coordinate
+/// stored by the payload value.
+pub(crate) trait RegionValue<Lane> {
+    fn visit_region_lists(&self, visit: &mut dyn FnMut(ArenaListId<Lane>));
+    fn rebrand_region_lists(&mut self, destination_arena: u32);
 }
 
 pub struct BatchMark<Lane> {
@@ -810,6 +841,18 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.counters
     }
 
+    #[must_use]
+    pub(crate) const fn region_identity(&self) -> u32 {
+        self.owner
+    }
+
+    pub(crate) fn record_source_nodes_copied(&mut self, count: usize) {
+        self.counters.source_nodes_copied = self
+            .counters
+            .source_nodes_copied
+            .saturating_add(count as u64);
+    }
+
     fn bind_pool(&mut self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
         match self.pool_owner {
             Some(owner) if owner != pool.owner => Err(ForkArenaError::InvalidChunk),
@@ -827,6 +870,67 @@ impl<T, Lane> ForkArena<T, Lane> {
         } else {
             Err(ForkArenaError::InvalidChunk)
         }
+    }
+
+    fn validate_live_chunks(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        for position in 0..self.live_payload_len() {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            pool.payload.validate(key, self.owner)?;
+        }
+        for position in 0..self.live_descriptor_len() {
+            let key = self
+                .live_key_at(true, position)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            pool.descriptors.validate(key, self.owner)?;
+        }
+        Ok(())
+    }
+
+    fn can_seal_boundary(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        u32::try_from(self.live_payload_len()).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        u32::try_from(self.live_descriptor_len()).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        self.validate_live_chunks(pool)
+    }
+
+    pub(crate) fn can_retire_region(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        self.validate_live_chunks(pool)
+    }
+
+    /// Releases every envelope after a complete read-only preflight.
+    pub(crate) fn retire_region(&mut self, pool: &mut ChunkPool<T>) -> Result<(), ForkArenaError> {
+        self.can_retire_region(pool)?;
+        let ownership = std::mem::replace(
+            &mut self.ownership,
+            ForkOwnership::Accepted(ChunkSet::default()),
+        );
+        let sets = match ownership {
+            ForkOwnership::Accepted(accepted) => vec![accepted],
+            ForkOwnership::Forked {
+                prefix,
+                detached_prior,
+                current,
+            } => vec![prefix, detached_prior, current],
+        };
+        for set in sets {
+            self.release_set(pool, set)
+                .expect("region retirement was completely preflighted");
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -1450,13 +1554,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
     ) -> Result<SealedBoundary<Lane>, ForkArenaError> {
-        self.bind_pool(pool)?;
-        if self.active_builder {
-            return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
+        self.can_seal_boundary(pool)?;
+        self.bind_pool(pool)
+            .expect("boundary pool binding was preflighted");
         let payload_tail = self.live_key_at(false, self.live_payload_len().saturating_sub(1));
         let descriptor_tail = self.live_key_at(true, self.live_descriptor_len().saturating_sub(1));
         let mut sealed = 0_u64;
@@ -1486,8 +1586,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             .saturating_add(unused_bytes);
         Ok(SealedBoundary {
             arena: self.owner,
-            payload_chunks: self.live_payload_len() as u32,
-            descriptor_chunks: self.live_descriptor_len() as u32,
+            payload_chunks: u32::try_from(self.live_payload_len())
+                .expect("payload boundary length was preflighted"),
+            descriptor_chunks: u32::try_from(self.live_descriptor_len())
+                .expect("descriptor boundary length was preflighted"),
             payload_tail,
             descriptor_tail,
             _lane: PhantomData,
@@ -1998,14 +2100,139 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
-    pub fn promote_batch_into<Destination>(
+    pub(crate) fn cancel_batch(&mut self, batch: SealedBatch<Lane>) -> Result<(), ForkArenaError> {
+        if batch.arena != self.owner
+            || self.pending_batch
+                != Some(PendingBatch {
+                    serial: batch.serial,
+                    payload_start: batch.payload_start,
+                    payload_end: batch.payload_end,
+                    descriptor_start: batch.descriptor_start,
+                    descriptor_end: batch.descriptor_end,
+                })
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        self.pending_batch = None;
+        Ok(())
+    }
+
+    pub(crate) fn promote_batch_into<Destination>(
         &mut self,
         pool: &mut ChunkPool<T>,
         destination: &mut ForkArena<T, Destination>,
         batch: SealedBatch<Lane>,
-    ) -> Result<Vec<ArenaListId<Destination>>, ForkArenaError> {
-        self.bind_pool(pool)?;
-        destination.bind_pool(pool)?;
+    ) -> Result<Vec<ArenaListId<Destination>>, BatchTransferError<Lane>>
+    where
+        T: RegionValue<Lane>,
+    {
+        if let Err(error) = self.preflight_batch_transfer(pool, destination, &batch) {
+            return Err(BatchTransferError { error, batch });
+        }
+        let promoted_lists = batch
+            .lists
+            .iter()
+            .copied()
+            .map(|list| rebrand_list(list, destination.owner))
+            .collect::<Vec<_>>();
+        self.bind_pool(pool)
+            .expect("batch transfer pool was preflighted");
+        destination
+            .bind_pool(pool)
+            .expect("batch destination pool was preflighted");
+        destination
+            .seal_boundary(pool)
+            .expect("batch destination boundary was preflighted");
+        let payload = self
+            .validate_suffix(
+                false,
+                batch.payload_start as usize,
+                batch.payload_end as usize,
+            )
+            .expect("batch payload suffix was preflighted");
+        self.validate_suffix(
+            true,
+            batch.descriptor_start as usize,
+            batch.descriptor_end as usize,
+        )
+        .expect("batch descriptor suffix was preflighted");
+        for key in &payload {
+            let used = pool
+                .payload
+                .used(*key, self.owner)
+                .expect("batch payload was preflighted");
+            for offset in 0..used {
+                pool.payload
+                    .get_mut(*key, self.owner, offset)
+                    .expect("batch payload cell was preflighted")
+                    .rebrand_region_lists(destination.owner);
+            }
+        }
+        let payload = self
+            .detach_suffix(false, batch.payload_start as usize)
+            .expect("batch payload detachment was preflighted");
+        let descriptors = self
+            .detach_suffix(true, batch.descriptor_start as usize)
+            .expect("batch descriptor detachment was preflighted");
+        for key in &payload {
+            pool.payload
+                .transfer(*key, self.owner, destination.owner)
+                .expect("batch payload ownership was preflighted");
+        }
+        for key in &descriptors {
+            pool.descriptors
+                .transfer(*key, self.owner, destination.owner)
+                .expect("batch descriptor ownership was preflighted");
+        }
+        let promoted = payload.len() + descriptors.len();
+        for key in &payload {
+            self.unindex_chunk(false, *key);
+        }
+        for key in &descriptors {
+            self.unindex_chunk(true, *key);
+        }
+        let payload_start = destination.live_payload_len();
+        let descriptor_start = destination.live_descriptor_len();
+        for (offset, key) in payload.iter().copied().enumerate() {
+            destination.index_chunk(false, key, payload_start + offset);
+        }
+        for (offset, key) in descriptors.iter().copied().enumerate() {
+            destination.index_chunk(true, key, descriptor_start + offset);
+        }
+        {
+            let current = destination.current_chunks_mut();
+            current.payload.extend(payload);
+            current.descriptors.extend(descriptors);
+        }
+        self.counters.chunks_promoted = self
+            .counters
+            .chunks_promoted
+            .saturating_add(promoted as u64);
+        destination.counters.chunks_promoted = destination
+            .counters
+            .chunks_promoted
+            .saturating_add(promoted as u64);
+        self.pending_batch = None;
+        Ok(promoted_lists)
+    }
+
+    fn preflight_batch_transfer<Destination>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Destination>,
+        batch: &SealedBatch<Lane>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.validate_pool(pool)?;
+        destination.validate_pool(pool)?;
+        if self.owner == destination.owner || destination.active_builder {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        if destination.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
         if batch.arena != self.owner {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -2040,51 +2267,165 @@ impl<T, Lane> ForkArena<T, Lane> {
                 return Err(ForkArenaError::UnsealedBoundary);
             }
         }
-        destination.seal_boundary(pool)?;
-        let payload = self.detach_suffix(false, batch.payload_start as usize)?;
-        let descriptors = self.detach_suffix(true, batch.descriptor_start as usize)?;
-        let promoted_lists = batch
-            .lists
-            .into_iter()
-            .map(|list| rebrand_list(list, destination.owner))
-            .collect::<Vec<_>>();
+        destination.can_seal_boundary(pool)?;
+        for list in &batch.lists {
+            self.validate_list_in_suffix(
+                pool,
+                *list,
+                batch.payload_start as usize,
+                batch.descriptor_start as usize,
+            )?;
+        }
         for key in &payload {
-            pool.payload.transfer(*key, self.owner, destination.owner)?;
+            let used = pool.payload.used(*key, self.owner)?;
+            for offset in 0..used {
+                let value = pool
+                    .payload
+                    .get(*key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidChunk)?;
+                let mut invalid = None;
+                value.visit_region_lists(&mut |list| {
+                    if invalid.is_none()
+                        && self
+                            .validate_list_in_suffix(
+                                pool,
+                                list,
+                                batch.payload_start as usize,
+                                batch.descriptor_start as usize,
+                            )
+                            .is_err()
+                    {
+                        invalid = Some(ForkArenaError::InvalidRegion);
+                    }
+                });
+                if let Some(error) = invalid {
+                    return Err(error);
+                }
+            }
         }
-        for key in &descriptors {
-            pool.descriptors
-                .transfer(*key, self.owner, destination.owner)?;
+        Ok(())
+    }
+
+    pub(crate) fn preflight_whole_region_transfer<Destination>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Destination>,
+        lists: &[ArenaListId<Lane>],
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        if self.active_builder || self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBuilder);
         }
-        let promoted = payload.len() + descriptors.len();
-        for key in &payload {
-            self.unindex_chunk(false, *key);
+        if !matches!(self.ownership, ForkOwnership::Accepted(_)) {
+            return Err(ForkArenaError::AlreadyForked);
         }
-        for key in &descriptors {
-            self.unindex_chunk(true, *key);
+        self.next_batch_serial
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        let boundary = SealedBatch {
+            arena: self.owner,
+            serial: self.next_batch_serial,
+            payload_start: 0,
+            payload_end: self.live_payload_len() as u32,
+            descriptor_start: 0,
+            descriptor_end: self.live_descriptor_len() as u32,
+            lists: lists.to_vec(),
+        };
+        self.preflight_transfer_coordinates(pool, destination, &boundary)
+    }
+
+    fn preflight_transfer_coordinates<Destination>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Destination>,
+        batch: &SealedBatch<Lane>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.validate_live_chunks(pool)?;
+        destination.can_seal_boundary(pool)?;
+        if self.owner == destination.owner || destination.active_builder {
+            return Err(ForkArenaError::InvalidRegion);
         }
-        let payload_start = destination.live_payload_len();
-        let descriptor_start = destination.live_descriptor_len();
-        for (offset, key) in payload.iter().copied().enumerate() {
-            destination.index_chunk(false, key, payload_start + offset);
+        let payload = self.validate_suffix(
+            false,
+            batch.payload_start as usize,
+            batch.payload_end as usize,
+        )?;
+        self.validate_suffix(
+            true,
+            batch.descriptor_start as usize,
+            batch.descriptor_end as usize,
+        )?;
+        for list in &batch.lists {
+            self.validate_list_in_suffix(
+                pool,
+                *list,
+                batch.payload_start as usize,
+                batch.descriptor_start as usize,
+            )?;
         }
-        for (offset, key) in descriptors.iter().copied().enumerate() {
-            destination.index_chunk(true, key, descriptor_start + offset);
+        for key in payload {
+            let used = pool.payload.used(key, self.owner)?;
+            for offset in 0..used {
+                let value = pool
+                    .payload
+                    .get(key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidChunk)?;
+                let mut valid = true;
+                value.visit_region_lists(&mut |list| {
+                    valid &= self
+                        .validate_list_in_suffix(
+                            pool,
+                            list,
+                            batch.payload_start as usize,
+                            batch.descriptor_start as usize,
+                        )
+                        .is_ok();
+                });
+                if !valid {
+                    return Err(ForkArenaError::InvalidRegion);
+                }
+            }
         }
-        {
-            let current = destination.current_chunks_mut();
-            current.payload.extend(payload);
-            current.descriptors.extend(descriptors);
+        Ok(())
+    }
+
+    pub(crate) fn seal_whole_region_batch(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        lists: Vec<ArenaListId<Lane>>,
+    ) -> Result<SealedBatch<Lane>, ForkArenaError> {
+        if self.active_builder || self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBuilder);
         }
-        self.counters.chunks_promoted = self
-            .counters
-            .chunks_promoted
-            .saturating_add(promoted as u64);
-        destination.counters.chunks_promoted = destination
-            .counters
-            .chunks_promoted
-            .saturating_add(promoted as u64);
-        self.pending_batch = None;
-        Ok(promoted_lists)
+        if !matches!(self.ownership, ForkOwnership::Accepted(_)) {
+            return Err(ForkArenaError::AlreadyForked);
+        }
+        let boundary = self.seal_boundary(pool)?;
+        let serial = self.next_batch_serial;
+        self.next_batch_serial = serial
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        self.pending_batch = Some(PendingBatch {
+            serial,
+            payload_start: 0,
+            payload_end: boundary.payload_chunks,
+            descriptor_start: 0,
+            descriptor_end: boundary.descriptor_chunks,
+        });
+        Ok(SealedBatch {
+            arena: self.owner,
+            serial,
+            payload_start: 0,
+            payload_end: boundary.payload_chunks,
+            descriptor_start: 0,
+            descriptor_end: boundary.descriptor_chunks,
+            lists,
+        })
     }
 
     fn validate_suffix(
