@@ -82,6 +82,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `docs/expansion_memory_lifetimes.md`: implementation map and retention audit
   for expansion generations, durable values, scratch, scanners, suspension,
   input, effects, and format ownership.
+- `docs/node_region_ownership.md`: authoritative exclusive node-region design
+  for exact paragraph checkpoints, page succession, TeX move/copy semantics,
+  and whole-region reclamation.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `third_party/`: ignored reference downloads and external source archives.
 

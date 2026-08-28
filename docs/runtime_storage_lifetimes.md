@@ -60,6 +60,11 @@ runtime. It is the authority when another architecture document discusses a
 different runtime storage lifetime. It does not define a wire format or a
 host-resource policy.
 
+[Node-region ownership](node_region_ownership.md) is the authoritative
+specialization for runtime node closures. It preserves this document's
+two-lineage and fixed-chunk rules while replacing raw-coordinate aliasing and
+conservative page bounds with exclusive page/durable region owners.
+
 [Expansion memory lifetimes](expansion_memory_lifetimes.md) is the focused
 plain-language map from this normative end state to the current expansion,
 scanner, suspension, revision, and format implementation. Its retention audit
@@ -103,19 +108,19 @@ copyable ids or inline scalars where that is cheaper. No per-value `Arc`,
 
 The following matrix is normative:
 
-| Value or storage                                              | Immediate owner                                                                     | Valid until                                                     | Rollback behavior                                                             | Escape path                                      |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
-| Interned control-sequence name and token spelling             | Session interning epoch                                                             | Session epoch retirement                                        | Never rolled back                                                             | Detached spelling or semantic atom               |
-| Current meaning, parameter, register, or code value           | Dense current-value bank                                                            | Overwritten or bank retirement                                  | TeX group saves, checkpoint deltas, or operation-local undo restore in place  | Packed value in a checkpoint or DTO              |
-| Immutable macro definition and its definition token lists     | Every live semantic carrier through one branded non-atomic shared handle            | Last exact carrier drop                                         | Rollback moves saved owners back and drops rejected/replaced owners           | Handle-free recipe at a cold boundary            |
-| Stored token list                                             | Every live eqtb, journal, input/expansion, checkpoint, PDF, or continuation carrier | Last exact carrier drop                                         | Moves transfer; true aliases explicitly clone; truncation/pruning drops       | Handle-free recipe at a cold boundary            |
-| Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch                                                          | Operation completion, rollback, or continuation disposal        | Reset the applicable lane lengths to saved cursors                            | None; surviving output is built in final storage |
-| Prepared cold operation or operation-local failure            | One caller-owned direct `OperationFrame`                                            | Application, rollback, typed suspension disposal, or reuse      | Completion consumes occupied fields; suspension moves the exact frame intact  | Typed in-process attempt continuation only       |
-| Pending mode material and page-builder nodes                  | Current generation storage                                                          | Mode close, rollback, setbox publication, or shipout            | Move-only nested-region truncation after promotion/detachment or root restore | Direct construction or shipout lowering          |
-| Box-register or checkpoint-surviving node                     | Store-owned revision slot                                                           | Slot retirement                                                 | Slot ownership restores before abandoned storage drops                        | Detached output or node recipe                   |
-| Source registration and compact provenance record             | Session or revision generation                                                      | Last owning generation, live input, or output recipe retirement | Cursor restoration and suffix discard                                         | Handle-free source recipe                        |
-| Structural diagnostic or rendered-source presentation         | Diagnostic or artifact DTO                                                          | DTO disposal                                                    | Not live runtime state                                                        | Already detached and handle-free                 |
-| Shipped page                                                  | `tex-out` value                                                                     | Output disposal                                                 | Outside engine rollback after publication                                     | Serialized artifact bytes or output DTO          |
+| Value or storage                                              | Immediate owner                                                                     | Valid until                                                     | Rollback behavior                                                            | Escape path                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------ |
+| Interned control-sequence name and token spelling             | Session interning epoch                                                             | Session epoch retirement                                        | Never rolled back                                                            | Detached spelling or semantic atom               |
+| Current meaning, parameter, register, or code value           | Dense current-value bank                                                            | Overwritten or bank retirement                                  | TeX group saves, checkpoint deltas, or operation-local undo restore in place | Packed value in a checkpoint or DTO              |
+| Immutable macro definition and its definition token lists     | Every live semantic carrier through one branded non-atomic shared handle            | Last exact carrier drop                                         | Rollback moves saved owners back and drops rejected/replaced owners          | Handle-free recipe at a cold boundary            |
+| Stored token list                                             | Every live eqtb, journal, input/expansion, checkpoint, PDF, or continuation carrier | Last exact carrier drop                                         | Moves transfer; true aliases explicitly clone; truncation/pruning drops      | Handle-free recipe at a cold boundary            |
+| Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch                                                          | Operation completion, rollback, or continuation disposal        | Reset the applicable lane lengths to saved cursors                           | None; surviving output is built in final storage |
+| Prepared cold operation or operation-local failure            | One caller-owned direct `OperationFrame`                                            | Application, rollback, typed suspension disposal, or reuse      | Completion consumes occupied fields; suspension moves the exact frame intact | Typed in-process attempt continuation only       |
+| Pending mode material and page-builder nodes                  | The current exclusive `PageRegion`                                                  | Page shipout, rollback, or transfer to a durable owner          | Move-only region/suffix settlement after root restore                        | Direct construction or shipout lowering          |
+| Box-register or checkpoint-surviving node                     | Exclusive durable region or history-owned page region                               | Owning register/form/journal/checkpoint interval retirement     | Restore owners before abandoned regions drop                                 | Detached output or node recipe                   |
+| Source registration and compact provenance record             | Session or revision generation                                                      | Last owning generation, live input, or output recipe retirement | Cursor restoration and suffix discard                                        | Handle-free source recipe                        |
+| Structural diagnostic or rendered-source presentation         | Diagnostic or artifact DTO                                                          | DTO disposal                                                    | Not live runtime state                                                       | Already detached and handle-free                 |
+| Shipped page                                                  | `tex-out` value                                                                     | Output disposal                                                 | Outside engine rollback after publication                                    | Serialized artifact bytes or output DTO          |
 
 ## Interning epoch
 
@@ -507,18 +512,18 @@ Nodes have four storage roles:
    temporary transformation indexes. These values are not nodes and never
    escape scratch.
 2. One caller-owned stable coarse `ChunkPool<Node>` is the physical authority
-   for current-generation active-material and page-material lanes. Each typed
-   `ForkArena` owns only lane coordinates, lifecycle metadata, and the sole
-   direct-range/nonrecursive-range-sequence list topology. Active
+   below exclusive `NodeRegion` owners. Each typed `ForkArena` owns only lane
+   coordinates, lifecycle metadata, and the sole direct-range/nonrecursive-
+   range-sequence list topology. One `PageRegion` owns each page-building
+   period; durable boxes/forms own separate self-contained regions. Active
    paragraph, math, alignment, and box regions promote only as sealed whole
-   batches into page ownership. Operation marks may restore a partial tail;
-   retained checkpoints can name only sealed whole-chunk boundaries. A
-   shared `&ChunkPool` yields stable direct payload borrows; every append,
-   seal, transfer, rollback, or prune requires the caller's exclusive
-   `&mut ChunkPool`. Persistent active lists retain only a move-only checked
-   builder coordinate and scalar tail state; they never retain that borrow.
-   A conservative durable bound protects page chunks
-   rebranded into state carriers.
+   envelopes into an exclusive destination. Operation marks may restore a
+   partial tail; retained checkpoints can name only sealed whole-chunk
+   boundaries. A shared region/pool borrow yields stable direct payload
+   borrows; every append, seal, transfer, rollback, or prune requires the
+   caller's exclusive mutable owner borrow. Persistent active lists retain only
+   a move-only checked builder coordinate and scalar tail state; they never
+   retain that borrow.
 3. Cold format decode stages validated node rows directly into the same
    generation-local page-material pool as its immutable initial accepted
    prefix, then seals the initial checkpoint. Loaded durable roots are typed
@@ -529,15 +534,16 @@ Nodes have four storage roles:
    retain warmed capacity; nested attempts take scalar marks and reset their
    complete suffix in O(1).
 
-All four storage classes are owned below the external store's current slot,
-not by a mode, group, box, or node. Builders consume runtime nodes once into
-active chunks; sealed regions transfer whole chunk envelopes into page
-material without payload copying. Setbox, PDF-form, box, unbox, page, math, and
-alignment transitions promote or rebrand typed coordinates. A TeX box copy
-shares the immutable range-list root under the same slot lease; it never adds a
-per-node or per-list reference count. Retained runtime checkpoints name sealed
-chunk and descriptor boundaries. Post-fork publication opens only the current
-suffix, and forking copies no node or token payload.
+The physical pool remains below the external store's current slot, but semantic
+node lifetime belongs to move-only regions. Builders consume runtime nodes once
+into active chunks; sealed regions transfer whole chunk envelopes into page
+material without payload copying. Setbox, PDF-form, consuming box/unbox, page,
+math, and alignment transitions move exclusive owners or ranges. TeX `\copy`
+and `\unhcopy` deep-copy the exact recursive node closure. If a retained
+checkpoint or save journal must preserve the source of a consuming move, the
+old region moves into history and the current destination receives that exact
+closure copy. Glue and stored token values retain their selected explicit
+shared owners. No per-node or per-list reference count is added.
 
 Paragraph post-line materialization is the range-preserving case where its
 input is already immutable page material. The production tape consumes one
@@ -566,12 +572,22 @@ same envelopes. No per-node prefix table, root registry, or source payload copy
 participates. Without explicit identity demand, these paths do no hash or
 summary work.
 
-The page builder publishes four independent page-material roots for its
-contribution list, current page, page discards, and split discards. The
-aggregate checkpoint records those roots directly; it never composes them into
-a synthetic list. Restart publication is admitted only with one quiescent,
-empty outer vertical mode, so the mode checkpoint retains scalar continuation
-state but no active builder or transient mode-material root.
+The page builder stores four independent owner-relative roots inside the
+current `PageRegion`: contribution list, current page, page discards, and split
+discards. The aggregate checkpoint row records the region id, those four roots,
+sealed payload/descriptor positions, scalar state, and journal position; it
+never composes them into a synthetic list. Multiple paragraph checkpoints in
+one page share the same region and copy no nodes. Restart publication is
+admitted only with one quiescent, empty outer vertical mode, so the mode
+checkpoint retains scalar continuation state but no active builder or
+transient mode-material root.
+
+Shipout starts a new page region. The existing page-break traversal moves
+self-contained whole held-over envelopes when unique or copies only the exact
+held-over closure when an old checkpoint must retain its region. Handle-free
+output owns no runtime node. Checkpoint history retains an old page region only
+while a boundary in its contiguous interval remains; pruning the last such row
+drops the whole region.
 
 Node token fields share the existing non-atomic stored-token payload for a
 true semantic alias. This applies to marks, deferred writes and specials, PDF
@@ -651,13 +667,12 @@ store parks the sole `CommandState` owner. Edit selection rewinds the accepted
 suffix in place and detaches its whole chunks; rejection rewinds current cells
 and redoes the detached prior cells before reattachment, while acceptance
 prunes the detached chunks. A checkpoint also contains compact marks and any
-optional coarse packed-bank snapshot. Its
-generation owns one conservative monotonic page-retention bound. A checkpoint
-with an explicit page handle in page-builder or mode state may raise that bound
-to the current page cursor; a checkpoint with no such carrier adds nothing.
-Rootless shipout may truncate only the suffix above the bound. Pruning need not
-lower it, and replacing the generation drops it wholesale. The explicit
-command-root fork copies the aggregate's vectors and scalar coordinates but
+capacity. A checkpoint also contains compact marks and any optional coarse
+packed-bank snapshot. Node history separately owns exclusive page regions in
+document order. A legal paragraph checkpoint stores an owner-relative row in
+its current region; a rootless mode checkpoint adds no node owner. After
+shipout, pruning the final row in an old page interval drops that whole region.
+The explicit command-root fork copies the aggregate's vectors and scalar coordinates but
 shares immutable definitions and stored-token payloads through their existing
 private owners; it does not traverse or copy definition, node, provenance, or
 page payload graphs. An ordinary retained-generation fork later clones that
@@ -715,18 +730,20 @@ numbering.
 Marks can be created only at a boundary whose live builders are sealed and
 whose execution scratch is quiescent. A mark is not an owning reference to
 each value it can restore. The session's prior/current generation slots and
-the checkpoint's direct aggregate owners provide lifetime; checkpoint cursors
-provide position. Dropping or pruning the checkpoint releases those owners
-immediately. Slot reuse never revalidates an old key, relocates a surviving
-checkpoint, or compacts live coordinates.
+direct checkpoint-history page-region owners provide lifetime; checkpoint
+cursors provide position. Dropping or pruning the last boundary row for one
+page drops that region immediately. Slot reuse never revalidates an old key,
+relocates a surviving checkpoint, or compacts live coordinates.
 
 Page candidate settlement orders semantic roots ahead of physical chunk
-ownership. Selection prevalidates both owners, rewinds the four PageBuilder
-roots while all accepted chunks remain attached, and only then detaches the
-accepted suffix. Rejection first undoes and drops every current root, releases
-current chunks and reattaches accepted chunks, then redoes the accepted roots.
-Acceptance drops accepted root inverses before pruning the detached accepted
-chunks. No fallible step may begin after this prevalidated root transition.
+ownership. Selection prevalidates the region/history owner, rewinds the four
+PageBuilder roots while all accepted chunks remain attached, and only then
+detaches the selected region suffix plus later accepted regions. Rejection
+first undoes and drops every current root and later candidate region, releases
+current chunks, reattaches accepted chunks/regions, then redoes the accepted
+roots. Acceptance removes checkpoint rows and accepted root inverses before
+pruning the detached suffix and dropping later accepted regions. No fallible
+step may begin after this prevalidated root transition.
 
 Named execution evidence is not itself checkpoint authority. A fresh command
 processor owns one move-only job-start eligibility receipt, consumed before
@@ -866,9 +883,10 @@ Rejection consumes the exclusive lease, clears the current store slot, and
 leaves prior unchanged. Acceptance first requires quiescent scratch and
 validates current-generation locality without mutation. It then consumes the
 lease, clears the complete former prior slot, and changes current's role to
-prior. No row, slab, or value moves. History retains only detached semantic
-evidence, hashes, schedules, and output prefixes. It never retains a live
-checkpoint or generation owner.
+prior. No row, slab, or value moves. History retains detached semantic
+evidence, hashes, schedules, output prefixes, and the exclusive page regions
+required by exact paragraph restart. It never retains a third runtime
+generation or infers node liveness from raw roots.
 
 There is no runtime compactor, relocation map, generation graph, forwarding
 pointer, slab splice, tracing collector, or content-equality merge. Routine

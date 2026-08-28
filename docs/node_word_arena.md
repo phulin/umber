@@ -2,16 +2,16 @@
 
 ## Status
 
-This document defines the node-specific implementation of
-[Runtime storage lifetimes](runtime_storage_lifetimes.md). The replacement
-substrate is one caller-owned `ChunkPool<T>` plus typed, coordinate-only
-`ForkArena<T, Lane>` states. Runtime payload is appended once into fixed-byte
-chunks owned by coarse pool pages. Lists are copy-only coordinates over those
-chunks. Reads take a shared pool borrow and yield stable direct references;
-allocation, sealing, promotion, settlement, and pruning require the caller's
-exclusive mutable pool borrow. A TeX lifetime transition promotes whole sealed
-chunks and rebrands their coordinates; it does not copy, relocate, or rewrite
-surviving payload.
+This document defines the compact chunk/range implementation below
+[Node-region ownership](node_region_ownership.md), which is authoritative for
+coarse node lifetime, TeX move/copy semantics, and exact checkpoint history.
+The replacement substrate is one caller-owned `ChunkPool<T>` plus typed,
+coordinate-only `ForkArena<T, Lane>` states. Runtime payload is appended once
+into fixed-byte chunks owned by coarse pool pages. Lists are copy-only borrowed
+coordinates over those chunks; they do not own payload. Reads take a shared
+region/pool borrow and yield stable direct references. Allocation, sealing,
+promotion, settlement, and pruning require the caller's exclusive mutable
+owner borrow.
 
 Every nonempty list, including a one-range list, publishes its range entries
 in descriptor chunks and is named by the same fixed 24-byte descriptor handle.
@@ -63,10 +63,10 @@ ordinary resolution remains direct, safe Rust and allocation-free.
 
 ## Lifetime-specific coordinates
 
-`NodeListId<L>` is a private-construction owner, row, and row-generation
-coordinate branded by
-its semantic lifetime. Row zero is the canonical empty list and resolves
-without storage. The public lifetime families are:
+`NodeListId<L>` is a private-construction row and row-generation coordinate
+branded by its semantic lifetime. It is never an owner. Row zero is the
+canonical empty list and resolves without storage. The coordinate families
+are:
 
 - `ScratchListId` for unfinished shaping, transforms, packing probes, and
   speculative operation material;
@@ -81,19 +81,21 @@ borrow projection over `PageListId`, `DurableListId<G>`, and
 `ShipoutScratchListId`. No semantic/checkpoint carrier accepts either shipout
 type, so scratch escape is a Rust type error rather than a runtime convention.
 
-A coordinate is not an owner. It contains no `Arc`, `Weak`, root slot,
-registry key, reference count, or drop-driven reachability action. Resolution
-borrows the one matching `NodeArena`, validates its compact owner identity, and
-indexes its row directly. Arena and coordinate constructors remain private to
-the storage layer, so a coordinate from an unrelated arena of the same
-semantic class is rejected rather than aliasing an equal row number.
+A coordinate is a borrowed capability under one matching move-only
+`NodeRegion`. It contains no `Arc`, `Weak`, root slot, registry key, reference
+count, or drop-driven reachability action. Resolution borrows that region and
+its pool, validates the compact owner identity, and indexes directly. Arena and
+coordinate constructors remain private to the storage layer, so a coordinate
+from an unrelated arena of the same semantic class is rejected rather than
+aliasing an equal row number. A production top-level owner cannot store a raw
+coordinate without its region owner.
 
-Checkpoint forks share coarse immutable 64-row arena segments. Publication
-continues in a uniquely owned tail segment or opens a new one after a fork;
-the fork copies only compact row-location metadata and segment handles, never
-a node payload. The segment handle belongs to the checkpoint-generation
-operation, not to an individual list coordinate, so this adds no per-value
-owner or hot lookup.
+Paragraph checkpoints within one page share the exclusive `PageRegion` that
+owns their coarse immutable chunks. Publication continues in its uniquely
+owned tail or opens a new chunk after sealing. A checkpoint stores only its
+region id, four PageBuilder roots, sealed payload/descriptor positions, scalar
+state, and journal position. It copies no payload and creates no segment,
+batch, or list owner.
 
 ## Payload placement
 
@@ -147,11 +149,14 @@ token; it never opens a replacement region or publishes a partial suffix.
 
 ## Lifetime transfer and cold materialization
 
-Ordinary setbox and PDF-form publication validate the live page coordinate,
-advance the generation's conservative durable page bound, and rebrand the
-coordinate. `\copy` shares that immutable row; consuming `\box` and unbox
-operations transfer the coordinate while clearing the exact state carrier.
-No ordinary transition walks a closure or copies a node/token payload.
+Ordinary setbox and PDF-form publication consume a self-contained exclusive
+region into the destination owner. Consuming `\box` and unbox operations
+transfer that region while clearing the exact state carrier when no retained
+checkpoint or save journal needs the old source. `\copy` and `\unhcopy`
+recursively copy the exact node closure. If history must preserve the source of
+an otherwise consuming move, the old region moves into history and the current
+destination receives a bounded closure copy. No ordinary borrowed-range list
+transition walks or copies a closure.
 
 The old dense relocation machinery remains only for a node graph entering from
 a distinct cold format/materialization arena. That boundary starts from
@@ -160,16 +165,16 @@ not callable from ordinary box, page, math, alignment, or token transitions.
 
 ## Boxes and generation ownership
 
-The dense box-register bank stores `Option<DurableListId<G>>`. TeX assignment
-and group restoration journal that copy-only value exactly like other dense
-state cells. The current revision, retained checkpoint, or in-session
-continuation owns the complete generation bundle which contains the durable
-node, token, glue, definition, and provenance arenas.
+The dense box-register bank stores a move-only durable owner-plus-root carrier,
+not a naked `DurableListId<G>`. TeX assignment moves the old carrier into the
+save journal before installing its replacement. Group restoration moves it
+back; a superseding global assignment drops it in TeX order. Retained
+checkpoint history likewise owns the exact older carrier it can restore.
 
-Moving a durable box into page or mode state rebrands its coordinate while the
-same coarse generation owner remains live. TeX `\copy` creates only the
-logical alias required by TeX. Neither operation adds per-list or per-node
-ownership.
+Moving a durable box into page or mode state transfers or merges its exclusive
+self-contained region when unique. TeX `\copy` creates an independent node
+closure but continues to share the selected immutable token-list and glue
+values, matching TeX82. Neither operation adds per-list or per-node ownership.
 
 ## Shipout boundary
 
@@ -198,25 +203,23 @@ A normal huge-page rejection, memo replay hit, successful commit, or void
 operand uses the same terminal whole-region/reset rules. No graph scan,
 compaction, relocation, free list, or per-row owner participates.
 
-Named checkpoints own scalar state, explicit roots, and marks into their one
-coarse generation. The generation maintains a monotonic conservative page
-bound: rootless captures do not advance it; any capture with a page handle may
-advance it to the current page cursor. Rootless shipout truncates only above
-that bound, preserving partial-page checkpoints in either restore order.
-Pruning may leave the bound conservative; generation replacement releases the
-complete page arena.
+Named checkpoints own scalar state and owner-relative marks through checkpoint
+history's page-region owners. Rootless mode state adds no node owner. After
+shipout, handle-free output keeps no runtime node and the held-over closure is
+evacuated into a new page region. An old region remains only while its
+contiguous checkpoint interval is retained, then drops wholesale. No monotonic
+page bound substitutes for ownership.
 
-Mode summaries retain their existing child coordinates directly. Capturing a
-named boundary does not publish a second page-arena copy of the mutable mode
-buffer merely to manufacture a root; the summary's coordinate scan alone
-decides whether the conservative page bound must advance.
+A legal retained boundary has one quiescent empty outer mode and therefore no
+mode child coordinate. Capturing it does not publish a second page-arena copy
+or manufacture a node root.
 
 `\setbox` uses the same rule with a different terminal publication: its exact
-operand region is transferred to the durable page prefix and assigned to the
-register, including the save-journal mutation. An overwritten coordinate may
-still be named by the journal, a checkpoint, or a PDF form record. The
-generation keeps a conservative monotonic durable bound; operation rollback
-restores the prior bound before truncating a rejected suffix.
+operand region is transferred to an exclusive durable carrier and assigned to
+the register, including the save-journal mutation. An overwritten region moves
+into the journal or checkpoint history when it remains restorable; otherwise
+it drops. Operation rollback restores the prior owner before truncating a
+rejected suffix.
 
 ## Semantic identity and detached boundaries
 

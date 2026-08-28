@@ -5,12 +5,13 @@ Status: implementation contract, 2026-08-27.
 This document specializes the
 [aggregate checkpoint component contract](aggregate_checkpoint_contract.md)
 for executor modes and the page builder. It does not introduce an independent
-ownership graph. The retained generation remains the sole lifetime authority;
-mode and page marks name storage owned by that generation.
+ownership graph. [Node-region ownership](node_region_ownership.md) is the
+authority for node closure lifetime: exclusive page regions, not raw list
+coordinates or dependency-counted batches, keep page payload live.
 
 ## Two-lineage chunk representation
 
-Every retained page list is owned by at most two generation lineages:
+Every retained page list participates in at most two execution lineages:
 
 1. immutable regions in the accepted prior lineage; and
 2. append-only regions in the current candidate lineage.
@@ -26,11 +27,19 @@ Appending opens only current chunks. Front/tail consumption, prepend, split,
 transfer, and discard movement publish compact canonical range-list records;
 they never materialize a contiguous payload buffer.
 
-The arena state is exactly `Accepted` or `Forked { prefix, detached_prior,
-current }`. Candidate rejection drops current chunks and reattaches the prior
-suffix. Candidate acceptance drops the detached prior and promotes current.
-A later edit still has only the accepted lineage and one private current
-suffix; no checkpoint, list, or operation creates a third generation.
+One exclusive `PageRegion` owns the page-node and descriptor chunks for each
+page-building period between shipouts. Paragraph checkpoints inside that page
+store the region id, all four exact PageBuilder roots, sealed payload and
+descriptor positions, scalar state, and journal position. They share the one
+backing region and copy no node payload.
+
+The selected region's arena state is exactly `Accepted` or `Forked { prefix,
+detached_prior, current }`. Candidate rejection drops current chunks and
+reattaches the prior suffix. Candidate acceptance drops the detached prior and
+promotes current. Accepted page regions after the selected checkpoint detach
+and settle as whole owners. A later edit still has only the accepted lineage
+and one private current suffix; no checkpoint, list, or operation creates a
+third generation.
 
 When an incremental session requests convergence identity before job start,
 each ordered node lane also maintains a version-1 domain-separated polynomial
@@ -81,6 +90,12 @@ therefore measures generated line nodes, while `source_nodes_copied` remains
 zero after paragraph publication and is backed by an explicit nonzero negative
 control plus source-address retention tests.
 
+Raw `PageListId` and `ArenaListId` values are borrowed capabilities under the
+matching region owner. They cannot be stored as production top-level owning
+roots. PageBuilder roots live inside `PageRegion`; a box/form owner carries its
+exclusive durable region with its root. Compile-fail coverage must reject a
+naked coordinate escaping that owner.
+
 Rooted settlement has three aggregate phases. Acceptance commits destination
 page/layout ranges, releases source-side move bookkeeping, and only then closes
 the transaction. Rejection first detaches candidate destination ranges and
@@ -121,30 +136,40 @@ owner-relative lifecycle; mode lists no longer block that later cutover.
 
 ## Page marks
 
-A page checkpoint records the page-timeline lineage and serial, the semantic
-journal position, and span roots for the contribution, current-page,
-page-discard, and split-discard lists. Fixed page dimensions, integers,
-contents, last-item facts, best-break coordinates, and fire-up coordinates are
-stored directly in the mark. Insertions and sparse mark classes use
+A page checkpoint stores its exclusive page-region id, the sealed payload and
+descriptor positions, the semantic journal position, and exact owner-relative
+roots for the contribution, current-page, page-discard, and split-discard
+lists. Fixed page dimensions, integers, contents, last-item facts, best-break
+coordinates, and fire-up coordinates are stored directly in the mark.
+Insertions and sparse mark classes use
 generation-owned append/journal lanes with scalar roots; the five class-zero
 marks are journaled token-list roots. Neither the insertion-position index nor
 the mark-class direct-lookup index is checkpoint ownership. They are rebuilt or
 rewound as part of applying their canonical journal roots.
 
-Validation checks every lineage, serial, range, font root, token root, and page
-node root without mutation. Application follows the aggregate order: acquire
-the coarse owner; restore dense and PDF state; install mode and page roots;
-transfer external roots; truncate font, source, durable-node, and page-node
-suffixes; then release the replaced owner.
+Validation checks every lineage, region generation, serial, range, font root,
+token root, and page-node root without mutation. Application follows the
+aggregate order: acquire the exclusive region/history owner; restore dense and
+PDF state; install mode and page roots; transfer external roots; settle payload
+and descriptor suffixes atomically; then release replaced whole regions only
+after no restored root can borrow them.
 
 ## Retained-byte accounting
 
-The generation is charged once for the capacity and initialized contents of
-its mode and page sequence stores, insertion lane, mark lane, and reversible
-semantic journals. A checkpoint is charged only for its fixed cursor/root
-records and execution counters. Shared prefix bytes are never charged once per
-checkpoint, and detached committed shipout artifacts are charged to the output
-owner rather than the speculative page timeline.
+Checkpoint history owns page regions directly in document order. Boundary rows
+for one page form one contiguous interval; no per-checkpoint or batch reference
+count determines liveness. A page region is charged once for its chunks,
+descriptors, PageBuilder state, and reusable capacity. A checkpoint is charged
+only for its fixed cursor/root record and execution counters. Shared prefix
+bytes are never charged once per checkpoint, and detached committed shipout
+artifacts are charged to the output owner rather than the speculative page
+timeline.
+
+Shipout starts a new page region. Handle-free output keeps no runtime node.
+The page-breaking traversal evacuates only the exact held-over closure into the
+new region, moving self-contained whole envelopes when no historical owner
+needs them and otherwise copying that bounded closure. An old region remains
+live only while its checkpoint interval remains retained, then drops wholesale.
 
 Prepared DVI receipts have their own direct `OutputLedger` owner. An engine
 checkpoint stores one fixed receipt-count mark into that accepted ledger.

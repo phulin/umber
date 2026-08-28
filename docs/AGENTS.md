@@ -110,6 +110,12 @@ interning epochs, dense journaled TeX state, generation-scoped immutable
 definitions, operation and node arenas, promotion, checkpoints, compaction,
 provenance, and handle-free boundaries.
 
+`node_region_ownership.md` is the authoritative node-specific ownership
+contract. It preserves exact paragraph restart while defining exclusive page
+and durable regions, TeX move/copy transitions, two-lineage suffix settlement,
+held-over evacuation, and the static prohibition on naked owning list
+coordinates. It supersedes page-batch dependency/refcount designs.
+
 `expansion_memory_lifetimes.md` maps that end-state contract onto the current
 expansion, scanner, input, suspension, incremental-candidate, and format code.
 It also records the source-audited retention classes and verified migration

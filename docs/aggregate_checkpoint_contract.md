@@ -9,6 +9,9 @@ This document fixes the ownership and measurement boundary for
 `EngineCheckpoint`. It does not authorize a cache, fast path, per-value owner,
 root registry, compaction, a third generation, per-checkpoint state bank, or
 heap indirection. The completed PDF scalar mark is reused unchanged.
+[Node-region ownership](node_region_ownership.md) is the authoritative
+node-specific specialization: exact paragraph checkpoints own exclusive page
+regions through history, never raw roots or dependency-counted page batches.
 
 One session owns an accepted prior generation and, only while executing an
 edit, one candidate current generation. A checkpoint contains bounded scalar
@@ -88,7 +91,7 @@ root instead of hashing it twice from the accepted head.
 | Dense command environment, definitions, durable nodes, provenance             | `Universe::core` in the current retained-generation slot                                                | `GenerationOwner` plus `JournalCursor`, durable-node cursor, and conservative page-node cursor; no dense-bank clone                           | The same one coarse generation owner and bounded state/journal/arena cursors                                                                          | Acquire coarse owner; replay dense-state journal; transfer command/mode/page roots before truncating durable and page suffixes                                                  | Charge the generation substrate once across every checkpoint that shares it; charge checkpoint-exclusive cursor bytes per record                                       | Include every reachable live cell after resolving macro, token, glue, font, and node values; exclude dead arena suffixes and physical ids                                                   |
 | Command delivery, input, parameters, conditions, groups, replay, diagnostics  | One physical `CommandState` parked in the retained generation or moved into `MainControl`               | `publish_summary` deep-cloned `CommandStateRoots` into one private `Rc`; clone aliased that root; restore cloned it again                     | One sealed typed-arena frame/list mark plus fixed logical-stack, attempt, source-anchor, and profile coordinates; aggregate roots are move-only       | Prevalidate profile, generation, frame/list mark, all logical marks, quiescence, and roots; rewind/detach accepted chunks; reject redoes and reattaches prior, accept prunes it | Charge the caller-owned command chunk pool once, then only fixed mark/profile/source-anchor fields per checkpoint; aliases copy no payload                             | Include profile, future input bytes/cursors, parameters, conditions, groups, replay fences, pending semantic diagnostics, and required source/provenance roots                              |
 | Mode nest and open mode lists                                                 | The one direct `ModeNestStorage` owned by `MainControl`                                                 | `ModeNest::summary` cloned every level and its list; the intermediate rooted implementation shared the mutable store through `Rc<RefCell<_>>` | One inline sole-empty-outer-level scalar admitted only by a restart-eligibility receipt; no open-list or journal-tail root                            | Install the scalar outer level and a fresh operation journal before page-arena truncation; retain the job-lifetime maximum-depth counter                                        | Charge the fixed rootless outer-level record per checkpoint; no shared mutable mode owner or accepted/candidate tail exists                                            | At legal boundaries include outer-mode scalars and the demand-maintained root; transient list, pending-character, math, alignment, and nested-mode payload is forbidden                     |
-| Page builder, lists, insertions, and marks                                    | `Universe::page` plus the generation page-node arena                                                    | Deep-clones `PageBuilderState`; explicit page handles raise the generation's monotonic retained page bound                                    | Fixed page-builder scalar/list cursors plus the existing generation page-arena bound                                                                  | Restore page roots after dense state and before page-arena truncation; truncate only after command and mode roots transfer                                                      | Charge page/node segments once per generation and fixed page cursors per checkpoint; never charge shipped detached artifacts here                                      | Include contribution/current/discard lists, page dimensions/integers, insertions, marks, best break, and fire-up state                                                                      |
+| Page builder, lists, insertions, and marks                                    | One exclusive `PageRegion` per page-building period, owned by live execution or accepted checkpoint history | Deep-clones `PageBuilderState`; explicit page handles raise the generation's monotonic retained page bound                                    | Region id, four owner-relative PageBuilder roots, sealed payload/descriptor positions, scalar state, and journal position                     | Restore roots while the region is attached; atomically settle payload and descriptor suffixes; drop later regions only after their checkpoint rows disappear              | Charge each page region once and only fixed page cursors per checkpoint; never charge shipped detached artifacts or multiply a region by its boundary count            | Include contribution/current/discard lists, page dimensions/integers, insertions, marks, best break, and fire-up state                                                                      |
 | Hyphenation                                                                   | `Universe::hyphenation`                                                                                 | Deep-clones language maps, trie vectors, exceptions, hyphen-code maps, and dependency projections                                             | One frozen initialized pattern-trie root shared by the generation, plus journal cursors for mutable exceptions and saved hyphen codes                 | Validate frozen-root identity and mutable marks; install the frozen root; reverse mutable journals; truncate exception/code suffixes                                            | Charge the frozen trie once per generation; charge journal blocks once while any checkpoint needs them and fixed marks per checkpoint                                  | Include initialized patterns, exceptions, saved codes, capacities that affect TeX overflow, and `patterns_open`; exclude memoized dependency projections                                    |
 | World effects, streams, artifacts, clocks, randomness, and host-visible state | The one `World` inside `Universe`                                                                       | `World::snapshot` clones maps and reconstructs effect-root ancestry while sharing several `Arc` vectors                                       | Fixed effect, stream, artifact, input, publication, clock/random, and file-framing cursors rooted in one coarse World generation                      | Validate forkable/retained ancestry; restore effects and stream buffers; restore artifact/input/publication roots; then release abandoned suffix owners                         | Charge retained effect/artifact/input blocks once per generation or output owner and fixed cursor bytes per checkpoint; detached accepted output is charged separately | Include every fact that can change future TeX behavior or emitted effects/artifacts, including stream partial lines, clocks/random state, shell policy, publication order, and file framing |
 | PDF                                                                           | The one `PdfStateSlot` inside `Universe`                                                                | Allocation-free fixed `PdfStateSnapshot`; image/form payload is one coarse prefix plus a private candidate delta                              | Fixed scalar cursor plus general/color version-lane roots and coarse payload position                                                                 | Select the named general/color roots, reset canonical row selections, drop the private version and row suffixes, then truncate the payload delta last                           | Fixed mark per checkpoint; charge packed version events and image/form payload once to their owning lineage and the candidate-private suffix to current                | Include every canonical PDF scalar, row selection, mutable value, color stack, object/order fingerprint, and payload identity exactly as specified in `pdf_backend.md`                      |
@@ -197,11 +200,12 @@ may exceed an impossible budget; that overage is reported explicitly. The
 accepted-generation transition only validates and prunes the already-bounded
 root set, so it no longer hides a larger pre-acceptance peak.
 
-Each observed `(owner, family)` pair also carries a restart-root reference
-count. Releasing the last mark into an obsolete lineage chunk releases that
-whole chunk, while a genuinely shared append/journal owner remains charged at
-its largest observed size until its final restart root is released. This
-prevents both multiplying shared storage and retaining charges after pruning.
+Logical retention counts are accounting only and never node-liveness
+authority. Page-region history owns contiguous page/epoch boundary intervals;
+removing the last row in one interval drops the whole exclusive region. No
+per-checkpoint, per-list, or batch reference count releases node chunks. Other
+coarse append/journal owners remain charged once while their direct aggregate
+owner is retained.
 
 `RetentionMetrics` reports the shared-owner, per-root metadata, and detached
 evidence terms independently, with `checkpoint_root_bytes` equal to their sum.
@@ -324,11 +328,13 @@ the same storage after discarding its current logical suffix.
 
 ## Core state, node arena, and primitive ownership target
 
-Dense state and node arenas remain direct mutable owners in one accepted
-lineage. A retained checkpoint stores only a journal cursor and reversible
-arena coordinates. It never owns a `StateCore`, `DenseState`, or
-`PageNodeArena` bank. Multiple sibling marks may name the same lineage without
-creating more mutable authorities.
+Dense state remains a direct mutable owner in one accepted lineage. Runtime
+nodes instead use the exclusive region ownership specified in
+[Node-region ownership](node_region_ownership.md). A retained checkpoint stores
+only a journal cursor and an owner-relative key into its history-owned page
+region. It never owns a `StateCore` or `DenseState` bank, clones a page region,
+or treats a raw node coordinate as ownership. Multiple sibling marks inside a
+page share one backing region without creating more mutable authorities.
 
 Each dense journal record stores its cell coordinate and one durable alternate
 value. Rewinding the accepted suffix swaps old values into the banks in reverse,
@@ -341,26 +347,28 @@ copies no delta value. Stack and arena journals use the same bidirectional rule
 with reversible logical coordinates. Durable values and node payloads are not
 copied into checkpoints or reconstructed by replaying page prefixes.
 
-The replacement page-node owner uses one caller-owned `ChunkPool<Node>` plus
-typed coordinate-only `ForkArena` lanes. Payload is append-once in fixed-byte
-logical chunks stored many per coarse pool page. An immutable pool borrow
-returns stable direct node references, while every physical mutation requires
-the caller's exclusive mutable pool borrow. The only logical list is normally
-one direct `ArenaRange` or,
-when composition is necessary, one arena-owned nonrecursive sequence of direct
-ranges with cumulative endpoints. Candidate rewind/reject truncates current
-payload and descriptor chunks to whole-chunk marks. There is no complete-row
-list owner, parallel `NodePiece` stream, linked-node lane, `Vec<Node>` mirror,
-recursive rope, overlay, per-node owner, compaction, or per-chunk heap.
+The replacement page-node substrate uses the existing caller-owned
+`ChunkPool<Node>` plus typed coordinate-only `ForkArena` lanes. An exclusive
+move-only `PageRegion` owns the chunk envelopes and PageBuilder roots for one
+page-building period. Payload is append-once in fixed-byte logical chunks
+stored many per coarse pool page. An immutable region/pool borrow returns
+stable direct node references, while every physical mutation requires the
+caller's exclusive mutable borrow. The only logical list is normally one
+direct `ArenaRange` or, when composition is necessary, one arena-owned
+nonrecursive sequence of direct ranges with cumulative endpoints. Candidate
+rewind/reject truncates current payload and descriptor chunks to whole-chunk
+marks. There is no complete-row list owner, parallel `NodePiece` stream,
+linked-node lane, `Vec<Node>` mirror, recursive rope, overlay, per-node owner,
+dependency-counted page batch, compaction, or per-chunk heap.
 
 An operation mark may include a partial tail and is never retainable. A
 checkpoint mark can be created only by consuming live builders and sealing
 payload and descriptor tails. Fork ownership is exactly `Accepted` or `Forked
 { prefix, detached_prior, current }`. Reject drops current and reattaches the
 saved prior suffix; accept drops the obsolete prior suffix and retains
-prefix-plus-current. Pruning releases only explicitly unreferenced whole
-chunks; absent a coarse liveness proof, storage remains conservatively retained
-until generation retirement.
+prefix-plus-current. Page regions after the selected checkpoint detach and
+settle wholesale. Pruning drops a whole region after its contiguous checkpoint
+interval disappears; it never infers liveness by scanning or counting roots.
 
 Prepared output pages follow the same coarse ownership rule in the executor.
 One retained-generation sidecar owns a `ChunkPool<PreparedDviPage>` and an
@@ -401,10 +409,11 @@ production `Vec<Node>`, native-node clone carrier, or math checkpoint root is
 created.
 
 The primitive registry remains immutable after initialization. Pruning drops
-whole unreachable journal and arena chunks once no sibling mark names them;
-it does not scan the engine, register roots, compact coordinates, or perform
-per-value ownership accounting. The former bank-loan allocation figures are
-historical diagnostic evidence only and are not a promoted representation.
+whole history-owned page regions and obsolete transactional suffix chunks only
+after their owner-relative checkpoint rows have been removed. It does not scan
+the engine, register roots, compact coordinates, or perform per-value
+ownership accounting. The former bank-loan allocation figures are historical
+diagnostic evidence only and are not a promoted representation.
 
 The rooted-lifecycle work in `umber2-pei0.2.13` replaces these independently
 materialized checkpoint banks with scalar marks plus one explicit edit-start
