@@ -1247,7 +1247,7 @@ impl<G> InputState<G> {
                 break;
             }
             let token = scratch
-                .argument_word(argument.range, index)
+                .admitted_argument_word(argument.range, index)
                 .ok()?
                 .semantic_token();
             render_token(stores, token, &mut raw, &mut rendered);
@@ -1267,7 +1267,7 @@ impl<G> InputState<G> {
                 break;
             }
             let token = scratch
-                .argument_word(argument.range, index)
+                .admitted_argument_word(argument.range, index)
                 .ok()?
                 .semantic_token();
             render_token(stores, token, &mut raw, &mut rendered);

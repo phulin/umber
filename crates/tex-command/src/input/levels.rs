@@ -161,8 +161,10 @@ pub(crate) struct TokenCursor<G> {
 /// First-class input cursor over one admitted absolute macro-argument range.
 ///
 /// Unlike a generic packed-token cursor, delivery has no storage-domain
-/// dispatch: it validates the frame serial and indexes the fixed-chunk lane
-/// directly. The same frame is the lineage inherited by child token lists.
+/// dispatch: admission validates the owning frame and exact argument once,
+/// after which the owner-protected half-open range indexes the fixed-chunk
+/// lane directly. The same frame is the lineage inherited by child token
+/// lists.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArgumentCursor<G> {
     pub(crate) range: crate::execution_scratch::MacroArgumentRange<G>,
@@ -188,9 +190,14 @@ impl<G> MacroArgumentCursor<G> {
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> Option<PackedTokenAt> {
         scratch
-            .argument_word(self.range, self.position())
+            .admitted_argument_word(self.range, self.position())
             .ok()
             .map(|word| (word.token_word(), word.origin(), None))
+    }
+
+    /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
+    pub(crate) fn is_exhausted(&self) -> bool {
+        self.position() >= self.range.len() as usize
     }
 
     #[inline(always)]
@@ -201,7 +208,7 @@ impl<G> MacroArgumentCursor<G> {
     ) -> Result<bool, ()> {
         let frame = self.frame;
         let position = frame.position();
-        let Ok(word) = scratch.argument_word(self.range, position as usize) else {
+        let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
             return Ok(false);
         };
         destination.write_stored(frame, position, word.token_word(), word.origin(), None);
@@ -1347,7 +1354,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
             let position = &mut self.positions[4];
             let word = self
                 .scratch
-                .argument_word(self.macro_argument, *position as usize)
+                .admitted_argument_word(self.macro_argument, *position as usize)
                 .expect("mixed direct macro cursor remains within its span");
             checksum = checksum.wrapping_add(u64::from(word.token_word().raw()));
             *position += 1;
@@ -1364,7 +1371,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
         }
         let _ = self
             .scratch
-            .argument_word(self.macro_argument, self.positions[4] as usize)
+            .admitted_argument_word(self.macro_argument, self.positions[4] as usize)
             .expect("rollback restores the exact direct macro cursor");
         MixedPackedCursorReceipt {
             calls: u64::from(rounds) * 5,
@@ -1447,7 +1454,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
         for _ in 0..calls {
             let word = self
                 .scratch
-                .argument_word(self.range, self.position as usize)
+                .admitted_argument_word(self.range, self.position as usize)
                 .expect("long macro-argument cursor remains within its span");
             checksum = checksum.wrapping_add(u64::from(word.token_word().raw()));
             self.position += 1;
@@ -1459,7 +1466,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
         self.position = opening;
         let _ = self
             .scratch
-            .argument_word(self.range, self.position as usize)
+            .admitted_argument_word(self.range, self.position as usize)
             .expect("rollback restores the exact long-argument cursor");
         LongMacroArgumentCursorReceipt {
             calls: u64::from(calls),

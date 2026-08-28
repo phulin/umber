@@ -1,9 +1,22 @@
 use tex_state::env::AssignmentScope;
+use tex_state::env::banks::IntParam;
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::{MacroCallOutcome, MacroParameterEscape};
-use crate::{CommandHostCapabilities, CommandState, DeliveryStatus};
+use crate::{
+    CommandHostCapabilities, CommandObservation, CommandObserver, CommandState, DeliveryStatus,
+    ObservedToken,
+};
+
+#[derive(Default)]
+struct RecordingObserver(Vec<CommandObservation>);
+
+impl CommandObserver for RecordingObserver {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
 #[test]
 fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
     assert_eq!(
@@ -213,7 +226,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         );
         assert_eq!(processor.command.scratch.frame_len(), 1);
         assert_eq!(processor.command.scratch.retained_slot_len(), 2);
-        assert_eq!(processor.command.scratch.copied_macro_words(), 0);
+        assert_eq!(processor.command.scratch.physical_macro_word_copies(), 0);
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -322,6 +335,103 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
                 .semantic_token(),
             letter('z')
         );
+    });
+}
+
+#[test]
+fn outer_group_trim_bounds_macro_trace_and_observation_at_both_ends() {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .assign_int_param(IntParam::TRACING_MACROS, 1, AssignmentScope::Global)
+            .expect("enable macro tracing");
+        let macro_token = install_macro(universe, "trimmed", &[Token::Param(1)]);
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                macro_token,
+                begin,
+                begin,
+                letter('x'),
+                end,
+                end,
+                letter('z'),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            )
+            .with_observer(&mut observer);
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_next_into(&mut destination)
+                    .expect("macro delivery"),
+                DeliveryStatus::Command
+            );
+            let call = destination.take().expect("macro command");
+            assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
+        }
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
+
+        let observed = observer
+            .0
+            .iter()
+            .find_map(|observation| match observation {
+                CommandObservation::Macro(record) if !record.activation => {
+                    Some(record.tokens.clone())
+                }
+                _ => None,
+            })
+            .expect("argument observation");
+        assert_eq!(
+            observed,
+            vec![
+                ObservedToken::Character {
+                    character: '{',
+                    catcode: Catcode::BeginGroup,
+                },
+                ObservedToken::Character {
+                    character: 'x',
+                    catcode: Catcode::Letter,
+                },
+                ObservedToken::Character {
+                    character: '}',
+                    catcode: Catcode::EndGroup,
+                },
+            ]
+        );
+        let trace: String = universe
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(trace.contains("#1<-{x}"), "{trace}");
+        assert!(!trace.contains("#1<-{x}}"), "{trace}");
     });
 }
 

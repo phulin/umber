@@ -1122,12 +1122,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .ok()
                     .flatten()
             })
-            .map(|range| {
-                self.command
-                    .scratch
-                    .argument_len(range)
-                    .expect("live macro argument range")
-            })
+            .map(|range| range.len() as usize)
             .sum()
     }
 

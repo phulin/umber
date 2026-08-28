@@ -1934,6 +1934,10 @@ LIFO retirement truncates to the frame mark and returns suffix chunks to the
 reusable stack. If an older frame retires beneath a pending child, the child
 inherits its reclaim mark; only that unpublished suffix may rebase after the
 last active ancestor retires, so no admitted cursor or sealed word moves.
+That exceptional rebase physically copies exactly the unpublished suffix
+length into the reclaimed prefix; test accounting records those word copies
+instead of describing the whole matcher as zero-copy. Ordinary sealing,
+replay, and strict-LIFO retirement move no words.
 Quiescent top-level calls clear lengths but retain every
 warmed allocation. The processor appends one fixed-width invocation provenance
 record using the active activation's invocation coordinate as parent; no rooted

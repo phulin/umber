@@ -403,12 +403,8 @@ impl<G> CommandState<G> {
         let range = self
             .scratch
             .argument_range(owner, slot)
-            .ok()
-            .flatten()
+            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer { slot })?
             .ok_or(ParameterReplayError::MissingArgument { slot })?;
-        self.scratch
-            .argument_len(range)
-            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer { slot })?;
         let identity = self.allocate_input_level_identity();
         let trace = ReplayTrace::MacroParameter { slot };
         let frame = super::packed_token_frame(

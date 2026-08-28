@@ -3450,6 +3450,30 @@ fn alignment_macro_ending_in_parameter_marker_preserves_the_v_template_sink() {
 }
 
 #[test]
+fn alignment_end_template_replayed_as_macro_argument_is_a_valid_endv_shape() {
+    // TeX82 §§325, 390, and 1131: a v-template ending in an undelimited macro
+    // call can make the frozen end-template token that call's argument. When
+    // it becomes `endv`, §1131 walks through the now-exhausted parameter and
+    // macro-body token lists to the retained v-template below them.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\identity#1{#1}\setbox0=\vbox{\halign{#\noexpand\identity\cr A\cr}}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert!(stores.copy_box_to_page(0).is_some());
+        assert!(
+            terminal_text(stores).is_empty(),
+            "{}",
+            terminal_text(stores)
+        );
+    });
+}
+
+#[test]
 fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     // TeX82 §799 appends a finished `\valign` row with a plain horizontal
     // splice. The two row widths therefore total exactly 5pt in the enclosing

@@ -206,10 +206,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .is_none())
                         .then(|| cursor.identity())
                     }
-                    InputLevel::MacroArgument(cursor) => cursor
-                        .token_at(&self.command.scratch)
-                        .is_none()
-                        .then(|| cursor.identity()),
+                    InputLevel::MacroArgument(cursor) => {
+                        cursor.is_exhausted().then(|| cursor.identity())
+                    }
                     InputLevel::Source(_) => None,
                 })
             else {
@@ -368,31 +367,38 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(|_| CommandError::input_invariant())?;
         let mut found = false;
         for level in self.command.input.levels.iter().rev() {
-            let InputLevel::Tokens(cursor) = level else {
-                break;
-            };
             // TeX82 §1131 walks downward only while `state=token_list` and
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if cursor
-                .token_at(PackedTokenSources::new(
-                    &self.command.input.replay,
-                    self.command.attempt.arena(),
-                ))
-                .is_some()
-            {
-                break;
-            }
-            if cursor.identity() == v_level
-                && matches!(cursor.behavior, TokenBehavior::VTemplate)
-                && matches!(
-                    cursor.retirement,
-                    RetirementBehavior::AwaitingVTemplateRetirement
-                )
-            {
-                found = true;
-                break;
+            match level {
+                InputLevel::Tokens(cursor) => {
+                    if cursor
+                        .token_at(PackedTokenSources::new(
+                            &self.command.input.replay,
+                            self.command.attempt.arena(),
+                        ))
+                        .is_some()
+                    {
+                        break;
+                    }
+                    if cursor.identity() == v_level
+                        && matches!(cursor.behavior, TokenBehavior::VTemplate)
+                        && matches!(
+                            cursor.retirement,
+                            RetirementBehavior::AwaitingVTemplateRetirement
+                        )
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                InputLevel::MacroArgument(cursor) => {
+                    if !cursor.is_exhausted() {
+                        break;
+                    }
+                }
+                InputLevel::Source(_) => break,
             }
         }
         if !found {
@@ -2194,9 +2200,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     Some(cursor.identity())
                 }
-                Some(InputLevel::MacroArgument(cursor))
-                    if cursor.token_at(&self.command.scratch).is_none() =>
-                {
+                Some(InputLevel::MacroArgument(cursor)) if cursor.is_exhausted() => {
                     Some(cursor.identity())
                 }
                 Some(InputLevel::Tokens(_))

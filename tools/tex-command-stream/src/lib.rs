@@ -1092,7 +1092,7 @@ mod tests {
     };
     use tex_oracle::{
         CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, Event, InputEvent,
-        InputReason, NormalizedEvent, ScannerEvent, SourceLocation,
+        InputReason, MacroEvent, NormalizedEvent, ScannerEvent, SourceLocation,
     };
     use tex_state::token::Token;
 
@@ -1116,6 +1116,46 @@ mod tests {
     fn committed_command_microfixture_satisfies_automated_bounds() {
         let fixture = committed_fixture();
         validate_automated_fixture(&fixture).expect("focused fixture must remain test-sized");
+    }
+
+    #[test]
+    fn committed_macro_fixture_keeps_every_trimmed_argument_observation_exact() {
+        let repository = test_support::repository_root();
+        let fixture_path = repository.join(FIXTURE_ROOT).join("expansion-macros-v1");
+        let fixture = CommittedFixture::load(&fixture_path).expect("committed macro fixture");
+        let startup = Startup::from_fixture(&fixture_path, &fixture, &ReplayResources::default())
+            .expect("macro startup");
+        let actual = startup.replay().expect("macro fixture replays");
+
+        let expected_arguments = fixture
+            .stream
+            .events
+            .iter()
+            .filter_map(|event| match &event.semantic {
+                Event::Macro(argument @ MacroEvent::Argument { .. }) => Some(argument.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let actual_arguments = actual
+            .events
+            .iter()
+            .filter_map(|event| match &event.event {
+                Event::Macro(argument @ MacroEvent::Argument { .. }) => Some(argument.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual_arguments, expected_arguments);
+        let MacroEvent::Argument { tokens, .. } = &expected_arguments[0] else {
+            unreachable!("filtered argument")
+        };
+        assert_eq!(tokens.first().map(|token| token.character), Some(123));
+        assert_eq!(tokens.last().map(|token| token.character), Some(125));
+        assert_eq!(
+            tokens.iter().filter(|token| token.character == 125).count(),
+            1,
+            "the outer argument's stripped right brace must not reappear"
+        );
     }
 
     #[test]

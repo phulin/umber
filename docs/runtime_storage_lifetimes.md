@@ -429,7 +429,9 @@ frame retirement truncates to its mark and returns suffix chunks to reuse. If
 an older active frame retires beneath a pending child, it transfers the earlier
 reclaim mark. Only the still-unpublished child suffix may rebase, and only once
 the last active ancestor has retired; sealed ranges and admitted cursors never
-move.
+move. Rebase is an explicit forward copy of every word in that unpublished
+suffix, and exact test accounting distinguishes it from the no-copy ordinary
+seal/replay/retire route.
 A scanner frame records the opening lengths of its
 temporary-word and builder lanes. No push creates an arena,
 scope capability, ownership token, loan, mailbox, watermark row, or parent
