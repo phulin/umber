@@ -50,13 +50,29 @@ Rollback restores those coordinates after applying its move-only private
 inverses. It therefore cannot leave an accepted contribution, current-page, or
 discard root consumed merely because artifact lowering aborted.
 
-List transfers follow the same two-lineage rule. A destructive Mode operation
-does not retain a copied `NodeSequence` inverse. It moves one coarse range
-carrier, identified by its source owner, generation, and range, through any
-Mode destination and then into the candidate `PageNodeArena` suffix. Kernels
-borrow immutable source ranges and publish only semantically new output ranges;
-they do not turn the source range back into an owned `Vec`. The compact move
-journal records the source coordinate and current destination once.
+List transfers follow the same two-lineage rule. Node payload lives once in
+generation-owned immutable `PageNodeArena` segments. A logical sequence is
+either one direct segment range or one range in the arena's append-only flat
+`NodePiece` stream. Every piece names a payload segment and carries its
+cumulative logical endpoint; pieces never name other composite sequences.
+Mixed transforms append one descriptor for each unchanged or newly produced
+run. Flattening a composite input copies only its compact direct-span
+descriptors, never node payload. Random access binary-searches cumulative
+endpoints, while a sequential cursor retains its current piece across
+short-lived arena borrows.
+
+A destructive Mode operation does not retain a copied `NodeSequence` inverse.
+It moves coarse range or sequence coordinates through its destination and then
+into the candidate arena suffix. The fixed inline multi-range carrier remains
+only transaction-phase plumbing; it is not the arbitrary logical-sequence
+representation. Paragraph breakpoint search, widths, protrusion, tracing, and
+line materialization share one statically dispatched borrowed view over slices
+and arena sequences. A coordinate-based `ParagraphTape` stores only the
+sequence coordinate plus scalar/index lineage scratch and reborrows payload for
+each execution step. The ordinary paragraph path moves its completed source
+into the page arena once; a hyphenation fallback reverses that whole-range move
+before transforming it. Kernels publish only semantically new output nodes and
+move unchanged runs by descriptor.
 
 Rooted settlement has three aggregate phases. Acceptance commits destination
 page/layout ranges, releases source-side move bookkeeping, and only then closes

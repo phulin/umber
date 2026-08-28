@@ -270,6 +270,15 @@ same bidirectional rule with reversible logical coordinates. Durable values
 and node payloads are not copied into checkpoints or reconstructed by replaying
 page prefixes.
 
+The page-node owner contains two append-only generation streams: immutable
+payload segments and a flat stream of coarse piece descriptors. A logical
+sequence is normally one direct payload range; a mixed sequence is a compact
+piece-stream range whose entries name payload ranges directly and carry
+cumulative endpoints. Candidate rewind/reject truncates both streams to their
+marks. Accepted descriptors may name only retained accepted/current payload
+segments. There are no recursive ropes, overlay nodes, per-node owners, or
+per-list heaps.
+
 The primitive registry remains immutable after initialization. Pruning drops
 whole unreachable journal and arena chunks once no sibling mark names them;
 it does not scan the engine, register roots, compact coordinates, or perform
