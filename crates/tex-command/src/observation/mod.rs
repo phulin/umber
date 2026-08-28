@@ -366,7 +366,7 @@ pub(crate) fn canonical_current_command_identity_for_profile<G>(
                 }
                 ResolvedMeaning::Macro { flags, .. } => (macro_command_name(flags).into(), None),
             };
-            (name, command.macro_observation_operand().or(operand))
+            (name, operand)
         }
         // TeX82 §25 dispatches `\expandafter` through the dedicated
         // `expand_after` command with selector zero. The current command owns

@@ -1,5 +1,7 @@
 //! Physical-line splitting and TeX line normalization.
 
+use std::num::NonZeroU64;
+
 use tex_state::SourceId;
 
 use crate::profile::{CharacterCode, CharacterMode};
@@ -107,15 +109,33 @@ impl SourceLocation {
 /// state and therefore remains stable across executor snapshots.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceProvenance {
-    range: SourceRange,
-    location: SourceLocation,
+    range_start: u64,
+    range_end: u64,
+    location: u64,
+    /// `SourceId + 1` supplies the niche used by `Option<SourceProvenance>`.
+    /// Every `u32` source id fits, including `u32::MAX`.
+    source_plus_one: NonZeroU64,
 }
 
 impl SourceProvenance {
+    const fn packed_source(source: SourceId) -> NonZeroU64 {
+        match NonZeroU64::new(source.raw() as u64 + 1) {
+            Some(source) => source,
+            None => unreachable!(),
+        }
+    }
+
+    const fn source(self) -> SourceId {
+        SourceId::new((self.source_plus_one.get() - 1) as u32)
+    }
+
     pub(crate) const fn from_range(range: SourceRange) -> Self {
+        let location = range.terminal_location();
         Self {
-            range,
-            location: range.terminal_location(),
+            range_start: range.start(),
+            range_end: range.end(),
+            location: location.byte(),
+            source_plus_one: Self::packed_source(range.source()),
         }
     }
 
@@ -123,21 +143,29 @@ impl SourceProvenance {
         range: SourceRange,
         location: SourceLocation,
     ) -> Self {
-        Self { range, location }
+        assert!(range.source().raw() == location.source().raw());
+        Self {
+            range_start: range.start(),
+            range_end: range.end(),
+            location: location.byte(),
+            source_plus_one: Self::packed_source(range.source()),
+        }
     }
 
     /// Exact raw spelling range.
     #[must_use]
     pub const fn range(self) -> SourceRange {
-        self.range
+        SourceRange::new(self.source(), self.range_start, self.range_end)
     }
 
     /// Canonical post-delivery TeX82 location.
     #[must_use]
     pub const fn location(self) -> SourceLocation {
-        self.location
+        SourceLocation::new(self.source(), self.location)
     }
 }
+
+const _: () = assert!(core::mem::size_of::<Option<SourceProvenance>>() == 32);
 
 /// A half-open decoded-scalar range within one normalized physical line.
 ///

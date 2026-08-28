@@ -10,7 +10,10 @@ use super::{CurrentCommand, DeliveryStamp};
 #[test]
 fn command_delivery_layout_stays_compact() {
     assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 24);
-    assert!(std::mem::size_of::<CurrentCommand<()>>() <= 144);
+    assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
+    // The canonical command carries raw identity, resolved meaning, exact
+    // provenance, and execution metadata in less than two 64-byte cache lines.
+    assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 112);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
 }
 
@@ -76,6 +79,42 @@ fn ordinary_character_is_resolved_without_a_state_handle() {
 }
 
 #[test]
+fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CurrentCommand::empty();
+        let spelling = TracedTokenWord::pack(
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            OriginId::UNKNOWN,
+        );
+        let slot = core::ptr::from_ref(&command);
+        command.write_raw_delivery(spelling, 17, 23, None, false, None, false);
+        assert_eq!(core::ptr::from_ref(&command), slot);
+        command.resolve_raw_delivery(29, &universe.command_context().expect("command context"));
+        assert_eq!(core::ptr::from_ref(&command), slot);
+
+        fn prepare<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
+            core::ptr::from_ref(command)
+        }
+        fn execute<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
+            core::ptr::from_ref(command)
+        }
+        assert_eq!(prepare(&command), slot);
+        assert_eq!(execute(&command), slot);
+        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23, 29));
+        assert_eq!(
+            command.meaning_ref(),
+            &ResolvedMeaning::Static(Meaning::CharToken {
+                ch: 'x',
+                cat: Catcode::Letter,
+            })
+        );
+    });
+}
+
+#[test]
 fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
     crate::test_harness::with_universe(|universe| {
         let replacement = TokenWord::pack(Token::Char {
@@ -113,6 +152,70 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         };
         assert_eq!(*flags, MeaningFlags::LONG);
         assert_eq!(delivered.replacement_word(0), Some(replacement));
+        assert_eq!(
+            crate::observation::canonical_current_command_identity(&command),
+            ("long_call".to_owned(), None)
+        );
+    });
+}
+
+#[test]
+fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(
+                &[],
+                &[TokenWord::pack(Token::Char {
+                    ch: 'M',
+                    cat: Catcode::Letter,
+                })],
+            )
+            .expect("definition");
+        let symbol = universe.intern("ownedmacro").expect("intern");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.clone()),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let baseline = definition.semantic_owner_count();
+        let mut command = CurrentCommand::empty();
+
+        command.write_raw_delivery(
+            TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN),
+            3,
+            5,
+            None,
+            false,
+            None,
+            false,
+        );
+        assert_eq!(definition.semantic_owner_count(), baseline);
+        command.resolve_raw_delivery(7, &universe.command_context().expect("command context"));
+        assert_eq!(definition.semantic_owner_count(), baseline + 1);
+
+        command.write_raw_delivery(
+            TracedTokenWord::pack(
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+                OriginId::UNKNOWN,
+            ),
+            11,
+            13,
+            None,
+            false,
+            None,
+            false,
+        );
+        // Raw preparation does not manufacture another owner. Resolution is
+        // the sole point that replaces the preceding resolved meaning.
+        assert_eq!(definition.semantic_owner_count(), baseline + 1);
+        command.resolve_raw_delivery(17, &universe.command_context().expect("command context"));
+        assert_eq!(definition.semantic_owner_count(), baseline);
+        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13, 17));
     });
 }
 

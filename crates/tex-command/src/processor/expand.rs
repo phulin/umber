@@ -843,6 +843,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.last_delivery = None;
+        let result = self.delivery_driver_inner(policy, destination);
+        if result.is_err() {
+            // A resource suspension has already moved the exact command into
+            // its typed expansion frame. Every other failure abandons the
+            // delivery. In both cases the caller slot and its DefinitionId
+            // owner must be empty, just as they were before raw delivery
+            // started, and a later episode must mint a fresh delivery proof.
+            destination.take();
+            self.last_delivery = None;
+        }
+        result
+    }
+
+    fn delivery_driver_inner(
+        &mut self,
+        policy: DeliveryPolicy,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         match policy.mode {
             DeliveryMode::Raw => {
                 debug_assert!(destination.is_none());

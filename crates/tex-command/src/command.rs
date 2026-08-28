@@ -19,15 +19,40 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,
     meaning: ResolvedMeaning<G>,
-    macro_observation_operand: Option<i64>,
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
     source_provenance: Option<SourceProvenance>,
-    direct_source: bool,
     direct_source_line: Option<u32>,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
-    outer_recovery_space: bool,
+    delivery_flags: CommandDeliveryFlags,
+}
+
+/// Scalar delivery facts shared by the raw, resolved, and recovery phases.
+///
+/// These bits replace the raw input-frame kind/flags and the final command's
+/// separate booleans. The caller-owned command slot is the only delivery
+/// representation, so each fact is written once and remains attached to the
+/// same value through scanning, execution, backup, or suspension.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+struct CommandDeliveryFlags(u8);
+
+impl CommandDeliveryFlags {
+    const DIRECT_SOURCE: u8 = 1 << 0;
+    const SUPPRESS_EXPANDABLE: u8 = 1 << 1;
+    const OUTER_RECOVERY_SPACE: u8 = 1 << 2;
+
+    const fn contains(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
+
+    fn set(&mut self, flag: u8, enabled: bool) {
+        if enabled {
+            self.0 |= flag;
+        } else {
+            self.0 &= !flag;
+        }
+    }
 }
 
 impl<G> Clone for CurrentCommand<G> {
@@ -35,15 +60,13 @@ impl<G> Clone for CurrentCommand<G> {
         Self {
             spelling: self.spelling,
             meaning: self.meaning.clone(),
-            macro_observation_operand: self.macro_observation_operand,
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_provenance: self.source_provenance,
-            direct_source: self.direct_source,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
-            outer_recovery_space: self.outer_recovery_space,
+            delivery_flags: self.delivery_flags,
         }
     }
 }
@@ -52,15 +75,13 @@ impl<G> PartialEq for CurrentCommand<G> {
     fn eq(&self, other: &Self) -> bool {
         self.spelling == other.spelling
             && self.meaning == other.meaning
-            && self.macro_observation_operand == other.macro_observation_operand
             && self.identity == other.identity
             && self.control_sequence == other.control_sequence
             && self.delivery == other.delivery
             && self.source_provenance == other.source_provenance
-            && self.direct_source == other.direct_source
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
-            && self.outer_recovery_space == other.outer_recovery_space
+            && self.delivery_flags == other.delivery_flags
     }
 }
 
@@ -70,15 +91,13 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.spelling.hash(state);
         self.meaning.hash(state);
-        self.macro_observation_operand.hash(state);
         self.identity.hash(state);
         self.control_sequence.hash(state);
         self.delivery.hash(state);
         self.source_provenance.hash(state);
-        self.direct_source.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
-        self.outer_recovery_space.hash(state);
+        self.delivery_flags.hash(state);
     }
 }
 
@@ -233,101 +252,148 @@ impl<G> CurrentCommand<G> {
         direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
     ) -> Self {
-        let mut destination = None;
-        Self::resolve_into(
-            &mut destination,
+        let mut command = Self::empty();
+        command.write_raw_delivery(
             spelling,
-            delivery,
+            delivery.input_level,
+            delivery.position,
             source_provenance,
             direct_source,
             direct_source_line,
-            state,
+            false,
         );
-        destination.expect("command resolution initializes its destination")
+        command.resolve_raw_delivery(delivery.sequence, state);
+        command
     }
 
-    /// Resolves directly into the active delivery request's final slot.
-    pub(crate) fn resolve_into<'destination>(
-        destination: &'destination mut Option<Self>,
+    /// Creates the reusable destination value owned by one delivery request.
+    ///
+    /// Raw input overwrites this value before any semantic consumer can
+    /// observe it. Keeping an initialized unresolved meaning avoids unsafe
+    /// partial initialization while adding no second command representation.
+    #[inline(always)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            spelling: TracedTokenWord::pack(
+                Token::Char {
+                    ch: '\0',
+                    cat: Catcode::Other,
+                },
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+            meaning: ResolvedMeaning::Static(Meaning::Undefined),
+            identity: CommandIdentity::Ordinary,
+            control_sequence: None,
+            delivery: DeliveryStamp::new(0, 0, 0),
+            source_provenance: None,
+            direct_source_line: None,
+            alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
+            delivery_flags: CommandDeliveryFlags::default(),
+        }
+    }
+
+    /// Writes one raw input transition into this command's final storage.
+    ///
+    /// The destination is the unresolved slot created for this delivery
+    /// request. Parameter substitution may overwrite its raw fields before
+    /// resolution, but a resolved slot is never recycled in place. The
+    /// semantic fields therefore retain their initialized unresolved values
+    /// until [`Self::resolve_raw_delivery`] writes them once.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub(crate) fn write_raw_delivery(
+        &mut self,
         spelling: TracedTokenWord,
-        delivery: DeliveryStamp,
+        input_level: u64,
+        position: u64,
         source_provenance: Option<SourceProvenance>,
         direct_source: bool,
         direct_source_line: Option<u32>,
-        state: &CommandContext<'_, G>,
-    ) -> &'destination mut Self {
-        debug_assert!(destination.is_none());
-        let token = spelling.semantic_token();
-        let (control_sequence, meaning) = match token {
-            Token::Cs(symbol) => (Some(symbol), state.compact_control_sequence_meaning(symbol)),
+        suppress_expandable: bool,
+    ) {
+        self.spelling = spelling;
+        self.delivery = DeliveryStamp::new(input_level, position, 0);
+        self.source_provenance = source_provenance;
+        self.direct_source_line = direct_source_line;
+        self.delivery_flags = CommandDeliveryFlags::default();
+        self.delivery_flags
+            .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
+        self.delivery_flags.set(
+            CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
+            suppress_expandable,
+        );
+    }
+
+    /// Resolves the raw spelling already held by this final command slot.
+    #[inline(always)]
+    pub(crate) fn resolve_raw_delivery(&mut self, sequence: u64, state: &CommandContext<'_, G>) {
+        self.delivery.sequence = sequence;
+        let token = self.spelling.semantic_token();
+        match token {
+            Token::Cs(symbol) => {
+                self.control_sequence = Some(symbol);
+                self.meaning = state.compact_control_sequence_meaning(symbol);
+            }
             Token::Char {
                 ch,
                 cat: Catcode::Active,
             } => {
                 let symbol = state.active_character_symbol(ch);
-                (
-                    symbol,
-                    symbol
-                        .map(|symbol| state.compact_control_sequence_meaning(symbol))
-                        .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
-                )
+                self.control_sequence = symbol;
+                self.meaning = symbol
+                    .map(|symbol| state.compact_control_sequence_meaning(symbol))
+                    .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined));
             }
-            Token::Char { ch, cat } => (
-                None,
-                ResolvedMeaning::Static(Meaning::CharToken { ch, cat }),
-            ),
+            Token::Char { ch, cat } => {
+                self.control_sequence = None;
+                self.meaning = ResolvedMeaning::Static(Meaning::CharToken { ch, cat });
+            }
             // `out_param` is converted to a literal replay token before
             // meaning resolution (TeX.web, get_next). A stray parameter token
             // is nevertheless represented deterministically while recovery
             // remains the responsibility of the raw delivery loop.
-            Token::Param(_) => (None, ResolvedMeaning::Static(Meaning::Undefined)),
+            Token::Param(_) => {
+                self.control_sequence = None;
+                self.meaning = ResolvedMeaning::Static(Meaning::Undefined);
+            }
             // TeX82 §222 keeps `eq_type(undefined_control_sequence)` at
             // `undefined_cs` and `equiv` at `null` for the whole run: the
             // dummy location has no meaning cell an assignment could reach.
             Token::Frozen(_) if token.is_undefined_control_sequence() => {
-                (None, ResolvedMeaning::Static(Meaning::Undefined))
+                self.control_sequence = None;
+                self.meaning = ResolvedMeaning::Static(Meaning::Undefined);
             }
-            Token::Frozen(_) if token.is_frozen_end_template() => (
-                None,
-                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+            Token::Frozen(_) if token.is_frozen_end_template() => {
+                self.control_sequence = None;
+                self.meaning = ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                     tex_state::meaning::ExpandablePrimitive::EndTemplate,
-                )),
-            ),
+                ));
+            }
             Token::Frozen(_) if token.is_frozen_endv() => {
-                (None, ResolvedMeaning::Static(Meaning::EndV))
+                self.control_sequence = None;
+                self.meaning = ResolvedMeaning::Static(Meaning::EndV);
             }
             Token::Frozen(_) if token.is_frozen_relax() => {
-                (None, ResolvedMeaning::Static(Meaning::Relax))
+                self.control_sequence = None;
+                self.meaning = ResolvedMeaning::Static(Meaning::Relax);
             }
             // Frozen primitive slots retain their complete registered word.
             // In particular TeX82 §§1369--1371's inaccessible `\endwrite`
             // is an outer macro, not a static primitive; projecting through
             // `Meaning` alone silently reclassified it as `undefined_cs`.
-            Token::Frozen(_) => (
-                None,
-                state
+            Token::Frozen(_) => {
+                self.control_sequence = None;
+                self.meaning = state
                     .frozen_primitive_resolved(token)
-                    .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
-            ),
-        };
-        let macro_observation_operand = None;
-        let identity = CommandIdentity::from_meaning(&meaning);
-        *destination = Some(Self {
-            spelling,
-            meaning,
-            macro_observation_operand,
-            identity,
-            control_sequence,
-            delivery,
-            source_provenance,
-            direct_source,
-            direct_source_line,
-            alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
-            outer_recovery_space: false,
-        });
-        destination
-            .as_mut()
-            .expect("command resolution initializes its destination")
+                    .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined));
+            }
+        }
+        self.identity = CommandIdentity::from_meaning(&self.meaning);
+    }
+
+    pub(crate) const fn suppresses_expandable_control_sequence(&self) -> bool {
+        self.delivery_flags
+            .contains(CommandDeliveryFlags::SUPPRESS_EXPANDABLE)
     }
 
     /// Replaces the effective meaning while retaining the exact delivered
@@ -394,11 +460,12 @@ impl<G> CurrentCommand<G> {
             ch: ' ',
             cat: Catcode::Space,
         });
-        self.macro_observation_operand = None;
         self.control_sequence = None;
         self.source_provenance = None;
-        self.direct_source = false;
-        self.outer_recovery_space = true;
+        self.delivery_flags
+            .set(CommandDeliveryFlags::DIRECT_SOURCE, false);
+        self.delivery_flags
+            .set(CommandDeliveryFlags::OUTER_RECOVERY_SPACE, true);
     }
 
     /// Replaces an intercepted alignment terminator's effective meaning while
@@ -407,7 +474,6 @@ impl<G> CurrentCommand<G> {
         self.meaning = ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
             tex_state::meaning::ExpandablePrimitive::EndTemplate,
         ));
-        self.macro_observation_operand = None;
         self.control_sequence = None;
     }
 
@@ -418,7 +484,8 @@ impl<G> CurrentCommand<G> {
     /// `scan_toks` collector to append before the inserted right brace closes
     /// the runaway text.
     pub(crate) const fn is_outer_recovery_space(&self) -> bool {
-        self.outer_recovery_space
+        self.delivery_flags
+            .contains(CommandDeliveryFlags::OUTER_RECOVERY_SPACE)
     }
 
     /// Completes TeX82's `get_x_token` conversion of inaccessible
@@ -431,7 +498,6 @@ impl<G> CurrentCommand<G> {
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.spelling = TracedTokenWord::pack(frozen_endv, self.spelling.origin());
         self.meaning = ResolvedMeaning::Static(Meaning::EndV);
-        self.macro_observation_operand = None;
         self.control_sequence = None;
         // The preceding tab/span/cr adjustment belongs to the intercepted
         // delimiter. TeX82 §343 replaces `cur_tok` with frozen end-v before
@@ -484,10 +550,6 @@ impl<G> CurrentCommand<G> {
         &self.meaning
     }
 
-    pub(crate) const fn macro_observation_operand(&self) -> Option<i64> {
-        self.macro_observation_operand
-    }
-
     /// Returns the control-sequence identity, if this spelling resolves via
     /// a control-sequence meaning cell.
     #[must_use]
@@ -538,7 +600,10 @@ impl<G> CurrentCommand<G> {
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
     pub(crate) const fn direct_source_provenance(&self) -> Option<SourceProvenance> {
-        if self.direct_source {
+        if self
+            .delivery_flags
+            .contains(CommandDeliveryFlags::DIRECT_SOURCE)
+        {
             self.source_provenance
         } else {
             None
@@ -550,7 +615,10 @@ impl<G> CurrentCommand<G> {
     /// no direct line even when their diagnostic provenance names a source.
     #[must_use]
     pub const fn direct_source_line_number(&self) -> Option<u32> {
-        if self.direct_source {
+        if self
+            .delivery_flags
+            .contains(CommandDeliveryFlags::DIRECT_SOURCE)
+        {
             self.direct_source_line
         } else {
             None
@@ -563,15 +631,13 @@ impl<G> CurrentCommand<G> {
         Self {
             spelling: self.spelling,
             meaning: self.meaning.clone(),
-            macro_observation_operand: self.macro_observation_operand,
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_provenance: self.source_provenance,
-            direct_source: self.direct_source,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
-            outer_recovery_space: self.outer_recovery_space,
+            delivery_flags: self.delivery_flags,
         }
     }
 }

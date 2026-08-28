@@ -115,6 +115,35 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
 }
 
 #[test]
+fn failed_raw_delivery_clears_its_partially_written_final_slot() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        // A parameter reference without an active macro frame is malformed.
+        // Raw delivery writes it before replay validation discovers that fact.
+        crate::test_harness::push(&mut command, [Token::Param(1)]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        assert!(matches!(
+            processor.get_next_into(&mut destination),
+            Err(crate::CommandError::InputInvariant(_))
+        ));
+        assert!(destination.is_none());
+        assert!(processor.last_delivery.is_none());
+    });
+}
+
+#[test]
 fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
     crate::test_harness::with_universe(|universe| {
         universe

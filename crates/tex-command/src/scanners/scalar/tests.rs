@@ -9,8 +9,8 @@ use crate::{CommandHostCapabilities, CommandState, RetainedScalarScan, processor
 fn keyword_replay_keeps_scalar_continuations_compact() {
     let prefix = std::mem::size_of::<super::MatchedKeywordPrefix<()>>();
     let pending = std::mem::size_of::<super::PendingScalarFrame<()>>();
-    assert_eq!(prefix, 736);
-    assert_eq!(pending, 792);
+    assert_eq!(prefix, 632);
+    assert_eq!(pending, 688);
 }
 
 #[test]

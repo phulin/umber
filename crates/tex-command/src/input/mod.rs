@@ -15,9 +15,9 @@ mod tests;
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroArgumentCursor,
     PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
-    PackedTokenSpanSource, RawDeliverySlot, ReplayLane, ReplayPayloadId, ReplayTrace,
-    RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason,
-    TokenBehavior, TokenCursor, packed_token_frame,
+    PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace, RetirementBehavior,
+    SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior,
+    TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{

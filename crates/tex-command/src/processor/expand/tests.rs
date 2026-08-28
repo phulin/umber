@@ -122,6 +122,121 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
 }
 
 #[test]
+fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix() {
+    crate::test_harness::with_universe(|universe| {
+        let input = install_static(
+            universe,
+            "input",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
+        );
+        let filename = "child".chars().map(|ch| Token::Char {
+            ch,
+            cat: Catcode::Letter,
+        });
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            std::iter::once(input)
+                .chain(filename)
+                .chain(std::iter::once(Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                })),
+        );
+        let snapshot = command.snapshot(universe).expect("input prefix snapshots");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+
+        let (resume, delivery_cursor) = {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let mut destination = None;
+            let error = processor
+                .get_x_token_into(&mut destination)
+                .expect_err("unresolved input suspends");
+            assert!(matches!(
+                error,
+                crate::CommandError::MissingInput { ref name, .. } if name == "child.tex"
+            ));
+            assert!(destination.is_none());
+            assert!(processor.scanner_resume.is_some());
+            let delivery_cursor = processor.delivery_cursor();
+            let resume = processor
+                .take_scanner_resume()
+                .expect("typed expansion suspension");
+            (resume, delivery_cursor)
+        };
+        capabilities.register_input(
+            "child.tex",
+            crate::SourceRegistration::new(crate::RegisteredSourceKind::Generated, &b"Q"[..])
+                .with_name("child.tex"),
+        );
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            processor.resume_delivery_cursor(delivery_cursor);
+            processor.install_scanner_resume(Some(resume));
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("resource-backed resume"),
+                crate::DeliveryStatus::Command
+            );
+            assert_eq!(
+                destination
+                    .take()
+                    .expect("resumed source command")
+                    .spelling()
+                    .semantic_token(),
+                Token::Char {
+                    ch: 'Q',
+                    cat: Catcode::Letter,
+                }
+            );
+            assert!(processor.scanner_resume.is_none());
+        }
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("resumed input prefix rolls back");
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("restored prefix expands")
+                .expect("restored child source command")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'Q',
+                cat: Catcode::Letter,
+            }
+        );
+    });
+}
+
+#[test]
 fn protected_replay_delivery_writes_the_terminal_macro_into_its_caller_slot() {
     crate::test_harness::with_universe(|universe| {
         let replacement = Token::Char {

@@ -154,8 +154,10 @@ impl<G> DefinitionId<G> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn semantic_owner_count(&self) -> usize {
+    /// Test-only count of semantic owners for exact lifetime assertions.
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn semantic_owner_count(&self) -> usize {
         let owner: std::rc::Rc<thin_dst::ThinData<DefinitionHeader, TokenWord>> =
             self.allocation.clone().into();
         std::rc::Rc::strong_count(&owner) - 1

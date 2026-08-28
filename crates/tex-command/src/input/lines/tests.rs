@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tex_state::SourceId;
 
-use super::{LineTerminator, SourceLineState};
+use super::{LineTerminator, SourceLineState, SourceLocation, SourceProvenance, SourceRange};
 use crate::input::source::{
     RegisteredSource, RegisteredSourceKind, SourceCursor, SourceRegistration,
 };
@@ -22,6 +22,19 @@ fn cursor(mode: CharacterMode, bytes: &[u8]) -> SourceCursor {
     )
     .expect("test backing is valid for selected mode");
     SourceCursor::new(source)
+}
+
+#[test]
+fn compact_source_provenance_preserves_every_coordinate_and_option_niche() {
+    let source = SourceId::new(u32::MAX);
+    let range = SourceRange::new(source, u64::MAX - 9, u64::MAX - 2);
+    let location = SourceLocation::new(source, u64::MAX - 4);
+    let provenance = SourceProvenance::from_range_and_location(range, location);
+
+    assert_eq!(provenance.range(), range);
+    assert_eq!(provenance.location(), location);
+    assert_eq!(core::mem::size_of::<SourceProvenance>(), 32);
+    assert_eq!(core::mem::size_of::<Option<SourceProvenance>>(), 32);
 }
 
 fn drain(

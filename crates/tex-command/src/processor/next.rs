@@ -13,8 +13,8 @@ use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, CompactSourceStepQueries, CompactSourceTokenizationStep,
     InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay, PackedTokenSources,
-    PackedTokenSpanHandle, RawDeliverySlot, ReplayTrace, RetirementBehavior, StoredReplayReason,
-    TokenBehavior, TokenCursor,
+    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    TokenCursor,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::input::SourceNameClass;
@@ -1619,16 +1619,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
-        let mut raw_delivery = RawDeliverySlot::empty();
+        *destination = Some(CurrentCommand::empty());
         loop {
             if let Some(episode) = self.take_ready_replay_completion() {
+                destination.take();
                 return Ok(super::DeliveryStatus::ReplayCompleted(episode));
             }
-            if matches!(
-                self.deliver_raw_input_into(&mut raw_delivery)?,
-                RawInputStatus::End
-            ) {
+            let command = destination
+                .as_mut()
+                .expect("canonical delivery owns its reusable command slot");
+            let raw_status = match self.deliver_raw_input_into(command) {
+                Ok(status) => status,
+                Err(error) => {
+                    destination.take();
+                    return Err(error);
+                }
+            };
+            if matches!(raw_status, RawInputStatus::End) {
                 if let Some(episode) = self.take_ready_replay_completion() {
+                    destination.take();
                     return Ok(super::DeliveryStatus::ReplayCompleted(episode));
                 }
                 // §360: a `\read` pseudo-file's line has ended, which is
@@ -1637,18 +1646,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `check_outer_validity` must not run and no runaway may be
                 // reported.
                 if std::mem::take(&mut self.read_line_ended) {
+                    destination.take();
                     return Ok(super::DeliveryStatus::End);
                 }
                 if self.recover_runaway_eof()? {
                     continue;
                 }
+                destination.take();
                 return Ok(super::DeliveryStatus::End);
             }
 
-            let spelling = raw_delivery.spelling();
+            let command = destination
+                .as_mut()
+                .expect("raw delivery retains its final command slot");
+            let spelling = command.spelling();
             let delivery_stamp = DeliveryStamp::new(
-                raw_delivery.level().0,
-                raw_delivery.position(),
+                command.delivery_stamp().input_level(),
+                command.delivery_stamp().position(),
                 self.next_delivery_sequence,
             );
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
@@ -1662,20 +1676,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             ) {
                 self.record_meaning_lookup();
             }
-            let command = CurrentCommand::<G>::resolve_into(
-                destination,
-                spelling,
-                delivery_stamp,
-                raw_delivery.source_provenance(),
-                raw_delivery.is_direct_source(),
-                raw_delivery.direct_source_line(),
-                self.state,
-            );
+            command.resolve_raw_delivery(delivery_stamp.sequence(), self.state);
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal
             ));
-            if raw_delivery.suppresses_expandable_control_sequence() {
+            if command.suppresses_expandable_control_sequence() {
                 command.suppress_expandable();
             }
             // Outer-validity recovery canonically backs up this exact raw
@@ -1739,7 +1745,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn deliver_raw_input_into(
         &mut self,
-        destination: &mut RawDeliverySlot,
+        destination: &mut CurrentCommand<G>,
     ) -> Result<RawInputStatus, CommandError> {
         loop {
             if self.command.has_ready_replay_completion() {
@@ -1831,12 +1837,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         {
                             return Err(CommandError::input_invariant());
                         }
-                        destination.write_source(
-                            identity,
-                            position,
+                        destination.write_raw_delivery(
                             spelling,
-                            token.provenance,
+                            identity.0,
+                            position,
+                            Some(token.provenance),
+                            true,
                             direct_source_line,
+                            false,
                         );
                     }
                     CompactSourceTokenizationStep::InvalidCharacter => {
@@ -1964,13 +1972,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         RetirementRestart::Continue => continue,
                         RetirementRestart::EndV(level) => {
-                            destination.write_end_template(
-                                level,
-                                u64::from(index),
+                            destination.write_raw_delivery(
                                 TracedTokenWord::pack(
                                     self.state.frozen_end_template_token(),
                                     tex_state::token::OriginId::UNKNOWN,
                                 ),
+                                level.0,
+                                u64::from(index),
+                                None,
+                                false,
+                                None,
+                                false,
                             );
                         }
                     }
@@ -1980,7 +1992,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Token::Param(slot) = destination.spelling().semantic_token() {
                 let replay = self
                     .command
-                    .replay_out_parameter(destination.level(), slot)
+                    .replay_out_parameter(
+                        InputLevelId(destination.delivery_stamp().input_level()),
+                        slot,
+                    )
                     .map_err(|_| CommandError::input_invariant())?;
                 if let OutParameterReplay::Pushed(_parameter_level) = replay {
                     observe!(

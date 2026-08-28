@@ -194,15 +194,16 @@ moves out of this slot only into its final consumer or the one typed expansion
 suspension slot at a real resource barrier. There is no process-global slot,
 mailbox, destination inference, or nested-request reuse.
 
-The input side of that same request uses one fixed call-local
-`RawDeliverySlot`. The top input level keeps its packed frame position,
-backing handle, source cursor, replay-completion frontier, and rollback
-authority. Its storage-lifetime tag was selected when the level was created;
-delivery borrows that domain, writes the spelling and only-present provenance
-directly into the raw slot, and advances the fixed frame in place. A macro
-parameter candidate pushes its argument range and restarts before current
-command construction. The raw slot is discarded on return and never enters a
-scanner or resource continuation.
+The input side writes into that same final command value. The top input level
+keeps its packed frame position, backing handle, source cursor,
+replay-completion frontier, and rollback authority. Its storage-lifetime tag
+was selected when the level was created; delivery borrows that domain, writes
+the spelling, raw delivery coordinate, only-present provenance, and input
+flags directly into `CurrentCommand`, and advances the fixed frame in place.
+A macro parameter candidate pushes its argument range and overwrites the same
+unresolved value on the next iteration. No raw command envelope is created or
+copied, and only a resolved command may enter a scanner or resource
+continuation.
 
 Control-sequence resolution borrows the already-admitted dense meaning row
 through the live `CommandContext`. Static words decode during that borrow; a
@@ -213,9 +214,9 @@ suspension can mutate state. Assignment level remains solely in the dense bank,
 so delivered-command ownership does not duplicate journaling or reinterpret a
 meaning after delivery.
 
-`CurrentCommand::resolve_into` lends the initialized caller destination back
-to the raw driver, so the remaining delivery steps mutate and observe that
-one final command in place. Alignment classification writes its exact
+`CurrentCommand::resolve_raw_delivery` resolves the spelling already stored in
+the caller destination, so the remaining delivery steps mutate and observe
+that one final command in place. Alignment classification writes its exact
 `AlignmentDeliveryAdjustment` into the same command before raw observation;
 backup later consumes that recorded adjustment rather than reclassifying the
 spelling. Internal ErrorStop deletion, math-shift lookahead, and recovery-list
@@ -1553,6 +1554,13 @@ pub struct CurrentCommand {
     delivery: DeliveryStamp,
 }
 ```
+
+The production value is 112 bytes: less than two 64-byte cache lines while it
+retains exact raw identity, a resolved static meaning or the one compact macro
+owner, delivery coordinates, provenance, and alignment/recovery flags.
+`SourceProvenance` uses a nonzero packed source identity so its optional form
+is the same 32 bytes as the present value. There is no per-command box,
+allocation, provenance arena, or alternate fast representation.
 
 The spelling and effective meaning may differ for the one delivery suppressed
 by `\noexpand`. `DeliveryStamp` proves the exact live input level and position

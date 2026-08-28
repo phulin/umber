@@ -84,8 +84,16 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(next.contains("RawDeliverySlot::empty()"));
-    assert!(levels.contains("size_of::<RawDeliverySlot>() == 88"));
+    assert!(next.contains("Some(CurrentCommand::empty())"));
+    assert!(next.contains("self.deliver_raw_input_into(command)"));
+    assert!(next.contains("command.resolve_raw_delivery("));
+    assert!(levels.contains("destination: &mut crate::CurrentCommand<G>"));
+    for retired in ["RawDeliverySlot", "resolve_into"] {
+        assert!(
+            !format!("{next}\n{levels}").contains(retired),
+            "raw delivery must write the canonical command directly, without {retired}"
+        );
+    }
     assert_eq!(
         next.matches("fn next_source_step(").count(),
         1,
