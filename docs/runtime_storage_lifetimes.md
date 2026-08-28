@@ -517,8 +517,16 @@ Nodes have four storage roles:
    seal, transfer, rollback, or prune requires the caller's exclusive
    `&mut ChunkPool`. Persistent active lists retain only a move-only checked
    builder coordinate and scalar tail state; they never retain that borrow.
-   A conservative durable bound protects page chunks
-   rebranded into state carriers.
+   Each completed page closure publishes its payload and descriptor chunks in
+   one sealed local batch. Nested `PageListId` values remain copy-only borrowed
+   coordinates: publication installs one coarse dependency charge from the
+   enclosing immutable batch instead of a per-node owner. Canonical top-level
+   slots own move-only `PageMaterialRoot` leases; TeX `\copy` explicitly adds
+   one lease, while a move transfers it. Retained checkpoints own scalar
+   prefix-interval leases. Releasing the final current root, interval, output
+   handoff, or fork lineage recycles the whole batch and settles its dependency
+   charges. Stable lane tombstones avoid coordinate shifts and prefix resolver
+   rebuilds, and chunk generations reject stale ids after reuse.
 3. Cold format decode stages validated node rows directly into the same
    generation-local page-material pool as its immutable initial accepted
    prefix, then seals the initial checkpoint. Loaded durable roots are typed

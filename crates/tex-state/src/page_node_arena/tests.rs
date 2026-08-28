@@ -417,3 +417,97 @@ fn accepted_identity_survives_reject_accept_and_prune() {
     assert_eq!(arena.counters().source_nodes_copied, 0);
     assert!(arena.counters().obsolete_chunks_pruned > 0);
 }
+
+#[test]
+fn independent_root_overwrite_recycles_a_prefix_batch_and_rejects_stale_id() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let stale = arena.publish_owned(penalties(&[1, 2])).expect("stale");
+    let stale_root = arena.acquire_root(stale).expect("root stale batch");
+    let survivor = arena.publish_owned(penalties(&[8, 9])).expect("survivor");
+    let survivor_root = arena.acquire_root(survivor).expect("root survivor");
+
+    arena.release_root(stale_root).expect("overwrite root");
+    assert!(!arena.contains(stale));
+    assert_eq!(resolved(&arena, survivor), penalties(&[8, 9]));
+
+    let replacement = arena.publish_owned(penalties(&[3, 4])).expect("reuse");
+    assert!(
+        !arena.contains(stale),
+        "recycled chunk generation rejects ABA"
+    );
+    assert_eq!(resolved(&arena, replacement), penalties(&[3, 4]));
+    arena.release_root(survivor_root).expect("drop survivor");
+}
+
+#[test]
+fn explicit_box_copy_keeps_one_coarse_batch_until_both_roots_drop() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let list = arena.publish_owned(penalties(&[10])).expect("box");
+    let first = arena.acquire_root(list).expect("box register root");
+    let second = arena.copy_root(&first).expect("TeX copy root");
+
+    arena.release_root(first).expect("drop first box");
+    assert!(arena.contains(list));
+    arena.release_root(second).expect("drop copied box");
+    assert!(!arena.contains(list));
+}
+
+#[test]
+fn enclosing_immutable_closure_keeps_nested_coordinates_live() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let child = arena.publish_owned(penalties(&[17])).expect("child");
+    let parent = arena
+        .publish_owned([Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: child,
+            post: PageListId::empty(),
+            replace: PageListId::empty(),
+            physical_replace_count: 0,
+        }])
+        .expect("parent");
+    let parent_root = arena.acquire_root(parent).expect("parent root");
+
+    assert!(arena.contains(child));
+    arena.release_root(parent_root).expect("drop closure");
+    assert!(!arena.contains(parent));
+    assert!(!arena.contains(child));
+}
+
+#[test]
+fn retained_checkpoint_interval_outlives_current_root() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let list = arena.publish_owned(penalties(&[21])).expect("list");
+    let root = arena.acquire_root(list).expect("current root");
+    let mark = arena
+        .seal_boundary()
+        .and_then(|boundary| arena.checkpoint_mark(boundary))
+        .expect("checkpoint");
+    let lease = arena
+        .retain_checkpoint_interval(mark)
+        .expect("retained interval");
+
+    arena.release_root(root).expect("drop current root");
+    assert!(arena.contains(list));
+    arena
+        .release_checkpoint_interval(lease)
+        .expect("drop retained interval");
+    assert!(!arena.contains(list));
+}
+
+#[test]
+fn repeated_completed_pages_reuse_coarse_storage_without_scans_or_copies() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let mut warmed_pages = 0;
+    for page in 0..256 {
+        let list = arena
+            .publish_owned(penalties(&[page, page + 1]))
+            .expect("page batch");
+        let root = arena.acquire_root(list).expect("output handoff");
+        arena.release_root(root).expect("shipout release");
+        if page == 31 {
+            warmed_pages = arena.pool.chunks.page_count();
+        }
+    }
+    assert_eq!(arena.pool.chunks.page_count(), warmed_pages);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}

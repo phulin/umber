@@ -10,8 +10,9 @@ use core::num::NonZeroU64;
 use std::ops::Range;
 
 use crate::fork_arena::{
-    ActiveListBuilder, ArenaListId, ArenaListView, ArenaRange, CheckpointMark, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
+    ActiveListBuilder, ArenaListId, ArenaListView, ArenaRange, BatchMark, CheckpointMark,
+    ForkArena, ForkArenaCounters, ForkArenaError, LocalBatch, OperationMark, PageMaterialLane,
+    SealedBoundary,
 };
 use crate::node::Node;
 use crate::node_region::{NodePool, NodeRegion, PageRole};
@@ -24,6 +25,8 @@ type PageMaterialNode = Node<PageListId>;
 pub struct PageMaterialActiveListBuilder {
     inner: ActiveListBuilder<PageMaterialNode, PageMaterialLane>,
     identity: Option<SemanticSequenceIdentity>,
+    batch: Option<BatchMark<PageMaterialLane>>,
+    dependencies: Vec<u64>,
 }
 
 impl Default for PageMaterialActiveListBuilder {
@@ -38,6 +41,8 @@ impl PageMaterialActiveListBuilder {
         Self {
             inner: ActiveListBuilder::vacant(),
             identity: None,
+            batch: None,
+            dependencies: Vec::new(),
         }
     }
 
@@ -50,6 +55,34 @@ impl PageMaterialActiveListBuilder {
     pub const fn is_open(&self) -> bool {
         self.inner.is_open()
     }
+}
+
+struct PageMaterialBatch {
+    envelope: LocalBatch<PageMaterialLane>,
+    references: u32,
+    dependencies: Vec<u64>,
+}
+
+/// Move-only owner of one immutable page-material closure. Nested
+/// `PageListId` values remain borrowed coordinates; only canonical root slots
+/// and explicit TeX box copies construct this coarse lease.
+#[must_use = "a page-material root must be moved into a root slot or explicitly released"]
+pub struct PageMaterialRoot {
+    list: PageListId,
+    batch: Option<u64>,
+}
+
+impl PageMaterialRoot {
+    #[must_use]
+    pub const fn list(&self) -> PageListId {
+        self.list
+    }
+}
+
+/// Move-only interval owner retained by one aggregate checkpoint.
+#[must_use = "a page-material checkpoint lease must be settled or released"]
+pub struct PageMaterialCheckpointLease {
+    batch_serial: u64,
 }
 
 /// Canonical runtime coordinate plus its demand-maintained semantic scalar.
@@ -271,6 +304,11 @@ pub struct PageMaterialArena {
     range_scratch: Vec<ArenaRange<PageMaterialLane>>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: bool,
+    batches: Vec<Option<PageMaterialBatch>>,
+    descriptor_batches: Vec<Option<(u32, u64)>>,
+    checkpoint_intervals: std::collections::BTreeMap<u64, u32>,
+    fork_batches: Option<(u64, u64)>,
+    collect_queue: Vec<u64>,
 }
 
 impl Default for PageMaterialArena {
@@ -297,6 +335,11 @@ impl PageMaterialArena {
             range_scratch: Vec::new(),
             coordinate_scratch: Vec::new(),
             semantic_identity_enabled: false,
+            batches: Vec::new(),
+            descriptor_batches: Vec::new(),
+            checkpoint_intervals: std::collections::BTreeMap::new(),
+            fork_batches: None,
+            collect_queue: Vec::new(),
         }
     }
 
@@ -340,6 +383,267 @@ impl PageMaterialArena {
         self.region.id()
     }
 
+    fn batch_serial(&self, list: PageListId) -> Result<Option<u64>, ForkArenaError> {
+        Self::batch_serial_in(&self.descriptor_batches, list)
+    }
+
+    fn batch_serial_in(
+        descriptor_batches: &[Option<(u32, u64)>],
+        list: PageListId,
+    ) -> Result<Option<u64>, ForkArenaError> {
+        let Some((slot, generation)) =
+            ForkArena::<PageMaterialNode, PageMaterialLane>::list_descriptor_signature(
+                list.coordinate(),
+            )
+        else {
+            return Ok(None);
+        };
+        descriptor_batches
+            .get(slot as usize)
+            .copied()
+            .flatten()
+            .filter(|(live_generation, _)| *live_generation == generation)
+            .map(|(_, serial)| Some(serial))
+            .ok_or(ForkArenaError::InvalidChunk)
+    }
+
+    fn add_dependency(dependencies: &mut Vec<u64>, dependency: Option<u64>) {
+        if let Some(dependency) = dependency
+            && !dependencies.contains(&dependency)
+        {
+            dependencies.push(dependency);
+        }
+    }
+
+    fn register_batch(
+        &mut self,
+        envelope: LocalBatch<PageMaterialLane>,
+        list: PageListId,
+        dependencies: Vec<u64>,
+    ) -> Result<(), ForkArenaError> {
+        let Some((slot, generation)) =
+            ForkArena::<PageMaterialNode, PageMaterialLane>::list_descriptor_signature(
+                list.coordinate(),
+            )
+        else {
+            return Ok(());
+        };
+        let serial = envelope.serial;
+        let index = usize::try_from(serial.saturating_sub(1))
+            .map_err(|_| ForkArenaError::CapacityOverflow)?;
+        if self.batches.len() <= index {
+            self.batches.resize_with(index + 1, || None);
+        }
+        if self.batches[index].is_some() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        for dependency in &dependencies {
+            let record = self
+                .batches
+                .get_mut((*dependency - 1) as usize)
+                .and_then(Option::as_mut)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            record.references = record
+                .references
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+        }
+        self.batches[index] = Some(PageMaterialBatch {
+            envelope,
+            references: 0,
+            dependencies,
+        });
+        let slot = slot as usize;
+        if self.descriptor_batches.len() <= slot {
+            self.descriptor_batches.resize(slot + 1, None);
+        }
+        self.descriptor_batches[slot] = Some((generation, serial));
+        Ok(())
+    }
+
+    fn finish_batch(
+        &mut self,
+        mark: BatchMark<PageMaterialLane>,
+        list: PageListId,
+        dependencies: Vec<u64>,
+    ) -> Result<PageListId, ForkArenaError> {
+        let envelope = self
+            .region
+            .pub_arena
+            .finish_local_batch(&mut self.pool.chunks, mark)?;
+        self.register_batch(envelope, list, dependencies)?;
+        Ok(list)
+    }
+
+    /// Acquires one canonical top-level owner. This is constant work; the
+    /// immutable closure's dependency charges were installed when its batch
+    /// was published.
+    pub fn acquire_root(&mut self, list: PageListId) -> Result<PageMaterialRoot, ForkArenaError> {
+        let batch = self.batch_serial(list)?;
+        if let Some(serial) = batch {
+            let record = self
+                .batches
+                .get_mut((serial - 1) as usize)
+                .and_then(Option::as_mut)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            record.references = record
+                .references
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+        }
+        Ok(PageMaterialRoot { list, batch })
+    }
+
+    /// Implements TeX's explicit `\copy` ownership event.
+    pub fn copy_root(
+        &mut self,
+        root: &PageMaterialRoot,
+    ) -> Result<PageMaterialRoot, ForkArenaError> {
+        self.acquire_root(root.list)
+    }
+
+    pub fn release_root(&mut self, root: PageMaterialRoot) -> Result<(), ForkArenaError> {
+        if let Some(serial) = root.batch {
+            self.release_reference(serial)?;
+            if self.batches[(serial - 1) as usize]
+                .as_ref()
+                .is_some_and(|batch| batch.references == 0)
+            {
+                self.collect_queue.push(serial);
+            }
+            self.collect_unrooted()?;
+        }
+        Ok(())
+    }
+
+    pub fn retain_checkpoint_interval(
+        &mut self,
+        mark: CheckpointMark<PageMaterialLane>,
+    ) -> Result<PageMaterialCheckpointLease, ForkArenaError> {
+        if !self.region.pub_arena.validates_checkpoint(mark) {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        let batch_serial =
+            ForkArena::<PageMaterialNode, PageMaterialLane>::local_batch_serial(mark);
+        *self.checkpoint_intervals.entry(batch_serial).or_default() += 1;
+        Ok(PageMaterialCheckpointLease { batch_serial })
+    }
+
+    pub fn release_checkpoint_interval(
+        &mut self,
+        lease: PageMaterialCheckpointLease,
+    ) -> Result<(), ForkArenaError> {
+        let old_high_water = self
+            .checkpoint_intervals
+            .last_key_value()
+            .map_or(0, |(serial, _)| *serial);
+        let count = self
+            .checkpoint_intervals
+            .get_mut(&lease.batch_serial)
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        *count -= 1;
+        if *count == 0 {
+            self.checkpoint_intervals.remove(&lease.batch_serial);
+        }
+        let new_high_water = self
+            .checkpoint_intervals
+            .last_key_value()
+            .map_or(0, |(serial, _)| *serial);
+        for serial in new_high_water.saturating_add(1)..=old_high_water {
+            if self
+                .batches
+                .get((serial - 1) as usize)
+                .and_then(Option::as_ref)
+                .is_some_and(|batch| batch.references == 0)
+            {
+                self.collect_queue.push(serial);
+            }
+        }
+        self.collect_unrooted()
+    }
+
+    fn release_reference(&mut self, serial: u64) -> Result<(), ForkArenaError> {
+        let record = self
+            .batches
+            .get_mut((serial - 1) as usize)
+            .and_then(Option::as_mut)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        record.references = record
+            .references
+            .checked_sub(1)
+            .ok_or(ForkArenaError::InvalidRegion)?;
+        Ok(())
+    }
+
+    fn collect_unrooted(&mut self) -> Result<(), ForkArenaError> {
+        if self.fork_batches.is_some() {
+            return Ok(());
+        }
+        let checkpoint_high_water = self
+            .checkpoint_intervals
+            .last_key_value()
+            .map_or(0, |(serial, _)| *serial);
+        while let Some(serial) = self.collect_queue.pop() {
+            if serial <= checkpoint_high_water
+                || self
+                    .batches
+                    .get((serial - 1) as usize)
+                    .and_then(Option::as_ref)
+                    .is_none_or(|batch| batch.references != 0)
+            {
+                continue;
+            }
+            let Some(batch) = self
+                .batches
+                .get_mut((serial - 1) as usize)
+                .and_then(Option::take)
+            else {
+                continue;
+            };
+            self.region
+                .pub_arena
+                .release_local_batch(&mut self.pool.chunks, &batch.envelope)?;
+            for dependency in batch.dependencies {
+                self.release_reference(dependency)?;
+                let record = self
+                    .batches
+                    .get((dependency - 1) as usize)
+                    .and_then(Option::as_ref)
+                    .expect("dependency stays present through its dependent release");
+                if record.references == 0 && dependency > checkpoint_high_water {
+                    self.collect_queue.push(dependency);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn retire_metadata_range(&mut self, range: std::ops::RangeInclusive<u64>) {
+        for serial in range.rev() {
+            let Some(batch) = self
+                .batches
+                .get_mut((serial - 1) as usize)
+                .and_then(Option::take)
+            else {
+                continue;
+            };
+            for dependency in batch.dependencies {
+                let record = self
+                    .batches
+                    .get_mut((dependency - 1) as usize)
+                    .and_then(Option::as_mut)
+                    .expect("a retired batch dependency precedes and survives it");
+                record.references = record
+                    .references
+                    .checked_sub(1)
+                    .expect("batch dependency charge is balanced");
+                if record.references == 0 {
+                    self.collect_queue.push(dependency);
+                }
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.region.pub_arena.live_payload_values(&self.pool.chunks)
@@ -349,15 +653,29 @@ impl PageMaterialArena {
         &mut self,
         nodes: impl IntoIterator<Item = PageMaterialNode>,
     ) -> Result<PageListId, ForkArenaError> {
+        let batch = self
+            .region
+            .pub_arena
+            .begin_local_batch(&mut self.pool.chunks)?;
         let mut identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
         let arena = self.region.pub_arena.region_identity();
+        let mut dependencies = Vec::new();
+        let descriptor_batches = &self.descriptor_batches;
         let mut builder = self.region.pub_arena.begin_builder(&mut self.pool.chunks)?;
         for node in nodes {
             if !node_children_belong_to_arena(&node, arena) {
                 return Err(ForkArenaError::InvalidRegion);
             }
+            node.visit_node_lists(|child| {
+                Self::add_dependency(
+                    &mut dependencies,
+                    Self::batch_serial_in(descriptor_batches, *child)
+                        .ok()
+                        .flatten(),
+                );
+            });
             if let Some(identity) = &mut identity {
                 let item_identity = semantic_node_identity(&node);
                 identity.push_back(item_identity);
@@ -375,7 +693,8 @@ impl PageMaterialArena {
                     ..crate::fork_arena::SequenceSummaryWork::default()
                 });
         }
-        Ok(PageListId::from_parts(coordinate, identity))
+        let list = PageListId::from_parts(coordinate, identity);
+        self.finish_batch(batch, list, dependencies)
     }
 
     /// Test-only negative control for the source-copy counter. Production
@@ -396,9 +715,15 @@ impl PageMaterialArena {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<(), ForkArenaError> {
+        builder.batch = Some(
+            self.region
+                .pub_arena
+                .begin_local_batch(&mut self.pool.chunks)?,
+        );
         self.region
             .pub_arena
             .open_active_list(&self.pool.chunks, &mut builder.inner)?;
+        builder.dependencies.clear();
         builder.identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
@@ -413,6 +738,12 @@ impl PageMaterialArena {
         if !node_children_belong_to_arena(&node, self.region.pub_arena.region_identity()) {
             return Err(ForkArenaError::InvalidRegion);
         }
+        node.visit_node_lists(|child| {
+            Self::add_dependency(
+                &mut builder.dependencies,
+                self.batch_serial(*child).ok().flatten(),
+            );
+        });
         if let Some(identity) = &mut builder.identity {
             let item_identity = semantic_node_identity(&node);
             identity.push_back(item_identity);
@@ -445,6 +776,7 @@ impl PageMaterialArena {
         builder: &mut PageMaterialActiveListBuilder,
         list: PageListId,
     ) -> Result<(), ForkArenaError> {
+        Self::add_dependency(&mut builder.dependencies, self.batch_serial(list)?);
         self.region.pub_arena.append_active_list(
             &mut self.pool.chunks,
             &mut builder.inner,
@@ -471,6 +803,7 @@ impl PageMaterialArena {
         list: PageListId,
         selected: Range<usize>,
     ) -> Result<(), ForkArenaError> {
+        Self::add_dependency(&mut builder.dependencies, self.batch_serial(list)?);
         let selected_identity = if self.semantic_identity_enabled {
             let (identity, work) = self.region.pub_arena.append_active_list_range_summarized(
                 &mut self.pool.chunks,
@@ -506,7 +839,13 @@ impl PageMaterialArena {
             .pub_arena
             .finalize_active_list(&mut self.pool.chunks, &mut builder.inner)?;
         let coordinate = builder.inner.take_sealed()?;
-        Ok(PageListId::from_parts(coordinate, builder.identity.take()))
+        let list = PageListId::from_parts(coordinate, builder.identity.take());
+        let batch = builder
+            .batch
+            .take()
+            .ok_or(ForkArenaError::InvalidActiveListBuilder)?;
+        let dependencies = std::mem::take(&mut builder.dependencies);
+        self.finish_batch(batch, list, dependencies)
     }
 
     pub fn rollback_active_list(
@@ -517,6 +856,8 @@ impl PageMaterialArena {
             .pub_arena
             .rollback_active_list(&mut self.pool.chunks, &mut builder.inner)?;
         builder.identity = None;
+        builder.batch = None;
+        builder.dependencies.clear();
         Ok(())
     }
 
@@ -531,6 +872,14 @@ impl PageMaterialArena {
         &mut self,
         lists: &[PageListId],
     ) -> Result<PageListId, ForkArenaError> {
+        let batch = self
+            .region
+            .pub_arena
+            .begin_local_batch(&mut self.pool.chunks)?;
+        let mut dependencies = Vec::new();
+        for list in lists {
+            Self::add_dependency(&mut dependencies, self.batch_serial(*list)?);
+        }
         let identity = if self.semantic_identity_enabled {
             let mut identity = SemanticSequenceIdentity::empty();
             for list in lists {
@@ -559,7 +908,8 @@ impl PageMaterialArena {
                     ..crate::fork_arena::SequenceSummaryWork::default()
                 });
         }
-        Ok(PageListId::from_parts(coordinate, identity))
+        let list = PageListId::from_parts(coordinate, identity);
+        self.finish_batch(batch, list, dependencies)
     }
 
     pub fn slice_sequence(
@@ -568,6 +918,12 @@ impl PageMaterialArena {
         selected: Range<usize>,
         _scratch: &mut Vec<PageListId>,
     ) -> Result<PageListId, ForkArenaError> {
+        let batch = self
+            .region
+            .pub_arena
+            .begin_local_batch(&mut self.pool.chunks)?;
+        let mut dependencies = Vec::new();
+        Self::add_dependency(&mut dependencies, self.batch_serial(list)?);
         if self.semantic_identity_enabled {
             let (coordinate, identity, work) = self.region.pub_arena.slice_list_summarized(
                 &mut self.pool.chunks,
@@ -577,7 +933,8 @@ impl PageMaterialArena {
                 semantic_node_identity,
             )?;
             self.region.pub_arena.record_identity_work(work);
-            Ok(PageListId::from_parts(coordinate, Some(identity)))
+            let list = PageListId::from_parts(coordinate, Some(identity));
+            self.finish_batch(batch, list, dependencies)
         } else {
             let coordinate = self.region.pub_arena.slice_list(
                 &mut self.pool.chunks,
@@ -585,7 +942,8 @@ impl PageMaterialArena {
                 selected,
                 &mut self.range_scratch,
             )?;
-            Ok(PageListId::from_parts(coordinate, None))
+            let list = PageListId::from_parts(coordinate, None);
+            self.finish_batch(batch, list, dependencies)
         }
     }
 
@@ -634,9 +992,15 @@ impl PageMaterialArena {
         &mut self,
         mark: OperationMark<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
+        let cutoff = ForkArena::<PageMaterialNode, PageMaterialLane>::operation_batch_serial(mark);
+        let end = self.batches.len() as u64;
         self.region
             .pub_arena
-            .restore_operation(&mut self.pool.chunks, mark)
+            .restore_operation(&mut self.pool.chunks, mark)?;
+        if end > cutoff {
+            self.retire_metadata_range(cutoff + 1..=end);
+        }
+        Ok(())
     }
 
     pub fn seal_boundary(&mut self) -> Result<SealedBoundary<PageMaterialLane>, ForkArenaError> {
@@ -654,7 +1018,11 @@ impl PageMaterialArena {
         &mut self,
         mark: CheckpointMark<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.region.pub_arena.begin_checkpoint_candidate(mark)
+        let cutoff = ForkArena::<PageMaterialNode, PageMaterialLane>::local_batch_serial(mark);
+        let prior_end = self.batches.len() as u64;
+        self.region.pub_arena.begin_checkpoint_candidate(mark)?;
+        self.fork_batches = Some((cutoff, prior_end));
+        Ok(())
     }
 
     #[must_use]
@@ -680,18 +1048,31 @@ impl PageMaterialArena {
         &mut self,
         boundary: SealedBoundary<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
+        let (_, prior_end) = self.fork_batches.ok_or(ForkArenaError::NotForked)?;
+        let current_end = self.batches.len() as u64;
         self.region
             .pub_arena
-            .reject_checkpoint_candidate(&mut self.pool.chunks, boundary)
+            .reject_checkpoint_candidate(&mut self.pool.chunks, boundary)?;
+        if current_end > prior_end {
+            self.retire_metadata_range(prior_end + 1..=current_end);
+        }
+        self.fork_batches = None;
+        self.collect_unrooted()
     }
 
     pub fn accept_checkpoint_candidate(
         &mut self,
         boundary: SealedBoundary<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
+        let (cutoff, prior_end) = self.fork_batches.ok_or(ForkArenaError::NotForked)?;
         self.region
             .pub_arena
-            .accept_checkpoint_candidate(&mut self.pool.chunks, boundary)
+            .accept_checkpoint_candidate(&mut self.pool.chunks, boundary)?;
+        if prior_end > cutoff {
+            self.retire_metadata_range(cutoff + 1..=prior_end);
+        }
+        self.fork_batches = None;
+        self.collect_unrooted()
     }
 
     /// Recursively copies one exact closure from another page region.
