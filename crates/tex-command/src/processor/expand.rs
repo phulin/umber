@@ -1219,7 +1219,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         self.command
             .timeline
-            .borrow_mut()
             .record_cumulative_expansions(self.command.expansion.cumulative_expansions);
         self.command.expansion.cumulative_expansions = self
             .command

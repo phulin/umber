@@ -52,6 +52,10 @@ impl RetainedEngineOperation for CaptureModeCheckpoint {
                 .push_current_node(&mut context, tex_state::node::Node::Penalty(penalty));
             context.append_page_contribution(tex_state::node::Node::Penalty(penalty));
         }
+        admitted
+            .prepare_checkpoint_control(control)
+            .expect("accepted command owner parks")
+            .accept();
         admitted.retain_checkpoint(checkpoint)
     }
 }
@@ -65,9 +69,12 @@ impl RetainedEngineOperation for InspectAndRejectModeFork {
     type Output = Vec<i32>;
 
     fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        let RestoredCheckpointRuntime { mut control } = admitted
-            .take_attachment::<RestoredCheckpointRuntime<G>>(self.runtime)
+        let _runtime = admitted
+            .take_attachment::<RestoredCheckpointRuntime>(self.runtime)
             .expect("fork owns restored runtime");
+        let mut control = admitted
+            .take_checkpoint_control()
+            .expect("fork owns typed main control");
         if let Some(penalty) = self.append_penalty {
             let mut context = admitted
                 .universe()
@@ -93,7 +100,10 @@ impl RetainedEngineOperation for InspectAndRejectModeFork {
                 })
                 .collect()
         };
-        control.reject_checkpoint_candidate();
+        admitted
+            .prepare_checkpoint_control(control)
+            .expect("rejected control parks")
+            .reject();
         penalties
     }
 }

@@ -612,16 +612,15 @@ lengths, scratch-lane lengths, durable storage cursors, mode/page cursors,
 source/effect ledger cursors, and the identity of the generation it addresses.
 A named checkpoint refers to either the current candidate or the prior
 accepted generation; it cannot retain a third generation. Named-boundary
-publication explicitly clones the exclusively mutable live command root once
-into a private thread-confined `Rc` owner beside its exact attempt mark. The
-command timeline contributes only a monotonic identity serial and owns no root
-row. Retained-checkpoint clones share that cold owner; ordinary command
-mutation never enters shared ownership. The retained executor store is the
-sole checkpoint container. It reuses physical slots with
-generation-plus-serial validation and exact live-index backreferences, so
-pruning drops unretained owners in O(live checkpoints) without scanning full
-capacity. A checkpoint also contains compact marks and any optional coarse
-packed-bank snapshot. Its
+publication appends a move-only frame to the physical command owner's typed
+fork arena and retains only its sealed mark, one-cell coordinate, attempt
+mark, and coarse generation capability. Checkpoint aliases copy those fixed
+coordinates and never alias mutable command storage. The retained executor
+store parks the sole `CommandState` owner. Edit selection rewinds the accepted
+suffix in place and detaches its whole chunks; rejection rewinds current cells
+and redoes the detached prior cells before reattachment, while acceptance
+prunes the detached chunks. A checkpoint also contains compact marks and any
+optional coarse packed-bank snapshot. Its
 generation owns one conservative monotonic page-retention bound. A checkpoint
 with an explicit page handle in page-builder or mode state may raise that bound
 to the current page cursor; a checkpoint with no such carrier adds nothing.
@@ -815,11 +814,12 @@ creation consumes an exclusive current-candidate lease, so another factory or
 caller cannot issue a concurrent candidate. Candidate execution may compare
 detached evidence from prior. It may also be seeded by the one validated
 aggregate checkpoint-fork operation: the operation checks every accepted root
-first, constructs a fresh command timeline and destination-local
-mutable/runtime owners off-slot, and publishes them only after the complete
-fork succeeds. Shared definition and stored-token carriers keep their existing
-private non-atomic owners; no public id is retargeted and no accepted owner is
-mutated.
+first, moves the same physical command owner into a destination-local current
+suffix, and publishes the destination only after the complete fork succeeds.
+Logical revision acceptance transfers that owner lease without changing its
+physical timeline identity or rebranding retained prefix marks. Shared
+definition and stored-token carriers keep their existing private non-atomic
+owners; no public id is retargeted and no third lineage is created.
 
 A loaded format enters this same model as the initial accepted generation.
 Admission consumes the validated detached image, drops its encoded bytes

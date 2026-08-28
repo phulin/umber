@@ -228,7 +228,7 @@ fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
 #[test]
 fn foreign_timeline_rejection_leaves_live_command_state_unchanged() {
     crate::test_harness::with_universe(|universe| {
-        let source = crate::CommandState::default();
+        let mut source = crate::CommandState::default();
         let summary = source
             .publish_summary(universe)
             .expect("quiescent command state publishes");
@@ -246,7 +246,7 @@ fn foreign_timeline_rejection_leaves_live_command_state_unchanged() {
 #[test]
 fn prepared_restore_cannot_be_applied_to_a_foreign_command_machine() {
     crate::test_harness::with_universe(|universe| {
-        let source = crate::CommandState::default();
+        let mut source = crate::CommandState::default();
         let summary = source
             .publish_summary(universe)
             .expect("quiescent command state publishes");
@@ -285,9 +285,9 @@ fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
         let snapshot = command
             .snapshot(universe)
             .expect("empty command attempt snapshots");
-        let retained = snapshot
-            .generation
-            .resolve(snapshot.cursor())
+        let retained = command
+            .timeline
+            .resolve(snapshot.cursor(), snapshot.generation().timeline)
             .expect("snapshot owner resolves");
         assert!(retained.is_empty());
     });
@@ -402,19 +402,19 @@ fn rollback_restores_a_mutated_input_frame_cursor() {
 }
 
 #[test]
-fn dropping_a_summary_releases_its_timeline_frame() {
+fn dropping_a_summary_never_mutates_its_physical_timeline() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
         let summary = command
             .publish_summary(universe)
             .expect("quiescent command state publishes");
-        assert_eq!(command.timeline.borrow().live_frame_count(), 1);
+        assert_eq!(command.timeline.live_frame_count(), 1);
 
         command
             .begin_file_name()
             .expect("live command root mutates directly");
         drop(summary);
-        assert_eq!(command.timeline.borrow().live_frame_count(), 0);
+        assert_eq!(command.timeline.live_frame_count(), 1);
     });
 }
 
@@ -422,23 +422,22 @@ fn dropping_a_summary_releases_its_timeline_frame() {
 fn named_checkpoint_capture_and_warmed_mutation_clone_no_roots() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
-        crate::state::reset_command_root_clone_count();
         let summary = command
             .publish_summary(universe)
             .expect("quiescent command state publishes");
-        assert_eq!(crate::state::command_root_clone_count(), 0);
+        assert_eq!(command.timeline.source_cells_copied(), 0);
 
         command
             .begin_file_name()
             .expect("post-capture mutation stays direct");
-        assert_eq!(crate::state::command_root_clone_count(), 0);
+        assert_eq!(command.timeline.source_cells_copied(), 0);
 
         command.end_file_name();
         command
             .begin_file_name()
             .expect("warmed mutation stays exclusive");
         command.end_file_name();
-        assert_eq!(crate::state::command_root_clone_count(), 0);
+        assert_eq!(command.timeline.source_cells_copied(), 0);
 
         drop(summary);
     });
@@ -488,23 +487,77 @@ fn stale_cursor_cannot_resolve_through_a_later_summary_owner() {
 }
 
 #[test]
-fn repeated_8192_capture_prune_cycles_retain_constant_metadata() {
+fn repeated_capture_keeps_one_physical_owner_and_append_only_marks() {
     crate::test_harness::with_universe(|universe| {
-        let command = crate::CommandState::default();
-        let timeline_owners = Rc::strong_count(&command.timeline);
-        let frame_capacity = command.timeline.borrow().frame_capacity();
+        let mut command = crate::CommandState::default();
+        let timeline_owner = command.timeline.owner;
+        let frame_capacity = command.timeline.frame_capacity();
 
-        for _ in 0..8_192 {
+        for _ in 0..64 {
             let summary = command
                 .publish_summary(universe)
                 .expect("summary publishes");
             drop(summary);
-            assert_eq!(command.timeline.borrow().live_frame_count(), 0);
         }
 
-        assert_eq!(Rc::strong_count(&command.timeline), timeline_owners);
-        assert_eq!(command.timeline.borrow().next_serial, 8_192);
-        assert_eq!(command.timeline.borrow().frame_capacity(), frame_capacity);
+        assert_eq!(command.timeline.owner, timeline_owner);
+        assert_eq!(command.timeline.next_serial, 64);
+        assert_eq!(command.timeline.live_frame_count(), 64);
+        assert_eq!(command.timeline.frame_capacity(), frame_capacity);
+    });
+}
+
+#[test]
+fn command_fork_reject_and_accept_preserve_prefix_marks_without_copying_history() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let owner = command.timeline.owner;
+        let early = command
+            .publish_summary(universe)
+            .expect("early summary publishes");
+        {
+            let state = universe.command_context().expect("command context");
+            command
+                .set_afterassignment(&state, word('x'))
+                .expect("accepted suffix mutates");
+        }
+        let later = command
+            .publish_summary(universe)
+            .expect("later summary publishes");
+
+        let mut rejected = crate::CommandState::fork_summary(command, &early, universe, universe)
+            .expect("early command prefix forks");
+        {
+            let state = universe.command_context().expect("command context");
+            rejected
+                .set_afterassignment(&state, word('y'))
+                .expect("candidate suffix mutates");
+        }
+        rejected.reject_checkpoint_candidate();
+        assert_eq!(rejected.timeline.owner, owner);
+        assert!(rejected.has_afterassignment());
+        rejected
+            .prepare_summary_restore(&later, universe)
+            .expect("rejected accepted suffix mark reattaches");
+
+        let mut accepted = crate::CommandState::fork_summary(rejected, &early, universe, universe)
+            .expect("same prefix forks again");
+        {
+            let state = universe.command_context().expect("command context");
+            accepted
+                .set_afterassignment(&state, word('z'))
+                .expect("replacement suffix mutates");
+        }
+        accepted.accept_checkpoint_candidate();
+        assert_eq!(accepted.timeline.owner, owner);
+        accepted
+            .prepare_summary_restore(&early, universe)
+            .expect("unchanged prefix mark survives acceptance");
+        assert!(matches!(
+            accepted.prepare_summary_restore(&later, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert_eq!(accepted.timeline.source_cells_copied(), 0);
     });
 }
 
@@ -512,7 +565,7 @@ fn repeated_8192_capture_prune_cycles_retain_constant_metadata() {
 #[test]
 fn warmed_8192_capture_prune_cycles_allocate_no_checkpoint_roots() {
     crate::test_harness::with_universe(|universe| {
-        let command = crate::CommandState::default();
+        let mut command = crate::CommandState::default();
         let warm = command
             .publish_summary(universe)
             .expect("warm summary publishes");
@@ -532,7 +585,7 @@ fn warmed_8192_capture_prune_cycles_allocate_no_checkpoint_roots() {
 
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-        assert_eq!(Rc::strong_count(&command.timeline), 1);
+        assert_eq!(command.timeline.live_frame_count(), 8_193);
     });
 }
 

@@ -258,7 +258,7 @@ impl IncompleteCondition {
 }
 
 /// Independent persistent condition stack.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ConditionStack {
     pub(crate) frames: crate::timeline::LogicalStack<ConditionFrame>,
     pub(crate) next_identity: u64,

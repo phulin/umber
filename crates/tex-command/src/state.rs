@@ -1,8 +1,6 @@
 //! Future-relevant state and discardable scratch allocation ownership.
 
-use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 
 use tex_state::CommandContext;
 use tex_state::token::TracedTokenWord;
@@ -30,21 +28,6 @@ use crate::profile::{
     CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileFingerprint,
     CommandProfileMismatch,
 };
-
-#[cfg(test)]
-thread_local! {
-    static COMMAND_ROOT_CLONES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn command_root_clone_count() -> usize {
-    COMMAND_ROOT_CLONES.get()
-}
-
-#[cfg(test)]
-pub(crate) fn reset_command_root_clone_count() {
-    COMMAND_ROOT_CLONES.set(0);
-}
 
 fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
     match reason {
@@ -142,33 +125,6 @@ pub struct CommandStateRoots<G> {
         Vec<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>,
 }
 
-impl<G> Clone for CommandStateRoots<G> {
-    fn clone(&self) -> Self {
-        #[cfg(test)]
-        COMMAND_ROOT_CLONES.set(COMMAND_ROOT_CLONES.get().saturating_add(1));
-        Self {
-            reachable_state_identity_enabled: self.reachable_state_identity_enabled,
-            engine_semantics: self.engine_semantics,
-            input: self.input.clone(),
-            parameters: self.parameters.clone(),
-            scanner: self.scanner.clone(),
-            conditions: self.conditions.clone(),
-            alignment: self.alignment.clone(),
-            expansion: self.expansion.clone(),
-            transient: self.transient.clone(),
-            replay_completions: self.replay_completions.clone(),
-            pending_replay_completions: self.pending_replay_completions.clone(),
-            semantic_diagnostics: self.semantic_diagnostics.clone(),
-            group_payloads: self.group_payloads.clone(),
-            aftergroup_payloads: self.aftergroup_payloads.clone(),
-            afterassignment: self.afterassignment,
-            name_in_progress: self.name_in_progress,
-            pending_input_open: self.pending_input_open.clone(),
-            named_token_list_pushes: self.named_token_list_pushes.clone(),
-        }
-    }
-}
-
 impl<G> CommandStateRoots<G> {
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -240,7 +196,7 @@ impl<G> CommandStateRoots<G> {
 #[derive(Debug)]
 pub struct CommandState<G> {
     pub(crate) roots: CommandStateRoots<G>,
-    pub(crate) timeline: Rc<RefCell<crate::snapshot::CommandTimeline<G>>>,
+    pub(crate) timeline: crate::snapshot::CommandTimeline<G>,
     /// Runtime-only TeX82 stack maxima. Snapshot roots deliberately omit
     /// these scalars so high-water marks survive rollback without becoming
     /// command semantics or checkpoint identity.
@@ -414,20 +370,13 @@ impl<G> Default for CommandState<G> {
     fn default() -> Self {
         Self {
             roots: CommandStateRoots::default(),
-            timeline: Rc::new(RefCell::new(crate::snapshot::CommandTimeline::default())),
+            timeline: crate::snapshot::CommandTimeline::default(),
             stack_usage: CommandStackUsage::default(),
             terminal_buffer_slots: 0,
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
         }
-    }
-}
-
-impl<G> Drop for CommandState<G> {
-    fn drop(&mut self) {
-        let roots = core::mem::take(&mut self.roots);
-        self.timeline.borrow_mut().return_roots(roots);
     }
 }
 
@@ -760,9 +709,7 @@ impl<G> CommandState<G> {
         spelling: TracedTokenWord,
     ) -> Result<(), CommandGroupError> {
         self.validate_group_payloads(state)?;
-        self.timeline
-            .borrow_mut()
-            .record_afterassignment(self.afterassignment);
+        self.timeline.record_afterassignment(self.afterassignment);
         self.afterassignment = Some(CommandPayload::new(spelling));
         Ok(())
     }
@@ -774,9 +721,7 @@ impl<G> CommandState<G> {
         state: &CommandContext<'_, G>,
     ) -> Result<Option<TracedTokenWord>, CommandGroupError> {
         self.validate_group_payloads(state)?;
-        self.timeline
-            .borrow_mut()
-            .record_afterassignment(self.afterassignment);
+        self.timeline.record_afterassignment(self.afterassignment);
         Ok(self.afterassignment.take().map(|payload| payload.spelling))
     }
 
@@ -1140,16 +1085,13 @@ impl<G> CommandState<G> {
 
     pub(crate) fn take_pending_input_open(&mut self) -> Option<crate::ScannedFileName> {
         let pending = self.pending_input_open.take();
-        self.timeline
-            .borrow_mut()
-            .record_pending_input_open(pending.clone());
+        self.timeline.record_pending_input_open(pending.clone());
         pending
     }
 
     pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
         debug_assert!(self.pending_input_open.is_none());
         self.timeline
-            .borrow_mut()
             .record_pending_input_open(self.pending_input_open.clone());
         self.pending_input_open = Some(file_name);
     }
@@ -1158,29 +1100,22 @@ impl<G> CommandState<G> {
         if self.name_in_progress {
             return Err(crate::CommandError::input_invariant());
         }
-        self.timeline
-            .borrow_mut()
-            .record_name_in_progress(self.name_in_progress);
+        self.timeline.record_name_in_progress(self.name_in_progress);
         self.name_in_progress = true;
         Ok(())
     }
 
     pub(crate) fn end_file_name(&mut self) {
-        self.timeline
-            .borrow_mut()
-            .record_name_in_progress(self.name_in_progress);
+        self.timeline.record_name_in_progress(self.name_in_progress);
         self.name_in_progress = false;
     }
 
     pub(crate) fn record_alignment_phase(&mut self) {
-        self.timeline
-            .borrow_mut()
-            .record_align_state(self.alignment.align_state);
+        self.timeline.record_align_state(self.alignment.align_state);
     }
 
     pub(crate) fn record_retained_file_line_number(&mut self) {
         self.timeline
-            .borrow_mut()
             .record_retained_file_line_number(self.input.retained_file_line_number);
     }
 
@@ -2144,21 +2079,6 @@ impl<G> CommandState<G> {
         state
     }
 
-    pub(crate) fn from_returned_roots(
-        roots: CommandStateRoots<G>,
-        timeline: Rc<RefCell<crate::snapshot::CommandTimeline<G>>>,
-    ) -> Self {
-        Self {
-            roots,
-            timeline,
-            stack_usage: CommandStackUsage::default(),
-            terminal_buffer_slots: 0,
-            attempt: crate::CommandAttempt::default(),
-            scratch: crate::execution_scratch::ExecutionScratch::default(),
-            active_attempt_operation: None,
-        }
-    }
-
     /// Selects the canonical compiled implementation executing this job.
     ///
     /// A newer implementation may execute an older format/profile, but the
@@ -2190,7 +2110,6 @@ impl<G> CommandState<G> {
         let id = tex_state::SourceId::new(raw);
         let source = RegisteredSource::register(id, self.profile(), registration)?;
         self.timeline
-            .borrow_mut()
             .record_next_source_identity(self.input.next_source_identity);
         self.input.next_source_identity += 1;
         let previous = self.input.pending_sources.insert(raw, source);
@@ -2483,9 +2402,7 @@ impl<G> CommandState<G> {
             })
             .is_some();
         if has_source {
-            self.timeline
-                .borrow_mut()
-                .record_force_eof(self.input.force_eof);
+            self.timeline.record_force_eof(self.input.force_eof);
             self.input.force_eof = true;
         }
         has_source
@@ -2766,7 +2683,6 @@ impl<G> CommandState<G> {
         crate::input::LineBackingRegistry<'_>,
     ) {
         self.timeline
-            .borrow_mut()
             .record_next_source_identity(self.input.next_source_identity);
         // This method runs for every physical token. The old
         // `active_buffer_lines` projection allocated a temporary Vec merely

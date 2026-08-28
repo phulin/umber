@@ -102,6 +102,50 @@ impl<G> AdmittedEngineGeneration<'_, G> {
         }
     }
 
+    /// Attaches erased host/runtime metadata while keeping its typed live
+    /// control separately reachable by aggregate settlement.
+    pub fn attach_with_checkpoint_control<T: 'static>(
+        &mut self,
+        attachment: T,
+        control: crate::MainControl<G>,
+    ) -> Result<RetainedEngineAttachmentKey, RetainedEngineAccessError> {
+        if self.sidecars.control.is_some() || self.sidecars.command.is_some() {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        self.sidecars.control = Some(control);
+        Ok(self.attach(attachment))
+    }
+
+    pub fn take_checkpoint_control(
+        &mut self,
+    ) -> Result<crate::MainControl<G>, RetainedEngineAccessError> {
+        self.sidecars
+            .control
+            .take()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)
+    }
+
+    /// Parks the sole quiescent command owner in the generation sidecar while
+    /// returning the non-generic mode settlement receipt to the caller.
+    pub fn prepare_checkpoint_control(
+        &mut self,
+        control: crate::MainControl<G>,
+    ) -> Result<crate::PreparedCheckpointControl, RetainedEngineAccessError> {
+        if self.sidecars.command.is_some() {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        let (command, prepared) = control.into_checkpoint_candidate_parts();
+        self.sidecars.command = Some(command);
+        Ok(prepared)
+    }
+
+    pub fn prepare_live_checkpoint_control(
+        &mut self,
+    ) -> Result<crate::PreparedCheckpointControl, RetainedEngineAccessError> {
+        let control = self.take_checkpoint_control()?;
+        self.prepare_checkpoint_control(control)
+    }
+
     pub fn attachment_mut<T: 'static>(
         &mut self,
         key: &RetainedEngineAttachmentKey,
@@ -358,11 +402,11 @@ pub struct RetainedEngineGeneration<'store> {
     liveness: Arc<()>,
 }
 
-/// Direct owners restored together from one aggregate checkpoint.
+/// Marker for the typed main-control owner restored together with one
+/// aggregate checkpoint. The control itself remains in the generation's
+/// typed sidecar so generic settlement can always reach it.
 #[doc(hidden)]
-pub struct RestoredCheckpointRuntime<G> {
-    pub control: crate::MainControl<G>,
-}
+pub struct RestoredCheckpointRuntime;
 
 /// Weak coarse-owner witness used by lifecycle tests and host diagnostics.
 /// It retains no runtime row, arena, checkpoint, or generation coordinate.
@@ -668,6 +712,15 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
             .ok_or(RetainedStateAccessError::StaleAttachment)?;
         match self {
             Self::Accept => {
+                if let Some(command) = candidate.command.as_mut() {
+                    command.accept_checkpoint_candidate();
+                } else {
+                    candidate
+                        .control
+                        .as_mut()
+                        .ok_or(RetainedStateAccessError::StaleAttachment)?
+                        .accept_checkpoint_candidate_in_place();
+                }
                 candidate
                     .boundaries
                     .as_mut()
@@ -676,6 +729,16 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
                 ledger.accept_checkpoint_candidate();
             }
             Self::Reject => {
+                let command = if let Some(mut command) = candidate.command.take() {
+                    command.reject_checkpoint_candidate();
+                    command
+                } else {
+                    candidate
+                        .control
+                        .take()
+                        .ok_or(RetainedStateAccessError::StaleAttachment)?
+                        .into_rejected_checkpoint_command()
+                };
                 candidate
                     .boundaries
                     .as_mut()
@@ -683,6 +746,7 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
                     .reject();
                 ledger.reject_checkpoint_candidate();
                 source.boundaries = candidate.boundaries.take();
+                source.command = Some(command);
                 source.ledger = candidate.ledger.take();
             }
         }
@@ -737,13 +801,14 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
             .ledger
             .take()
             .expect("the accepted generation owns its output ledger");
-        let (universe, control) = match checkpoint.fork_state(universe, &mut ledger) {
-            Ok(restored) => restored,
-            Err(error) => {
-                sidecars.ledger = Some(ledger);
-                return Err(RetainedEngineForkError::Restore(error));
-            }
-        };
+        let (universe, control) =
+            match checkpoint.fork_state(universe, &mut sidecars.command, &mut ledger) {
+                Ok(restored) => restored,
+                Err(error) => {
+                    sidecars.ledger = Some(ledger);
+                    return Err(RetainedEngineForkError::Restore(error));
+                }
+            };
         let mut boundaries = sidecars
             .boundaries
             .take()
@@ -753,8 +818,10 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
             universe,
             Box::new(EngineGenerationSidecars::<G> {
                 generation: self.generation,
-                attachment: Some(Box::new(RestoredCheckpointRuntime { control })),
+                attachment: Some(Box::new(RestoredCheckpointRuntime)),
                 boundaries: Some(boundaries),
+                command: None,
+                control: Some(control),
                 ledger: Some(ledger),
             }),
             budget_counters,
@@ -1180,6 +1247,8 @@ struct EngineGenerationSidecars<G> {
     generation: u64,
     attachment: Option<Box<dyn Any>>,
     boundaries: Option<BoundaryLane<G>>,
+    command: Option<tex_command::CommandState<G>>,
+    control: Option<crate::MainControl<G>>,
     ledger: Option<crate::OutputLedger>,
 }
 
@@ -1195,6 +1264,8 @@ impl RetainedStateOperation for InitializeSidecars {
             generation: self.generation,
             attachment: None,
             boundaries: Some(BoundaryLane::default()),
+            command: None,
+            control: None,
             ledger: Some(crate::OutputLedger::new()),
         })
     }
@@ -1260,17 +1331,28 @@ mod tests {
         type Output = RetainedCheckpointKey;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let checkpoint = {
+            let parked = admitted.sidecars.command.take();
+            let (checkpoint, control) = {
                 let universe = admitted.universe();
-                let mut control = crate::MainControl::tex82_initex(universe);
-                control
+                let mut control = parked.map_or_else(
+                    || crate::MainControl::tex82_initex(universe),
+                    |command| {
+                        crate::MainControl::from_checkpoint_fork(command, crate::ModeNest::new())
+                    },
+                );
+                let checkpoint = control
                     .capture_checkpoint(
                         crate::EngineBoundary::JobStart,
                         universe,
                         crate::ExecutionBudgetCounters::default(),
                     )
-                    .expect("quiescent checkpoint")
+                    .expect("quiescent checkpoint");
+                (checkpoint, control)
             };
+            admitted
+                .prepare_checkpoint_control(control)
+                .expect("cold command owner parks")
+                .accept();
             admitted.retain_checkpoint(checkpoint)
         }
     }
@@ -1297,10 +1379,10 @@ mod tests {
                 .universe()
                 .assign_count(0, self.0, AssignmentScope::Global)
                 .expect("baseline count");
-            let checkpoint = {
+            let (checkpoint, control) = {
                 let universe = admitted.universe();
                 let mut control = crate::MainControl::tex82_initex(universe);
-                control
+                let checkpoint = control
                     .capture_checkpoint(
                         crate::EngineBoundary::JobStart,
                         universe,
@@ -1309,8 +1391,13 @@ mod tests {
                             cumulative_fuel: 11,
                         },
                     )
-                    .expect("quiescent checkpoint")
+                    .expect("quiescent checkpoint");
+                (checkpoint, control)
             };
+            admitted
+                .prepare_checkpoint_control(control)
+                .expect("cold command owner parks")
+                .accept();
             admitted.retain_checkpoint(checkpoint)
         }
     }
@@ -1325,9 +1412,12 @@ mod tests {
         type Output = (i32, RetainedCheckpointKey);
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let RestoredCheckpointRuntime { mut control } = admitted
-                .take_attachment::<RestoredCheckpointRuntime<G>>(self.runtime)
+            let _runtime = admitted
+                .take_attachment::<RestoredCheckpointRuntime>(self.runtime)
                 .expect("fork owns restored main control");
+            let mut control = admitted
+                .take_checkpoint_control()
+                .expect("fork owns typed main control");
             let before = admitted
                 .universe()
                 .command_context()
@@ -1345,10 +1435,13 @@ mod tests {
                     crate::ExecutionBudgetCounters::default(),
                 )
                 .expect("candidate checkpoint");
+            let prepared = admitted
+                .prepare_checkpoint_control(control)
+                .expect("candidate command owner parks");
             if self.accept_modes {
-                control.accept_checkpoint_candidate();
+                prepared.accept();
             } else {
-                control.reject_checkpoint_candidate();
+                prepared.reject();
             }
             (before, admitted.retain_checkpoint(checkpoint))
         }
@@ -1368,6 +1461,10 @@ mod tests {
                     crate::ExecutionBudgetCounters::default(),
                 )
                 .expect("loaded format checkpoint");
+            admitted
+                .prepare_checkpoint_control(control)
+                .expect("loaded command owner parks")
+                .accept();
             admitted.retain_checkpoint(checkpoint)
         }
     }
@@ -1392,6 +1489,10 @@ mod tests {
                     crate::ExecutionBudgetCounters::default(),
                 )
                 .expect("resource checkpoint");
+            admitted
+                .prepare_checkpoint_control(control)
+                .expect("resource command owner parks")
+                .accept();
             admitted.retain_checkpoint(checkpoint)
         }
     }
@@ -1402,9 +1503,12 @@ mod tests {
         type Output = RetainedEngineAttachmentKey;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let RestoredCheckpointRuntime { mut control } = admitted
-                .take_attachment::<RestoredCheckpointRuntime<G>>(self.0)
+            let runtime = admitted
+                .take_attachment::<RestoredCheckpointRuntime>(self.0)
                 .expect("fork runtime");
+            let mut control = admitted
+                .take_checkpoint_control()
+                .expect("fork owns typed main control");
             let step = control
                 .advance_episode(admitted.universe())
                 .expect("resource suspension");
@@ -1413,7 +1517,9 @@ mod tests {
                 crate::StepResult::Suspended(crate::ResourceNeed::Input { ref name, .. })
                     if name == "child.tex"
             ));
-            admitted.attach(RestoredCheckpointRuntime { control })
+            admitted
+                .attach_with_checkpoint_control(runtime, control)
+                .expect("suspended control reattaches")
         }
     }
 
@@ -1423,9 +1529,12 @@ mod tests {
         type Output = crate::StepResult;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let RestoredCheckpointRuntime { mut control } = admitted
-                .take_attachment::<RestoredCheckpointRuntime<G>>(self.0)
+            let _runtime = admitted
+                .take_attachment::<RestoredCheckpointRuntime>(self.0)
                 .expect("suspended runtime");
+            let mut control = admitted
+                .take_checkpoint_control()
+                .expect("suspension owns typed main control");
             control.capabilities_mut().register_input(
                 "child.tex",
                 SourceRegistration::new(
@@ -1438,6 +1547,10 @@ mod tests {
                     .advance_episode(admitted.universe())
                     .expect("resource retry");
                 if step == crate::StepResult::Progress(crate::MainControlStep::End) {
+                    admitted
+                        .prepare_checkpoint_control(control)
+                        .expect("terminal control parks")
+                        .accept();
                     return step;
                 }
             }

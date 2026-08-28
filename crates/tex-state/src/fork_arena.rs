@@ -88,6 +88,29 @@ impl<T> ChunkStorage<T> {
         self.pages.len()
     }
 
+    fn allocated_heap_bytes(&self) -> usize {
+        self.pages
+            .capacity()
+            .saturating_mul(std::mem::size_of::<ChunkPage<T>>())
+            .saturating_add(self.pages.iter().fold(0_usize, |bytes, page| {
+                bytes.saturating_add(
+                    page.slots
+                        .len()
+                        .saturating_mul(std::mem::size_of::<Option<T>>()),
+                )
+            }))
+            .saturating_add(
+                self.chunks
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ChunkMeta>()),
+            )
+            .saturating_add(
+                self.free
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+    }
+
     fn add_page(&mut self) -> Result<(), ForkArenaError> {
         let page_slots = self
             .slots_per_chunk
@@ -332,6 +355,15 @@ impl<T> ChunkPool<T> {
     #[must_use]
     pub fn page_count(&self) -> usize {
         self.payload.page_count()
+    }
+
+    /// Heap capacity retained by payload and descriptor pages plus their
+    /// allocation metadata. Allocator-private bookkeeping is not observable.
+    #[must_use]
+    pub fn allocated_heap_bytes(&self) -> usize {
+        self.payload
+            .allocated_heap_bytes()
+            .saturating_add(self.descriptors.allocated_heap_bytes())
     }
 }
 
@@ -1549,6 +1581,102 @@ impl<T, Lane> ForkArena<T, Lane> {
                         .get(key, self.owner, offset)
                         .ok_or(ForkArenaError::InvalidChunk)?,
                 );
+            }
+        }
+        Ok(())
+    }
+
+    /// Mutates the accepted suffix after `mark` in reverse sequence order.
+    ///
+    /// This is the reversible-journal counterpart of
+    /// [`Self::visit_accepted_checkpoint_suffix`]. The arena topology remains
+    /// sealed and unchanged; only move-owned journal cells are updated before
+    /// the suffix is detached.
+    #[doc(hidden)]
+    pub fn visit_accepted_checkpoint_suffix_mut_reverse(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+        mut visit: impl FnMut(&mut T),
+    ) -> Result<(), ForkArenaError> {
+        if !self.can_begin_checkpoint_candidate(mark) {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        self.visit_live_payload_range_mut_reverse(
+            pool,
+            mark.payload_chunks as usize,
+            self.live_payload_len(),
+            &mut visit,
+        )
+    }
+
+    /// Mutates the current candidate suffix after its selected prefix in
+    /// reverse sequence order without touching the detached accepted suffix.
+    #[doc(hidden)]
+    pub fn visit_current_checkpoint_suffix_mut_reverse(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+        mut visit: impl FnMut(&mut T),
+    ) -> Result<(), ForkArenaError> {
+        if !matches!(self.ownership, ForkOwnership::Forked { .. })
+            || !self.validates_checkpoint(mark)
+        {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        self.visit_live_payload_range_mut_reverse(
+            pool,
+            mark.payload_chunks as usize,
+            self.live_payload_len(),
+            &mut visit,
+        )
+    }
+
+    /// Mutates the detached accepted suffix in sequence order. This permits a
+    /// reversible journal to redo its prior suffix immediately before arena
+    /// rejection reattaches the same chunks.
+    #[doc(hidden)]
+    pub fn visit_detached_checkpoint_suffix_mut(
+        &self,
+        pool: &mut ChunkPool<T>,
+        mut visit: impl FnMut(&mut T),
+    ) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        let ForkOwnership::Forked { detached_prior, .. } = &self.ownership else {
+            return Err(ForkArenaError::NotForked);
+        };
+        for key in &detached_prior.payload {
+            let used = pool.payload.used(*key, self.owner)?;
+            for offset in 0..used {
+                let value = pool
+                    .payload
+                    .get_mut(*key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidChunk)?;
+                visit(value);
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_live_payload_range_mut_reverse(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        start: usize,
+        end: usize,
+        visit: &mut impl FnMut(&mut T),
+    ) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        for position in (start..end).rev() {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidCheckpoint)?;
+            let used = pool.payload.used(key, self.owner)?;
+            for offset in (0..used).rev() {
+                let value = pool
+                    .payload
+                    .get_mut(key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidChunk)?;
+                visit(value);
             }
         }
         Ok(())

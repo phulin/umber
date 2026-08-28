@@ -67,6 +67,10 @@ impl<G> PersistentInterpreter<G> {
         }
     }
 
+    pub(crate) fn into_state(self) -> CommandState<G> {
+        self.state
+    }
+
     pub(crate) const fn state(&self) -> &CommandState<G> {
         &self.state
     }

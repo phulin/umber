@@ -386,10 +386,10 @@ impl RevisionTransaction<'_> {
     pub fn reject(mut self) {
         let prepared = prepare_candidate_runtime(&mut self.generation, self.runtime_key.take())
             .expect("a completed candidate retains its terminal command/mode owner");
-        self.generation.prepare_candidate_reject();
         if let Some(prepared) = prepared {
             prepared.reject();
         }
+        self.generation.prepare_candidate_reject();
         self.generation.finish_candidate_reject();
     }
 
@@ -658,10 +658,10 @@ impl<'store> RevisionCandidate<'store> {
         if let Some(mut generation) = self.generation.take() {
             let prepared = prepare_candidate_runtime(&mut generation, self.runtime_key.take())
                 .expect("a live candidate retains its command/mode owner");
-            generation.prepare_candidate_reject();
             if let Some(prepared) = prepared {
                 prepared.reject();
             }
+            generation.prepare_candidate_reject();
             generation.finish_candidate_reject();
         }
     }
@@ -688,9 +688,17 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
         self,
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
-        let mut runtime = match self.runtime_key {
-            Some(key) => match admitted.take_attachment::<CandidateRuntime<G>>(key) {
-                Ok(runtime) => runtime,
+        let (mut runtime, mut control) = match self.runtime_key {
+            Some(key) => match admitted.take_attachment::<CandidateRuntime>(key) {
+                Ok(runtime) => match admitted.take_checkpoint_control() {
+                    Ok(control) => (runtime, control),
+                    Err(error) => {
+                        return CandidateRunResult {
+                            execution: Err(SessionError::RetainedEngine(error)),
+                            runtime_key: None,
+                        };
+                    }
+                },
                 Err(error) => {
                     return CandidateRunResult {
                         execution: Err(SessionError::RetainedEngine(error)),
@@ -700,17 +708,25 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
             },
             None => {
                 let restored = match self.checkpoint_control_key {
-                    Some(key) => match admitted
-                        .take_attachment::<tex_exec::RestoredCheckpointRuntime<G>>(key)
-                    {
-                        Ok(runtime) => Some(runtime),
-                        Err(error) => {
-                            return CandidateRunResult {
-                                execution: Err(SessionError::RetainedEngine(error)),
-                                runtime_key: None,
-                            };
+                    Some(key) => {
+                        match admitted.take_attachment::<tex_exec::RestoredCheckpointRuntime>(key) {
+                            Ok(_runtime) => match admitted.take_checkpoint_control() {
+                                Ok(control) => Some(control),
+                                Err(error) => {
+                                    return CandidateRunResult {
+                                        execution: Err(SessionError::RetainedEngine(error)),
+                                        runtime_key: None,
+                                    };
+                                }
+                            },
+                            Err(error) => {
+                                return CandidateRunResult {
+                                    execution: Err(SessionError::RetainedEngine(error)),
+                                    runtime_key: None,
+                                };
+                            }
                         }
-                    },
+                    }
                     None => None,
                 };
                 match initialize_candidate_runtime(&mut admitted, self.candidate, restored) {
@@ -730,6 +746,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 universe,
                 ledger,
                 checkpoints,
+                &mut control,
                 &mut runtime,
                 self.candidate,
                 self.host,
@@ -740,7 +757,15 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
         // Terminal command and mode owners remain attached until the
         // aggregate accept/reject barrier explicitly settles them. Drop is
         // reserved for unwinding before an attachment can be published.
-        let runtime_key = Some(admitted.attach(runtime));
+        let runtime_key = match admitted.attach_with_checkpoint_control(runtime, control) {
+            Ok(key) => Some(key),
+            Err(error) => {
+                return CandidateRunResult {
+                    execution: Err(SessionError::RetainedEngine(error)),
+                    runtime_key: None,
+                };
+            }
+        };
         CandidateRunResult {
             execution,
             runtime_key,
@@ -778,9 +803,9 @@ impl tex_exec::RetainedEngineOperation for SettleCandidateRuntime {
         self,
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
-        let runtime = admitted.take_attachment::<CandidateRuntime<G>>(self.key)?;
+        let _runtime = admitted.take_attachment::<CandidateRuntime>(self.key)?;
         Ok(PreparedCandidateRuntime {
-            control: runtime.control.prepare_checkpoint_candidate(),
+            control: admitted.prepare_live_checkpoint_control()?,
         })
     }
 }
@@ -827,12 +852,15 @@ impl tex_exec::RetainedEngineOperation for PublishInitialFormatCheckpoint {
         let mut control = MainControl::with_profile(self.profile);
         let checkpoint = control
             .capture_job_start_checkpoint(universe, tex_exec::ExecutionBudgetCounters::default())?;
+        admitted
+            .prepare_checkpoint_control(control)
+            .map_err(SessionError::RetainedEngine)?
+            .accept();
         Ok(admitted.retain_checkpoint(checkpoint))
     }
 }
 
-struct CandidateRuntime<G> {
-    control: MainControl<G>,
+struct CandidateRuntime {
     history: LiveHistoryState,
     delivered_commands: usize,
     answered_needs: Vec<ResourceNeed>,
@@ -1075,8 +1103,8 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
 fn initialize_candidate_runtime<G: 'static>(
     admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
     candidate: &RevisionCandidate<'_>,
-    restored: Option<tex_exec::RestoredCheckpointRuntime<G>>,
-) -> Result<CandidateRuntime<G>, SessionError> {
+    restored: Option<MainControl<G>>,
+) -> Result<(CandidateRuntime, MainControl<G>), SessionError> {
     let rooted_restart = restored.is_some()
         && candidate
             .plan
@@ -1115,11 +1143,7 @@ fn initialize_candidate_runtime<G: 'static>(
         root_framing: candidate.root_framing,
         root_framing_name: candidate.root_framing_name.as_deref(),
     };
-    let restored_control = match restored {
-        Some(restored) => Some(restored.control),
-        None => None,
-    };
-    let mut control = candidate_control(universe, &options, restored_control)?;
+    let mut control = candidate_control(universe, &options, restored)?;
     control
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
@@ -1139,26 +1163,28 @@ fn initialize_candidate_runtime<G: 'static>(
         }
         start_candidate_job(universe, &mut control, options)?;
     }
-    Ok(CandidateRuntime {
+    Ok((
+        CandidateRuntime {
+            history,
+            delivered_commands: 0,
+            answered_needs: Vec::new(),
+        },
         control,
-        history,
-        delivered_commands: 0,
-        answered_needs: Vec::new(),
-    })
+    ))
 }
 
 fn execute_plan<G>(
     universe: &mut Universe<G>,
     ledger: &mut OutputLedger,
     checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
-    runtime: &mut CandidateRuntime<G>,
+    control: &mut MainControl<G>,
+    runtime: &mut CandidateRuntime,
     candidate: &RevisionCandidate<'_>,
     host: &mut dyn ResourceHost,
     cancellation: &Cancellation,
     failed_attempt_fuel: &mut u64,
 ) -> Result<PlanExecution, SessionError> {
     let CandidateRuntime {
-        control,
         history,
         delivered_commands,
         answered_needs,
@@ -2266,10 +2292,10 @@ impl<'store> Session<'store> {
         let mut prepared = prepare_candidate_runtime(&mut generation, transaction.runtime_key)
             .map_err(SessionError::RetainedEngine)?;
         if let Err(error) = generation.preflight_boundary_lane() {
-            generation.prepare_candidate_reject();
             if let Some(prepared) = prepared.take() {
                 prepared.reject();
             }
+            generation.prepare_candidate_reject();
             generation.finish_candidate_reject();
             return Err(SessionError::RetainedEngine(error));
         }
@@ -2282,12 +2308,12 @@ impl<'store> Session<'store> {
         // HRTB brand, so its checkpoint roots cannot contain a prior id.
         let previous = self.prior_generation.take();
         if let Some(mut previous) = previous {
-            previous
-                .generation
-                .prepare_candidate_accept(&mut generation);
             if let Some(prepared) = prepared.take() {
                 prepared.accept();
             }
+            previous
+                .generation
+                .prepare_candidate_accept(&mut generation);
             previous.generation.finish_candidate_accept(&mut generation);
             previous
                 .generation

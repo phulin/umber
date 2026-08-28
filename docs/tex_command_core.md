@@ -3141,13 +3141,16 @@ therefore leaves its payload reachable until the named mark is rejected or
 sealed.
 
 The live root remains the sole mutable borrower before and after publication.
-Cloning a retained value increments the reusable frame's owner count and copies
-the fixed cursor tuple. Candidate handoff first drops `MainControl`, which moves
-the root back into the thread-confined timeline owner; fork then restores the
-named logical tops and undo positions and moves that same root into the sole
-current command machine. Rejection drops the current suffix and returns the
-root for another fork. No first-write COW, deferred aggregate clone, root
-registry, compactor, per-entry heap owner, or additional lineage participates.
+Cloning a retained value copies the fixed mark tuple and coarse generation
+capability; it never aliases the timeline. Candidate handoff moves the sole
+`CommandState` out of `MainControl` and parks it in the retained generation.
+Fork selects its sealed timeline mark, rewinds later accepted cells in place,
+detaches those chunks, and moves that same physical owner into the sole current
+command machine. Rejection rewinds the current suffix and redoes the detached
+accepted suffix before reattaching it. Acceptance drops the detached chunks
+without rebranding the unchanged prefix. No first-write COW, deferred aggregate
+clone, root registry, compactor, per-entry heap owner, or additional lineage
+participates.
 Restore validates the complete aggregate before replaying undo and truncating
 the unpublished logical suffix, following the owner-before-roots-before-
 truncation ordering in `runtime_storage_lifetimes.md`.

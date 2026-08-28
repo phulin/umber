@@ -2038,24 +2038,45 @@ impl<G> MainControl<G> {
     /// barrier. Destination owners must settle before this receipt commits or
     /// returns the source-side mode ranges.
     #[doc(hidden)]
-    pub fn prepare_checkpoint_candidate(mut self) -> PreparedCheckpointControl {
-        PreparedCheckpointControl {
-            modes: std::mem::take(&mut self.modes),
-        }
+    pub(crate) fn into_checkpoint_candidate_parts(
+        mut self,
+    ) -> (CommandState<G>, PreparedCheckpointControl) {
+        let modes = std::mem::take(&mut self.modes);
+        let command = self.command.into_state();
+        (command, PreparedCheckpointControl { modes })
     }
 
     /// Convenience barrier used by owner-local tests. Aggregate callers use
     /// [`Self::prepare_checkpoint_candidate`] so destination owners settle
     /// first.
     pub fn accept_checkpoint_candidate(self) {
-        self.prepare_checkpoint_candidate().accept();
+        let mut control = self;
+        control.accept_checkpoint_candidate_in_place();
     }
 
     /// Returns command and mode roots through their rejection paths before
     /// aggregate state rejection. Consuming `self` prevents later use of a
     /// partially settled command machine.
     pub fn reject_checkpoint_candidate(self) {
-        self.prepare_checkpoint_candidate().reject();
+        let (mut command, control) = self.into_checkpoint_candidate_parts();
+        control.reject();
+        command.reject_checkpoint_candidate();
+    }
+
+    /// Settles a quiescent command/mode candidate while retaining the live
+    /// control owner and any host suspension continuation it carries.
+    pub(crate) fn accept_checkpoint_candidate_in_place(&mut self) {
+        self.modes.accept_checkpoint_candidate();
+        self.command.state_mut().accept_checkpoint_candidate();
+    }
+
+    /// Rejects a quiescent command/mode candidate and returns its physical
+    /// command owner for source-side reattachment.
+    pub(crate) fn into_rejected_checkpoint_command(self) -> CommandState<G> {
+        let (mut command, control) = self.into_checkpoint_candidate_parts();
+        control.reject();
+        command.reject_checkpoint_candidate();
+        command
     }
 
     pub(crate) fn arm_terminal_revision(&mut self, step: MainControlStep) {

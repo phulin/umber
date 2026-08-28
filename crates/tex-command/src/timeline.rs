@@ -11,6 +11,8 @@ pub(crate) struct LogicalStack<T> {
     rows: Vec<T>,
     top: usize,
     undo: Vec<ElementUndo<T>>,
+    fork: Option<LogicalStackFork>,
+    detached_prior: Vec<ElementUndo<T>>,
     recording: Cell<bool>,
 }
 
@@ -26,23 +28,20 @@ struct ElementUndo<T> {
     old: T,
 }
 
+#[derive(Debug)]
+struct LogicalStackFork {
+    accepted_top: usize,
+    selected_undo: usize,
+}
+
 impl<T> Default for LogicalStack<T> {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
             top: 0,
             undo: Vec::new(),
-            recording: Cell::new(false),
-        }
-    }
-}
-
-impl<T: Clone> Clone for LogicalStack<T> {
-    fn clone(&self) -> Self {
-        Self {
-            rows: self.rows[..self.top].to_vec(),
-            top: self.top,
-            undo: Vec::new(),
+            fork: None,
+            detached_prior: Vec::new(),
             recording: Cell::new(false),
         }
     }
@@ -142,13 +141,6 @@ impl<T: Clone> LogicalStack<T> {
         self.rows.get_mut(index)
     }
 
-    pub(crate) fn iter_mut(&mut self) -> core::slice::IterMut<'_, T> {
-        for index in 0..self.top {
-            self.record(index);
-        }
-        self.rows[..self.top].iter_mut()
-    }
-
     pub(crate) fn mark(&self) -> Option<LogicalStackMark> {
         self.recording.set(true);
         Some(LogicalStackMark {
@@ -162,7 +154,7 @@ impl<T: Clone> LogicalStack<T> {
     }
 
     pub(crate) fn restore(&mut self, mark: LogicalStackMark) -> bool {
-        if !self.validates(mark) {
+        if self.fork.is_some() || !self.validates(mark) {
             return false;
         }
         while self.undo.len() > mark.undo as usize {
@@ -171,6 +163,53 @@ impl<T: Clone> LogicalStack<T> {
         }
         self.top = mark.top as usize;
         true
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(&mut self, mark: LogicalStackMark) {
+        assert!(
+            self.fork.is_none(),
+            "logical stack already owns a candidate fork"
+        );
+        assert!(
+            self.validates(mark),
+            "logical stack candidate mark was prevalidated"
+        );
+        debug_assert!(self.detached_prior.is_empty());
+        while self.undo.len() > mark.undo as usize {
+            let mut inverse = self.undo.pop().expect("validated undo suffix exists");
+            std::mem::swap(&mut self.rows[inverse.index], &mut inverse.old);
+            self.detached_prior.push(inverse);
+        }
+        let accepted_top = self.top;
+        self.top = mark.top as usize;
+        self.fork = Some(LogicalStackFork {
+            accepted_top,
+            selected_undo: mark.undo as usize,
+        });
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(&mut self) {
+        let fork = self
+            .fork
+            .take()
+            .expect("logical stack rejection requires a candidate fork");
+        while self.undo.len() > fork.selected_undo {
+            let mut inverse = self.undo.pop().expect("candidate undo suffix exists");
+            std::mem::swap(&mut self.rows[inverse.index], &mut inverse.old);
+        }
+        while let Some(mut inverse) = self.detached_prior.pop() {
+            std::mem::swap(&mut self.rows[inverse.index], &mut inverse.old);
+            self.undo.push(inverse);
+        }
+        self.top = fork.accepted_top;
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self) {
+        let _fork = self
+            .fork
+            .take()
+            .expect("logical stack acceptance requires a candidate fork");
+        self.detached_prior.clear();
     }
 
     fn record(&mut self, index: usize) {
@@ -198,6 +237,11 @@ impl<T> LogicalStack<T> {
             )
             .saturating_add(
                 self.undo
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ElementUndo<T>>()),
+            )
+            .saturating_add(
+                self.detached_prior
                     .capacity()
                     .saturating_mul(std::mem::size_of::<ElementUndo<T>>()),
             )

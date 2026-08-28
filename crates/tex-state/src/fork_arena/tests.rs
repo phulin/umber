@@ -180,6 +180,68 @@ fn checkpoint_marks_are_whole_chunk_boundaries_and_rejection_reattaches_prior() 
 }
 
 #[test]
+fn forked_journal_visitors_preserve_reverse_undo_and_forward_redo_order() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let _prefix = list(&mut arena, &mut pool, [1]);
+    let selected = {
+        let boundary = arena.seal_boundary(&mut pool).expect("selected boundary");
+        arena.checkpoint_mark(boundary).expect("checkpoint")
+    };
+    let accepted_suffix = list(&mut arena, &mut pool, [2, 3]);
+    arena.seal_boundary(&mut pool).expect("accepted head");
+
+    let mut accepted_reverse = Vec::new();
+    arena
+        .visit_accepted_checkpoint_suffix_mut_reverse(&mut pool, selected, |value| {
+            accepted_reverse.push(*value);
+            *value += 10;
+        })
+        .expect("accepted journal rewind");
+    assert_eq!(accepted_reverse, [3, 2]);
+    arena
+        .begin_checkpoint_candidate(selected)
+        .expect("candidate fork");
+    let candidate = list(&mut arena, &mut pool, [4, 5]);
+
+    let mut candidate_reverse = Vec::new();
+    arena
+        .visit_current_checkpoint_suffix_mut_reverse(&mut pool, selected, |value| {
+            candidate_reverse.push(*value);
+        })
+        .expect("candidate journal rewind");
+    assert_eq!(candidate_reverse, [5, 4]);
+    let mut accepted_forward = Vec::new();
+    arena
+        .visit_detached_checkpoint_suffix_mut(&mut pool, |value| {
+            accepted_forward.push(*value);
+            *value -= 10;
+        })
+        .expect("accepted journal redo");
+    assert_eq!(accepted_forward, [12, 13]);
+
+    let settlement = arena.seal_boundary(&mut pool).expect("settlement");
+    arena
+        .reject_checkpoint_candidate(&mut pool, settlement)
+        .expect("reject candidate");
+    assert_eq!(
+        arena
+            .list(&pool, accepted_suffix)
+            .expect("accepted suffix reattached")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert_eq!(
+        arena
+            .list(&pool, candidate)
+            .expect_err("candidate suffix dropped"),
+        ForkArenaError::InvalidRange
+    );
+}
+
+#[test]
 fn acceptance_prunes_detached_prior_and_keeps_candidate_chunks() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

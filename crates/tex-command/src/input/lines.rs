@@ -191,11 +191,6 @@ pub struct PhysicalLine {
 }
 
 impl PhysicalLine {
-    pub(crate) const fn with_number(mut self, number: u64) -> Self {
-        self.number = number;
-        self
-    }
-
     /// One-based physical line number within this registered source.
     #[must_use]
     pub const fn number(self) -> u64 {

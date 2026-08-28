@@ -412,25 +412,6 @@ pub struct EngineCheckpoint<G> {
     pub(crate) budget_counters: crate::ExecutionBudgetCounters,
 }
 
-impl<G> Clone for EngineCheckpoint<G> {
-    fn clone(&self) -> Self {
-        Self {
-            schema_version: self.schema_version,
-            boundary: self.boundary,
-            runtime: self.runtime.clone(),
-            command: self.command.clone(),
-            modes: self.modes.clone(),
-            output: self.output.clone(),
-            reachable_state_identity: self.reachable_state_identity,
-            retention: self.retention,
-            root_anchor: self.root_anchor,
-            effect_prefix: self.effect_prefix,
-            artifact_prefix: self.artifact_prefix,
-            budget_counters: self.budget_counters,
-        }
-    }
-}
-
 impl<G> EngineCheckpoint<G> {
     pub(crate) fn pdf_history_position(&self) -> (u64, u64) {
         self.runtime.pdf_history_position()
@@ -439,6 +420,7 @@ impl<G> EngineCheckpoint<G> {
     pub(crate) fn fork_state(
         &self,
         source: &mut Universe<G>,
+        command_owner: &mut Option<CommandState<G>>,
         output: &mut crate::OutputLedger,
     ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
         let output_checkpoint = self.output.ok_or(CheckpointRestoreError::Output(
@@ -449,52 +431,42 @@ impl<G> EngineCheckpoint<G> {
                 tex_state::fork_arena::ForkArenaError::InvalidCheckpoint,
             ));
         }
+        let command_restore = command_owner
+            .as_ref()
+            .ok_or(CheckpointRestoreError::Command(
+                CommandRestoreError::InvalidCursor,
+            ))?
+            .prepare_summary_restore(&self.command, source)
+            .map_err(CheckpointRestoreError::Command)?;
         let mut destination = source
             .fork_runtime_checkpoint(&self.runtime)
             .map_err(CheckpointRestoreError::Runtime)?;
         // Capture pairs this opaque mode root with a later font watermark from
         // the same admitted generation.  A second walk here would inspect the
         // accepted owner's post-checkpoint suffix, not the bounded mode root.
-        let command = match CommandState::fork_summary(&self.command, source, &destination) {
-            Ok(command) => command,
-            Err(error) => {
-                source.reject_checkpoint_candidate(&mut destination);
-                return Err(CheckpointRestoreError::Command(error));
-            }
-        };
+        let mut command = command_owner
+            .take()
+            .expect("prevalidated aggregate fork owns the command timeline")
+            .begin_checkpoint_candidate(command_restore);
         let modes = match ModeNest::fork_checkpoint(&self.modes) {
             Ok(modes) => modes,
             Err(error) => {
-                drop(command);
+                command.reject_checkpoint_candidate();
+                *command_owner = Some(command);
                 source.reject_checkpoint_candidate(&mut destination);
                 return Err(CheckpointRestoreError::Mode(error));
             }
         };
-        output
-            .resume(output_checkpoint)
-            .map_err(CheckpointRestoreError::Output)?;
+        if let Err(error) = output.resume(output_checkpoint) {
+            command.reject_checkpoint_candidate();
+            *command_owner = Some(command);
+            source.reject_checkpoint_candidate(&mut destination);
+            return Err(CheckpointRestoreError::Output(error));
+        }
         Ok((
             destination,
             MainControl::from_checkpoint_fork(command, modes),
         ))
-    }
-
-    /// Runs the production aggregate fork path for the standalone profiling
-    /// gate. The returned generation and control remain generation-branded;
-    /// this feature-only seam exposes no checkpoint field or raw cursor.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_fork_state(
-        &self,
-        source: &mut Universe<G>,
-    ) -> Result<(Universe<G>, MainControl<G>, crate::OutputLedger), CheckpointRestoreError> {
-        let mut output = crate::OutputLedger::new();
-        let mut checkpoint = self.clone();
-        if !checkpoint.has_output_ledger() {
-            checkpoint.set_output_ledger(output.checkpoint());
-        }
-        let (universe, control) = checkpoint.fork_state(source, &mut output)?;
-        Ok((universe, control, output))
     }
 
     /// Exercises only the mode/page owner fork, first mutation, and rejection

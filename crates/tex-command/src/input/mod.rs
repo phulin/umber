@@ -82,21 +82,6 @@ pub(crate) struct InputState<G> {
     pub(crate) force_eof: bool,
 }
 
-impl<G> Clone for InputState<G> {
-    fn clone(&self) -> Self {
-        Self {
-            levels: self.levels.clone(),
-            replay: self.replay.clone(),
-            retained_file_line_number: self.retained_file_line_number,
-            terminal_context_line: self.terminal_context_line.clone(),
-            pending_sources: self.pending_sources.clone(),
-            next_level_identity: self.next_level_identity,
-            next_source_identity: self.next_source_identity,
-            force_eof: self.force_eof,
-        }
-    }
-}
-
 impl<G> Default for InputState<G> {
     fn default() -> Self {
         Self {
@@ -544,7 +529,7 @@ impl<G> InputState<G> {
         attempt: &crate::attempt::AttemptArena<G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, stores, parameters, attempt, scratch)
+        self.render_context_for_levels(&self.levels, None, stores, parameters, attempt, scratch)
     }
 
     /// Whether §312's first displayed level enters §314's unconditional
@@ -568,7 +553,8 @@ impl<G> InputState<G> {
                 InputLevel::Source(source) => {
                     let bottom = index == 0
                         || matches!(source.name_class, crate::input::SourceNameClass::File);
-                    if Self::source_context_level(source, index == 0, None, None, widths).is_some()
+                    if Self::source_context_level(source, index == 0, None, None, None, widths)
+                        .is_some()
                         || bottom
                     {
                         return false;
@@ -610,16 +596,14 @@ impl<G> InputState<G> {
         attempt: &crate::attempt::AttemptArena<G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
-        let mut levels = self.levels.clone();
-        if let Some(InputLevel::Source(source)) = levels.iter_mut().find(|level| {
-            matches!(level, InputLevel::Source(source) if source.identity() == retiring.identity())
-        }) {
-            *source = retiring.clone();
-            if let Some(line) = source.cursor.line.as_mut() {
-                line.physical = line.physical.with_number(source.cursor.next_line_number);
-            }
-        }
-        self.render_context_for_levels(&levels, stores, parameters, attempt, scratch)
+        self.render_context_for_levels(
+            &self.levels,
+            Some(retiring),
+            stores,
+            parameters,
+            attempt,
+            scratch,
+        )
     }
 
     pub(crate) fn output_close_context(
@@ -639,12 +623,13 @@ impl<G> InputState<G> {
             )
         });
         let levels = output_index.map_or(self.levels.as_slice(), |index| &self.levels[..index]);
-        self.render_context_for_levels(levels, stores, parameters, attempt, scratch)
+        self.render_context_for_levels(levels, None, stores, parameters, attempt, scratch)
     }
 
     fn render_context_for_levels(
         &self,
         input_levels: &[InputLevel<G>],
+        retiring_source: Option<&SourceLevel<G>>,
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
@@ -663,13 +648,18 @@ impl<G> InputState<G> {
             stores.untracked_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32,
         );
         let project_level = |index: usize| match input_levels.get(index)? {
-            InputLevel::Source(source) => Self::source_context_level(
-                source,
-                index == 0,
-                live_endlinechar,
-                newlinechar,
-                widths,
-            ),
+            InputLevel::Source(source) => {
+                let retiring =
+                    retiring_source.filter(|retiring| retiring.identity() == source.identity());
+                Self::source_context_level(
+                    retiring.unwrap_or(source),
+                    index == 0,
+                    retiring.map(|source| source.cursor.next_line_number),
+                    live_endlinechar,
+                    newlinechar,
+                    widths,
+                )
+            }
             InputLevel::Tokens(tokens) => Self::token_context_level(
                 TokenContextStorage {
                     stores,
@@ -686,8 +676,19 @@ impl<G> InputState<G> {
         let mut reached_bottom_source = false;
         for (index, level) in input_levels.iter().enumerate().rev() {
             let current = index + 1 == input_levels.len();
-            let visible = Self::context_level_is_visible(level, parameters, current);
+            let visible = match level {
+                InputLevel::Source(source) => retiring_source
+                    .filter(|retiring| retiring.identity() == source.identity())
+                    .unwrap_or(source)
+                    .cursor
+                    .line
+                    .is_some(),
+                InputLevel::Tokens(_) => Self::context_level_is_visible(level, parameters, current),
+            };
             if let InputLevel::Source(source) = level {
+                let source = retiring_source
+                    .filter(|retiring| retiring.identity() == source.identity())
+                    .unwrap_or(source);
                 reached_bottom_source =
                     index == 0 || matches!(source.name_class, crate::input::SourceNameClass::File);
             }
@@ -791,6 +792,7 @@ impl<G> InputState<G> {
     fn source_context_level(
         source: &SourceLevel<G>,
         bottom_of_stack: bool,
+        physical_line_number: Option<u64>,
         live_endlinechar: Option<char>,
         newlinechar: Option<char>,
         widths: tex_state::print::ErrorContextWidths,
@@ -860,7 +862,10 @@ impl<G> InputState<G> {
             SourceNameClass::ReadStream(16) => "<read *> ".to_owned(),
             SourceNameClass::ReadStream(stream) => format!("<read {stream}> "),
             SourceNameClass::Scantokens(_) | SourceNameClass::File => {
-                format!("l.{} ", line.physical.number())
+                format!(
+                    "l.{} ",
+                    physical_line_number.unwrap_or_else(|| line.physical.number())
+                )
             }
         };
         // §313 pseudoprints each buffer character through §59's `print`, so

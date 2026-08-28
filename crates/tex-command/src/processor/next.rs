@@ -1421,10 +1421,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         diagnostic: u64,
     ) -> Result<(), CommandError> {
         self.back_input(command)?;
-        self.command
-            .timeline
-            .borrow_mut()
-            .record_expansion_diagnostic_push();
+        self.command.timeline.record_expansion_diagnostic_push();
         self.command.expansion.pending_diagnostics.push(diagnostic);
         Ok(())
     }
@@ -1465,10 +1462,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         message: String,
         help: &'static [&'static str],
     ) {
-        self.command
-            .timeline
-            .borrow_mut()
-            .record_expansion_diagnostic_push();
+        self.command.timeline.record_expansion_diagnostic_push();
         self.command.expansion.pending_diagnostics.push(diagnostic);
         let context = self.command.output_open_context(self.state);
         self.command
@@ -2298,10 +2292,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.command.scanner.clear_for_recovery();
         }
         if let Some(warning) = warning {
-            self.command
-                .timeline
-                .borrow_mut()
-                .record_expansion_diagnostic_push();
+            self.command.timeline.record_expansion_diagnostic_push();
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
         let observed_tokens = std::iter::once(first_token)

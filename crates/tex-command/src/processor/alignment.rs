@@ -296,22 +296,6 @@ pub(crate) struct AlignmentDeliveryState<G> {
     pub(crate) pending_outer_recovery_cr: Option<TracedTokenWord>,
 }
 
-impl<G> Clone for AlignmentDeliveryState<G> {
-    fn clone(&self) -> Self {
-        Self {
-            align_state: self.align_state,
-            align_stack: self.align_stack.clone(),
-            active_alignment: self.active_alignment,
-            suspended: self.suspended.clone(),
-            active_cell: self.active_cell.clone(),
-            completed_preamble: self.completed_preamble.clone(),
-            pending_fin_col_delimiter: self.pending_fin_col_delimiter,
-            extra_tab_recovery: self.extra_tab_recovery,
-            pending_outer_recovery_cr: self.pending_outer_recovery_cr,
-        }
-    }
-}
-
 impl<G> PartialEq for AlignmentDeliveryState<G> {
     fn eq(&self, other: &Self) -> bool {
         self.align_state == other.align_state

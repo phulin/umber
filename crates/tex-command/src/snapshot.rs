@@ -8,15 +8,17 @@
 
 use core::fmt;
 use core::marker::PhantomData;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use tex_state::fork_arena::{ArenaListId, CheckpointMark, ChunkPool, ForkArena};
 use tex_state::{GenerationOwner, Universe};
 
 use crate::attempt::AttemptMark;
 use crate::processor::ScannerStatus;
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
 use crate::state::{CommandState, CommandStateRoots};
+
+static NEXT_COMMAND_TIMELINE_OWNER: AtomicU64 = AtomicU64::new(1);
 
 fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     use std::hash::{Hash as _, Hasher as _};
@@ -56,17 +58,26 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     hash
 }
 
-/// Monotonic identity source for in-session command checkpoints.
+/// Sole physical command-history owner for one admitted generation.
 ///
-/// The live command machine borrows the aggregate roots exclusively. Its drop
-/// returns that loan here for a candidate fork; a checkpoint retains only one
-/// reusable frame and its compact coordinates.
+/// Checkpoint frames and scalar undo records share one typed chunk lane.
+/// Retained snapshots carry only a sealed lane mark and a one-cell frame
+/// coordinate; no snapshot aliases this mutable owner.
 pub(crate) struct CommandTimeline<G> {
+    owner: u64,
     next_serial: u32,
-    frames: Vec<CommandTimelineFrame>,
-    free_frames: Vec<usize>,
-    returned_roots: Option<CommandStateRoots<G>>,
-    root_undo: Vec<CommandRootUndo<G>>,
+    pool: ChunkPool<CommandTimelineCell<G>>,
+    arena: ForkArena<CommandTimelineCell<G>, CommandTimelineLane>,
+    frames: usize,
+    head: Option<CheckpointMark<CommandTimelineLane>>,
+    fork: Option<CommandTimelineFork>,
+}
+
+enum CommandTimelineLane {}
+
+enum CommandTimelineCell<G> {
+    Frame(CommandTimelineFrame),
+    RootUndo(CommandRootUndo<G>),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -74,8 +85,19 @@ struct CommandTimelineFrame {
     serial: u32,
     cursor: CommandSnapshotCursor,
     attempt: AttemptMark,
-    root_undo: usize,
-    owners: u32,
+}
+
+#[derive(Clone, Copy)]
+struct CommandTimelineMark {
+    frame: ArenaListId<CommandTimelineLane>,
+    boundary: CheckpointMark<CommandTimelineLane>,
+    frames: usize,
+}
+
+struct CommandTimelineFork {
+    selected: CommandTimelineMark,
+    prior_head: Option<CheckpointMark<CommandTimelineLane>>,
+    prior_frames: usize,
 }
 
 enum CommandRootUndo<G> {
@@ -88,17 +110,51 @@ enum CommandRootUndo<G> {
     RetainedFileLineNumber(i32),
     ForceEof(bool),
     PendingInputOpen(Option<crate::ScannedFileName>),
-    ExpansionDiagnosticPush,
+    ExpansionDiagnosticPush(Option<u64>),
+}
+
+impl<G> CommandRootUndo<G> {
+    fn swap(&mut self, roots: &mut CommandStateRoots<G>) {
+        match self {
+            Self::NameInProgress(value) => std::mem::swap(value, &mut roots.name_in_progress),
+            Self::Afterassignment(value) => std::mem::swap(value, &mut roots.afterassignment),
+            Self::CumulativeExpansions(value) => {
+                std::mem::swap(value, &mut roots.expansion.cumulative_expansions);
+            }
+            Self::AlignState(value) => std::mem::swap(value, &mut roots.alignment.align_state),
+            Self::NextInputLevelIdentity(value) => {
+                std::mem::swap(value, &mut roots.input.next_level_identity);
+            }
+            Self::NextSourceIdentity(value) => {
+                std::mem::swap(value, &mut roots.input.next_source_identity);
+            }
+            Self::RetainedFileLineNumber(value) => {
+                std::mem::swap(value, &mut roots.input.retained_file_line_number);
+            }
+            Self::ForceEof(value) => std::mem::swap(value, &mut roots.input.force_eof),
+            Self::PendingInputOpen(value) => {
+                std::mem::swap(value, &mut roots.pending_input_open);
+            }
+            Self::ExpansionDiagnosticPush(value) => match value.take() {
+                Some(diagnostic) => roots.expansion.pending_diagnostics.push(diagnostic),
+                None => {
+                    *value = roots.expansion.pending_diagnostics.pop();
+                }
+            },
+        }
+    }
 }
 
 impl<G> Default for CommandTimeline<G> {
     fn default() -> Self {
         Self {
             next_serial: 0,
-            frames: Vec::with_capacity(64),
-            free_frames: Vec::with_capacity(64),
-            returned_roots: None,
-            root_undo: Vec::with_capacity(256),
+            owner: NEXT_COMMAND_TIMELINE_OWNER.fetch_add(1, Ordering::Relaxed),
+            pool: ChunkPool::default(),
+            arena: ForkArena::new(),
+            frames: 0,
+            head: None,
+            fork: None,
         }
     }
 }
@@ -111,45 +167,30 @@ impl<G> fmt::Debug for CommandTimeline<G> {
 
 impl<G> CommandTimeline<G> {
     fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(
-                self.frames
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<CommandTimelineFrame>()),
-            )
-            .saturating_add(
-                self.free_frames
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<usize>()),
-            )
-            .saturating_add(
-                self.root_undo
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<CommandRootUndo<G>>()),
-            )
-            .saturating_add(
-                self.returned_roots
-                    .as_ref()
-                    .map_or(0, CommandStateRoots::retained_bytes),
-            )
+        std::mem::size_of::<Self>().saturating_add(self.pool.allocated_heap_bytes())
     }
 
     #[cfg(test)]
     fn live_frame_count(&self) -> usize {
-        self.frames.iter().filter(|frame| frame.serial != 0).count()
+        self.frames
     }
 
     #[cfg(test)]
     fn frame_capacity(&self) -> usize {
-        self.frames.capacity()
+        self.pool.chunk_capacity()
     }
 
-    pub(crate) fn retain(
+    #[cfg(test)]
+    fn source_cells_copied(&self) -> u64 {
+        self.arena.counters().source_nodes_copied
+    }
+
+    fn retain(
         &mut self,
         attempt: AttemptMark,
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
-    ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
+    ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
         if !attempt.is_empty() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
@@ -161,225 +202,248 @@ impl<G> CommandTimeline<G> {
         attempt: AttemptMark,
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
-    ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
+    ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
         let serial = self
             .next_serial
             .checked_add(1)
             .ok_or(CommandSummaryError::TimelineCapacity)?;
         self.next_serial = serial;
         let cursor = CommandSnapshotCursor::new(serial, arenas, stacks);
-        let frame = CommandTimelineFrame {
-            serial,
-            cursor,
-            attempt,
-            root_undo: self.root_undo.len(),
-            owners: 1,
-        };
-        if let Some(slot) = self.free_frames.pop() {
-            self.frames[slot] = frame;
-        } else {
-            self.frames.push(frame);
-        }
-        Ok(cursor)
-    }
-
-    fn retain_owner(&mut self, serial: u32) -> bool {
-        let Some(frame) = self.frames.iter_mut().find(|frame| frame.serial == serial) else {
-            return false;
-        };
-        let Some(owners) = frame.owners.checked_add(1) else {
-            return false;
-        };
-        frame.owners = owners;
-        true
-    }
-
-    fn release_owner(&mut self, serial: u32) {
-        let Some((slot, frame)) = self
+        let mut builder = self
+            .arena
+            .begin_builder(&mut self.pool)
+            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
+        builder
+            .push(CommandTimelineCell::Frame(CommandTimelineFrame {
+                serial,
+                cursor,
+                attempt,
+            }))
+            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
+        let frame = builder
+            .seal()
+            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
+        let boundary = self
+            .arena
+            .seal_boundary(&mut self.pool)
+            .and_then(|boundary| self.arena.checkpoint_mark(boundary))
+            .map_err(|_| CommandSummaryError::TimelineCapacity)?;
+        self.frames = self
             .frames
-            .iter_mut()
-            .enumerate()
-            .find(|(_, frame)| frame.serial == serial)
-        else {
-            return;
-        };
-        frame.owners -= 1;
-        if frame.owners == 0 {
-            frame.serial = 0;
-            self.free_frames.push(slot);
-        }
+            .checked_add(1)
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        self.head = Some(boundary);
+        Ok((
+            cursor,
+            CommandTimelineMark {
+                frame,
+                boundary,
+                frames: self.frames,
+            },
+        ))
     }
 
     fn resolve(
         &self,
         cursor: CommandSnapshotCursor,
-    ) -> Option<(AttemptMark, CommandSnapshotCursor)> {
-        self.frames
-            .iter()
-            .find(|frame| frame.serial == cursor.command_journal() && frame.cursor == cursor)
-            .map(|frame| (frame.attempt, frame.cursor))
-    }
-
-    pub(crate) fn return_roots(&mut self, roots: CommandStateRoots<G>) {
-        debug_assert!(self.returned_roots.is_none());
-        self.returned_roots = Some(roots);
-    }
-
-    fn take_roots(&mut self) -> Option<CommandStateRoots<G>> {
-        self.returned_roots.take()
+        mark: CommandTimelineMark,
+    ) -> Option<AttemptMark> {
+        if !self.arena.validates_checkpoint(mark.boundary) || mark.frames > self.frames {
+            return None;
+        }
+        let view = self.arena.list(&self.pool, mark.frame).ok()?;
+        let CommandTimelineCell::Frame(frame) = view.get(0)? else {
+            return None;
+        };
+        (view.len() == 1 && frame.serial == cursor.command_journal() && frame.cursor == cursor)
+            .then_some(frame.attempt)
     }
 
     fn has_live_frame(&self) -> bool {
-        self.frames.iter().any(|frame| frame.serial != 0)
+        self.frames != 0
+    }
+
+    fn append_root_undo(&mut self, undo: CommandRootUndo<G>) {
+        if !self.has_live_frame() {
+            return;
+        }
+        let mut builder = self
+            .arena
+            .begin_builder(&mut self.pool)
+            .expect("command timeline owns the sole journal builder");
+        builder
+            .push(CommandTimelineCell::RootUndo(undo))
+            .expect("one command undo record fits its chunk");
+        let _ = builder
+            .seal()
+            .expect("command undo record seals without materialization");
     }
 
     pub(crate) fn record_name_in_progress(&mut self, old: bool) {
-        if self.has_live_frame() {
-            self.root_undo.push(CommandRootUndo::NameInProgress(old));
-        }
+        self.append_root_undo(CommandRootUndo::NameInProgress(old));
     }
 
     pub(crate) fn record_afterassignment(&mut self, old: Option<crate::state::CommandPayload<G>>) {
-        if self.has_live_frame() {
-            self.root_undo.push(CommandRootUndo::Afterassignment(old));
-        }
+        self.append_root_undo(CommandRootUndo::Afterassignment(old));
     }
 
     pub(crate) fn record_cumulative_expansions(&mut self, old: u64) {
-        if self.has_live_frame() {
-            self.root_undo
-                .push(CommandRootUndo::CumulativeExpansions(old));
-        }
+        self.append_root_undo(CommandRootUndo::CumulativeExpansions(old));
     }
 
     pub(crate) fn record_align_state(&mut self, old: i32) {
-        if self.has_live_frame() {
-            self.root_undo.push(CommandRootUndo::AlignState(old));
-        }
+        self.append_root_undo(CommandRootUndo::AlignState(old));
     }
 
     pub(crate) fn record_next_input_level_identity(&mut self, old: u64) {
-        if self.has_live_frame() {
-            self.root_undo
-                .push(CommandRootUndo::NextInputLevelIdentity(old));
-        }
+        self.append_root_undo(CommandRootUndo::NextInputLevelIdentity(old));
     }
 
     pub(crate) fn record_next_source_identity(&mut self, old: u64) {
-        if self.has_live_frame() {
-            self.root_undo
-                .push(CommandRootUndo::NextSourceIdentity(old));
-        }
+        self.append_root_undo(CommandRootUndo::NextSourceIdentity(old));
     }
 
     pub(crate) fn record_retained_file_line_number(&mut self, old: i32) {
-        if self.has_live_frame() {
-            self.root_undo
-                .push(CommandRootUndo::RetainedFileLineNumber(old));
-        }
+        self.append_root_undo(CommandRootUndo::RetainedFileLineNumber(old));
     }
 
     pub(crate) fn record_force_eof(&mut self, old: bool) {
-        if self.has_live_frame() {
-            self.root_undo.push(CommandRootUndo::ForceEof(old));
-        }
+        self.append_root_undo(CommandRootUndo::ForceEof(old));
     }
 
     pub(crate) fn record_pending_input_open(&mut self, old: Option<crate::ScannedFileName>) {
-        if self.has_live_frame() {
-            self.root_undo.push(CommandRootUndo::PendingInputOpen(old));
-        }
+        self.append_root_undo(CommandRootUndo::PendingInputOpen(old));
     }
 
     pub(crate) fn record_expansion_diagnostic_push(&mut self) {
-        if self.has_live_frame() {
-            self.root_undo
-                .push(CommandRootUndo::ExpansionDiagnosticPush);
-        }
+        self.append_root_undo(CommandRootUndo::ExpansionDiagnosticPush(None));
     }
 
     fn restore_roots(
         &mut self,
-        cursor: CommandSnapshotCursor,
+        mark: CommandTimelineMark,
         roots: &mut CommandStateRoots<G>,
     ) -> bool {
-        let Some(target) = self
-            .frames
-            .iter()
-            .find(|frame| frame.serial == cursor.command_journal() && frame.cursor == cursor)
-            .map(|frame| frame.root_undo)
-        else {
+        if !self.arena.can_begin_checkpoint_candidate(mark.boundary) {
             return false;
-        };
-        while self.root_undo.len() > target {
-            match self
-                .root_undo
-                .pop()
-                .expect("validated command undo suffix exists")
-            {
-                CommandRootUndo::NameInProgress(old) => roots.name_in_progress = old,
-                CommandRootUndo::Afterassignment(old) => roots.afterassignment = old,
-                CommandRootUndo::CumulativeExpansions(old) => {
-                    roots.expansion.cumulative_expansions = old;
-                }
-                CommandRootUndo::AlignState(old) => roots.alignment.align_state = old,
-                CommandRootUndo::NextInputLevelIdentity(old) => {
-                    roots.input.next_level_identity = old;
-                }
-                CommandRootUndo::NextSourceIdentity(old) => {
-                    roots.input.next_source_identity = old;
-                }
-                CommandRootUndo::RetainedFileLineNumber(old) => {
-                    roots.input.retained_file_line_number = old;
-                }
-                CommandRootUndo::ForceEof(old) => roots.input.force_eof = old,
-                CommandRootUndo::PendingInputOpen(old) => roots.pending_input_open = old,
-                CommandRootUndo::ExpansionDiagnosticPush => {
-                    roots.expansion.pending_diagnostics.pop();
-                }
-            }
         }
-        for (slot, frame) in self.frames.iter_mut().enumerate() {
-            if frame.serial != 0 && frame.root_undo > target {
-                frame.serial = 0;
-                frame.owners = 0;
-                self.free_frames.push(slot);
-            }
-        }
+        self.arena
+            .visit_accepted_checkpoint_suffix_mut_reverse(&mut self.pool, mark.boundary, |cell| {
+                if let CommandTimelineCell::RootUndo(inverse) = cell {
+                    inverse.swap(roots);
+                }
+            })
+            .expect("prevalidated command suffix restores in place");
+        self.arena
+            .restore_accepted_checkpoint(&mut self.pool, mark.boundary)
+            .expect("prevalidated command boundary restores atomically");
+        self.frames = mark.frames;
+        self.head = Some(mark.boundary);
         true
+    }
+
+    fn can_begin_checkpoint_candidate(&self, mark: CommandTimelineMark) -> bool {
+        self.fork.is_none() && self.arena.can_begin_checkpoint_candidate(mark.boundary)
+    }
+
+    fn begin_checkpoint_candidate(
+        &mut self,
+        mark: CommandTimelineMark,
+        roots: &mut CommandStateRoots<G>,
+    ) {
+        assert!(
+            self.can_begin_checkpoint_candidate(mark),
+            "command candidate cursor was prevalidated"
+        );
+        self.arena
+            .visit_accepted_checkpoint_suffix_mut_reverse(&mut self.pool, mark.boundary, |cell| {
+                if let CommandTimelineCell::RootUndo(inverse) = cell {
+                    inverse.swap(roots);
+                }
+            })
+            .expect("prevalidated command suffix rewinds in place");
+        self.arena
+            .begin_checkpoint_candidate(mark.boundary)
+            .expect("prevalidated command mark begins the sole fork");
+        self.fork = Some(CommandTimelineFork {
+            selected: mark,
+            prior_head: self.head,
+            prior_frames: self.frames,
+        });
+        self.head = Some(mark.boundary);
+        self.frames = mark.frames;
+    }
+
+    fn reject_checkpoint_candidate(&mut self, roots: &mut CommandStateRoots<G>) {
+        let fork = self
+            .fork
+            .take()
+            .expect("command rejection requires a candidate fork");
+        let boundary = self
+            .arena
+            .seal_boundary(&mut self.pool)
+            .expect("command rejection seals its current suffix");
+        self.arena
+            .visit_current_checkpoint_suffix_mut_reverse(
+                &mut self.pool,
+                fork.selected.boundary,
+                |cell| {
+                    if let CommandTimelineCell::RootUndo(inverse) = cell {
+                        inverse.swap(roots);
+                    }
+                },
+            )
+            .expect("command rejection rewinds its current suffix");
+        self.arena
+            .visit_detached_checkpoint_suffix_mut(&mut self.pool, |cell| {
+                if let CommandTimelineCell::RootUndo(inverse) = cell {
+                    inverse.swap(roots);
+                }
+            })
+            .expect("command rejection redoes its detached accepted suffix");
+        self.arena
+            .reject_checkpoint_candidate(&mut self.pool, boundary)
+            .expect("command rejection reattaches its prior chunks");
+        self.head = fork.prior_head;
+        self.frames = fork.prior_frames;
+    }
+
+    fn accept_checkpoint_candidate(&mut self) {
+        let _fork = self
+            .fork
+            .take()
+            .expect("command acceptance requires a candidate fork");
+        let boundary = self
+            .arena
+            .seal_boundary(&mut self.pool)
+            .expect("command acceptance seals its current suffix");
+        self.arena
+            .accept_checkpoint_candidate(&mut self.pool, boundary)
+            .expect("command acceptance drops its detached prior chunks");
     }
 }
 
-/// Sole coarse capability retained by one command snapshot or summary.
+/// Coarse generation plus stable physical-timeline identity retained by one
+/// command snapshot or summary.
 ///
-/// Command state and its in-session checkpoints never cross a thread boundary,
-/// so the command timeline deliberately uses [`Rc`]. The independently shared
-/// state generation retains its existing atomic owner.
+/// The timeline itself remains solely owned by the live command state. Marks
+/// carry only its scalar identity; no checkpoint aliases mutable command
+/// storage.
 pub struct CommandGenerationOwner<G> {
     generation: GenerationOwner<G>,
-    timeline: Rc<RefCell<CommandTimeline<G>>>,
+    timeline_owner: u64,
     attempt: AttemptMark,
-    serial: u32,
+    timeline: CommandTimelineMark,
 }
 
 impl<G> Clone for CommandGenerationOwner<G> {
     fn clone(&self) -> Self {
-        assert!(
-            self.timeline.borrow_mut().retain_owner(self.serial),
-            "retained command owner must name a live timeline frame"
-        );
         Self {
             generation: self.generation.clone(),
-            timeline: Rc::clone(&self.timeline),
+            timeline_owner: self.timeline_owner,
             attempt: self.attempt,
-            serial: self.serial,
+            timeline: self.timeline,
         }
-    }
-}
-
-impl<G> Drop for CommandGenerationOwner<G> {
-    fn drop(&mut self) {
-        self.timeline.borrow_mut().release_owner(self.serial);
     }
 }
 
@@ -390,41 +454,30 @@ impl<G> fmt::Debug for CommandGenerationOwner<G> {
 }
 
 impl<G> CommandGenerationOwner<G> {
-    pub(crate) fn new(
+    fn new(
         generation: GenerationOwner<G>,
-        timeline: Rc<RefCell<CommandTimeline<G>>>,
+        timeline_owner: u64,
         attempt: AttemptMark,
-        cursor: CommandSnapshotCursor,
+        timeline: CommandTimelineMark,
     ) -> Self {
         Self {
             generation,
-            timeline,
+            timeline_owner,
             attempt,
-            serial: cursor.command_journal(),
+            timeline,
         }
     }
 
-    pub(crate) fn addresses(
-        &self,
-        generation: &GenerationOwner<G>,
-        timeline: &Rc<RefCell<CommandTimeline<G>>>,
-    ) -> bool {
-        self.generation.same_generation(generation) && Rc::ptr_eq(&self.timeline, timeline)
-    }
-
-    pub(crate) fn addresses_generation(&self, generation: &GenerationOwner<G>) -> bool {
-        self.generation.same_generation(generation)
+    pub(crate) fn addresses(&self, generation: &GenerationOwner<G>, timeline_owner: u64) -> bool {
+        self.generation.same_generation(generation) && self.timeline_owner == timeline_owner
     }
 
     fn checkpoint_owner_id(&self) -> tex_state::CheckpointOwnerId {
         self.generation.checkpoint_owner_id()
     }
 
-    pub(crate) fn resolve(&self, cursor: CommandSnapshotCursor) -> Option<AttemptMark> {
-        (cursor.command_journal() == self.serial)
-            .then(|| self.timeline.borrow().resolve(cursor))
-            .flatten()
-            .map(|(attempt, _)| attempt)
+    fn addresses_cursor(&self, cursor: CommandSnapshotCursor) -> bool {
+        self.timeline.frames != 0 && cursor.command_journal() != 0
     }
 }
 
@@ -669,12 +722,8 @@ impl<G> CommandStateSnapshot<G> {
     /// Whether this snapshot addresses the admitted generation retained by
     /// `generation`.
     #[must_use]
-    pub(crate) fn addresses(
-        &self,
-        generation: &GenerationOwner<G>,
-        timeline: &Rc<RefCell<CommandTimeline<G>>>,
-    ) -> bool {
-        self.generation.addresses(generation, timeline)
+    pub(crate) fn addresses(&self, generation: &GenerationOwner<G>, timeline_owner: u64) -> bool {
+        self.generation.addresses(generation, timeline_owner)
     }
 }
 
@@ -710,12 +759,8 @@ impl<G> TransientCommandSnapshot<G> {
         }
     }
 
-    fn addresses(
-        &self,
-        generation: &GenerationOwner<G>,
-        timeline: &Rc<RefCell<CommandTimeline<G>>>,
-    ) -> bool {
-        self.generation.addresses(generation, timeline)
+    fn addresses(&self, generation: &GenerationOwner<G>, timeline_owner: u64) -> bool {
+        self.generation.addresses(generation, timeline_owner)
     }
 }
 
@@ -919,44 +964,23 @@ impl std::error::Error for CommandRestoreError {}
 
 /// Fully validated command-root switch. Applying it cannot fail.
 pub struct PreparedCommandRestore<G> {
-    timeline: Rc<RefCell<CommandTimeline<G>>>,
+    timeline_owner: u64,
+    timeline: CommandTimelineMark,
     cursor: CommandSnapshotCursor,
     attempt: AttemptMark,
+    brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> CommandState<G> {
-    fn fork_timeline_summary(summary: &CommandSummary<G>) -> Result<Self, CommandRestoreError> {
-        let attempt = summary
-            .generation()
-            .resolve(summary.cursor())
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        if !attempt.is_empty() {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        let roots = summary
-            .generation
-            .timeline
-            .borrow_mut()
-            .take_roots()
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        let mut fork = Self::from_returned_roots(roots, Rc::clone(&summary.generation.timeline));
-        let restored = {
-            let timeline = Rc::clone(&fork.timeline);
-            timeline
-                .borrow_mut()
-                .restore_roots(summary.cursor(), &mut fork.roots)
-        };
-        if !restored || !fork.restore_logical_stacks(summary.cursor()) {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        Ok(fork)
-    }
-
     /// Runs only the command-family fork for its standalone allocation gate.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
-    pub fn profile_fork_summary(summary: &CommandSummary<G>) -> Result<Self, CommandRestoreError> {
-        Self::fork_timeline_summary(summary)
+    pub fn profile_fork_summary(
+        self,
+        summary: &CommandSummary<G>,
+        universe: &Universe<G>,
+    ) -> Result<Self, CommandRestoreError> {
+        Self::fork_summary(self, summary, universe, universe)
     }
 
     /// Moves the returned command-root loan into one candidate and restores the
@@ -964,6 +988,7 @@ impl<G> CommandState<G> {
     /// lanes begin quiescent.
     #[doc(hidden)]
     pub fn fork_summary(
+        mut command: Self,
         summary: &CommandSummary<G>,
         source: &Universe<G>,
         destination: &Universe<G>,
@@ -976,19 +1001,24 @@ impl<G> CommandState<G> {
             .map_err(|_| CommandRestoreError::ForeignGeneration)?;
         if !summary
             .generation()
-            .addresses_generation(&source_generation)
+            .addresses(&source_generation, command.timeline.owner)
             || !source_generation.same_generation(&destination_generation)
         {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        let fork = Self::fork_timeline_summary(summary)?;
-        fork.profile()
+        let restore = command.resolve_restore(summary.generation(), summary.cursor())?;
+        if !restore.attempt.is_empty() {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        command
+            .profile()
             .validate_fingerprint(
                 CommandProfileBoundary::Summary,
                 CommandProfileFingerprint::from_u64(summary.profile_fingerprint()),
             )
             .map_err(CommandRestoreError::Profile)?;
-        Ok(fork)
+        command.begin_prepared_candidate(restore);
+        Ok(command)
     }
 
     /// Reports whether the live command machine can publish one named
@@ -1021,7 +1051,7 @@ impl<G> CommandState<G> {
             "terminal format closure requires quiescent command state"
         );
         self.roots = crate::state::CommandStateRoots::default();
-        self.timeline = Rc::new(RefCell::new(CommandTimeline::default()));
+        self.timeline = CommandTimeline::default();
         self.attempt = crate::CommandAttempt::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
         self.active_attempt_operation = None;
@@ -1155,12 +1185,12 @@ impl<G> CommandState<G> {
     }
 
     fn retain_cursor(
-        &self,
+        &mut self,
         attempt: AttemptMark,
-    ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
+    ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
         let arenas = self.checkpoint_arenas(attempt)?;
         let stacks = self.checkpoint_stacks()?;
-        self.timeline.borrow_mut().retain(attempt, arenas, stacks)
+        self.timeline.retain(attempt, arenas, stacks)
     }
 
     fn resolve_restore(
@@ -1168,8 +1198,12 @@ impl<G> CommandState<G> {
         owner: &CommandGenerationOwner<G>,
         cursor: CommandSnapshotCursor,
     ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
-        let attempt = owner
-            .resolve(cursor)
+        if !owner.addresses_cursor(cursor) || owner.timeline_owner != self.timeline.owner {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        let attempt = self
+            .timeline
+            .resolve(cursor, owner.timeline)
             .ok_or(CommandRestoreError::InvalidCursor)?;
         let attempt_rows = attempt
             .checked_row_count()
@@ -1231,9 +1265,11 @@ impl<G> CommandState<G> {
             .validate_mark(attempt)
             .map_err(|_| CommandRestoreError::InvalidCursor)?;
         Ok(PreparedCommandRestore {
-            timeline: Rc::clone(&self.timeline),
+            timeline_owner: self.timeline.owner,
+            timeline: owner.timeline,
             cursor,
             attempt,
+            brand: PhantomData,
         })
     }
 
@@ -1288,19 +1324,103 @@ impl<G> CommandState<G> {
                 })
     }
 
+    fn begin_prepared_candidate(&mut self, restore: PreparedCommandRestore<G>) {
+        debug_assert_eq!(restore.timeline_owner, self.timeline.owner);
+        let stacks = restore.cursor.stacks();
+        let arenas = restore.cursor.arenas();
+        self.timeline
+            .begin_checkpoint_candidate(restore.timeline, &mut self.roots);
+        self.input
+            .levels
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.input_depth(),
+                undo: arenas.input_rows(),
+            });
+        self.parameters
+            .activations
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.parameter_depth(),
+                undo: arenas.input_words(),
+            });
+        self.conditions
+            .frames
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.condition_depth(),
+                undo: arenas.parameter_words(),
+            });
+        self.group_payloads
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.group_payload_depth(),
+                undo: arenas.builder_words(),
+            });
+        self.aftergroup_payloads
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.aftergroup_payload_count(),
+                undo: stacks.aftergroup_payload_undo(),
+            });
+        self.alignment
+            .align_stack
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.alignment_depth(),
+                undo: stacks.alignment_undo(),
+            });
+        self.alignment
+            .suspended
+            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+                top: stacks.suspended_alignment_depth(),
+                undo: stacks.suspended_alignment_undo(),
+            });
+        self.attempt
+            .arena_mut()
+            .truncate(restore.attempt)
+            .expect("prevalidated command candidate attempt mark");
+    }
+
+    /// Consumes the sole physical command owner and opens its prevalidated
+    /// accepted/detached-prior/current transaction at `restore`.
+    #[doc(hidden)]
+    pub fn begin_checkpoint_candidate(mut self, restore: PreparedCommandRestore<G>) -> Self {
+        self.begin_prepared_candidate(restore);
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn reject_checkpoint_candidate(&mut self) {
+        self.alignment.suspended.reject_checkpoint_candidate();
+        self.alignment.align_stack.reject_checkpoint_candidate();
+        self.aftergroup_payloads.reject_checkpoint_candidate();
+        self.group_payloads.reject_checkpoint_candidate();
+        self.conditions.frames.reject_checkpoint_candidate();
+        self.parameters.activations.reject_checkpoint_candidate();
+        self.input.levels.reject_checkpoint_candidate();
+        self.timeline.reject_checkpoint_candidate(&mut self.roots);
+    }
+
+    #[doc(hidden)]
+    pub fn accept_checkpoint_candidate(&mut self) {
+        self.timeline.accept_checkpoint_candidate();
+        self.input.levels.accept_checkpoint_candidate();
+        self.parameters.activations.accept_checkpoint_candidate();
+        self.conditions.frames.accept_checkpoint_candidate();
+        self.group_payloads.accept_checkpoint_candidate();
+        self.aftergroup_payloads.accept_checkpoint_candidate();
+        self.alignment.align_stack.accept_checkpoint_candidate();
+        self.alignment.suspended.accept_checkpoint_candidate();
+    }
+
     /// Captures one exact in-session command position as bounded marks. The
     /// live root remains exclusively mutable and no accumulated payload moves.
     pub fn snapshot(
-        &self,
+        &mut self,
         universe: &Universe<G>,
     ) -> Result<CommandStateSnapshot<G>, CommandSummaryError> {
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
         let attempt = self.attempt.arena().mark();
-        let cursor = self.retain_cursor(attempt)?;
+        let (cursor, timeline) = self.retain_cursor(attempt)?;
         Ok(CommandStateSnapshot::new(
-            CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
+            CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
             cursor,
         ))
     }
@@ -1311,7 +1431,7 @@ impl<G> CommandState<G> {
     /// it may retain an open attempt mark, but neither the mark nor its coarse
     /// generation owner can escape through a clone, summary, or detached DTO.
     pub fn transient_snapshot(
-        &self,
+        &mut self,
         universe: &Universe<G>,
     ) -> Result<TransientCommandSnapshot<G>, CommandSummaryError> {
         let generation = universe
@@ -1320,12 +1440,9 @@ impl<G> CommandState<G> {
         let attempt = self.attempt.arena().mark();
         let arenas = self.checkpoint_arenas(attempt)?;
         let stacks = self.checkpoint_stacks()?;
-        let cursor = self
-            .timeline
-            .borrow_mut()
-            .retain_transient(attempt, arenas, stacks)?;
+        let (cursor, timeline) = self.timeline.retain_transient(attempt, arenas, stacks)?;
         Ok(TransientCommandSnapshot::new(
-            CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
+            CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
             cursor,
         ))
     }
@@ -1334,7 +1451,7 @@ impl<G> CommandState<G> {
     /// direct before and after capture; accumulated command roots are not
     /// cloned.
     pub fn publish_summary(
-        &self,
+        &mut self,
         universe: &Universe<G>,
     ) -> Result<CommandSummary<G>, CommandSummaryError> {
         self.validate_summary_quiescence()?;
@@ -1342,7 +1459,7 @@ impl<G> CommandState<G> {
             .generation_owner()
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
         let attempt = self.attempt.arena().mark();
-        let cursor = self.retain_cursor(attempt)?;
+        let (cursor, timeline) = self.retain_cursor(attempt)?;
         let root_source_anchor = self.input.levels.iter().find_map(|level| {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
@@ -1352,9 +1469,9 @@ impl<G> CommandState<G> {
         let retained_owner_bytes = self
             .roots
             .retained_bytes()
-            .saturating_add(self.timeline.borrow().retained_bytes());
+            .saturating_add(self.timeline.retained_bytes());
         Ok(CommandSummary::new(
-            CommandGenerationOwner::new(generation, Rc::clone(&self.timeline), attempt, cursor),
+            CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
             cursor,
             self.checkpoint_profile_fingerprint().get(),
             root_source_anchor,
@@ -1404,7 +1521,10 @@ impl<G> CommandState<G> {
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandRestoreError::ForeignGeneration)?;
-        if !summary.generation().addresses(&generation, &self.timeline) {
+        if !summary
+            .generation()
+            .addresses(&generation, self.timeline.owner)
+        {
             return Err(CommandRestoreError::ForeignGeneration);
         }
         self.resolve_restore(summary.generation(), summary.cursor())
@@ -1416,19 +1536,16 @@ impl<G> CommandState<G> {
         &mut self,
         restore: PreparedCommandRestore<G>,
     ) -> Result<(), CommandRestoreError> {
-        if !Rc::ptr_eq(&restore.timeline, &self.timeline) {
+        if restore.timeline_owner != self.timeline.owner {
             return Err(CommandRestoreError::ForeignGeneration);
         }
         self.attempt
             .arena()
             .validate_mark(restore.attempt)
             .map_err(|_| CommandRestoreError::InvalidCursor)?;
-        let restored = {
-            let timeline = Rc::clone(&self.timeline);
-            timeline
-                .borrow_mut()
-                .restore_roots(restore.cursor, &mut self.roots)
-        };
+        let restored = self
+            .timeline
+            .restore_roots(restore.timeline, &mut self.roots);
         if !restored {
             return Err(CommandRestoreError::InvalidCursor);
         }
@@ -1460,7 +1577,7 @@ impl<G> CommandState<G> {
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandRestoreError::ForeignGeneration)?;
-        if !snapshot.addresses(&generation, &self.timeline) {
+        if !snapshot.addresses(&generation, self.timeline.owner) {
             return Err(CommandRestoreError::ForeignGeneration);
         }
         let restore = self.resolve_restore(snapshot.generation(), snapshot.cursor())?;
@@ -1492,7 +1609,7 @@ impl<G> CommandState<G> {
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandRestoreError::ForeignGeneration)?;
-        if !snapshot.addresses(&generation, &self.timeline) {
+        if !snapshot.addresses(&generation, self.timeline.owner) {
             return Err(CommandRestoreError::ForeignGeneration);
         }
         let restore = self.resolve_restore(&snapshot.generation, snapshot.cursor)?;

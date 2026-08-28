@@ -62,8 +62,8 @@ fn retirement_rejects_a_stale_level_identity_before_mutation() {
 
 #[test]
 fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
-    crate::test_harness::with_universe(|_universe| {
-        let mut state = CommandState::<()>::default();
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
         let source = state
             .register_source(SourceRegistration::new(
                 RegisteredSourceKind::Generated,
@@ -71,7 +71,7 @@ fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
             ))
             .expect("source registers");
         state.open_registered_source(source).expect("source opens");
-        let checkpoint = state.roots.clone();
+        let checkpoint = state.snapshot(universe).expect("command checkpoint");
         state.push_token_level(
             PackedTokenSpanHandle::transient([]),
             TokenBehavior::Ordinary,
@@ -86,7 +86,9 @@ fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
         );
         assert_eq!(state.stack_usage().input_stack, 2);
 
-        state.roots = checkpoint;
+        state
+            .rollback(&checkpoint, universe)
+            .expect("command rollback");
         assert_eq!(state.input_level_count(), 1);
         assert_eq!(state.stack_usage().input_stack, 2);
     });

@@ -311,13 +311,16 @@ collector (see `src/conditionals.rs`).
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
-  snapshots and named summaries backed by the command-root timeline and
-  containing one coarse generation owner plus fixed scalar journal, arena,
-  stack, source-anchor, and profile coordinates. Capture and retained-owner
-  clone copy only those marks. Main control returns its exclusive aggregate-root
-  loan before candidate fork; the fork reuses that generation-owned storage,
-  restores the named marks, and owns the only current suffix. Validation never
-  mutates the runtime, and capture requires quiescent execution scratch.
+  snapshots and named summaries backed by one caller-owned typed fork arena and
+  containing one coarse generation owner plus fixed sealed timeline, arena,
+  stack, source-anchor, and profile coordinates. Capture appends a move-only
+  frame; retained-owner clone copies only scalar coordinates. Main control
+  parks its exclusive physical command owner in the retained generation before
+  candidate fork; the fork detaches the later accepted chunks, restores the
+  named marks in place, and owns the only current suffix. Reject rewinds current
+  cells and redoes the detached prior cells before reattachment; accept prunes
+  that prior suffix. Validation never mutates the runtime, aggregate command
+  roots are not `Clone`, and capture requires quiescent execution scratch.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   and suspended-execution recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped

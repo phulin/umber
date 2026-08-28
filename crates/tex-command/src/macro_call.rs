@@ -35,19 +35,6 @@ pub(crate) struct ParameterState<G> {
     pub(crate) next_activation_identity: u64,
 }
 
-impl<G> Clone for ParameterState<G> {
-    fn clone(&self) -> Self {
-        assert!(
-            self.activations.is_empty(),
-            "live macro scratch descriptors cannot cross a command-root clone"
-        );
-        Self {
-            activations: crate::timeline::LogicalStack::default(),
-            next_activation_identity: self.next_activation_identity,
-        }
-    }
-}
-
 impl<G> Default for ParameterState<G> {
     fn default() -> Self {
         Self {
