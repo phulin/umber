@@ -1297,28 +1297,23 @@ impl<T, Lane> ForkArena<T, Lane> {
             let overlap_start = selected.start.max(logical_start);
             let overlap_end = selected.end.min(logical_end);
             if overlap_start < overlap_end {
-                let offset = u32::try_from(overlap_start - logical_start)
-                    .map_err(|_| ForkArenaError::CapacityOverflow)?;
-                let len = u32::try_from(overlap_end - overlap_start)
-                    .map_err(|_| ForkArenaError::CapacityOverflow)?;
-                self.append_active_range(
-                    pool,
-                    builder,
-                    ArenaRange {
+                let source = ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
                         arena: self.owner,
-                        first: Some(ChunkId {
-                            arena: self.owner,
-                            raw: entry.range.first,
-                            _lane: PhantomData,
-                        }),
-                        start: entry
-                            .range
-                            .start
-                            .checked_add(offset)
-                            .ok_or(ForkArenaError::CapacityOverflow)?,
-                        len,
-                    },
+                        raw: entry.range.first,
+                        _lane: PhantomData,
+                    }),
+                    start: entry.range.start,
+                    len: entry.range.len,
+                };
+                let overlap = self.slice_range(
+                    pool,
+                    source,
+                    overlap_start - logical_start,
+                    overlap_end - overlap_start,
                 )?;
+                self.append_active_range(pool, builder, overlap)?;
             }
             if logical_end >= selected.end {
                 break;
