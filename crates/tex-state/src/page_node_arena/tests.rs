@@ -1,16 +1,18 @@
-use super::{PageMaterialArena, PageMaterialListId};
+use super::{PageListId, PageMaterialArena};
 use crate::node::Node;
 use crate::node_sequence::SemanticSequenceIdentity;
 
-fn penalties(values: &[i32]) -> Vec<Node> {
+type PageMaterialNode = Node<PageListId>;
+
+fn penalties(values: &[i32]) -> Vec<PageMaterialNode> {
     values.iter().copied().map(Node::Penalty).collect()
 }
 
-fn identity(nodes: &[Node]) -> SemanticSequenceIdentity {
+fn identity(nodes: &[PageMaterialNode]) -> SemanticSequenceIdentity {
     SemanticSequenceIdentity::from_nodes(nodes)
 }
 
-fn resolved(arena: &PageMaterialArena, list: PageMaterialListId) -> Vec<Node> {
+fn resolved(arena: &PageMaterialArena, list: PageListId) -> Vec<PageMaterialNode> {
     arena
         .list(list)
         .expect("live page list")

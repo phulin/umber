@@ -5,6 +5,7 @@
 //! optional demand-maintained identity used by state hashing.
 
 use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
 use std::ops::Range;
 
 use crate::fork_arena::{
@@ -14,13 +15,23 @@ use crate::fork_arena::{
 use crate::node::Node;
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
+type PageMaterialNode = Node<PageListId>;
+
 /// Canonical runtime coordinate plus its demand-maintained semantic scalar.
-pub struct PageMaterialListId {
+pub struct PageListId {
     coordinate: ArenaListId<PageMaterialLane>,
     semantic_identity: u64,
 }
 
-impl PageMaterialListId {
+impl PageListId {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            coordinate: ArenaListId::empty(),
+            semantic_identity: 0,
+        }
+    }
+
     fn from_parts(
         coordinate: ArenaListId<PageMaterialLane>,
         identity: Option<SemanticSequenceIdentity>,
@@ -67,32 +78,32 @@ impl PageMaterialListId {
     }
 }
 
-impl Clone for PageMaterialListId {
+impl Clone for PageListId {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl Copy for PageMaterialListId {}
+impl Copy for PageListId {}
 
-impl core::fmt::Debug for PageMaterialListId {
+impl core::fmt::Debug for PageListId {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
-            .debug_struct("PageMaterialListId")
+            .debug_struct("PageListId")
             .field("len", &self.len())
             .finish_non_exhaustive()
     }
 }
 
-impl PartialEq for PageMaterialListId {
+impl PartialEq for PageListId {
     fn eq(&self, other: &Self) -> bool {
         self.coordinate == other.coordinate
     }
 }
 
-impl Eq for PageMaterialListId {}
+impl Eq for PageListId {}
 
-impl Hash for PageMaterialListId {
+impl Hash for PageListId {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if self.semantic_identity == 0 {
             self.coordinate.hash(state);
@@ -102,10 +113,74 @@ impl Hash for PageMaterialListId {
     }
 }
 
+/// Generation-branded durable root into the same runtime page-material arena.
+pub struct DurableListId<G> {
+    page: PageListId,
+    _generation: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> DurableListId<G> {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            page: PageListId::empty(),
+            _generation: PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub const fn page(self) -> PageListId {
+        self.page
+    }
+
+    #[must_use]
+    pub const fn semantic_identity(self) -> Option<u64> {
+        self.page.semantic_identity()
+    }
+}
+
+impl PageListId {
+    #[must_use]
+    pub const fn rebrand<G>(self) -> DurableListId<G> {
+        DurableListId {
+            page: self,
+            _generation: PhantomData,
+        }
+    }
+}
+
+impl<G> Clone for DurableListId<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for DurableListId<G> {}
+
+impl<G> core::fmt::Debug for DurableListId<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("DurableListId(..)")
+    }
+}
+
+impl<G> PartialEq for DurableListId<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.page == other.page
+    }
+}
+
+impl<G> Eq for DurableListId<G> {}
+
+impl<G> Hash for DurableListId<G> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.page.hash(state);
+    }
+}
+
 /// Runtime page payload owner. Every `Node` is appended exactly once.
 pub struct PageMaterialArena {
-    pool: ChunkPool<Node>,
-    arena: ForkArena<Node, PageMaterialLane>,
+    pool: ChunkPool<PageMaterialNode>,
+    arena: ForkArena<PageMaterialNode, PageMaterialLane>,
     range_scratch: Vec<ArenaRange<PageMaterialLane>>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: bool,
@@ -156,8 +231,8 @@ impl PageMaterialArena {
 
     pub fn publish_owned(
         &mut self,
-        nodes: impl IntoIterator<Item = Node>,
-    ) -> Result<PageMaterialListId, ForkArenaError> {
+        nodes: impl IntoIterator<Item = PageMaterialNode>,
+    ) -> Result<PageListId, ForkArenaError> {
         let mut identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
@@ -170,15 +245,15 @@ impl PageMaterialArena {
             builder.push(node)?;
         }
         let coordinate = builder.seal()?;
-        Ok(PageMaterialListId::from_parts(coordinate, identity))
+        Ok(PageListId::from_parts(coordinate, identity))
     }
 
     pub fn slice_with_identity(
         &mut self,
-        list: PageMaterialListId,
+        list: PageListId,
         selected: Range<usize>,
         identity: Option<SemanticSequenceIdentity>,
-    ) -> Result<PageMaterialListId, ForkArenaError> {
+    ) -> Result<PageListId, ForkArenaError> {
         assert_eq!(self.semantic_identity_enabled, identity.is_some());
         let coordinate = self.arena.slice_list(
             &mut self.pool,
@@ -186,14 +261,14 @@ impl PageMaterialArena {
             selected,
             &mut self.range_scratch,
         )?;
-        Ok(PageMaterialListId::from_parts(coordinate, identity))
+        Ok(PageListId::from_parts(coordinate, identity))
     }
 
     pub fn compose_with_identity(
         &mut self,
-        lists: &[PageMaterialListId],
+        lists: &[PageListId],
         identity: Option<SemanticSequenceIdentity>,
-    ) -> Result<PageMaterialListId, ForkArenaError> {
+    ) -> Result<PageListId, ForkArenaError> {
         assert_eq!(self.semantic_identity_enabled, identity.is_some());
         self.coordinate_scratch.clear();
         self.coordinate_scratch
@@ -203,13 +278,13 @@ impl PageMaterialArena {
             &self.coordinate_scratch,
             &mut self.range_scratch,
         )?;
-        Ok(PageMaterialListId::from_parts(coordinate, identity))
+        Ok(PageListId::from_parts(coordinate, identity))
     }
 
     pub fn list(
         &self,
-        list: PageMaterialListId,
-    ) -> Result<ArenaListView<'_, Node, PageMaterialLane>, ForkArenaError> {
+        list: PageListId,
+    ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
         self.arena.list(&self.pool, list.coordinate())
     }
 

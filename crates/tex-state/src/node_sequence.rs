@@ -29,7 +29,9 @@ impl SemanticSequenceIdentity {
     }
 
     #[must_use]
-    pub fn from_nodes<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> Self {
+    pub fn from_nodes<'a, List: Hash + 'a>(
+        nodes: impl IntoIterator<Item = &'a Node<List>>,
+    ) -> Self {
         let mut identity = Self::empty();
         for node in nodes {
             identity.push_back(semantic_node_identity(node));
@@ -119,7 +121,7 @@ fn sequence_power(mut exponent: usize) -> u64 {
 }
 
 #[must_use]
-pub(crate) fn semantic_node_identity(node: &Node) -> u64 {
+pub(crate) fn semantic_node_identity<List: Hash>(node: &Node<List>) -> u64 {
     let state = RandomState::with_seeds(
         0x756d_6265_725f_6e6f,
         0x6465_5f73_656d_616e,

@@ -504,6 +504,12 @@ impl<Lane> Hash for ArenaListId<Lane> {
 }
 
 impl<Lane> ArenaListId<Lane> {
+    /// Returns the owner-independent canonical empty-list coordinate.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::Range(ArenaRange::empty(0))
+    }
+
     #[must_use]
     pub const fn len(self) -> usize {
         match self {
@@ -1465,7 +1471,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// Returns the empty canonical list for this arena lane.
     #[must_use]
     pub const fn empty_list(&self) -> ArenaListId<Lane> {
-        ArenaListId::Range(ArenaRange::empty(self.owner))
+        ArenaListId::empty()
     }
 
     /// Selects one logical subrange without copying payload values.
@@ -1661,15 +1667,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         range: ArenaRange<Lane>,
     ) -> Result<(), ForkArenaError> {
+        if range.len == 0 && range.first.is_none() {
+            return Ok(());
+        }
         if range.arena != self.owner {
             return Err(ForkArenaError::ForeignArena);
         }
         if range.len == 0 {
-            return if range.first.is_none() {
-                Ok(())
-            } else {
-                Err(ForkArenaError::InvalidRange)
-            };
+            return Err(ForkArenaError::InvalidRange);
         }
         let first = range.first.ok_or(ForkArenaError::InvalidRange)?;
         if first.arena != self.owner {
