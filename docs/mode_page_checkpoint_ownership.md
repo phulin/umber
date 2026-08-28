@@ -15,10 +15,13 @@ Every retained page list is owned by at most two generation lineages:
 1. immutable regions in the accepted prior lineage; and
 2. append-only regions in the current candidate lineage.
 
-Node payload is append-once in fixed-byte chunks inside coarse pool pages. The
-only list topology is a direct `ArenaRange` or one arena-owned nonrecursive
-sequence of direct ranges. Payload chunks have no competing row-list identity,
-and there is no parallel `NodePiece`, linked-node, or `Vec<Node>` owner.
+Node payload is append-once in fixed-byte chunks inside one caller-owned coarse
+pool. Typed `ForkArena` states contain coordinates and lifecycle metadata, not
+the pool. Shared pool borrows yield stable direct node references; all physical
+mutation takes the caller's exclusive mutable pool borrow. The only list
+topology is a direct `ArenaRange` or one arena-owned nonrecursive sequence of
+direct ranges. Payload chunks have no competing row-list identity, and there
+is no parallel `NodePiece`, linked-node, or `Vec<Node>` owner.
 Appending opens only current chunks. Front/tail consumption, prepend, split,
 transfer, and discard movement publish compact canonical range-list records;
 they never materialize a contiguous payload buffer.

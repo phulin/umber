@@ -270,9 +270,12 @@ same bidirectional rule with reversible logical coordinates. Durable values
 and node payloads are not copied into checkpoints or reconstructed by replaying
 page prefixes.
 
-The replacement page-node owner uses `ChunkPool<Node>` plus a typed
-`ForkArena`. Payload is append-once in fixed-byte logical chunks stored many per
-coarse pool page. The only logical list is normally one direct `ArenaRange` or,
+The replacement page-node owner uses one caller-owned `ChunkPool<Node>` plus
+typed coordinate-only `ForkArena` lanes. Payload is append-once in fixed-byte
+logical chunks stored many per coarse pool page. An immutable pool borrow
+returns stable direct node references, while every physical mutation requires
+the caller's exclusive mutable pool borrow. The only logical list is normally
+one direct `ArenaRange` or,
 when composition is necessary, one arena-owned nonrecursive sequence of direct
 ranges with cumulative endpoints. Candidate rewind/reject truncates current
 payload and descriptor chunks to whole-chunk marks. There is no complete-row

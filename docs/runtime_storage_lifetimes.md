@@ -502,14 +502,17 @@ Nodes have four storage roles:
 1. Execution scratch contains unfinished shaping words, packing probes, and
    temporary transformation indexes. These values are not nodes and never
    escape scratch.
-2. Current-generation active-material and page-material lanes share a stable
-   coarse chunk pool. Each typed `ForkArena` owns append-once fixed-byte chunks
-   and the sole direct-range/nonrecursive-range-sequence list topology. Active
+2. One caller-owned stable coarse `ChunkPool<Node>` is the physical authority
+   for current-generation active-material and page-material lanes. Each typed
+   `ForkArena` owns only lane coordinates, lifecycle metadata, and the sole
+   direct-range/nonrecursive-range-sequence list topology. Active
    paragraph, math, alignment, and box regions promote only as sealed whole
    batches into page ownership. Operation marks may restore a partial tail;
    retained checkpoints can name only sealed whole-chunk boundaries. A
-   conservative durable bound protects page chunks rebranded into state
-   carriers.
+   shared `&ChunkPool` yields stable direct payload borrows; every append,
+   seal, transfer, rollback, or prune requires the caller's exclusive
+   `&mut ChunkPool`. A conservative durable bound protects page chunks
+   rebranded into state carriers.
 3. Cold format materialization may own a physically separate generation-local
    node arena. Loaded roots retain that arena; an ordinary runtime builder does
    not publish into it.

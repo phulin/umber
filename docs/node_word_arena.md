@@ -4,11 +4,14 @@
 
 This document defines the node-specific implementation of
 [Runtime storage lifetimes](runtime_storage_lifetimes.md). The replacement
-substrate is `ChunkPool<T>` plus typed `ForkArena<T, Lane>`. Runtime payload is
-appended once into fixed-byte chunks owned by coarse pool pages. Lists are
-copy-only coordinates over those chunks. A TeX lifetime transition promotes
-whole sealed chunks and rebrands their coordinates; it does not copy,
-relocate, or rewrite surviving payload.
+substrate is one caller-owned `ChunkPool<T>` plus typed, coordinate-only
+`ForkArena<T, Lane>` states. Runtime payload is appended once into fixed-byte
+chunks owned by coarse pool pages. Lists are copy-only coordinates over those
+chunks. Reads take a shared pool borrow and yield stable direct references;
+allocation, sealing, promotion, settlement, and pruning require the caller's
+exclusive mutable pool borrow. A TeX lifetime transition promotes whole sealed
+chunks and rebrands their coordinates; it does not copy, relocate, or rewrite
+surviving payload.
 
 The older complete-row `NodeArena` and its `NodePiece` composite stream remain
 only as migration inputs. They are not the target representation and must not

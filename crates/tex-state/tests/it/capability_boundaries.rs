@@ -26,6 +26,15 @@ fn restricted_capabilities_reject_privileged_apis() {
         ],
     );
     assert_compile_fail(
+        "fork-arena-pool-mutation-forbidden",
+        &manifest_dir.join("tests/ui/fork_arena_pool_mutation_forbidden.rs"),
+        &dependencies,
+        &[
+            "E0502",
+            "cannot borrow `pool` as mutable because it is also borrowed as immutable",
+        ],
+    );
+    assert_compile_fail(
         "durable-token-boundary-forbidden",
         &manifest_dir.join("tests/ui/durable_token_boundary_forbidden.rs"),
         &dependencies,
