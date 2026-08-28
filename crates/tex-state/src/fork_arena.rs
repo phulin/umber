@@ -200,6 +200,15 @@ impl<T> ChunkStorage<T> {
         self.pages[page].slots[index].as_ref()
     }
 
+    fn get_mut(&mut self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&mut T> {
+        let meta = self.validate(key, arena).ok()?;
+        if offset >= meta.used {
+            return None;
+        }
+        let (page, index) = self.slot_index(key, offset as usize).ok()?;
+        self.pages[page].slots[index].as_mut()
+    }
+
     fn used(&self, key: RawChunkKey, arena: u32) -> Result<u32, ForkArenaError> {
         Ok(self.validate(key, arena)?.used)
     }
@@ -1516,6 +1525,89 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Visits only the accepted payload suffix after `mark`, before that
+    /// suffix is detached for a candidate. Work is proportional to the exact
+    /// suffix selected for the fork and never touches the unchanged prefix.
+    #[doc(hidden)]
+    pub fn visit_accepted_checkpoint_suffix(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+        mut visit: impl FnMut(&T),
+    ) -> Result<(), ForkArenaError> {
+        if !self.can_begin_checkpoint_candidate(mark) {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        for position in mark.payload_chunks as usize..self.live_payload_len() {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidCheckpoint)?;
+            let used = pool.payload.used(key, self.owner)?;
+            for offset in 0..used {
+                visit(
+                    pool.payload
+                        .get(key, self.owner, offset)
+                        .ok_or(ForkArenaError::InvalidChunk)?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns one cell from a lane whose publication contract seals exactly
+    /// one payload and one descriptor chunk per record.
+    #[doc(hidden)]
+    pub fn sealed_single_at<'a>(
+        &self,
+        pool: &'a ChunkPool<T>,
+        position: usize,
+    ) -> Result<(ArenaListId<Lane>, CheckpointMark<Lane>, &'a T), ForkArenaError> {
+        self.validate_pool(pool)?;
+        if self.live_payload_len() != self.live_descriptor_len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let payload = self
+            .live_key_at(false, position)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let descriptor = self
+            .live_key_at(true, position)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        if pool.payload.used(payload, self.owner)? != 1
+            || pool.descriptors.used(descriptor, self.owner)? != 1
+            || !pool.payload.is_sealed(payload, self.owner)?
+            || !pool.descriptors.is_sealed(descriptor, self.owner)?
+        {
+            return Err(ForkArenaError::UnsealedBoundary);
+        }
+        let value = pool
+            .payload
+            .get(payload, self.owner, 0)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let list = ArenaListId::from_record(self.owner, descriptor, 0, 1, 1);
+        self.validate_list(pool, list)?;
+        Ok((
+            list,
+            CheckpointMark {
+                arena: self.owner,
+                payload_chunks: (position + 1) as u32,
+                descriptor_chunks: (position + 1) as u32,
+                payload_tail: Some(payload),
+                descriptor_tail: Some(descriptor),
+                _lane: PhantomData,
+            },
+            value,
+        ))
+    }
+
+    /// Number of one-cell records in a sealed record lane.
+    #[doc(hidden)]
+    pub fn sealed_single_len(&self) -> Result<usize, ForkArenaError> {
+        if self.active_builder || self.live_payload_len() != self.live_descriptor_len() {
+            return Err(ForkArenaError::UnsealedBoundary);
+        }
+        Ok(self.live_payload_len())
+    }
+
     pub fn begin_checkpoint_candidate(
         &mut self,
         mark: CheckpointMark<Lane>,
@@ -2071,6 +2163,35 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool,
             list,
         })
+    }
+
+    /// Mutates the sole payload cell of a one-value list without changing
+    /// its sealed topology or stable coordinate.
+    #[doc(hidden)]
+    pub fn with_single_value_mut<R>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        mutate: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, ForkArenaError> {
+        self.validate_list(pool, list)?;
+        if list.len() != 1 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let entry = self.descriptor_entry(pool, list.first, list.start, 0)?;
+        let first_position = self
+            .resolved_position(false, entry.range.first)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let capacity = pool.payload.chunk_capacity();
+        let absolute = entry.range.start as usize;
+        let key = self
+            .live_key_at(false, first_position + absolute / capacity)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let value = pool
+            .payload
+            .get_mut(key, self.owner, (absolute % capacity) as u32)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        Ok(mutate(value))
     }
 
     fn validate_list(

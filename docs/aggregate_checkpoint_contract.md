@@ -46,6 +46,41 @@ partial-acquisition rollback use the exact reverse. Execution counters are
 copied only after the semantic owners reach `CandidateLive`, and publication
 metadata changes only after `AcceptedPromoted`.
 
+### Boundary-record ownership
+
+The executor sidecar stores boundary evidence and its optional move-only
+`EngineCheckpoint` together in one typed `BoundaryLane`. The lane uses a
+caller-owned `ChunkPool` and one-cell `ForkArena` records. Each stable
+owner-relative key is the record's list coordinate plus its sealed
+whole-chunk mark; a logical revision number is evidence, never physical owner
+identity.
+
+At edit start the selected prefix remains in the same physical arena. The
+exact later accepted suffix becomes `detached_prior`, and candidate records
+append only to `current`. Rejection drops current records and reattaches the
+prior suffix. Acceptance drops the prior suffix and promotes current records.
+Neither path clones a prefix, publishes replacement keys, or rebuilds an
+index from all boundary rows. A repeated acceptance therefore leaves every
+unchanged prefix key and the `EngineCheckpoint` marks stored in its cell
+physically valid.
+
+Lookup binary-searches the position-ordered one-cell lane and resolves an
+exact boundary/ordinal within that position. Evidence-only records store the
+nearest restart record coordinate when appended, so a long run of completion
+evidence such as `ShipoutComplete` falls back directly without a backward
+walk over the run. Releasing a restart root clears only the option in its
+existing cell; detached evidence remains addressable and no checkpoint
+payload moves. Fork-arena lifecycle counters require zero source-record
+copies through append, accept, reject, and retry.
+
+The page owner follows the same physical-prefix rule. Selecting a retained
+`PageMaterial` mark keeps the accepted prefix frames and list coordinates in
+the existing timeline, detaches only later frames/inverses, and settles that
+suffix on reject or accept. World, source, and font fork setup also restores
+their demand-maintained identity scalar to the selected mark before candidate
+mutation; replaying the same suffix consequently recreates the same semantic
+root instead of hashing it twice from the accepted head.
+
 ## Component matrix
 
 | Component                                                                     | Sole live owner now and finally                                                                         | Historical baseline capture                                                                                                                   | Final checkpoint mark or root                                                                                                                 | Restore order after complete validation                                                                                                                                   | Checkpoint retention charge                                                                                                                                            | Complete reachable-state identity                                                                                                                                                           |

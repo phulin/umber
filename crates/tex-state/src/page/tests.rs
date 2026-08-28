@@ -328,6 +328,45 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
 }
 
 #[test]
+fn repeated_accept_keeps_prefix_checkpoint_frames_physically_stable() {
+    let mut arena = PageMaterialArena::default();
+    let mut page = PageBuilderState::default();
+    page.push_contribution(&mut arena, kern(1));
+    let first = page.checkpoint_mark();
+    page.push_contribution(&mut arena, kern(2));
+    let selected = page.checkpoint_mark();
+    page.push_contribution(&mut arena, kern(3));
+    let detached_later = page.checkpoint_mark();
+
+    let tail = page.begin_checkpoint_candidate(selected);
+    page.push_contribution(&mut arena, kern(20));
+    let candidate_later = page.checkpoint_mark();
+    page.prepare_checkpoint_candidate_acceptance(tail);
+
+    assert!(page.validates_checkpoint_mark(first));
+    assert!(page.validates_checkpoint_mark(selected));
+    assert!(page.validates_checkpoint_mark(candidate_later));
+    assert!(!page.validates_checkpoint_mark(detached_later));
+
+    let tail = page.begin_checkpoint_candidate(first);
+    page.push_contribution(&mut arena, kern(30));
+    page.prepare_checkpoint_candidate_rejection(&tail);
+    page.finish_checkpoint_candidate_rejection(tail);
+    assert!(page.validates_checkpoint_mark(first));
+    assert!(page.validates_checkpoint_mark(selected));
+    assert!(page.validates_checkpoint_mark(candidate_later));
+
+    let tail = page.begin_checkpoint_candidate(selected);
+    page.push_contribution(&mut arena, kern(40));
+    let replacement = page.checkpoint_mark();
+    page.prepare_checkpoint_candidate_acceptance(tail);
+    assert!(page.validates_checkpoint_mark(first));
+    assert!(page.validates_checkpoint_mark(selected));
+    assert!(page.validates_checkpoint_mark(replacement));
+    assert!(!page.validates_checkpoint_mark(candidate_later));
+}
+
+#[test]
 fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
     let mut arena = crate::page_node_arena::PageMaterialArena::default();
     let mut source = PageBuilderState::default();

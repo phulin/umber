@@ -1222,6 +1222,7 @@ impl FontStore {
             .identities
             .begin_checkpoint_candidate(mark.identities)
             .expect("validated font identity mark remains rewindable");
+        self.reachable_state_identity = mark.reachable_state_identity;
         let non_parameter_font_info_words = std::mem::replace(
             &mut self.non_parameter_font_info_words,
             mark.non_parameter_font_info_words,

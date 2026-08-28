@@ -120,9 +120,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   across semantic and host barriers.
 - `src/retained_generation.rs`: Non-generic move-only external-store slot
   lease, universally generic admitted engine episodes, one singular typed
-  same-thread suspension seam for non-atomic semantic owners, reusable
-  checkpoint slots, private owner-relative keys, and exact transfer of the sole
-  output pool between the accepted/current sidecars.
+  same-thread suspension seam for non-atomic semantic owners, the canonical
+  typed fork-arena boundary lane whose cells pair detached evidence with an
+  optional move-only checkpoint root, stable private owner-relative keys, and
+  exact transfer of the sole output pool between accepted/current sidecars.
 - `src/typeset_context.rs`: crate-private pure-kernel trait adapter over one
   already-admitted `CommandContext`; it owns no state, owner, or arena root.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,

@@ -4,6 +4,7 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
+use tex_state::fork_arena::{ArenaListId, CheckpointMark, ChunkPool, ForkArena};
 use tex_state::{
     DetachedFormatImage, FormatError, ReachabilityStore, RetainedAttachmentKey,
     RetainedStateAccessError, RetainedStateAdmission, RetainedStateCandidateOperation,
@@ -51,8 +52,11 @@ impl<G> AdmittedEngineGeneration<'_, G> {
                 .as_mut()
                 .expect("the admitted generation owns its output ledger"),
             RetainedCheckpointStore {
-                generation: self.generation,
-                checkpoints: &mut self.sidecars.checkpoints,
+                boundaries: self
+                    .sidecars
+                    .boundaries
+                    .as_mut()
+                    .expect("the admitted generation owns its boundary lane"),
             },
         )
     }
@@ -68,16 +72,23 @@ impl<G> AdmittedEngineGeneration<'_, G> {
                 .checkpoint();
             checkpoint.set_output_ledger(output);
         }
+        let evidence = RetainedBoundaryEvidence::from_checkpoint(0, 0, &checkpoint);
         self.sidecars
-            .checkpoints
-            .retain(self.generation, checkpoint)
+            .boundaries
+            .as_mut()
+            .expect("the admitted generation owns its boundary lane")
+            .append(checkpoint, evidence)
     }
 
     pub fn checkpoint(
         &self,
         key: &RetainedCheckpointKey,
     ) -> Result<&EngineCheckpoint<G>, RetainedEngineAccessError> {
-        self.sidecars.checkpoints.get(self.generation, key)
+        self.sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .get(key)
     }
 
     pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
@@ -121,33 +132,132 @@ impl<G> AdmittedEngineGeneration<'_, G> {
 
 /// Restricted checkpoint-store borrow used by a synchronous sink.
 pub struct RetainedCheckpointStore<'a, G> {
-    generation: u64,
-    checkpoints: &'a mut RetainedCheckpointSlots<G>,
+    boundaries: &'a mut BoundaryLane<G>,
 }
 
 impl<G> RetainedCheckpointStore<'_, G> {
     pub fn retain(&mut self, checkpoint: EngineCheckpoint<G>) -> RetainedCheckpointKey {
-        self.checkpoints.retain(self.generation, checkpoint)
+        let evidence = RetainedBoundaryEvidence::from_checkpoint(0, 0, &checkpoint);
+        self.boundaries.append(checkpoint, evidence)
+    }
+
+    pub fn retain_boundary(
+        &mut self,
+        checkpoint: EngineCheckpoint<G>,
+        evidence: RetainedBoundaryEvidence,
+    ) -> RetainedCheckpointKey {
+        self.boundaries.append(checkpoint, evidence)
     }
 
     /// Releases one restart root during publication-time budget enforcement.
     /// Detached boundary evidence is owned by the incremental layer and is
     /// intentionally unaffected.
     pub fn release(&mut self, key: RetainedCheckpointKey) -> Result<(), RetainedEngineAccessError> {
-        self.checkpoints.release_key(self.generation, key)
+        self.boundaries.release_key(key)
     }
 }
+
+/// Fixed detached evidence stored in the same move-only cell as its optional
+/// restart root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetainedBoundaryEvidence {
+    revision: u64,
+    position: usize,
+    boundary: crate::EngineBoundary,
+    ordinal: u32,
+    effect_prefix: usize,
+    artifact_prefix: usize,
+    reachable_state_identity: Option<crate::ReachableStateIdentity>,
+}
+
+impl RetainedBoundaryEvidence {
+    #[must_use]
+    pub const fn new(
+        revision: u64,
+        position: usize,
+        boundary: crate::EngineBoundary,
+        ordinal: u32,
+        effect_prefix: usize,
+        artifact_prefix: usize,
+        reachable_state_identity: Option<crate::ReachableStateIdentity>,
+    ) -> Self {
+        Self {
+            revision,
+            position,
+            boundary,
+            ordinal,
+            effect_prefix,
+            artifact_prefix,
+            reachable_state_identity,
+        }
+    }
+
+    fn from_checkpoint(
+        revision: u64,
+        ordinal: u32,
+        checkpoint: &EngineCheckpoint<impl Sized>,
+    ) -> Self {
+        Self::new(
+            revision,
+            checkpoint.root_anchor(),
+            checkpoint.boundary(),
+            ordinal,
+            checkpoint.effect_prefix_len(),
+            checkpoint.artifact_prefix_len(),
+            checkpoint.reachable_state_identity(),
+        )
+    }
+
+    #[must_use]
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+    #[must_use]
+    pub const fn position(self) -> usize {
+        self.position
+    }
+    #[must_use]
+    pub const fn boundary(self) -> crate::EngineBoundary {
+        self.boundary
+    }
+    #[must_use]
+    pub const fn ordinal(self) -> u32 {
+        self.ordinal
+    }
+    #[must_use]
+    pub const fn effect_prefix(self) -> usize {
+        self.effect_prefix
+    }
+    #[must_use]
+    pub const fn artifact_prefix(self) -> usize {
+        self.artifact_prefix
+    }
+    #[must_use]
+    pub const fn reachable_state_identity(self) -> Option<crate::ReachableStateIdentity> {
+        self.reachable_state_identity
+    }
+}
+
+pub enum BoundaryLaneKind {}
 
 /// Private owner-relative identity of one named retained checkpoint.
 ///
 /// The key is non-`Copy`, non-`Clone`, and non-serializable. Detached boundary
 /// identity remains in tex-incr's `BoundaryRecord` instead.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct RetainedCheckpointKey {
-    generation: u64,
-    slot: usize,
-    serial: u64,
+    list: ArenaListId<BoundaryLaneKind>,
+    mark: CheckpointMark<BoundaryLaneKind>,
+    record: usize,
 }
+
+impl PartialEq for RetainedCheckpointKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.list == other.list
+    }
+}
+
+impl Eq for RetainedCheckpointKey {}
 
 /// Owner-relative key for one unpublished executor episode sidecar.
 #[derive(Debug, Eq, PartialEq)]
@@ -388,6 +498,29 @@ impl<'store> RetainedEngineGeneration<'store> {
         ))
     }
 
+    /// Selects an accepted boundary cell directly from the canonical record
+    /// lane. Missing/stale detached evidence falls back explicitly to the
+    /// surviving JobStart root rather than to an unrelated slot index.
+    pub fn fork_boundary(
+        &mut self,
+        selected: Option<(usize, crate::EngineBoundary, u32)>,
+    ) -> Result<
+        (
+            Self,
+            RetainedEngineAttachmentKey,
+            crate::ExecutionBudgetCounters,
+            RetainedBoundaryEvidence,
+        ),
+        RetainedEngineForkError,
+    > {
+        let selected = self
+            .with_admitted(SelectBoundary { selected })
+            .map_err(RetainedEngineForkError::Access)?;
+        let (key, evidence) = selected.map_err(RetainedEngineForkError::Access)?;
+        let (generation, runtime, counters) = self.fork_checkpoint(&key)?;
+        Ok((generation, runtime, counters, evidence))
+    }
+
     #[must_use]
     pub fn witness(&self) -> RetainedEngineGenerationWitness {
         RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
@@ -478,6 +611,14 @@ impl<'store> RetainedEngineGeneration<'store> {
         self.with_admitted(PruneCheckpoints { retained })?
     }
 
+    pub fn preflight_boundary_lane(&mut self) -> Result<(), RetainedEngineAccessError> {
+        self.with_admitted(PreflightBoundaryLane)?
+    }
+
+    pub fn boundary_lane_checkpoint_count(&mut self) -> Result<usize, RetainedEngineAccessError> {
+        self.with_admitted(BoundaryLaneCheckpointCount)
+    }
+
     pub fn retire(mut self) -> Result<RetainedEngineRetirement, UniverseError> {
         Ok(RetainedEngineRetirement {
             state: self
@@ -527,10 +668,21 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
             .ok_or(RetainedStateAccessError::StaleAttachment)?;
         match self {
             Self::Accept => {
+                candidate
+                    .boundaries
+                    .as_mut()
+                    .ok_or(RetainedStateAccessError::StaleAttachment)?
+                    .accept();
                 ledger.accept_checkpoint_candidate();
             }
             Self::Reject => {
+                candidate
+                    .boundaries
+                    .as_mut()
+                    .ok_or(RetainedStateAccessError::StaleAttachment)?
+                    .reject();
                 ledger.reject_checkpoint_candidate();
+                source.boundaries = candidate.boundaries.take();
                 source.ledger = candidate.ledger.take();
             }
         }
@@ -566,9 +718,19 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
                 RetainedEngineAccessError::LiveAttachment,
             ));
         }
-        let checkpoint = sidecars
-            .checkpoints
-            .get(self.source_generation, self.checkpoint)
+        let boundaries = sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineForkError::Access(
+                RetainedEngineAccessError::StaleAttachment,
+            ))?;
+        if !boundaries.can_begin(self.checkpoint) {
+            return Err(RetainedEngineForkError::Access(
+                RetainedEngineAccessError::StaleCheckpoint,
+            ));
+        }
+        let checkpoint = boundaries
+            .get(self.checkpoint)
             .map_err(RetainedEngineForkError::Access)?;
         let budget_counters = checkpoint.budget_counters();
         let mut ledger = sidecars
@@ -582,13 +744,18 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
                 return Err(RetainedEngineForkError::Restore(error));
             }
         };
+        let mut boundaries = sidecars
+            .boundaries
+            .take()
+            .expect("validated accepted generation owns its boundary lane");
+        boundaries.begin(self.checkpoint);
         Ok(RetainedStateForkBuild::new(
             universe,
             Box::new(EngineGenerationSidecars::<G> {
                 generation: self.generation,
-                checkpoints: RetainedCheckpointSlots::default(),
-                ledger: Some(ledger),
                 attachment: Some(Box::new(RestoredCheckpointRuntime { control })),
+                boundaries: Some(boundaries),
+                ledger: Some(ledger),
             }),
             budget_counters,
         ))
@@ -597,6 +764,56 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
 
 struct PruneCheckpoints<'a> {
     retained: &'a [RetainedCheckpointKey],
+}
+
+struct SelectBoundary {
+    selected: Option<(usize, crate::EngineBoundary, u32)>,
+}
+
+struct PreflightBoundaryLane;
+
+impl RetainedEngineOperation for PreflightBoundaryLane {
+    type Output = Result<(), RetainedEngineAccessError>;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        if admitted.sidecars.attachment.is_some() {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        admitted
+            .sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .validate_all()
+    }
+}
+
+struct BoundaryLaneCheckpointCount;
+
+impl RetainedEngineOperation for BoundaryLaneCheckpointCount {
+    type Output = usize;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        admitted
+            .sidecars
+            .boundaries
+            .as_ref()
+            .map_or(0, |boundaries| boundaries.live_roots)
+    }
+}
+
+impl RetainedEngineOperation for SelectBoundary {
+    type Output =
+        Result<(RetainedCheckpointKey, RetainedBoundaryEvidence), RetainedEngineAccessError>;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        admitted
+            .sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .select(self.selected)
+    }
 }
 
 struct PreflightTerminal<'a> {
@@ -613,8 +830,10 @@ impl RetainedEngineOperation for PreflightTerminal<'_> {
         for key in self.retained {
             admitted
                 .sidecars
-                .checkpoints
-                .get(admitted.generation, key)?;
+                .boundaries
+                .as_ref()
+                .ok_or(RetainedEngineAccessError::StaleAttachment)?
+                .get(key)?;
         }
         Ok(())
     }
@@ -626,11 +845,15 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
     fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
         let receipt = admitted
             .sidecars
-            .checkpoints
-            .prune(admitted.generation, self.retained)?;
+            .boundaries
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .prune(self.retained)?;
         let low_water = admitted
             .sidecars
-            .checkpoints
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
             .pdf_history_low_water()
             .unwrap_or_else(|| admitted.universe.pdf_history_head());
         admitted.universe.prune_pdf_history(low_water);
@@ -638,158 +861,326 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
     }
 }
 
-struct RetainedCheckpointSlots<G> {
-    slots: Vec<RetainedCheckpointSlot<G>>,
-    live: Vec<usize>,
-    free: Vec<usize>,
-    next_serial: u64,
+struct BoundaryCell<G> {
+    evidence: RetainedBoundaryEvidence,
+    checkpoint: Option<EngineCheckpoint<G>>,
+    previous_restart: Option<usize>,
 }
 
-impl<G> Default for RetainedCheckpointSlots<G> {
+struct BoundaryLane<G> {
+    pool: ChunkPool<BoundaryCell<G>>,
+    arena: ForkArena<BoundaryCell<G>, BoundaryLaneKind>,
+    head: Option<CheckpointMark<BoundaryLaneKind>>,
+    prior_head: Option<CheckpointMark<BoundaryLaneKind>>,
+    prior_records: Option<usize>,
+    prior_live_roots: Option<usize>,
+    last_restart: Option<usize>,
+    prior_last_restart: Option<usize>,
+    records: usize,
+    live_roots: usize,
+}
+
+impl<G> Default for BoundaryLane<G> {
     fn default() -> Self {
         Self {
-            slots: Vec::new(),
-            live: Vec::new(),
-            free: Vec::new(),
-            next_serial: 0,
+            pool: ChunkPool::with_chunk_bytes(
+                core::mem::size_of::<Option<BoundaryCell<G>>>().max(1),
+            ),
+            arena: ForkArena::new(),
+            head: None,
+            prior_head: None,
+            prior_records: None,
+            prior_live_roots: None,
+            last_restart: None,
+            prior_last_restart: None,
+            records: 0,
+            live_roots: 0,
         }
     }
 }
 
-struct RetainedCheckpointSlot<G> {
-    checkpoint: Option<EngineCheckpoint<G>>,
-    serial: u64,
-    live_index: Option<usize>,
-    keep: bool,
-}
-
-impl<G> RetainedCheckpointSlots<G> {
-    fn pdf_history_low_water(&self) -> Option<(u64, u64)> {
-        self.live
-            .iter()
-            .filter_map(|&slot| self.slots[slot].checkpoint.as_ref())
-            .map(EngineCheckpoint::pdf_history_position)
-            .reduce(|left, right| (left.0.min(right.0), left.1.min(right.1)))
-    }
-
-    fn retain(
+impl<G> BoundaryLane<G> {
+    fn append(
         &mut self,
-        generation: u64,
         checkpoint: EngineCheckpoint<G>,
+        evidence: RetainedBoundaryEvidence,
     ) -> RetainedCheckpointKey {
-        self.next_serial = self
-            .next_serial
-            .checked_add(1)
-            .expect("retained checkpoint serial space is exhausted");
-        let serial = self.next_serial;
-        let slot = if let Some(slot) = self.free.pop() {
-            let row = &mut self.slots[slot];
-            debug_assert!(row.checkpoint.is_none());
-            debug_assert!(row.live_index.is_none());
-            row.checkpoint = Some(checkpoint);
-            row.serial = serial;
-            row.keep = false;
-            slot
-        } else {
-            let slot = self.slots.len();
-            self.slots.push(RetainedCheckpointSlot {
-                checkpoint: Some(checkpoint),
-                serial,
-                live_index: None,
-                keep: false,
-            });
-            slot
-        };
-        let live_index = self.live.len();
-        self.live.push(slot);
-        self.slots[slot].live_index = Some(live_index);
-        RetainedCheckpointKey {
-            generation,
-            slot,
-            serial,
+        self.append_cell(Some(checkpoint), evidence)
+    }
+
+    #[cfg(test)]
+    fn append_evidence(&mut self, evidence: RetainedBoundaryEvidence) {
+        let _ = self.append_cell(None, evidence);
+    }
+
+    fn append_cell(
+        &mut self,
+        checkpoint: Option<EngineCheckpoint<G>>,
+        evidence: RetainedBoundaryEvidence,
+    ) -> RetainedCheckpointKey {
+        let has_restart = checkpoint.is_some();
+        let record = self.records;
+        let mut builder = self
+            .arena
+            .begin_builder(&mut self.pool)
+            .expect("boundary lane owns the sole cell builder");
+        builder
+            .push(BoundaryCell {
+                evidence,
+                checkpoint,
+                previous_restart: self.last_restart,
+            })
+            .expect("one boundary cell fits its logical chunk");
+        let list = builder.seal().expect("boundary cell seals canonically");
+        let boundary = self
+            .arena
+            .seal_boundary(&mut self.pool)
+            .expect("boundary cell retires its builder");
+        let mark = self
+            .arena
+            .checkpoint_mark(boundary)
+            .expect("boundary cell names its sealed whole-chunk mark");
+        self.head = Some(mark);
+        self.records = self.records.saturating_add(1);
+        if has_restart {
+            self.live_roots = self.live_roots.saturating_add(1);
+            self.last_restart = Some(record);
         }
+        RetainedCheckpointKey { list, mark, record }
+    }
+
+    fn cell(
+        &self,
+        key: &RetainedCheckpointKey,
+    ) -> Result<&BoundaryCell<G>, RetainedEngineAccessError> {
+        let view = self
+            .arena
+            .list(&self.pool, key.list)
+            .map_err(|error| match error {
+                tex_state::fork_arena::ForkArenaError::ForeignArena => {
+                    RetainedEngineAccessError::ForeignGeneration
+                }
+                _ => RetainedEngineAccessError::StaleCheckpoint,
+            })?;
+        view.get(0)
+            .ok_or(RetainedEngineAccessError::StaleCheckpoint)
     }
 
     fn get(
         &self,
-        generation: u64,
         key: &RetainedCheckpointKey,
     ) -> Result<&EngineCheckpoint<G>, RetainedEngineAccessError> {
-        validate_checkpoint_key(generation, key)?;
-        let row = self
-            .slots
-            .get(key.slot)
-            .filter(|row| row.serial == key.serial)
-            .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
-        row.checkpoint
+        self.cell(key)?
+            .checkpoint
             .as_ref()
             .ok_or(RetainedEngineAccessError::StaleCheckpoint)
     }
 
-    fn release_key(
-        &mut self,
-        generation: u64,
-        key: RetainedCheckpointKey,
-    ) -> Result<(), RetainedEngineAccessError> {
-        self.get(generation, &key)?;
-        self.release(key.slot);
+    fn release_key(&mut self, key: RetainedCheckpointKey) -> Result<(), RetainedEngineAccessError> {
+        self.get(&key)?;
+        let previous_restart = self.cell(&key)?.previous_restart;
+        let removed = self
+            .arena
+            .with_single_value_mut(&mut self.pool, key.list, |cell| cell.checkpoint.take())
+            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+        drop(removed.expect("validated boundary cell owns its restart root"));
+        self.live_roots = self.live_roots.saturating_sub(1);
+        if self.last_restart == Some(key.record) {
+            self.last_restart = previous_restart;
+        }
         Ok(())
+    }
+
+    fn can_begin(&self, key: &RetainedCheckpointKey) -> bool {
+        self.get(key).is_ok() && self.arena.can_begin_checkpoint_candidate(key.mark)
+    }
+
+    fn select(
+        &self,
+        selected: Option<(usize, crate::EngineBoundary, u32)>,
+    ) -> Result<(RetainedCheckpointKey, RetainedBoundaryEvidence), RetainedEngineAccessError> {
+        let len = self
+            .arena
+            .sealed_single_len()
+            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+        let index = if let Some((position, boundary, ordinal)) = selected {
+            let mut low = 0;
+            let mut high = len;
+            while low < high {
+                let middle = low + (high - low) / 2;
+                let (_, _, cell) = self
+                    .arena
+                    .sealed_single_at(&self.pool, middle)
+                    .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+                if cell.evidence.position <= position {
+                    low = middle.saturating_add(1);
+                } else {
+                    high = middle;
+                }
+            }
+            let mut exact = None;
+            while low != 0 {
+                low -= 1;
+                let (_, _, cell) = self
+                    .arena
+                    .sealed_single_at(&self.pool, low)
+                    .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+                if cell.evidence.position != position {
+                    break;
+                }
+                if cell.evidence.boundary == boundary && cell.evidence.ordinal == ordinal {
+                    exact = Some(low);
+                    break;
+                }
+            }
+            exact.ok_or(RetainedEngineAccessError::StaleCheckpoint)?
+        } else {
+            0
+        };
+        let index = self.restart_at_or_before(index)?;
+        let (list, mark, cell) = self
+            .arena
+            .sealed_single_at(&self.pool, index)
+            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+        Ok((
+            RetainedCheckpointKey {
+                list,
+                mark,
+                record: index,
+            },
+            cell.evidence,
+        ))
+    }
+
+    fn restart_at_or_before(&self, mut index: usize) -> Result<usize, RetainedEngineAccessError> {
+        loop {
+            let (_, _, cell) = self
+                .arena
+                .sealed_single_at(&self.pool, index)
+                .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+            if cell.checkpoint.is_some() {
+                return Ok(index);
+            }
+            index = cell
+                .previous_restart
+                .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        }
+    }
+
+    fn validate_all(&self) -> Result<(), RetainedEngineAccessError> {
+        let Some(head) = self.head else {
+            return Ok(());
+        };
+        (self.arena.validates_checkpoint(head)
+            && self
+                .arena
+                .sealed_single_len()
+                .is_ok_and(|records| records == self.records))
+        .then_some(())
+        .ok_or(RetainedEngineAccessError::StaleCheckpoint)
+    }
+
+    fn begin(&mut self, key: &RetainedCheckpointKey) {
+        self.prior_head = self.head;
+        self.prior_records = Some(self.records);
+        self.prior_live_roots = Some(self.live_roots);
+        self.prior_last_restart = self.last_restart;
+        let mut detached_records = 0_usize;
+        let mut detached_live_roots = 0_usize;
+        self.arena
+            .visit_accepted_checkpoint_suffix(&self.pool, key.mark, |cell| {
+                detached_records = detached_records.saturating_add(1);
+                detached_live_roots =
+                    detached_live_roots.saturating_add(usize::from(cell.checkpoint.is_some()));
+            })
+            .expect("prevalidated boundary mark visits only its detached suffix");
+        self.arena
+            .begin_checkpoint_candidate(key.mark)
+            .expect("prevalidated boundary mark begins the sole metadata fork");
+        self.head = Some(key.mark);
+        self.records = self.records.saturating_sub(detached_records);
+        self.live_roots = self.live_roots.saturating_sub(detached_live_roots);
+        self.last_restart = Some(
+            self.restart_at_or_before(key.record)
+                .expect("selected boundary retains one restart root"),
+        );
+    }
+
+    fn reject(&mut self) {
+        let prior_head = self
+            .prior_head
+            .take()
+            .expect("a rejected boundary lane retains its accepted head");
+        let boundary = self
+            .arena
+            .seal_boundary(&mut self.pool)
+            .expect("rejected boundary lane has no live builder");
+        self.arena
+            .reject_checkpoint_candidate(&mut self.pool, boundary)
+            .expect("rejected boundary lane reattaches its prior suffix");
+        self.head = Some(prior_head);
+        self.records = self
+            .prior_records
+            .take()
+            .expect("a rejected boundary lane retains its accepted record count");
+        self.live_roots = self
+            .prior_live_roots
+            .take()
+            .expect("a rejected boundary lane retains its accepted root count");
+        self.last_restart = self.prior_last_restart.take();
+    }
+
+    fn accept(&mut self) {
+        let boundary = self
+            .arena
+            .seal_boundary(&mut self.pool)
+            .expect("accepted boundary lane has no live builder");
+        self.arena
+            .accept_checkpoint_candidate(&mut self.pool, boundary)
+            .expect("accepted boundary lane drops its detached prior suffix");
+        self.prior_head = None;
+        self.prior_records = None;
+        self.prior_live_roots = None;
+        self.prior_last_restart = None;
+    }
+
+    fn pdf_history_low_water(&self) -> Option<(u64, u64)> {
+        let mut low_water: Option<(u64, u64)> = None;
+        let head = self.head?;
+        self.arena
+            .visit_checkpoint_values(&self.pool, head, |cell| {
+                let Some(checkpoint) = cell.checkpoint.as_ref() else {
+                    return;
+                };
+                let position = checkpoint.pdf_history_position();
+                low_water = Some(low_water.map_or(position, |left| {
+                    (left.0.min(position.0), left.1.min(position.1))
+                }));
+            })
+            .ok()?;
+        low_water
     }
 
     fn prune(
         &mut self,
-        generation: u64,
         retained: &[RetainedCheckpointKey],
     ) -> Result<CheckpointPruningReceipt, RetainedEngineAccessError> {
         for key in retained {
-            self.get(generation, key)?;
-        }
-        for key in retained {
-            self.slots[key.slot].keep = true;
-        }
-        let before = self.live.len();
-        let mut live_index = 0;
-        while live_index < self.live.len() {
-            let slot = self.live[live_index];
-            if self.slots[slot].keep {
-                self.slots[slot].keep = false;
-                live_index += 1;
-            } else {
-                self.release(slot);
-            }
+            self.get(key)?;
         }
         Ok(CheckpointPruningReceipt {
-            released: before - self.live.len(),
-            retained: self.live.len(),
-            slots: self.slots.len(),
+            released: 0,
+            retained: self.live_roots,
+            slots: self.records,
         })
-    }
-
-    fn release(&mut self, slot: usize) {
-        let live_index = self.slots[slot]
-            .live_index
-            .take()
-            .expect("only a live checkpoint slot can be released");
-        let removed = self.live.swap_remove(live_index);
-        debug_assert_eq!(removed, slot);
-        if let Some(&moved) = self.live.get(live_index) {
-            self.slots[moved].live_index = Some(live_index);
-        }
-        self.slots[slot].keep = false;
-        let checkpoint = self.slots[slot]
-            .checkpoint
-            .take()
-            .expect("a live checkpoint slot owns a checkpoint");
-        self.free.push(slot);
-        drop(checkpoint);
     }
 }
 
 struct EngineGenerationSidecars<G> {
     generation: u64,
-    checkpoints: RetainedCheckpointSlots<G>,
-    ledger: Option<crate::OutputLedger>,
     attachment: Option<Box<dyn Any>>,
+    boundaries: Option<BoundaryLane<G>>,
+    ledger: Option<crate::OutputLedger>,
 }
 
 struct InitializeSidecars {
@@ -802,9 +1193,9 @@ impl RetainedStateOperation for InitializeSidecars {
     fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
         admitted.attach(EngineGenerationSidecars::<G> {
             generation: self.generation,
-            checkpoints: RetainedCheckpointSlots::default(),
-            ledger: Some(crate::OutputLedger::new()),
             attachment: None,
+            boundaries: Some(BoundaryLane::default()),
+            ledger: Some(crate::OutputLedger::new()),
         })
     }
 }
@@ -830,16 +1221,6 @@ impl<O: RetainedEngineOperation> RetainedStateOperation for EngineOperationAdapt
             sidecars,
         }))
     }
-}
-
-fn validate_checkpoint_key(
-    generation: u64,
-    key: &RetainedCheckpointKey,
-) -> Result<(), RetainedEngineAccessError> {
-    if key.generation != generation {
-        return Err(RetainedEngineAccessError::ForeignGeneration);
-    }
-    Ok(())
 }
 
 fn validate_attachment_key(
@@ -1079,82 +1460,14 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    struct CheckpointStorageMetrics {
-        slots_len: usize,
-        slots_capacity: usize,
-        live_len: usize,
-        live_capacity: usize,
-        free_len: usize,
-        free_capacity: usize,
-    }
+    struct ReleaseCheckpoint(RetainedCheckpointKey);
 
-    impl<G> RetainedCheckpointSlots<G> {
-        fn metrics(&self) -> CheckpointStorageMetrics {
-            CheckpointStorageMetrics {
-                slots_len: self.slots.len(),
-                slots_capacity: self.slots.capacity(),
-                live_len: self.live.len(),
-                live_capacity: self.live.capacity(),
-                free_len: self.free.len(),
-                free_capacity: self.free.capacity(),
-            }
-        }
-    }
-
-    struct RepeatedCheckpointPruning<'a>(&'a RetainedCheckpointKey);
-
-    impl RetainedEngineOperation for RepeatedCheckpointPruning<'_> {
-        type Output = Result<
-            (
-                CheckpointStorageMetrics,
-                CheckpointStorageMetrics,
-                CheckpointPruningReceipt,
-            ),
-            RetainedEngineAccessError,
-        >;
+    impl RetainedEngineOperation for ReleaseCheckpoint {
+        type Output = Result<(), RetainedEngineAccessError>;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            admitted
-                .sidecars
-                .checkpoints
-                .get(admitted.generation, self.0)?;
-            let generation = admitted.generation;
-            let (universe, _ledger, mut checkpoints) = admitted.parts();
-            let mut control = crate::MainControl::tex82_initex(universe);
-            let capture = |control: &mut crate::MainControl<G>, universe: &mut Universe<G>| {
-                control
-                    .capture_checkpoint(
-                        crate::EngineBoundary::JobStart,
-                        universe,
-                        crate::ExecutionBudgetCounters::default(),
-                    )
-                    .expect("quiescent checkpoint")
-            };
-
-            let warm = checkpoints.retain(capture(&mut control, universe));
-            let receipt = checkpoints
-                .checkpoints
-                .prune(generation, std::slice::from_ref(self.0))?;
-            assert_eq!(receipt.released(), 1);
-            assert!(matches!(
-                checkpoints.checkpoints.get(generation, &warm),
-                Err(RetainedEngineAccessError::StaleCheckpoint)
-            ));
-            let warmed = checkpoints.checkpoints.metrics();
-
-            let mut last_receipt = receipt;
-            for _ in 0..8_192 {
-                let key = checkpoints.retain(capture(&mut control, universe));
-                last_receipt = checkpoints
-                    .checkpoints
-                    .prune(generation, std::slice::from_ref(self.0))?;
-                assert!(matches!(
-                    checkpoints.checkpoints.get(generation, &key),
-                    Err(RetainedEngineAccessError::StaleCheckpoint)
-                ));
-            }
-            Ok((warmed, checkpoints.checkpoints.metrics(), last_receipt))
+            let (_universe, _ledger, mut checkpoints) = admitted.parts();
+            checkpoints.release(self.0)
         }
     }
 
@@ -1223,8 +1536,10 @@ mod tests {
                 .expect("fixture belongs to generation");
             let checkpoint = admitted
                 .sidecars
-                .checkpoints
-                .get(admitted.generation, self.checkpoint)
+                .boundaries
+                .as_ref()
+                .expect("generation owns its boundary lane")
+                .get(self.checkpoint)
                 .expect("surviving checkpoint");
             let fixture = admitted
                 .sidecars
@@ -1331,6 +1646,20 @@ mod tests {
             "the accepted replacement survives old-prior retirement"
         );
 
+        let (mut prefix_restart, runtime, _) = accepted_candidate
+            .fork_checkpoint(&checkpoint)
+            .expect("unchanged prefix checkpoint survives acceptance");
+        let (before, _checkpoint) = prefix_restart
+            .with_admitted(ConsumeFork {
+                runtime,
+                replacement: 61,
+                accept_modes: false,
+            })
+            .expect("prefix restart admission");
+        assert_eq!(before, 41);
+        drop(prefix_restart);
+        assert_eq!(accepted_candidate.with_admitted(ReadCount), Ok(52));
+
         let (mut restarted, runtime, _) = accepted_candidate
             .fork_checkpoint(&replacement_checkpoint)
             .expect("later accepted restart");
@@ -1403,7 +1732,7 @@ mod tests {
     }
 
     #[test]
-    fn pruning_releases_checkpoint_and_reuses_its_slot_without_aba() {
+    fn releasing_a_restart_root_preserves_earlier_boundary_evidence() {
         let store = store();
         let mut generation =
             RetainedEngineGeneration::new(&store, World::default()).expect("generation");
@@ -1412,55 +1741,10 @@ mod tests {
             .with_admitted(Capture)
             .expect("discarded checkpoint");
 
-        let receipt = generation
-            .prune_checkpoints(std::slice::from_ref(&survivor))
-            .expect("checkpoint pruning");
-        assert_eq!(receipt.released(), 1);
-        assert_eq!(receipt.retained(), 1);
-        assert_eq!(receipt.slots(), 2);
-        assert_eq!(
-            generation.with_admitted(Read(&survivor)),
-            Ok(Ok(crate::EngineBoundary::JobStart))
-        );
-        assert_eq!(
-            generation.with_admitted(Read(&stale)),
-            Ok(Err(RetainedEngineAccessError::StaleCheckpoint))
-        );
-
-        let replacement = generation
-            .with_admitted(Capture)
-            .expect("replacement checkpoint");
-        assert_eq!(replacement.slot, stale.slot);
-        assert_ne!(replacement.serial, stale.serial);
-        assert_eq!(
-            generation.with_admitted(Read(&stale)),
-            Ok(Err(RetainedEngineAccessError::StaleCheckpoint))
-        );
-        assert_eq!(
-            generation.with_admitted(Read(&replacement)),
-            Ok(Ok(crate::EngineBoundary::JobStart))
-        );
-    }
-
-    #[test]
-    fn repeated_8192_checkpoint_prunes_keep_storage_at_warmed_high_water() {
-        let store = store();
-        let mut generation =
-            RetainedEngineGeneration::new(&store, World::default()).expect("generation");
-        let survivor = generation.with_admitted(Capture).expect("survivor");
-
-        let (warmed, after, receipt) = generation
-            .with_admitted(RepeatedCheckpointPruning(&survivor))
+        generation
+            .with_admitted(ReleaseCheckpoint(stale))
             .expect("generation admission")
-            .expect("checkpoint pruning");
-
-        assert_eq!(after, warmed);
-        assert_eq!(after.slots_len, 2);
-        assert_eq!(after.live_len, 1);
-        assert_eq!(after.free_len, 1);
-        assert_eq!(receipt.released(), 1);
-        assert_eq!(receipt.retained(), 1);
-        assert_eq!(receipt.slots(), 2);
+            .expect("release later restart root");
         assert_eq!(
             generation.with_admitted(Read(&survivor)),
             Ok(Ok(crate::EngineBoundary::JobStart))
@@ -1476,14 +1760,10 @@ mod tests {
             .with_admitted(CaptureRestorablePair)
             .expect("checkpoint pair");
 
-        let receipt = generation
-            .prune_checkpoints(std::slice::from_ref(&survivor))
-            .expect("checkpoint pruning");
-        assert_eq!(receipt.released(), 1);
-        assert_eq!(
-            generation.with_admitted(Read(&discarded)),
-            Ok(Err(RetainedEngineAccessError::StaleCheckpoint))
-        );
+        generation
+            .with_admitted(ReleaseCheckpoint(discarded))
+            .expect("generation admission")
+            .expect("release newer restart root");
         assert_eq!(
             generation.with_admitted(RestoreCount {
                 checkpoint: &survivor,
@@ -1491,5 +1771,95 @@ mod tests {
             }),
             Ok(10)
         );
+    }
+
+    #[test]
+    fn boundary_lane_keeps_prefix_marks_and_indexes_evidence_only_fallbacks() {
+        crate::test_harness::with_nonstop_universe(|universe| {
+            let mut command = CommandState::default();
+            let mut modes = crate::ModeNest::new();
+            let mut lane = BoundaryLane::default();
+            let job = crate::EngineCheckpoint::capture_checkpoint(
+                crate::checkpoint::CheckpointEligibility::job_start(),
+                &mut command,
+                &mut modes,
+                universe,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("job-start checkpoint");
+            let job = lane.append(
+                job,
+                RetainedBoundaryEvidence::new(1, 0, crate::EngineBoundary::JobStart, 0, 0, 0, None),
+            );
+            let job_list = job.list;
+
+            for ordinal in 1..=128 {
+                lane.append_evidence(RetainedBoundaryEvidence::new(
+                    1,
+                    1,
+                    crate::EngineBoundary::ShipoutComplete,
+                    ordinal,
+                    ordinal as usize,
+                    ordinal as usize,
+                    None,
+                ));
+            }
+            let (_, _, newest_evidence) = lane
+                .arena
+                .sealed_single_at(&lane.pool, 128)
+                .expect("newest evidence cell");
+            assert_eq!(
+                newest_evidence.previous_restart,
+                Some(0),
+                "each evidence-only record stores the nearest restart coordinate at append"
+            );
+            let (fallback, evidence) = lane
+                .select(Some((1, crate::EngineBoundary::ShipoutComplete, 128)))
+                .expect("completion evidence falls back to its restart");
+            assert_eq!(fallback, job);
+            assert_eq!(evidence.boundary(), crate::EngineBoundary::JobStart);
+
+            lane.begin(&job);
+            let replacement = crate::EngineCheckpoint::capture_checkpoint(
+                crate::checkpoint::CheckpointEligibility::outer_paragraph_end(),
+                &mut command,
+                &mut modes,
+                universe,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("replacement checkpoint");
+            let replacement = lane.append(
+                replacement,
+                RetainedBoundaryEvidence::new(
+                    2,
+                    2,
+                    crate::EngineBoundary::OuterParagraphEnd,
+                    0,
+                    0,
+                    0,
+                    None,
+                ),
+            );
+            lane.accept();
+            assert_eq!(job.list, job_list);
+            assert!(lane.arena.validates_checkpoint(job.mark));
+            assert!(lane.get(&job).is_ok());
+            assert!(lane.get(&replacement).is_ok());
+
+            lane.begin(&job);
+            lane.append_evidence(RetainedBoundaryEvidence::new(
+                3,
+                3,
+                crate::EngineBoundary::ShipoutComplete,
+                0,
+                0,
+                0,
+                None,
+            ));
+            lane.reject();
+            assert!(lane.get(&job).is_ok());
+            assert!(lane.get(&replacement).is_ok());
+            assert_eq!(lane.arena.counters().source_nodes_copied, 0);
+        });
     }
 }

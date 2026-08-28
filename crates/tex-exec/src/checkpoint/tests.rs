@@ -517,7 +517,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
                 append_penalty: None,
             })
             .expect("retry admission"),
-        [],
+        Vec::<i32>::new(),
         "candidate-only nodes must not escape the rejected coarse owner"
     );
     drop(retried);

@@ -70,7 +70,8 @@ fn cold_execution_publishes_detached_artifact_and_boundary_history() {
         session
             .history()
             .iter()
-            .any(|record| record.key().boundary == EngineBoundary::ShipoutComplete)
+            .all(|record| record.key().boundary != EngineBoundary::ShipoutComplete),
+        "shipout is completion evidence, not restart eligibility"
     );
 }
 
@@ -425,14 +426,8 @@ fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
         .collect::<Vec<_>>();
     assert_eq!(
         before.iter().map(|key| key.boundary).collect::<Vec<_>>(),
-        [
-            EngineBoundary::JobStart,
-            EngineBoundary::ShipoutComplete,
-            EngineBoundary::OuterParagraphEnd,
-            EngineBoundary::ShipoutComplete,
-            EngineBoundary::ShipoutComplete,
-        ],
-        "the grouped root paragraph and nested paragraph/shipouts are absent; root-origin page output remains"
+        [EngineBoundary::JobStart, EngineBoundary::OuterParagraphEnd,],
+        "only the root-main-file, group-zero outer paragraph is restart eligible"
     );
 
     let output = session
@@ -559,7 +554,10 @@ fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
         RevisionCandidateResult::Complete
     ));
     assert!(candidate.generation.is_some());
-    assert!(candidate.runtime_key.is_none());
+    assert!(
+        candidate.runtime_key.is_some(),
+        "terminal command/mode owners remain attached until aggregate settlement"
+    );
     let discovery = candidate
         .completion_resource_discovery()
         .expect("terminal candidate exposes detached completion");
@@ -807,10 +805,8 @@ fn registered_font_resource_survives_each_fresh_generation() {
 #[test]
 fn history_budget_keeps_job_start_and_newest_observation() {
     let mut source = String::new();
-    for width in 1..=8 {
-        source.push_str(&format!(
-            "\\shipout\\vbox{{\\hrule height1pt width{width}pt}}"
-        ));
+    for _ in 1..=8 {
+        source.push_str("\\indent\\par");
     }
     source.push_str("\\end");
     let unbounded_source = source.clone();
@@ -830,7 +826,7 @@ fn history_budget_keeps_job_start_and_newest_observation() {
     );
     assert_eq!(
         session.history()[1].key().boundary,
-        EngineBoundary::ShipoutComplete
+        EngineBoundary::OuterParagraphEnd
     );
     assert_eq!(
         session.current_retained_checkpoint_count(),
@@ -865,10 +861,8 @@ fn history_budget_keeps_job_start_and_newest_observation() {
 #[test]
 fn retention_charges_one_shared_owner_and_distinguishes_detached_evidence() {
     let mut source = String::new();
-    for width in 1..=8 {
-        source.push_str(&format!(
-            "\\shipout\\vbox{{\\hrule height1pt width{width}pt}}"
-        ));
+    for _ in 1..=8 {
+        source.push_str("\\indent\\par");
     }
     source.push_str("\\end");
     let mut session = Session::start(

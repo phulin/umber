@@ -348,6 +348,7 @@ pub struct RevisionTransaction<'store> {
     fragments: FragmentStore,
     layout: EditorLayout,
     content_hash: ContentHash,
+    restart_boundary: Option<BoundaryKey>,
     completion: DetachedEngineCompletion,
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
@@ -356,7 +357,6 @@ pub struct RevisionTransaction<'store> {
     expansion_stats: ExpansionStats,
     generation: tex_exec::RetainedEngineGeneration<'store>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
-    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
     checkpoint_retained_bytes: usize,
     checkpoint_shared_owner_bytes: usize,
     checkpoint_metadata_bytes: usize,
@@ -420,7 +420,6 @@ struct CandidatePlan {
     source: String,
     fragments: FragmentStore,
     layout: EditorLayout,
-    old_history: Vec<BoundaryRecord>,
     execution_path: RevisionExecutionPath,
     restart_boundary: Option<BoundaryKey>,
     revision_setup_latency: Duration,
@@ -432,7 +431,6 @@ struct CandidateCompletion {
     dependencies: Vec<tex_state::InputDependency>,
     delivered_commands: usize,
     format_dump: Option<DetachedFormatDump>,
-    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
     checkpoint_retained_bytes: usize,
     checkpoint_shared_owner_bytes: usize,
     checkpoint_metadata_bytes: usize,
@@ -1014,13 +1012,6 @@ impl LiveHistoryState {
         }
         self.protected_overage_bytes = self.retained_bytes().saturating_sub(self.checkpoint_budget);
     }
-
-    fn take_checkpoint_keys(&mut self) -> Vec<tex_exec::RetainedCheckpointKey> {
-        std::mem::take(&mut self.checkpoint_keys)
-            .into_iter()
-            .flatten()
-            .collect()
-    }
 }
 
 struct LiveHistorySink<'state, 'generation, G> {
@@ -1059,6 +1050,15 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             reachable_state_identity: checkpoint.reachable_state_identity(),
         });
         let retention = checkpoint.retention();
+        let evidence = tex_exec::RetainedBoundaryEvidence::new(
+            self.state.revision.raw(),
+            position,
+            boundary,
+            ordinal,
+            checkpoint.effect_prefix_len(),
+            checkpoint.artifact_prefix_len(),
+            checkpoint.reachable_state_identity(),
+        );
         self.state.observe_shared_owners(retention);
         self.state.checkpoint_metadata_bytes = self
             .state
@@ -1066,7 +1066,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             .max(retention.checkpoint_metadata_bytes());
         self.state
             .checkpoint_keys
-            .push(Some(self.retained.retain(checkpoint)));
+            .push(Some(self.retained.retain_boundary(checkpoint, evidence)));
         self.state.checkpoint_retentions.push(Some(retention));
         self.state.enforce_publication_budget(&mut self.retained);
     }
@@ -1264,7 +1264,6 @@ fn execute_plan<G>(
                     let checkpoint_metadata_bytes = sink.state.restart_metadata_bytes();
                     let detached_boundary_bytes = sink.state.detached_boundary_bytes();
                     let checkpoint_protected_overage_bytes = sink.state.protected_overage_bytes;
-                    let checkpoint_keys = sink.state.take_checkpoint_keys();
                     return Ok(PlanExecution::Complete(
                         Box::new(CandidateCompletion {
                             completion,
@@ -1272,7 +1271,6 @@ fn execute_plan<G>(
                             dependencies,
                             delivered_commands: *delivered_commands,
                             format_dump,
-                            checkpoint_keys,
                             checkpoint_retained_bytes,
                             checkpoint_shared_owner_bytes,
                             checkpoint_metadata_bytes,
@@ -1538,7 +1536,7 @@ struct RenderMapCache {
 struct RetainedRevisionGeneration<'store> {
     revision: RevisionId,
     generation: tex_exec::RetainedEngineGeneration<'store>,
-    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    checkpoint_count: usize,
 }
 
 impl RenderMapCache {
@@ -1860,7 +1858,7 @@ impl<'store> Session<'store> {
         self.prior_generation = Some(RetainedRevisionGeneration {
             revision: self.revision,
             generation,
-            checkpoint_keys: vec![checkpoint],
+            checkpoint_count: 1,
         });
         self.initex = false;
         Ok(())
@@ -1966,7 +1964,7 @@ impl<'store> Session<'store> {
     pub fn current_retained_checkpoint_count(&self) -> usize {
         self.prior_generation
             .as_ref()
-            .map_or(0, |generation| generation.checkpoint_keys.len())
+            .map_or(0, |generation| generation.checkpoint_count)
     }
 
     pub fn register_input_file(
@@ -2006,7 +2004,6 @@ impl<'store> Session<'store> {
             source: self.source.clone(),
             fragments: self.fragments.clone(),
             layout: clone_layout(&self.layout, &self.fragments)?,
-            old_history: Vec::new(),
             execution_path: RevisionExecutionPath::Cold,
             restart_boundary: None,
             revision_setup_latency: Duration::ZERO,
@@ -2051,7 +2048,6 @@ impl<'store> Session<'store> {
             source: self.source.clone(),
             fragments: self.fragments.clone(),
             layout: clone_layout(&self.layout, &self.fragments)?,
-            old_history: self.history.clone(),
             execution_path: RevisionExecutionPath::ExternalInputDelta,
             restart_boundary: None,
             revision_setup_latency: Duration::ZERO,
@@ -2089,7 +2085,6 @@ impl<'store> Session<'store> {
             source: next,
             fragments,
             layout,
-            old_history: self.history.clone(),
             execution_path,
             restart_boundary: (execution_path == RevisionExecutionPath::SlowEdit)
                 .then_some(edit.range.start)
@@ -2113,22 +2108,16 @@ impl<'store> Session<'store> {
             if let Some(prior) = self.prior_generation.as_mut() {
                 let selected = plan
                     .restart_boundary
-                    .filter(|_| self.history.len() == prior.checkpoint_keys.len())
-                    .and_then(|selected| {
-                        self.history
-                            .iter()
-                            .position(|record| record.key == selected)
-                    })
-                    .unwrap_or(0);
-                let checkpoint = prior
-                    .checkpoint_keys
-                    .get(selected)
-                    .expect("the selected history record retains a checkpoint");
-                plan.restart_boundary = self.history.get(selected).map(|record| record.key);
-                let (generation, runtime, _budget_counters) = prior
+                    .map(|key| (key.position, key.boundary, key.ordinal));
+                let (generation, runtime, _budget_counters, selected) = prior
                     .generation
-                    .fork_checkpoint(checkpoint)
+                    .fork_boundary(selected)
                     .map_err(SessionError::RetainedEngineFork)?;
+                plan.restart_boundary = Some(BoundaryKey {
+                    position: selected.position(),
+                    boundary: selected.boundary(),
+                    ordinal: selected.ordinal(),
+                });
                 (Some(generation), Some(runtime))
             } else {
                 (None, None)
@@ -2181,9 +2170,18 @@ impl<'store> Session<'store> {
             .completed
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
+        let old_history_start = candidate
+            .plan
+            .restart_boundary
+            .and_then(|selected| {
+                self.history
+                    .iter()
+                    .position(|record| record.key == selected)
+            })
+            .map_or(0, |selected| selected.saturating_add(1));
         let mut reuse = compare_histories(HistoryComparison {
             execution_path: candidate.plan.execution_path,
-            old: &candidate.plan.old_history,
+            old: &self.history[old_history_start..],
             new: &completion.history,
             unchanged_content: candidate.plan.base_content_hash
                 == ContentHash::from_bytes(candidate.plan.source.as_bytes()),
@@ -2192,6 +2190,25 @@ impl<'store> Session<'store> {
             revision_setup_latency: candidate.plan.revision_setup_latency,
             pages_retyped: completion.completion.pages().len(),
         });
+        if reuse.same_history_attempts == 0
+            && candidate.plan.execution_path != RevisionExecutionPath::Cold
+            && candidate.plan.base_content_hash
+                == ContentHash::from_bytes(candidate.plan.source.as_bytes())
+            && let Some(selected) = candidate.plan.restart_boundary
+            && self
+                .history
+                .iter()
+                .any(|record| record.key == selected && record.reachable_state_identity.is_some())
+        {
+            // The exact selected root was identity-validated before the fork.
+            // With unchanged authored content it is itself the earliest
+            // convergence point even when execution publishes no later
+            // eligible boundary (for example a shipout-only job).
+            reuse.same_history_attempts = 1;
+            reuse.trace_nodes_walked = 1;
+            reuse.convergence_boundary = Some(selected);
+            reuse.same_history_stop = SameHistoryStop::Matched;
+        }
         reuse.restart_boundary = candidate.plan.restart_boundary;
         let generation = candidate
             .generation
@@ -2208,6 +2225,7 @@ impl<'store> Session<'store> {
             base_content_hash: candidate.plan.base_content_hash,
             revision: candidate.plan.revision,
             content_hash: ContentHash::from_bytes(candidate.plan.source.as_bytes()),
+            restart_boundary: candidate.plan.restart_boundary,
             source: candidate.plan.source,
             fragments: candidate.plan.fragments,
             layout: candidate.plan.layout,
@@ -2219,7 +2237,6 @@ impl<'store> Session<'store> {
             expansion_stats: ExpansionStats::default(),
             generation,
             runtime_key,
-            checkpoint_keys: completion.checkpoint_keys,
             checkpoint_retained_bytes: completion.checkpoint_retained_bytes,
             checkpoint_shared_owner_bytes: completion.checkpoint_shared_owner_bytes,
             checkpoint_metadata_bytes: completion.checkpoint_metadata_bytes,
@@ -2245,11 +2262,10 @@ impl<'store> Session<'store> {
         if transaction.base_content_hash != self.content_hash {
             return Err(SessionError::ContentHashMismatch);
         }
-        let retained_checkpoint_keys = transaction.checkpoint_keys;
         let mut generation = transaction.generation;
         let mut prepared = prepare_candidate_runtime(&mut generation, transaction.runtime_key)
             .map_err(SessionError::RetainedEngine)?;
-        if let Err(error) = generation.preflight_terminal(&retained_checkpoint_keys) {
+        if let Err(error) = generation.preflight_boundary_lane() {
             generation.prepare_candidate_reject();
             if let Some(prepared) = prepared.take() {
                 prepared.reject();
@@ -2257,14 +2273,9 @@ impl<'store> Session<'store> {
             generation.finish_candidate_reject();
             return Err(SessionError::RetainedEngine(error));
         }
-        if let Err(error) = generation.prune_checkpoints(&retained_checkpoint_keys) {
-            generation.prepare_candidate_reject();
-            if let Some(prepared) = prepared.take() {
-                prepared.reject();
-            }
-            generation.finish_candidate_reject();
-            return Err(SessionError::RetainedEngine(error));
-        }
+        let checkpoint_count = generation
+            .boundary_lane_checkpoint_count()
+            .map_err(SessionError::RetainedEngine)?;
         // All fallible current-generation validation and root pruning happens
         // before either accepted metadata or the prior owner changes. The
         // current generation was constructed independently under its own
@@ -2289,7 +2300,7 @@ impl<'store> Session<'store> {
         let incoming = RetainedRevisionGeneration {
             revision: transaction.revision,
             generation,
-            checkpoint_keys: retained_checkpoint_keys,
+            checkpoint_count,
         };
         let acceptance = Timer::start();
         self.revision = transaction.revision;
@@ -2297,7 +2308,17 @@ impl<'store> Session<'store> {
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        self.history = transaction.history;
+        if let Some(selected) = transaction.restart_boundary {
+            let prefix = self
+                .history
+                .iter()
+                .position(|record| record.key == selected)
+                .map_or(0, |index| index.saturating_add(1));
+            self.history.truncate(prefix);
+            self.history.extend(transaction.history);
+        } else {
+            self.history = transaction.history;
+        }
         self.prior_generation = Some(incoming);
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;

@@ -5778,6 +5778,7 @@ impl World {
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;
         self.error_channel = snapshot.error_channel.clone();
+        self.reachable_state_identity = snapshot.reachable_state_identity;
 
         AcceptedWorldTail {
             head,

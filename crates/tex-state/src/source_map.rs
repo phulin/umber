@@ -817,6 +817,7 @@ impl SourceMap {
             .identities
             .begin_checkpoint_candidate(mark.identities)
             .expect("validated source identity mark remains rewindable");
+        self.reachable_state_identity = mark.reachable_state_identity;
         let next_pos = std::mem::replace(&mut self.next_pos, mark.next_pos);
         AcceptedSourceMapTail {
             regions,

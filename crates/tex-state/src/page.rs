@@ -560,9 +560,9 @@ struct PageCheckpointJournal {
 }
 
 pub(crate) struct AcceptedPageTail {
-    origin_timeline: u64,
     origin: usize,
     selected: usize,
+    prefix_frames: usize,
     accepted_rewind_work: u64,
     future: Vec<PageInverse>,
     future_frames: Vec<PageCheckpointFrame>,
@@ -896,7 +896,6 @@ impl PageBuilderState {
         debug_assert!(self.validates_checkpoint_mark(mark));
         debug_assert!(self.checkpoint_journal.candidate_root_frame.is_none());
         let origin = self.checkpoint_journal.applied;
-        let origin_timeline = self.checkpoint_journal.timeline;
         let origin_scalars = self.scalar_snapshot();
         let origin_semantic_roots = self.semantic_roots;
         let rewind_before = self.checkpoint_journal.replay_work;
@@ -922,10 +921,16 @@ impl PageBuilderState {
         self.rebuild_canonical_lane_values();
         self.restore_scalars(mark.scalars);
         self.semantic_roots = mark.semantic_roots;
-        let future = std::mem::take(&mut self.checkpoint_journal.inverses);
-        let future_frames = std::mem::take(&mut self.checkpoint_journal.frames);
-        self.checkpoint_journal.applied = 0;
-        self.checkpoint_journal.timeline = NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed);
+        let future = self.checkpoint_journal.inverses.split_off(mark.cursor);
+        let selected_frame = self
+            .checkpoint_journal
+            .frames
+            .iter()
+            .position(|frame| frame.id == mark.frame)
+            .expect("validated page checkpoint retains its frame");
+        let prefix_frames = selected_frame.saturating_add(1);
+        let future_frames = self.checkpoint_journal.frames.split_off(prefix_frames);
+        self.checkpoint_journal.applied = mark.cursor;
         let root_frame = self.checkpoint_journal.next_frame;
         self.checkpoint_journal.next_frame = self
             .checkpoint_journal
@@ -934,13 +939,13 @@ impl PageBuilderState {
             .expect("page candidate frame space exhausted");
         self.checkpoint_journal.frames.push(PageCheckpointFrame {
             id: root_frame,
-            cursor: 0,
+            cursor: mark.cursor,
         });
         self.checkpoint_journal.candidate_root_frame = Some(root_frame);
         AcceptedPageTail {
-            origin_timeline,
             origin,
             selected: mark.cursor,
+            prefix_frames,
             accepted_rewind_work,
             future,
             future_frames,
@@ -956,13 +961,13 @@ impl PageBuilderState {
     /// Rewinds candidate roots and drops every current-lineage inverse before
     /// the page-material arena releases candidate chunks.
     pub(crate) fn prepare_checkpoint_candidate_rejection(&mut self, tail: &AcceptedPageTail) {
-        while self.checkpoint_journal.applied > 0 {
+        while self.checkpoint_journal.applied > tail.selected {
             self.checkpoint_journal.applied -= 1;
             self.toggle_page_inverse(self.checkpoint_journal.applied);
         }
         self.checkpoint_journal.candidate_root_frame = None;
-        self.checkpoint_journal.inverses.clear();
-        self.checkpoint_journal.frames.clear();
+        self.checkpoint_journal.inverses.truncate(tail.selected);
+        self.checkpoint_journal.frames.truncate(tail.prefix_frames);
         self.insertion_lane.truncate(tail.insertion_root);
         self.mark_lane.truncate(tail.mark_root);
     }
@@ -970,16 +975,17 @@ impl PageBuilderState {
     /// Reattaches the accepted journal and redoes its roots only after the
     /// page-material arena has reattached the detached accepted chunks.
     pub(crate) fn finish_checkpoint_candidate_rejection(&mut self, mut tail: AcceptedPageTail) {
-        debug_assert!(self.checkpoint_journal.inverses.is_empty());
-        debug_assert!(self.checkpoint_journal.frames.is_empty());
-        debug_assert_eq!(self.checkpoint_journal.applied, 0);
+        debug_assert_eq!(self.checkpoint_journal.inverses.len(), tail.selected);
+        debug_assert_eq!(self.checkpoint_journal.frames.len(), tail.prefix_frames);
+        debug_assert_eq!(self.checkpoint_journal.applied, tail.selected);
         self.insertion_lane.append(&mut tail.insertion_lane_after);
         self.mark_lane.append(&mut tail.mark_lane_after);
         self.rebuild_canonical_lane_values();
-        self.checkpoint_journal.inverses = tail.future;
-        self.checkpoint_journal.frames = tail.future_frames;
+        self.checkpoint_journal.inverses.append(&mut tail.future);
+        self.checkpoint_journal
+            .frames
+            .append(&mut tail.future_frames);
         self.checkpoint_journal.applied = tail.selected;
-        self.checkpoint_journal.timeline = tail.origin_timeline;
         let redo_before = self.checkpoint_journal.replay_work;
         while self.checkpoint_journal.applied < tail.origin {
             let index = self.checkpoint_journal.applied;
