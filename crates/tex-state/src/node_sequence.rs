@@ -309,6 +309,15 @@ pub enum FrozenListRole {
 /// spill for their uncommon multi-cell source spelling.
 pub type DirectHighCellLineages = SmallVec<[DirectHighCellLineage; 1]>;
 
+/// Builds allocator-only lineage rows for an immutable mirrored source.
+///
+/// The returned values are compact transformation scratch.  They do not own
+/// or duplicate any node payload from `nodes`.
+#[must_use]
+pub fn borrowed_mirrored_high_cell_lineages(nodes: &[Node]) -> Vec<DirectHighCellLineages> {
+    mirrored_high_cell_lineages(nodes).0
+}
+
 /// Counts exact direct-cell allocation identities shared by two projections.
 #[must_use]
 pub fn direct_high_cell_overlap(

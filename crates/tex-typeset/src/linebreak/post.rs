@@ -20,18 +20,24 @@ pub fn post_line_break<S: TypesetState>(
 /// `materialize_next` accepts ownership of the previous line's node buffer,
 /// clears it, and fills it with the next line. Callers that consume one line
 /// before requesting another therefore pay for line storage only once.
-pub struct LineMaterializer {
-    semantic: ChannelCursor,
-    physical: ChannelCursor,
+pub struct LineMaterializer<'a> {
+    semantic: ChannelCursor<'a>,
+    physical: ChannelCursor<'a>,
     physical_breaks: Vec<BreakDecision>,
     actions: Vec<MaterializationAction>,
     breaks: Vec<BreakDecision>,
     line_no: usize,
     params: PostLineBreakParams,
+    par_fill_override: Option<GlueSpec>,
 }
 
-struct ChannelCursor {
-    nodes: std::vec::IntoIter<Node>,
+enum ChannelNodes<'a> {
+    Owned(std::vec::IntoIter<Node>),
+    Borrowed(core::slice::Iter<'a, Node>),
+}
+
+struct ChannelCursor<'a> {
+    nodes: ChannelNodes<'a>,
     high_cell_lineages: std::vec::IntoIter<DirectHighCellLineages>,
     position: usize,
     node_count: usize,
@@ -40,36 +46,64 @@ struct ChannelCursor {
     active_directions: Vec<Direction>,
 }
 
-impl LineMaterializer {
+impl<'a> LineMaterializer<'a> {
     #[must_use]
     pub fn new(
-        tape: ParagraphTape,
+        tape: ParagraphTape<'a>,
         breaks: Vec<BreakDecision>,
         params: PostLineBreakParams,
     ) -> Self {
         let ParagraphTape {
-            sequence,
+            source,
             materialization,
+            par_fill_override,
             ..
         } = tape;
-        let semantic_high_cell_lineages = sequence.semantic_high_cell_lineages().to_vec();
-        let physical_high_cell_lineages = sequence.physical_high_cell_lineages().to_vec();
-        let (semantic, physical, boundaries) = sequence.into_parts();
-        let physical_breaks = breaks
-            .iter()
-            .map(|decision| BreakDecision {
-                position: boundaries[decision.position.min(boundaries.len() - 1)],
-                ..*decision
-            })
-            .collect();
+        let (semantic, physical, semantic_lineages, physical_lineages, physical_breaks) =
+            match source {
+                super::ParagraphSource::Owned(sequence) => {
+                    let semantic_lineages = sequence.semantic_high_cell_lineages().to_vec();
+                    let physical_lineages = sequence.physical_high_cell_lineages().to_vec();
+                    let physical_breaks = breaks
+                        .iter()
+                        .map(|decision| BreakDecision {
+                            position: sequence
+                                .physical_boundary(decision.position)
+                                .expect("break position is a semantic boundary"),
+                            ..*decision
+                        })
+                        .collect();
+                    let (semantic, physical, _) = sequence.into_parts();
+                    (
+                        ChannelNodes::Owned(semantic.into_iter()),
+                        ChannelNodes::Owned(physical.into_iter()),
+                        semantic_lineages,
+                        physical_lineages,
+                        physical_breaks,
+                    )
+                }
+                super::ParagraphSource::BorrowedMirrored(nodes) => {
+                    let semantic_lineages =
+                        tex_state::node_sequence::borrowed_mirrored_high_cell_lineages(nodes);
+                    let physical_lineages = semantic_lineages.clone();
+                    (
+                        ChannelNodes::Borrowed(nodes.iter()),
+                        ChannelNodes::Borrowed(nodes.iter()),
+                        semantic_lineages,
+                        physical_lineages,
+                        breaks.clone(),
+                    )
+                }
+            };
         Self {
-            semantic: ChannelCursor::new(semantic, semantic_high_cell_lineages),
-            physical: ChannelCursor::new(physical, physical_high_cell_lineages),
+            semantic: ChannelCursor::new(semantic, semantic_lineages),
+            physical: ChannelCursor::new(physical, physical_lineages),
             physical_breaks,
             actions: materialization,
             breaks,
             line_no: 0,
             params,
+            par_fill_override,
         }
     }
 
@@ -106,13 +140,20 @@ impl LineMaterializer {
         let physical_high_cell_lineages = sequence.physical_high_cell_lineages().to_vec();
         let (semantic, physical) = sequence.take();
         Self {
-            physical: ChannelCursor::new(physical, physical_high_cell_lineages),
-            semantic: ChannelCursor::new(semantic, semantic_high_cell_lineages),
+            physical: ChannelCursor::new(
+                ChannelNodes::Owned(physical.into_iter()),
+                physical_high_cell_lineages,
+            ),
+            semantic: ChannelCursor::new(
+                ChannelNodes::Owned(semantic.into_iter()),
+                semantic_high_cell_lineages,
+            ),
             physical_breaks: breaks.clone(),
             actions,
             breaks,
             line_no: 0,
             params,
+            par_fill_override: None,
         }
     }
 
@@ -130,6 +171,7 @@ impl LineMaterializer {
             &decision,
             &self.params,
             Some(&self.actions),
+            self.par_fill_override,
             &mut line,
             &mut high_cell_lineages,
         );
@@ -141,6 +183,7 @@ impl LineMaterializer {
             &self.physical_breaks[self.line_no],
             &self.params,
             None,
+            self.par_fill_override,
             &mut physical_nodes,
             &mut physical_high_cell_lineages,
         );
@@ -164,12 +207,12 @@ impl LineMaterializer {
     }
 }
 
-impl ChannelCursor {
-    fn new(nodes: Vec<Node>, high_cell_lineages: Vec<DirectHighCellLineages>) -> Self {
+impl<'a> ChannelCursor<'a> {
+    fn new(nodes: ChannelNodes<'a>, high_cell_lineages: Vec<DirectHighCellLineages>) -> Self {
         let node_count = nodes.len();
         assert_eq!(node_count, high_cell_lineages.len());
         Self {
-            nodes: nodes.into_iter(),
+            nodes,
             high_cell_lineages: high_cell_lineages.into_iter(),
             position: 0,
             node_count,
@@ -180,12 +223,36 @@ impl ChannelCursor {
     }
 }
 
+impl ChannelNodes<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Owned(nodes) => nodes.len(),
+            Self::Borrowed(nodes) => nodes.len(),
+        }
+    }
+
+    fn next_owned(&mut self) -> Option<Node> {
+        match self {
+            Self::Owned(nodes) => nodes.next(),
+            Self::Borrowed(nodes) => nodes.next().cloned(),
+        }
+    }
+
+    fn first(&self) -> Option<&Node> {
+        match self {
+            Self::Owned(nodes) => nodes.as_slice().first(),
+            Self::Borrowed(nodes) => nodes.as_slice().first(),
+        }
+    }
+}
+
 fn materialize_channel<S: TypesetState>(
     state: &S,
-    cursor: &mut ChannelCursor,
+    cursor: &mut ChannelCursor<'_>,
     decision: &BreakDecision,
     params: &PostLineBreakParams,
     actions: Option<&[MaterializationAction]>,
+    par_fill_override: Option<GlueSpec>,
     line: &mut Vec<Node>,
     lineages: &mut Vec<DirectHighCellLineage>,
 ) {
@@ -228,6 +295,7 @@ fn materialize_channel<S: TypesetState>(
         decision,
         &params.empty_list,
         actions,
+        par_fill_override,
         (line, lineages),
     );
     cursor.pending_post = pending_post;
@@ -246,8 +314,8 @@ fn materialize_channel<S: TypesetState>(
         kind: GlueKind::RightSkip,
         leader: None,
     });
-    while cursor.nodes.as_slice().first().is_some_and(is_discardable) {
-        let _ = cursor.nodes.next();
+    while cursor.nodes.first().is_some_and(is_discardable) {
+        let _ = cursor.nodes.next_owned();
         let _ = cursor.high_cell_lineages.next();
         cursor.position += 1;
     }
@@ -301,7 +369,7 @@ pub fn post_line_break_owned<S: TypesetState>(
 fn push_owned_line_segment<S: TypesetState>(
     state: &S,
     source: (
-        &mut std::vec::IntoIter<Node>,
+        &mut ChannelNodes<'_>,
         &mut std::vec::IntoIter<DirectHighCellLineages>,
         &mut usize,
         usize,
@@ -310,6 +378,7 @@ fn push_owned_line_segment<S: TypesetState>(
     decision: &BreakDecision,
     empty_list: &tex_state::node_arena::PageListId,
     actions: Option<&[MaterializationAction]>,
+    par_fill_override: Option<GlueSpec>,
     output: (&mut Vec<Node>, &mut Vec<DirectHighCellLineage>),
 ) -> (Vec<Node>, Vec<DirectHighCellLineage>) {
     let (nodes, lineage_rows, position, node_count) = source;
@@ -318,7 +387,20 @@ fn push_owned_line_segment<S: TypesetState>(
     let mut post_lineages = Vec::new();
     while *position < end {
         let absolute = *position;
-        let node = nodes.next().expect("paragraph break position is in bounds");
+        let mut node = nodes
+            .next_owned()
+            .expect("paragraph break position is in bounds");
+        if let (
+            Some(spec),
+            Node::Glue {
+                spec: node_spec,
+                kind: GlueKind::ParFillSkip,
+                ..
+            },
+        ) = (par_fill_override, &mut node)
+        {
+            *node_spec = spec;
+        }
         let node_lineages = lineage_rows
             .next()
             .expect("paragraph lineage position is in bounds");

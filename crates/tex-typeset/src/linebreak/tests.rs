@@ -3214,6 +3214,72 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
 }
 
 #[test]
+fn borrowed_paragraph_tape_materializes_from_immutable_source_and_overlays_par_fill() {
+    let mut universe = TestState::new();
+    let empty = universe.publish_page_nodes(&[]);
+    let original = GlueSpec {
+        width: sp(3),
+        stretch: sp(1),
+        stretch_order: Order::Normal,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    };
+    let replacement = GlueSpec {
+        width: sp(9),
+        stretch: sp(2),
+        ..GlueSpec::ZERO
+    };
+    let nodes = vec![
+        rule(1),
+        Node::Glue {
+            spec: original,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+        Node::Penalty(-10_000),
+    ];
+    let mut tape = ParagraphTape::analyze_borrowed(&universe, &nodes, &params(100));
+    tape.replace_last_par_fill(replacement);
+    let mut materializer = LineMaterializer::new(
+        tape,
+        vec![BreakDecision {
+            position: nodes.len(),
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        }],
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: GlueSpec::ZERO,
+            right_skip: GlueSpec::ZERO,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+    let line = materializer
+        .materialize_next(&universe, Vec::new())
+        .expect("borrowed line materializes");
+
+    assert!(matches!(
+        &nodes[1],
+        Node::Glue { spec, .. } if *spec == original
+    ));
+    assert!(line.nodes.iter().any(|node| matches!(
+        node,
+        Node::Glue {
+            spec,
+            kind: GlueKind::ParFillSkip,
+            ..
+        } if *spec == replacement
+    )));
+}
+
+#[test]
 fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() {
     let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;

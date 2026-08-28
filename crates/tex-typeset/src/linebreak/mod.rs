@@ -180,7 +180,7 @@ pub use tex_state::{
 pub struct LineBreakResult {
     pub breaks: Vec<BreakDecision>,
     pub demerits: i32,
-    pub tape: ParagraphTape,
+    pub tape: ParagraphTape<'static>,
     pub last_line_fill: Option<GlueSpec>,
     pub memory: BreakMemoryPlan,
 }
@@ -191,10 +191,17 @@ pub struct LineBreakResult {
 /// channels and values derived from them.  Break searches, diagnostics, and
 /// post-line-break materialization all consume this same analysis.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ParagraphTape {
-    sequence: NodeSequence,
+pub struct ParagraphTape<'a> {
+    source: ParagraphSource<'a>,
     break_sites: Vec<BreakSite>,
     materialization: Vec<MaterializationAction>,
+    par_fill_override: Option<GlueSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ParagraphSource<'a> {
+    Owned(NodeSequence),
+    BorrowedMirrored(&'a [Node]),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -219,7 +226,7 @@ enum MaterializationAction {
     BreakMath,
 }
 
-impl ParagraphTape {
+impl ParagraphTape<'static> {
     #[must_use]
     pub fn analyze<S: TypesetState>(
         state: &S,
@@ -245,36 +252,68 @@ impl ParagraphTape {
             .collect();
         let materialization = analyzer.materialization;
         Self {
-            sequence,
+            source: ParagraphSource::Owned(sequence),
             break_sites,
             materialization,
+            par_fill_override: None,
+        }
+    }
+}
+
+impl<'a> ParagraphTape<'a> {
+    /// Analyzes an immutable paragraph directly through its owner's borrow.
+    ///
+    /// The source payload remains outside the tape and is never cloned merely
+    /// to run breakpoint search or post-line materialization.
+    #[must_use]
+    pub fn analyze_borrowed<S: TypesetState>(
+        state: &S,
+        nodes: &'a [Node],
+        params: &LineBreakParams,
+    ) -> Self {
+        let mut analyzer = LegalBreakpoints::new(state, nodes, params);
+        let break_sites = analyzer
+            .by_ref()
+            .map(|site| {
+                let display_end = trace_display_end(state, nodes, site);
+                BreakSite {
+                    breakpoint: site,
+                    trace: TraceSpan {
+                        display_end,
+                        next_start: trace_display_next_start(state, nodes, site, display_end),
+                        display_suffix: trace_display_suffix(nodes, site),
+                        breakpoint: trace_breakpoint(nodes, site),
+                    },
+                }
+            })
+            .collect();
+        let materialization = analyzer.materialization;
+        Self {
+            source: ParagraphSource::BorrowedMirrored(nodes),
+            break_sites,
+            materialization,
+            par_fill_override: None,
         }
     }
 
     #[must_use]
     pub fn nodes(&self) -> &[Node] {
-        self.sequence.semantic()
+        match &self.source {
+            ParagraphSource::Owned(sequence) => sequence.semantic(),
+            ParagraphSource::BorrowedMirrored(nodes) => nodes,
+        }
     }
 
     pub fn replace_last_par_fill(&mut self, spec: GlueSpec) {
-        let (mut semantic, physical, boundaries) = std::mem::take(&mut self.sequence).into_parts();
-        if let Some(Node::Glue { spec: par_fill, .. }) = semantic.iter_mut().rev().find(|node| {
-            matches!(
-                node,
-                Node::Glue {
-                    kind: tex_state::node::GlueKind::ParFillSkip,
-                    ..
-                }
-            )
-        }) {
-            *par_fill = spec;
-        }
-        self.sequence = NodeSequence::from_projection(semantic, physical, boundaries);
+        self.par_fill_override = Some(spec);
     }
 
     #[must_use]
     pub fn into_semantic_nodes(self) -> Vec<Node> {
-        self.sequence.into_semantic()
+        match self.source {
+            ParagraphSource::Owned(sequence) => sequence.into_semantic(),
+            ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
+        }
     }
 }
 
@@ -377,7 +416,7 @@ where
     plan_with_tape(plan, tape)
 }
 
-pub fn plan_with_tape(plan: BreakPlan, tape: ParagraphTape) -> LineBreakResult {
+pub fn plan_with_tape(plan: BreakPlan, tape: ParagraphTape<'static>) -> LineBreakResult {
     LineBreakResult {
         breaks: plan.breaks,
         demerits: plan.demerits,
@@ -402,7 +441,7 @@ pub fn try_line_break_without_hyphenation<S: TypesetState>(
 
 pub fn try_tape_without_hyphenation<S: TypesetState>(
     state: &S,
-    tape: &ParagraphTape,
+    tape: &ParagraphTape<'_>,
     params: &LineBreakParams,
 ) -> Option<BreakPlan> {
     (params.pretolerance >= 0)
@@ -421,7 +460,7 @@ pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
 
 pub fn try_tape_without_hyphenation_traced<S: TypesetState>(
     state: &S,
-    tape: &ParagraphTape,
+    tape: &ParagraphTape<'_>,
     params: &LineBreakParams,
 ) -> (Option<BreakPlan>, Vec<LineBreakTrace>) {
     let mut trace = Vec::new();
@@ -458,7 +497,7 @@ pub fn line_break_hyphenated<S: TypesetState>(
 
 pub fn break_hyphenated_tape<S: TypesetState>(
     state: &S,
-    tape: &ParagraphTape,
+    tape: &ParagraphTape<'_>,
     params: &LineBreakParams,
 ) -> BreakPlan {
     let second = run_pass(
@@ -490,7 +529,7 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
 
 pub fn break_hyphenated_tape_traced<S: TypesetState>(
     state: &S,
-    tape: &ParagraphTape,
+    tape: &ParagraphTape<'_>,
     params: &LineBreakParams,
     mut trace: Vec<LineBreakTrace>,
 ) -> (BreakPlan, Vec<LineBreakTrace>) {
@@ -677,7 +716,7 @@ struct Breakpoint {
 
 fn run_pass<S: TypesetState>(
     state: &S,
-    tape: &ParagraphTape,
+    tape: &ParagraphTape<'_>,
     params: &LineBreakParams,
     tolerance: i32,
     emergency: bool,
