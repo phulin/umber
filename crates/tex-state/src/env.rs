@@ -1774,12 +1774,6 @@ impl<G> DenseState<G> {
         self.journal().retained_bytes()
     }
 
-    #[cfg(feature = "profiling")]
-    pub(crate) fn record_journal_checkpoint(&mut self) {
-        let group_depth = self.groups.len();
-        self.journal_mut().record_checkpoint(group_depth);
-    }
-
     #[must_use]
     pub(crate) fn allocated_overflow_pages(&self) -> usize {
         self.counts.allocated_overflow_pages()

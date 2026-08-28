@@ -669,28 +669,24 @@ fn command_fork_reject_and_accept_preserve_prefix_marks_without_copying_history(
 
 #[cfg(feature = "profiling")]
 #[test]
-fn warmed_8192_capture_prune_cycles_allocate_no_checkpoint_roots() {
+fn packed_8192_capture_cycles_append_fixed_marks_without_copying_roots() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
         let warm = command
             .publish_summary(universe)
             .expect("warm summary publishes");
         drop(warm);
-        let owner = tex_state::measurement::HotCoreAllocationOwner::EvidencePublication;
-        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        {
-            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            for _ in 0..8_192 {
-                let summary = command
-                    .publish_summary(universe)
-                    .expect("summary publishes");
-                drop(summary);
-            }
+        let before = command.timeline.arena.counters();
+        for _ in 0..8_192 {
+            let summary = command
+                .publish_summary(universe)
+                .expect("summary publishes");
+            drop(summary);
         }
-        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let after = command.timeline.arena.counters();
 
-        assert_eq!(after.calls - before.calls, 0);
-        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(after.new_semantic_nodes - before.new_semantic_nodes, 8_192);
+        assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 0);
         assert_eq!(command.timeline.live_frame_count(), 8_193);
     });
 }

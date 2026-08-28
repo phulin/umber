@@ -240,13 +240,6 @@ pub struct SaveJournalCensus {
     pub bytes_moved_by_growth: u64,
     pub maximum_group_depth: u64,
     pub entries_at_maximum_group_depth: u64,
-    pub checkpoints: u64,
-    pub checkpoint_mutations: u64,
-    pub checkpoint_unique_cells: u64,
-    pub maximum_checkpoint_mutations: u64,
-    pub maximum_checkpoint_unique_cells: u64,
-    pub checkpoints_with_open_groups: u64,
-    pub maximum_checkpoint_group_depth: u64,
 }
 
 /// Physical node-graph events, separated from TeX logical aliasing.
@@ -462,13 +455,6 @@ static SAVE_JOURNAL_GROWTHS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_BYTES_MOVED_BY_GROWTH: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MAXIMUM_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_ENTRIES_AT_MAXIMUM_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_CHECKPOINTS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_CHECKPOINT_MUTATIONS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_CHECKPOINT_UNIQUE_CELLS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH: AtomicU64 = AtomicU64::new(0);
 static NODE_ROWS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
 static NODES_PUBLISHED: AtomicU64 = AtomicU64::new(0);
 static NODE_COORDINATE_TRANSFERS: AtomicU64 = AtomicU64::new(0);
@@ -603,18 +589,6 @@ pub(crate) fn record_save_journal_census(census: SaveJournalCensus) {
     SAVE_JOURNAL_MAXIMUM_GROUP_DEPTH.fetch_max(census.maximum_group_depth, Ordering::Relaxed);
     SAVE_JOURNAL_ENTRIES_AT_MAXIMUM_GROUP_DEPTH
         .fetch_max(census.entries_at_maximum_group_depth, Ordering::Relaxed);
-    SAVE_JOURNAL_CHECKPOINTS.fetch_max(census.checkpoints, Ordering::Relaxed);
-    SAVE_JOURNAL_CHECKPOINT_MUTATIONS.fetch_max(census.checkpoint_mutations, Ordering::Relaxed);
-    SAVE_JOURNAL_CHECKPOINT_UNIQUE_CELLS
-        .fetch_max(census.checkpoint_unique_cells, Ordering::Relaxed);
-    SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS
-        .fetch_max(census.maximum_checkpoint_mutations, Ordering::Relaxed);
-    SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS
-        .fetch_max(census.maximum_checkpoint_unique_cells, Ordering::Relaxed);
-    SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS
-        .fetch_max(census.checkpoints_with_open_groups, Ordering::Relaxed);
-    SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH
-        .fetch_max(census.maximum_checkpoint_group_depth, Ordering::Relaxed);
 }
 
 #[must_use]
@@ -648,17 +622,6 @@ pub fn save_journal_census() -> SaveJournalCensus {
         bytes_moved_by_growth: SAVE_JOURNAL_BYTES_MOVED_BY_GROWTH.load(Ordering::Relaxed),
         maximum_group_depth: SAVE_JOURNAL_MAXIMUM_GROUP_DEPTH.load(Ordering::Relaxed),
         entries_at_maximum_group_depth: SAVE_JOURNAL_ENTRIES_AT_MAXIMUM_GROUP_DEPTH
-            .load(Ordering::Relaxed),
-        checkpoints: SAVE_JOURNAL_CHECKPOINTS.load(Ordering::Relaxed),
-        checkpoint_mutations: SAVE_JOURNAL_CHECKPOINT_MUTATIONS.load(Ordering::Relaxed),
-        checkpoint_unique_cells: SAVE_JOURNAL_CHECKPOINT_UNIQUE_CELLS.load(Ordering::Relaxed),
-        maximum_checkpoint_mutations: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_MUTATIONS
-            .load(Ordering::Relaxed),
-        maximum_checkpoint_unique_cells: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_UNIQUE_CELLS
-            .load(Ordering::Relaxed),
-        checkpoints_with_open_groups: SAVE_JOURNAL_CHECKPOINTS_WITH_OPEN_GROUPS
-            .load(Ordering::Relaxed),
-        maximum_checkpoint_group_depth: SAVE_JOURNAL_MAXIMUM_CHECKPOINT_GROUP_DEPTH
             .load(Ordering::Relaxed),
     }
 }

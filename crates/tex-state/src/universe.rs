@@ -2467,8 +2467,6 @@ impl<G> Universe<G> {
         external_page_roots: bool,
         wants_reachable_state_identity: bool,
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
-        #[cfg(feature = "profiling")]
-        self.live_state_mut()?.record_journal_checkpoint();
         if !(external_page_roots || self.page_region.builder().retains_page_node_handles()) {
             self.release_unretained_page_suffix()?;
         }

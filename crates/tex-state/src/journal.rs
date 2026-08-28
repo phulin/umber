@@ -348,15 +348,6 @@ struct SaveJournalProfile {
     group_depth: usize,
     maximum_group_depth: usize,
     entries_at_maximum_group_depth: usize,
-    interval_cells: std::collections::HashSet<StateCell>,
-    interval_mutations: u64,
-    checkpoints: u64,
-    checkpoint_mutations: u64,
-    checkpoint_unique_cells: u64,
-    maximum_checkpoint_mutations: u64,
-    maximum_checkpoint_unique_cells: u64,
-    checkpoints_with_open_groups: u64,
-    maximum_checkpoint_group_depth: usize,
 }
 
 impl<G> SaveJournal<G> {
@@ -1244,8 +1235,6 @@ impl<G> SaveJournal<G> {
             StateWord::Code(_) => 6,
         };
         self.profile.mutation_words[word] = self.profile.mutation_words[word].saturating_add(1);
-        self.profile.interval_mutations = self.profile.interval_mutations.saturating_add(1);
-        self.profile.interval_cells.insert(mutation.cell());
     }
 
     #[cfg(feature = "profiling")]
@@ -1280,35 +1269,6 @@ impl<G> SaveJournal<G> {
     #[cfg(feature = "profiling")]
     fn record_profile_peak(&mut self) {
         self.profile.peak_entries = self.profile.peak_entries.max(self.retained_len());
-    }
-
-    #[cfg(feature = "profiling")]
-    pub(crate) fn record_checkpoint(&mut self, group_depth: usize) {
-        self.profile.checkpoints = self.profile.checkpoints.saturating_add(1);
-        self.profile.checkpoint_mutations = self
-            .profile
-            .checkpoint_mutations
-            .saturating_add(self.profile.interval_mutations);
-        self.profile.checkpoint_unique_cells = self
-            .profile
-            .checkpoint_unique_cells
-            .saturating_add(u64::try_from(self.profile.interval_cells.len()).unwrap_or(u64::MAX));
-        self.profile.maximum_checkpoint_mutations = self
-            .profile
-            .maximum_checkpoint_mutations
-            .max(self.profile.interval_mutations);
-        self.profile.maximum_checkpoint_unique_cells = self
-            .profile
-            .maximum_checkpoint_unique_cells
-            .max(u64::try_from(self.profile.interval_cells.len()).unwrap_or(u64::MAX));
-        if group_depth != 0 {
-            self.profile.checkpoints_with_open_groups =
-                self.profile.checkpoints_with_open_groups.saturating_add(1);
-            self.profile.maximum_checkpoint_group_depth =
-                self.profile.maximum_checkpoint_group_depth.max(group_depth);
-        }
-        self.profile.interval_cells.clear();
-        self.profile.interval_mutations = 0;
     }
 }
 
@@ -1354,27 +1314,6 @@ impl<G> Drop for SaveJournal<G> {
                 .unwrap_or(u64::MAX),
             entries_at_maximum_group_depth: u64::try_from(
                 self.profile.entries_at_maximum_group_depth,
-            )
-            .unwrap_or(u64::MAX),
-            checkpoints: self.profile.checkpoints,
-            checkpoint_mutations: self
-                .profile
-                .checkpoint_mutations
-                .saturating_add(self.profile.interval_mutations),
-            checkpoint_unique_cells: self.profile.checkpoint_unique_cells.saturating_add(
-                u64::try_from(self.profile.interval_cells.len()).unwrap_or(u64::MAX),
-            ),
-            maximum_checkpoint_mutations: self
-                .profile
-                .maximum_checkpoint_mutations
-                .max(self.profile.interval_mutations),
-            maximum_checkpoint_unique_cells: self
-                .profile
-                .maximum_checkpoint_unique_cells
-                .max(u64::try_from(self.profile.interval_cells.len()).unwrap_or(u64::MAX)),
-            checkpoints_with_open_groups: self.profile.checkpoints_with_open_groups,
-            maximum_checkpoint_group_depth: u64::try_from(
-                self.profile.maximum_checkpoint_group_depth,
             )
             .unwrap_or(u64::MAX),
         });
