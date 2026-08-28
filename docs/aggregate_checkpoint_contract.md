@@ -75,10 +75,11 @@ the slot to the free list; detached evidence remains addressable in its own
 rows and no checkpoint payload is copied. The release produces one typed
 transaction that validates all owner-relative marks before it removes the
 command frame and page-history row. A command frame uses the same
-generation-checked reusable-row discipline. Protected `JobStart` remains an
-exact head-relative command and save-journal cursor, so those two journal
-prefixes conservatively report zero reclaimed chunks until that anchor is
-materialized independently.
+generation-checked reusable-row discipline. `JobStart` is an exact frozen
+format image plus explicit session metadata, not a live command or save-journal
+cursor. Removing a restart root therefore advances both journal families to
+the earliest surviving live floor, returns every whole prefix chunk to their
+pools, and invalidates older physical marks while keeping that floor exact.
 
 The page owner follows the same physical-prefix rule. Selecting a retained
 `PageMaterial` mark keeps the accepted prefix frames and list coordinates in

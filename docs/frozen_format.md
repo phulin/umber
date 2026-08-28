@@ -437,17 +437,16 @@ Validation is complete, ordered, and bounded:
 6. validate graph topology and required roots; and
 7. publish the materialized stores as one destination generation.
 
-At session admission, the detached image is consumed. Encoded container bytes
-are dropped before destination construction; decoded payload rows are drained
-or moved as their final runtime columns are installed, and no decoded image
-owner survives successful materialization. The session captures the
-generation's pre-job `JobStart` checkpoint and publishes it as the ordinary
-initial accepted generation. First and later document candidates use the same
-exclusive prior/current checkpoint fork and rollback path; the first accepted
-document retires the format generation normally. There is no permanent image
-owner or format-specific job overlay in the session. The immutable-base and
-mutable-overlay terminology used by the format decoder describes storage
-within the one materialized generation, not an additional runtime owner.
+At session admission, the detached image's validated encoded bytes become the
+exact frozen `JobStart` owner. Materialization decodes those bytes into fresh
+destination-local runtime columns and publishes complete dense, definition,
+token, glue, font, hyphenation, PDF, and page identities. The session binds the
+image to explicit command-profile, compatibility, and job-clock metadata; a
+mismatched materialization fails before execution. Ordinary document
+candidates still use the exclusive prior/current checkpoint fork and rollback
+path, but `JobStart` fallback cold-loads a new independent generation from the
+frozen bytes. The live generation therefore retains no format-specific overlay
+or bootstrap cursor, and its journal prefixes can be physically reclaimed.
 
 Counts and offsets are widened before checked arithmetic and converted to
 host `usize` only after proving they fit the actual byte slice. Validation
@@ -541,7 +540,7 @@ packed handles to immutable primitive rows. Source-built and loaded-format
 paths issue those handles from the same deterministic registry order; handle
 resolution never addresses the restored mutable meaning cells. Because the
 handles are process-local accelerators and are neither captured nor encoded,
-this optimization does not change schema 11, its ABI fingerprint, or its
+this optimization does not change schema 12, its ABI fingerprint, or its
 lookup-configuration fingerprint.
 
 ## Migration from schemas 9 and 10

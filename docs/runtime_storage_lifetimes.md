@@ -901,15 +901,16 @@ physical timeline identity or rebranding retained prefix marks. Shared
 definition and stored-token carriers keep their existing private non-atomic
 owners; no public id is retargeted and no third lineage is created.
 
-A loaded format enters this same model as the initial accepted generation.
-Admission consumes the validated detached image, drops its encoded bytes
-before construction, drains or moves every decoded row into one generation,
-and retains its pre-job `JobStart` checkpoint in the prior slot. The first
-document candidate therefore uses the same exclusive checkpoint fork as every
-later candidate. Rejection leaves that generation unchanged; the first
-acceptance retires it through the ordinary prior/current swap. There is no
-format-owned third generation, permanent image owner, complete decoded/live
-overlap, or format-specific runtime lookup layer.
+A loaded format enters this model as one exact frozen `JobStart` image, not an
+initial accepted runtime generation. The session retains the immutable encoded
+bytes plus explicit profile, compatibility, and job-clock metadata. First-job
+and later JobStart fallback decode into an independent current generation;
+decoded staging disappears after atomic publication. Ordinary accepted
+boundary restarts still use the exclusive checkpoint fork. There is no
+format-owned third runtime generation, permanent decoded overlay, complete
+decoded/live overlap, or format-specific runtime lookup layer. The separately
+charged image replaces the live bootstrap cursor, allowing command and state
+journal prefix chunks to be released and physically reused.
 
 Rejection consumes the exclusive lease, clears the current store slot, and
 leaves prior unchanged. Acceptance first requires quiescent scratch and

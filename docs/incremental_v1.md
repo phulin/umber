@@ -556,16 +556,23 @@ The public `AcceptedOutput` copies only materialized effects, committed
 artifacts, detached DVI plans, and telemetry. It never copies a
 `BoundaryRecord` or `EngineCheckpoint`; restart history is visible only through
 the live session and cannot be kept alive accidentally by a published output.
-`JobStart` and the newest boundary are protected, so the checkpoint-root total
-may exceed the requested budget; the reported overage makes the budget
-explicitly soft rather than silently discarding the only useful roots.
+The newest live boundary is protected, so the checkpoint-root total may exceed
+the requested budget; the reported overage makes the budget explicitly soft
+rather than silently discarding the only useful live root. `JobStart` remains
+available through its separately charged frozen image and explicit session
+metadata, not through a live checkpoint cursor.
 
 When charged checkpoint-root retention exceeds the budget, the session evicts
 restart roots in this deterministic order:
 
 1. oldest `OuterParagraphEnd` records first;
 2. oldest non-final `ShipoutComplete` records next; and
-3. never `JobStart` or the newest boundary while that generation is accepted.
+3. never the newest live boundary while that generation is accepted.
+
+`JobStart` schedule evidence is retained independently of this root-pruning
+order. A fallback materializes a fresh generation from the frozen anchor, so
+releasing live boundaries can advance command, dense-state, logical-stack, and
+save-journal floors and reuse their physical prefix chunks.
 
 Cold and replacement candidates apply the same policy as each named boundary
 is published. The live generation charge is the opaque lower bound until the
