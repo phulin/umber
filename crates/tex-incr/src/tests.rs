@@ -360,6 +360,55 @@ fn loaded_format_checkpoint_survives_rejection_and_seeds_later_revisions() {
 }
 
 #[test]
+fn loaded_format_node_rows_publish_with_job_start_identity_and_survive_the_session() {
+    let mut format = session(RevisionId::new(1), r"\setbox0=\hbox{\penalty123}\dump");
+    format.set_utf8_input_as_bytes(true);
+    let format = format.cold().expect("node-bearing format construction");
+    let image = DetachedFormatImage::try_from_bytes(
+        format
+            .format_dump()
+            .expect("node-bearing format dump")
+            .image
+            .as_bytes()
+            .to_vec(),
+    )
+    .expect("detached node-bearing format image");
+
+    let source = r"\setbox1=\copy0 \message{first}\end";
+    let mut loaded = session(RevisionId::new(1), source);
+    loaded.set_utf8_input_as_bytes(true);
+    loaded
+        .set_format_image(image)
+        .expect("node-bearing format checkpoint admission");
+    let first = loaded.cold().expect("first loaded-format document");
+    assert!(terminal_effect_text(&first).contains("first"));
+    assert_eq!(loaded.history()[0].key().boundary, EngineBoundary::JobStart);
+
+    let insertion = source.find("\\end").expect("end command");
+    let second = loaded
+        .advance(
+            RevisionId::new(2),
+            edit(
+                &loaded,
+                insertion..insertion,
+                r"\setbox2=\copy0 \message{second}",
+            ),
+        )
+        .expect("later revision reuses the retained loaded-format JobStart");
+    let terminal = terminal_effect_text(&second);
+    assert!(terminal.contains("first"), "{terminal}");
+    assert!(terminal.contains("second"), "{terminal}");
+    assert_eq!(
+        second.reuse.restart_boundary,
+        Some(BoundaryKey {
+            position: 0,
+            boundary: EngineBoundary::JobStart,
+            ordinal: 0,
+        })
+    );
+}
+
+#[test]
 fn semantic_edit_matches_a_fresh_cold_execution() {
     let original = page_source(10);
     let replacement = page_source(24);

@@ -282,6 +282,16 @@ impl<'store> RetainedStateGeneration<'store> {
         world: World,
         image: DetachedFormatImage,
     ) -> Result<Self, FormatError> {
+        Self::from_format_owned_with_page_node_identity_demand(store, world, image, false)
+    }
+
+    #[doc(hidden)]
+    pub fn from_format_owned_with_page_node_identity_demand(
+        store: ReachabilityStore,
+        world: World,
+        image: DetachedFormatImage,
+        wants_page_node_semantic_identity: bool,
+    ) -> Result<Self, FormatError> {
         #[cfg(feature = "profiling")]
         let _allocation_scope = crate::measurement::hot_core_allocation_scope(
             crate::measurement::HotCoreAllocationOwner::ColdMaterialization,
@@ -290,8 +300,13 @@ impl<'store> RetainedStateGeneration<'store> {
             FormatError::InvalidState(format!("session epoch is not available: {error:?}"))
         })?;
         let generation = Generation::<PhysicalGenerationCoordinate>::new();
-        let mut universe =
-            crate::format::materialize_retained_format(interner, generation, world, image)?;
+        let mut universe = crate::format::materialize_retained_format(
+            interner,
+            generation,
+            world,
+            image,
+            wants_page_node_semantic_identity,
+        )?;
         drop(universe.release_session_epoch());
         let physical = PhysicalStateGeneration {
             incarnation: next_incarnation(),

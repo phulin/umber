@@ -1904,12 +1904,14 @@ impl<'store> Session<'store> {
             !self.candidate_lease.is_claimed(),
             "format admission precedes candidate construction"
         );
-        let mut generation = tex_exec::RetainedEngineGeneration::from_format_owned(
-            self.reachability_store.clone(),
-            World::memory_with_clock(self.job_clock),
-            image,
-        )
-        .map_err(SessionError::Format)?;
+        let mut generation =
+            tex_exec::RetainedEngineGeneration::from_format_owned_with_page_node_identity_demand(
+                self.reachability_store.clone(),
+                World::memory_with_clock(self.job_clock),
+                image,
+                true,
+            )
+            .map_err(SessionError::Format)?;
         let checkpoint = generation
             .with_admitted(PublishInitialFormatCheckpoint {
                 profile: self.effective_command_profile(),

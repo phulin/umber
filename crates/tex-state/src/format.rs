@@ -1177,9 +1177,13 @@ pub(crate) fn materialize_retained_format<G>(
     generation: crate::generation::Generation<G>,
     world: World,
     image: DetachedFormatImage,
+    wants_page_node_semantic_identity: bool,
 ) -> Result<Universe<G>, FormatError> {
     let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
+    if wants_page_node_semantic_identity {
+        universe.page_nodes.enable_semantic_identity();
+    }
     let DetachedFormatImage { bytes, decoded } = image;
     drop(bytes);
     let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;

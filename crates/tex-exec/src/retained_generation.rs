@@ -468,8 +468,23 @@ impl<'store> RetainedEngineGeneration<'store> {
         world: World,
         image: DetachedFormatImage,
     ) -> Result<Self, FormatError> {
+        Self::from_format_owned_with_page_node_identity_demand(store, world, image, false)
+    }
+
+    #[doc(hidden)]
+    pub fn from_format_owned_with_page_node_identity_demand(
+        store: ReachabilityStore,
+        world: World,
+        image: DetachedFormatImage,
+        wants_page_node_semantic_identity: bool,
+    ) -> Result<Self, FormatError> {
         let generation = next_generation();
-        let mut state = RetainedStateGeneration::from_format_owned(store, world, image)?;
+        let mut state = RetainedStateGeneration::from_format_owned_with_page_node_identity_demand(
+            store,
+            world,
+            image,
+            wants_page_node_semantic_identity,
+        )?;
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,
