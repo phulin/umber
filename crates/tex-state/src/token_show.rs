@@ -351,10 +351,46 @@ pub fn append_token_show_text<S: TokenDisplayState + ?Sized>(
     }
 }
 
-fn append_non_character_token_text<S: TokenDisplayState + ?Sized>(
+trait TokenTextSink {
+    fn push(&mut self, ch: char);
+    fn push_str(&mut self, text: &str);
+}
+
+impl TokenTextSink for String {
+    fn push(&mut self, ch: char) {
+        String::push(self, ch);
+    }
+
+    fn push_str(&mut self, text: &str) {
+        String::push_str(self, text);
+    }
+}
+
+struct SelectorTextSink<'a> {
+    text: &'a mut String,
+    newlinechar: Option<char>,
+}
+
+impl TokenTextSink for SelectorTextSink<'_> {
+    fn push(&mut self, ch: char) {
+        if Some(ch) == self.newlinechar {
+            self.text.push('\n');
+        } else {
+            append_tex_print_char(ch, self.text);
+        }
+    }
+
+    fn push_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.push(ch);
+        }
+    }
+}
+
+fn append_non_character_token_text<S: TokenDisplayState + ?Sized, T: TokenTextSink>(
     stores: &S,
     token: Token,
-    text: &mut String,
+    text: &mut T,
 ) {
     match token {
         Token::Cs(symbol) => {
@@ -434,13 +470,32 @@ pub fn append_token_selector_text<S: TokenDisplayState + ?Sized>(
     newlinechar: Option<char>,
     text: &mut String,
 ) {
-    let mut raw = String::new();
-    append_token_string_text(stores, token, &mut raw);
-    for ch in raw.chars() {
-        if Some(ch) == newlinechar {
-            text.push('\n');
-        } else {
-            append_tex_print_char(ch, text);
+    let mut sink = SelectorTextSink { text, newlinechar };
+    if let Token::Char { ch, cat } = token {
+        sink.push(ch);
+        if cat == Catcode::Parameter {
+            sink.push(ch);
+        }
+    } else {
+        append_non_character_token_text(stores, token, &mut sink);
+        let name = match token {
+            Token::Cs(symbol) => {
+                if stores.display_control_sequence_kind(symbol)
+                    == Some(ControlSequenceKind::ActiveCharacter)
+                {
+                    return;
+                }
+                stores.display_resolve(symbol).unwrap_or("")
+            }
+            Token::Frozen(_) => stores
+                .display_frozen_primitive_name(token)
+                .unwrap_or("endtemplate"),
+            Token::Char { .. } | Token::Param(_) => return,
+        };
+        let mut chars = name.chars();
+        match (chars.next(), chars.next()) {
+            (Some(ch), None) if stores.display_catcode(ch) != Catcode::Letter => {}
+            _ => sink.push(' '),
         }
     }
 }

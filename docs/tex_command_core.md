@@ -2515,6 +2515,17 @@ Only TeX's real backup path or typed resource suspension consumes it. This
 keeps ordinary collection destination-directed without a returned-command
 handoff, a heap indirection, or generation-long retention.
 
+The parameter and replacement sinks are also the only source for TeX82
+§306's partial runaway display. A scanner episode records the deferred-
+diagnostic cursor at entry and retains it with those sinks across resource
+suspension. Completion first checks only that episode's diagnostic suffix. An
+ordinary successful scan returns without constructing, copying, or rendering
+diagnostic tokens; when EOF or outer-command recovery has actually published
+the matching runaway report, completion borrows the two scanner slices and
+streams them once, with the synthetic `->` separator, into the report's final
+selector-aware string before the attempt scope retires. There is no parallel
+diagnostic token buffer or success-path recovery fast path.
+
 Tokens returned by `\unexpanded` or token-list `\the` have no permanent
 suppression metadata. If they later re-enter ordinary input, ordinary
 `get_x_token` expands them.

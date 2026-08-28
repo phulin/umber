@@ -330,6 +330,17 @@ backup or resource suspension moves the command out, and suspension moves it
 directly into the typed collector continuation. The destination therefore
 does not retain commands across a generation or act as a hidden result cache.
 
+The same scanner frame retains the deferred-diagnostic cursor established
+when its parameter and replacement sinks opened. Successful completion finds
+no episode-owned runaway report and returns without allocating, copying, or
+rendering diagnostic context. If EOF or outer-validity recovery did publish a
+report, completion borrows those existing sinks before their scope retires and
+walks each word once into the report's final selector-aware partial string,
+carrying the macro match character across the synthetic `->` separator. No
+diagnostic token vector, second token traversal, or success-path string exists;
+resource suspension retains only the sinks and cursor already owned by the
+scanner frame.
+
 Multi-child primitives require a caller frame of their own. For example,
 `\pdfstrcmp` stores whether its left or right expanded scan owns the child; the
 right phase also retains the completed left attempt-list coordinate. A retry

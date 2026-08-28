@@ -149,6 +149,12 @@ struct ScanToksSinks {
 pub(crate) struct PendingScanToks<G> {
     scope: crate::attempt::OwnedAttemptScope,
     sinks: ScanToksSinks,
+    /// First deferred diagnostic which can belong to this scanner episode.
+    ///
+    /// A resource suspension retains the cursor beside the scanner sinks, so
+    /// completion never mistakes an older, still-unpublished runaway report
+    /// for recovery produced by the resumed scan.
+    diagnostic_start: usize,
     config: ScanToksConfig,
     episode: ScannerEpisode,
     phase: PendingScanToksPhase<G>,
@@ -613,10 +619,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             ),
             None => None,
         };
-        let (scope, sinks, episode, phase) = match pending {
-            Some(pending) if pending.config == config => {
-                (pending.scope, pending.sinks, pending.episode, pending.phase)
-            }
+        let (scope, sinks, diagnostic_start, episode, phase) = match pending {
+            Some(pending) if pending.config == config => (
+                pending.scope,
+                pending.sinks,
+                pending.diagnostic_start,
+                pending.episode,
+                pending.phase,
+            ),
             Some(mut pending) => {
                 if let Some(child) = pending.take_child() {
                     self.abort_continuation(child)?;
@@ -647,6 +657,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 (
                     scope,
                     sinks,
+                    self.command.semantic_diagnostics.len(),
                     self.begin_scanner_episode(
                         config.scanner_status(builder, warning),
                         config.status_visibility,
@@ -667,6 +678,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .store_scanner_frame(PendingScanToks {
                         scope,
                         sinks,
+                        diagnostic_start,
                         config,
                         episode,
                         phase: continuation,
@@ -705,17 +717,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(attempt_command_error)?;
             return Err(CommandError::input_invariant());
         }
-        let mut partial = if matches!(config.grammar, ScanToksGrammar::MacroDefinition) {
-            parameter_text_for_runaway(self.command.attempt.arena(), &result)?
-        } else {
-            Vec::new()
-        };
-        partial.extend(
-            self.attempt_words(result.replacement_text)?
-                .iter()
-                .map(|word| TracedTokenWord::pack(word.semantic_token(), OriginId::UNKNOWN)),
-        );
-        self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
+        self.render_scan_toks_runaway_if_recovered(config, diagnostic_start, &result)?;
         self.finish_scanner_episode(episode);
         let completed_tokens = if !self.is_observed() {
             Vec::new()
@@ -764,6 +766,76 @@ impl<G> CommandProcessor<'_, '_, G> {
             .defer_attempt_scope_retirement(scope)
             .map_err(attempt_command_error)?;
         Ok(result)
+    }
+
+    /// Completes TeX82 §306's partial-list display only when this exact
+    /// scanner episode produced a runaway report.
+    ///
+    /// Ordinary successful scans never enter the renderer. Recovery borrows
+    /// the already-collected scanner buffers, walks each word once, and writes
+    /// directly into the report's final selector-aware string; it neither
+    /// copies the token lists nor creates a diagnostic staging buffer.
+    fn render_scan_toks_runaway_if_recovered(
+        &mut self,
+        config: ScanToksConfig,
+        diagnostic_start: usize,
+        result: &ScannedToksBuffers,
+    ) -> Result<(), CommandError> {
+        let expected_heading = match config.grammar {
+            ScanToksGrammar::General => "Runaway text?",
+            ScanToksGrammar::MacroDefinition => "Runaway definition?",
+        };
+        let Some(diagnostic_index) = self
+            .command
+            .semantic_diagnostics
+            .get(diagnostic_start..)
+            .and_then(|diagnostics| {
+                diagnostics.iter().rposition(|diagnostic| {
+                    matches!(
+                        diagnostic,
+                        crate::CommandSemanticDiagnostic::Recoverable {
+                            identity: crate::processor::RUNAWAY_SCAN_DIAGNOSTIC,
+                            runaway: Some(crate::state::RunawayPrelude { heading, .. }),
+                            ..
+                        } if *heading == expected_heading
+                    )
+                })
+            })
+            .map(|relative| diagnostic_start + relative)
+        else {
+            return Ok(());
+        };
+
+        #[cfg(test)]
+        RUNAWAY_RENDER_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+
+        let parameter_text = matches!(config.grammar, ScanToksGrammar::MacroDefinition)
+            .then(|| self.attempt_words(result.parameter_text))
+            .transpose()?;
+        let replacement_text = self.attempt_words(result.replacement_text)?;
+        let mut partial = String::new();
+        let mut match_marker = '#';
+        if let Some(parameter_text) = parameter_text {
+            append_runaway_words(self.state, parameter_text, &mut match_marker, &mut partial);
+            append_runaway_character(self.state, '-', &mut partial);
+            append_runaway_character(self.state, '>', &mut partial);
+        }
+        append_runaway_words(
+            self.state,
+            replacement_text,
+            &mut match_marker,
+            &mut partial,
+        );
+
+        let Some(crate::CommandSemanticDiagnostic::Recoverable {
+            runaway: Some(runaway),
+            ..
+        }) = self.command.semantic_diagnostics.get_mut(diagnostic_index)
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        runaway.partial = partial;
+        Ok(())
     }
 
     // The failure moves the inline continuation directly into reusable
@@ -1814,30 +1886,65 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 }
 
-fn parameter_text_for_runaway<G>(
-    arena: &crate::attempt::AttemptArena<G>,
-    result: &ScannedToksBuffers,
-) -> Result<Vec<TracedTokenWord>, CommandError> {
-    let mut tokens: Vec<_> = arena
-        .token_words(result.parameter_text)
-        .map_err(attempt_command_error)?
-        .iter()
-        .map(|word| TracedTokenWord::pack(word.semantic_token(), OriginId::UNKNOWN))
-        .collect();
-    // TeX82 §§294/306/473 store one `def_ref` list whose `end_match_token`
-    // separates parameter text from replacement text and prints as `->`.
-    // Umber owns those halves as separate immutable lists, so reconstruct the
-    // sentinel's diagnostic spelling before appending the replacement below.
-    tokens.extend(['-', '>'].map(|ch| {
-        TracedTokenWord::pack(
-            Token::Char {
-                ch,
-                cat: Catcode::Other,
-            },
-            OriginId::UNKNOWN,
-        )
-    }));
-    Ok(tokens)
+fn append_runaway_words<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    tokens: &[TracedTokenWord],
+    match_marker: &mut char,
+    partial: &mut String,
+) {
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index].semantic_token();
+        if let Token::Char {
+            ch,
+            cat: Catcode::Parameter,
+        } = token
+            && let Some(Token::Param(slot)) =
+                tokens.get(index + 1).map(|word| word.semantic_token())
+        {
+            *match_marker = ch;
+            append_runaway_character(state, ch, partial);
+            append_runaway_character(state, char::from(b'0' + slot), partial);
+            index += 2;
+            continue;
+        }
+        if let Token::Param(slot) = token {
+            append_runaway_character(state, *match_marker, partial);
+            append_runaway_character(state, char::from(b'0' + slot), partial);
+        } else {
+            state.append_token_selector_text(token, partial);
+        }
+        index += 1;
+    }
+}
+
+fn append_runaway_character<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    ch: char,
+    partial: &mut String,
+) {
+    state.append_token_selector_text(
+        Token::Char {
+            ch,
+            cat: Catcode::Other,
+        },
+        partial,
+    );
+}
+
+#[cfg(test)]
+thread_local! {
+    static RUNAWAY_RENDER_COUNT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn runaway_render_count() -> u64 {
+    RUNAWAY_RENDER_COUNT.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn reset_runaway_render_count() {
+    RUNAWAY_RENDER_COUNT.with(|count| count.set(0));
 }
 
 pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
