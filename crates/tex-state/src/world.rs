@@ -1711,6 +1711,7 @@ struct AcceptedEffectBlock {
     domains: Arc<Vec<EffectDomain>>,
     semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
     placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
+    stream_open_contexts: Arc<Vec<Option<String>>>,
     len: usize,
     total_len: usize,
 }
@@ -1736,6 +1737,7 @@ impl AcceptedEffectBlock {
             domains: Arc::clone(&source.effect_domains),
             semantic_record_ordinals: Arc::clone(&source.effect_semantic_record_ordinals),
             placement_intra_orders: Arc::clone(&source.effect_placement_intra_orders),
+            stream_open_contexts: Arc::clone(&source.stream_open_contexts),
             len,
             total_len: parent_len.saturating_add(len),
         }))
@@ -1778,13 +1780,21 @@ impl AcceptedEffectBlock {
                     .map(effect_retained_bytes)
                     .sum::<usize>(),
             )
+            .saturating_add(
+                self.stream_open_contexts[..self.len]
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .map(String::len)
+                    .sum::<usize>(),
+            )
             .saturating_add(self.len.saturating_mul(
                 std::mem::size_of::<EffectSequence>()
                     + std::mem::size_of::<Option<EffectPublicationId>>()
                     + std::mem::size_of::<Option<EffectPublicationRecordOrdinal>>()
                     + std::mem::size_of::<EffectDomain>()
                     + std::mem::size_of::<EffectSemanticRecordOrdinal>()
-                    + std::mem::size_of::<EffectPlacementIntraOrder>(),
+                    + std::mem::size_of::<EffectPlacementIntraOrder>()
+                    + std::mem::size_of::<Option<String>>(),
             ))
     }
 }
@@ -1818,6 +1828,11 @@ struct AcceptedInputDependencyWrite {
 /// candidate owns the mutable timeline.
 pub(crate) struct AcceptedWorldTail {
     head: WorldSnapshot,
+    input_identities: crate::identity::AcceptedIdentityTail,
+}
+
+#[derive(Debug, Default)]
+struct DetachedWorldStorage {
     effects: Vec<EffectRecord>,
     effect_sequences: Vec<EffectSequence>,
     effect_publications: Vec<Option<EffectPublicationId>>,
@@ -1828,13 +1843,117 @@ pub(crate) struct AcceptedWorldTail {
     effect_publication_dispositions: Vec<EffectPublicationDisposition>,
     effect_counters: Vec<AcceptedEffectCounterWrite>,
     inputs: Vec<InputRecord>,
-    input_identities: crate::identity::AcceptedIdentityTail,
     input_dependencies: Vec<AcceptedInputDependencyWrite>,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
     committed_artifacts: Vec<CommittedArtifact>,
     artifact_publications: Vec<ArtifactPublicationRecord>,
-    stream_open_contexts: Vec<(EffectPos, String)>,
+    stream_open_contexts: Vec<Option<String>>,
+}
+
+impl DetachedWorldStorage {
+    fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+            && self.effect_sequences.is_empty()
+            && self.effect_publications.is_empty()
+            && self.effect_publication_record_ordinals.is_empty()
+            && self.effect_domains.is_empty()
+            && self.effect_semantic_record_ordinals.is_empty()
+            && self.effect_placement_intra_orders.is_empty()
+            && self.effect_publication_dispositions.is_empty()
+            && self.effect_counters.is_empty()
+            && self.inputs.is_empty()
+            && self.input_dependencies.is_empty()
+            && self.shell_escapes.is_empty()
+            && self.artifact_commits.is_empty()
+            && self.committed_artifacts.is_empty()
+            && self.artifact_publications.is_empty()
+            && self.stream_open_contexts.is_empty()
+    }
+
+    fn reserve_effect(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.effects, needed);
+        Self::reserve_to(&mut self.effect_sequences, needed);
+        Self::reserve_to(&mut self.effect_publications, needed);
+        Self::reserve_to(&mut self.effect_publication_record_ordinals, needed);
+        Self::reserve_to(&mut self.effect_domains, needed);
+        Self::reserve_to(&mut self.effect_semantic_record_ordinals, needed);
+        Self::reserve_to(&mut self.effect_placement_intra_orders, needed);
+        Self::reserve_to(&mut self.stream_open_contexts, needed);
+    }
+
+    fn reserve_effect_publication_disposition(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.effect_publication_dispositions, needed);
+    }
+
+    fn reserve_effect_counter(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.effect_counters, needed);
+    }
+
+    fn reserve_input(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.inputs, needed);
+    }
+
+    fn reserve_input_dependency(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.input_dependencies, needed);
+    }
+
+    fn reserve_shell_escape(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.shell_escapes, needed);
+    }
+
+    fn reserve_artifact(&mut self, needed: usize) {
+        Self::reserve_to(&mut self.artifact_commits, needed);
+        Self::reserve_to(&mut self.committed_artifacts, needed);
+        Self::reserve_to(&mut self.artifact_publications, needed);
+    }
+
+    fn reserve_to<T>(values: &mut Vec<T>, needed: usize) {
+        if values.capacity() < needed {
+            values.reserve(needed.saturating_sub(values.len()));
+        }
+    }
+
+    fn clear(&mut self) {
+        self.effects.clear();
+        self.effect_sequences.clear();
+        self.effect_publications.clear();
+        self.effect_publication_record_ordinals.clear();
+        self.effect_domains.clear();
+        self.effect_semantic_record_ordinals.clear();
+        self.effect_placement_intra_orders.clear();
+        self.effect_publication_dispositions.clear();
+        self.effect_counters.clear();
+        self.inputs.clear();
+        self.input_dependencies.clear();
+        self.shell_escapes.clear();
+        self.artifact_commits.clear();
+        self.committed_artifacts.clear();
+        self.artifact_publications.clear();
+        self.stream_open_contexts.clear();
+    }
+
+    #[cfg(test)]
+    fn capacities(&self) -> [usize; 16] {
+        [
+            self.effects.capacity(),
+            self.effect_sequences.capacity(),
+            self.effect_publications.capacity(),
+            self.effect_publication_record_ordinals.capacity(),
+            self.effect_domains.capacity(),
+            self.effect_semantic_record_ordinals.capacity(),
+            self.effect_placement_intra_orders.capacity(),
+            self.effect_publication_dispositions.capacity(),
+            self.effect_counters.capacity(),
+            self.inputs.capacity(),
+            self.input_dependencies.capacity(),
+            self.shell_escapes.capacity(),
+            self.artifact_commits.capacity(),
+            self.committed_artifacts.capacity(),
+            self.artifact_publications.capacity(),
+            self.stream_open_contexts.capacity(),
+        ]
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -2085,7 +2204,8 @@ pub struct World {
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
     unavailable_memory_outputs: BTreeSet<PathBuf>,
-    stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
+    stream_open_contexts: Arc<Vec<Option<String>>>,
+    detached: DetachedWorldStorage,
     reachable_state_identity: Option<WorldReachableStateIdentity>,
 }
 
@@ -2468,6 +2588,10 @@ impl PageOutputPublicationReceipt {
 
 impl Clone for World {
     fn clone(&self) -> Self {
+        assert!(
+            self.detached.is_empty(),
+            "a forked World transaction cannot be cloned"
+        );
         Self {
             backend: self.backend.clone(),
             accepted_effects: self.accepted_effects.clone(),
@@ -2534,6 +2658,7 @@ impl Clone for World {
             execution_trace: self.execution_trace.clone(),
             unavailable_memory_outputs: self.unavailable_memory_outputs.clone(),
             stream_open_contexts: self.stream_open_contexts.clone(),
+            detached: DetachedWorldStorage::default(),
             reachable_state_identity: self.reachable_state_identity,
         }
     }
@@ -2828,7 +2953,8 @@ impl World {
             execution_tracing: false,
             execution_trace: Vec::new(),
             unavailable_memory_outputs: BTreeSet::new(),
-            stream_open_contexts: Arc::new(BTreeMap::new()),
+            stream_open_contexts: Arc::new(Vec::new()),
+            detached: DetachedWorldStorage::default(),
             reachable_state_identity: None,
         }
     }
@@ -3054,6 +3180,7 @@ impl World {
         modification_date: Option<FileModificationDate>,
         origin: InputOrigin,
     ) -> FileContent {
+        self.detached.reserve_input(self.inputs.len() + 1);
         let record = self.allocate_input_record();
         let content =
             FileContent::from_shared(record, path.to_owned(), bytes, modification_date, origin);
@@ -3425,6 +3552,7 @@ impl World {
             }
         };
         self.stream_bufs_mut().terminal_input_next += 1;
+        self.detached.reserve_input(self.inputs.len() + 1);
         let bytes = line.as_bytes().to_vec();
         let record = self.allocate_input_record();
         let content = FileContent::new(record, PathBuf::from("<terminal>"), bytes);
@@ -3841,6 +3969,8 @@ impl World {
         open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
         reservation: ArtifactPublicationReservation,
     ) {
+        self.detached
+            .reserve_artifact(self.artifact_commits.len() + 1);
         Arc::make_mut(&mut self.artifact_commits).push(hash);
         self.record_artifact_identity(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
@@ -3879,6 +4009,8 @@ impl World {
         artifact: CommittedArtifact,
         publication: ArtifactPublicationRecord,
     ) {
+        self.detached
+            .reserve_artifact(self.artifact_commits.len() + 1);
         let hash = artifact.hash;
         Arc::make_mut(&mut self.artifact_commits).push(hash);
         self.record_artifact_identity(hash);
@@ -4004,8 +4136,7 @@ impl World {
             Arc::make_mut(&mut self.effect_domains).truncate(0);
             Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(0);
             Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(0);
-            Arc::make_mut(&mut self.stream_open_contexts)
-                .retain(|position, _| *position <= self.effect_base);
+            Arc::make_mut(&mut self.stream_open_contexts).truncate(0);
             debug_assert_eq!(pending, records.len().saturating_sub(committed));
             return Err(DetachedEffectPublicationError {
                 committed,
@@ -4059,12 +4190,13 @@ impl World {
 
     /// Attaches the canonical input display captured for the just-recorded open.
     pub fn set_last_stream_open_context(&mut self, context: impl Into<String>) {
-        let position = self.effect_pos();
         assert!(
             matches!(self.effects.last(), Some(EffectRecord::StreamOpen { .. })),
             "stream-open context must follow its exact effect"
         );
-        Arc::make_mut(&mut self.stream_open_contexts).insert(position, context.into());
+        *Arc::make_mut(&mut self.stream_open_contexts)
+            .last_mut()
+            .expect("stream-open context follows one effect") = Some(context.into());
     }
 
     /// Returns a retained host outcome for an output target when one exists.
@@ -4480,6 +4612,8 @@ impl World {
             allowed,
         };
         self.append_effect(EffectRecord::ShellEscape(record.clone()));
+        self.detached
+            .reserve_shell_escape(self.shell_escapes.len() + 1);
         self.shell_escapes.push(record);
         allowed
     }
@@ -4518,9 +4652,8 @@ impl World {
                     Arc::make_mut(&mut self.effect_domains).drain(0..applied);
                     Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
                     Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
+                    Arc::make_mut(&mut self.stream_open_contexts).drain(0..applied);
                     self.effect_base.0 += applied as u64;
-                    Arc::make_mut(&mut self.stream_open_contexts)
-                        .retain(|position, _| *position > self.effect_base);
                 }
                 let retry_safety = match err.retry_safety() {
                     EffectRetrySafety::Safe => EffectRetrySafety::Safe,
@@ -4545,9 +4678,8 @@ impl World {
         Arc::make_mut(&mut self.effect_domains).drain(0..applied);
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
         Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
+        Arc::make_mut(&mut self.stream_open_contexts).drain(0..applied);
         self.effect_base = effect_pos;
-        Arc::make_mut(&mut self.stream_open_contexts)
-            .retain(|position, _| *position > self.effect_base);
         Ok(())
     }
 
@@ -4741,6 +4873,8 @@ impl World {
     }
 
     fn journal_input_dependency(&mut self, path: &Path) {
+        self.detached
+            .reserve_input_dependency(self.input_dependency_journal.len() + 1);
         let previous = self.input_dependencies.get(path).cloned();
         let path = self
             .input_dependencies
@@ -4883,8 +5017,7 @@ impl World {
         for index in indices {
             let record = self.effects[index].clone();
             let context = if matches!(record, EffectRecord::StreamOpen { .. }) {
-                self.effect_position(index)
-                    .and_then(|position| self.stream_open_contexts.get(&position).cloned())
+                self.stream_open_contexts[index].clone()
             } else {
                 None
             };
@@ -4942,6 +5075,8 @@ impl World {
         output_attempt: EffectOutputAttemptId,
         recursive_receipt: Option<PageOutputPublicationReceiptId>,
     ) {
+        self.detached
+            .reserve_effect_publication_disposition(self.effect_publication_dispositions.len() + 1);
         Arc::make_mut(&mut self.effect_publication_dispositions).push(
             EffectPublicationDisposition::new(rejected, winner, output_attempt, recursive_receipt),
         );
@@ -5706,8 +5841,7 @@ impl World {
         }
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
-        Arc::make_mut(&mut self.stream_open_contexts)
-            .retain(|position, _| *position <= snapshot.effect_pos);
+        Arc::make_mut(&mut self.stream_open_contexts).truncate(snapshot.effect_len);
         self.restore_stream_bufs(snapshot.stream_bufs);
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
@@ -5749,42 +5883,58 @@ impl World {
         assert!(self.active_effect_output_attempt.is_none());
         assert!(self.active_effect_domain.is_none());
         let head = self.snapshot();
-
-        let effects = Arc::make_mut(&mut self.effects).split_off(snapshot.effect_len);
-        let effect_sequences =
-            Arc::make_mut(&mut self.effect_sequences).split_off(snapshot.effect_len);
-        let effect_publications =
-            Arc::make_mut(&mut self.effect_publications).split_off(snapshot.effect_len);
-        let effect_publication_record_ordinals =
+        let mut detached = std::mem::take(&mut self.detached);
+        assert!(
+            detached.is_empty(),
+            "World already owns a detached accepted suffix"
+        );
+        detached
+            .effects
+            .extend(Arc::make_mut(&mut self.effects).drain(snapshot.effect_len..));
+        detached
+            .effect_sequences
+            .extend(Arc::make_mut(&mut self.effect_sequences).drain(snapshot.effect_len..));
+        detached
+            .effect_publications
+            .extend(Arc::make_mut(&mut self.effect_publications).drain(snapshot.effect_len..));
+        detached.effect_publication_record_ordinals.extend(
             Arc::make_mut(&mut self.effect_publication_record_ordinals)
-                .split_off(snapshot.effect_len);
-        let effect_domains = Arc::make_mut(&mut self.effect_domains).split_off(snapshot.effect_len);
-        let effect_semantic_record_ordinals =
-            Arc::make_mut(&mut self.effect_semantic_record_ordinals).split_off(snapshot.effect_len);
-        let effect_placement_intra_orders =
-            Arc::make_mut(&mut self.effect_placement_intra_orders).split_off(snapshot.effect_len);
-        let effect_publication_dispositions =
+                .drain(snapshot.effect_len..),
+        );
+        detached
+            .effect_domains
+            .extend(Arc::make_mut(&mut self.effect_domains).drain(snapshot.effect_len..));
+        detached.effect_semantic_record_ordinals.extend(
+            Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(snapshot.effect_len..),
+        );
+        detached.effect_placement_intra_orders.extend(
+            Arc::make_mut(&mut self.effect_placement_intra_orders).drain(snapshot.effect_len..),
+        );
+        detached.effect_publication_dispositions.extend(
             Arc::make_mut(&mut self.effect_publication_dispositions)
-                .split_off(snapshot.effect_publication_disposition_len);
+                .drain(snapshot.effect_publication_disposition_len..),
+        );
+        detached
+            .stream_open_contexts
+            .extend(Arc::make_mut(&mut self.stream_open_contexts).drain(snapshot.effect_len..));
 
-        let counter_suffix = Arc::make_mut(&mut self.effect_counter_journal)
-            .split_off(snapshot.effect_counter_journal_len);
-        let effect_counters = counter_suffix
-            .into_iter()
-            .map(|undo| {
-                let after = match undo {
-                    EffectCounterUndo::Publication { key, .. } => self
-                        .next_effect_publication_record_ordinals
-                        .get(&key)
-                        .copied(),
-                    EffectCounterUndo::Semantic { key, .. } => {
-                        self.next_effect_semantic_record_ordinals.get(&key).copied()
-                    }
-                };
-                AcceptedEffectCounterWrite { undo, after }
-            })
-            .collect::<Vec<_>>();
-        for write in effect_counters.iter().rev() {
+        for undo in Arc::make_mut(&mut self.effect_counter_journal)
+            .drain(snapshot.effect_counter_journal_len..)
+        {
+            let after = match undo {
+                EffectCounterUndo::Publication { key, .. } => self
+                    .next_effect_publication_record_ordinals
+                    .get(&key)
+                    .copied(),
+                EffectCounterUndo::Semantic { key, .. } => {
+                    self.next_effect_semantic_record_ordinals.get(&key).copied()
+                }
+            };
+            detached
+                .effect_counters
+                .push(AcceptedEffectCounterWrite { undo, after });
+        }
+        for write in detached.effect_counters.iter().rev() {
             match write.undo {
                 EffectCounterUndo::Publication { key, previous } => match previous {
                     Some(value) => {
@@ -5808,25 +5958,26 @@ impl World {
             }
         }
 
-        let inputs = Arc::make_mut(&mut self.inputs).split_off(snapshot.input_len);
+        detached
+            .inputs
+            .extend(Arc::make_mut(&mut self.inputs).drain(snapshot.input_len..));
         let input_identities = self
             .input_identities
             .begin_checkpoint_candidate(snapshot.input_identities)
             .expect("validated World input identity mark remains rewindable");
-        let dependency_suffix = Arc::make_mut(&mut self.input_dependency_journal)
-            .split_off(snapshot.input_dependency_journal_len);
-        let input_dependencies = dependency_suffix
-            .into_iter()
-            .map(|(path, previous)| {
-                let after = self.input_dependencies.get(path.as_ref()).cloned();
-                AcceptedInputDependencyWrite {
+        for (path, previous) in Arc::make_mut(&mut self.input_dependency_journal)
+            .drain(snapshot.input_dependency_journal_len..)
+        {
+            let after = self.input_dependencies.get(path.as_ref()).cloned();
+            detached
+                .input_dependencies
+                .push(AcceptedInputDependencyWrite {
                     path,
                     previous,
                     after,
-                }
-            })
-            .collect::<Vec<_>>();
-        for write in input_dependencies.iter().rev() {
+                });
+        }
+        for write in detached.input_dependencies.iter().rev() {
             match &write.previous {
                 Some(value) => {
                     Arc::make_mut(&mut self.input_dependencies)
@@ -5839,32 +5990,22 @@ impl World {
         }
         self.input_dependency_len = snapshot.input_dependency_len;
 
-        let shell_escapes = self.shell_escapes.split_off(snapshot.shell_escape_len);
+        detached
+            .shell_escapes
+            .extend(self.shell_escapes.drain(snapshot.shell_escape_len..));
         let artifact_mark = snapshot
             .artifact_commit_len
             .checked_sub(self.artifact_base)
             .expect("World artifact mark follows the live base");
-        let artifact_commits = Arc::make_mut(&mut self.artifact_commits).split_off(artifact_mark);
-        let committed_artifacts =
-            Arc::make_mut(&mut self.committed_artifacts).split_off(artifact_mark);
-        let artifact_publications =
-            Arc::make_mut(&mut self.artifact_publications).split_off(artifact_mark);
-        let context_keys = self
-            .stream_open_contexts
-            .range((
-                std::ops::Bound::Excluded(snapshot.effect_pos),
-                std::ops::Bound::Unbounded,
-            ))
-            .map(|(position, _)| *position)
-            .collect::<Vec<_>>();
-        let stream_open_contexts = context_keys
-            .into_iter()
-            .filter_map(|position| {
-                Arc::make_mut(&mut self.stream_open_contexts)
-                    .remove(&position)
-                    .map(|context| (position, context))
-            })
-            .collect();
+        detached
+            .artifact_commits
+            .extend(Arc::make_mut(&mut self.artifact_commits).drain(artifact_mark..));
+        detached
+            .committed_artifacts
+            .extend(Arc::make_mut(&mut self.committed_artifacts).drain(artifact_mark..));
+        detached
+            .artifact_publications
+            .extend(Arc::make_mut(&mut self.artifact_publications).drain(artifact_mark..));
 
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
         self.next_effect_sequence = snapshot.next_effect_sequence;
@@ -5888,50 +6029,37 @@ impl World {
         self.file_framing = snapshot.file_framing;
         self.error_channel = snapshot.error_channel.clone();
         self.reachable_state_identity = snapshot.reachable_state_identity;
+        self.detached = detached;
 
         AcceptedWorldTail {
             head,
-            effects,
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-            effect_publication_dispositions,
-            effect_counters,
-            inputs,
             input_identities,
-            input_dependencies,
-            shell_escapes,
-            artifact_commits,
-            committed_artifacts,
-            artifact_publications,
-            stream_open_contexts,
         }
     }
 
     pub(crate) fn reject_checkpoint_candidate(
         &mut self,
         root: &WorldSnapshot,
-        mut tail: AcceptedWorldTail,
+        tail: AcceptedWorldTail,
     ) {
         self.rollback(root);
         self.input_identities
             .reject_checkpoint_candidate(tail.input_identities);
-        Arc::make_mut(&mut self.effects).append(&mut tail.effects);
-        Arc::make_mut(&mut self.effect_sequences).append(&mut tail.effect_sequences);
-        Arc::make_mut(&mut self.effect_publications).append(&mut tail.effect_publications);
+        let mut detached = std::mem::take(&mut self.detached);
+        Arc::make_mut(&mut self.effects).append(&mut detached.effects);
+        Arc::make_mut(&mut self.effect_sequences).append(&mut detached.effect_sequences);
+        Arc::make_mut(&mut self.effect_publications).append(&mut detached.effect_publications);
         Arc::make_mut(&mut self.effect_publication_record_ordinals)
-            .append(&mut tail.effect_publication_record_ordinals);
-        Arc::make_mut(&mut self.effect_domains).append(&mut tail.effect_domains);
+            .append(&mut detached.effect_publication_record_ordinals);
+        Arc::make_mut(&mut self.effect_domains).append(&mut detached.effect_domains);
         Arc::make_mut(&mut self.effect_semantic_record_ordinals)
-            .append(&mut tail.effect_semantic_record_ordinals);
+            .append(&mut detached.effect_semantic_record_ordinals);
         Arc::make_mut(&mut self.effect_placement_intra_orders)
-            .append(&mut tail.effect_placement_intra_orders);
+            .append(&mut detached.effect_placement_intra_orders);
         Arc::make_mut(&mut self.effect_publication_dispositions)
-            .append(&mut tail.effect_publication_dispositions);
-        for write in &tail.effect_counters {
+            .append(&mut detached.effect_publication_dispositions);
+        Arc::make_mut(&mut self.stream_open_contexts).append(&mut detached.stream_open_contexts);
+        for write in &detached.effect_counters {
             match write.undo {
                 EffectCounterUndo::Publication { key, .. } => match write.after {
                     Some(value) => {
@@ -5955,9 +6083,9 @@ impl World {
             }
         }
         Arc::make_mut(&mut self.effect_counter_journal)
-            .extend(tail.effect_counters.iter().map(|write| write.undo));
-        Arc::make_mut(&mut self.inputs).append(&mut tail.inputs);
-        for write in &tail.input_dependencies {
+            .extend(detached.effect_counters.drain(..).map(|write| write.undo));
+        Arc::make_mut(&mut self.inputs).append(&mut detached.inputs);
+        for write in &detached.input_dependencies {
             match &write.after {
                 Some(value) => {
                     Arc::make_mut(&mut self.input_dependencies)
@@ -5969,21 +6097,23 @@ impl World {
             }
         }
         Arc::make_mut(&mut self.input_dependency_journal).extend(
-            tail.input_dependencies
-                .iter()
-                .map(|write| (Arc::clone(&write.path), write.previous.clone())),
+            detached
+                .input_dependencies
+                .drain(..)
+                .map(|write| (write.path, write.previous)),
         );
-        self.shell_escapes.append(&mut tail.shell_escapes);
-        Arc::make_mut(&mut self.artifact_commits).append(&mut tail.artifact_commits);
-        Arc::make_mut(&mut self.committed_artifacts).append(&mut tail.committed_artifacts);
-        Arc::make_mut(&mut self.artifact_publications).append(&mut tail.artifact_publications);
-        Arc::make_mut(&mut self.stream_open_contexts).extend(tail.stream_open_contexts);
+        self.shell_escapes.append(&mut detached.shell_escapes);
+        Arc::make_mut(&mut self.artifact_commits).append(&mut detached.artifact_commits);
+        Arc::make_mut(&mut self.committed_artifacts).append(&mut detached.committed_artifacts);
+        Arc::make_mut(&mut self.artifact_publications).append(&mut detached.artifact_publications);
+        self.detached = detached;
         self.rollback(&tail.head);
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedWorldTail) {
         self.input_identities
             .accept_checkpoint_candidate(tail.input_identities);
+        self.detached.clear();
     }
 
     /// Installs a retained checkpoint into a new generation. Accepted effects
@@ -6031,7 +6161,7 @@ impl World {
             .max(snapshot.next_artifact_publication_identity);
         self.active_artifact_publication_group = None;
         self.active_terminal_publication = None;
-        self.stream_open_contexts = Arc::new(BTreeMap::new());
+        self.stream_open_contexts = Arc::new(Vec::new());
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_effect_publication_record_ordinals = Arc::new(BTreeMap::new());
         self.next_effect_semantic_record_ordinals = Arc::new(BTreeMap::new());
@@ -6100,6 +6230,7 @@ impl World {
     }
 
     fn append_effect(&mut self, record: EffectRecord) {
+        self.detached.reserve_effect(self.effects.len() + 1);
         if let Some(identity) = &mut self.reachable_state_identity {
             identity.effects.push(stable_hash(&record));
         }
@@ -6136,6 +6267,7 @@ impl World {
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).push(ordinal);
         let placement = self.allocate_effect_placement_intra_order();
         Arc::make_mut(&mut self.effect_placement_intra_orders).push(placement);
+        Arc::make_mut(&mut self.stream_open_contexts).push(None);
     }
 
     #[doc(hidden)]
@@ -6226,6 +6358,8 @@ impl World {
     }
 
     fn journal_publication_counter(&mut self, key: EffectPublicationId) {
+        self.detached
+            .reserve_effect_counter(self.effect_counter_journal.len() + 1);
         let previous = self
             .next_effect_publication_record_ordinals
             .get(&key)
@@ -6235,6 +6369,8 @@ impl World {
     }
 
     fn journal_semantic_counter(&mut self, key: EffectDomain) {
+        self.detached
+            .reserve_effect_counter(self.effect_counter_journal.len() + 1);
         let previous = self.next_effect_semantic_record_ordinals.get(&key).copied();
         Arc::make_mut(&mut self.effect_counter_journal)
             .push(EffectCounterUndo::Semantic { key, previous });
@@ -6289,11 +6425,7 @@ impl World {
                         position,
                         slot: *slot,
                         path: target.path().to_owned(),
-                        context: self
-                            .stream_open_contexts
-                            .get(&position)
-                            .cloned()
-                            .unwrap_or_default(),
+                        context: self.stream_open_contexts[index].clone().unwrap_or_default(),
                     }));
                     error.effect_retry(EffectRetrySafety::Safe)
                 })?;

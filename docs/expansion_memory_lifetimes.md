@@ -494,7 +494,13 @@ actually consults. A checkpoint owns no shared mutable stream buffer and
 causes no first-mutation COW. Effect rows, aligned
 publication sidecars, input records/content, and reduced dependency facts live
 in coarse immutable accepted blocks; a candidate appends into private suffixes
-and private counter/dependency journals. Source registrations use that same
+and private counter/dependency journals. Within one World owner, selecting a
+candidate drains the exact accepted suffix into reusable detached-prior
+buffers whose capacity was warmed by the original semantic appends. Rejection
+moves those payloads and journal writes back; acceptance clears the buffers
+without releasing capacity. Thus candidate settlement performs no prefix scan,
+`split_off`, payload clone, or per-checkpoint tail allocation, and heap payload
+addresses remain stable across both paths. Source registrations use that same
 accepted-block/private-suffix split. Loaded and generated immutable font
 contexts instead live in fixed-capacity coarse chunks owned by the physical
 generation. A logical font row holds only its chunk coordinate; rollback

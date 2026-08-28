@@ -243,10 +243,10 @@ layout charge but execute none of the semantic hashing.
 At the recorded baseline, capture and restore copied accumulated command, mode, page,
 hyphenation, and World state. Checkpoint clone repeats most of those copies.
 Fork performs unavoidable construction of one destination generation but also
-copies the same accumulated families. The first destination mutation may
-currently trigger additional World copy-on-write; this is a deferred
-first-mutation copy and is not misreported as capture. PDF payload mutation
-already appends to its private delta and copies no prefix.
+copies the same accumulated families. At that baseline, the first destination
+mutation could also trigger additional World copy-on-write; this was a deferred
+first-mutation copy and was not misreported as capture. PDF payload mutation
+already appended to its private delta and copied no prefix.
 
 ## World, source, and font ownership outcome
 
@@ -254,26 +254,31 @@ already appends to its private delta and copies no prefix.
 baseline with fixed marks and coarse accepted blocks. The concrete ownership
 classification is:
 
-| Column or family                                  | Representation at a retained boundary                                                                                                                                   | Retained-byte owner and release                                                                                                                                   |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Effect records and aligned publication sidecars   | One immutable accepted block per admitted lineage plus an empty destination-private suffix; the checkpoint stores absolute base and aligned scalar lengths              | Each block charges its record payload and six aligned sidecar columns once to the lineage that produced it; a rejected suffix dies with its candidate             |
-| Publication and semantic counters                 | Current-lineage maps plus one undo journal; the checkpoint stores only the journal length and scalar identity frontiers                                                 | Accepted next ordinals are recovered from immutable aligned effect columns, so no counter map crosses or is cloned at fork                                        |
-| Stream state                                      | Fixed read-record/byte cursors, immutable write-path ids, terminal-input cursor, and scalar terminal/log offsets; numbered streams retain no unused partial-line mirror | Immutable input records, bytes, and path spellings stay in the stable World session owner; mutable stream positions and offsets belong directly to the live World |
-| Input records and immutable bytes                 | Coarse accepted record/content blocks plus an empty destination-private record/content suffix; the checkpoint stores record and identity cursors                        | Input bytes are charged once to the block containing their record; accepted identities are shared as run blocks and new identities use the candidate              |
-| Reduced input dependencies                        | Coarse accepted maps plus a private override map and undo journal; the checkpoint stores the journal length and exact effective count                                   | Accepted observations remain in their source lineage block; rollback deletes candidate-only overrides and terminal detachment materializes once                   |
-| Artifact commits                                  | A retained artifact cursor; a fork starts an empty candidate commit ledger at that cursor                                                                               | Verified/committed bytes cross once into the durable artifact owner; provisional page receipts are quiescent transaction state and cannot checkpoint              |
-| Sources                                           | Immutable accepted registration/backing blocks plus private vectors and sparse index for the candidate; `SourceMapMark` remains fixed                                   | Descriptor bytes, line indexes, regions, and generated backing are charged once to their accepted block; logical positions and marks are scalar                   |
-| Fonts                                             | Immutable accepted loaded-font/index/hash blocks plus a private loaded-font suffix; identifier and expansion changes use candidate overrides with bounded undo marks    | Loaded metrics and recipes are charged once to their accepted block; mutable identifier/expansion values roll back without copying immutable fonts                |
-| Dependency tracker and execution/identity scalars | Revision/invalidation epochs and run-compressed accepted identity metadata                                                                                              | No changed-at map or per-value identity table is cloned; job/revision counters remain fixed scalar state                                                          |
+| Column or family                                  | Representation at a retained boundary                                                                                                                                   | Retained-byte owner and release                                                                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Effect records and aligned publication sidecars   | One immutable accepted block per admitted lineage plus a destination-private suffix; the checkpoint stores absolute base and aligned scalar lengths                     | Each block charges its record payload and seven aligned sidecar columns once to the lineage that produced it; stream-open context is position-aligned, not scanned |
+| Publication and semantic counters                 | Current-lineage maps plus one undo journal; the checkpoint stores only the journal length and scalar identity frontiers                                                 | Accepted next ordinals are recovered from immutable aligned effect columns, so no counter map crosses or is cloned at fork                                         |
+| Stream state                                      | Fixed read-record/byte cursors, immutable write-path ids, terminal-input cursor, and scalar terminal/log offsets; numbered streams retain no unused partial-line mirror | Immutable input records, bytes, and path spellings stay in the stable World session owner; mutable stream positions and offsets belong directly to the live World  |
+| Input records and immutable bytes                 | Coarse accepted record/content blocks plus an empty destination-private record/content suffix; the checkpoint stores record and identity cursors                        | Input bytes are charged once to the block containing their record; accepted identities are shared as run blocks and new identities use the candidate               |
+| Reduced input dependencies                        | Coarse accepted maps plus a private override map and undo journal; the checkpoint stores the journal length and exact effective count                                   | Accepted observations remain in their source lineage block; rollback deletes candidate-only overrides and terminal detachment materializes once                    |
+| Artifact commits                                  | A retained artifact cursor; a fork starts an empty candidate commit ledger at that cursor                                                                               | Verified/committed bytes cross once into the durable artifact owner; provisional page receipts are quiescent transaction state and cannot checkpoint               |
+| Sources                                           | Immutable accepted registration/backing blocks plus private vectors and sparse index for the candidate; `SourceMapMark` remains fixed                                   | Descriptor bytes, line indexes, regions, and generated backing are charged once to their accepted block; logical positions and marks are scalar                    |
+| Fonts                                             | Immutable accepted loaded-font/index/hash blocks plus a private loaded-font suffix; identifier and expansion changes use candidate overrides with bounded undo marks    | Loaded metrics and recipes are charged once to their accepted block; mutable identifier/expansion values roll back without copying immutable fonts                 |
+| Dependency tracker and execution/identity scalars | Revision/invalidation epochs and run-compressed accepted identity metadata                                                                                              | No changed-at map or per-value identity table is cloned; job/revision counters remain fixed scalar state                                                           |
 
 Only prior and current lineages are mutable authorities. Accepted blocks are
 immutable row storage, not additional generations, and no block registers
 roots or compacts/relocates values. Reads select accepted prefix or current
 suffix directly; mutation appends to the current suffix or its explicit undo
-journal. Restore first validates every mark, reverses mutable journals, resets
-scalars, and then truncates suffix columns. A fork shares the exact marked
-prefix, excludes source rows after the mark, and allocates only the new
-lineage's empty containers.
+journal. Same-owner candidate settlement drains the exact accepted suffix into
+one reusable World-owned detached-prior aggregate. Rejection replays those
+rows and journal writes; acceptance clears the buffers while retaining their
+capacity. Semantic appends warm every aligned detached lane, so fork performs
+no prefix scan, `split_off`, payload clone, or per-checkpoint tail allocation.
+Restore first validates every mark, reverses mutable journals, resets scalars,
+and then truncates suffix columns. A generation fork shares the exact marked
+immutable prefix, excludes source rows after the mark, and allocates only the
+new lineage's empty containers.
 
 `WorldSnapshot` retains no `Arc<StreamBufState>`. Capture and checkpoint clone
 copy only the fixed stream cursor tuple. A read slot stores an immutable input

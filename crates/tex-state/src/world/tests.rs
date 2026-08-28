@@ -408,6 +408,125 @@ fn repeated_stream_candidate_accept_and_reject_restore_positions_and_scalars() {
 }
 
 #[test]
+fn checkpoint_candidate_reuses_detached_storage_and_moves_owned_payloads() {
+    let mut world = World::memory();
+    world
+        .begin_retained_session()
+        .expect("test World becomes rollback-capable");
+    let root = world.snapshot();
+
+    for slot in 0..16 {
+        let path = format!("stream-{slot}.tex");
+        world
+            .set_memory_file(&path, format!("line-{slot}\n").into_bytes())
+            .expect("stream input is seeded");
+        world
+            .open_in(StreamSlot::new(slot), &path)
+            .expect("stream input opens");
+        world.open_out(StreamSlot::new(slot), format!("stream-{slot}.out"));
+    }
+    for index in 0..64 {
+        world.record_special(format!("effect-{index}"), vec![index as u8; 32]);
+        world.record_shell_escape(format!("command-{index}"));
+        world
+            .record_input_dependency(
+                format!("dependency-{index}.tex"),
+                InputDependencyOutcome::Missing,
+                InputDependencyAccess::AuthoritativeProbe,
+            )
+            .expect("dependency is recorded");
+    }
+    for slot in 0..16 {
+        assert_eq!(
+            world
+                .read_stream_line(StreamSlot::new(slot))
+                .expect("stream input reads"),
+            Some(format!("line-{slot}"))
+        );
+    }
+    let publication = world.reserve_effect_publication();
+    world.claim_effect_publication(0..world.effects.len(), publication);
+    let output_attempt = world.allocate_effect_output_attempt();
+    world.commit_effect_publication_winner(None, publication, output_attempt, None);
+    for index in 0..8 {
+        let bytes = vec![index as u8; 128];
+        let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
+        let reservation = world.reserve_artifact_publication_at(0);
+        world.record_artifact_commit(
+            hash,
+            bytes,
+            ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
+            Vec::new(),
+            reservation,
+        );
+    }
+
+    let accepted = world.snapshot();
+    let warmed_capacities = world.detached.capacities();
+    let effect_payload = world
+        .effects
+        .iter()
+        .find_map(|record| match record {
+            EffectRecord::Special { payload, .. } => Some(payload.as_ptr()),
+            _ => None,
+        })
+        .expect("special payload exists");
+    let input_path = Arc::as_ptr(&world.inputs[0].path);
+    let artifact_bytes = world.committed_artifacts[0].bytes().as_ptr();
+
+    let tail = world.begin_checkpoint_candidate(&root);
+    assert_eq!(world.detached.capacities(), warmed_capacities);
+    assert_eq!(world.detached.effects.len(), accepted.effect_len);
+    assert_eq!(world.detached.inputs.len(), accepted.input_len);
+    assert_eq!(world.detached.committed_artifacts.len(), 8);
+    assert_eq!(
+        world
+            .detached
+            .effects
+            .iter()
+            .find_map(|record| match record {
+                EffectRecord::Special { payload, .. } => Some(payload.as_ptr()),
+                _ => None,
+            })
+            .expect("detached special payload exists"),
+        effect_payload
+    );
+    assert_eq!(Arc::as_ptr(&world.detached.inputs[0].path), input_path);
+    assert_eq!(
+        world.detached.committed_artifacts[0].bytes().as_ptr(),
+        artifact_bytes
+    );
+
+    world.record_special("rejected", vec![255; 32]);
+    world.reject_checkpoint_candidate(&root, tail);
+    assert_eq!(world.snapshot(), accepted);
+    assert!(world.detached.is_empty());
+    assert_eq!(world.detached.capacities(), warmed_capacities);
+    assert_eq!(
+        world
+            .effects
+            .iter()
+            .find_map(|record| match record {
+                EffectRecord::Special { payload, .. } => Some(payload.as_ptr()),
+                _ => None,
+            })
+            .expect("restored special payload exists"),
+        effect_payload
+    );
+    assert_eq!(Arc::as_ptr(&world.inputs[0].path), input_path);
+    assert_eq!(
+        world.committed_artifacts[0].bytes().as_ptr(),
+        artifact_bytes
+    );
+
+    let tail = world.begin_checkpoint_candidate(&root);
+    world.record_special("accepted", vec![127; 32]);
+    world.accept_checkpoint_candidate(tail);
+    assert!(world.detached.is_empty());
+    assert_eq!(world.detached.capacities(), warmed_capacities);
+}
+
+#[test]
 fn effect_counter_marks_restore_exactly_and_continue_across_a_fork() {
     let mut source = World::memory();
     source
