@@ -1,0 +1,207 @@
+use super::*;
+use crate::node::Node;
+
+fn owner(arena: &mut PageMaterialArena, penalty: i32) -> DurableNodeClosure {
+    let root = arena
+        .publish_owned([Node::Penalty(penalty)])
+        .expect("page root");
+    arena
+        .copy_page_root_to_durable(root)
+        .expect("durable owner")
+}
+
+fn current_region(state: &DurableBoxState, index: u16) -> Option<NodeRegionId> {
+    state.metadata(index).map(DurableNodeMetadata::region)
+}
+
+#[test]
+fn overwrite_without_retained_history_retires_the_old_owner() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let first = owner(&mut arena, 11);
+    let first_id = first.region_id();
+    state
+        .assign(
+            &mut arena,
+            0,
+            Some(first),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("initial assignment");
+    let second = owner(&mut arena, 13);
+    let second_id = second.region_id();
+    state
+        .assign(
+            &mut arena,
+            0,
+            Some(second),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("overwrite");
+
+    assert!(!arena.durable_region_is_live(first_id));
+    assert_eq!(current_region(&state, 0), Some(second_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let accepted = owner(&mut arena, 17);
+    let accepted_id = accepted.region_id();
+    state
+        .assign(
+            &mut arena,
+            3,
+            Some(accepted),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("accepted assignment");
+    let checkpoint = state.checkpoint_cursor();
+    let head = owner(&mut arena, 19);
+    let head_id = head.region_id();
+    state
+        .assign(
+            &mut arena,
+            3,
+            Some(head),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("accepted head");
+
+    let accepted_tail = state.begin_checkpoint_candidate(checkpoint);
+    assert_eq!(current_region(&state, 3), Some(accepted_id));
+    let candidate = owner(&mut arena, 23);
+    let candidate_id = candidate.region_id();
+    state
+        .assign(
+            &mut arena,
+            3,
+            Some(candidate),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("candidate assignment");
+    state.reject_checkpoint_candidate(&mut arena, checkpoint, accepted_tail);
+
+    assert_eq!(current_region(&state, 3), Some(head_id));
+    assert!(!arena.durable_region_is_live(candidate_id));
+    assert!(arena.durable_region_is_live(accepted_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn operation_rollback_moves_the_original_owner_back_without_copying() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let original = owner(&mut arena, 29);
+    let original_id = original.region_id();
+    state
+        .assign(
+            &mut arena,
+            7,
+            Some(original),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("original assignment");
+    let operation = state.begin_operation();
+    let replacement = owner(&mut arena, 31);
+    let replacement_id = replacement.region_id();
+    let before = arena.durable_transition_counters();
+    state
+        .replace(&mut arena, 7, Some(replacement))
+        .expect("operation replacement");
+    state.rollback_operation(&mut arena, operation);
+
+    assert_eq!(current_region(&state, 7), Some(original_id));
+    assert!(!arena.durable_region_is_live(replacement_id));
+    assert_eq!(arena.durable_transition_counters(), before);
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn local_group_restore_moves_the_saved_owner_back() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let original = owner(&mut arena, 37);
+    let original_id = original.region_id();
+    state
+        .assign(
+            &mut arena,
+            9,
+            Some(original),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("original assignment");
+    state.begin_group(2);
+    let local = owner(&mut arena, 41);
+    let local_id = local.region_id();
+    state
+        .assign(
+            &mut arena,
+            9,
+            Some(local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("local assignment");
+    state.end_group(&mut arena, 2);
+
+    assert_eq!(current_region(&state, 9), Some(original_id));
+    assert!(!arena.durable_region_is_live(local_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn checkpoint_accept_drops_the_superseded_owner_only_once() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let old = owner(&mut arena, 43);
+    let old_id = old.region_id();
+    state
+        .assign(
+            &mut arena,
+            12,
+            Some(old),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("old assignment");
+    let checkpoint = state.checkpoint_cursor();
+    let superseded = owner(&mut arena, 47);
+    let superseded_id = superseded.region_id();
+    state
+        .assign(
+            &mut arena,
+            12,
+            Some(superseded),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("accepted suffix");
+    let accepted_tail = state.begin_checkpoint_candidate(checkpoint);
+    let current = owner(&mut arena, 53);
+    let current_id = current.region_id();
+    state
+        .assign(
+            &mut arena,
+            12,
+            Some(current),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("candidate suffix");
+    state.accept_checkpoint_candidate(&mut arena, accepted_tail);
+
+    assert_eq!(current_region(&state, 12), Some(current_id));
+    assert!(!arena.durable_region_is_live(superseded_id));
+    assert!(arena.durable_region_is_live(old_id));
+    state.retire_all(&mut arena);
+}

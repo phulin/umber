@@ -437,9 +437,7 @@ fn accepted_identity_survives_reject_accept_and_prune() {
 #[test]
 fn unique_durable_move_preserves_recursive_addresses_without_copying() {
     let mut arena = PageMaterialArena::with_chunk_bytes(64);
-    let leaf = arena
-        .publish_owned([Node::Penalty(41)])
-        .expect("page leaf");
+    let leaf = arena.publish_owned([Node::Penalty(41)]).expect("page leaf");
     let root = arena.publish_owned([boxed(leaf)]).expect("page box");
     let durable = arena
         .copy_page_root_to_durable(root)
@@ -488,9 +486,7 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
 #[test]
 fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
     let mut arena = PageMaterialArena::with_chunk_bytes(64);
-    let leaf = arena
-        .publish_owned([Node::Penalty(43)])
-        .expect("page leaf");
+    let leaf = arena.publish_owned([Node::Penalty(43)]).expect("page leaf");
     let root = arena.publish_owned([boxed(leaf)]).expect("page box");
     let durable = arena
         .copy_page_root_to_durable(root)
@@ -499,38 +495,48 @@ fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
 
     let copied = arena.copy_durable_to_page(&durable).expect("TeX copy");
     assert_eq!(resolved(&arena, copied).len(), 1);
-    assert_eq!(arena.durable_list(&durable).expect("source retained").len(), 1);
+    assert_eq!(
+        arena.durable_list(&durable).expect("source retained").len(),
+        1
+    );
     let after = arena.durable_transition_counters();
-    assert_eq!(after.tex_copy_nodes_copied - before.tex_copy_nodes_copied, 2);
-    assert_eq!(after.node_closure_scan_nodes - before.node_closure_scan_nodes, 2);
+    assert_eq!(
+        after.tex_copy_nodes_copied - before.tex_copy_nodes_copied,
+        2
+    );
+    assert_eq!(
+        after.node_closure_scan_nodes - before.node_closure_scan_nodes,
+        2
+    );
     arena.retire_durable(durable).expect("retire source owner");
 }
 
 #[test]
 fn historical_durable_owner_copy_is_move_only_and_independent() {
     let mut arena = PageMaterialArena::with_chunk_bytes(64);
-    let root = arena
-        .publish_owned([Node::Penalty(47)])
-        .expect("page root");
+    let root = arena.publish_owned([Node::Penalty(47)]).expect("page root");
     let original = arena
         .copy_page_root_to_durable(root)
         .expect("original owner");
     let original_id = original.region_id();
     let before = arena.durable_transition_counters();
 
-    let history = arena
-        .copy_durable_owner(&original)
-        .expect("history owner");
+    let history = arena.copy_durable_owner(&original).expect("history owner");
     assert_ne!(history.region_id(), original_id);
     assert_eq!(arena.durable_list(&original).expect("original").len(), 1);
     assert_eq!(arena.durable_list(&history).expect("history").len(), 1);
     let after = arena.durable_transition_counters();
     assert_eq!(
-        after.history_preservation_nodes_copied
-            - before.history_preservation_nodes_copied,
+        after.history_preservation_nodes_copied - before.history_preservation_nodes_copied,
         1
     );
     arena.retire_durable(original).expect("retire original");
-    assert_eq!(arena.durable_list(&history).expect("history survives").len(), 1);
+    assert_eq!(
+        arena
+            .durable_list(&history)
+            .expect("history survives")
+            .len(),
+        1
+    );
     arena.retire_durable(history).expect("retire history");
 }

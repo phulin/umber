@@ -424,7 +424,8 @@ impl PageMaterialArena {
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         let source = self.region.root(&self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
-        let copied = match copy_region_root_into(&mut self.pool, &self.region, source, &mut durable) {
+        let copied = match copy_region_root_into(&mut self.pool, &self.region, source, &mut durable)
+        {
             Ok(root) => root,
             Err(error) => {
                 assert!(
@@ -482,6 +483,28 @@ impl PageMaterialArena {
         self.durable_transitions.tex_copy_nodes_copied = self
             .durable_transitions
             .tex_copy_nodes_copied
+            .saturating_add(copied);
+        self.durable_transitions.node_closure_scan_nodes = self
+            .durable_transitions
+            .node_closure_scan_nodes
+            .saturating_add(copied);
+        Ok(root.list())
+    }
+
+    pub(crate) fn copy_history_preserved_to_page(
+        &mut self,
+        closure: &DurableNodeClosure,
+    ) -> Result<PageListId, ForkArenaError> {
+        let before = self.region.counters().source_nodes_copied;
+        let root = copy_closure_into(&mut self.pool, closure, &mut self.region)?;
+        let copied = self
+            .region
+            .counters()
+            .source_nodes_copied
+            .saturating_sub(before);
+        self.durable_transitions.history_preservation_nodes_copied = self
+            .durable_transitions
+            .history_preservation_nodes_copied
             .saturating_add(copied);
         self.durable_transitions.node_closure_scan_nodes = self
             .durable_transitions
@@ -552,6 +575,11 @@ impl PageMaterialArena {
         self.pool
             .retire_region(closure.into_region())
             .map_err(|(error, _)| error)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn durable_region_is_live(&self, id: crate::node_region::NodeRegionId) -> bool {
+        self.pool.validates_id(id)
     }
 
     pub fn open_active_list(

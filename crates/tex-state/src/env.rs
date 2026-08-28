@@ -2,6 +2,7 @@
 
 #[path = "env/banks.rs"]
 pub mod banks;
+mod durable_boxes;
 mod font_runtime;
 #[path = "env/group.rs"]
 pub(crate) mod group;

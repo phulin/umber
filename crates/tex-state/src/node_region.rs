@@ -137,7 +137,7 @@ impl NodePool {
     }
 
     #[cfg(test)]
-    fn validates_id(&self, id: NodeRegionId) -> bool {
+    pub(crate) fn validates_id(&self, id: NodeRegionId) -> bool {
         id.pool == self.id
             && self
                 .regions

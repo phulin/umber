@@ -50,6 +50,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   provenance publication.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, and journal-cursor restore.
+- `src/env/durable_boxes.rs` and `src/env/durable_boxes/tests.rs`: move-only
+  durable node-closure register owners, exact group/operation/checkpoint
+  owner swaps, bounded history-preservation copies, and lifecycle tests.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
   dimensions, character settings, PDF code tables, and ligature state.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
