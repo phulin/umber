@@ -692,6 +692,77 @@ pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &
     }
 }
 
+/// Replaces provisional OpenType adjustments while retaining every unchanged
+/// page-material span by coordinate.
+pub(crate) fn reshape_open_type_runs_list<G>(
+    stores: &mut CommandContext<'_, G>,
+    source: tex_state::node_arena::PageListId,
+) -> tex_state::node_arena::PageListId {
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let mut index = 0;
+    while index < source.len() {
+        let first = stores
+            .page_nodes(source)
+            .expect("OpenType source belongs to the live page arena")
+            .owned_node(index)
+            .and_then(|node| match node {
+                Node::Char { font, ch, origin } => Some((*font, *ch, *origin)),
+                _ => None,
+            });
+        let Some((font, ch, origin)) = first else {
+            stores.append_page_active_list_range(&mut output, source, index..index + 1);
+            index += 1;
+            continue;
+        };
+        if !is_ltr_shaping_font(stores, font)
+            || !is_supported_script(tex_fonts::character_script(ch))
+        {
+            stores.append_page_active_list_range(&mut output, source, index..index + 1);
+            index += 1;
+            continue;
+        }
+        let mut chars = vec![crate::mode::PendingHChar { font, ch, origin }];
+        let mut script = tex_fonts::character_script(ch);
+        index += 1;
+        while index < source.len() {
+            let next = stores
+                .page_nodes(source)
+                .expect("OpenType source belongs to the live page arena")
+                .owned_node(index);
+            match next {
+                Some(Node::Kern {
+                    kind: KernKind::Font,
+                    ..
+                }) => index += 1,
+                Some(Node::Char {
+                    font: next_font,
+                    ch: next_ch,
+                    origin: next_origin,
+                }) if *next_font == font
+                    && scripts_compatible(script, tex_fonts::character_script(*next_ch)) =>
+                {
+                    let next_script = tex_fonts::character_script(*next_ch);
+                    if is_strong_script(next_script) {
+                        script = next_script;
+                    }
+                    chars.push(crate::mode::PendingHChar {
+                        font,
+                        ch: *next_ch,
+                        origin: *next_origin,
+                    });
+                    index += 1;
+                }
+                _ => break,
+            }
+        }
+        for node in shape_open_type_chars(stores, &chars, &[]) {
+            stores.push_page_active_list(&mut output, node);
+        }
+    }
+    stores.finalize_page_active_list(&mut output)
+}
+
 pub(crate) fn reconstitute_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,

@@ -10,6 +10,13 @@ struct HyphenationProjection<'a> {
     missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
 }
 
+pub(super) struct HyphenatedHlist {
+    pub(super) semantic: tex_state::node_arena::PageListId,
+    pub(super) physical: tex_state::node_arena::PageListId,
+    pub(super) physical_boundaries: Vec<usize>,
+    pub(super) missing_hyphens: Vec<MissingHyphenDiagnostic>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct HyphenationContext {
     language: u8,
@@ -70,42 +77,51 @@ pub(crate) fn apply_scanned_hyphenation_exceptions<G>(
 fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    nodes: Vec<Node>,
+    source: tex_state::node_arena::PageListId,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
-) -> Result<(Vec<Node>, HyphenationContext), ExecError> {
+) -> Result<(tex_state::node_arena::PageListId, HyphenationContext), ExecError> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
-    let mut out: Option<Vec<Node>> = None;
+    let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut out);
+    let mut output_len = 0usize;
     let mut index = 0;
     let mut auto_breaking = true;
     let mut language = 0;
     let mut left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
     let mut right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
 
-    while index < nodes.len() {
-        let node = &nodes[index];
-        update_hyphenation_context(node, &mut language, &mut left, &mut right);
-        match node {
-            Node::MathOn(_) => auto_breaking = false,
-            Node::MathOff(_) => auto_breaking = true,
-            _ => {}
-        }
-        if let Some(out) = &mut out {
-            out.push(node.clone());
-        }
+    while index < source.len() {
+        let is_glue = {
+            let node = stores
+                .page_nodes(source)
+                .expect("hyphenation source belongs to the live page arena")
+                .owned_node(index)
+                .expect("hyphenation cursor remains in range");
+            update_hyphenation_context(node, &mut language, &mut left, &mut right);
+            match node {
+                Node::MathOn(_) => auto_breaking = false,
+                Node::MathOff(_) => auto_breaking = true,
+                _ => {}
+            }
+            matches!(node, Node::Glue { .. })
+        };
+        stores.append_page_active_list_range(&mut out, source, index..index + 1);
+        output_len += 1;
         index += 1;
 
         if auto_breaking
-            && matches!(node, Node::Glue { .. })
+            && is_glue
             && let Some(next) = hyphenate_after_glue(
                 stores,
                 diagnostic_effects,
-                &nodes,
+                source,
                 index,
                 (language, left, right),
                 &mut out,
+                &mut output_len,
                 fuel,
                 projection,
             )?
@@ -114,7 +130,7 @@ fn hyphenated_hlist_with_projections<G>(
         }
     }
     Ok((
-        out.unwrap_or(nodes),
+        stores.finalize_page_active_list(&mut out),
         HyphenationContext {
             language,
             left,
@@ -128,18 +144,12 @@ fn hyphenated_hlist_with_projections<G>(
 /// semantic pre-break list used by line breaking, while TeX's linked-list
 /// representation exposes the preceding reconstituted character span in the
 /// discretionary's diagnostic pre-break branch.
-pub(crate) fn hyphenated_hlist_sequence_with_fuel<G>(
+pub(crate) fn hyphenated_hlist_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    nodes: Vec<Node>,
+    source: tex_state::node_arena::PageListId,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<
-    (
-        tex_state::node_sequence::NodeSequence,
-        Vec<MissingHyphenDiagnostic>,
-    ),
-    ExecError,
-> {
+) -> Result<HyphenatedHlist, ExecError> {
     let mut physical_post_overrides = Vec::new();
     let mut missing_hyphens = Vec::new();
     let mut projection = HyphenationProjection {
@@ -149,97 +159,184 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel<G>(
     let (semantic, _) = hyphenated_hlist_with_projections(
         stores,
         diagnostic_effects,
-        nodes,
+        source,
         fuel,
         &mut projection,
     )?;
-    let mut physical = semantic.clone();
-    for (index, physical_post) in physical_post_overrides {
-        if let Some(Node::Disc { post, .. }) = physical.get_mut(index) {
-            *post = physical_post;
-        }
-    }
-    project_physical_pre_break_spans(stores, diagnostic_effects, &mut physical, fuel)?;
-    Ok((
-        tex_state::node_sequence::NodeSequence::from_channels(semantic, physical),
+    let physical = project_physical_hlist(
+        stores,
+        diagnostic_effects,
+        semantic,
+        &physical_post_overrides,
+        fuel,
+    )?;
+    let semantic = crate::box_runtime::hmode::reshape_open_type_runs_list(stores, semantic);
+    let physical_boundaries = compacted_physical_boundaries(stores, semantic, physical.len());
+    Ok(HyphenatedHlist {
+        semantic,
+        physical,
+        physical_boundaries,
         missing_hyphens,
-    ))
+    })
 }
 
-fn project_physical_pre_break_spans<G>(
+fn project_physical_hlist<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    nodes: &mut [Node],
+    semantic: tex_state::node_arena::PageListId,
+    post_overrides: &[(usize, tex_state::node_arena::PageListId)],
     fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    for index in 1..nodes.len() {
-        let Node::Disc {
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    let mut physical = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut physical);
+    let mut override_index = 0usize;
+    for index in 0..semantic.len() {
+        let post_override = (post_overrides.get(override_index).map(|entry| entry.0)
+            == Some(index))
+        .then(|| post_overrides[override_index].1);
+        let pre_projection =
+            physical_pre_break_projection(stores, diagnostic_effects, semantic, index, fuel)?;
+        if post_override.is_some() || pre_projection.is_some() {
+            let mut replacement = stores
+                .page_nodes(semantic)
+                .expect("hyphenated paragraph belongs to the live page arena")
+                .owned_node(index)
+                .expect("hyphenated paragraph cursor remains in range")
+                .clone();
+            let Node::Disc { pre, post, .. } = &mut replacement else {
+                unreachable!("physical projection targets a discretionary")
+            };
+            if let Some(projected) = post_override {
+                *post = projected;
+                override_index += 1;
+            }
+            if let Some(projected) = pre_projection {
+                *pre = projected;
+            }
+            stores.push_page_active_list(&mut physical, replacement);
+        } else {
+            stores.append_page_active_list_range(&mut physical, semantic, index..index + 1);
+        }
+    }
+    Ok(stores.finalize_page_active_list(&mut physical))
+}
+
+fn physical_pre_break_projection<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    semantic: tex_state::node_arena::PageListId,
+    index: usize,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
+    if index == 0 {
+        return Ok(None);
+    }
+    let qualifies = {
+        let nodes = stores
+            .page_nodes(semantic)
+            .expect("hyphenated paragraph belongs to the live page arena");
+        let Some(Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             replace,
             physical_replace_count: 2,
             ..
-        } = &nodes[index]
+        }) = nodes.owned_node(index)
         else {
-            continue;
+            return Ok(None);
         };
         let replacement = stores
             .page_node_list(*replace)
             .expect("discretionary replacement belongs to the live page arena");
-        if replacement.len() != 1
-            || !matches!(
+        replacement.len() == 1
+            && matches!(
                 replacement.first(),
                 Some(Node::Kern {
                     kind: KernKind::Font,
                     ..
                 })
             )
-        {
-            continue;
-        }
-
-        let (font, chars, origins) = match &nodes[index - 1] {
-            Node::Char { font, ch, origin } => (*font, vec![*ch], vec![*origin]),
-            Node::Lig {
+    };
+    if !qualifies {
+        return Ok(None);
+    }
+    let (font, mut pending) = {
+        let nodes = stores
+            .page_nodes(semantic)
+            .expect("hyphenated paragraph belongs to the live page arena");
+        match nodes.owned_node(index - 1) {
+            Some(Node::Char { font, ch, origin }) => (
+                *font,
+                vec![PendingHChar {
+                    font: *font,
+                    ch: *ch,
+                    origin: *origin,
+                }],
+            ),
+            Some(Node::Lig {
                 font,
                 orig,
                 origins,
                 ..
-            } => (*font, orig.clone(), origins.clone()),
-            _ => continue,
-        };
-        let Some(hyphen) = usable_hyphen_char(stores, font) else {
-            continue;
-        };
-        let last_origin = origins.last().copied().unwrap_or(OriginId::UNKNOWN);
-        let mut pending = chars
-            .into_iter()
-            .zip(origins)
-            .map(|(ch, origin)| PendingHChar { font, ch, origin })
-            .collect::<Vec<_>>();
-        pending.push(PendingHChar {
-            font,
-            ch: hyphen,
-            origin: last_origin,
+            }) => (
+                *font,
+                orig.iter()
+                    .copied()
+                    .zip(origins.iter().copied())
+                    .map(|(ch, origin)| PendingHChar {
+                        font: *font,
+                        ch,
+                        origin,
+                    })
+                    .collect(),
+            ),
+            _ => return Ok(None),
+        }
+    };
+    let Some(hyphen) = usable_hyphen_char(stores, font) else {
+        return Ok(None);
+    };
+    let last_origin = pending
+        .last()
+        .map_or(OriginId::UNKNOWN, |entry| entry.origin);
+    pending.push(PendingHChar {
+        font,
+        ch: hyphen,
+        origin: last_origin,
+    });
+    let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+        stores,
+        diagnostic_effects,
+        &pending,
+        true,
+        false,
+        fuel,
+    )
+    .map_err(ExecError::Command)?;
+    Ok(Some(stores.publish_page_nodes(pre)))
+}
+
+fn compacted_physical_boundaries<G>(
+    stores: &CommandContext<'_, G>,
+    semantic: tex_state::node_arena::PageListId,
+    physical_len: usize,
+) -> Vec<usize> {
+    let nodes = stores
+        .page_nodes(semantic)
+        .expect("shaped paragraph belongs to the live page arena");
+    let mut boundary = 0usize;
+    let mut boundaries = Vec::with_capacity(nodes.len() + 1);
+    boundaries.push(0);
+    for node in nodes {
+        boundary = boundary.saturating_add(match node {
+            Node::Lig { orig, .. } => orig.len().max(1),
+            _ => 1,
         });
-        let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
-            stores,
-            diagnostic_effects,
-            &pending,
-            true,
-            false,
-            fuel,
-        )
-        .map_err(ExecError::Command)?;
-        let pre = stores.publish_page_nodes(pre);
-        let Node::Disc {
-            pre: physical_pre, ..
-        } = &mut nodes[index]
-        else {
-            unreachable!()
-        };
-        *physical_pre = pre;
+        boundaries.push(boundary.min(physical_len));
     }
-    Ok(())
+    if let Some(last) = boundaries.last_mut() {
+        *last = physical_len;
+    }
+    boundaries
 }
 
 fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, right: &mut usize) {
@@ -259,14 +356,15 @@ fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, 
 fn hyphenate_after_glue<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    nodes: &[Node],
+    source: tex_state::node_arena::PageListId,
     start: usize,
     context: (u8, usize, usize),
-    out: &mut Option<Vec<Node>>,
+    out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<Option<usize>, ExecError> {
-    let Some(candidate) = find_hyphenation_candidate(stores, nodes, start, context) else {
+    let Some(candidate) = find_hyphenation_candidate(stores, source, start, context) else {
         return Ok(None);
     };
     let HyphenationCandidate {
@@ -281,35 +379,40 @@ fn hyphenate_after_glue<G>(
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
     let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
     if positions.is_empty() {
-        if let Some(out) = out {
-            out.extend_from_slice(&nodes[start..index]);
-        }
+        stores.append_page_active_list_range(out, source, start..index);
+        *output_len += index - start;
         return Ok(Some(index));
     }
 
-    let out = out.get_or_insert_with(|| {
-        let mut out = Vec::with_capacity(nodes.len());
-        out.extend_from_slice(&nodes[..start]);
-        out
-    });
-    out.extend_from_slice(&nodes[start..word_start]);
-    let trailing_font_kern = nodes[word_start..index].last().and_then(|node| match node {
-        Node::Kern {
-            amount,
-            kind: KernKind::Font,
-        } => Some(Node::Kern {
-            amount: *amount,
-            kind: KernKind::Font,
-        }),
-        _ => None,
-    });
-    let no_left_boundary = matches!(
-        out.last(),
-        Some(Node::Kern {
-            kind: KernKind::Font,
-            ..
-        })
-    );
+    stores.append_page_active_list_range(out, source, start..word_start);
+    *output_len += word_start - start;
+    let trailing_font_kern = stores
+        .page_nodes(source)
+        .expect("hyphenation source belongs to the live page arena")
+        .owned_node(index - 1)
+        .is_some_and(|node| {
+            matches!(
+                node,
+                Node::Kern {
+                    kind: KernKind::Font,
+                    ..
+                }
+            )
+        });
+    let no_left_boundary = word_start != 0
+        && stores
+            .page_nodes(source)
+            .expect("hyphenation source belongs to the live page arena")
+            .owned_node(word_start - 1)
+            .is_some_and(|node| {
+                matches!(
+                    node,
+                    Node::Kern {
+                        kind: KernKind::Font,
+                        ..
+                    }
+                )
+            });
     append_hyphenated_word(
         stores,
         diagnostic_effects,
@@ -317,11 +420,13 @@ fn hyphenate_after_glue<G>(
         &positions,
         no_left_boundary,
         out,
+        output_len,
         fuel,
         projection,
     )?;
-    if let Some(kern) = trailing_font_kern {
-        out.push(kern);
+    if trailing_font_kern {
+        stores.append_page_active_list_range(out, source, index - 1..index);
+        *output_len += 1;
     }
     Ok(Some(index))
 }
@@ -339,14 +444,15 @@ struct HyphenationCandidate {
 /// potentially hyphenatable part begins through the same-font letter span.
 fn find_hyphenation_candidate<G>(
     stores: &CommandContext<'_, G>,
-    nodes: &[Node],
+    source: tex_state::node_arena::PageListId,
     start: usize,
     context: (u8, usize, usize),
 ) -> Option<HyphenationCandidate> {
+    let nodes = stores.page_nodes(source).ok()?;
     let (mut language, mut left, mut right) = context;
     let mut index = start;
     let (word_start, font) = loop {
-        let node = nodes.get(index)?;
+        let node = nodes.owned_node(index)?;
         match first_word_char(stores, language, node) {
             Some((font, ch, lower)) => {
                 if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
@@ -373,7 +479,7 @@ fn find_hyphenation_candidate<G>(
 
     let mut word = Vec::new();
     index = word_start;
-    while let Some(node) = nodes.get(index) {
+    while let Some(node) = nodes.owned_node(index) {
         match node {
             Node::Char {
                 font: node_font,
@@ -393,21 +499,20 @@ fn find_hyphenation_candidate<G>(
             }
             Node::Lig {
                 font: node_font,
-                ch,
                 orig,
                 origins,
                 ..
             } if *node_font == font => {
-                let chars = orig.clone();
                 if word
                     .len()
-                    .checked_add(chars.len())
+                    .checked_add(orig.len())
                     .is_none_or(|len| len > 63)
                 {
                     break;
                 }
-                let Some(normalized) = chars
-                    .into_iter()
+                let Some(normalized) = orig
+                    .iter()
+                    .copied()
                     .map(|ch| normalized_hyphen_code(stores, language, ch).map(|lower| (ch, lower)))
                     .collect::<Option<Vec<_>>>()
                 else {
@@ -478,8 +583,11 @@ fn is_pre_word_skip(node: &Node) -> bool {
     ) || matches!(node, Node::Char { .. } | Node::Lig { .. })
 }
 
-fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
-    while let Some(node) = nodes.get(index) {
+fn permitted_word_terminator(
+    nodes: tex_state::node_arena::NodeCursor<'_>,
+    mut index: usize,
+) -> bool {
+    while let Some(node) = nodes.owned_node(index) {
         match node {
             Node::Char { .. }
             | Node::Lig { .. }
@@ -577,7 +685,8 @@ fn append_hyphenated_word<G>(
     word: &[WordChar],
     positions: &[usize],
     no_left_boundary: bool,
-    out: &mut Vec<Node>,
+    out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<(), ExecError> {
@@ -604,13 +713,15 @@ fn append_hyphenated_word<G>(
         ) && positions.get(position_index) == Some(&char_start);
         while positions.get(position_index) == Some(&char_start) {
             let replacement = boundary_kern.then_some(node.clone());
-            out.push(discretionary_hyphen(
+            let disc = discretionary_hyphen(
                 stores,
                 word[char_start - 1].font,
                 replacement,
-                out.len(),
+                *output_len,
                 projection.missing_hyphens,
-            ));
+            );
+            stores.push_page_active_list(out, disc);
+            *output_len += 1;
             position_index += 1;
         }
         if boundary_kern {
@@ -626,7 +737,7 @@ fn append_hyphenated_word<G>(
                 stores,
                 diagnostic_effects,
                 word,
-                ((char_start, position, char_end), out.len()),
+                ((char_start, position, char_end), *output_len),
                 node,
                 &nodes[node_index + 1..],
                 fuel,
@@ -634,8 +745,9 @@ fn append_hyphenated_word<G>(
             )?;
             projection
                 .physical_post_overrides
-                .push((out.len(), physical_post));
-            out.push(disc);
+                .push((*output_len, physical_post));
+            stores.push_page_active_list(out, disc);
+            *output_len += 1;
             position_index += 1;
             // TeX82 likewise suppresses another hyphenation point whose
             // branches have not synchronized before this node ends.
@@ -646,20 +758,23 @@ fn append_hyphenated_word<G>(
                 position_index += 1;
             }
         } else {
-            out.push(node);
+            stores.push_page_active_list(out, node);
+            *output_len += 1;
         }
         char_start = char_end;
     }
 
     while let Some(&position) = positions.get(position_index) {
         debug_assert_eq!(position, char_start);
-        out.push(discretionary_hyphen(
+        let disc = discretionary_hyphen(
             stores,
             word[position - 1].font,
             None,
-            out.len(),
+            *output_len,
             projection.missing_hyphens,
-        ));
+        );
+        stores.push_page_active_list(out, disc);
+        *output_len += 1;
         position_index += 1;
     }
     Ok(())

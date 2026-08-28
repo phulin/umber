@@ -582,27 +582,17 @@ fn break_hlist_with_trace<G>(
         ))
     } else {
         drop(tape);
-        let hlist = stores
-            .page_node_list(hlist)
-            .expect("hyphenated paragraph belongs to the live page arena")
-            .nodes()
-            .iter()
-            .cloned()
-            .collect();
-        let (sequence, missing_hyphens) = super::hyphenation::hyphenated_hlist_sequence_with_fuel(
+        let hyphenated = super::hyphenation::hyphenated_hlist_with_fuel(
             stores,
             diagnostic_effects,
             hlist,
             fuel,
         )?;
-        let (mut hyphenated, physical_nodes) = sequence.take();
-        crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
-        let tape = ParagraphTape::analyze(
+        let tape = ParagraphTape::analyze_arena_projection_ids(
             &crate::typeset_context::TypesetContext::new(stores),
-            tex_state::node_sequence::NodeSequence::from_compacted_semantic(
-                hyphenated,
-                physical_nodes,
-            ),
+            hyphenated.semantic,
+            hyphenated.physical,
+            Some(hyphenated.physical_boundaries),
             &line_params,
         );
         let (plan, trace) = if tracing {
@@ -625,7 +615,7 @@ fn break_hlist_with_trace<G>(
         Ok((
             tex_typeset::linebreak::plan_with_tape(plan, tape),
             trace,
-            missing_hyphens,
+            hyphenated.missing_hyphens,
         ))
     }
 }
