@@ -217,7 +217,7 @@ impl<G> CommandTimeline<G> {
     }
 
     #[cfg(any(test, feature = "profiling"))]
-    fn packed_journal_counters(&self) -> CommandTimelineCounters {
+    pub(crate) fn packed_journal_counters(&self) -> CommandTimelineCounters {
         let scalar = self.scalars.counters();
         let pending = self.pending_input.counters();
         CommandTimelineCounters {
@@ -230,6 +230,7 @@ impl<G> CommandTimeline<G> {
                 .chunks_acquired
                 .saturating_add(pending.chunks_acquired),
             chunks_reused: scalar.chunks_reused.saturating_add(pending.chunks_reused),
+            ..CommandTimelineCounters::default()
         }
     }
 
@@ -523,6 +524,13 @@ pub struct CommandTimelineCounters {
     pub ordered_events: u64,
     pub chunks_acquired: u64,
     pub chunks_reused: u64,
+    pub logical_payload_admissions: u64,
+    pub full_frame_history_clones: u64,
+    pub logical_records: u64,
+    pub logical_record_bytes: u64,
+    pub logical_coalesced_mutations: u64,
+    pub displaced_payloads: u64,
+    pub displaced_reuses: u64,
 }
 
 /// Coarse generation plus stable physical-timeline identity retained by one
@@ -589,10 +597,10 @@ impl<G> CommandGenerationOwner<G> {
 /// validates the coordinate against its own generation before truncation.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct CommandArenaCursors {
-    input_rows: u32,
-    input_words: u32,
-    parameter_words: u32,
-    builder_words: u32,
+    input_rows: PackedJournalMark,
+    input_words: PackedJournalMark,
+    parameter_words: PackedJournalMark,
+    builder_words: PackedJournalMark,
     attempt_rows: u32,
 }
 
@@ -606,6 +614,22 @@ impl CommandArenaCursors {
         attempt_rows: u32,
     ) -> Self {
         Self {
+            input_rows: PackedJournalMark::synthetic(input_rows),
+            input_words: PackedJournalMark::synthetic(input_words),
+            parameter_words: PackedJournalMark::synthetic(parameter_words),
+            builder_words: PackedJournalMark::synthetic(builder_words),
+            attempt_rows,
+        }
+    }
+
+    const fn live(
+        input_rows: PackedJournalMark,
+        input_words: PackedJournalMark,
+        parameter_words: PackedJournalMark,
+        builder_words: PackedJournalMark,
+        attempt_rows: u32,
+    ) -> Self {
+        Self {
             input_rows,
             input_words,
             parameter_words,
@@ -616,21 +640,37 @@ impl CommandArenaCursors {
 
     #[must_use]
     pub const fn input_rows(self) -> u32 {
-        self.input_rows
+        self.input_rows.record_count()
     }
 
     #[must_use]
     pub const fn input_words(self) -> u32 {
-        self.input_words
+        self.input_words.record_count()
     }
 
     #[must_use]
     pub const fn parameter_words(self) -> u32 {
-        self.parameter_words
+        self.parameter_words.record_count()
     }
 
     #[must_use]
     pub const fn builder_words(self) -> u32 {
+        self.builder_words.record_count()
+    }
+
+    const fn input_rows_mark(self) -> PackedJournalMark {
+        self.input_rows
+    }
+
+    const fn input_words_mark(self) -> PackedJournalMark {
+        self.input_words
+    }
+
+    const fn parameter_words_mark(self) -> PackedJournalMark {
+        self.parameter_words
+    }
+
+    const fn builder_words_mark(self) -> PackedJournalMark {
         self.builder_words
     }
 
@@ -647,14 +687,14 @@ pub struct CommandStackCursors {
     parameter_depth: u32,
     condition_depth: u32,
     alignment_depth: u32,
-    alignment_undo: u32,
+    alignment_undo: PackedJournalMark,
     suspended_alignment_depth: u32,
-    suspended_alignment_undo: u32,
+    suspended_alignment_undo: PackedJournalMark,
     replay_depth: u32,
     diagnostic_count: u32,
     group_payload_depth: u32,
     aftergroup_payload_count: u32,
-    aftergroup_payload_undo: u32,
+    aftergroup_payload_undo: PackedJournalMark,
     afterassignment_present: bool,
 }
 
@@ -680,7 +720,7 @@ impl CommandStackCursors {
     }
 
     #[must_use]
-    const fn alignment_undo(self) -> u32 {
+    const fn alignment_undo(self) -> PackedJournalMark {
         self.alignment_undo
     }
 
@@ -690,7 +730,7 @@ impl CommandStackCursors {
     }
 
     #[must_use]
-    const fn suspended_alignment_undo(self) -> u32 {
+    const fn suspended_alignment_undo(self) -> PackedJournalMark {
         self.suspended_alignment_undo
     }
 
@@ -715,7 +755,7 @@ impl CommandStackCursors {
     }
 
     #[must_use]
-    const fn aftergroup_payload_undo(self) -> u32 {
+    const fn aftergroup_payload_undo(self) -> PackedJournalMark {
         self.aftergroup_payload_undo
     }
 
@@ -1160,7 +1200,7 @@ impl<G> CommandState<G> {
     }
 
     fn checkpoint_arenas(
-        &self,
+        &mut self,
         attempt: AttemptMark,
     ) -> Result<CommandArenaCursors, CommandSummaryError> {
         let attempt_rows = attempt
@@ -1185,7 +1225,7 @@ impl<G> CommandState<G> {
             .group_payloads
             .mark()
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandArenaCursors::new(
+        Ok(CommandArenaCursors::live(
             input.undo,
             parameters.undo,
             conditions.undo,
@@ -1194,7 +1234,7 @@ impl<G> CommandState<G> {
         ))
     }
 
-    fn checkpoint_stacks(&self) -> Result<CommandStackCursors, CommandSummaryError> {
+    fn checkpoint_stacks(&mut self) -> Result<CommandStackCursors, CommandSummaryError> {
         let aftergroups = self
             .aftergroup_payloads
             .mark()
@@ -1316,27 +1356,27 @@ impl<G> CommandState<G> {
             .levels
             .validates(crate::timeline::LogicalStackMark {
                 top: cursor.stacks().input_depth(),
-                undo: arenas.input_rows(),
+                undo: arenas.input_rows_mark(),
             })
             && self
                 .parameters
                 .activations
                 .validates(crate::timeline::LogicalStackMark {
                     top: cursor.stacks().parameter_depth(),
-                    undo: arenas.input_words(),
+                    undo: arenas.input_words_mark(),
                 })
             && self
                 .conditions
                 .frames
                 .validates(crate::timeline::LogicalStackMark {
                     top: cursor.stacks().condition_depth(),
-                    undo: arenas.parameter_words(),
+                    undo: arenas.parameter_words_mark(),
                 })
             && self
                 .group_payloads
                 .validates(crate::timeline::LogicalStackMark {
                     top: cursor.stacks().group_payload_depth(),
-                    undo: arenas.builder_words(),
+                    undo: arenas.builder_words_mark(),
                 })
             && self
                 .aftergroup_payloads
@@ -1382,27 +1422,27 @@ impl<G> CommandState<G> {
             .levels
             .restore(crate::timeline::LogicalStackMark {
                 top: stacks.input_depth(),
-                undo: arenas.input_rows(),
+                undo: arenas.input_rows_mark(),
             })
             && self
                 .parameters
                 .activations
                 .restore(crate::timeline::LogicalStackMark {
                     top: stacks.parameter_depth(),
-                    undo: arenas.input_words(),
+                    undo: arenas.input_words_mark(),
                 })
             && self
                 .conditions
                 .frames
                 .restore(crate::timeline::LogicalStackMark {
                     top: stacks.condition_depth(),
-                    undo: arenas.parameter_words(),
+                    undo: arenas.parameter_words_mark(),
                 })
             && self
                 .group_payloads
                 .restore(crate::timeline::LogicalStackMark {
                     top: stacks.group_payload_depth(),
-                    undo: arenas.builder_words(),
+                    undo: arenas.builder_words_mark(),
                 })
             && self
                 .aftergroup_payloads
@@ -1436,24 +1476,24 @@ impl<G> CommandState<G> {
             .levels
             .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
                 top: stacks.input_depth(),
-                undo: arenas.input_rows(),
+                undo: arenas.input_rows_mark(),
             });
         self.parameters
             .activations
             .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
                 top: stacks.parameter_depth(),
-                undo: arenas.input_words(),
+                undo: arenas.input_words_mark(),
             });
         self.conditions
             .frames
             .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
                 top: stacks.condition_depth(),
-                undo: arenas.parameter_words(),
+                undo: arenas.parameter_words_mark(),
             });
         self.group_payloads
             .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
                 top: stacks.group_payload_depth(),
-                undo: arenas.builder_words(),
+                undo: arenas.builder_words_mark(),
             });
         self.aftergroup_payloads
             .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {

@@ -64,10 +64,14 @@ collector (see `src/conditionals.rs`).
   format or summary payload. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive rollback without shared synchronization.
-- `src/timeline.rs`: generation-owned reversible stack storage. Physical input,
-  parameter, condition, group, aftergroup, and alignment rows survive a logical
-  pop while a checkpoint can reach them; fixed marks retain logical tops and
-  compact element-undo positions, and restore discards only the current suffix.
+- `src/timeline.rs`: generation-owned reversible stack storage. Immutable frame
+  payloads are admitted once in dense rows; fixed-chunk journals retain only
+  first-touch inline execution state or generation-checked handles into a
+  reusable stored-state/displaced-payload slab. Physical input, parameter,
+  condition, group, aftergroup, and alignment rows survive a logical pop while
+  a checkpoint can reach them. Fixed marks retain logical tops and packed
+  journal positions; reject redoes the detached accepted suffix and accept
+  releases its obsolete slab slots without a frame clone or third lineage.
 - `src/scalar_journal.rs` and `src/scalar_journal/tests.rs`: reusable fixed-chunk
   bidirectional command-root journal, scalar marks, two-lineage suffix
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.

@@ -24,6 +24,17 @@ struct GateCounts {
     fork: Counts,
     fork_first_mutation: Counts,
     repeated_scalar_mutations: Counts,
+    repeated_input_frame_mutations: Counts,
+    logical_history: LogicalHistoryCounts,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LogicalHistoryCounts {
+    payload_admissions_per_frame: u64,
+    full_frame_history_clones: u64,
+    records: u64,
+    record_bytes: u64,
+    coalesced_mutations: u64,
 }
 
 fn main() {
@@ -44,11 +55,15 @@ fn main() {
             "repeated_scalar_mutations",
             shallow.repeated_scalar_mutations,
         ),
+        (
+            "repeated_input_frame_mutations",
+            shallow.repeated_input_frame_mutations,
+        ),
     ] {
         assert_eq!(counts, Counts::ZERO, "{name} must remain allocation-free");
     }
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} repeated_scalar_mutations={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} logical_history={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -56,6 +71,8 @@ fn main() {
         shallow.fork,
         shallow.fork_first_mutation,
         shallow.repeated_scalar_mutations,
+        shallow.repeated_input_frame_mutations,
+        shallow.logical_history,
     );
 }
 
@@ -141,21 +158,59 @@ fn run_fixture(units: usize) -> GateCounts {
         command
             .restore_summary(&summary, universe)
             .expect("coalescing cleanup restores");
-        drop(command);
-
-        let (_, fork) = measure(|| {
-            let candidate = CommandState::profile_fork_summary(&summary).expect("checkpoint forks");
-            assert_eq!(candidate.input_level_count(), units * 2);
-            drop(candidate);
+        let input_before = command.profile_timeline_counters();
+        let logical_frames =
+            u64::try_from(command.input_level_count()).expect("frame count fits u64");
+        assert_eq!(
+            input_before.logical_payload_admissions, logical_frames,
+            "each logical frame has exactly one admitted payload"
+        );
+        let (_, repeated_input_frame_mutations) =
+            measure(|| command.profile_repeated_input_frame_mutations(8_192));
+        let input_after = command.profile_timeline_counters();
+        assert_eq!(
+            input_after.logical_payload_admissions,
+            input_before.logical_payload_admissions
+        );
+        assert_eq!(input_after.full_frame_history_clones, 0);
+        assert_eq!(
+            input_after.logical_records - input_before.logical_records,
+            1
+        );
+        assert_eq!(
+            input_after.logical_coalesced_mutations - input_before.logical_coalesced_mutations,
+            8_191
+        );
+        assert!(input_after.logical_record_bytes - input_before.logical_record_bytes <= 48);
+        let logical_history = LogicalHistoryCounts {
+            payload_admissions_per_frame: input_before.logical_payload_admissions / logical_frames,
+            full_frame_history_clones: input_after.full_frame_history_clones,
+            records: input_after.logical_records - input_before.logical_records,
+            record_bytes: input_after.logical_record_bytes - input_before.logical_record_bytes,
+            coalesced_mutations: input_after.logical_coalesced_mutations
+                - input_before.logical_coalesced_mutations,
+        };
+        command
+            .restore_summary(&summary, universe)
+            .expect("input-frame coalescing cleanup restores");
+        let (candidate, fork) = measure(|| {
+            CommandState::profile_fork_summary(command, &summary, universe)
+                .expect("checkpoint forks")
         });
-        let (_, fork_first_mutation) = measure(|| {
-            let mut candidate =
-                CommandState::profile_fork_summary(&summary).expect("checkpoint forks again");
+        assert_eq!(candidate.input_level_count(), units * 2);
+        let mut command = candidate;
+        command.reject_checkpoint_candidate();
+        let (candidate, fork_first_mutation) = measure(|| {
+            let mut candidate = CommandState::profile_fork_summary(command, &summary, universe)
+                .expect("checkpoint forks again");
             candidate.profile_first_timeline_mutation();
             assert!(candidate.profile_name_in_progress());
-            drop(candidate);
+            candidate
         });
-        let isolated = CommandState::profile_fork_summary(&summary).expect("fork restores exactly");
+        let mut command = candidate;
+        command.reject_checkpoint_candidate();
+        let isolated = CommandState::profile_fork_summary(command, &summary, universe)
+            .expect("fork restores exactly");
         assert!(!isolated.profile_name_in_progress());
         drop(isolated);
 
@@ -167,6 +222,8 @@ fn run_fixture(units: usize) -> GateCounts {
             fork,
             fork_first_mutation,
             repeated_scalar_mutations,
+            repeated_input_frame_mutations,
+            logical_history,
         }
     })
     .expect("checkpoint gate universe")

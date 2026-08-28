@@ -1785,6 +1785,18 @@ Macro replacement, argument-range, durable-list, and attempt-list spans remain
 direct coordinates into their existing owners. They do not enter the replay
 lane, acquire a shared token buffer, or copy their packed words at admission.
 
+Logical input history separates the immutable frame payload from its mutable
+execution phase. A token row owns its span, behavior, trace, and identity once;
+its packed frame and retirement phase form a fixed inline state record. Source
+rows similarly retain backing and nesting payload once, while the rarer
+line/backing execution state uses a separate reusable fixed slab so it cannot
+inflate token-cursor records. The first mutation of one row in a legal
+checkpoint interval records the old state; later cursor advances coalesce into
+that record and the live row holds the final state. Pop/push replacement moves
+the displaced payload into a generation-checked slab slot and journals only
+that handle. No input history entry clones `InputLevel`, a token span, macro
+definition, source ancestry, or command frame.
+
 Detached resource continuations deliberately do not serialize a runtime frame
 or arena coordinate. Detachment projects packed words, backup coordinates,
 portable identity, and current offset into the existing handle-free DTO;
@@ -1795,7 +1807,7 @@ physical byte/scalar/line cursor and rebuild the source frame after
 registration, preserving diagnostic positions without publishing runtime
 coordinates.
 
-The implemented ownership model keeps copy-only `MacroActivation` values in
+The implemented ownership model keeps stable `MacroActivation` payloads in
 the `ParameterState` activation chain and stores a typed activation identity
 in `TokenBehavior::MacroBody`. One admitted owner retains up to 64 macro
 records and their live token/provenance closure. `MacroArguments` and every
@@ -1847,7 +1859,10 @@ Macro-body retirement atomically removes the activation matching that level's
 typed `param_start`; a mismatched activation chain is rejected before either
 owner is mutated. A source pop moves its boxed `SourceOpenDepths` owner into
 the retirement result, so `file_warning` consumes the already-validated top
-frame record without an identity walk or ancestry clone. Nested `\input` and
+frame record without an identity walk. A history-retained retirement projects
+only its diagnostic ancestry while the rollback-reachable source payload stays
+in its stable row; an uncheckpointed final cleanup moves the owner directly.
+Nested `\input` and
 `\scantokens` install that record in the source-opening transition before the
 frame becomes observable. The committed lifecycle record may copy `ReplayTrace` for
 observation, but neither its action nor activation cleanup consults that trace.
@@ -3134,16 +3149,25 @@ of command-journal, arena-watermark, stack-length, and ordered-ledger
 positions. Named-boundary publication appends one reusable timeline frame and
 copies only those scalar coordinates; it does not clone `CommandStateRoots` or
 any accumulated command payload. Generation-owned input, parameter, condition,
-group, aftergroup, and alignment stacks retain physical append rows behind
-logical tops. Replacing a rollback-reachable row records a compact old element,
-while root scalars use a descriptor-free packed bidirectional journal. Its
+group, aftergroup, and alignment stacks retain physical payload rows behind
+logical tops. Payload admission is once per pushed frame. A rollback-reachable
+replacement move-stores the old row in a reusable fixed slab and records its
+compact stable handle; ordinary mutation records only the element's inline
+execution state. Rare large source execution state uses its own fixed stored-
+state slab. Both lanes preserve one current suffix and at most one detached
+accepted suffix, and settlement returns obsolete slots to their free heads.
+Root scalars use a descriptor-free packed bidirectional journal. Its
 fixed-size records append into reusable coarse pages, and each checkpoint adds
 only scalar journal marks. Dense first-touch bits coalesce writes to the same
 root cell within one checkpoint interval: the record retains the first old
 value, the live root retains the final new value, reverse rollback swaps the
 old value into place, and forward redo swaps the final value back. A logical
 pop therefore leaves its payload reachable until the named mark is rejected or
-sealed.
+sealed. Logical-stack first-touch epochs apply the same interval rule to cursor
+and phase changes: 1,024 advances of one token frame publish one at-most-48-byte
+record and 1,023 coalesced writes. Push, pop, and replacement order remains in
+the logical top and replacement-handle journal, so intermediate diagnostics
+continue to observe the exact live stack.
 
 Only state cells whose intermediate values cannot escape the checkpoint
 transaction are coalesced: filename-scan activity, pending after-assignment,

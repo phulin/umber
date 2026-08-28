@@ -481,6 +481,21 @@ impl<G> Clone for CommandPayload<G> {
 
 impl<G> Copy for CommandPayload<G> {}
 
+impl<G> crate::timeline::LogicalStackElement for CommandPayload<G> {
+    type InlineState = ();
+    type StoredState = ();
+
+    fn capture_state(
+        &self,
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+        crate::timeline::CapturedStackState::Inline(())
+    }
+
+    fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
+
+    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
+}
+
 impl<G> CommandPayload<G> {
     const fn new(spelling: TracedTokenWord) -> Self {
         Self {
@@ -506,14 +521,31 @@ pub(crate) struct CommandGroupPayload<G> {
 
 impl<G> Clone for CommandGroupPayload<G> {
     fn clone(&self) -> Self {
-        Self {
-            frame: self.frame,
-            token_start: self.token_start,
-            token_top: self.token_top,
-            brand: core::marker::PhantomData,
-            latest_aftergroup_position: self.latest_aftergroup_position,
-        }
+        *self
     }
+}
+
+impl<G> Copy for CommandGroupPayload<G> {}
+
+impl<G> crate::timeline::LogicalStackElement for CommandGroupPayload<G> {
+    type InlineState = (usize, Option<u32>);
+    type StoredState = ();
+
+    fn capture_state(
+        &self,
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+        crate::timeline::CapturedStackState::Inline((
+            self.token_top,
+            self.latest_aftergroup_position,
+        ))
+    }
+
+    fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
+        std::mem::swap(&mut self.token_top, &mut state.0);
+        std::mem::swap(&mut self.latest_aftergroup_position, &mut state.1);
+    }
+
+    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
 
 impl<G> CommandGroupPayload<G> {
@@ -688,7 +720,7 @@ impl<G> CommandState<G> {
             .map_err(CommandGroupError::State)?;
         let group = self
             .group_payloads
-            .pop()
+            .pop_copy()
             .expect("validated command group frame remains present");
         let aftergroup = self.aftergroup_payloads[group.token_start..group.token_top]
             .iter()
@@ -869,12 +901,12 @@ impl<G> CommandState<G> {
             return Err(crate::AttemptError::InvalidCoordinate);
         }
         while self.parameters.activations.len() > mark.macro_depth() {
-            let activation = self
+            let arguments = self
                 .parameters
                 .retire_last_activation()
                 .ok_or(crate::AttemptError::InvalidCoordinate)?;
             self.scratch
-                .pop_macro_frame(activation.arguments.frame())
+                .pop_macro_frame(arguments.frame())
                 .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
         }
         self.attempt.rollback_operation(mark)?;
@@ -1139,12 +1171,61 @@ impl<G> CommandState<G> {
         }
     }
 
+    /// Rewrites one token-frame execution phase repeatedly while its immutable
+    /// input payload stays admitted once in the logical-stack row.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_repeated_input_frame_mutations(&mut self, mutations: usize) {
+        for _ in 0..mutations {
+            let Some(crate::input::InputLevel::Tokens(cursor)) = self.input.levels.last_mut()
+            else {
+                panic!("profiling fixture keeps a token frame on top");
+            };
+            cursor.retirement = match cursor.retirement {
+                crate::input::RetirementBehavior::Pop => {
+                    crate::input::RetirementBehavior::StopAtEnd
+                }
+                _ => crate::input::RetirementBehavior::Pop,
+            };
+        }
+    }
+
     /// Returns structural packed-journal evidence for standalone gates.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
     #[must_use]
     pub fn profile_timeline_counters(&self) -> crate::CommandTimelineCounters {
-        self.timeline.packed_journal_counters()
+        let mut counters = self.timeline.packed_journal_counters();
+        for stack in [
+            self.input.levels.counters(),
+            self.parameters.activations.counters(),
+            self.conditions.frames.counters(),
+            self.group_payloads.counters(),
+            self.aftergroup_payloads.counters(),
+            self.alignment.align_stack.counters(),
+            self.alignment.suspended.counters(),
+        ] {
+            counters.logical_payload_admissions = counters
+                .logical_payload_admissions
+                .saturating_add(stack.payload_admissions);
+            counters.full_frame_history_clones = counters
+                .full_frame_history_clones
+                .saturating_add(stack.full_payload_history_clones);
+            counters.logical_records = counters.logical_records.saturating_add(stack.undo_records);
+            counters.logical_record_bytes = counters
+                .logical_record_bytes
+                .saturating_add(stack.undo_record_bytes);
+            counters.logical_coalesced_mutations = counters
+                .logical_coalesced_mutations
+                .saturating_add(stack.coalesced_mutations);
+            counters.displaced_payloads = counters
+                .displaced_payloads
+                .saturating_add(u64::from(stack.displaced_payloads));
+            counters.displaced_reuses = counters
+                .displaced_reuses
+                .saturating_add(stack.displaced_reuses);
+        }
+        counters
     }
 
     /// Reads the scalar used by the standalone rollback/fork isolation gate.

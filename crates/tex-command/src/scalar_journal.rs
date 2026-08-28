@@ -7,11 +7,25 @@
 
 const CHUNKS_PER_PAGE: usize = 16;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct PackedJournalMark {
     tail: Option<ChunkKey>,
     chunks: u32,
     records: u64,
+}
+
+impl PackedJournalMark {
+    pub(crate) const fn synthetic(records: u32) -> Self {
+        Self {
+            tail: None,
+            chunks: records,
+            records: records as u64,
+        }
+    }
+
+    pub(crate) const fn record_count(self) -> u32 {
+        self.records as u32
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -22,7 +36,7 @@ pub(crate) struct PackedJournalCounters {
     pub(crate) chunks_reused: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ChunkKey {
     slot: u32,
     generation: u32,
@@ -195,11 +209,26 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         mark: PackedJournalMark,
         mut swap: impl FnMut(&mut T),
     ) -> bool {
+        self.restore_with(
+            mark,
+            &mut (),
+            |value, ()| swap(value),
+            |value, ()| drop(value),
+        )
+    }
+
+    pub(crate) fn restore_with<C>(
+        &mut self,
+        mark: PackedJournalMark,
+        context: &mut C,
+        mut swap: impl FnMut(&mut T, &mut C),
+        mut release: impl FnMut(T, &mut C),
+    ) -> bool {
         if self.fork.is_some() || !self.validates(mark) {
             return false;
         }
-        self.visit_current_suffix_reverse(mark, &mut swap);
-        self.release_current_suffix(mark);
+        self.visit_current_suffix_reverse(mark, &mut |value| swap(value, context));
+        self.release_current_suffix(mark, &mut |value| release(value, context));
         self.interval_tail_open = false;
         true
     }
@@ -253,13 +282,26 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
     }
 
     pub(crate) fn reject_checkpoint_candidate(&mut self, mut swap: impl FnMut(&mut T)) {
+        self.reject_checkpoint_candidate_with(
+            &mut (),
+            |value, ()| swap(value),
+            |value, ()| drop(value),
+        );
+    }
+
+    pub(crate) fn reject_checkpoint_candidate_with<C>(
+        &mut self,
+        context: &mut C,
+        mut swap: impl FnMut(&mut T, &mut C),
+        mut release: impl FnMut(T, &mut C),
+    ) {
         let fork = self
             .fork
             .take()
             .expect("journal rejection requires a candidate fork");
-        self.visit_current_suffix_reverse(fork.selected, &mut swap);
-        self.release_current_suffix(fork.selected);
-        self.visit_detached_forward(&mut swap);
+        self.visit_current_suffix_reverse(fork.selected, &mut |value| swap(value, context));
+        self.release_current_suffix(fork.selected, &mut |value| release(value, context));
+        self.visit_detached_forward(&mut |value| swap(value, context));
 
         match (self.tail, self.detached_head) {
             (Some(prefix_tail), Some(detached_head)) => {
@@ -289,10 +331,18 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) {
+        self.accept_checkpoint_candidate_with(&mut (), |value, ()| drop(value));
+    }
+
+    pub(crate) fn accept_checkpoint_candidate_with<C>(
+        &mut self,
+        context: &mut C,
+        mut release: impl FnMut(T, &mut C),
+    ) {
         self.fork
             .take()
             .expect("journal acceptance requires a candidate fork");
-        self.release_detached();
+        self.release_detached(&mut |value| release(value, context));
         self.interval_tail_open = false;
     }
 
@@ -392,12 +442,12 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         }
     }
 
-    fn release_current_suffix(&mut self, mark: PackedJournalMark) {
+    fn release_current_suffix(&mut self, mark: PackedJournalMark, release: &mut impl FnMut(T)) {
         let mut cursor = self.tail;
         while cursor != mark.tail {
             let key = cursor.expect("validated journal suffix reaches mark");
             cursor = self.chunk(key).expect("live journal suffix chunk").previous;
-            self.release_chunk(key);
+            self.release_chunk(key, release);
         }
         self.tail = mark.tail;
         if let Some(tail) = mark.tail {
@@ -411,20 +461,22 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         self.records = mark.records;
     }
 
-    fn release_detached(&mut self) {
+    fn release_detached(&mut self, release: &mut impl FnMut(T)) {
         let mut cursor = self.detached_head;
         while let Some(key) = cursor {
             cursor = self.chunk(key).expect("live detached chunk").next;
-            self.release_chunk(key);
+            self.release_chunk(key, release);
         }
         self.detached_head = None;
     }
 
-    fn release_chunk(&mut self, key: ChunkKey) {
+    fn release_chunk(&mut self, key: ChunkKey, release: &mut impl FnMut(T)) {
         let free_head = self.free_head;
         let chunk = self.chunk_mut(key).expect("released journal chunk is live");
         for value in &mut chunk.values[..usize::from(chunk.used)] {
-            drop(value.take());
+            if let Some(value) = value.take() {
+                release(value);
+            }
         }
         chunk.live = false;
         chunk.used = 0;

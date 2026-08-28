@@ -255,18 +255,6 @@ impl<G> Clone for PackedTokenSpanHandle<G> {
     }
 }
 
-impl<G> Clone for TokenCursor<G> {
-    fn clone(&self) -> Self {
-        Self {
-            span: self.span.clone(),
-            behavior: self.behavior,
-            retirement: self.retirement,
-            trace: self.trace.clone(),
-            frame: self.frame,
-        }
-    }
-}
-
 /// Call-local destination for one raw input delivery.
 ///
 /// Input levels retain every future-relevant cursor and backing owner. This
@@ -489,24 +477,77 @@ impl<'a, G> PackedTokenSources<'a, G> {
     }
 }
 
-impl<G> Clone for SourceLevel<G> {
-    fn clone(&self) -> Self {
-        Self {
-            frame: self.frame,
-            cursor: self.cursor.clone(),
-            name_class: self.name_class,
-            retirement: self.retirement,
-            every_eof: self.every_eof.clone(),
-            open_depths: self.open_depths.clone(),
-        }
-    }
+/// Checkpoint-local execution state for one stable input payload.
+///
+/// Token-source identity, immutable token spans, replay classification, and
+/// source nesting ancestry stay in the admitted [`InputLevel`]. The hot token
+/// path journals only the fixed frame and retirement phase. Source line state
+/// is larger because terminal replacement and `\read` admission can change
+/// its backing, but it is captured only on the first source mutation in one
+/// legal checkpoint interval.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InputLevelInlineState {
+    frame: PackedInputFrame,
+    retirement: RetirementBehavior,
 }
 
-impl<G> Clone for InputLevel<G> {
-    fn clone(&self) -> Self {
+#[derive(Debug)]
+pub(crate) struct SourceLevelExecutionState<G> {
+    frame: PackedInputFrame,
+    cursor: Box<SourceCursor>,
+    name_class: SourceNameClass,
+    retirement: SourceRetirement,
+    every_eof: Option<tex_state::TokenListId<G>>,
+}
+
+impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
+    type InlineState = InputLevelInlineState;
+    type StoredState = SourceLevelExecutionState<G>;
+
+    fn capture_state(
+        &self,
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
         match self {
-            Self::Source(source) => Self::Source(source.clone()),
-            Self::Tokens(tokens) => Self::Tokens(tokens.clone()),
+            Self::Source(source) => {
+                crate::timeline::CapturedStackState::Stored(SourceLevelExecutionState {
+                    frame: source.frame,
+                    cursor: source.cursor.clone(),
+                    name_class: source.name_class,
+                    retirement: source.retirement,
+                    every_eof: source.every_eof.clone(),
+                })
+            }
+            Self::Tokens(tokens) => {
+                crate::timeline::CapturedStackState::Inline(InputLevelInlineState {
+                    frame: tokens.frame,
+                    retirement: tokens.retirement,
+                })
+            }
+        }
+    }
+
+    fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
+        match self {
+            Self::Tokens(tokens) => {
+                std::mem::swap(&mut tokens.frame, &mut state.frame);
+                std::mem::swap(&mut tokens.retirement, &mut state.retirement);
+            }
+            Self::Source(_) => unreachable!("a source frame uses the stored state lane"),
+        }
+    }
+
+    fn swap_stored_state(&mut self, state: &mut Self::StoredState) {
+        match self {
+            Self::Source(source) => {
+                std::mem::swap(&mut source.frame, &mut state.frame);
+                std::mem::swap(&mut source.cursor, &mut state.cursor);
+                std::mem::swap(&mut source.name_class, &mut state.name_class);
+                std::mem::swap(&mut source.retirement, &mut state.retirement);
+                std::mem::swap(&mut source.every_eof, &mut state.every_eof);
+            }
+            Self::Tokens(_) => {
+                unreachable!("a token frame uses the inline state lane")
+            }
         }
     }
 }

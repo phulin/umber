@@ -341,6 +341,21 @@ impl<G> Clone for SuspendedAlignment<G> {
     }
 }
 
+impl<G> crate::timeline::LogicalStackElement for SuspendedAlignment<G> {
+    type InlineState = ();
+    type StoredState = ();
+
+    fn capture_state(
+        &self,
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+        crate::timeline::CapturedStackState::Inline(())
+    }
+
+    fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
+
+    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
+}
+
 impl<G> PartialEq for SuspendedAlignment<G> {
     fn eq(&self, other: &Self) -> bool {
         self.alignment == other.alignment && self.active_cell == other.active_cell
@@ -737,7 +752,7 @@ impl<G> AlignmentDeliveryState<G> {
     ) -> Result<(), AlignmentLifecycleError> {
         let suspended = self
             .suspended
-            .pop()
+            .pop_project(Clone::clone)
             .ok_or(AlignmentLifecycleError::NoSuspendedAlignment)?;
         if suspended.alignment != alignment {
             self.suspended.push(suspended);
@@ -761,7 +776,7 @@ impl<G> AlignmentDeliveryState<G> {
         self.active_alignment = None;
         self.active_cell = None;
         self.completed_preamble = None;
-        self.align_state = self.align_stack.pop().unwrap_or(TOP_LEVEL_ALIGN_STATE);
+        self.align_state = self.align_stack.pop_copy().unwrap_or(TOP_LEVEL_ALIGN_STATE);
         Ok(())
     }
 

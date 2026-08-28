@@ -170,6 +170,15 @@ a token increments an offset and performs no clone, allocation, weak upgrade,
 or hash lookup. Source refill may allocate one source chunk; it does not
 allocate per token.
 
+Checkpoint history does not copy this 40-byte frame or its larger enclosing
+input payload on each advance. Immutable span/source identity remains in one
+admitted row. A packed first-touch record stores only the frame execution state,
+coalesces later advances within the legal checkpoint interval, and uses a
+separate fixed slab for rare source-line state. Pop/push replacement journals a
+generation-checked displaced-row handle. Fork settlement detaches, redoes, or
+releases whole current/prior suffix chunks without a stack snapshot or third
+lineage.
+
 Backup, `\noexpand`, templates, inserted recovery tokens, and macro arguments
 use the same frame type. A small inline frame covers one- and two-token replay;
 larger replay is a span in an episode arena.

@@ -188,7 +188,7 @@ impl IfLimit {
 }
 
 /// Persistent, stable identity-bearing TeX condition state.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ConditionFrame {
     pub(crate) identity: ConditionId,
     pub(crate) kind: ConditionalKind,
@@ -196,6 +196,23 @@ pub(crate) struct ConditionFrame {
     pub(crate) source_line: u32,
     /// e-TeX's `\unless` negates the current-if type and branch.
     pub(crate) inverted: bool,
+}
+
+impl crate::timeline::LogicalStackElement for ConditionFrame {
+    type InlineState = IfLimit;
+    type StoredState = ();
+
+    fn capture_state(
+        &self,
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+        crate::timeline::CapturedStackState::Inline(self.limit)
+    }
+
+    fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
+        std::mem::swap(&mut self.limit, state);
+    }
+
+    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
 
 /// One unfinished conditional retired by TeX82 §1335's final cleanup.
@@ -316,7 +333,7 @@ impl ConditionStack {
     }
 
     pub(crate) fn pop(&mut self) -> Option<ConditionFrame> {
-        self.frames.pop()
+        self.frames.pop_copy()
     }
 
     pub(crate) fn drain_incomplete(&mut self) -> Vec<IncompleteCondition> {

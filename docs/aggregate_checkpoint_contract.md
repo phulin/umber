@@ -84,6 +84,15 @@ their demand-maintained identity scalar to the selected mark before candidate
 mutation; replaying the same suffix consequently recreates the same semantic
 root instead of hashing it twice from the accepted head.
 
+Logical command stacks apply that rule without copying frame payloads into
+history. Each push admits the immutable token, source, command, or macro
+payload once; history thereafter carries only its mutable execution state. A
+first mutation in a checkpoint interval appends one packed handle and old-state
+record, and later cursor or phase changes coalesce into that record.
+Pop and replacement records use stable handles into reusable fixed slabs, so
+reject and accept can swap or retire exactly the prior/current suffix without
+an `ElementUndo<InputLevel>` clone, a per-event allocation, or a third lineage.
+
 ## Component matrix
 
 | Component                                                                     | Sole live owner now and finally                                                                             | Historical baseline capture                                                                                                                   | Final checkpoint mark or root                                                                                                                         | Restore order after complete validation                                                                                                                                         | Checkpoint retention charge                                                                                                                                            | Complete reachable-state identity                                                                                                                                                           |

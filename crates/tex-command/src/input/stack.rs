@@ -33,6 +33,75 @@ pub(crate) struct InputRetirement {
     pub(crate) closes_file_frame: bool,
 }
 
+enum RetiredInputLevel<G> {
+    Source {
+        identity: InputLevelId,
+        name_class: SourceNameClass,
+        source: tex_state::SourceId,
+        retirement: super::SourceRetirement,
+        open_depths: Option<Box<super::SourceOpenDepths>>,
+        framed: bool,
+    },
+    Tokens {
+        identity: InputLevelId,
+        behavior: TokenBehavior,
+        retirement: RetirementBehavior,
+        trace: ReplayTrace,
+        replay: Option<super::ReplayPayloadId<G>>,
+    },
+}
+
+impl<G> RetiredInputLevel<G> {
+    fn borrowed(level: &InputLevel<G>) -> Self {
+        match level {
+            InputLevel::Source(source) => Self::Source {
+                identity: source.identity(),
+                name_class: source.name_class,
+                source: source.cursor.current_backing().id,
+                retirement: source.retirement,
+                open_depths: source.open_depths.clone(),
+                framed: source_level_is_framed(source),
+            },
+            InputLevel::Tokens(cursor) => Self::Tokens {
+                identity: cursor.identity(),
+                behavior: cursor.behavior,
+                retirement: cursor.retirement,
+                trace: cursor.trace.clone(),
+                replay: match &cursor.span {
+                    PackedTokenSpanHandle::Replay { replay, .. } => Some(*replay),
+                    _ => None,
+                },
+            },
+        }
+    }
+
+    fn owned(level: InputLevel<G>) -> Self {
+        match level {
+            InputLevel::Source(source) => {
+                let framed = source_level_is_framed(&source);
+                Self::Source {
+                    identity: source.identity(),
+                    name_class: source.name_class,
+                    source: source.cursor.current_backing().id,
+                    retirement: source.retirement,
+                    open_depths: source.open_depths,
+                    framed,
+                }
+            }
+            InputLevel::Tokens(cursor) => Self::Tokens {
+                identity: cursor.identity(),
+                behavior: cursor.behavior,
+                retirement: cursor.retirement,
+                trace: cursor.trace,
+                replay: match cursor.span {
+                    PackedTokenSpanHandle::Replay { replay, .. } => Some(replay),
+                    _ => None,
+                },
+            },
+        }
+    }
+}
+
 /// Observer-visible class of an exhausted input level.
 ///
 /// It is derived only after retirement has selected its canonical action, so
@@ -118,6 +187,13 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl<G> CommandState<G> {
+    fn pop_retired_input_level(&mut self) -> Option<RetiredInputLevel<G>> {
+        if !self.input.levels.records_history() {
+            return self.input.levels.pop_owned().map(RetiredInputLevel::owned);
+        }
+        self.input.levels.pop_project(RetiredInputLevel::borrowed)
+    }
+
     /// TeX82 one-word nodes owned by live command input and argument buffers.
     ///
     /// An execution operation that allocates recursively must compose its
@@ -359,27 +435,20 @@ impl<G> CommandState<G> {
         }
 
         let InputLevel::Tokens(cursor) = level else {
-            let InputLevel::Source(source) = self
-                .input
-                .levels
-                .pop()
+            let RetiredInputLevel::Source {
+                name_class,
+                source: source_id,
+                retirement,
+                open_depths,
+                framed,
+                ..
+            } = self
+                .pop_retired_input_level()
                 .expect("the inspected top source remains live")
             else {
                 unreachable!("the inspected top level was not a source cursor");
             };
-            let name_class = source.name_class;
-            let source_id = source.cursor.current_backing().id;
-            let action = source_retirement_action(source.retirement);
-            let framed = match name_class {
-                SourceNameClass::File => {
-                    source.cursor.backing.name.is_some()
-                        && source.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
-                }
-                SourceNameClass::Scantokens(19) => true,
-                SourceNameClass::Terminal
-                | SourceNameClass::ReadStream(_)
-                | SourceNameClass::Scantokens(_) => false,
-            };
+            let action = source_retirement_action(retirement);
             // TeX82 §362 tests and clears the process-global `force_eof`
             // only in §360's `name>17` (real-file) refill branch. §483's
             // `name<=17` read/terminal pseudo-sources retire without
@@ -409,7 +478,7 @@ impl<G> CommandState<G> {
                 name_class: Some(name_class),
                 source: Some(source_id),
                 trace: None,
-                source_open_depths: source.open_depths,
+                source_open_depths: open_depths,
                 closes_file_frame: framed,
             });
         };
@@ -443,23 +512,27 @@ impl<G> CommandState<G> {
         }
 
         self.validate_macro_body_retirement(&cursor.behavior)?;
-        let InputLevel::Tokens(cursor) = self
-            .input
-            .levels
-            .pop()
+        let RetiredInputLevel::Tokens {
+            behavior,
+            retirement,
+            trace,
+            replay,
+            ..
+        } = self
+            .pop_retired_input_level()
             .expect("the inspected top level remains live")
         else {
             unreachable!("the inspected top level was a token cursor");
         };
-        self.finish_macro_body_retirement(&cursor.behavior)
+        self.finish_macro_body_retirement(&behavior)
             .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-        if let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span {
+        if let Some(replay) = replay {
             self.input
                 .replay
                 .release(replay)
                 .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
         }
-        let action = match cursor.retirement {
+        let action = match retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             // tex.web §357: a v-template that has already reported its frozen
@@ -475,10 +548,10 @@ impl<G> CommandState<G> {
         Ok(InputRetirement {
             identity: expected,
             action,
-            reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            reason: input_retirement_reason(&behavior, &trace),
             name_class: None,
             source: None,
-            trace: Some(cursor.trace),
+            trace: Some(trace),
             source_open_depths: None,
             closes_file_frame: false,
         })
@@ -495,33 +568,47 @@ impl<G> CommandState<G> {
     /// therefore unwind top-down here even when a macro body, an alignment
     /// template, or a partially consumed source is still live.
     pub(crate) fn pop_input_level_at_end_of_job(&mut self) -> Option<InputRetirement> {
-        let level = self.input.levels.pop()?;
-        let identity = input_level_identity(&level);
-        let InputLevel::Tokens(cursor) = level else {
-            let InputLevel::Source(source) = level else {
+        let level = self.pop_retired_input_level()?;
+        let RetiredInputLevel::Tokens {
+            identity,
+            behavior,
+            retirement,
+            trace,
+            replay,
+        } = level
+        else {
+            let RetiredInputLevel::Source {
+                identity,
+                name_class,
+                source,
+                retirement,
+                open_depths,
+                ..
+            } = level
+            else {
                 unreachable!("the popped level was not a token cursor");
             };
-            let action = source_retirement_action(source.retirement);
+            let action = source_retirement_action(retirement);
             return Some(InputRetirement {
                 identity,
                 action,
                 reason: InputRetirementReason::Source,
-                name_class: Some(source.name_class),
-                source: Some(source.cursor.current_backing().id),
+                name_class: Some(name_class),
+                source: Some(source),
                 trace: None,
-                source_open_depths: source.open_depths,
+                source_open_depths: open_depths,
                 closes_file_frame: false,
             });
         };
-        self.finish_macro_body_retirement(&cursor.behavior)
+        self.finish_macro_body_retirement(&behavior)
             .expect("final cleanup runs inside one direct operation");
-        if let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span {
+        if let Some(replay) = replay {
             self.input
                 .replay
                 .release(replay)
                 .expect("final cleanup preserves replay LIFO order");
         }
-        let action = match cursor.retirement {
+        let action = match retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             RetirementBehavior::Pop
             | RetirementBehavior::RetainExhaustedVTemplate
@@ -532,10 +619,10 @@ impl<G> CommandState<G> {
         Some(InputRetirement {
             identity,
             action,
-            reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            reason: input_retirement_reason(&behavior, &trace),
             name_class: None,
             source: None,
-            trace: Some(cursor.trace),
+            trace: Some(trace),
             source_open_depths: None,
             closes_file_frame: false,
         })
@@ -579,9 +666,9 @@ impl<G> CommandState<G> {
         behavior: &TokenBehavior,
     ) -> Result<(), crate::execution_scratch::ScratchError> {
         if matches!(behavior, TokenBehavior::MacroBody(_))
-            && let Some(activation) = self.parameters.retire_last_activation()
+            && let Some(arguments) = self.parameters.retire_last_activation()
         {
-            self.scratch.pop_macro_frame(activation.arguments.frame())?;
+            self.scratch.pop_macro_frame(arguments.frame())?;
         }
         Ok(())
     }
@@ -612,6 +699,19 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
         }
         ReplayTrace::Inserted | ReplayTrace::Transient(_) => InputRetirementReason::Recovery,
         ReplayTrace::Stored(reason) => InputRetirementReason::TokenList(*reason),
+    }
+}
+
+fn source_level_is_framed<G>(source: &super::SourceLevel<G>) -> bool {
+    match source.name_class {
+        SourceNameClass::File => {
+            source.cursor.backing.name.is_some()
+                && source.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
+        }
+        SourceNameClass::Scantokens(19) => true,
+        SourceNameClass::Terminal
+        | SourceNameClass::ReadStream(_)
+        | SourceNameClass::Scantokens(_) => false,
     }
 }
 

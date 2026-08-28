@@ -60,16 +60,19 @@ pub(crate) struct MacroActivation<G> {
     pub(crate) invocation: OriginId,
 }
 
-impl<G> Clone for MacroActivation<G> {
-    fn clone(&self) -> Self {
-        Self {
-            identity: self.identity,
-            name: self.name,
-            definition: self.definition.clone(),
-            arguments: self.arguments,
-            invocation: self.invocation,
-        }
+impl<G> crate::timeline::LogicalStackElement for MacroActivation<G> {
+    type InlineState = ();
+    type StoredState = ();
+
+    fn capture_state(
+        &self,
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+        crate::timeline::CapturedStackState::Inline(())
     }
+
+    fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
+
+    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
 
 /// Private descriptor for one sealed at-most-nine-argument scratch slot.
@@ -205,8 +208,9 @@ impl<G> ParameterState<G> {
             .map(|activation| activation.invocation)
     }
 
-    pub(crate) fn retire_last_activation(&mut self) -> Option<MacroActivation<G>> {
-        self.activations.pop()
+    pub(crate) fn retire_last_activation(&mut self) -> Option<MacroArguments<G>> {
+        self.activations
+            .pop_project(|activation| activation.arguments)
     }
 }
 

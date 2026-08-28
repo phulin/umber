@@ -1,11 +1,12 @@
 use core::cell::Cell;
 use std::rc::Rc;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use super::{
     CommandArenaCursors, CommandRestoreError, CommandSnapshotCursor, CommandStackCursors,
     CommandStateSnapshot, CommandSummary, CommandSummaryError,
 };
+use crate::scalar_journal::PackedJournalMark;
 
 struct Brand;
 
@@ -42,14 +43,14 @@ fn cursor(seed: u32) -> CommandSnapshotCursor {
             parameter_depth: seed + 7,
             condition_depth: seed + 8,
             alignment_depth: seed + 9,
-            alignment_undo: seed + 15,
+            alignment_undo: PackedJournalMark::synthetic(seed + 15),
             suspended_alignment_depth: seed + 16,
-            suspended_alignment_undo: seed + 17,
+            suspended_alignment_undo: PackedJournalMark::synthetic(seed + 17),
             replay_depth: seed + 10,
             diagnostic_count: seed + 11,
             group_payload_depth: seed + 13,
             aftergroup_payload_count: seed + 14,
-            aftergroup_payload_undo: seed + 18,
+            aftergroup_payload_undo: PackedJournalMark::synthetic(seed + 18),
             afterassignment_present: seed.is_multiple_of(2),
         },
     )
@@ -466,6 +467,60 @@ fn repeated_same_scalar_writes_coalesce_to_first_old_and_final_live_value() {
             .rollback(&snapshot, universe)
             .expect("first old value restores");
         assert!(!command.name_in_progress());
+    });
+}
+
+#[test]
+fn token_frame_history_is_one_compact_record_without_payload_clones() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let words = [TokenWord::pack(Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        })];
+        let list = universe
+            .command_context()
+            .expect("command context")
+            .allocate_token_list(&words)
+            .expect("token list allocates");
+        command.push_everypar(&universe.command_context().expect("command context"), list);
+        let checkpoint = command.snapshot(universe).expect("checkpoint captures");
+        let before = command.input.levels.counters();
+
+        for _ in 0..1_024 {
+            let Some(crate::input::InputLevel::Tokens(cursor)) = command.input.levels.last_mut()
+            else {
+                panic!("fixture token frame remains live");
+            };
+            cursor.retirement = match cursor.retirement {
+                crate::input::RetirementBehavior::Pop => {
+                    crate::input::RetirementBehavior::StopAtEnd
+                }
+                _ => crate::input::RetirementBehavior::Pop,
+            };
+        }
+
+        let after = command.input.levels.counters();
+        assert_eq!(after.payload_admissions, before.payload_admissions);
+        assert_eq!(after.full_payload_history_clones, 0);
+        assert_eq!(after.undo_records - before.undo_records, 1);
+        assert_eq!(
+            after.coalesced_mutations - before.coalesced_mutations,
+            1_023
+        );
+        assert!(
+            after.undo_record_bytes - before.undo_record_bytes <= 48,
+            "token-frame record bytes: {}",
+            after.undo_record_bytes - before.undo_record_bytes
+        );
+
+        command
+            .rollback(&checkpoint, universe)
+            .expect("token frame cursor restores exactly");
+        let Some(crate::input::InputLevel::Tokens(cursor)) = command.input.levels.last() else {
+            panic!("restored token frame remains live");
+        };
+        assert_eq!(cursor.retirement, crate::input::RetirementBehavior::Pop);
     });
 }
 
