@@ -1,4 +1,4 @@
-use super::{ArenaListId, ChunkPool, ForkArena, ForkArenaError};
+use super::{ActiveListBuilder, ArenaListId, ChunkPool, ForkArena, ForkArenaError};
 use crate::node::Node;
 use crate::node_arena::NodeCursor;
 
@@ -260,6 +260,139 @@ fn borrowed_node_cursor_traverses_page_material_without_materialization() {
             })
             .collect::<Vec<_>>(),
         vec![17, 23]
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn detached_active_builder_rejects_foreign_lane_owner() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut first = ForkArena::<u32, ActiveLane>::new();
+    let mut second = ForkArena::<u32, ActiveLane>::new();
+    let mut builder = ActiveListBuilder::vacant();
+    first
+        .open_active_list(&pool, &mut builder)
+        .expect("open active list");
+    assert_eq!(
+        second.push_active_list(&mut pool, &mut builder, 7),
+        Err(ForkArenaError::InvalidActiveListBuilder)
+    );
+    first
+        .rollback_active_list(&mut pool, &mut builder)
+        .expect("owner rolls back its builder");
+    assert!(builder.is_vacant());
+}
+
+#[test]
+fn open_active_builder_blocks_checkpoint_sealing_and_rolls_back_partial_tail() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let prior = list(&mut arena, &mut pool, [1, 2]);
+    let before = arena.operation_mark(&pool);
+    let mut builder = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut builder)
+        .expect("open active list");
+    arena
+        .push_active_list(&mut pool, &mut builder, 3)
+        .expect("append partial tail");
+    assert!(matches!(
+        arena.seal_boundary(&mut pool),
+        Err(ForkArenaError::ActiveBuilder)
+    ));
+    arena
+        .rollback_active_list(&mut pool, &mut builder)
+        .expect("operation rollback");
+    assert_eq!(
+        arena.operation_mark(&pool).payload_chunks,
+        before.payload_chunks
+    );
+    assert_eq!(
+        arena
+            .list(&pool, prior)
+            .expect("prior list survives")
+            .get(1),
+        Some(&2)
+    );
+}
+
+#[test]
+fn active_range_append_is_zero_copy_and_keeps_stable_source_references() {
+    let mut pool = ChunkPool::<Node>::with_chunk_bytes(128);
+    let mut arena = ForkArena::<Node, super::PageMaterialLane>::new();
+    let source = {
+        let mut source = arena.begin_builder(&mut pool).expect("source builder");
+        source.push(Node::Penalty(11)).expect("source node");
+        source.push(Node::Penalty(12)).expect("source node");
+        source.seal().expect("source list")
+    };
+    let source_address = arena
+        .list(&pool, source)
+        .expect("source view")
+        .get(0)
+        .expect("source node") as *const Node;
+
+    let mut active = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut active)
+        .expect("open unbox destination");
+    arena
+        .append_active_list(&mut pool, &mut active, source)
+        .expect("append source range");
+    arena
+        .push_active_list(&mut pool, &mut active, Node::Penalty(13))
+        .expect("append new semantic node");
+    arena
+        .finalize_active_list(&mut pool, &mut active)
+        .expect("seal active destination");
+    let output = active.take_sealed().expect("sealed coordinate");
+    let output_view = arena.list(&pool, output).expect("output view");
+    assert_eq!(output_view.len(), 3);
+    assert_eq!(
+        output_view.get(0).expect("retained source") as *const Node,
+        source_address
+    );
+    assert!(matches!(output_view.get(2), Some(Node::Penalty(13))));
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(arena.counters().new_semantic_nodes, 3);
+}
+
+#[test]
+fn rejected_candidate_truncates_detached_active_builder_output() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let accepted = list(&mut arena, &mut pool, [1]);
+    let selected = {
+        let boundary = arena.seal_boundary(&mut pool).expect("accepted boundary");
+        arena.checkpoint_mark(boundary).expect("checkpoint")
+    };
+    arena
+        .begin_checkpoint_candidate(selected)
+        .expect("candidate fork");
+    let mut active = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut active)
+        .expect("candidate active list");
+    arena
+        .push_active_list(&mut pool, &mut active, 9)
+        .expect("candidate node");
+    arena
+        .finalize_active_list(&mut pool, &mut active)
+        .expect("candidate list seal");
+    let candidate = active.take_sealed().expect("candidate coordinate");
+    let settlement = arena.seal_boundary(&mut pool).expect("settlement boundary");
+    arena
+        .reject_checkpoint_candidate(&mut pool, settlement)
+        .expect("reject candidate");
+    assert_eq!(
+        arena.list(&pool, accepted).expect("accepted prefix").get(0),
+        Some(&1)
+    );
+    assert_eq!(
+        arena
+            .list(&pool, candidate)
+            .expect_err("candidate coordinate is stale"),
+        ForkArenaError::InvalidRange
     );
     assert_eq!(arena.counters().source_nodes_copied, 0);
 }

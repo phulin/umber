@@ -236,7 +236,7 @@ impl<T> ChunkStorage<T> {
 
     fn truncate(&mut self, key: RawChunkKey, arena: u64, used: u32) -> Result<(), ForkArenaError> {
         let old_used = self.validate(key, arena)?.used;
-        if used > old_used || (used != old_used && self.validate(key, arena)?.sealed) {
+        if used > old_used {
             return Err(ForkArenaError::InvalidOperationMark);
         }
         if used == old_used {
@@ -246,7 +246,12 @@ impl<T> ChunkStorage<T> {
             let (page, index) = self.slot_index(key, offset as usize)?;
             drop(self.pages[page].slots[index].take());
         }
-        self.validate_mut(key, arena)?.used = used;
+        let capacity = self.slots_per_chunk;
+        let meta = self.validate_mut(key, arena)?;
+        meta.used = used;
+        if used as usize != capacity {
+            meta.sealed = false;
+        }
         Ok(())
     }
 
@@ -557,6 +562,19 @@ impl<Lane> Clone for OperationMark<Lane> {
 }
 impl<Lane> Copy for OperationMark<Lane> {}
 
+impl<Lane> core::fmt::Debug for OperationMark<Lane> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("OperationMark")
+            .field("arena", &self.arena)
+            .field("payload_chunks", &self.payload_chunks)
+            .field("payload_tail_used", &self.payload_tail_used)
+            .field("descriptor_chunks", &self.descriptor_chunks)
+            .field("descriptor_tail_used", &self.descriptor_tail_used)
+            .finish()
+    }
+}
+
 /// Consuming proof that every builder has retired and both tails are sealed.
 pub struct SealedBoundary<Lane> {
     arena: u64,
@@ -639,6 +657,75 @@ pub enum ForkArenaError {
     InvalidRegion,
     NotForked,
     UnsealedBoundary,
+    InvalidActiveListBuilder,
+}
+
+/// Move-only persistent list construction state.
+///
+/// The builder contains only checked coordinates and scalar tail state. It
+/// never borrows or points at the arena or pool; every operation must present
+/// both owners explicitly and returns before either exclusive borrow ends.
+#[must_use = "an active-list builder must be finalized or explicitly rolled back"]
+pub struct ActiveListBuilder<T, Lane> {
+    state: ActiveListBuilderState<Lane>,
+    _payload: PhantomData<fn(T) -> T>,
+}
+
+enum ActiveListBuilderState<Lane> {
+    Vacant,
+    Open(OpenActiveList<Lane>),
+    Sealed(ArenaListId<Lane>),
+}
+
+struct OpenActiveList<Lane> {
+    arena: u64,
+    operation: OperationMark<Lane>,
+    pending: Option<ArenaRange<Lane>>,
+    pending_extendable: bool,
+    descriptor_first: Option<(RawChunkKey, u32)>,
+    descriptor_count: u32,
+    len: u32,
+}
+
+impl<T, Lane> Default for ActiveListBuilder<T, Lane> {
+    fn default() -> Self {
+        Self::vacant()
+    }
+}
+
+impl<T, Lane> ActiveListBuilder<T, Lane> {
+    #[must_use]
+    pub const fn vacant() -> Self {
+        Self {
+            state: ActiveListBuilderState::Vacant,
+            _payload: PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_vacant(&self) -> bool {
+        matches!(self.state, ActiveListBuilderState::Vacant)
+    }
+
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        matches!(self.state, ActiveListBuilderState::Open(_))
+    }
+
+    #[must_use]
+    pub const fn is_sealed(&self) -> bool {
+        matches!(self.state, ActiveListBuilderState::Sealed(_))
+    }
+
+    /// Takes the sealed coordinate and returns the builder to its vacant
+    /// state without touching arena storage.
+    pub fn take_sealed(&mut self) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        let ActiveListBuilderState::Sealed(list) = self.state else {
+            return Err(ForkArenaError::InvalidActiveListBuilder);
+        };
+        self.state = ActiveListBuilderState::Vacant;
+        Ok(list)
+    }
 }
 
 /// One typed arena lane containing coordinates and lifecycle metadata only.
@@ -709,6 +796,17 @@ impl<T, Lane> ForkArena<T, Lane> {
     #[must_use]
     pub fn payload_chunk_capacity(&self, pool: &ChunkPool<T>) -> usize {
         pool.payload.chunk_capacity()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_payload_values(&self, pool: &ChunkPool<T>) -> usize {
+        (0..self.live_payload_len())
+            .map(|index| {
+                self.live_key_at(false, index)
+                    .and_then(|key| pool.payload.used(key, self.owner).ok())
+                    .unwrap_or(0) as usize
+            })
+            .sum()
     }
 
     fn live_payload_len(&self) -> usize {
@@ -1006,6 +1104,256 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
+    /// Opens a persistent coordinate-only builder. The builder may outlive
+    /// this call, but it owns no borrow; the lane remains exclusively marked
+    /// active until the builder is finalized or rolled back.
+    pub fn open_active_list(
+        &mut self,
+        pool: &ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+    ) -> Result<(), ForkArenaError> {
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        if !builder.is_vacant() {
+            return Err(ForkArenaError::InvalidActiveListBuilder);
+        }
+        let operation = self.operation_mark(pool);
+        self.active_builder = true;
+        builder.state = ActiveListBuilderState::Open(OpenActiveList {
+            arena: self.owner,
+            operation,
+            pending: None,
+            pending_extendable: false,
+            descriptor_first: None,
+            descriptor_count: 0,
+            len: 0,
+        });
+        Ok(())
+    }
+
+    fn active_list_open_mut<'a>(
+        &self,
+        builder: &'a mut ActiveListBuilder<T, Lane>,
+    ) -> Result<&'a mut OpenActiveList<Lane>, ForkArenaError> {
+        let ActiveListBuilderState::Open(open) = &mut builder.state else {
+            return Err(ForkArenaError::InvalidActiveListBuilder);
+        };
+        if !self.active_builder || open.arena != self.owner {
+            return Err(ForkArenaError::InvalidActiveListBuilder);
+        }
+        Ok(open)
+    }
+
+    fn flush_active_list_pending(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+    ) -> Result<(), ForkArenaError> {
+        let (pending, cumulative_end) = {
+            let open = self.active_list_open_mut(builder)?;
+            (open.pending.take(), open.len)
+        };
+        let Some(range) = pending else {
+            return Ok(());
+        };
+        let raw = RawRange {
+            first: range.first.ok_or(ForkArenaError::InvalidRange)?.raw,
+            start: range.start,
+            len: range.len,
+        };
+        let coordinate = self.append_descriptor(
+            pool,
+            RangeEntry {
+                range: raw,
+                cumulative_end,
+            },
+        )?;
+        let open = self.active_list_open_mut(builder)?;
+        open.descriptor_first.get_or_insert(coordinate);
+        open.descriptor_count = open
+            .descriptor_count
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        open.pending_extendable = false;
+        Ok(())
+    }
+
+    /// Appends one newly created semantic payload to an open active list.
+    pub fn push_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        value: T,
+    ) -> Result<(), ForkArenaError> {
+        let should_flush = {
+            let open = self.active_list_open_mut(builder)?;
+            open.pending.is_some() && !open.pending_extendable
+        };
+        if should_flush {
+            self.flush_active_list_pending(pool, builder)?;
+        }
+        let (first, start) = self.append_payload(pool, value)?;
+        let open = self.active_list_open_mut(builder)?;
+        open.len = open
+            .len
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        if open.pending_extendable {
+            let pending = open
+                .pending
+                .as_mut()
+                .expect("extendable active-list tail has a range");
+            pending.len = pending
+                .len
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+        } else {
+            open.pending = Some(ArenaRange {
+                arena: self.owner,
+                first: Some(ChunkId {
+                    arena: self.owner,
+                    raw: first,
+                    _lane: PhantomData,
+                }),
+                start,
+                len: 1,
+            });
+            open.pending_extendable = true;
+        }
+        Ok(())
+    }
+
+    fn append_active_range(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        range: ArenaRange<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        if range.is_empty() {
+            return Ok(());
+        }
+        self.validate_range(pool, range)?;
+        if self.active_list_open_mut(builder)?.pending.is_some() {
+            self.flush_active_list_pending(pool, builder)?;
+        }
+        let open = self.active_list_open_mut(builder)?;
+        open.len = open
+            .len
+            .checked_add(range.len)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        open.pending = Some(range);
+        open.pending_extendable = false;
+        Ok(())
+    }
+
+    /// Appends an existing immutable list by coordinates only.
+    pub fn append_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        list: ArenaListId<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.active_list_open_mut(builder)?;
+        self.validate_list(pool, list)?;
+        match list {
+            ArenaListId::Range(range) => self.append_active_range(pool, builder, range),
+            ArenaListId::Sequence {
+                first,
+                start,
+                count,
+                ..
+            } => {
+                for index in 0..count {
+                    let raw = self.descriptor_entry(pool, first, start, index)?.range;
+                    self.append_active_range(
+                        pool,
+                        builder,
+                        ArenaRange {
+                            arena: self.owner,
+                            first: Some(ChunkId {
+                                arena: self.owner,
+                                raw: raw.first,
+                                _lane: PhantomData,
+                            }),
+                            start: raw.start,
+                            len: raw.len,
+                        },
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Finalizes the active list into the canonical direct-range or flat
+    /// range-sequence coordinate. Payload is never materialized.
+    pub fn finalize_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+    ) -> Result<(), ForkArenaError> {
+        let (descriptor_count, pending, len) = {
+            let open = self.active_list_open_mut(builder)?;
+            (open.descriptor_count, open.pending, open.len)
+        };
+        let list = if descriptor_count == 0 {
+            ArenaListId::Range(pending.unwrap_or_else(|| ArenaRange::empty(self.owner)))
+        } else {
+            self.flush_active_list_pending(pool, builder)?;
+            let open = self.active_list_open_mut(builder)?;
+            let (first, start) = open
+                .descriptor_first
+                .ok_or(ForkArenaError::InvalidActiveListBuilder)?;
+            ArenaListId::Sequence {
+                arena: self.owner,
+                first,
+                start,
+                count: open.descriptor_count,
+                len,
+                _lane: PhantomData,
+            }
+        };
+        self.validate_list(pool, list)?;
+        self.active_builder = false;
+        builder.state = ActiveListBuilderState::Sealed(list);
+        Ok(())
+    }
+
+    /// Rolls an open active list back to its partial operation mark and
+    /// returns the builder to its vacant state.
+    pub fn rollback_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+    ) -> Result<(), ForkArenaError> {
+        let operation = self.active_list_open_mut(builder)?.operation;
+        self.active_builder = false;
+        builder.state = ActiveListBuilderState::Vacant;
+        self.restore_operation(pool, operation)
+    }
+
+    /// Finalizes and splits an active list without reading payload values.
+    pub fn finalize_and_split_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        split: usize,
+        scratch: &mut Vec<ArenaRange<Lane>>,
+    ) -> Result<(ArenaListId<Lane>, ArenaListId<Lane>), ForkArenaError> {
+        self.finalize_active_list(pool, builder)?;
+        let list = builder.take_sealed()?;
+        if split > list.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let left = self.slice_list(pool, list, 0..split, scratch)?;
+        let right = self.slice_list(pool, list, split..list.len(), scratch)?;
+        Ok((left, right))
+    }
+
     pub fn seal_boundary(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -1073,7 +1421,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
-    fn validates_checkpoint(&self, mark: CheckpointMark<Lane>) -> bool {
+    pub fn validates_checkpoint(&self, mark: CheckpointMark<Lane>) -> bool {
         mark.arena == self.owner
             && mark.payload_chunks as usize <= self.live_payload_len()
             && mark.descriptor_chunks as usize <= self.live_descriptor_len()
@@ -1087,6 +1435,31 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .descriptor_chunks
                     .checked_sub(1)
                     .and_then(|index| self.live_key_at(true, index as usize))
+    }
+
+    pub fn visit_checkpoint_values(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+        mut visit: impl FnMut(&T),
+    ) -> Result<(), ForkArenaError> {
+        if !self.validates_checkpoint(mark) {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        for position in 0..mark.payload_chunks as usize {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidCheckpoint)?;
+            let used = pool.payload.used(key, self.owner)?;
+            for offset in 0..used {
+                visit(
+                    pool.payload
+                        .get(key, self.owner, offset)
+                        .ok_or(ForkArenaError::InvalidChunk)?,
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn begin_checkpoint_candidate(
@@ -1899,6 +2272,10 @@ impl<T, Lane> core::fmt::Debug for ArenaListView<'_, T, Lane> {
 }
 
 impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
+    #[must_use]
+    pub const fn nodes(self) -> Self {
+        self
+    }
     #[must_use]
     pub const fn len(&self) -> usize {
         self.list.len()

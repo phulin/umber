@@ -291,6 +291,16 @@ prefix-plus-current. Pruning releases only explicitly unreferenced whole
 chunks; absent a coarse liveness proof, storage remains conservatively retained
 until generation retirement.
 
+Long-lived construction uses a move-only `ActiveListBuilder` containing only
+the arena owner, its partial operation coordinate, one pending range, and
+descriptor-tail scalars. It holds no pool/arena borrow, pointer, or shared
+owner. Every push, range append, split, finalize, and rollback presents the
+caller-owned pool and typed arena explicitly, validates the builder owner, and
+returns before the exclusive borrow ends. An open builder blocks checkpoint
+sealing; finalization produces only the canonical range/list coordinate, while
+rollback truncates its operation suffix. The builder has distinct vacant,
+open, and sealed states and has no conversion to `CheckpointMark`.
+
 The primitive registry remains immutable after initialization. Pruning drops
 whole unreachable journal and arena chunks once no sibling mark names them;
 it does not scan the engine, register roots, compact coordinates, or perform

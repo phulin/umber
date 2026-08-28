@@ -49,7 +49,11 @@ inverses. It therefore cannot leave an accepted contribution, current-page, or
 discard root consumed merely because artifact lowering aborted.
 
 Active paragraph, math, alignment, and box builders own exclusive typed chunk
-regions. Sealing a complete output produces a move-only `SealedBatch`; lane
+regions. Their persistent `ActiveListBuilder` state is coordinate-only: every
+mutation temporarily presents the one caller-owned pool and lane, and an open
+builder prevents checkpoint sealing. Appending an immutable page/durable list
+adds only its canonical ranges; replacement nodes are appended once. Sealing a
+complete output produces a move-only `SealedBatch`; lane
 promotion transfers its whole chunk envelopes and canonical range descriptors
 to page-material ownership while retaining stable raw chunk keys. Mixed
 transforms reuse unchanged ranges and append replacement nodes once. Random

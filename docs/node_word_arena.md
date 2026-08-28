@@ -19,6 +19,14 @@ than the temporary view borrow. The existing `NodeCursor` therefore retains
 its slice adapter for pure tests and adds a page-material view variant without
 materialization or a guard-owned lifetime.
 
+`ActiveListBuilder` is the persistent append boundary. It is move-only and
+stores only private generation-checked coordinates plus scalar pending-range
+and descriptor state. It has explicit vacant, open, and sealed states. No
+state holds a reference, pointer, `Rc`, or `RefCell`; each operation receives
+the pool and arena explicitly. Open builders cannot become retained marks and
+must be finalized or rolled back before a whole-chunk checkpoint boundary can
+be sealed.
+
 The `TypesetState::page_nodes` contract returns this borrowed `NodeCursor`, not
 a contiguous slice. Existing row storage continues through the slice variant
 during migration; the replacement page lane enters through `ArenaListView`.
@@ -26,9 +34,9 @@ Packing, protrusion, breakpoint widths, math conversion, and line
 materialization therefore no longer require contiguous page ownership at
 their shared state boundary.
 
-The older complete-row `NodeArena` and its `NodePiece` composite stream remain
-only as migration inputs. They are not the target representation and must not
-gain another production consumer.
+The older complete-row `NodeArena` and its `NodePiece` composite stream are
+superseded migration code and must be deleted as the remaining callers move to
+the sole chunk/range topology; they must not gain another production consumer.
 
 The logical row representation is not a format ABI. It may be compacted into
 words and sidecars without changing the lifetime contract below, provided that

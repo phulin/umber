@@ -77,9 +77,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   recipes whose generated sources are named by semantic identity.
 - `src/fork_arena.rs` and `src/fork_arena/tests.rs`: Safe caller-owned
   fixed-byte-chunk coarse page pools, coordinate-only typed semantic-lane
-  arenas, stable direct borrowed views, canonical nonrecursive range lists,
-  partial operation rollback, whole-chunk retained marks, exclusive batch
-  promotion, and exactly accepted-versus-forked settlement.
+  arenas, move-only detached active-list builders with explicit pool mutation,
+  stable direct borrowed views, canonical nonrecursive range lists, partial
+  operation rollback, whole-chunk retained marks, exclusive batch promotion,
+  and exactly accepted-versus-forked settlement.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
   format staging, decoded-row draining into final owners, and infallible atomic
   publication after complete validation.
