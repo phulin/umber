@@ -755,7 +755,7 @@ fn observe_expansion_fonts<S: TypesetState>(
                 pre, post, replace, ..
             } => {
                 for list in [pre, post, replace] {
-                    let owned = state.page_nodes(*list).to_vec();
+                    let owned = state.page_nodes(*list).iter().cloned().collect::<Vec<_>>();
                     observe_expansion_fonts(state, &owned, paragraph)?;
                 }
             }

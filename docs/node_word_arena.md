@@ -19,6 +19,13 @@ than the temporary view borrow. The existing `NodeCursor` therefore retains
 its slice adapter for pure tests and adds a page-material view variant without
 materialization or a guard-owned lifetime.
 
+The `TypesetState::page_nodes` contract returns this borrowed `NodeCursor`, not
+a contiguous slice. Existing row storage continues through the slice variant
+during migration; the replacement page lane enters through `ArenaListView`.
+Packing, protrusion, breakpoint widths, math conversion, and line
+materialization therefore no longer require contiguous page ownership at
+their shared state boundary.
+
 The older complete-row `NodeArena` and its `NodePiece` composite stream remain
 only as migration inputs. They are not the target representation and must not
 gain another production consumer.

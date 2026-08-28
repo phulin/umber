@@ -33,7 +33,10 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
-    fn page_nodes(&self, list: tex_state::node_arena::PageListId) -> &[tex_state::node::Node];
+    fn page_nodes(
+        &self,
+        list: tex_state::node_arena::PageListId,
+    ) -> tex_state::node_arena::NodeCursor<'_>;
     fn page_node_sequence(
         &self,
         _sequence: tex_state::node_arena::PageNodeSequenceId,

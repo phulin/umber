@@ -245,11 +245,13 @@ impl TestState {
 }
 
 impl TypesetState for TestState {
-    fn page_nodes(&self, list: PageListId) -> &[Node] {
-        self.pages
-            .get(list)
-            .expect("live test page coordinate")
-            .nodes()
+    fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
+        tex_state::node_arena::NodeCursor::compact(
+            self.pages
+                .get(list)
+                .expect("live test page coordinate")
+                .nodes(),
+        )
     }
 
     fn page_node_sequence(

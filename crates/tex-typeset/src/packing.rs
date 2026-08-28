@@ -118,8 +118,8 @@ pub fn measure_unset(
     kind: UnsetKind,
 ) -> UnsetMetrics {
     let meas = match kind {
-        UnsetKind::HBox => measure_hlist(state, NodeCursor::compact(state.page_nodes(*list))),
-        UnsetKind::VBox => measure_vlist(state, NodeCursor::compact(state.page_nodes(*list))),
+        UnsetKind::HBox => measure_hlist(state, state.page_nodes(*list)),
+        UnsetKind::VBox => measure_vlist(state, state.page_nodes(*list)),
     };
     let stretch_order = highest_order(meas.stretch);
     let shrink_order = highest_order(meas.shrink);
@@ -143,7 +143,7 @@ pub fn hpack(
 ) -> PackedBox {
     let nodes = state.page_nodes(list);
     let has_content = !nodes.is_empty();
-    let meas = measure_hlist(state, NodeCursor::compact(nodes));
+    let meas = measure_hlist(state, nodes);
     let width = target_size(meas.width, spec);
     let glue = set_glue(width, meas.width, &meas, has_content);
     let diagnostics = hpack_diagnostics(glue, params);
@@ -193,7 +193,7 @@ pub fn vpack(
 ) -> PackedBox {
     let nodes = state.page_nodes(list);
     let has_content = !nodes.is_empty();
-    let mut meas = measure_vlist(state, NodeCursor::compact(nodes));
+    let mut meas = measure_vlist(state, nodes);
     clamp_depth(&mut meas, params.box_max_depth);
     let height = target_size(meas.height, spec);
     let glue = set_glue(height, meas.height, &meas, has_content);
@@ -457,8 +457,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                 );
             }
             PackedNode::Disc(replace) => {
-                let replacement =
-                    measure_hlist(state, NodeCursor::compact(state.page_nodes(replace)));
+                let replacement = measure_hlist(state, state.page_nodes(replace));
                 // A discretionary replacement contributes its natural box
                 // dimensions here, but its inner glue is not outer hpack glue.
                 meas.merge_horizontal_dimensions(replacement, MetricOverflow::PACKING);

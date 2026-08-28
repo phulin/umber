@@ -519,9 +519,9 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace: *empty_list,
                     physical_replace_count: 0,
                 });
-                out.extend(state.page_nodes(pre).to_vec());
+                out.extend(state.page_nodes(pre).iter().cloned());
                 out_lineages.extend(frozen_high_cell_lineages(state, &pre, FrozenListRole::Pre));
-                post.extend(state.page_nodes(post_list).to_vec());
+                post.extend(state.page_nodes(post_list).iter().cloned());
                 post_lineages.extend(frozen_high_cell_lineages(
                     state,
                     &post_list,
@@ -542,7 +542,7 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace,
                     physical_replace_count,
                 });
-                out.extend(state.page_nodes(replace).to_vec());
+                out.extend(state.page_nodes(replace).iter().cloned());
                 out_lineages.extend(frozen_high_cell_lineages(
                     state,
                     &replace,

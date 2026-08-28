@@ -422,11 +422,13 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
 }
 
 impl<G> TypesetState for LoweredMathSink<'_, '_, G> {
-    fn page_nodes(&self, list: PageListId) -> &[Node] {
-        self.stores
-            .page_node_list(list)
-            .expect("math list belongs to the admitted page arena")
-            .nodes()
+    fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
+        tex_state::node_arena::NodeCursor::compact(
+            self.stores
+                .page_node_list(list)
+                .expect("math list belongs to the admitted page arena")
+                .nodes(),
+        )
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {

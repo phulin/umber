@@ -6,7 +6,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::{MathFontSize, MathStyle};
 use tex_state::node::Node;
-use tex_state::node_arena::{PageListId, PageNodeArena};
+use tex_state::node_arena::{NodeCursor, PageListId, PageNodeArena};
 use tex_state::scaled::Scaled;
 use tex_typeset::linebreak::{LineBreakParams, LineShape, try_line_break_without_hyphenation};
 use tex_typeset::math::{MathParamState, MathParams, MathTypesetState, Style, mlist_to_hlist};
@@ -33,8 +33,8 @@ impl KernelState {
 }
 
 impl TypesetState for KernelState {
-    fn page_nodes(&self, list: PageListId) -> &[Node] {
-        self.pages.get(list).expect("live page coordinate").nodes()
+    fn page_nodes(&self, list: PageListId) -> NodeCursor<'_> {
+        NodeCursor::compact(self.pages.get(list).expect("live page coordinate").nodes())
     }
 
     fn font_char_metrics(&self, _font: FontId, code: u8) -> Option<CharMetrics> {

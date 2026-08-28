@@ -495,7 +495,11 @@ fn expand_math_choices_into(
         index: 0,
     });
     while let Some(frame) = view.stack.last_mut() {
-        let Some(node) = state.page_nodes(frame.list).get(frame.index).cloned() else {
+        let Some(node) = state
+            .page_nodes(frame.list)
+            .owned_node(frame.index)
+            .cloned()
+        else {
             view.stack.pop();
             continue;
         };
@@ -1098,8 +1102,8 @@ fn convert_source_list(
             let nodes = ctx
                 .state
                 .page_nodes(current)
-                .to_vec()
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|node| source_node(ctx, node))
                 .collect::<Vec<_>>();
             let converted = match current_role {

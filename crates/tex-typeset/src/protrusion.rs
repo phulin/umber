@@ -224,7 +224,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                 Search::Glyph(Glyph { font: *font, code })
             }),
         Node::HList(box_node) => {
-            let children = NodeCursor::compact(state.page_nodes(box_node.children));
+            let children = state.page_nodes(box_node.children);
             edge_glyph_cursor(state, children, 0, children.len(), edge).map_or_else(
                 || {
                     if box_node.width.raw() == 0 {
@@ -244,7 +244,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                 Edge::Right if !pre.is_empty() => pre,
                 _ => replace,
             };
-            let children = NodeCursor::compact(state.page_nodes(*list));
+            let children = state.page_nodes(*list);
             edge_glyph_cursor(state, children, 0, children.len(), edge)
                 .map_or(Search::Skip, Search::Glyph)
         }

@@ -3128,6 +3128,16 @@ impl<'a> NodeCursor<'a> {
         }
     }
     #[must_use]
+    pub fn first(&self) -> Option<&'a Node> {
+        self.owned_node(0)
+    }
+    #[must_use]
+    pub fn last(&self) -> Option<&'a Node> {
+        self.len()
+            .checked_sub(1)
+            .and_then(|index| self.owned_node(index))
+    }
+    #[must_use]
     pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {
         CharCodes::new(*self, index)
     }

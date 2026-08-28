@@ -115,7 +115,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
 ) -> Widths {
     line_widths_cursor(
         state,
-        NodeCursor::compact(state.page_nodes(*list)),
+        state.page_nodes(*list),
         start,
         end,
         include_font_expansion,
@@ -261,7 +261,7 @@ fn add_nested_list_widths<S: TypesetState>(
 ) {
     let mut stack = vec![(*owner, 0usize)];
     while let Some((owner, index)) = stack.last_mut() {
-        let cursor = NodeCursor::compact(state.page_nodes(*owner));
+        let cursor = state.page_nodes(*owner);
         if *index >= cursor.len() {
             let _ = stack.pop();
             continue;

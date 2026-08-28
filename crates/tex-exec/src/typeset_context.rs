@@ -8,7 +8,6 @@ use tex_state::font::{FontExpansion, PdfFontCode};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::MathFontSize;
-use tex_state::node::Node;
 use tex_state::node_arena::{PageListId, PageNodeSequenceId};
 use tex_state::scaled::Scaled;
 use tex_typeset::TypesetState;
@@ -27,10 +26,12 @@ impl<'a, 'state, G> TypesetContext<'a, 'state, G> {
 }
 
 impl<G> TypesetState for TypesetContext<'_, '_, G> {
-    fn page_nodes(&self, list: PageListId) -> &[Node] {
-        self.state
-            .page_nodes(list)
-            .expect("typesetting list belongs to the admitted page arena")
+    fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
+        tex_state::node_arena::NodeCursor::compact(
+            self.state
+                .page_nodes(list)
+                .expect("typesetting list belongs to the admitted page arena"),
+        )
     }
 
     fn page_node_sequence(
