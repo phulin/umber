@@ -1413,6 +1413,18 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .and_then(|index| self.live_key_at(true, index as usize))
     }
 
+    /// Returns whether an accepted arena can detach its suffix at `mark`.
+    ///
+    /// This is the read-only half of checkpoint selection. Aggregate restore
+    /// validates it before mutating any other owner so the later selection and
+    /// settlement phases are infallible.
+    pub fn can_begin_checkpoint_candidate(&self, mark: CheckpointMark<Lane>) -> bool {
+        !self.active_builder
+            && self.pending_batch.is_none()
+            && matches!(self.ownership, ForkOwnership::Accepted(_))
+            && self.validates_checkpoint(mark)
+    }
+
     pub fn visit_checkpoint_values(
         &self,
         pool: &ChunkPool<T>,
@@ -1473,6 +1485,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         self.rebuild_resolvers();
         Ok(())
+    }
+
+    /// Destructively restores an accepted arena to a retained whole-chunk
+    /// checkpoint and prunes the superseded accepted suffix.
+    ///
+    /// Callers needing reject/retry keep the arena forked and use the explicit
+    /// candidate settlement methods instead. This convenience exists for the
+    /// aggregate same-generation restore barrier, whose validation phase has
+    /// already established [`Self::can_begin_checkpoint_candidate`].
+    pub fn restore_accepted_checkpoint(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        if !self.can_begin_checkpoint_candidate(mark) {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        self.begin_checkpoint_candidate(mark)?;
+        let boundary = self.seal_boundary(pool)?;
+        self.accept_checkpoint_candidate(pool, boundary)
     }
 
     pub fn reject_checkpoint_candidate(

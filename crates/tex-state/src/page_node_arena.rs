@@ -527,6 +527,18 @@ impl PageMaterialArena {
         self.arena.validates_checkpoint(mark)
     }
 
+    #[must_use]
+    pub fn can_restore_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
+        self.arena.can_begin_checkpoint_candidate(mark)
+    }
+
+    pub fn restore_checkpoint(
+        &mut self,
+        mark: CheckpointMark<PageMaterialLane>,
+    ) -> Result<(), ForkArenaError> {
+        self.arena.restore_accepted_checkpoint(&mut self.pool, mark)
+    }
+
     pub fn font_roots_are_live(
         &self,
         mark: CheckpointMark<PageMaterialLane>,

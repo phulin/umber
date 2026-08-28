@@ -221,6 +221,39 @@ fn acceptance_prunes_detached_prior_and_keeps_candidate_chunks() {
 }
 
 #[test]
+fn accepted_restore_prunes_superseded_chunks_without_exposing_a_partial_mark() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let retained = list(&mut arena, &mut pool, [1, 2]);
+    let selected = {
+        let boundary = arena.seal_boundary(&mut pool).expect("selected boundary");
+        arena.checkpoint_mark(boundary).expect("checkpoint")
+    };
+    let superseded = list(&mut arena, &mut pool, [3, 4]);
+    arena
+        .seal_boundary(&mut pool)
+        .expect("accepted head boundary");
+
+    assert!(arena.can_begin_checkpoint_candidate(selected));
+    arena
+        .restore_accepted_checkpoint(&mut pool, selected)
+        .expect("prevalidated accepted restore");
+
+    assert_eq!(
+        arena.list(&pool, retained).expect("retained prefix").get(1),
+        Some(&2)
+    );
+    assert_eq!(
+        arena
+            .list(&pool, superseded)
+            .expect_err("accepted restore prunes its superseded suffix"),
+        ForkArenaError::InvalidRange
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert!(arena.counters().obsolete_chunks_pruned > 0);
+}
+
+#[test]
 fn canonical_range_sequence_has_indexed_and_sequential_parity() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
