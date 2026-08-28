@@ -99,5 +99,9 @@ writes, zero scalar-list descriptor publications, at most 32 record bytes, and
 zero warmed heap allocation. A second 8,192-transition loop repeatedly pushes
 and pops one input frame after warming its physical depth; it requires zero
 allocation, no new logical undo record, and no additional displaced payload.
-The gate also rejects a candidate mutation and forks the same accepted mark
-again to prove exact rollback and lineage isolation.
+The gate also rejects a candidate mutation, releases one obsolete prefix, and
+forks the surviving accepted mark again to prove exact rollback, lineage
+isolation, and prefix-floor validity. Finally it measures 10,000,000 successive
+mutation/boundary/release cycles and requires one live frame, one 128-row frame
+page, and one physically returned journal chunk per boundary. Elapsed time is
+reported diagnostically; physical occupancy is the deterministic gate.

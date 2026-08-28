@@ -1,5 +1,6 @@
 use std::alloc::System;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use tex_command::{CommandProfile, CommandState, RegisteredSourceKind, SourceRegistration};
@@ -39,6 +40,15 @@ struct LogicalHistoryCounts {
     coalesced_mutations: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PrefixPlateauCounts {
+    boundaries: usize,
+    live_frames: usize,
+    frame_capacity: usize,
+    journal_chunks_released: usize,
+    elapsed: Duration,
+}
+
 fn main() {
     let shallow = run_fixture(1);
     let accumulated = run_fixture(64);
@@ -69,8 +79,15 @@ fn main() {
     ] {
         assert_eq!(counts, Counts::ZERO, "{name} must remain allocation-free");
     }
+    let prefix_plateau = run_prefix_plateau(10_000_000);
+    assert_eq!(prefix_plateau.live_frames, 1);
+    assert_eq!(prefix_plateau.frame_capacity, 128);
+    assert_eq!(
+        prefix_plateau.journal_chunks_released,
+        prefix_plateau.boundaries
+    );
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} prefix_plateau={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -82,6 +99,7 @@ fn main() {
         shallow.repeated_input_frame_mutations,
         shallow.repeated_input_level_reuse,
         shallow.logical_history,
+        prefix_plateau,
     );
 }
 
@@ -255,7 +273,7 @@ fn run_fixture(units: usize) -> GateCounts {
         });
         assert!(receipt.timeline_frames_live() < receipt.timeline_frame_capacity());
         assert_ne!(receipt.timeline_frames_released(), 0);
-        let isolated = CommandState::profile_fork_summary(command, &summary, universe)
+        let isolated = CommandState::profile_fork_summary(command, &survivor, universe)
             .expect("fork restores exactly");
         assert!(!isolated.profile_name_in_progress());
         drop(isolated);
@@ -275,6 +293,47 @@ fn run_fixture(units: usize) -> GateCounts {
         }
     })
     .expect("checkpoint gate universe")
+}
+
+fn run_prefix_plateau(boundaries: usize) -> PrefixPlateauCounts {
+    tex_state::with_universe(budget(), |universe| {
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        let job_start = command
+            .publish_summary(universe)
+            .expect("JobStart summary publishes");
+        command
+            .release_checkpoint_summary(&job_start, None)
+            .expect("frozen JobStart releases its live frame");
+        let mut prior = command
+            .publish_summary(universe)
+            .expect("first ordinary summary publishes");
+        let mut journal_chunks_released = 0usize;
+        let started = Instant::now();
+        let mut final_receipt = None;
+        for _ in 0..boundaries {
+            command.profile_repeated_timeline_mutations(1);
+            let next = command
+                .publish_summary(universe)
+                .expect("next ordinary summary publishes");
+            let receipt = command
+                .release_checkpoint_summary(&prior, Some(&next))
+                .expect("obsolete prefix releases");
+            journal_chunks_released =
+                journal_chunks_released.saturating_add(receipt.command_journal_chunks_released());
+            final_receipt = Some(receipt);
+            prior = next;
+        }
+        let elapsed = started.elapsed();
+        let final_receipt = final_receipt.expect("positive boundary measurement");
+        PrefixPlateauCounts {
+            boundaries,
+            live_frames: final_receipt.timeline_frames_live(),
+            frame_capacity: final_receipt.timeline_frame_capacity(),
+            journal_chunks_released,
+            elapsed,
+        }
+    })
+    .expect("prefix plateau universe")
 }
 
 fn measure<T>(operation: impl FnOnce() -> T) -> (T, Counts) {
