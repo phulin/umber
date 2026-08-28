@@ -280,11 +280,12 @@ pub type PageNodeRange = NodeRangeId<PageLifetime>;
 
 const MAX_NODE_RANGE_REGIONS: usize = 4;
 
-/// Bounded inline logical list made from immutable arena regions.
+/// Bounded inline transfer carrier made from immutable arena regions.
 ///
-/// Four regions cover the current-front/prior/current-back page deque and one
-/// additional unchanged/new transform boundary.  The descriptor never spills
-/// to the heap and cannot silently grow into a per-node ownership overlay.
+/// Four regions cover the aggregate transaction's
+/// current-front/prior/current-back page deque and one destination-return
+/// boundary. Arbitrary transformed lists use the arena's flat composite-piece
+/// stream instead; this carrier never spills to the heap.
 pub struct NodeRanges<L> {
     regions: [NodeRangeId<L>; MAX_NODE_RANGE_REGIONS],
     len: u8,
@@ -369,11 +370,126 @@ impl<L> NodeRanges<L> {
 /// Open-mode and page-builder bounded logical range list.
 pub type PageNodeRanges = NodeRanges<PageLifetime>;
 
+/// One flat immutable span in the generation-owned composite-piece stream.
+struct NodePiece<L> {
+    range: NodeRangeId<L>,
+    cumulative_end: u32,
+    generation: u64,
+}
+
+impl<L> Clone for NodePiece<L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<L> Copy for NodePiece<L> {}
+
+impl<L> core::fmt::Debug for NodePiece<L> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("NodePiece")
+            .field("range", &self.range)
+            .field("cumulative_end", &self.cumulative_end)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Copy-only logical sequence over immutable node payload.
+///
+/// A direct sequence names one payload span. A composite names a contiguous
+/// range in the arena's flat piece stream. Piece entries always name payload
+/// spans directly; they never refer to another composite sequence.
+pub enum ArenaNodeSequenceId<L> {
+    Direct(NodeRangeId<L>),
+    Composite {
+        owner: u64,
+        start: u32,
+        end: u32,
+        generation: u64,
+        len: u32,
+    },
+}
+
+impl<L> ArenaNodeSequenceId<L> {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::Direct(NodeRangeId::empty())
+    }
+
+    #[must_use]
+    pub const fn len(self) -> usize {
+        match self {
+            Self::Direct(range) => range.len(),
+            Self::Composite { len, .. } => len as usize,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<L> Clone for ArenaNodeSequenceId<L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<L> Copy for ArenaNodeSequenceId<L> {}
+
+impl<L> core::fmt::Debug for ArenaNodeSequenceId<L> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ArenaNodeSequenceId")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<L> PartialEq for ArenaNodeSequenceId<L> {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (Self::Direct(left), Self::Direct(right)) => left == right,
+            (
+                Self::Composite {
+                    owner: left_owner,
+                    start: left_start,
+                    end: left_end,
+                    generation: left_generation,
+                    ..
+                },
+                Self::Composite {
+                    owner: right_owner,
+                    start: right_start,
+                    end: right_end,
+                    generation: right_generation,
+                    ..
+                },
+            ) => {
+                left_owner == right_owner
+                    && left_start == right_start
+                    && left_end == right_end
+                    && left_generation == right_generation
+            }
+            _ => false,
+        }
+    }
+}
+
+impl<L> Eq for ArenaNodeSequenceId<L> {}
+
+/// Page-arena logical node sequence coordinate.
+pub type PageNodeSequenceId = ArenaNodeSequenceId<PageLifetime>;
+
 /// Owner-checked suffix watermark for one node arena.
 pub struct NodeArenaCursor<L> {
     owner: u64,
     rows: u32,
     next_generation: u64,
+    pieces: u32,
+    next_piece_generation: u64,
     _lifetime: PhantomData<fn(&L) -> &L>,
 }
 
@@ -694,6 +810,8 @@ pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     owner: u64,
     next_generation: u64,
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
+    pieces: Vec<NodePiece<L>>,
+    next_piece_generation: u64,
     segments: Vec<Option<Rc<NodeArenaSegment<L, Glue, Tokens>>>>,
     segment_live_rows: Vec<u32>,
     semantic_identity_enabled: bool,
@@ -705,6 +823,8 @@ pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
 pub(crate) struct AcceptedNodeArenaTail<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
     next_generation: u64,
+    pieces: Vec<NodePiece<L>>,
+    next_piece_generation: u64,
 }
 
 struct NodeArenaRow<L, Glue, Tokens> {
@@ -1006,6 +1126,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             owner,
             next_generation: next_list_generation_namespace(),
             rows: Vec::new(),
+            pieces: Vec::new(),
+            next_piece_generation: next_list_generation_namespace(),
             segments: Vec::new(),
             segment_live_rows: Vec::new(),
             semantic_identity_enabled: false,
@@ -1028,6 +1150,8 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             owner: self.owner,
             rows: u32::try_from(self.rows.len()).expect("node arena exceeds u32 rows"),
             next_generation: self.next_generation,
+            pieces: u32::try_from(self.pieces.len()).expect("node piece stream exceeds u32 rows"),
+            next_piece_generation: self.next_piece_generation,
             _lifetime: PhantomData,
         }
     }
@@ -1060,6 +1184,9 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         if cursor.rows as usize > self.rows.len() {
             return Err(NodeArenaError::CursorBeyondEnd);
         }
+        if cursor.pieces as usize > self.pieces.len() {
+            return Err(NodeArenaError::CursorBeyondEnd);
+        }
         Ok(())
     }
 
@@ -1070,7 +1197,13 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     ) -> Result<NodeArenaCursor<L>, NodeArenaError> {
         self.validate_cursor(left)?;
         self.validate_cursor(right)?;
-        Ok(if left.rows >= right.rows { left } else { right })
+        if left.rows >= right.rows && left.pieces >= right.pieces {
+            Ok(left)
+        } else if right.rows >= left.rows && right.pieces >= left.pieces {
+            Ok(right)
+        } else {
+            Err(NodeArenaError::InvalidList)
+        }
     }
 
     /// Validates every font coordinate retained in the cursor's immutable
@@ -1103,6 +1236,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             self.release_row(index);
         }
         self.rows.truncate(cursor.rows as usize);
+        self.pieces.truncate(cursor.pieces as usize);
         self.trim_empty_tail_segments();
         Ok(())
     }
@@ -1113,6 +1247,7 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     ) -> Result<(), NodeArenaError> {
         self.truncate(cursor)?;
         self.next_generation = cursor.next_generation;
+        self.next_piece_generation = cursor.next_piece_generation;
         Ok(())
     }
 
@@ -1125,10 +1260,15 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         self.validate_cursor(cursor)?;
         let rows = self.rows.split_off(cursor.rows as usize);
         let next_generation = self.next_generation;
+        let pieces = self.pieces.split_off(cursor.pieces as usize);
+        let next_piece_generation = self.next_piece_generation;
         self.next_generation = cursor.next_generation;
+        self.next_piece_generation = cursor.next_piece_generation;
         Ok(AcceptedNodeArenaTail {
             rows,
             next_generation,
+            pieces,
+            next_piece_generation,
         })
     }
 
@@ -1140,7 +1280,9 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
     ) -> Result<(), NodeArenaError> {
         self.truncate(cursor)?;
         self.rows.append(&mut tail.rows);
+        self.pieces.append(&mut tail.pieces);
         self.next_generation = tail.next_generation;
+        self.next_piece_generation = tail.next_piece_generation;
         Ok(())
     }
 
@@ -1285,6 +1427,152 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         Ok(NodeRangesView {
             arena: self,
             ranges,
+        })
+    }
+
+    fn validate_sequence(&self, sequence: ArenaNodeSequenceId<L>) -> Result<(), NodeArenaError> {
+        match sequence {
+            ArenaNodeSequenceId::Direct(range) => {
+                let _ = self.get_range(range)?;
+            }
+            ArenaNodeSequenceId::Composite {
+                owner,
+                start,
+                end,
+                generation,
+                len,
+            } => {
+                if owner != self.owner || start >= end || end as usize > self.pieces.len() {
+                    return Err(NodeArenaError::InvalidList);
+                }
+                let pieces = &self.pieces[start as usize..end as usize];
+                if pieces.iter().any(|piece| piece.generation != generation)
+                    || pieces.last().map(|piece| piece.cumulative_end) != Some(len)
+                    || !pieces
+                        .windows(2)
+                        .all(|pair| pair[0].cumulative_end < pair[1].cumulative_end)
+                {
+                    return Err(NodeArenaError::InvalidList);
+                }
+                for piece in pieces {
+                    let _ = self.get_range(piece.range)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Builds one logical sequence by flattening compact source descriptors.
+    ///
+    /// Direct inputs remain direct. Multiple inputs append one flat piece for
+    /// every direct unchanged/new run. A composite input contributes copies
+    /// of only its compact direct-span entries; node payload is never copied
+    /// and the resulting piece stream contains no recursive references.
+    pub fn compose_sequences(
+        &mut self,
+        inputs: &[ArenaNodeSequenceId<L>],
+    ) -> Result<ArenaNodeSequenceId<L>, NodeArenaError> {
+        let mut only = None;
+        let mut nonempty = 0_usize;
+        let mut piece_count = 0_usize;
+        let mut logical_len = 0_usize;
+        for input in inputs.iter().copied() {
+            self.validate_sequence(input)?;
+            if input.is_empty() {
+                continue;
+            }
+            only = Some(input);
+            nonempty += 1;
+            logical_len = logical_len
+                .checked_add(input.len())
+                .ok_or(NodeArenaError::CapacityOverflow)?;
+            piece_count = piece_count
+                .checked_add(match input {
+                    ArenaNodeSequenceId::Direct(_) => 1,
+                    ArenaNodeSequenceId::Composite { start, end, .. } => (end - start) as usize,
+                })
+                .ok_or(NodeArenaError::CapacityOverflow)?;
+        }
+        if nonempty == 0 {
+            return Ok(ArenaNodeSequenceId::empty());
+        }
+        if nonempty == 1 {
+            return Ok(only.expect("one nonempty input was recorded"));
+        }
+
+        let start = self.pieces.len();
+        let final_len = start
+            .checked_add(piece_count)
+            .ok_or(NodeArenaError::CapacityOverflow)?;
+        u32::try_from(final_len).map_err(|_| NodeArenaError::CapacityOverflow)?;
+        let logical_len =
+            u32::try_from(logical_len).map_err(|_| NodeArenaError::CapacityOverflow)?;
+        self.pieces
+            .try_reserve(piece_count)
+            .map_err(|_| NodeArenaError::AllocationFailed)?;
+        let generation = self.next_piece_generation;
+        self.next_piece_generation = generation
+            .checked_add(1)
+            .expect("node piece generation exhausted");
+        let mut cumulative_end = 0_u32;
+        for input in inputs.iter().copied().filter(|input| !input.is_empty()) {
+            match input {
+                ArenaNodeSequenceId::Direct(range) => {
+                    cumulative_end = cumulative_end
+                        .checked_add(
+                            u32::try_from(range.len())
+                                .map_err(|_| NodeArenaError::CapacityOverflow)?,
+                        )
+                        .ok_or(NodeArenaError::CapacityOverflow)?;
+                    self.pieces.push(NodePiece {
+                        range,
+                        cumulative_end,
+                        generation,
+                    });
+                }
+                ArenaNodeSequenceId::Composite {
+                    start,
+                    end,
+                    generation: source_generation,
+                    ..
+                } => {
+                    let mut source_prior_end = 0_u32;
+                    for index in start as usize..end as usize {
+                        let source = self.pieces[index];
+                        debug_assert_eq!(source.generation, source_generation);
+                        let piece_len = source.cumulative_end - source_prior_end;
+                        source_prior_end = source.cumulative_end;
+                        cumulative_end = cumulative_end
+                            .checked_add(piece_len)
+                            .ok_or(NodeArenaError::CapacityOverflow)?;
+                        self.pieces.push(NodePiece {
+                            range: source.range,
+                            cumulative_end,
+                            generation,
+                        });
+                    }
+                }
+            }
+        }
+        debug_assert_eq!(cumulative_end, logical_len);
+        Ok(ArenaNodeSequenceId::Composite {
+            owner: self.owner,
+            start: u32::try_from(start).expect("piece start was capacity checked"),
+            end: u32::try_from(self.pieces.len()).expect("piece end was capacity checked"),
+            generation,
+            len: logical_len,
+        })
+    }
+
+    /// Borrows one direct or flat-composite logical sequence.
+    pub fn get_sequence(
+        &self,
+        sequence: ArenaNodeSequenceId<L>,
+    ) -> Result<ArenaNodeSequence<'_, L, Glue, Tokens>, NodeArenaError> {
+        self.validate_sequence(sequence)?;
+        Ok(ArenaNodeSequence {
+            arena: self,
+            sequence,
         })
     }
 
@@ -1876,6 +2164,121 @@ impl<L, Glue, Tokens> DoubleEndedIterator for NodeRangesIter<'_, L, Glue, Tokens
 }
 
 impl<L, Glue, Tokens> ExactSizeIterator for NodeRangesIter<'_, L, Glue, Tokens> {}
+
+/// Borrowed direct or flat-composite logical node sequence.
+pub struct ArenaNodeSequence<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
+    arena: &'a NodeArena<L, Glue, Tokens>,
+    sequence: ArenaNodeSequenceId<L>,
+}
+
+impl<L, Glue, Tokens> core::fmt::Debug for ArenaNodeSequence<'_, L, Glue, Tokens> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ArenaNodeSequence")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, L, Glue, Tokens> ArenaNodeSequence<'a, L, Glue, Tokens> {
+    #[must_use]
+    pub const fn id(&self) -> ArenaNodeSequenceId<L> {
+        self.sequence
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.sequence.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.sequence.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&'a Node<NodeListId<L>, Glue, Tokens>> {
+        if index >= self.len() {
+            return None;
+        }
+        match self.sequence {
+            ArenaNodeSequenceId::Direct(range) => self
+                .arena
+                .get_range(range)
+                .expect("validated direct sequence remains live")
+                .get(index),
+            ArenaNodeSequenceId::Composite { start, end, .. } => {
+                let pieces = &self.arena.pieces[start as usize..end as usize];
+                let piece_index =
+                    pieces.partition_point(|piece| piece.cumulative_end <= index as u32);
+                let piece = pieces[piece_index];
+                let prior_end = piece_index
+                    .checked_sub(1)
+                    .map_or(0, |prior| pieces[prior].cumulative_end);
+                self.arena
+                    .get_range(piece.range)
+                    .expect("validated composite piece remains live")
+                    .get(index - prior_end as usize)
+            }
+        }
+    }
+
+    /// Walks the piece stream in logical order. The iterator advances within
+    /// each payload range before consulting the next compact descriptor.
+    pub fn iter(&self) -> ArenaNodeSequenceIter<'a, L, Glue, Tokens> {
+        ArenaNodeSequenceIter {
+            arena: self.arena,
+            sequence: self.sequence,
+            piece: 0,
+            within_piece: 0,
+            remaining: self.len(),
+        }
+    }
+}
+
+pub struct ArenaNodeSequenceIter<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
+    arena: &'a NodeArena<L, Glue, Tokens>,
+    sequence: ArenaNodeSequenceId<L>,
+    piece: usize,
+    within_piece: usize,
+    remaining: usize,
+}
+
+impl<'a, L, Glue, Tokens> Iterator for ArenaNodeSequenceIter<'a, L, Glue, Tokens> {
+    type Item = &'a Node<NodeListId<L>, Glue, Tokens>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let range = match self.sequence {
+            ArenaNodeSequenceId::Direct(range) => range,
+            ArenaNodeSequenceId::Composite { start, .. } => {
+                self.arena.pieces[start as usize + self.piece].range
+            }
+        };
+        let view = self
+            .arena
+            .get_range(range)
+            .expect("validated sequence piece remains live");
+        let node = view
+            .get(self.within_piece)
+            .expect("piece cursor remains in bounds");
+        self.within_piece += 1;
+        self.remaining -= 1;
+        if self.within_piece == view.len() {
+            self.piece += 1;
+            self.within_piece = 0;
+        }
+        Some(node)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<L, Glue, Tokens> ExactSizeIterator for ArenaNodeSequenceIter<'_, L, Glue, Tokens> {}
 
 /// Immutable logical node sequence resolved through one arena borrow.
 pub type NodeSlice<L, Glue = GlueSpec, Tokens = NodeTokenList> =

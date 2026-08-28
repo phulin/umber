@@ -336,6 +336,95 @@ fn partial_range_cannot_be_destructively_transferred() {
 }
 
 #[test]
+fn flat_composite_sequence_preserves_arbitrarily_many_unchanged_and_new_runs() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let mut runs = Vec::new();
+    for value in 0..9 {
+        let range = arena
+            .publish_range(vec![Node::Penalty(value)])
+            .expect("test run publishes");
+        runs.push(super::ArenaNodeSequenceId::Direct(range));
+    }
+    let first = arena
+        .compose_sequences(&runs[..6])
+        .expect("six-run sequence composes");
+    let flattened = arena
+        .compose_sequences(&[first, runs[6], runs[7], runs[8]])
+        .expect("composite input flattens into direct pieces");
+
+    assert_eq!(flattened.len(), 9);
+    assert_eq!(
+        arena
+            .get_sequence(flattened)
+            .expect("flat sequence resolves")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        (0..9).map(Node::Penalty).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        arena
+            .get_sequence(flattened)
+            .expect("flat sequence resolves")
+            .get(7),
+        Some(&Node::Penalty(7))
+    );
+}
+
+#[test]
+fn composite_piece_stream_rewinds_and_redoes_at_the_arena_cursor() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let left = arena
+        .publish_range(vec![Node::Penalty(1)])
+        .expect("left run publishes");
+    let right = arena
+        .publish_range(vec![Node::Penalty(2)])
+        .expect("right run publishes");
+    let mark = arena.cursor();
+    let accepted = arena
+        .compose_sequences(&[
+            super::ArenaNodeSequenceId::Direct(left),
+            super::ArenaNodeSequenceId::Direct(right),
+        ])
+        .expect("accepted composite publishes");
+    let tail = arena
+        .begin_checkpoint_candidate(mark)
+        .expect("piece stream rewinds");
+    let candidate = arena
+        .compose_sequences(&[
+            super::ArenaNodeSequenceId::Direct(right),
+            super::ArenaNodeSequenceId::Direct(left),
+        ])
+        .expect("candidate composite publishes");
+    assert_eq!(
+        accepted, candidate,
+        "candidate reuses exact piece coordinate"
+    );
+    assert_eq!(
+        arena
+            .get_sequence(candidate)
+            .expect("candidate resolves")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [Node::Penalty(2), Node::Penalty(1)]
+    );
+
+    arena
+        .reject_checkpoint_candidate(mark, tail)
+        .expect("piece stream rejection");
+    assert_eq!(
+        arena
+            .get_sequence(accepted)
+            .expect("accepted composite is restored")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [Node::Penalty(1), Node::Penalty(2)]
+    );
+}
+
+#[test]
 fn rollback_cursor_is_owner_checked_and_truncates_only_suffix() {
     let mut arena = NodeArena::<PageLifetime>::new();
     let retained = arena
