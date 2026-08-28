@@ -2436,6 +2436,7 @@ impl<G> Universe<G> {
         if let Some(core) = &mut self.core {
             let _ = core.enable_reachable_state_identity();
         }
+        let _ = self.durable_boxes.enable_semantic_identity();
         let _ = self.world.enable_reachable_state_identity();
         let _ = self.hyphenation.enable_reachable_state_identity();
         let _ = self.dependencies.enable_reachable_state_identity();

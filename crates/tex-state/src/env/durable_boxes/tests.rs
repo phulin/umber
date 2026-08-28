@@ -128,6 +128,36 @@ fn operation_rollback_moves_the_original_owner_back_without_copying() {
 }
 
 #[test]
+fn operation_rollback_restores_the_maintained_semantic_root() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    arena.enable_semantic_identity();
+    let mut state = DurableBoxState::new();
+    assert!(state.enable_semantic_identity());
+    let original = owner(&mut arena, 31);
+    state
+        .assign(
+            &mut arena,
+            8,
+            Some(original),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("original assignment");
+    let original_identity = state.semantic_identity_root();
+    let operation = state.begin_operation();
+    let replacement = owner(&mut arena, 37);
+    state
+        .replace(&mut arena, 8, Some(replacement))
+        .expect("operation replacement");
+
+    assert_ne!(state.semantic_identity_root(), original_identity);
+    state.rollback_operation(&mut arena, operation);
+
+    assert_eq!(state.semantic_identity_root(), original_identity);
+    state.retire_all(&mut arena);
+}
+
+#[test]
 fn local_group_restore_moves_the_saved_owner_back() {
     let mut arena = PageMaterialArena::with_chunk_bytes(64);
     let mut state = DurableBoxState::new();

@@ -34,6 +34,10 @@ impl DurableNodeMetadata {
         self.len
     }
 
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
     pub const fn semantic_identity(self) -> Option<u64> {
         self.semantic_identity
     }
@@ -116,6 +120,7 @@ pub(crate) struct DurableBoxState {
     groups: Vec<DurableGroup>,
     retained_groups: Vec<DurableGroup>,
     next_group_id: u64,
+    semantic_identity: Option<crate::state_hash::SemanticMapIdentity>,
     operation_entries: Vec<DurableMutation>,
     active_operations: Vec<usize>,
 }
@@ -231,6 +236,7 @@ impl DurableBoxState {
             groups: Vec::new(),
             retained_groups: Vec::new(),
             next_group_id: 0,
+            semantic_identity: None,
             operation_entries: Vec::new(),
             active_operations: Vec::new(),
         }
@@ -277,30 +283,68 @@ impl DurableBoxState {
         }
     }
 
-    pub(crate) fn semantic_identity_root(&self) -> Option<u64> {
-        let mut values = Vec::new();
+    pub(crate) fn enable_semantic_identity(&mut self) -> bool {
+        if self.semantic_identity.is_some() {
+            return true;
+        }
+        let mut identity = crate::state_hash::SemanticMapIdentity::empty(0x626f_785f_726f_6f74);
         for (index, cell) in self.dense.iter().enumerate() {
             if let Some(owner) = &cell.value {
-                values.push((index as u16, owner.root().list().semantic_identity()?));
+                identity.replace(
+                    index as u64,
+                    None,
+                    Some(match owner.root().list().semantic_identity() {
+                        Some(identity) => identity,
+                        None => return false,
+                    }),
+                );
             }
         }
         let mut overflow = self.overflow.iter().collect::<Vec<_>>();
         overflow.sort_unstable_by_key(|(index, _)| **index);
         for (&index, cell) in overflow {
             if let Some(owner) = &cell.value {
-                values.push((index, owner.root().list().semantic_identity()?));
+                identity.replace(
+                    u64::from(index),
+                    None,
+                    Some(match owner.root().list().semantic_identity() {
+                        Some(identity) => identity,
+                        None => return false,
+                    }),
+                );
             }
         }
-        Some(crate::state_hash::semantic_scalar_root(
-            0x626f_785f_726f_6f74,
-            |hasher| {
-                hasher.usize(values.len());
-                for (index, identity) in values {
-                    hasher.u16(index);
-                    hasher.u64(identity);
-                }
-            },
-        ))
+        self.semantic_identity = Some(identity);
+        true
+    }
+
+    pub(crate) fn semantic_identity_root(&self) -> Option<u64> {
+        self.semantic_identity.map(|identity| identity.root())
+    }
+
+    fn value_identity(value: &Option<DurableNodeClosure>) -> Option<u64> {
+        value.as_ref().map(|owner| {
+            owner
+                .root()
+                .list()
+                .semantic_identity()
+                .expect("identity demand precedes durable box publication")
+        })
+    }
+
+    fn swap_mutation(&mut self, mutation: &mut DurableMutation) {
+        let identities = self.semantic_identity.is_some().then(|| {
+            (
+                Self::value_identity(&self.cell_mut(mutation.index).value),
+                Self::value_identity(&mutation.alternate),
+            )
+        });
+        let cell = self.cell_mut(mutation.index);
+        std::mem::swap(&mut cell.value, &mut mutation.alternate);
+        std::mem::swap(&mut cell.level, &mut mutation.alternate_level);
+        if let (Some(identity), Some((old, new))) = (&mut self.semantic_identity, identities) {
+            identity.replace(u64::from(mutation.index), old, new);
+        }
     }
 
     fn copy_value(
@@ -362,6 +406,17 @@ impl DurableBoxState {
             (std::mem::replace(&mut cell.value, value), cell.level)
         };
         self.cell_mut(index).level = level;
+        let identities = self.semantic_identity.is_some().then(|| {
+            (
+                Self::value_identity(&before.0),
+                Self::value_identity(&self.cell(index).expect("durable box cell exists").value),
+            )
+        });
+        if let (Some(identity), Some((old_identity, new_identity))) =
+            (&mut self.semantic_identity, identities)
+        {
+            identity.replace(u64::from(index), old_identity, new_identity);
+        }
 
         let checkpoint_needed =
             self.checkpoint_stamps.get(&index).copied() != Some(self.checkpoint_epoch);
@@ -684,9 +739,7 @@ impl DurableBoxState {
         assert_eq!(self.active_operations.last(), Some(&operation.position));
         let mut suffix = self.operation_entries.split_off(operation.position);
         for mutation in suffix.iter_mut().rev() {
-            let cell = self.cell_mut(mutation.index);
-            std::mem::swap(&mut cell.value, &mut mutation.alternate);
-            std::mem::swap(&mut cell.level, &mut mutation.alternate_level);
+            self.swap_mutation(mutation);
         }
         for mutation in suffix {
             Self::retire_value(arena, mutation.alternate);
@@ -697,9 +750,7 @@ impl DurableBoxState {
     fn swap_checkpoint_suffix(&mut self, start: usize) {
         let mut suffix = self.checkpoint_entries.split_off(start);
         for mutation in suffix.iter_mut().rev() {
-            let cell = self.cell_mut(mutation.index);
-            std::mem::swap(&mut cell.value, &mut mutation.alternate);
-            std::mem::swap(&mut cell.level, &mut mutation.alternate_level);
+            self.swap_mutation(mutation);
         }
         self.checkpoint_entries.append(&mut suffix);
     }
@@ -765,9 +816,7 @@ impl DurableBoxState {
             Self::retire_value(arena, mutation.alternate);
         }
         for mutation in &mut accepted.entries {
-            let cell = self.cell_mut(mutation.index);
-            std::mem::swap(&mut cell.value, &mut mutation.alternate);
-            std::mem::swap(&mut cell.level, &mut mutation.alternate_level);
+            self.swap_mutation(mutation);
         }
         self.checkpoint_entries.append(&mut accepted.entries);
         for group in std::mem::take(&mut self.groups) {
