@@ -830,8 +830,7 @@ impl tex_exec::RetainedEngineOperation for PublishInitialFormatCheckpoint {
             return Err(SessionError::FormatFontPolicy { name: font.name });
         }
         let mut control = MainControl::with_profile(self.profile);
-        let checkpoint = control.capture_checkpoint(
-            EngineBoundary::JobStart,
+        let checkpoint = control.capture_job_start_checkpoint(
             universe,
             tex_exec::ExecutionBudgetCounters::default(),
         )?;

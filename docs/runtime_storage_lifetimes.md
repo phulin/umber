@@ -698,6 +698,13 @@ current chunks and reattaches accepted chunks, then redoes the accepted roots.
 Acceptance drops accepted root inverses before pruning the detached accepted
 chunks. No fallible step may begin after this prevalidated root transition.
 
+Named execution evidence is not itself checkpoint authority. A fresh command
+processor owns one move-only job-start eligibility receipt, consumed before
+execution begins. Live execution can produce another receipt only after a
+root-main-file outer paragraph reaches the quiescent publication barrier.
+Shipout completion remains detached evidence for hosts and telemetry but has no
+receipt constructor, so it cannot enter retained restart history.
+
 Restore is atomic and follows this order:
 
 1. Validate the checkpoint/session identity, generation ancestry, all journal

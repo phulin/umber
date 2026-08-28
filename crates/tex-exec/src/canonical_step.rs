@@ -260,7 +260,10 @@ impl OutputLedger {
         if std::mem::replace(&mut self.job_start_committed, true) {
             return Ok(false);
         }
-        self.publish(control, universe, sink, &[EngineBoundary::JobStart])?;
+        let eligibility = control
+            .take_job_start_eligibility()
+            .ok_or(CommandSummaryError::AttemptSuspended)?;
+        self.publish(control, universe, sink, vec![eligibility])?;
         Ok(true)
     }
 
@@ -332,16 +335,17 @@ impl OutputLedger {
         control: &mut MainControl<G>,
         universe: &mut Universe<G>,
         sink: &mut dyn CheckpointSink<G>,
-        boundaries: &[EngineBoundary],
+        eligibilities: Vec<crate::checkpoint::CheckpointEligibility>,
     ) -> Result<(), CommandSummaryError> {
         self.collect_prepared_pages(control);
-        for &boundary in boundaries {
+        for eligibility in eligibilities {
+            let boundary = eligibility.boundary();
             if !sink.wants_checkpoint(boundary) {
                 continue;
             }
             let counters = ExecutionBudgetCounters::default();
             let mut checkpoint = control.capture_checkpoint_with_identity_demand(
-                boundary,
+                eligibility,
                 universe,
                 counters,
                 sink.wants_reachable_state_identity(boundary),
@@ -408,8 +412,9 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
             .publish_terminal_named_boundaries(self.universe)
             .map_err(CanonicalStepFailure::Execution)?;
         let boundaries = self.control.take_completed_boundaries();
+        let eligibilities = self.control.take_checkpoint_eligibilities();
         self.ledger
-            .publish(self.control, self.universe, sink, &boundaries)
+            .publish(self.control, self.universe, sink, eligibilities)
             .map_err(CanonicalStepFailure::Checkpoint)
     }
 
@@ -483,9 +488,10 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
             return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));
         }
         let boundaries = self.control.take_completed_boundaries().into_boxed_slice();
+        let eligibilities = self.control.take_checkpoint_eligibilities();
         if let Err(error) = self
             .ledger
-            .publish(self.control, self.universe, sink, &boundaries)
+            .publish(self.control, self.universe, sink, eligibilities)
         {
             self.control
                 .record_external_episode_barrier(SemanticEpisodeBarrier::Checkpoint);

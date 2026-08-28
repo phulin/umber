@@ -370,6 +370,12 @@ pub struct MainControl<G> {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
+    /// Move-only restart eligibility produced alongside root-main outer
+    /// paragraph evidence. Shipout evidence never enters this lane.
+    completed_checkpoint_eligibilities: Vec<crate::checkpoint::CheckpointEligibility>,
+    /// The sole job-start restart capability. Restored controls do not regain
+    /// it, and successful initial capture consumes it permanently.
+    job_start_eligibility: Option<crate::checkpoint::CheckpointEligibility>,
     /// Ordered named-boundary intents waiting for command-owned scanner,
     /// macro, resource, and structural continuations to become quiescent.
     pending_named_boundaries: VecDeque<PendingNamedBoundary>,
@@ -1997,6 +2003,8 @@ impl<G> Default for MainControl<G> {
             immediate_prints: Vec::new(),
             prepared_shipout: None,
             completed_boundaries: Vec::new(),
+            completed_checkpoint_eligibilities: Vec::new(),
+            job_start_eligibility: Some(crate::checkpoint::CheckpointEligibility::job_start()),
             pending_named_boundaries: VecDeque::new(),
             pending_resource_site: None,
             pending_direct_operation: None,
@@ -2021,6 +2029,7 @@ impl<G> MainControl<G> {
         Self {
             command: PersistentInterpreter::from_state(command),
             modes,
+            job_start_eligibility: None,
             ..Self::default()
         }
     }
@@ -2444,28 +2453,35 @@ impl<G> MainControl<G> {
         Ok(Some(crate::DetachedFormatDump { image, receipt }))
     }
 
-    /// Captures a quiescent named checkpoint for this command processor.
-    pub fn capture_checkpoint(
+    /// Consumes this fresh command processor's sole job-start receipt.
+    pub fn capture_job_start_checkpoint(
         &mut self,
-        boundary: crate::EngineBoundary,
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
         if self.has_external_attempt_owner() {
             return Err(tex_command::CommandSummaryError::AttemptSuspended);
         }
-        crate::EngineCheckpoint::capture_checkpoint(
-            boundary,
+        let eligibility = self
+            .take_job_start_eligibility()
+            .ok_or(tex_command::CommandSummaryError::AttemptSuspended)?;
+        let result = crate::EngineCheckpoint::capture_checkpoint(
+            eligibility,
             &mut self.command,
             &mut self.modes,
             stores,
             budget_counters,
-        )
+        );
+        if result.is_err() {
+            self.job_start_eligibility =
+                Some(crate::checkpoint::CheckpointEligibility::job_start());
+        }
+        result
     }
 
     pub(crate) fn capture_checkpoint_with_identity_demand(
         &mut self,
-        boundary: crate::EngineBoundary,
+        eligibility: crate::checkpoint::CheckpointEligibility,
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
         wants_reachable_state_identity: bool,
@@ -2474,7 +2490,7 @@ impl<G> MainControl<G> {
             return Err(tex_command::CommandSummaryError::AttemptSuspended);
         }
         crate::EngineCheckpoint::capture_checkpoint_with_identity_demand(
-            boundary,
+            eligibility,
             &mut self.command,
             &mut self.modes,
             stores,
@@ -3431,6 +3447,18 @@ impl<G> MainControl<G> {
         std::mem::take(&mut self.completed_boundaries)
     }
 
+    pub(crate) fn take_checkpoint_eligibilities(
+        &mut self,
+    ) -> Vec<crate::checkpoint::CheckpointEligibility> {
+        std::mem::take(&mut self.completed_checkpoint_eligibilities)
+    }
+
+    pub(crate) fn take_job_start_eligibility(
+        &mut self,
+    ) -> Option<crate::checkpoint::CheckpointEligibility> {
+        self.job_start_eligibility.take()
+    }
+
     /// Records one ordered named-boundary intent per newly committed shipout.
     /// Structural and command-owned continuations gate later publication.
     fn finish_shipout_publication(
@@ -3904,6 +3932,11 @@ impl<G> MainControl<G> {
                     .map_err(|_| ExecError::MissingToken {
                         context: "rootless shipout page release",
                     })?;
+            }
+            if published.boundary == crate::EngineBoundary::OuterParagraphEnd {
+                self.completed_checkpoint_eligibilities.push(
+                    crate::checkpoint::CheckpointEligibility::outer_paragraph_end(),
+                );
             }
             self.completed_boundaries.push(published.boundary);
             return Ok(Some(published.boundary));
@@ -5366,6 +5399,10 @@ impl<G> MainControl<G> {
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
+        // Once execution begins, this control can no longer truthfully
+        // produce job-start restart eligibility even if the caller skipped
+        // the ordinary initial publication hook.
+        self.job_start_eligibility = None;
         if self.operation_observations.is_none() {
             // A caller may resume an observed resource suspension through
             // the unobserved API. The semantic continuation is independent

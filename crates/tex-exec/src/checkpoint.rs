@@ -361,6 +361,35 @@ pub enum EngineBoundary {
     ShipoutComplete,
 }
 
+/// Move-only proof that a restart checkpoint may be captured now.
+///
+/// Construction is private to main control: job start contributes its sole
+/// initial receipt, and live execution contributes one only after a
+/// root-main-file outer paragraph has reached the quiescent publication
+/// barrier. Shipout completion deliberately has no constructor.
+#[derive(Debug)]
+pub(crate) struct CheckpointEligibility {
+    boundary: EngineBoundary,
+}
+
+impl CheckpointEligibility {
+    pub(crate) const fn job_start() -> Self {
+        Self {
+            boundary: EngineBoundary::JobStart,
+        }
+    }
+
+    pub(crate) const fn outer_paragraph_end() -> Self {
+        Self {
+            boundary: EngineBoundary::OuterParagraphEnd,
+        }
+    }
+
+    pub(crate) const fn boundary(&self) -> EngineBoundary {
+        self.boundary
+    }
+}
+
 /// One restartable aggregate checkpoint in an admitted generation.
 ///
 /// The runtime portion owns one coarse generation and opaque state roots. The
@@ -509,15 +538,15 @@ impl<G> EngineCheckpoint<G> {
 
     /// Captures a named boundary. Command publication proves that no scanner,
     /// macro matcher, alignment delivery, or attempt arena remains live.
-    pub fn capture_checkpoint(
-        boundary: EngineBoundary,
+    pub(crate) fn capture_checkpoint(
+        eligibility: CheckpointEligibility,
         command: &mut CommandState<G>,
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<Self, CommandSummaryError> {
         Self::capture_checkpoint_with_identity_demand(
-            boundary,
+            eligibility,
             command,
             nest,
             universe,
@@ -530,15 +559,15 @@ impl<G> EngineCheckpoint<G> {
     /// gate. Production demand is selected through [`CheckpointSink`].
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
-    pub fn profile_capture_checkpoint_with_identity_demand(
-        boundary: EngineBoundary,
+    pub(crate) fn profile_capture_checkpoint_with_identity_demand(
+        eligibility: CheckpointEligibility,
         command: &mut CommandState<G>,
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<Self, CommandSummaryError> {
         Self::capture_checkpoint_with_identity_demand(
-            boundary,
+            eligibility,
             command,
             nest,
             universe,
@@ -548,13 +577,14 @@ impl<G> EngineCheckpoint<G> {
     }
 
     pub(crate) fn capture_checkpoint_with_identity_demand(
-        boundary: EngineBoundary,
+        eligibility: CheckpointEligibility,
         command: &mut CommandState<G>,
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
         wants_reachable_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
+        let boundary = eligibility.boundary();
         let command = command.publish_summary(universe)?;
         let root_anchor = command
             .root_source_anchor()
