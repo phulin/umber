@@ -228,12 +228,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Runtime
   page-material facade pairing the canonical coarse-arena coordinate with its
   demand-maintained semantic identity scalar, including zero-hash disabled
-  execution, sealed payload-plus-descriptor closure batches, move-only coarse
-  top-level/checkpoint leases, dependency-counted nested coordinates,
-  rootless whole-batch recycling, and identity-preserving split/compose/fork
-  settlement tests, plus exact recursive cross-region semantic copy used only
-  by lifetime transitions. Its payload is explicitly `Node<PageListId>` so
-  nested ids remain borrowed coordinates rather than independent owners.
+  execution, identity-preserving split/compose/fork settlement, and exact
+  recursive cross-region semantic copy used only by lifetime transitions. Its
+  payload is explicitly `Node<PageListId>` so the replacement topology cannot
+  retain child coordinates from the superseded row arena during migration.
 - `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
   hash rollback tests.
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
