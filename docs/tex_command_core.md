@@ -205,6 +205,15 @@ unresolved value on the next iteration. No raw command envelope is created or
 copied, and only a resolved command may enter a scanner or resource
 continuation.
 
+The command state admits that top row once per input transition. A source
+cursor without a loaded line returns `NeedLine`; it never reconstructs lower
+buffer occupancy, loads, firms, or registers a line from the per-token path.
+One physical-line acquisition transition owns those operations, updates the
+authoritative TeX `line` scalar only when its value changes, and then retries
+delivery. Source retirement restores the enclosing source's line immediately;
+token-list push and pop leave it unchanged. Exact per-token provenance still
+comes from the tokenizer and is copied into the same command value.
+
 Control-sequence resolution borrows the already-admitted dense meaning row
 through the live `CommandContext`. Static words decode during that borrow; a
 macro meaning clones its generation-branded definition owner exactly once into
@@ -1688,6 +1697,10 @@ policy. A `SourceId` cannot be reopened; provenance source-map registration is
 independent and retains the exact ID after the source level retires.
 
 Physical refill distinguishes LF, CR, CRLF, and a missing final terminator.
+The refill owner computes lower-source buffer occupancy once, loads and firms
+the physical line, registers any replacement backing, journals an actual TeX
+line-number change, and retries the singular top transition. Tokenization
+returns `NeedLine` instead of receiving a backing registry on every token.
 A final terminator does not manufacture another empty line. Normalization
 removes trailing byte `0x20` values, captures the current profile-valid
 `endlinechar`, and delivers that synthetic character at the zero-width anchor

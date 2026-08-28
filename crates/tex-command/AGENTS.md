@@ -148,7 +148,9 @@ collector (see `src/conditionals.rs`).
   borrowed untransformed control-word slice or owned superscript fallback into
   packed identity plus direct provenance, profile-specific superscript notation,
   invalid-character recovery steps, byte/scalar ranges, and focused conformance
-  tests.
+  tests. A cursor with no loaded line returns `NeedLine`; physical acquisition
+  belongs to the singular input-top owner and never receives a backing registry
+  through the ordinary token path.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
   source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
@@ -163,7 +165,8 @@ collector (see `src/conditionals.rs`).
   opening installs it before the frame becomes visible, and retirement moves
   it out with that exact top frame; see `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  the one canonical source/token frame-push transition and scalar maximum
+  the one destination-directed source/token top transition, the singular
+  physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, `param_start` parameter replay ownership, and
   trace-independence tests.

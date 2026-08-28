@@ -550,6 +550,105 @@ fn repeated_same_scalar_writes_coalesce_to_first_old_and_final_live_value() {
 }
 
 #[test]
+fn nested_source_pop_and_snapshot_restore_keep_authoritative_line_exact() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let parent = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"AB"[..],
+            ))
+            .expect("parent registration");
+        command
+            .open_registered_source(parent)
+            .expect("parent opening");
+        let mut capabilities = crate::CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let first = processor
+                .get_next()
+                .expect("parent delivery")
+                .expect("parent character");
+            assert_eq!(
+                first.spelling().semantic_token(),
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                }
+            );
+            assert_eq!(processor.current_file_line_number(), 1);
+        }
+        let snapshot = command.snapshot(universe).expect("mid-line snapshot");
+
+        let nested = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b""[..],
+            ))
+            .expect("nested registration");
+        command
+            .open_registered_source(nested)
+            .expect("nested opening");
+        assert_eq!(command.current_file_line_number(), 0);
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let resumed_parent = processor
+                .get_next()
+                .expect("nested EOF resumes parent")
+                .expect("parent second token");
+            assert_eq!(
+                resumed_parent.spelling().semantic_token(),
+                Token::Char {
+                    ch: 'B',
+                    cat: Catcode::Letter,
+                }
+            );
+            assert_eq!(processor.current_file_line_number(), 1);
+        }
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("line and cursor restore together");
+        assert_eq!(command.current_file_line_number(), 1);
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let replayed = processor
+            .get_next()
+            .expect("restored parent delivery")
+            .expect("restored second token");
+        assert_eq!(
+            replayed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Letter,
+            }
+        );
+    });
+}
+
+#[test]
 fn token_frame_history_is_one_compact_record_without_payload_clones() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

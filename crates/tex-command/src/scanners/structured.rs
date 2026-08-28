@@ -8687,10 +8687,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if let Some(name) = framing_name {
                     self.state.print_file_open(&name);
                 }
-                let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
-                self.command
-                    .prepare_started_input(endlinechar)
-                    .ok_or_else(|| CommandError::input_invariant())?;
+                self.prepare_started_input()?;
                 self.host.initialize_job_name(&attempted_name);
                 // TeX82 §537 retains `a_make_name_string` for the opened
                 // request; Web2C additionally retains its full resolved name.

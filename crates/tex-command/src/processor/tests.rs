@@ -1,6 +1,7 @@
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+use crate::input::InputLevel;
 use crate::{
     AlignmentIdentity, CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation,
     CommandObserver, CommandState, DeliveryStatus,
@@ -268,6 +269,92 @@ fn direct_source_command_captures_its_physical_line_before_retirement() {
                 break;
             }
         }
+    });
+}
+
+#[test]
+fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_source() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"ab\n"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let first = processor
+            .get_next()
+            .expect("first delivery")
+            .expect("first character");
+        assert_eq!(
+            first.spelling().semantic_token(),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }
+        );
+        assert_eq!(first.direct_source_line_number(), Some(1));
+        assert_eq!(processor.command.input.current_file_line_number(), 1);
+        let first_line_number = match processor.command.input.levels.last() {
+            Some(InputLevel::Source(source)) => source
+                .cursor
+                .line
+                .as_ref()
+                .expect("the acquired line remains active")
+                .physical
+                .number(),
+            _ => panic!("the source remains active"),
+        };
+
+        let second = processor
+            .get_next()
+            .expect("second delivery")
+            .expect("second character");
+        assert_eq!(
+            second.spelling().semantic_token(),
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            }
+        );
+        let second_provenance = second.source_provenance();
+        assert_eq!(second.direct_source_line_number(), Some(1));
+        assert_eq!(processor.command.input.current_file_line_number(), 1);
+        let second_line_number = match processor.command.input.levels.last() {
+            Some(InputLevel::Source(source)) => source
+                .cursor
+                .line
+                .as_ref()
+                .expect("the same physical line remains active")
+                .physical
+                .number(),
+            _ => panic!("the source remains active"),
+        };
+        assert_eq!(second_line_number, first_line_number);
+
+        processor.back_input(second).expect("backup");
+        let replayed = processor
+            .get_next()
+            .expect("backup delivery")
+            .expect("backed-up character");
+        assert_eq!(replayed.source_provenance(), second_provenance);
+        assert_eq!(replayed.direct_source_line_number(), None);
+        assert_eq!(processor.command.input.current_file_line_number(), 1);
     });
 }
 

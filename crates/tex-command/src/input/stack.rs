@@ -3,14 +3,35 @@
 
 use crate::CommandState;
 use tex_state::DefinitionId;
-use tex_state::token::OriginId;
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
-    SourceNameClass, StoredReplayReason, TokenBehavior, TokenCursor,
+    CompactSourceStepQueries, CompactSourceTokenizationStep, InputLevel, InputLevelId,
+    PackedTokenSources, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
+    SourceControlSequenceKind, SourceNameClass, SourceToken, StoredReplayReason, TokenBehavior,
+    TokenCursor,
 };
+
+/// Result of one admission of the current input top.
+pub(crate) enum InputTopTransition {
+    Delivered,
+    ParameterPushed(InputLevelId),
+    InvalidCharacter,
+    NeedLine(InputLevelId),
+    SourceExhausted(InputLevelId),
+    TokenExhausted(InputLevelId),
+    Empty,
+}
+
+type SourceMapRegistration = (tex_state::SourceId, tex_state::source_map::SourceDescriptor);
+
+pub(crate) struct AcquiredInputLine {
+    pub(crate) physical: super::PhysicalLine,
+    source_registration: Option<SourceMapRegistration>,
+    replacement_registration: Option<SourceMapRegistration>,
+}
 
 /// One committed input-lifecycle transition.
 ///
@@ -198,6 +219,304 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl<G> CommandState<G> {
+    /// Advances the exact top input row once and writes the caller's final
+    /// command value in place. Physical-line acquisition is deliberately a
+    /// separate transition: a cursor without a loaded line returns
+    /// [`InputTopTransition::NeedLine`] without loading or journaling one.
+    pub(crate) fn transition_input_top_into(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        create_control_sequences: bool,
+        destination: &mut crate::CurrentCommand<G>,
+    ) -> Result<InputTopTransition, ()> {
+        let profile = self.profile();
+        let force_eof = self.source_force_eof();
+        let (delivered, delivered_by_parameter, admitted_identity) = {
+            let attempt = self.attempt.arena();
+            let scratch = &self.scratch;
+            let roots = &mut self.roots;
+            let replay_lane = &roots.input.replay;
+            let Some(level) = roots.input.levels.last_mut() else {
+                return Ok(InputTopTransition::Empty);
+            };
+            match level {
+                InputLevel::Source(source) => {
+                    let identity = source.identity();
+                    let position = source.cursor.next_physical_offset;
+                    if state.tracked_region_is_active() {
+                        super::observe_immutable_source(state, source);
+                    }
+                    let mut queries = LiveSourceQueries {
+                        state,
+                        create_control_sequences,
+                    };
+                    let step = match profile.character_mode() {
+                        crate::CharacterMode::EightBitExact => source
+                            .cursor
+                            .next_compact_exact_byte_step(force_eof, &mut queries),
+                        crate::CharacterMode::UnicodeExtended => source
+                            .cursor
+                            .next_compact_unicode_step(force_eof, &mut queries),
+                    };
+                    match step {
+                        CompactSourceTokenizationStep::Token(token) => {
+                            let range = token.provenance.range();
+                            let origin = if range.end().saturating_sub(range.start()) == 1 {
+                                state.source_token_origin(
+                                    range.source(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            } else {
+                                state.source_range_origin(
+                                    range.source(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            };
+                            let direct_source_line = source.cursor.line.as_ref().map(|line| {
+                                u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
+                            });
+                            if source.frame.identity() != identity.0
+                                || source.frame.advance().is_none()
+                            {
+                                return Err(());
+                            }
+                            destination.write_raw_delivery(
+                                TracedTokenWord::from_parts(token.word, origin),
+                                identity.0,
+                                position,
+                                Some(token.provenance),
+                                true,
+                                direct_source_line,
+                                false,
+                            );
+                            (InputTopTransition::Delivered, false, Some(identity))
+                        }
+                        CompactSourceTokenizationStep::InvalidCharacter => {
+                            (InputTopTransition::InvalidCharacter, false, Some(identity))
+                        }
+                        CompactSourceTokenizationStep::NeedLine => (
+                            InputTopTransition::NeedLine(identity),
+                            false,
+                            Some(identity),
+                        ),
+                        CompactSourceTokenizationStep::End => (
+                            InputTopTransition::SourceExhausted(identity),
+                            false,
+                            Some(identity),
+                        ),
+                    }
+                }
+                InputLevel::Tokens(cursor) => {
+                    let identity = cursor.identity();
+                    let delivered = cursor.deliver_into(
+                        PackedTokenSources::new(replay_lane, attempt),
+                        destination,
+                    )?;
+                    if delivered {
+                        (
+                            InputTopTransition::Delivered,
+                            matches!(cursor.behavior, TokenBehavior::Parameter),
+                            Some(identity),
+                        )
+                    } else {
+                        (
+                            InputTopTransition::TokenExhausted(identity),
+                            false,
+                            Some(identity),
+                        )
+                    }
+                }
+                InputLevel::MacroArgument(cursor) => {
+                    let identity = cursor.identity();
+                    let delivered = cursor.deliver_into(scratch, destination)?;
+                    if delivered {
+                        (InputTopTransition::Delivered, true, Some(identity))
+                    } else {
+                        (
+                            InputTopTransition::TokenExhausted(identity),
+                            false,
+                            Some(identity),
+                        )
+                    }
+                }
+            }
+        };
+
+        if !matches!(delivered, InputTopTransition::Delivered) {
+            return Ok(delivered);
+        }
+        let Token::Param(slot) = destination.spelling().semantic_token() else {
+            return Ok(InputTopTransition::Delivered);
+        };
+        let delivering_level = InputLevelId(destination.delivery_stamp().input_level());
+        if admitted_identity != Some(delivering_level) {
+            return Err(());
+        }
+        match self
+            .replay_out_parameter_after_admission(delivering_level, delivered_by_parameter, slot)
+            .map_err(|_| ())?
+        {
+            OutParameterReplay::Literal => Ok(InputTopTransition::Delivered),
+            OutParameterReplay::Pushed(level) => Ok(InputTopTransition::ParameterPushed(level)),
+        }
+    }
+
+    /// Acquires, firms, registers, and accounts for one physical line on the
+    /// current source. This is the only production transition that computes
+    /// lower-buffer occupancy or changes TeX's retained `line` scalar.
+    pub(crate) fn acquire_input_top_line(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        create_control_sequences: bool,
+        endlinechar: i32,
+        firm: bool,
+        pending_acquired_line: bool,
+    ) -> Result<Option<super::PhysicalLine>, ()> {
+        if state.tracked_region_is_active()
+            && let Some(InputLevel::Source(source)) = self.input.levels.last()
+        {
+            super::observe_immutable_source(state, source);
+        }
+        let acquired = {
+            let mut queries = LiveSourceQueries {
+                state,
+                create_control_sequences,
+            };
+            self.acquire_input_top_line_with_queries(
+                endlinechar,
+                firm,
+                pending_acquired_line,
+                &mut queries,
+            )?
+        };
+        let Some(acquired) = acquired else {
+            return Ok(None);
+        };
+        if let Some((source, descriptor)) = acquired.source_registration {
+            let _ = state.register_source(source, descriptor);
+        }
+        if let Some((source, descriptor)) = acquired.replacement_registration {
+            let _ = state.register_source(source, descriptor);
+        }
+        if state.tracked_region_is_active()
+            && let Some(InputLevel::Source(source)) = self.input.levels.last()
+        {
+            super::observe_immutable_source(state, source);
+        }
+        Ok(Some(acquired.physical))
+    }
+
+    pub(crate) fn acquire_input_top_line_with_queries(
+        &mut self,
+        endlinechar: i32,
+        firm: bool,
+        pending_acquired_line: bool,
+        queries: &mut dyn crate::SourceStepQueries,
+    ) -> Result<Option<AcquiredInputLine>, ()> {
+        let occupied_below_active =
+            self.input
+                .levels
+                .iter()
+                .rev()
+                .skip(1)
+                .fold(0_usize, |total, level| {
+                    let Some((len, endline)) = crate::state::source_buffer_line(level) else {
+                        return total;
+                    };
+                    total
+                        .saturating_add(len)
+                        .saturating_add(usize::from(endline))
+                        .saturating_add(1)
+                });
+        let buffer_start = 1_usize
+            .saturating_add(self.terminal_buffer_slots)
+            .saturating_add(occupied_below_active);
+        let profile = self.profile();
+        let old_next_source_identity = self.input.next_source_identity;
+        let (physical, retained_line, source_registration, replacement_registration) = {
+            let usage = &mut self.stack_usage;
+            let input = &mut self.roots.input;
+            let Some(InputLevel::Source(source)) = input.levels.last_mut() else {
+                return Err(());
+            };
+            let identity = source.identity();
+            let name_class = source.name_class;
+            if pending_acquired_line {
+                source.cursor.pending_acquired_line = true;
+            }
+            let source_registration = (!source.cursor.backing_registered).then(|| {
+                source.cursor.backing_registered = true;
+                (
+                    source.cursor.backing.id,
+                    source.cursor.backing.source_descriptor(),
+                )
+            });
+            let mut lines = super::LineBackingRegistry {
+                profile,
+                next_identity: &mut input.next_source_identity,
+                usage,
+                buffer_start,
+                name_class: Some(name_class),
+            };
+            let Some(line) = source.cursor.load_next_line(endlinechar) else {
+                return Ok(None);
+            };
+            let physical = line.physical;
+            lines.record_line_usage(&source.cursor);
+            if firm {
+                source
+                    .cursor
+                    .firm_up_the_line(endlinechar, queries, &mut lines);
+                lines.record_line_usage(&source.cursor);
+            }
+            let replacement_registration = if source.cursor.line_backing_registered {
+                None
+            } else {
+                source.cursor.line_backing.as_ref().map(|backing| {
+                    source.cursor.line_backing_registered = true;
+                    (backing.id, backing.source_descriptor())
+                })
+            };
+            let retained_line = match name_class {
+                SourceNameClass::File | SourceNameClass::Scantokens(_) => source
+                    .cursor
+                    .line
+                    .as_ref()
+                    .map(|line| line.physical.number().min(i32::MAX as u64) as i32)
+                    .unwrap_or(0),
+                SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
+            };
+            debug_assert_eq!(source.identity(), identity);
+            (
+                physical,
+                retained_line,
+                source_registration,
+                replacement_registration,
+            )
+        };
+        if self.input.next_source_identity != old_next_source_identity {
+            self.timeline
+                .record_next_source_identity(old_next_source_identity);
+        }
+        self.set_retained_file_line_number(retained_line);
+        Ok(Some(AcquiredInputLine {
+            physical,
+            source_registration,
+            replacement_registration,
+        }))
+    }
+
+    pub(crate) fn set_retained_file_line_number(&mut self, line: i32) {
+        if self.input.retained_file_line_number == line {
+            return;
+        }
+        self.timeline
+            .record_retained_file_line_number(self.input.retained_file_line_number);
+        self.input.retained_file_line_number = line;
+    }
+
     fn pop_retired_input_level(&mut self) -> Option<RetiredInputLevel<G>> {
         if !self.input.levels.records_history() {
             return self.input.levels.pop_owned().map(RetiredInputLevel::owned);
@@ -367,19 +686,35 @@ impl<G> CommandState<G> {
         delivering_level: InputLevelId,
         slot: u8,
     ) -> Result<OutParameterReplay, ParameterReplayError> {
-        let actual = self
-            .input
-            .levels
-            .last()
-            .map(input_level_identity)
-            .ok_or(ParameterReplayError::NoInput)?;
+        let (actual, delivered_by_parameter) = match self.input.levels.last() {
+            Some(level) => (
+                input_level_identity(level),
+                matches!(
+                    level,
+                    InputLevel::Tokens(TokenCursor {
+                        behavior: TokenBehavior::Parameter,
+                        ..
+                    })
+                ),
+            ),
+            None => return Err(ParameterReplayError::NoInput),
+        };
         if actual != delivering_level {
             return Err(ParameterReplayError::LevelChanged {
                 expected: delivering_level,
                 actual,
             });
         }
-        if matches!(self.input.levels.last(), Some(InputLevel::MacroArgument(_))) {
+        self.replay_out_parameter_after_admission(delivering_level, delivered_by_parameter, slot)
+    }
+
+    fn replay_out_parameter_after_admission(
+        &mut self,
+        _delivering_level: InputLevelId,
+        delivered_by_parameter: bool,
+        slot: u8,
+    ) -> Result<OutParameterReplay, ParameterReplayError> {
+        if delivered_by_parameter {
             return Ok(OutParameterReplay::Literal);
         }
         if !(1..=9).contains(&slot) {
@@ -495,6 +830,7 @@ impl<G> CommandState<G> {
             else {
                 unreachable!("the inspected top level was not a source cursor");
             };
+            self.restore_retained_line_after_source_pop();
             let action = source_retirement_action(retirement);
             // TeX82 §362 tests and clears the process-global `force_eof`
             // only in §360's `name>17` (real-file) refill branch. §483's
@@ -635,6 +971,7 @@ impl<G> CommandState<G> {
             else {
                 unreachable!("the popped level was not a token cursor");
             };
+            self.restore_retained_line_after_source_pop();
             let action = source_retirement_action(retirement);
             return Some(InputRetirement {
                 identity,
@@ -719,6 +1056,32 @@ impl<G> CommandState<G> {
         }
         Ok(())
     }
+
+    fn restore_retained_line_after_source_pop(&mut self) {
+        let line = self
+            .input
+            .levels
+            .iter()
+            .rev()
+            .find_map(|level| match level {
+                InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
+                InputLevel::Source(source) => Some(match source.name_class {
+                    SourceNameClass::File | SourceNameClass::Scantokens(_) => source
+                        .cursor
+                        .line
+                        .as_ref()
+                        .map_or_else(
+                            || source.cursor.next_line_number.saturating_sub(1),
+                            |line| line.physical.number(),
+                        )
+                        .min(i32::MAX as u64)
+                        as i32,
+                    SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
+                }),
+            })
+            .unwrap_or(0);
+        self.set_retained_file_line_number(line);
+    }
 }
 
 fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputRetirementReason {
@@ -759,6 +1122,91 @@ fn source_level_is_framed<G>(source: &super::SourceLevel<G>) -> bool {
         SourceNameClass::Terminal
         | SourceNameClass::ReadStream(_)
         | SourceNameClass::Scantokens(_) => false,
+    }
+}
+
+/// Live engine queries used while the one admitted source row is borrowed.
+struct LiveSourceQueries<'a, 'b, G> {
+    state: &'a mut tex_state::CommandContext<'b, G>,
+    create_control_sequences: bool,
+}
+
+impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
+    fn catcode(&mut self, code: crate::CharacterCode) -> Catcode {
+        self.state.catcode(crate::profile::token_character(code))
+    }
+
+    fn firm_up_the_line(&mut self, line: &str) -> Option<super::SourceRegistration> {
+        use tex_state::env::banks::IntParam;
+        if self.state.int_param(IntParam::PAUSING) <= 0
+            || !self.state.interaction_permits_terminal_input()
+        {
+            return None;
+        }
+        let prompt = format!("\n{line}=>");
+        let replacement = self
+            .state
+            .input_ln(tex_state::CommandLineSource::Terminal { prompt: &prompt })?;
+        if replacement.is_empty() {
+            return None;
+        }
+        Some(super::SourceRegistration::new(
+            super::RegisteredSourceKind::Generated,
+            replacement.into_bytes(),
+        ))
+    }
+}
+
+impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
+    fn compact_control_word(&mut self, name: &str) -> TokenWord {
+        let token = if self.create_control_sequences {
+            Token::Cs(self.state.intern_hash_control_sequence(name))
+        } else {
+            self.state
+                .known_control_sequence(name)
+                .map_or_else(Token::undefined_control_sequence, Token::Cs)
+        };
+        TokenWord::pack(token)
+    }
+
+    fn compact_source_token(&mut self, source_token: &SourceToken) -> TokenWord {
+        let token = match source_token {
+            SourceToken::Character { code, catcode, .. } => Token::Char {
+                ch: crate::profile::token_character(*code),
+                cat: *catcode,
+            },
+            SourceToken::ControlSequence { name, kind, .. } => match kind {
+                SourceControlSequenceKind::Active => Token::Char {
+                    ch: crate::profile::token_character(name[0]),
+                    cat: Catcode::Active,
+                },
+                SourceControlSequenceKind::Word
+                | SourceControlSequenceKind::Symbol
+                | SourceControlSequenceKind::Paragraph
+                | SourceControlSequenceKind::Null => {
+                    if name.len() == 1 {
+                        let mut encoded = [0_u8; 4];
+                        let spelling =
+                            crate::profile::token_character(name[0]).encode_utf8(&mut encoded);
+                        Token::Cs(self.state.intern_control_sequence(spelling))
+                    } else {
+                        let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
+                        name.with_text(|name| {
+                            if hashed && !self.create_control_sequences {
+                                self.state
+                                    .known_control_sequence(name)
+                                    .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                            } else if hashed {
+                                Token::Cs(self.state.intern_hash_control_sequence(name))
+                            } else {
+                                Token::Cs(self.state.intern_control_sequence(name))
+                            }
+                        })
+                    }
+                }
+            },
+        };
+        TokenWord::pack(token)
     }
 }
 

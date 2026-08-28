@@ -15,7 +15,7 @@ use crate::profile::{CharacterCode, CharacterMode};
 use super::lines::{
     SourceCharacter, SourceLocation, SourceProvenance, SourceRange, SourceScalarRange,
 };
-use super::source::{LineBackingRegistry, SourceCursor, SourceRegistration};
+use super::source::{SourceCursor, SourceRegistration};
 
 /// Character capacity held inside an owned control-sequence spelling.
 ///
@@ -316,6 +316,14 @@ pub enum SourceTokenizationStep {
 pub(crate) enum CompactSourceTokenizationStep {
     Token(CompactSourceToken),
     InvalidCharacter,
+    NeedLine,
+    End,
+}
+
+pub(crate) enum CursorSourceTokenizationStep {
+    Token(SourceToken),
+    InvalidCharacter(InvalidSourceCharacter),
+    NeedLine,
     End,
 }
 
@@ -327,6 +335,7 @@ pub(crate) struct CompactSourceToken {
 enum SourceStep<T> {
     Token(T),
     InvalidCharacter(InvalidSourceCharacter),
+    NeedLine,
     End,
 }
 
@@ -384,7 +393,6 @@ impl<F: FnMut(CharacterCode) -> Catcode> SourceStepQueries for CatcodeQueries<F>
 
 #[derive(Clone, Copy)]
 struct SourceStepControls {
-    endlinechar: i32,
     force_eof: bool,
     mode: CharacterMode,
     superscript: SuperscriptPolicy,
@@ -394,73 +402,63 @@ impl SourceCursor {
     /// Delivers one exact-byte tokenization step.
     pub(crate) fn next_exact_byte_step(
         &mut self,
-        endlinechar: i32,
         force_eof: bool,
         queries: &mut dyn SourceStepQueries,
-        lines: &mut LineBackingRegistry<'_>,
-    ) -> SourceTokenizationStep {
+    ) -> CursorSourceTokenizationStep {
         match self.next_source_step(
             SourceStepControls {
-                endlinechar,
                 force_eof,
                 mode: CharacterMode::EightBitExact,
                 superscript: SuperscriptPolicy::ExactByte,
             },
             queries,
-            lines,
             &mut |_, token| token.into_owned(CharacterMode::EightBitExact),
         ) {
-            SourceStep::Token(token) => SourceTokenizationStep::Token(token),
+            SourceStep::Token(token) => CursorSourceTokenizationStep::Token(token),
             SourceStep::InvalidCharacter(invalid) => {
-                SourceTokenizationStep::InvalidCharacter(invalid)
+                CursorSourceTokenizationStep::InvalidCharacter(invalid)
             }
-            SourceStep::End => SourceTokenizationStep::End,
+            SourceStep::NeedLine => CursorSourceTokenizationStep::NeedLine,
+            SourceStep::End => CursorSourceTokenizationStep::End,
         }
     }
 
     /// Delivers one separately identified Unicode-extension tokenization step.
     pub(crate) fn next_unicode_step(
         &mut self,
-        endlinechar: i32,
         force_eof: bool,
         queries: &mut dyn SourceStepQueries,
-        lines: &mut LineBackingRegistry<'_>,
-    ) -> SourceTokenizationStep {
+    ) -> CursorSourceTokenizationStep {
         match self.next_source_step(
             SourceStepControls {
-                endlinechar,
                 force_eof,
                 mode: CharacterMode::UnicodeExtended,
                 superscript: SuperscriptPolicy::UnicodeExtended,
             },
             queries,
-            lines,
             &mut |_, token| token.into_owned(CharacterMode::UnicodeExtended),
         ) {
-            SourceStep::Token(token) => SourceTokenizationStep::Token(token),
+            SourceStep::Token(token) => CursorSourceTokenizationStep::Token(token),
             SourceStep::InvalidCharacter(invalid) => {
-                SourceTokenizationStep::InvalidCharacter(invalid)
+                CursorSourceTokenizationStep::InvalidCharacter(invalid)
             }
-            SourceStep::End => SourceTokenizationStep::End,
+            SourceStep::NeedLine => CursorSourceTokenizationStep::NeedLine,
+            SourceStep::End => CursorSourceTokenizationStep::End,
         }
     }
 
     pub(crate) fn next_compact_exact_byte_step(
         &mut self,
-        endlinechar: i32,
         force_eof: bool,
         queries: &mut dyn CompactSourceStepQueries,
-        lines: &mut LineBackingRegistry<'_>,
     ) -> CompactSourceTokenizationStep {
         match self.next_source_step(
             SourceStepControls {
-                endlinechar,
                 force_eof,
                 mode: CharacterMode::EightBitExact,
                 superscript: SuperscriptPolicy::ExactByte,
             },
             queries,
-            lines,
             &mut |queries, token| {
                 let provenance = token.provenance();
                 let word = match token {
@@ -474,26 +472,23 @@ impl SourceCursor {
         ) {
             SourceStep::Token(token) => CompactSourceTokenizationStep::Token(token),
             SourceStep::InvalidCharacter(_) => CompactSourceTokenizationStep::InvalidCharacter,
+            SourceStep::NeedLine => CompactSourceTokenizationStep::NeedLine,
             SourceStep::End => CompactSourceTokenizationStep::End,
         }
     }
 
     pub(crate) fn next_compact_unicode_step(
         &mut self,
-        endlinechar: i32,
         force_eof: bool,
         queries: &mut dyn CompactSourceStepQueries,
-        lines: &mut LineBackingRegistry<'_>,
     ) -> CompactSourceTokenizationStep {
         match self.next_source_step(
             SourceStepControls {
-                endlinechar,
                 force_eof,
                 mode: CharacterMode::UnicodeExtended,
                 superscript: SuperscriptPolicy::UnicodeExtended,
             },
             queries,
-            lines,
             &mut |queries, token| {
                 let provenance = token.provenance();
                 let word = match token {
@@ -507,6 +502,7 @@ impl SourceCursor {
         ) {
             SourceStep::Token(token) => CompactSourceTokenizationStep::Token(token),
             SourceStep::InvalidCharacter(_) => CompactSourceTokenizationStep::InvalidCharacter,
+            SourceStep::NeedLine => CompactSourceTokenizationStep::NeedLine,
             SourceStep::End => CompactSourceTokenizationStep::End,
         }
     }
@@ -515,11 +511,9 @@ impl SourceCursor {
         &mut self,
         controls: SourceStepControls,
         queries: &mut Q,
-        lines: &mut LineBackingRegistry<'_>,
         emit: &mut impl for<'line> FnMut(&mut Q, ScannedSourceToken<'line>) -> T,
     ) -> SourceStep<T> {
         let SourceStepControls {
-            endlinechar,
             force_eof,
             mode,
             superscript,
@@ -528,12 +522,7 @@ impl SourceCursor {
 
         loop {
             if self.line.is_none() {
-                if self.load_next_line(endlinechar).is_none() {
-                    return SourceStep::End;
-                }
-                lines.record_line_usage(self);
-                self.firm_up_the_line(endlinechar, queries, lines);
-                lines.record_line_usage(self);
+                return SourceStep::NeedLine;
             }
             // The replacement §363 installs has backing of its own, so the
             // current line's bytes must be taken after it has run, not once
@@ -553,7 +542,7 @@ impl SourceCursor {
                     return SourceStep::End;
                 }
                 self.finish_line();
-                continue;
+                return SourceStep::NeedLine;
             };
             let scalar_range = self.spelling_scalar_range(character);
             let observed = catcode(character.code());

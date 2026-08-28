@@ -2163,10 +2163,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // line's `end_file_reading`.  Keeping the report at this
             // boundary preserves both §306's `->...` pseudoprint and §82's
             // still-live read-stream context.
-            let endlinechar = self
-                .state
-                .int_param(tex_state::env::banks::IntParam::END_LINE_CHAR);
-            self.command.load_next_source_line(endlinechar);
+            self.acquire_source_line(false)?;
             let mut partial = vec![
                 TracedTokenWord::pack(
                     Token::Char {
@@ -2316,10 +2313,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         level: crate::input::InputLevelId,
         tokens: AttemptTokenBufferId,
     ) -> Result<(), CommandError> {
-        let endlinechar = self
-            .state
-            .int_param(tex_state::env::banks::IntParam::END_LINE_CHAR);
-        self.command.load_next_source_line(endlinechar);
+        self.acquire_source_line(false)?;
         while let Some(character) = self.command.next_source_character() {
             let ch = crate::profile::token_character(character.code());
             let origin = self.state.source_token_origin(

@@ -9,6 +9,7 @@ use tex_state::{GroupFrame, GroupKind, StateError};
 use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
+#[cfg(test)]
 use crate::input::{CompactSourceStepQueries, CompactSourceTokenizationStep};
 use crate::input::{
     InputLevel, InputLevelId, PhysicalLine, RegisteredSource, RegisteredSourceKind,
@@ -994,16 +995,6 @@ impl<G> CommandState<G> {
         Ok((operation, resume, pending))
     }
 
-    pub(crate) fn observe_active_source_dependencies(&self, state: &mut CommandContext<'_, G>) {
-        if !state.tracked_region_is_active() {
-            return;
-        }
-        let Some(InputLevel::Source(source)) = self.input.levels.last() else {
-            return;
-        };
-        crate::input::observe_immutable_source(state, source);
-    }
-
     /// Publishes the command-owned dependency roots read by one processor
     /// episode. Complex continuations without a complete canonical projection
     /// poison the outer region before the processor can inspect them.
@@ -1145,11 +1136,6 @@ impl<G> CommandState<G> {
 
     pub(crate) fn record_alignment_phase(&mut self) {
         self.timeline.record_align_state(self.alignment.align_state);
-    }
-
-    pub(crate) fn record_retained_file_line_number(&mut self) {
-        self.timeline
-            .record_retained_file_line_number(self.input.retained_file_line_number);
     }
 
     /// Opens the smallest rollback-coupled scalar mutation for the standalone
@@ -1442,14 +1428,6 @@ impl<G> CommandState<G> {
             .levels
             .last()
             .is_none_or(|level| crate::input::input_level_identity(level) < episode.0)
-    }
-
-    /// Whether a retired executor-owned level has no remaining descendants.
-    pub(crate) fn has_ready_replay_completion(&self) -> bool {
-        self.pending_replay_completions
-            .iter()
-            .copied()
-            .any(|identity| self.replay_completion_is_ready(CommandReplayEpisode(identity)))
     }
 
     /// Claims the first retired ownership boundary whose descendants are gone.
@@ -2294,20 +2272,6 @@ impl<G> CommandState<G> {
         Ok((identity, framing_name))
     }
 
-    pub(crate) fn prepare_started_input(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
-        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
-            return None;
-        };
-        // TeX82 §§537--538 acquire line 1 immediately after the successful
-        // file-open attempt. `input_ln` represents even an empty file as one
-        // empty opening line.
-        level.cursor.pending_acquired_line = true;
-        level
-            .cursor
-            .load_next_line(endlinechar)
-            .map(|line| line.physical)
-    }
-
     /// Opens an already registered source under an explicit tex.web §303
     /// `name` classification, consuming the source's pending backing.
     pub fn open_registered_source_as(
@@ -2468,6 +2432,14 @@ impl<G> CommandState<G> {
         if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
             level.cursor.install_scantokens_eof_context_line();
         }
+        let retained_line = level
+            .cursor
+            .line
+            .as_ref()
+            .map(|line| line.physical.number().min(i32::MAX as u64) as i32);
+        if let Some(retained_line) = retained_line {
+            self.set_retained_file_line_number(retained_line);
+        }
         let words = stores.token_list(every_eof.clone());
         Some(self.push_token_level(
             PackedTokenSpanHandle::durable(words),
@@ -2499,6 +2471,7 @@ impl<G> CommandState<G> {
             every_eof,
             open_depths,
         }));
+        self.set_retained_file_line_number(0);
         identity
     }
 
@@ -2550,54 +2523,6 @@ impl<G> CommandState<G> {
         )
     }
 
-    /// Splits and normalizes the next physical line on the active source.
-    ///
-    /// LF, CR, and CRLF are retained as distinct physical metadata. TeX
-    /// trailing spaces are removed and the current `endlinechar` is captured
-    /// for this line without tokenizing any characters.
-    pub fn load_next_source_line(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
-        let physical = {
-            let InputLevel::Source(level) = self.input.levels.last_mut()? else {
-                return None;
-            };
-            level
-                .cursor
-                .load_next_line(endlinechar)
-                .map(|line| line.physical)?
-        };
-        self.record_active_buffer_line_usage();
-        Some(physical)
-    }
-
-    /// Records the §31 buffer index reached by the active physical line.
-    /// Every enclosing source retains its normalized line in TeX's shared
-    /// buffer; token-list levels consume no buffer positions.
-    fn record_active_buffer_line_usage(&mut self) {
-        let mut lines = self.active_buffer_lines();
-        let Some(_) = lines.pop() else {
-            return;
-        };
-        let outer_slots = lines.into_iter().fold(0_usize, |total, (len, endline)| {
-            total
-                .saturating_add(len)
-                .saturating_add(usize::from(endline))
-                .saturating_add(1)
-        });
-        let Some(InputLevel::Source(active)) = self.input.levels.last() else {
-            return;
-        };
-        let buffer_start = 1_usize
-            .saturating_add(self.terminal_buffer_slots)
-            .saturating_add(outer_slots);
-        if let Some(positions) = crate::input::source_line_buffer_high_water(
-            &active.cursor,
-            Some(active.name_class),
-            buffer_start,
-        ) {
-            self.stack_usage.record_buffer_usage(positions);
-        }
-    }
-
     pub(crate) fn record_csname_buffer_usage(&mut self, name_len: usize) {
         if name_len == 0 {
             return;
@@ -2639,27 +2564,6 @@ impl<G> CommandState<G> {
         let mode = backing.mode;
         let bytes = std::sync::Arc::clone(&backing.bytes);
         level.cursor.line.as_mut()?.next_character(mode, &bytes)
-    }
-
-    /// Names the backing TeX82 §363 installed over the active line, if any.
-    ///
-    /// A replacement line is real immutable input with an identity of its
-    /// own, so the aggregate source map has to learn about it before any
-    /// token located in it is reported. Returning `None` is the ordinary
-    /// case: the line came from the file, which is registered already.
-    pub(crate) fn take_active_line_registration(
-        &mut self,
-    ) -> Option<(tex_state::SourceId, tex_state::source_map::SourceDescriptor)> {
-        let Some(InputLevel::Source(level)) = self.input.levels.last_mut() else {
-            return None;
-        };
-        if level.cursor.line_backing_registered {
-            return None;
-        }
-        let backing = level.cursor.line_backing.as_ref()?;
-        let registration = (backing.id, backing.source_descriptor());
-        level.cursor.line_backing_registered = true;
-        Some(registration)
     }
 
     /// Captures the active source's immutable identity and bytes for detached
@@ -2706,11 +2610,33 @@ impl<G> CommandState<G> {
             crate::CharacterMode::EightBitExact,
             "exact-byte tokenization requires an exact-byte command profile"
         );
-        let force_eof = self.source_force_eof();
-        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
-            return SourceTokenizationStep::End;
-        };
-        cursor.next_exact_byte_step(endlinechar, force_eof, queries, &mut lines)
+        loop {
+            let force_eof = self.source_force_eof();
+            let step = match self.input.levels.last_mut() {
+                Some(InputLevel::Source(level)) => {
+                    level.cursor.next_exact_byte_step(force_eof, queries)
+                }
+                _ => return SourceTokenizationStep::End,
+            };
+            match step {
+                crate::input::CursorSourceTokenizationStep::Token(token) => {
+                    return SourceTokenizationStep::Token(token);
+                }
+                crate::input::CursorSourceTokenizationStep::InvalidCharacter(invalid) => {
+                    return SourceTokenizationStep::InvalidCharacter(invalid);
+                }
+                crate::input::CursorSourceTokenizationStep::End => {
+                    return SourceTokenizationStep::End;
+                }
+                crate::input::CursorSourceTokenizationStep::NeedLine => {}
+            }
+            if self
+                .acquire_active_source_line_with_queries(endlinechar, queries, true)
+                .is_none()
+            {
+                return SourceTokenizationStep::End;
+            }
+        }
     }
 
     /// Tokenizes one Unicode-scalar source step using the caller's live code
@@ -2735,54 +2661,62 @@ impl<G> CommandState<G> {
             crate::CharacterMode::UnicodeExtended,
             "Unicode tokenization requires a UnicodeExtended command profile"
         );
-        let force_eof = self.source_force_eof();
-        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
-            return SourceTokenizationStep::End;
-        };
-        cursor.next_unicode_step(endlinechar, force_eof, queries, &mut lines)
+        loop {
+            let force_eof = self.source_force_eof();
+            let step = match self.input.levels.last_mut() {
+                Some(InputLevel::Source(level)) => {
+                    level.cursor.next_unicode_step(force_eof, queries)
+                }
+                _ => return SourceTokenizationStep::End,
+            };
+            match step {
+                crate::input::CursorSourceTokenizationStep::Token(token) => {
+                    return SourceTokenizationStep::Token(token);
+                }
+                crate::input::CursorSourceTokenizationStep::InvalidCharacter(invalid) => {
+                    return SourceTokenizationStep::InvalidCharacter(invalid);
+                }
+                crate::input::CursorSourceTokenizationStep::End => {
+                    return SourceTokenizationStep::End;
+                }
+                crate::input::CursorSourceTokenizationStep::NeedLine => {}
+            }
+            if self
+                .acquire_active_source_line_with_queries(endlinechar, queries, true)
+                .is_none()
+            {
+                return SourceTokenizationStep::End;
+            }
+        }
     }
 
-    /// Tokenizes one exact-byte source step directly into compact command
-    /// delivery identity while the transient control-sequence name is live.
+    #[cfg(test)]
     pub(crate) fn next_compact_exact_source_step(
         &mut self,
         endlinechar: i32,
         queries: &mut dyn CompactSourceStepQueries,
     ) -> CompactSourceTokenizationStep {
-        let profile = self.profile();
-        assert_eq!(
-            profile.character_mode(),
-            crate::CharacterMode::EightBitExact,
-            "exact-byte tokenization requires an exact-byte command profile"
-        );
-        let force_eof = self.source_force_eof();
-        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
-            return CompactSourceTokenizationStep::End;
-        };
-        cursor.next_compact_exact_byte_step(endlinechar, force_eof, queries, &mut lines)
+        loop {
+            let force_eof = self.source_force_eof();
+            let step = match self.input.levels.last_mut() {
+                Some(InputLevel::Source(level)) => level
+                    .cursor
+                    .next_compact_exact_byte_step(force_eof, queries),
+                _ => return CompactSourceTokenizationStep::End,
+            };
+            if !matches!(step, CompactSourceTokenizationStep::NeedLine) {
+                return step;
+            }
+            if self
+                .acquire_active_source_line_with_queries(endlinechar, queries, true)
+                .is_none()
+            {
+                return CompactSourceTokenizationStep::End;
+            }
+        }
     }
 
-    /// Tokenizes one Unicode source step directly into compact command
-    /// delivery identity while the transient control-sequence name is live.
-    pub(crate) fn next_compact_unicode_source_step(
-        &mut self,
-        endlinechar: i32,
-        queries: &mut dyn CompactSourceStepQueries,
-    ) -> CompactSourceTokenizationStep {
-        let profile = self.profile();
-        assert_eq!(
-            profile.character_mode(),
-            crate::CharacterMode::UnicodeExtended,
-            "Unicode tokenization requires a UnicodeExtended command profile"
-        );
-        let force_eof = self.source_force_eof();
-        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
-            return CompactSourceTokenizationStep::End;
-        };
-        cursor.next_compact_unicode_step(endlinechar, force_eof, queries, &mut lines)
-    }
-
-    fn source_force_eof(&self) -> bool {
+    pub(crate) fn source_force_eof(&self) -> bool {
         self.input.force_eof
             && self
                 .input
@@ -2796,63 +2730,16 @@ impl<G> CommandState<G> {
                 == Some(true)
     }
 
-    /// Borrows the active source cursor beside the source-identity counter.
-    ///
-    /// TeX82 §363's replacement line needs an identity allocated while the
-    /// cursor that will read it is already borrowed, so the two disjoint
-    /// fields are handed out together rather than the cursor alone.
-    fn active_source_cursor(
+    fn acquire_active_source_line_with_queries(
         &mut self,
-        profile: CommandProfile,
-    ) -> (
-        Option<&mut crate::input::SourceCursor>,
-        crate::input::LineBackingRegistry<'_>,
-    ) {
-        self.timeline
-            .record_next_source_identity(self.input.next_source_identity);
-        // This method runs for every physical token. The old
-        // `active_buffer_lines` projection allocated a temporary Vec merely
-        // to reverse it. The last input level is the source cursor we are
-        // about to advance; fold the lower levels in place and do not count
-        // that cursor's current line toward its own buffer base. Skipping the
-        // level rather than the first _present line_ is also correct while a
-        // newly opened top source has not loaded its first line yet.
-        let occupied_below_active =
-            self.input
-                .levels
-                .iter()
-                .rev()
-                .skip(1)
-                .fold(0_usize, |total, level| {
-                    let Some((len, endline)) = source_buffer_line(level) else {
-                        return total;
-                    };
-                    total
-                        .saturating_add(len)
-                        .saturating_add(usize::from(endline))
-                        .saturating_add(1)
-                });
-        let buffer_start = 1_usize
-            .saturating_add(self.terminal_buffer_slots)
-            .saturating_add(occupied_below_active);
-        let name_class = self.input.levels.last().and_then(|level| match level {
-            InputLevel::Source(source) => Some(source.name_class),
-            InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
-        });
-        let usage = &mut self.stack_usage;
-        let input = &mut self.roots.input;
-        let lines = crate::input::LineBackingRegistry {
-            profile,
-            next_identity: &mut input.next_source_identity,
-            usage,
-            buffer_start,
-            name_class,
-        };
-        let cursor = match input.levels.last_mut() {
-            Some(InputLevel::Source(level)) => Some(level.cursor.as_mut()),
-            _ => None,
-        };
-        (cursor, lines)
+        endlinechar: i32,
+        queries: &mut dyn crate::SourceStepQueries,
+        firm: bool,
+    ) -> Option<PhysicalLine> {
+        self.acquire_input_top_line_with_queries(endlinechar, firm, false, queries)
+            .ok()
+            .flatten()
+            .map(|acquired| acquired.physical)
     }
 
     /// Returns the immutable profile selected when this job was created.
@@ -2892,7 +2779,7 @@ impl<G> CommandState<G> {
     }
 }
 
-fn source_buffer_line<G>(level: &InputLevel<G>) -> Option<(usize, bool)> {
+pub(crate) fn source_buffer_line<G>(level: &InputLevel<G>) -> Option<(usize, bool)> {
     let InputLevel::Source(source) = level else {
         return None;
     };

@@ -24,13 +24,11 @@ pub use levels::{
     LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
     MixedPackedCursorReceipt,
 };
-pub(crate) use source::{
-    LineBackingRegistry, RegisteredSource, SourceCursor, source_line_buffer_high_water,
-};
+pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
     InputRetirement, InputRetirementAction, InputRetirementError, InputRetirementReason,
-    OutParameterReplay, ParameterReplayError, input_level_identity,
+    InputTopTransition, OutParameterReplay, ParameterReplayError, input_level_identity,
 };
 
 pub use lines::{
@@ -46,7 +44,9 @@ pub use tokenizer::{
     InvalidSourceCharacter, LexerState, SourceControlSequenceKind, SourceStepQueries, SourceToken,
     SourceTokenizationStep,
 };
-pub(crate) use tokenizer::{CompactSourceStepQueries, CompactSourceTokenizationStep};
+pub(crate) use tokenizer::{
+    CompactSourceStepQueries, CompactSourceTokenizationStep, CursorSourceTokenizationStep,
+};
 
 /// Persistent input-stack ownership.
 ///
@@ -1285,64 +1285,9 @@ impl<G> InputState<G> {
         )
     }
 
-    /// TeX82's current `line` value for e-TeX's `\inputlineno`.
-    ///
-    /// Token-list levels retain the source line they interrupted; terminal and
-    /// `\read` levels have no file line number and therefore expose zero.
+    /// TeX82's authoritative process-global `line` value.
     pub(crate) fn current_file_line_number(&self) -> i32 {
-        self.levels
-            .iter()
-            .rev()
-            .find_map(|level| match level {
-                InputLevel::Source(source)
-                    if matches!(
-                        source.name_class,
-                        SourceNameClass::Scantokens(_) | SourceNameClass::File
-                    ) =>
-                {
-                    Some(
-                        source
-                            .cursor
-                            .line
-                            .as_ref()
-                            .map_or_else(
-                                || source.cursor.next_line_number.saturating_sub(1),
-                                |line| line.physical.number(),
-                            )
-                            .min(i32::MAX as u64) as i32,
-                    )
-                }
-                InputLevel::Source(_) => Some(0),
-                InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
-            })
-            .unwrap_or(self.retained_file_line_number)
-    }
-
-    /// Synchronizes TeX82's global `line` after a physical source step.
-    ///
-    /// The source cursor can have just exhausted its line, in which case
-    /// `next_line_number - 1` is still the live value until another physical
-    /// line is acquired. Terminal and `\read` pseudo-files do not replace the
-    /// retained enclosing file value.
-    pub(crate) fn retain_active_file_line_number(&mut self) {
-        let Some(InputLevel::Source(source)) = self.levels.last() else {
-            return;
-        };
-        if !matches!(
-            source.name_class,
-            SourceNameClass::Scantokens(_) | SourceNameClass::File
-        ) {
-            return;
-        }
-        self.retained_file_line_number = source
-            .cursor
-            .line
-            .as_ref()
-            .map_or_else(
-                || source.cursor.next_line_number.saturating_sub(1),
-                |line| line.physical.number(),
-            )
-            .min(i32::MAX as u64) as i32;
+        self.retained_file_line_number
     }
 
     pub(crate) fn current_file_source_id(&self) -> Option<tex_state::SourceId> {

@@ -496,6 +496,15 @@ is visible to a semantic consumer. The unresolved phase retains no backing
 handle or cursor, needs no rollback record, and can never move into a typed
 suspension.
 
+Source and token-list delivery share one `CommandState` input-top transition,
+which admits and advances the exact top row once. A source tokenizer step with
+no loaded line returns `NeedLine`; the separate physical-line transition alone
+walks lower source lines for buffer accounting, loads and firms the line,
+registers its backing, and journals a changed retained line number. The
+retained scalar is the O(1) authority for `\inputlineno`: source push and pop,
+physical acquisition, read/terminal entry, and the `\scantokens` EOF sentinel
+update it, while ordinary tokens and token-list nesting do not.
+
 Resolution returns a borrow of the same caller-owned command slot.
 Outer validity, alignment classification, and optional observation use that
 same borrow in canonical order; classification stores the exact adjustment on

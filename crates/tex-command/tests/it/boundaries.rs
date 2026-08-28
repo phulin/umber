@@ -65,6 +65,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         .expect("read raw delivery implementation");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read typed delivery driver");
+    let input_stack = fs::read_to_string(manifest_dir.join("src/input/stack.rs"))
+        .expect("read input-top transition");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
         .expect("read input-level representation");
 
@@ -95,12 +97,12 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         );
     }
     assert_eq!(
-        next.matches("fn next_source_step(").count(),
+        input_stack.matches("fn transition_input_top_into(").count(),
         1,
-        "exact and Unicode profiles must select beneath the shared delivery loop"
+        "source and stored input must share one destination-directed top transition"
     );
-    assert!(next.contains("CharacterMode::EightBitExact"));
-    assert!(next.contains("CharacterMode::UnicodeExtended"));
+    assert!(input_stack.contains("CharacterMode::EightBitExact"));
+    assert!(input_stack.contains("CharacterMode::UnicodeExtended"));
     assert!(
         !expansion.contains("ControlSequenceCreation"),
         "canonical command delivery must not carry source-name creation policy"
@@ -111,7 +113,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "raw and expanded drivers must share canonical ID delivery"
     );
     assert!(next.contains("create_source_control_sequences"));
-    assert!(next.contains("CompactSourceStepQueries for LiveSourceQueries"));
+    assert!(input_stack.contains("CompactSourceStepQueries for LiveSourceQueries"));
     assert!(
         !next.contains(".trace"),
         "diagnostic replay explanations must not select raw delivery semantics"

@@ -79,6 +79,11 @@ fn a_final_terminator_does_not_create_an_extra_physical_line() {
 }
 
 #[test]
+fn source_line_state_stays_at_the_pre_transition_layout() {
+    assert_eq!(std::mem::size_of::<super::SourceLineState>(), 128);
+}
+
+#[test]
 fn empty_and_consecutive_terminators_have_exact_blank_line_behavior() {
     let mut empty = cursor(CharacterMode::EightBitExact, b"");
     assert!(empty.load_next_line(13).is_none());
