@@ -338,7 +338,7 @@ pub(crate) struct SaveJournal<G> {
 #[derive(Clone, Default)]
 struct SaveJournalProfile {
     mutations: u64,
-    mutation_words: [u64; 8],
+    mutation_words: [u64; 7],
     group_enters: u64,
     group_exits: u64,
     append_calls: u64,
@@ -1240,9 +1240,8 @@ impl<G> SaveJournal<G> {
             StateWord::Dimension(_) => 2,
             StateWord::TokenList(_) => 3,
             StateWord::Glue(_) => 4,
-            StateWord::NodeList(_) => 5,
-            StateWord::Font(_) => 6,
-            StateWord::Code(_) => 7,
+            StateWord::Font(_) => 5,
+            StateWord::Code(_) => 6,
         };
         self.profile.mutation_words[word] = self.profile.mutation_words[word].saturating_add(1);
         self.profile.interval_mutations = self.profile.interval_mutations.saturating_add(1);

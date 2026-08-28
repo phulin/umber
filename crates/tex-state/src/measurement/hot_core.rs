@@ -232,7 +232,7 @@ pub struct SaveJournalCensus {
     pub stamp_entries: u64,
     pub stamp_capacity: u64,
     pub mutations: u64,
-    pub mutation_words: [u64; 8],
+    pub mutation_words: [u64; 7],
     pub group_enters: u64,
     pub group_exits: u64,
     pub append_calls: u64,
@@ -454,7 +454,7 @@ static SAVE_JOURNAL_OPERATION_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_STAMP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_STAMP_CAPACITY: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MUTATIONS: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_MUTATION_WORDS: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+static SAVE_JOURNAL_MUTATION_WORDS: [AtomicU64; 7] = [const { AtomicU64::new(0) }; 7];
 static SAVE_JOURNAL_GROUP_ENTERS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_GROUP_EXITS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_APPEND_CALLS: AtomicU64 = AtomicU64::new(0);
