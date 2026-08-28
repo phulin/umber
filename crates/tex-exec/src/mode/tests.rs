@@ -826,7 +826,6 @@ fn journal_fatal_commit_model_and_operational_invisibility_hold() {
 fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        source.current_list_mutation().push(context, kern(-1));
         let checkpoint = source.checkpoint();
         for index in 0..4_096 {
             source.current_list_mutation().push(context, kern(index));
@@ -834,27 +833,18 @@ fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
 
         {
             let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
-            assert_eq!(nest_nodes(&candidate, context), [kern(-1)]);
-            candidate
-                .current_list_mutation()
-                .with_node_mut(context, 0, |node| *node = kern(-2));
-            assert_eq!(nest_nodes(&candidate, context), [kern(-2)]);
             candidate.current_list_mutation().push(context, kern(9_001));
-            assert_eq!(nest_nodes(&candidate, context).len(), 2);
+            assert_eq!(nest_nodes(&candidate, context), [kern(9_001)]);
             assert_eq!(
                 candidate.current_list_mutation().pop_last_node(context),
                 Some(kern(9_001))
-            );
-            assert_eq!(
-                candidate.current_list_mutation().pop_last_node(context),
-                Some(kern(-2))
             );
             assert!(candidate.current_list().is_empty());
         }
 
         let source_nodes = nest_nodes(&source, context);
-        assert_eq!(source_nodes.len(), 4_097);
-        assert_eq!(source_nodes.first(), Some(&kern(-1)));
+        assert_eq!(source_nodes.len(), 4_096);
+        assert_eq!(source_nodes.first(), Some(&kern(0)));
         assert_eq!(source_nodes.last(), Some(&kern(4_095)));
     });
 }
@@ -863,14 +853,13 @@ fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
 fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        source.current_list_mutation().push(context, kern(1));
         let checkpoint = source.checkpoint();
         source.push(Mode::Horizontal).expect("accepted push");
         source.current_list_mutation().push(context, kern(2));
 
         let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
         assert_eq!(candidate.depth(), 1);
-        assert_eq!(nest_nodes(&candidate, context), [kern(1)]);
+        assert!(nest_nodes(&candidate, context).is_empty());
         candidate.push(Mode::Vertical).expect("candidate push");
         candidate.current_list_mutation().push(context, kern(3));
         candidate.accept_checkpoint_candidate();
@@ -880,7 +869,7 @@ fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
         {
             let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling fork");
             assert_eq!(sibling.depth(), 1);
-            assert_eq!(nest_nodes(&sibling, context), [kern(1)]);
+            assert!(nest_nodes(&sibling, context).is_empty());
         }
         assert_eq!(candidate.depth(), 2);
         assert_eq!(nest_nodes(&candidate, context), [kern(3)]);
@@ -893,13 +882,14 @@ fn accepted_candidate_keeps_its_published_mark_seedable() {
         let mut source = ModeNest::new();
         let root = source.checkpoint();
         let mut candidate = ModeNest::fork_checkpoint(&root).expect("rooted fork");
-        candidate.current_list_mutation().push(context, kern(1));
+        candidate.current_list_mutation().set_prev_graf(1);
         let published = candidate.checkpoint();
-        candidate.current_list_mutation().push(context, kern(2));
+        candidate.current_list_mutation().set_prev_graf(2);
         candidate.accept_checkpoint_candidate();
 
         let restarted = ModeNest::fork_checkpoint(&published).expect("published fork");
-        assert_eq!(nest_nodes(&restarted, context), [kern(1)]);
+        assert_eq!(restarted.current_list().prev_graf(), 1);
+        assert!(nest_nodes(&restarted, context).is_empty());
     });
 }
 
@@ -907,7 +897,6 @@ fn accepted_candidate_keeps_its_published_mark_seedable() {
 fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        source.current_list_mutation().push(context, kern(-1));
         let checkpoint = source.checkpoint();
         for index in 0..4_096 {
             source.current_list_mutation().push(context, kern(index));
@@ -925,20 +914,20 @@ fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
                     .iter()
                     .cloned()
                     .collect::<Vec<_>>(),
-                [kern(-1), kern(-2)]
+                [kern(-2)]
             );
             assert!(candidate.current_list().is_empty());
         }
 
         let source_nodes = nest_nodes(&source, context);
-        assert_eq!(source_nodes.len(), 4_097);
+        assert_eq!(source_nodes.len(), 4_096);
         assert_eq!(source_nodes.last(), Some(&kern(4_095)));
     });
 }
 
 #[test]
 fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
-    with_context(|context| {
+    with_context(|_| {
         let mut nest = ModeNest::new();
         nest.enable_reachable_state_identity();
         let initial = nest
@@ -951,14 +940,11 @@ fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
             .reachable_state_identity_root()
             .expect("mode root is available");
         assert_ne!(scalar, initial);
-        nest.current_list_mutation().push(context, kern(11));
         let rooted = nest.checkpoint();
         let expected = rooted
             .reachable_state_identity_root()
             .expect("mode root is available");
-        for index in 0..4_096 {
-            nest.current_list_mutation().push(context, kern(index));
-        }
+        nest.current_list_mutation().set_prev_graf(8);
         assert_ne!(
             nest.checkpoint().reachable_state_identity_root(),
             Some(expected)
@@ -980,4 +966,12 @@ fn transient_mode_material_cannot_publish_a_retained_checkpoint() {
         source.current_list_mutation().push(context, kern(1));
         let _ = source.checkpoint();
     });
+}
+
+#[test]
+#[should_panic(expected = "restart checkpoint requires one quiescent empty outer vertical mode")]
+fn nested_mode_cannot_publish_a_retained_checkpoint() {
+    let mut source = ModeNest::new();
+    source.push(Mode::Horizontal).expect("nested mode");
+    let _ = source.checkpoint();
 }

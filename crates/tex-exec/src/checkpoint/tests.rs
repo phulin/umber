@@ -13,9 +13,9 @@ use super::{
     EngineCheckpoint, ReachableStateRoots,
 };
 use crate::{
-    AdmittedEngineGeneration, AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec,
-    ExecutionBudgetCounters, Mode, ModeNest, RestoredCheckpointRuntime, RetainedCheckpointKey,
-    RetainedEngineAttachmentKey, RetainedEngineGeneration, RetainedEngineOperation,
+    AdmittedEngineGeneration, ExecutionBudgetCounters, Mode, ModeNest, RestoredCheckpointRuntime,
+    RetainedCheckpointKey, RetainedEngineAttachmentKey, RetainedEngineGeneration,
+    RetainedEngineOperation,
 };
 
 fn retained_store() -> ReachabilityStore {
@@ -26,7 +26,6 @@ fn retained_store() -> ReachabilityStore {
 }
 
 struct CaptureModeCheckpoint {
-    checkpoint_penalty: Option<i32>,
     accepted_tail_len: usize,
 }
 
@@ -35,15 +34,6 @@ impl RetainedEngineOperation for CaptureModeCheckpoint {
 
     fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
         let mut control = crate::MainControl::tex82_initex(admitted.universe());
-        if let Some(penalty) = self.checkpoint_penalty {
-            let mut context = admitted
-                .universe()
-                .command_context()
-                .expect("checkpoint context");
-            control
-                .mode_nest_mut_for_test()
-                .push_current_node(&mut context, tex_state::node::Node::Penalty(penalty));
-        }
         let checkpoint = control
             .capture_checkpoint(
                 EngineBoundary::OuterParagraphEnd,
@@ -132,11 +122,7 @@ fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut command = CommandState::default();
         let mut modes = ModeNest::new();
-        crate::test_harness::with_admitted(universe, |context| {
-            modes
-                .current_list_mutation()
-                .push(context, tex_state::node::Node::Penalty(17));
-        });
+        modes.current_list_mutation().set_prev_graf(17);
         crate::mode::reset_semantic_fingerprint_calls_for_test();
 
         let ordinary = EngineCheckpoint::capture_checkpoint(
@@ -234,9 +220,10 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
             retention.command_bytes() > std::mem::size_of_val(&checkpoint.command),
             "command charge must name its owner storage, not its summary handle"
         );
-        assert!(
-            retention.mode_bytes() > std::mem::size_of_val(&checkpoint.modes),
-            "mode charge must name its owner storage, not its checkpoint handle"
+        assert_eq!(
+            retention.mode_bytes(),
+            checkpoint.modes.retained_owner_bytes(),
+            "mode retention is exactly one scalar outer-level summary"
         );
         for (component, bytes) in [
             ("command", retention.command_bytes()),
@@ -275,7 +262,6 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
         };
         for family in [
             CheckpointOwnerFamily::Command,
-            CheckpointOwnerFamily::Mode,
             CheckpointOwnerFamily::Page,
             CheckpointOwnerFamily::World,
             CheckpointOwnerFamily::Hyphenation,
@@ -289,6 +275,11 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
                 "shared {family:?} owner must keep one accounting identity"
             );
         }
+        assert_ne!(
+            owner(retention, CheckpointOwnerFamily::Mode),
+            owner(later.retention(), CheckpointOwnerFamily::Mode),
+            "each scalar mode checkpoint is its own bounded owner"
+        );
         assert_eq!(
             owner(retention, CheckpointOwnerFamily::Core),
             owner(later.retention(), CheckpointOwnerFamily::Core),
@@ -298,7 +289,7 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
 }
 
 #[test]
-fn retained_checkpoint_restores_command_and_mode_token_roots() {
+fn retained_checkpoint_restores_command_tokens_and_scalar_mode_state() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let command_root = universe
             .command_context()
@@ -308,14 +299,6 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
                 cat: Catcode::Other,
             })])
             .expect("command root");
-        let u_template = tex_state::node::NodeTokenList::new([TokenWord::pack(Token::Char {
-            ch: 'u',
-            cat: Catcode::Other,
-        })]);
-        let v_template = tex_state::node::NodeTokenList::new([TokenWord::pack(Token::Char {
-            ch: 'v',
-            cat: Catcode::Other,
-        })]);
         let mut command = CommandState::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         command.push_everypar(
@@ -328,19 +311,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         );
         assert_eq!(pushes.len(), 1, "everypar publishes one retained push");
         let mut modes = ModeNest::new();
-        modes
-            .current_list_mutation()
-            .set_align_state(AlignState::new(
-                AlignmentKind::HAlign,
-                AlignmentPackSpec::Natural,
-                vec![AlignColumn {
-                    u_template,
-                    v_template,
-                }],
-                Vec::new(),
-                tex_state::glue::GlueSpec::ZERO,
-                None,
-            ));
+        modes.current_list_mutation().set_prev_graf(7);
         let checkpoint = EngineCheckpoint::capture_checkpoint(
             CheckpointEligibility::job_start(),
             &mut command,
@@ -366,10 +337,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             &mut universe.command_context().expect("command context"),
             &mut diagnostic_effects,
         );
-        modes
-            .current_list_mutation()
-            .take_align_state()
-            .expect("alignment root is mutated after capture");
+        modes.current_list_mutation().set_prev_graf(9);
         checkpoint
             .restore_state(&mut command, &mut modes, universe)
             .expect("retained checkpoint restores into its owning timeline");
@@ -398,25 +366,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         );
         drop(processor);
 
-        let current_list = modes.current_list();
-        let column = &current_list
-            .align_state()
-            .expect("restored alignment")
-            .columns()[0];
-        assert_eq!(
-            column.u_template.words(),
-            &[TokenWord::pack(Token::Char {
-                ch: 'u',
-                cat: Catcode::Other,
-            })]
-        );
-        assert_eq!(
-            column.v_template.words(),
-            &[TokenWord::pack(Token::Char {
-                ch: 'v',
-                cat: Catcode::Other,
-            })]
-        );
+        assert_eq!(modes.current_list().prev_graf(), 7);
     });
 }
 
@@ -508,8 +458,6 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut command = CommandState::default();
         let mut modes = ModeNest::new();
-        modes.push(Mode::Horizontal).expect("horizontal mode");
-        modes.push(Mode::Math).expect("math mode");
         let checkpoint = EngineCheckpoint::capture_checkpoint(
             CheckpointEligibility::outer_paragraph_end(),
             &mut command,
@@ -519,6 +467,8 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
         )
         .expect("checkpoint captures");
 
+        modes.push(Mode::Horizontal).expect("horizontal mode");
+        modes.push(Mode::Math).expect("math mode");
         modes
             .push(Mode::RestrictedHorizontal)
             .expect("later nested mode");
@@ -526,7 +476,7 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
         checkpoint
             .restore_state(&mut command, &mut modes, universe)
             .expect("checkpoint restores");
-        assert_eq!(modes.depth(), 3, "semantic mode summary rolled back");
+        assert_eq!(modes.depth(), 1, "semantic mode summary rolled back");
         assert_eq!(
             modes.maximum_saved_depth(),
             2,
@@ -542,7 +492,6 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
         RetainedEngineGeneration::new(&store, World::default()).expect("accepted generation");
     let checkpoint = accepted
         .with_admitted(CaptureModeCheckpoint {
-            checkpoint_penalty: Some(11),
             accepted_tail_len: 0,
         })
         .expect("checkpoint admission");
@@ -557,8 +506,8 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
                 append_penalty: Some(22),
             })
             .expect("candidate admission"),
-        [11, 22],
-        "the candidate sees the checkpoint root plus its detached branch"
+        [22],
+        "the candidate sees only its detached branch from the eligible empty root"
     );
     drop(rejected);
 
@@ -572,7 +521,7 @@ fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
                 append_penalty: None,
             })
             .expect("retry admission"),
-        [11],
+        [],
         "candidate-only nodes must not escape the rejected coarse owner"
     );
     drop(retried);
@@ -585,7 +534,6 @@ fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
         RetainedEngineGeneration::new(&store, World::default()).expect("accepted generation");
     let checkpoint = accepted
         .with_admitted(CaptureModeCheckpoint {
-            checkpoint_penalty: None,
             accepted_tail_len: 512,
         })
         .expect("early checkpoint admission");

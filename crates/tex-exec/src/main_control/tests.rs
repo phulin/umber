@@ -6964,10 +6964,8 @@ fn named_checkpoints_require_root_main_file_and_level_zero() {
             [
                 crate::EngineBoundary::JobStart,
                 crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-                crate::EngineBoundary::ShipoutComplete,
             ],
-            "the grouped root paragraph and both nested-file boundaries are filtered; the package-defined macro invoked from root, explicit root shipout, and final root paragraph shipout remain"
+            "only the package-defined macro invoked from the quiescent root is restart-eligible; shipouts remain boundary evidence"
         );
     });
 }
@@ -7055,11 +7053,8 @@ fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
         }
         assert_eq!(
             checkpoint_boundaries(&checkpoints),
-            [
-                crate::EngineBoundary::JobStart,
-                crate::EngineBoundary::ShipoutComplete,
-            ],
-            "the nested shipout remains filtered after return and retry; the later root shipout remains eligible"
+            [crate::EngineBoundary::JobStart],
+            "shipout origin remains evidence-only across return and retry"
         );
     });
 }
@@ -7092,6 +7087,15 @@ fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
                 crate::EngineBoundary::OuterParagraphEnd,
                 crate::EngineBoundary::ShipoutComplete,
             ]
+        );
+        assert_eq!(
+            control
+                .take_checkpoint_eligibilities()
+                .iter()
+                .map(crate::checkpoint::CheckpointEligibility::boundary)
+                .collect::<Vec<_>>(),
+            [crate::EngineBoundary::OuterParagraphEnd],
+            "shipout completion is detached evidence, not restart eligibility"
         );
     });
 }
@@ -7245,22 +7249,19 @@ fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
                 !matches!(result, crate::CanonicalStepResult::Failed(_)),
                 "shipout boundary result: {result:?}"
             );
-            if checkpoints
-                .iter()
-                .any(|checkpoint| checkpoint.boundary() == crate::EngineBoundary::ShipoutComplete)
-            {
+            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
                 break;
             }
         }
-        assert_eq!(stores.count(0).expect("count register"), 0);
         assert_eq!(
-            checkpoints
-                .iter()
-                .filter(|checkpoint| {
-                    checkpoint.boundary() == crate::EngineBoundary::ShipoutComplete
-                })
-                .count(),
-            1
+            stores.count(0).expect("count register"),
+            4,
+            "the runner reaches terminal completion after publishing shipout evidence"
+        );
+        assert_eq!(
+            checkpoint_boundaries(&checkpoints),
+            [],
+            "shipout completion must not manufacture a restart checkpoint"
         );
     });
 }
@@ -7285,20 +7286,21 @@ fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
                 !matches!(result, crate::CanonicalStepResult::Failed(_)),
                 "mixed boundary result: {result:?}"
             );
-            if checkpoints.len() == 2 {
+            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
                 break;
             }
         }
-        assert_eq!(stores.count(0).expect("count register"), 0);
+        assert_eq!(
+            stores.count(0).expect("count register"),
+            5,
+            "the runner reaches terminal completion after draining both intents"
+        );
         assert_eq!(
             checkpoints
                 .iter()
                 .map(crate::EngineCheckpoint::boundary)
                 .collect::<Vec<_>>(),
-            [
-                crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-            ]
+            [crate::EngineBoundary::OuterParagraphEnd,]
         );
     });
 }
@@ -10840,10 +10842,6 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
             &mut control,
             br"\pdfsnaprefpoint\pdfsnapy 3pt\pdfsnapycomp 500",
         );
-        assert_eq!(
-            control.step(stores).expect("reference point"),
-            MainControlStep::Continue
-        );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
@@ -10851,6 +10849,10 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("snapping state checkpoints");
+        assert_eq!(
+            control.step(stores).expect("reference point"),
+            MainControlStep::Continue
+        );
         assert_eq!(
             control.step(stores).expect("snap glue"),
             MainControlStep::Continue
@@ -10862,6 +10864,10 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("snapping state restores");
+        assert_eq!(
+            control.step(stores).expect("retried reference point"),
+            MainControlStep::Continue
+        );
         assert_eq!(
             control.step(stores).expect("retried snap glue"),
             MainControlStep::Continue
@@ -11159,10 +11165,6 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
         let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\pdfinterwordspaceon\pdfinterwordspaceoff");
 
-        assert_eq!(
-            control.step(stores).expect("first toggle"),
-            MainControlStep::Continue
-        );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
@@ -11171,12 +11173,20 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             )
             .expect("quiescent toggle state checkpoints");
         assert_eq!(
+            control.step(stores).expect("first toggle"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
             control.step(stores).expect("second toggle"),
             MainControlStep::Continue
         );
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("toggle state restores");
+        assert_eq!(
+            control.step(stores).expect("first toggle retries"),
+            MainControlStep::Continue
+        );
         assert_eq!(
             control.step(stores).expect("second toggle retries"),
             MainControlStep::Continue
@@ -11321,10 +11331,6 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
         let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
 
-        assert_eq!(
-            control.step(stores).expect("first toggle"),
-            MainControlStep::Continue
-        );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
@@ -11333,12 +11339,20 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
             )
             .expect("running-link toggle checkpoints");
         assert_eq!(
+            control.step(stores).expect("first toggle"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
             control.step(stores).expect("second toggle"),
             MainControlStep::Continue
         );
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("running-link toggle restores");
+        assert_eq!(
+            control.step(stores).expect("first toggle retries"),
+            MainControlStep::Continue
+        );
         assert_eq!(
             control.step(stores).expect("second toggle retries"),
             MainControlStep::Continue
