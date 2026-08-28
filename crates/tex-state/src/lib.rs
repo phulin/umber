@@ -64,6 +64,7 @@ mod expansion_diagnostic;
 mod expansion_recovery;
 pub mod file_framing;
 pub mod font;
+pub mod fork_arena;
 mod format;
 mod format_container;
 mod frozen_lookup;

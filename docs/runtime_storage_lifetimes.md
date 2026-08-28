@@ -502,11 +502,14 @@ Nodes have four storage roles:
 1. Execution scratch contains unfinished shaping words, packing probes, and
    temporary transformation indexes. These values are not nodes and never
    escape scratch.
-2. One current-generation mode/page arena contains material for open
-   horizontal, vertical, math, insertion, alignment, page-builder, box-register,
-   and PDF-form lists. Save and operation marks name storage cursors, so
-   rollback restores roots and truncates only unpublished suffixes. A
-   conservative durable bound protects rows rebranded into state carriers.
+2. Current-generation active-material and page-material lanes share a stable
+   coarse chunk pool. Each typed `ForkArena` owns append-once fixed-byte chunks
+   and the sole direct-range/nonrecursive-range-sequence list topology. Active
+   paragraph, math, alignment, and box regions promote only as sealed whole
+   batches into page ownership. Operation marks may restore a partial tail;
+   retained checkpoints can name only sealed whole-chunk boundaries. A
+   conservative durable bound protects page chunks rebranded into state
+   carriers.
 3. Cold format materialization may own a physically separate generation-local
    node arena. Loaded roots retain that arena; an ordinary runtime builder does
    not publish into it.
@@ -516,15 +519,14 @@ Nodes have four storage roles:
    complete suffix in O(1).
 
 All four storage classes are owned below the external store's current slot,
-not by a mode, group, box, or node. Builders emit runtime nodes once into the
-generation page arena. Setbox, PDF-form, box, unbox, page, math, and alignment
-transitions transfer or rebrand coordinates. A TeX box copy shares the
-immutable row under the same slot lease; it never adds a per-node or per-list
-reference count. No live node closure is copied between storage classes.
-Retained runtime checkpoints share coarse immutable 64-row arena segments;
-post-fork publication opens an independent tail segment. Segment ownership is
-one aggregate checkpoint mechanism rather than a list-coordinate owner, and
-forking copies no node or token payload.
+not by a mode, group, box, or node. Builders consume runtime nodes once into
+active chunks; sealed regions transfer whole chunk envelopes into page
+material without payload copying. Setbox, PDF-form, box, unbox, page, math, and
+alignment transitions promote or rebrand typed coordinates. A TeX box copy
+shares the immutable range-list root under the same slot lease; it never adds a
+per-node or per-list reference count. Retained runtime checkpoints name sealed
+chunk and descriptor boundaries. Post-fork publication opens only the current
+suffix, and forking copies no node or token payload.
 
 Node token fields share the existing non-atomic stored-token payload for a
 true semantic alias. This applies to marks, deferred writes and specials, PDF

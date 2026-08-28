@@ -3,10 +3,16 @@
 ## Status
 
 This document defines the node-specific implementation of
-[Runtime storage lifetimes](runtime_storage_lifetimes.md). Runtime lists are
-copy-only coordinates whose immutable rows are owned by a generation page
-arena or by cold format materialization storage. A TeX lifetime transition
-rebrands a coordinate; it does not copy, relocate, or rewrite the row.
+[Runtime storage lifetimes](runtime_storage_lifetimes.md). The replacement
+substrate is `ChunkPool<T>` plus typed `ForkArena<T, Lane>`. Runtime payload is
+appended once into fixed-byte chunks owned by coarse pool pages. Lists are
+copy-only coordinates over those chunks. A TeX lifetime transition promotes
+whole sealed chunks and rebrands their coordinates; it does not copy,
+relocate, or rewrite surviving payload.
+
+The older complete-row `NodeArena` and its `NodePiece` composite stream remain
+only as migration inputs. They are not the target representation and must not
+gain another production consumer.
 
 The logical row representation is not a format ABI. It may be compacted into
 words and sidecars without changing the lifetime contract below, provided that
@@ -66,19 +72,23 @@ coordinate. Validation failure leaves the arena unchanged. The arena owns the
 complete immutable row; nested node fields contain only coordinates back into
 that same arena.
 
-`NodeArenaCursor<L>` records the arena identity and row count. Operation and
-page restore follows this order:
+`OperationMark<L>` may name a partially used payload or descriptor tail and is
+restricted to local failure. It cannot convert into a retained mark.
+Consuming every builder and sealing both tails yields an opaque
+`SealedBoundary<L>`, which alone can construct `CheckpointMark<L>`. A retained
+mark therefore contains only whole-chunk counts and stable terminal keys.
+Operation and page restore follows this order:
 
 1. validate the state journal, mode/page roots, and arena cursor without
    mutation;
 2. restore all canonical mode, page, alignment, insertion, and box roots;
-3. truncate only the rejected arena suffix; and
+3. truncate only the rejected current chunk suffix; and
 4. release replaced coarse owners after no restored root can name them.
 
-A foreign cursor or a cursor beyond the current suffix is rejected without
-mutation. Reusing released trailing storage assigns a fresh row generation, so
-a stale copied coordinate cannot alias a later page even when its physical row
-number is reused.
+A foreign mark or a mark beyond the current suffix is rejected without
+mutation. Reusing a released chunk slot assigns a fresh slot generation, so a
+stale copied coordinate cannot alias later material even when its physical
+slot number is reused.
 
 `NodeArenaRegion<L>` is the consuming form of that cursor for a structurally
 nested allocation suffix. It is neither `Clone` nor `Copy`. A top-level

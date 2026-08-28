@@ -75,6 +75,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/font.rs`: Stateful loaded-font store, font handles, null font,
   missing-character records, rollback marks, and handle-free artifact-facing
   recipes whose generated sources are named by semantic identity.
+- `src/fork_arena.rs` and `src/fork_arena/tests.rs`: Safe fixed-byte-chunk
+  coarse page pools, typed semantic-lane arenas, canonical nonrecursive range
+  lists, partial operation rollback, whole-chunk retained marks, exclusive
+  batch promotion, and exactly accepted-versus-forked settlement.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
   format staging, decoded-row draining into final owners, and infallible atomic
   publication after complete validation.

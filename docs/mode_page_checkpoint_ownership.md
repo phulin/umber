@@ -8,31 +8,26 @@ for executor modes and the page builder. It does not introduce an independent
 ownership graph. The retained generation remains the sole lifetime authority;
 mode and page marks name storage owned by that generation.
 
-## Two-lineage sequence representation
+## Two-lineage chunk representation
 
-Every open mode list and page-builder list is owned by at most two generation
-lineages:
+Every retained page list is owned by at most two generation lineages:
 
 1. immutable regions in the accepted prior lineage; and
 2. append-only regions in the current candidate lineage.
 
-The regions are coordinates into coarse generation storage. They are not
-owners, chunks, history entries, or values which can outlive that storage.
-Most lists need one prior region followed by one current region. The
-contribution deque may need a bounded three-region view--a current-lineage
-front lane, the immutable prior region, and a current-lineage back lane--so a
-candidate can implement both TeX prepend and append without adding an owner.
-Appending material extends only a current region. Front consumption, tail
-consumption, list transfer, and discard-list movement update scalar coordinates
-and do not copy a region. APIs which consume or inspect a complete logical list
-iterate the bounded view in semantic order; they do not materialize a
-contiguous `Vec`.
+Node payload is append-once in fixed-byte chunks inside coarse pool pages. The
+only list topology is a direct `ArenaRange` or one arena-owned nonrecursive
+sequence of direct ranges. Payload chunks have no competing row-list identity,
+and there is no parallel `NodePiece`, linked-node, or `Vec<Node>` owner.
+Appending opens only current chunks. Front/tail consumption, prepend, split,
+transfer, and discard movement publish compact canonical range-list records;
+they never materialize a contiguous payload buffer.
 
-Candidate rejection discards the private current suffix wholesale and restores
-the prior roots. Candidate acceptance makes that suffix the current accepted
-extent before the old prior lineage is released. A later edit still has only
-the accepted prior and one private current suffix; no checkpoint, chunk, or
-list creates a third generation.
+The arena state is exactly `Accepted` or `Forked { prefix, detached_prior,
+current }`. Candidate rejection drops current chunks and reattaches the prior
+suffix. Candidate acceptance drops the detached prior and promotes current.
+A later edit still has only the accepted lineage and one private current
+suffix; no checkpoint, list, or operation creates a third generation.
 
 When an incremental session requests convergence identity before job start,
 each ordered node lane also maintains a version-1 domain-separated polynomial
@@ -50,29 +45,22 @@ Rollback restores those coordinates after applying its move-only private
 inverses. It therefore cannot leave an accepted contribution, current-page, or
 discard root consumed merely because artifact lowering aborted.
 
-List transfers follow the same two-lineage rule. Node payload lives once in
-generation-owned immutable `PageNodeArena` segments. A logical sequence is
-either one direct segment range or one range in the arena's append-only flat
-`NodePiece` stream. Every piece names a payload segment and carries its
-cumulative logical endpoint; pieces never name other composite sequences.
-Mixed transforms append one descriptor for each unchanged or newly produced
-run. Flattening a composite input copies only its compact direct-span
-descriptors, never node payload. Random access binary-searches cumulative
-endpoints, while a sequential cursor retains its current piece across
-short-lived arena borrows.
+Active paragraph, math, alignment, and box builders own exclusive typed chunk
+regions. Sealing a complete output produces a move-only `SealedBatch`; lane
+promotion transfers its whole chunk envelopes and canonical range descriptors
+to page-material ownership while retaining stable raw chunk keys. Mixed
+transforms reuse unchanged ranges and append replacement nodes once. Random
+access binary-searches cumulative range endpoints, while a sequential cursor
+retains its scalar position across short-lived arena borrows.
 
 A destructive Mode operation does not retain a copied `NodeSequence` inverse.
-It moves coarse range or sequence coordinates through its destination and then
-into the candidate arena suffix. The fixed inline multi-range carrier remains
-only transaction-phase plumbing; it is not the arbitrary logical-sequence
-representation. Paragraph breakpoint search, widths, protrusion, tracing, and
-line materialization share one statically dispatched borrowed view over slices
-and arena sequences. A coordinate-based `ParagraphTape` stores only the
-sequence coordinate plus scalar/index lineage scratch and reborrows payload for
-each execution step. The ordinary paragraph path moves its completed source
-into the page arena once; a hyphenation fallback reverses that whole-range move
-before transforming it. Kernels publish only semantically new output nodes and
-move unchanged runs by descriptor.
+Candidate-only active material restores an `OperationMark` and truncates its
+partial chunk suffix on local failure. Legal restart checkpoints contain no
+active Mode node list. Paragraph breakpoint search, widths, protrusion,
+tracing, and line materialization share one statically dispatched borrowed
+view over test slices and canonical arena lists. A coordinate-based
+`ParagraphTape` stores only the list coordinate plus scalar/index scratch and
+reborrows payload for each execution step.
 
 Rooted settlement has three aggregate phases. Acceptance commits destination
 page/layout ranges, releases source-side move bookkeeping, and only then closes

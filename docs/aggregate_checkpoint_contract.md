@@ -270,14 +270,23 @@ same bidirectional rule with reversible logical coordinates. Durable values
 and node payloads are not copied into checkpoints or reconstructed by replaying
 page prefixes.
 
-The page-node owner contains two append-only generation streams: immutable
-payload segments and a flat stream of coarse piece descriptors. A logical
-sequence is normally one direct payload range; a mixed sequence is a compact
-piece-stream range whose entries name payload ranges directly and carry
-cumulative endpoints. Candidate rewind/reject truncates both streams to their
-marks. Accepted descriptors may name only retained accepted/current payload
-segments. There are no recursive ropes, overlay nodes, per-node owners, or
-per-list heaps.
+The replacement page-node owner uses `ChunkPool<Node>` plus a typed
+`ForkArena`. Payload is append-once in fixed-byte logical chunks stored many per
+coarse pool page. The only logical list is normally one direct `ArenaRange` or,
+when composition is necessary, one arena-owned nonrecursive sequence of direct
+ranges with cumulative endpoints. Candidate rewind/reject truncates current
+payload and descriptor chunks to whole-chunk marks. There is no complete-row
+list owner, parallel `NodePiece` stream, linked-node lane, `Vec<Node>` mirror,
+recursive rope, overlay, per-node owner, compaction, or per-chunk heap.
+
+An operation mark may include a partial tail and is never retainable. A
+checkpoint mark can be created only by consuming live builders and sealing
+payload and descriptor tails. Fork ownership is exactly `Accepted` or `Forked
+{ prefix, detached_prior, current }`. Reject drops current and reattaches the
+saved prior suffix; accept drops the obsolete prior suffix and retains
+prefix-plus-current. Pruning releases only explicitly unreferenced whole
+chunks; absent a coarse liveness proof, storage remains conservatively retained
+until generation retirement.
 
 The primitive registry remains immutable after initialization. Pruning drops
 whole unreachable journal and arena chunks once no sibling mark names them;
