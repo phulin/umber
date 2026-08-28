@@ -3075,6 +3075,7 @@ pub struct NodeCursor<'a> {
 enum NodeCursorSource<'a> {
     Slice(&'a [Node]),
     Arena(ArenaNodeSequence<'a, PageLifetime>),
+    Fork(crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>),
 }
 
 impl<'a> NodeCursor<'a> {
@@ -3095,10 +3096,19 @@ impl<'a> NodeCursor<'a> {
         }
     }
     #[must_use]
+    pub const fn fork_arena(
+        view: crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>,
+    ) -> Self {
+        Self {
+            source: NodeCursorSource::Fork(view),
+        }
+    }
+    #[must_use]
     pub const fn len(&self) -> usize {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.len(),
             NodeCursorSource::Arena(sequence) => sequence.len(),
+            NodeCursorSource::Fork(view) => view.len(),
         }
     }
     #[must_use]
@@ -3114,6 +3124,7 @@ impl<'a> NodeCursor<'a> {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.get(index),
             NodeCursorSource::Arena(sequence) => sequence.get(index),
+            NodeCursorSource::Fork(view) => view.get(index),
         }
     }
     #[must_use]
@@ -3124,6 +3135,11 @@ impl<'a> NodeCursor<'a> {
         match self.source {
             NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(nodes.iter()),
             NodeCursorSource::Arena(sequence) => NodeCursorIter::Arena(sequence.iter()),
+            NodeCursorSource::Fork(view) => NodeCursorIter::Fork {
+                view,
+                front: 0,
+                back: view.len(),
+            },
         }
     }
 }
@@ -3131,6 +3147,11 @@ impl<'a> NodeCursor<'a> {
 pub enum NodeCursorIter<'a> {
     Slice(core::slice::Iter<'a, Node>),
     Arena(ArenaNodeSequenceIter<'a, PageLifetime>),
+    Fork {
+        view: crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>,
+        front: usize,
+        back: usize,
+    },
 }
 
 impl<'a> Iterator for NodeCursorIter<'a> {
@@ -3140,6 +3161,14 @@ impl<'a> Iterator for NodeCursorIter<'a> {
         match self {
             Self::Slice(nodes) => nodes.next(),
             Self::Arena(nodes) => nodes.next(),
+            Self::Fork { view, front, back } => {
+                if *front == *back {
+                    return None;
+                }
+                let node = view.get(*front);
+                *front += usize::from(node.is_some());
+                node
+            }
         }
     }
 
@@ -3147,6 +3176,10 @@ impl<'a> Iterator for NodeCursorIter<'a> {
         match self {
             Self::Slice(nodes) => nodes.size_hint(),
             Self::Arena(nodes) => nodes.size_hint(),
+            Self::Fork { front, back, .. } => {
+                let remaining = *back - *front;
+                (remaining, Some(remaining))
+            }
         }
     }
 }

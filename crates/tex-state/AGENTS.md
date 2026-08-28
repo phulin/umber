@@ -172,7 +172,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena.rs`: Generation page and cold loaded-node arenas; copy-only
   typed/rebranded coordinates; shared immutable checkpoint rows; exact
   branch-local generation frontiers; owner-checked suffix cursors; borrowed
-  resolution; demand-enabled layout-independent list identities; and cold-only exact-root relocation.
+  resolution, including the replacement page-material `ArenaListView` cursor;
+  demand-enabled layout-independent list identities; and cold-only exact-root
+  relocation.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.

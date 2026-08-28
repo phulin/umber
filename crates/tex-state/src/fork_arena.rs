@@ -19,6 +19,9 @@ const CHUNKS_PER_PAGE: usize = 16;
 static NEXT_POOL_OWNER: AtomicU64 = AtomicU64::new(1);
 static NEXT_ARENA_OWNER: AtomicU64 = AtomicU64::new(1);
 
+/// Canonical page-material lane used by execution and borrowed typesetting.
+pub enum PageMaterialLane {}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[doc(hidden)]
 pub struct RawChunkKey {
@@ -1839,6 +1842,14 @@ pub struct ArenaListView<'a, T, Lane> {
     pool: &'a ChunkPool<T>,
     list: ArenaListId<Lane>,
 }
+
+impl<T, Lane> Clone for ArenaListView<'_, T, Lane> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T, Lane> Copy for ArenaListView<'_, T, Lane> {}
 
 impl<T, Lane> core::fmt::Debug for ArenaListView<'_, T, Lane> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

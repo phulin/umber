@@ -1,4 +1,6 @@
 use super::{ArenaListId, ChunkPool, ForkArena, ForkArenaError};
+use crate::node::Node;
+use crate::node_arena::NodeCursor;
 
 enum ActiveLane {}
 enum PageLane {}
@@ -234,6 +236,32 @@ fn stable_payload_reference_outlives_the_temporary_view() {
 
     let borrowed = first(&arena, &pool, values);
     assert_eq!(*borrowed, 41);
+}
+
+#[test]
+fn borrowed_node_cursor_traverses_page_material_without_materialization() {
+    let mut pool = ChunkPool::<Node>::with_chunk_bytes(128);
+    let mut arena = ForkArena::<Node, super::PageMaterialLane>::new();
+    let list = {
+        let mut builder = arena.begin_builder(&mut pool).expect("builder");
+        builder.push(Node::Penalty(17)).expect("first node");
+        builder.push(Node::Penalty(23)).expect("second node");
+        builder.seal().expect("sealed page list")
+    };
+    let cursor = NodeCursor::fork_arena(arena.list(&pool, list).expect("page view"));
+
+    assert!(matches!(cursor.owned_node(0), Some(Node::Penalty(17))));
+    assert_eq!(
+        cursor
+            .iter()
+            .map(|node| match node {
+                Node::Penalty(value) => *value,
+                _ => unreachable!("test list contains only penalties"),
+            })
+            .collect::<Vec<_>>(),
+        vec![17, 23]
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 
 #[test]

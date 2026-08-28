@@ -13,6 +13,12 @@ exclusive mutable pool borrow. A TeX lifetime transition promotes whole sealed
 chunks and rebrands their coordinates; it does not copy, relocate, or rewrite
 surviving payload.
 
+`ArenaListView` is a copy-only direct borrow of both the coordinate lane and
+the physical pool. Its returned node references carry the pool borrow rather
+than the temporary view borrow. The existing `NodeCursor` therefore retains
+its slice adapter for pure tests and adds a page-material view variant without
+materialization or a guard-owned lifetime.
+
 The older complete-row `NodeArena` and its `NodePiece` composite stream remain
 only as migration inputs. They are not the target representation and must not
 gain another production consumer.
