@@ -1652,3 +1652,39 @@ fn multi_byte_source_origin_detaches_the_complete_registered_range() {
     })
     .expect("universe allocation");
 }
+
+#[test]
+fn page_node_transform_counts_new_payload_and_never_copies_source_nodes() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command admission");
+        let left = context.publish_page_node_range(vec![Node::Penalty(1), Node::Penalty(2)]);
+        let right = context.publish_page_node_range(vec![Node::Penalty(3), Node::Penalty(4)]);
+        let source = context.compose_page_node_sequences(&[
+            crate::node_arena::ArenaNodeSequenceId::Direct(left),
+            crate::node_arena::ArenaNodeSequenceId::Direct(right),
+        ]);
+        let mut scratch = crate::node_arena::PageNodeTransformScratch::default();
+        context.begin_page_node_transform(&mut scratch);
+        context.retain_page_node_source_range(&mut scratch, source, 0..1);
+        context.append_new_page_nodes(&mut scratch, vec![Node::Penalty(9)]);
+        context.retain_page_node_source_range(&mut scratch, source, 3..4);
+        let transformed = context.finish_page_node_transform(&mut scratch);
+
+        assert_eq!(scratch.new_semantic_nodes(), 1);
+        assert_eq!(scratch.source_nodes_copied(), 0);
+        assert_eq!(
+            context
+                .page_node_sequence(transformed)
+                .expect("transformed sequence resolves")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [Node::Penalty(1), Node::Penalty(9), Node::Penalty(4)]
+        );
+
+        context.begin_page_node_transform(&mut scratch);
+        assert_eq!(scratch.new_semantic_nodes(), 0);
+        assert_eq!(scratch.source_nodes_copied(), 0);
+    })
+    .expect("universe allocation");
+}

@@ -496,6 +496,44 @@ impl<L> Eq for ArenaNodeSequenceId<L> {}
 /// Page-arena logical node sequence coordinate.
 pub type PageNodeSequenceId = ArenaNodeSequenceId<PageLifetime>;
 
+/// Caller-owned reusable descriptor scratch for one immutable node transform.
+///
+/// Unchanged source nodes enter `pieces` only through sliced arena
+/// coordinates. Semantically new output is published once and its direct
+/// range is appended beside those coordinates. The counters deliberately
+/// distinguish required semantic construction from forbidden source copying.
+#[derive(Debug, Default)]
+pub struct PageNodeTransformScratch {
+    pub(crate) pieces: Vec<PageNodeSequenceId>,
+    pub(crate) slices: Vec<PageNodeSequenceId>,
+    pub(crate) new_semantic_nodes: usize,
+    source_nodes_copied: usize,
+}
+
+impl PageNodeTransformScratch {
+    /// Starts another transform while retaining warmed descriptor capacity.
+    pub fn begin(&mut self) {
+        self.pieces.clear();
+        self.slices.clear();
+        self.new_semantic_nodes = 0;
+        self.source_nodes_copied = 0;
+    }
+
+    /// Number of genuinely new nodes published by this transform.
+    #[must_use]
+    pub const fn new_semantic_nodes(&self) -> usize {
+        self.new_semantic_nodes
+    }
+
+    /// Number of unchanged source nodes physically copied by this transform.
+    ///
+    /// Descriptor-only transforms keep this at zero by construction.
+    #[must_use]
+    pub const fn source_nodes_copied(&self) -> usize {
+        self.source_nodes_copied
+    }
+}
+
 pub struct ArenaNodeSequenceCursor<L> {
     sequence: ArenaNodeSequenceId<L>,
     position: u32,

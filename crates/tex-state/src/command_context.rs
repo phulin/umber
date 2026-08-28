@@ -3226,6 +3226,60 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page sequence range belongs to the live page arena")
     }
 
+    /// Starts a descriptor-only transform in caller-owned reusable scratch.
+    pub fn begin_page_node_transform(
+        &self,
+        scratch: &mut crate::node_arena::PageNodeTransformScratch,
+    ) {
+        scratch.begin();
+    }
+
+    /// Appends an unchanged source range by coordinate only.
+    pub fn retain_page_node_source_range(
+        &mut self,
+        scratch: &mut crate::node_arena::PageNodeTransformScratch,
+        source: crate::node_arena::PageNodeSequenceId,
+        range: core::ops::Range<usize>,
+    ) {
+        let piece = self
+            .page_nodes
+            .slice_sequence(source, range, &mut scratch.slices)
+            .expect("retained source range belongs to the live page arena");
+        if !piece.is_empty() {
+            scratch.pieces.push(piece);
+        }
+    }
+
+    /// Publishes genuinely new transform output once and appends its range.
+    pub fn append_new_page_nodes(
+        &mut self,
+        scratch: &mut crate::node_arena::PageNodeTransformScratch,
+        nodes: Vec<crate::node::Node>,
+    ) {
+        if nodes.is_empty() {
+            return;
+        }
+        scratch.new_semantic_nodes = scratch.new_semantic_nodes.saturating_add(nodes.len());
+        let range = self.publish_page_node_range(nodes);
+        scratch
+            .pieces
+            .push(crate::node_arena::ArenaNodeSequenceId::Direct(range));
+    }
+
+    /// Completes a transform by flattening only its compact descriptors.
+    pub fn finish_page_node_transform(
+        &mut self,
+        scratch: &mut crate::node_arena::PageNodeTransformScratch,
+    ) -> crate::node_arena::PageNodeSequenceId {
+        let sequence = self
+            .page_nodes
+            .compose_sequences(&scratch.pieces)
+            .expect("transform pieces belong to the live page arena");
+        scratch.pieces.clear();
+        scratch.slices.clear();
+        sequence
+    }
+
     /// Returns a whole payload segment to operation-local ownership without
     /// cloning it. Partial or shared-row extraction is deliberately rejected.
     pub fn take_page_node_range(
