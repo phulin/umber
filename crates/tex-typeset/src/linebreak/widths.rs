@@ -175,17 +175,27 @@ pub(super) fn add_node_width<S: TypesetState>(
     index: usize,
     include_font_expansion: bool,
 ) {
-    if let Node::Disc { replace, .. } = &nodes[index] {
-        add_nested_list_widths(widths, state, replace, include_font_expansion);
-        return;
-    }
-    add_node_width_cursor(
+    add_node_width_source(
         widths,
         state,
-        &NodeCursor::owned(nodes),
+        NodeCursor::owned(nodes),
         index,
         include_font_expansion,
     );
+}
+
+pub(super) fn add_node_width_source<S: TypesetState>(
+    widths: &mut Widths,
+    state: &S,
+    nodes: NodeCursor<'_>,
+    index: usize,
+    include_font_expansion: bool,
+) {
+    if let Some(Node::Disc { replace, .. }) = nodes.owned_node(index) {
+        add_nested_list_widths(widths, state, replace, include_font_expansion);
+        return;
+    }
+    add_node_width_cursor(widths, state, &nodes, index, include_font_expansion);
 }
 
 fn add_node_width_cursor<S: TypesetState>(

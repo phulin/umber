@@ -2391,7 +2391,7 @@ fn font_kern_is_not_discarded_at_start_of_next_line() {
         kind: KernKind::Font,
     }];
 
-    assert_eq!(next_width_position(&nodes, 0), 0);
+    assert_eq!(next_width_position(NodeCursor::owned(&nodes), 0), 0);
 }
 
 #[test]
@@ -3277,6 +3277,90 @@ fn borrowed_paragraph_tape_materializes_from_immutable_source_and_overlays_par_f
             ..
         } if *spec == replacement
     )));
+}
+
+#[test]
+fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
+    use tex_state::node_arena::{ArenaNodeSequenceId, NodeArena, PageLifetime};
+
+    let mut universe = TestState::new();
+    let empty = universe.publish_page_nodes(&[]);
+    let source = vec![
+        rule(12),
+        Node::Glue {
+            spec: GlueSpec {
+                width: sp(4),
+                stretch: sp(20),
+                ..GlueSpec::ZERO
+            },
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(13),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let pieces = source
+        .chunks(1)
+        .map(|chunk| {
+            arena
+                .publish_range(chunk.to_vec())
+                .map(ArenaNodeSequenceId::Direct)
+                .expect("paragraph piece publishes")
+        })
+        .collect::<Vec<_>>();
+    let sequence = arena
+        .compose_sequences(&pieces)
+        .expect("paragraph pieces compose");
+    let arena_view = arena.get_sequence(sequence).expect("paragraph resolves");
+    let source_addresses = arena_view
+        .iter()
+        .map(|node| core::ptr::from_ref(node))
+        .collect::<Vec<_>>();
+    let line_params = params(18);
+    let slice_tape = ParagraphTape::analyze_borrowed(&universe, &source, &line_params);
+    let arena_tape = ParagraphTape::analyze_arena(&universe, arena_view, &line_params);
+
+    assert_eq!(arena_tape.break_sites, slice_tape.break_sites);
+    assert_eq!(arena_tape.materialization, slice_tape.materialization);
+    let slice_plan = break_hyphenated_tape(&universe, &slice_tape, &line_params);
+    let arena_plan = break_hyphenated_tape(&universe, &arena_tape, &line_params);
+    assert_eq!(arena_plan, slice_plan);
+
+    let post_params = PostLineBreakParams {
+        empty_list: empty,
+        left_skip: GlueSpec::ZERO,
+        right_skip: GlueSpec::ZERO,
+        interline_penalty: 0,
+        club_penalty: 0,
+        widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+        broken_penalty: 0,
+        prev_graf: 0,
+        interline_penalties: Vec::new(),
+        club_penalties: Vec::new(),
+        shape: LineShape::natural(sp(18)),
+    };
+    let mut slice_materializer =
+        LineMaterializer::new(slice_tape, slice_plan.breaks, post_params.clone());
+    let mut arena_materializer = LineMaterializer::new(arena_tape, arena_plan.breaks, post_params);
+    loop {
+        let slice_line = slice_materializer.materialize_next(&universe, Vec::new());
+        let arena_line = arena_materializer.materialize_next(&universe, Vec::new());
+        assert_eq!(arena_line, slice_line);
+        if arena_line.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        arena
+            .get_sequence(sequence)
+            .expect("source remains live")
+            .iter()
+            .map(|node| core::ptr::from_ref(node))
+            .collect::<Vec<_>>(),
+        source_addresses,
+        "analysis and materialization retain the original arena payload"
+    );
 }
 
 #[test]

@@ -528,7 +528,7 @@ fn break_hlist_with_trace<G>(
         )
     } else {
         (
-            cached_pretolerance_plan(stores, tape.nodes(), &line_params),
+            cached_pretolerance_plan(stores, &tape, &line_params),
             Vec::new(),
         )
     };
@@ -584,7 +584,7 @@ fn break_hlist_with_trace<G>(
 fn report_line_break_trace<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    nodes: &[Node],
+    nodes: tex_state::node_arena::NodeCursor<'_>,
     trace: &[LineBreakTrace],
     missing_hyphens: &[super::hyphenation::MissingHyphenDiagnostic],
 ) {
@@ -615,7 +615,7 @@ fn report_line_break_trace<G>(
                 display_suffix,
                 ..
             } if !display.is_empty() => (
-                Some(short_display.render_nodes(stores, &nodes[display.clone()])),
+                Some(short_display.render_node_range(stores, nodes, display.clone())),
                 display_suffix
                     .as_ref()
                     .map(|suffix| short_display.render_line_break_trace_suffix(stores, *suffix)),
@@ -753,12 +753,12 @@ fn report_line_break_trace<G>(
 /// runtime or generation-crossing cache values.
 pub fn cached_pretolerance_plan<G>(
     stores: &mut CommandContext<'_, G>,
-    hlist: &[Node],
+    tape: &ParagraphTape<'_>,
     line_params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
-    try_line_break_without_hyphenation(
+    tex_typeset::linebreak::try_tape_without_hyphenation(
         &crate::typeset_context::TypesetContext::new(stores),
-        hlist,
+        tape,
         line_params,
     )
 }
@@ -1044,8 +1044,7 @@ use tex_typeset::linebreak::{
     LineBreakParams, LineBreakPass, LineBreakResult, LineBreakTrace, LineDimensions,
     LineMaterializer, LineShape, LineShapeEntry, ParagraphShape as TypesetParagraphShape,
     ParagraphTape, PostLineBreakParams, TraceBreakpoint, break_hyphenated_tape,
-    break_hyphenated_tape_traced, try_line_break_without_hyphenation,
-    try_tape_without_hyphenation_traced,
+    break_hyphenated_tape_traced, try_tape_without_hyphenation_traced,
 };
 
 use crate::box_runtime::{

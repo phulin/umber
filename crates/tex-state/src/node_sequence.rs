@@ -315,7 +315,25 @@ pub type DirectHighCellLineages = SmallVec<[DirectHighCellLineage; 1]>;
 /// or duplicate any node payload from `nodes`.
 #[must_use]
 pub fn borrowed_mirrored_high_cell_lineages(nodes: &[Node]) -> Vec<DirectHighCellLineages> {
-    mirrored_high_cell_lineages(nodes).0
+    borrowed_mirrored_high_cell_lineages_from(nodes.iter())
+}
+
+/// Builds allocator lineage scratch while walking a non-contiguous immutable
+/// source. Node payload is borrowed and never copied into the scratch.
+#[must_use]
+pub fn borrowed_mirrored_high_cell_lineages_from<'a>(
+    nodes: impl IntoIterator<Item = &'a Node>,
+) -> Vec<DirectHighCellLineages> {
+    nodes
+        .into_iter()
+        .enumerate()
+        .map(|(row, node)| {
+            direct_high_cell_lineages(
+                node,
+                u32::try_from(row).expect("node sequence exceeds u32 rows"),
+            )
+        })
+        .collect()
 }
 
 /// Counts exact direct-cell allocation identities shared by two projections.

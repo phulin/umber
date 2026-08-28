@@ -2,6 +2,7 @@
 
 use tex_state::font::PdfFontCode;
 use tex_state::node::{GlueKind, MarginKernSide, Node};
+use tex_state::node_arena::NodeCursor;
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -26,13 +27,25 @@ impl LineProtrusion {
 /// Finds the candidate line's protruding edge characters.
 #[must_use]
 pub fn line_protrusion(state: &impl TypesetState, nodes: &[Node]) -> LineProtrusion {
+    line_protrusion_cursor(state, NodeCursor::owned(nodes), 0, nodes.len())
+}
+
+#[must_use]
+pub(crate) fn line_protrusion_cursor(
+    state: &impl TypesetState,
+    nodes: NodeCursor<'_>,
+    start: usize,
+    end: usize,
+) -> LineProtrusion {
     LineProtrusion {
-        left: edge_glyph(state, nodes, Edge::Left).map_or(Scaled::from_raw(0), |glyph| {
-            glyph_width(state, glyph, Edge::Left)
-        }),
-        right: edge_glyph(state, nodes, Edge::Right).map_or(Scaled::from_raw(0), |glyph| {
-            glyph_width(state, glyph, Edge::Right)
-        }),
+        left: edge_glyph_cursor(state, nodes, start, end, Edge::Left)
+            .map_or(Scaled::from_raw(0), |glyph| {
+                glyph_width(state, glyph, Edge::Left)
+            }),
+        right: edge_glyph_cursor(state, nodes, start, end, Edge::Right)
+            .map_or(Scaled::from_raw(0), |glyph| {
+                glyph_width(state, glyph, Edge::Right)
+            }),
     }
 }
 
@@ -163,9 +176,24 @@ enum Search {
 }
 
 fn edge_glyph(state: &impl TypesetState, nodes: &[Node], edge: Edge) -> Option<Glyph> {
+    edge_glyph_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), edge)
+}
+
+fn edge_glyph_cursor(
+    state: &impl TypesetState,
+    nodes: NodeCursor<'_>,
+    start: usize,
+    end: usize,
+    edge: Edge,
+) -> Option<Glyph> {
+    let start = start.min(nodes.len());
+    let end = end.min(nodes.len()).max(start);
     match edge {
         Edge::Left => {
-            for node in nodes {
+            for index in start..end {
+                let node = nodes
+                    .owned_node(index)
+                    .expect("edge index belongs to source");
                 match search_node(state, node, edge) {
                     Search::Glyph(glyph) => return Some(glyph),
                     Search::Skip => {}
@@ -174,7 +202,10 @@ fn edge_glyph(state: &impl TypesetState, nodes: &[Node], edge: Edge) -> Option<G
             }
         }
         Edge::Right => {
-            for node in nodes.iter().rev() {
+            for index in (start..end).rev() {
+                let node = nodes
+                    .owned_node(index)
+                    .expect("edge index belongs to source");
                 match search_node(state, node, edge) {
                     Search::Glyph(glyph) => return Some(glyph),
                     Search::Skip => {}
@@ -193,8 +224,8 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                 Search::Glyph(Glyph { font: *font, code })
             }),
         Node::HList(box_node) => {
-            let children = state.page_nodes(box_node.children).to_vec();
-            edge_glyph(state, &children, edge).map_or_else(
+            let children = NodeCursor::compact(state.page_nodes(box_node.children));
+            edge_glyph_cursor(state, children, 0, children.len(), edge).map_or_else(
                 || {
                     if box_node.width.raw() == 0 {
                         Search::Skip
@@ -213,8 +244,9 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                 Edge::Right if !pre.is_empty() => pre,
                 _ => replace,
             };
-            let children = state.page_nodes(*list).to_vec();
-            edge_glyph(state, &children, edge).map_or(Search::Skip, Search::Glyph)
+            let children = NodeCursor::compact(state.page_nodes(*list));
+            edge_glyph_cursor(state, children, 0, children.len(), edge)
+                .map_or(Search::Skip, Search::Glyph)
         }
         Node::Kern { amount, .. } | Node::MathOn(amount) | Node::MathOff(amount)
             if amount.raw() == 0 =>

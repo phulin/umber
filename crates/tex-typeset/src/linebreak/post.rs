@@ -34,6 +34,11 @@ pub struct LineMaterializer<'a> {
 enum ChannelNodes<'a> {
     Owned(std::vec::IntoIter<Node>),
     Borrowed(core::slice::Iter<'a, Node>),
+    Arena(
+        core::iter::Peekable<
+            tex_state::node_arena::ArenaNodeSequenceIter<'a, tex_state::node_arena::PageLifetime>,
+        >,
+    ),
 }
 
 struct ChannelCursor<'a> {
@@ -89,6 +94,20 @@ impl<'a> LineMaterializer<'a> {
                     (
                         ChannelNodes::Borrowed(nodes.iter()),
                         ChannelNodes::Borrowed(nodes.iter()),
+                        semantic_lineages,
+                        physical_lineages,
+                        breaks.clone(),
+                    )
+                }
+                super::ParagraphSource::BorrowedArena(sequence) => {
+                    let semantic_lineages =
+                        tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(
+                            sequence.iter(),
+                        );
+                    let physical_lineages = semantic_lineages.clone();
+                    (
+                        ChannelNodes::Arena(sequence.iter().peekable()),
+                        ChannelNodes::Arena(sequence.iter().peekable()),
                         semantic_lineages,
                         physical_lineages,
                         breaks.clone(),
@@ -228,6 +247,7 @@ impl ChannelNodes<'_> {
         match self {
             Self::Owned(nodes) => nodes.len(),
             Self::Borrowed(nodes) => nodes.len(),
+            Self::Arena(nodes) => nodes.len(),
         }
     }
 
@@ -235,13 +255,15 @@ impl ChannelNodes<'_> {
         match self {
             Self::Owned(nodes) => nodes.next(),
             Self::Borrowed(nodes) => nodes.next().cloned(),
+            Self::Arena(nodes) => nodes.next().cloned(),
         }
     }
 
-    fn first(&self) -> Option<&Node> {
+    fn first(&mut self) -> Option<&Node> {
         match self {
             Self::Owned(nodes) => nodes.as_slice().first(),
             Self::Borrowed(nodes) => nodes.as_slice().first(),
+            Self::Arena(nodes) => nodes.peek().copied(),
         }
     }
 }

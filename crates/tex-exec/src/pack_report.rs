@@ -274,6 +274,7 @@ impl ShortDisplayRenderer {
         self.font = None;
     }
 
+    #[cfg(test)]
     pub(crate) fn render_nodes<G>(
         &mut self,
         stores: &CommandContext<'_, G>,
@@ -283,6 +284,25 @@ impl ShortDisplayRenderer {
         append_short_display_nodes(
             stores,
             nodes,
+            DiscReplacementLayout::DetachedProjection,
+            &mut self.font,
+            &mut out,
+        );
+        out
+    }
+
+    pub(crate) fn render_node_range<G>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        nodes: tex_state::node_arena::NodeCursor<'_>,
+        range: core::ops::Range<usize>,
+    ) -> String {
+        let mut out = String::new();
+        append_short_display_cursor(
+            stores,
+            nodes,
+            range.start,
+            range.end,
             DiscReplacementLayout::DetachedProjection,
             &mut self.font,
             &mut out,
@@ -329,11 +349,12 @@ fn append_short_display<G>(
     let nodes = stores
         .page_node_list(list)
         .expect("diagnostic list belongs to the live page arena")
-        .nodes()
-        .to_vec();
-    append_short_display_nodes(
+        .nodes();
+    append_short_display_cursor(
         stores,
-        &nodes,
+        tex_state::node_arena::NodeCursor::compact(nodes),
+        0,
+        nodes.len(),
         match list_layout {
             DiagnosticListLayout::DetachedProjection => DiscReplacementLayout::DetachedProjection,
             DiagnosticListLayout::FrozenList => DiscReplacementLayout::FrozenList,
@@ -353,6 +374,7 @@ enum DiscReplacementLayout {
     FrozenList,
 }
 
+#[cfg(test)]
 fn append_short_display_nodes<G>(
     stores: &CommandContext<'_, G>,
     nodes: &[Node],
@@ -360,8 +382,29 @@ fn append_short_display_nodes<G>(
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
-    let mut index = 0;
-    while let Some(node) = nodes.get(index) {
+    append_short_display_cursor(
+        stores,
+        tex_state::node_arena::NodeCursor::owned(nodes),
+        0,
+        nodes.len(),
+        disc_layout,
+        font_in_short_display,
+        out,
+    );
+}
+
+fn append_short_display_cursor<G>(
+    stores: &CommandContext<'_, G>,
+    nodes: tex_state::node_arena::NodeCursor<'_>,
+    start: usize,
+    end: usize,
+    disc_layout: DiscReplacementLayout,
+    font_in_short_display: &mut Option<u32>,
+    out: &mut String,
+) {
+    let end = end.min(nodes.len());
+    let mut index = start.min(end);
+    while let Some(node) = (index < end).then(|| nodes.owned_node(index)).flatten() {
         index += 1;
         match node {
             Node::Char { font, ch, .. } => {
@@ -426,7 +469,7 @@ fn append_short_display_nodes<G>(
                         .len(),
                     DiscReplacementLayout::FrozenList => usize::from(*physical_replace_count),
                 };
-                index = index.saturating_add(replacement_count).min(nodes.len());
+                index = index.saturating_add(replacement_count).min(end);
             }
             // §175's `othercases do_nothing`: kerns, penalties, and the math
             // list nodes that never reach a packed horizontal list.

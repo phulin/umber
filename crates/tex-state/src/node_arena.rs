@@ -2171,6 +2171,22 @@ pub struct ArenaNodeSequence<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
     sequence: ArenaNodeSequenceId<L>,
 }
 
+impl<'a, L, Glue, Tokens> Clone for ArenaNodeSequence<'a, L, Glue, Tokens> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'a, L, Glue, Tokens> Copy for ArenaNodeSequence<'a, L, Glue, Tokens> {}
+
+impl<L, Glue, Tokens> PartialEq for ArenaNodeSequence<'_, L, Glue, Tokens> {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.arena, other.arena) && self.sequence == other.sequence
+    }
+}
+
+impl<L, Glue, Tokens> Eq for ArenaNodeSequence<'_, L, Glue, Tokens> {}
+
 impl<L, Glue, Tokens> core::fmt::Debug for ArenaNodeSequence<'_, L, Glue, Tokens> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -2385,7 +2401,7 @@ impl<'a> NodeList<'a, PageLifetime> {
 
     #[must_use]
     pub fn char_codes(self, index: usize) -> Option<CharCodes<'a>> {
-        CharCodes::new(self.nodes(), index)
+        CharCodes::new(NodeCursor::compact(self.nodes()), index)
     }
 }
 
@@ -2846,53 +2862,109 @@ impl NodeRef<'_> {
     }
 }
 
-/// Unified read cursor for operation buffers and immutable page rows.
+/// Unified indexed view for operation buffers and direct or composite page
+/// sequences.
+///
+/// The arena variant retains only a borrow and a compact coordinate. Random
+/// access binary-searches flat piece endpoints; sequential consumers should
+/// use [`Self::iter`], whose arena iterator caches its current piece.
 #[derive(Clone, Copy)]
 pub struct NodeCursor<'a> {
-    nodes: &'a [Node],
+    source: NodeCursorSource<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum NodeCursorSource<'a> {
+    Slice(&'a [Node]),
+    Arena(ArenaNodeSequence<'a, PageLifetime>),
 }
 
 impl<'a> NodeCursor<'a> {
     #[must_use]
     pub const fn owned(nodes: &'a [Node]) -> Self {
-        Self { nodes }
+        Self {
+            source: NodeCursorSource::Slice(nodes),
+        }
     }
     #[must_use]
     pub const fn compact(nodes: &'a [Node]) -> Self {
-        Self { nodes }
+        Self::owned(nodes)
+    }
+    #[must_use]
+    pub const fn arena(sequence: ArenaNodeSequence<'a, PageLifetime>) -> Self {
+        Self {
+            source: NodeCursorSource::Arena(sequence),
+        }
     }
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.nodes.len()
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.len(),
+            NodeCursorSource::Arena(sequence) => sequence.len(),
+        }
     }
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.len() == 0
     }
     #[must_use]
     pub fn get(&self, index: usize) -> Option<NodeRef<'a>> {
-        self.nodes.get(index).map(NodeRef::from)
+        self.owned_node(index).map(NodeRef::from)
     }
     #[must_use]
     pub fn owned_node(&self, index: usize) -> Option<&'a Node> {
-        self.nodes.get(index)
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.get(index),
+            NodeCursorSource::Arena(sequence) => sequence.get(index),
+        }
     }
     #[must_use]
     pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {
-        CharCodes::new(self.nodes, index)
+        CharCodes::new(*self, index)
+    }
+    pub fn iter(&self) -> NodeCursorIter<'a> {
+        match self.source {
+            NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(nodes.iter()),
+            NodeCursorSource::Arena(sequence) => NodeCursorIter::Arena(sequence.iter()),
+        }
     }
 }
 
+pub enum NodeCursorIter<'a> {
+    Slice(core::slice::Iter<'a, Node>),
+    Arena(ArenaNodeSequenceIter<'a, PageLifetime>),
+}
+
+impl<'a> Iterator for NodeCursorIter<'a> {
+    type Item = &'a Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Slice(nodes) => nodes.next(),
+            Self::Arena(nodes) => nodes.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Slice(nodes) => nodes.size_hint(),
+            Self::Arena(nodes) => nodes.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for NodeCursorIter<'_> {}
+
 /// Lazy same-font byte-character run.
 pub struct CharCodes<'a> {
-    nodes: &'a [Node],
+    nodes: NodeCursor<'a>,
     next: usize,
     font: crate::ids::FontId,
 }
 
 impl<'a> CharCodes<'a> {
-    fn new(nodes: &'a [Node], index: usize) -> Option<Self> {
-        let Node::Char { font, ch, .. } = nodes.get(index)? else {
+    fn new(nodes: NodeCursor<'a>, index: usize) -> Option<Self> {
+        let Node::Char { font, ch, .. } = nodes.owned_node(index)? else {
             return None;
         };
         u8::try_from(*ch as u32).ok()?;
@@ -2911,7 +2983,7 @@ impl<'a> CharCodes<'a> {
 impl Iterator for CharCodes<'_> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
-        let Node::Char { font, ch, .. } = self.nodes.get(self.next)? else {
+        let Node::Char { font, ch, .. } = self.nodes.owned_node(self.next)? else {
             return None;
         };
         if *font != self.font {

@@ -1,7 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::PageListId;
+use tex_state::node_arena::{ArenaNodeSequence, NodeCursor, PageLifetime, PageListId};
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
 
@@ -202,6 +202,7 @@ pub struct ParagraphTape<'a> {
 enum ParagraphSource<'a> {
     Owned(NodeSequence),
     BorrowedMirrored(&'a [Node]),
+    BorrowedArena(ArenaNodeSequence<'a, PageLifetime>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -234,6 +235,7 @@ impl ParagraphTape<'static> {
         params: &LineBreakParams,
     ) -> Self {
         let nodes = sequence.semantic();
+        let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
         let break_sites = analyzer
             .by_ref()
@@ -271,6 +273,8 @@ impl<'a> ParagraphTape<'a> {
         nodes: &'a [Node],
         params: &LineBreakParams,
     ) -> Self {
+        let source = nodes;
+        let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
         let break_sites = analyzer
             .by_ref()
@@ -289,7 +293,41 @@ impl<'a> ParagraphTape<'a> {
             .collect();
         let materialization = analyzer.materialization;
         Self {
-            source: ParagraphSource::BorrowedMirrored(nodes),
+            source: ParagraphSource::BorrowedMirrored(source),
+            break_sites,
+            materialization,
+            par_fill_override: None,
+        }
+    }
+
+    /// Analyzes a direct or flat-composite page-arena sequence without
+    /// materializing its immutable node payload into a contiguous buffer.
+    #[must_use]
+    pub fn analyze_arena<S: TypesetState>(
+        state: &S,
+        sequence: ArenaNodeSequence<'a, PageLifetime>,
+        params: &LineBreakParams,
+    ) -> Self {
+        let nodes = NodeCursor::arena(sequence);
+        let mut analyzer = LegalBreakpoints::new(state, nodes, params);
+        let break_sites = analyzer
+            .by_ref()
+            .map(|site| {
+                let display_end = trace_display_end(state, nodes, site);
+                BreakSite {
+                    breakpoint: site,
+                    trace: TraceSpan {
+                        display_end,
+                        next_start: trace_display_next_start(state, nodes, site, display_end),
+                        display_suffix: trace_display_suffix(nodes, site),
+                        breakpoint: trace_breakpoint(nodes, site),
+                    },
+                }
+            })
+            .collect();
+        let materialization = analyzer.materialization;
+        Self {
+            source: ParagraphSource::BorrowedArena(sequence),
             break_sites,
             materialization,
             par_fill_override: None,
@@ -297,10 +335,11 @@ impl<'a> ParagraphTape<'a> {
     }
 
     #[must_use]
-    pub fn nodes(&self) -> &[Node] {
+    pub fn nodes(&self) -> NodeCursor<'_> {
         match &self.source {
-            ParagraphSource::Owned(sequence) => sequence.semantic(),
-            ParagraphSource::BorrowedMirrored(nodes) => nodes,
+            ParagraphSource::Owned(sequence) => NodeCursor::owned(sequence.semantic()),
+            ParagraphSource::BorrowedMirrored(nodes) => NodeCursor::owned(nodes),
+            ParagraphSource::BorrowedArena(sequence) => NodeCursor::arena(*sequence),
         }
     }
 
@@ -313,6 +352,7 @@ impl<'a> ParagraphTape<'a> {
         match self.source {
             ParagraphSource::Owned(sequence) => sequence.into_semantic(),
             ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
+            ParagraphSource::BorrowedArena(sequence) => sequence.iter().cloned().collect(),
         }
     }
 }
@@ -582,7 +622,7 @@ mod widths;
 
 pub use post::{LineMaterializer, post_line_break, post_line_break_owned};
 
-use widths::{Widths, add_node_width, line_badness, line_widths_nodes, line_widths_view};
+use widths::{Widths, add_node_width_source, line_badness, line_widths_nodes, line_widths_view};
 
 /// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
 ///
@@ -801,7 +841,8 @@ fn run_pass<S: TypesetState>(
                     .width_position(&tape.break_sites)
                     .min(nodes.len());
                 let end = bp.position.min(nodes.len()).max(start);
-                let protrusion = crate::protrusion::line_protrusion(state, &nodes[start..end]);
+                let protrusion =
+                    crate::protrusion::line_protrusion_cursor(state, nodes, start, end);
                 target
                     .checked_add(protrusion.total())
                     .expect("pdfTeX protruded line target fits Scaled")
@@ -1051,14 +1092,14 @@ fn run_pass<S: TypesetState>(
     Some(reconstruct(active[chosen], &passive, last_line_fit, memory))
 }
 
-fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<PageListId> {
+fn trace_display_suffix(nodes: NodeCursor<'_>, bp: Breakpoint) -> Option<PageListId> {
     // §903's boundary-kern reconstitution keeps the displaced ligature in
     // the automatic discretionary's side list. TeX82's linked list exposes
     // it to §851; Umber carries it as this detached trace suffix instead.
     if !matches!(
         bp.position
             .checked_sub(2)
-            .and_then(|index| nodes.get(index)),
+            .and_then(|index| nodes.owned_node(index)),
         Some(Node::Kern {
             kind: KernKind::Font,
             ..
@@ -1070,25 +1111,25 @@ fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<PageListId> {
         kind: tex_state::node::DiscKind::AutomaticHyphen,
         replace,
         ..
-    } = nodes.get(bp.position.checked_sub(1)?)?
+    } = nodes.owned_node(bp.position.checked_sub(1)?)?
     else {
         return None;
     };
     Some(*replace)
 }
 
-fn trace_display_end(state: &impl TypesetState, nodes: &[Node], bp: Breakpoint) -> usize {
+fn trace_display_end(state: &impl TypesetState, nodes: NodeCursor<'_>, bp: Breakpoint) -> usize {
     let Some(Node::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
-        .and_then(|index| nodes.get(index))
+        .and_then(|index| nodes.owned_node(index))
     else {
         return bp.position;
     };
     if matches!(
         bp.position
             .checked_sub(2)
-            .and_then(|index| nodes.get(index)),
+            .and_then(|index| nodes.owned_node(index)),
         Some(Node::Kern {
             kind: KernKind::Font,
             ..
@@ -1106,16 +1147,16 @@ fn trace_display_end(state: &impl TypesetState, nodes: &[Node], bp: Breakpoint) 
     if !matches!(
         bp.position
             .checked_sub(2)
-            .and_then(|index| nodes.get(index)),
+            .and_then(|index| nodes.owned_node(index)),
         Some(Node::Disc { .. })
-    ) || matches!(nodes.get(bp.position), Some(Node::Disc { .. }))
+    ) || matches!(nodes.owned_node(bp.position), Some(Node::Disc { .. }))
     {
         return bp.position;
     }
     let mut replacement_count = state.page_nodes(*replace).len();
     let mut index = bp.position - 1;
     while let Some(previous) = index.checked_sub(1) {
-        let Node::Disc { replace, .. } = &nodes[previous] else {
+        let Some(Node::Disc { replace, .. }) = nodes.owned_node(previous) else {
             break;
         };
         replacement_count = replacement_count.saturating_add(state.page_nodes(*replace).len());
@@ -1128,7 +1169,7 @@ fn trace_display_end(state: &impl TypesetState, nodes: &[Node], bp: Breakpoint) 
 
 fn trace_display_next_start(
     state: &impl TypesetState,
-    nodes: &[Node],
+    nodes: NodeCursor<'_>,
     bp: Breakpoint,
     display_end: usize,
 ) -> usize {
@@ -1137,7 +1178,7 @@ fn trace_display_next_start(
     } else if let Some(Node::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
-        .and_then(|index| nodes.get(index))
+        .and_then(|index| nodes.owned_node(index))
         && display_end.saturating_sub(bp.position) == state.page_nodes(*replace).len()
     {
         // §851's temporary link surgery may make the current structural slice
@@ -1152,11 +1193,14 @@ fn trace_display_next_start(
     }
 }
 
-fn trace_breakpoint(nodes: &[Node], bp: Breakpoint) -> TraceBreakpoint {
+fn trace_breakpoint(nodes: NodeCursor<'_>, bp: Breakpoint) -> TraceBreakpoint {
     if bp.penalty <= EJECT_PENALTY && bp.position >= nodes.len() {
         return TraceBreakpoint::Paragraph;
     }
-    match &nodes[bp.position - 1] {
+    match nodes
+        .owned_node(bp.position - 1)
+        .expect("breakpoint belongs to paragraph")
+    {
         Node::Glue { .. } => TraceBreakpoint::Glue,
         Node::Penalty(_) => TraceBreakpoint::Penalty,
         Node::Disc { .. } => TraceBreakpoint::Discretionary,
@@ -1505,16 +1549,24 @@ fn line_shortfall_for_route(target: Scaled, natural: WideScaled) -> Scaled {
         .unwrap_or(Scaled::from_raw(0))
 }
 
-fn discretionary_post_is_nonempty(nodes: &[Node], position: usize) -> bool {
+fn discretionary_post_is_nonempty(nodes: NodeCursor<'_>, position: usize) -> bool {
     matches!(
-        position.checked_sub(1).and_then(|index| nodes.get(index)),
+        position
+            .checked_sub(1)
+            .and_then(|index| nodes.owned_node(index)),
         Some(Node::Disc { post, .. }) if !post.is_empty()
     )
 }
 
-fn next_width_position(nodes: &[Node], position: usize) -> usize {
+fn next_width_position(nodes: NodeCursor<'_>, position: usize) -> usize {
     let mut position = position.min(nodes.len());
-    while position < nodes.len() && is_discardable(&nodes[position]) {
+    while position < nodes.len()
+        && is_discardable(
+            nodes
+                .owned_node(position)
+                .expect("width position belongs to paragraph"),
+        )
+    {
         position += 1;
     }
     position
@@ -1579,7 +1631,7 @@ fn discretionary_penalty(pre_is_empty: bool, params: &LineBreakParams) -> i32 {
 
 struct LegalBreakpoints<'a, S> {
     state: &'a S,
-    nodes: &'a [Node],
+    nodes: NodeCursor<'a>,
     params: &'a LineBreakParams,
     index: usize,
     prefix: Widths,
@@ -1591,7 +1643,7 @@ struct LegalBreakpoints<'a, S> {
 }
 
 impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
-    fn new(state: &'a S, nodes: &'a [Node], params: &'a LineBreakParams) -> Self {
+    fn new(state: &'a S, nodes: NodeCursor<'a>, params: &'a LineBreakParams) -> Self {
         Self {
             state,
             nodes,
@@ -1622,7 +1674,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         };
         let mut next_width = line_width;
         for index in width_position..next_position {
-            add_node_width(
+            add_node_width_source(
                 &mut next_width,
                 self.state,
                 self.nodes,
@@ -1636,7 +1688,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         if hyphenated
             && let Some(Node::Disc { post, .. }) = position
                 .checked_sub(1)
-                .and_then(|index| self.nodes.get(index))
+                .and_then(|index| self.nodes.owned_node(index))
         {
             next_width = next_width.sub(line_widths_view(
                 self.state,
@@ -1665,7 +1717,7 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
         while self.index < self.nodes.len() {
             let i = self.index;
             let before = self.prefix;
-            add_node_width(
+            add_node_width_source(
                 &mut self.prefix,
                 self.state,
                 self.nodes,
@@ -1674,9 +1726,19 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
             );
             self.index += 1;
 
-            let definition = match &self.nodes[i] {
+            let node = self
+                .nodes
+                .owned_node(i)
+                .expect("legal-break index belongs to paragraph");
+            let definition = match node {
                 Node::Glue { .. }
-                    if self.auto_breaking && i > 0 && !is_discardable(&self.nodes[i - 1]) =>
+                    if self.auto_breaking
+                        && i > 0
+                        && !is_discardable(
+                            self.nodes
+                                .owned_node(i - 1)
+                                .expect("prior legal-break index belongs to paragraph"),
+                        ) =>
                 {
                     Some((i + 1, i, 0, false, Widths::zero(), before))
                 }
@@ -1685,7 +1747,7 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                     ..
                 } if self.auto_breaking
                     && i + 1 < self.nodes.len()
-                    && matches!(self.nodes[i + 1], Node::Glue { .. }) =>
+                    && matches!(self.nodes.owned_node(i + 1), Some(Node::Glue { .. })) =>
                 {
                     // TeX82 §866's `kern_break` calls `try_break` before
                     // adding the kern width; §822 then removes that
@@ -1714,7 +1776,9 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                     ),
                     before,
                 )),
-                Node::MathOff(_) if matches!(self.nodes.get(i + 1), Some(Node::Glue { .. })) => {
+                Node::MathOff(_)
+                    if matches!(self.nodes.owned_node(i + 1), Some(Node::Glue { .. })) =>
+                {
                     self.auto_breaking = true;
                     // The same §866 `kern_break` ordering applies to an
                     // after-math node: its math-surround width belongs to an
@@ -1731,7 +1795,7 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                 }
                 _ => None,
             };
-            self.materialization.push(match self.nodes[i] {
+            self.materialization.push(match node {
                 Node::Disc { .. } => MaterializationAction::Discretionary,
                 Node::Glue { .. } if definition.is_some() => {
                     MaterializationAction::BreakDiscardable
@@ -1779,7 +1843,7 @@ fn legal_breakpoints<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> Vec<Breakpoint> {
-    LegalBreakpoints::new(state, nodes, params).collect()
+    LegalBreakpoints::new(state, NodeCursor::owned(nodes), params).collect()
 }
 
 fn is_discardable(node: &Node) -> bool {
