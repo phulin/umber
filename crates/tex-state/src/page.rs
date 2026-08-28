@@ -684,6 +684,22 @@ pub(crate) struct AcceptedPageRegionTail {
     later_rows: Vec<PageRegionCheckpoint>,
 }
 
+/// Move-only document-order ownership of accepted page-building periods.
+///
+/// The final entry is the only current region. Earlier entries exist only
+/// because their contiguous checkpoint interval is non-empty; no node-root
+/// census participates in their retention.
+pub(crate) struct PageRegionHistory {
+    regions: Vec<PageRegion>,
+    pending_successor: Option<PreparedPageRegionSuccessor>,
+}
+
+pub(crate) struct AcceptedPageRegionHistoryTail {
+    selected: AcceptedPageRegionTail,
+    later_regions: Vec<PageRegion>,
+    selected_region: NodeRegionId,
+}
+
 /// Result of completing one page lifetime and opening its successor.
 pub struct PageRegionSuccession {
     current: PageRegion,
@@ -691,9 +707,200 @@ pub struct PageRegionSuccession {
     held_over: PageListId,
 }
 
+struct PreparedPageRegionSuccessor {
+    current: PageRegion,
+    held_over: PageListId,
+}
+
 impl Default for PageRegion {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Default for PageRegionHistory {
+    fn default() -> Self {
+        Self {
+            regions: vec![PageRegion::new()],
+            pending_successor: None,
+        }
+    }
+}
+
+impl PageRegionHistory {
+    fn current(&self) -> &PageRegion {
+        self.regions
+            .last()
+            .expect("page history always has a current region")
+    }
+
+    fn current_mut(&mut self) -> &mut PageRegion {
+        self.regions
+            .last_mut()
+            .expect("page history always has a current region")
+    }
+
+    fn region(&self, key: PageRegionCheckpointKey) -> Option<&PageRegion> {
+        self.regions.iter().find(|region| region.id() == key.region)
+    }
+
+    pub(crate) fn nodes(&self) -> &PageNodeArena {
+        self.current().nodes()
+    }
+
+    pub(crate) fn nodes_mut(&mut self) -> &mut PageNodeArena {
+        self.current_mut().nodes_mut()
+    }
+
+    pub(crate) fn builder(&self) -> &PageBuilderState {
+        self.current().builder()
+    }
+
+    pub(crate) fn builder_mut(&mut self) -> &mut PageBuilderState {
+        self.current_mut().builder_mut()
+    }
+
+    pub(crate) fn parts_mut(&mut self) -> (&mut PageNodeArena, &mut PageBuilderState) {
+        self.current_mut().parts_mut()
+    }
+
+    pub(crate) fn seal_checkpoint(&mut self) -> Result<PageRegionCheckpointKey, ForkArenaError> {
+        self.current_mut().seal_checkpoint()
+    }
+
+    pub(crate) fn validates_checkpoint(&self, key: PageRegionCheckpointKey) -> bool {
+        self.region(key)
+            .is_some_and(|region| region.validates_checkpoint(key))
+    }
+
+    pub(crate) fn arena_checkpoint(
+        &self,
+        key: PageRegionCheckpointKey,
+    ) -> Option<CheckpointMark<PageMaterialLane>> {
+        self.region(key)
+            .and_then(|region| region.arena_checkpoint(key))
+    }
+
+    pub(crate) fn checkpoint_identity_root(
+        &self,
+        key: PageRegionCheckpointKey,
+    ) -> Option<Option<u64>> {
+        self.region(key)
+            .and_then(|region| region.checkpoint_identity_root(key))
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        key: PageRegionCheckpointKey,
+    ) -> Result<AcceptedPageRegionHistoryTail, ForkArenaError> {
+        let selected = self
+            .regions
+            .iter()
+            .position(|region| region.validates_checkpoint(key))
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        let later_regions = self.regions.split_off(selected.saturating_add(1));
+        let selected_region = self.current().id();
+        self.current_mut().counters.later_page_regions_detached = self
+            .current()
+            .counters
+            .later_page_regions_detached
+            .saturating_add(later_regions.len() as u64);
+        let selected = self.current_mut().begin_checkpoint_candidate(key)?;
+        Ok(AcceptedPageRegionHistoryTail {
+            selected,
+            later_regions,
+            selected_region,
+        })
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        mut tail: AcceptedPageRegionHistoryTail,
+    ) -> Result<(), ForkArenaError> {
+        let selected = self
+            .regions
+            .iter()
+            .position(|region| region.id() == tail.selected_region)
+            .ok_or(ForkArenaError::InvalidRegion)?;
+        self.regions.truncate(selected.saturating_add(1));
+        self.current_mut()
+            .reject_checkpoint_candidate(tail.selected)?;
+        self.regions.append(&mut tail.later_regions);
+        Ok(())
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(
+        &mut self,
+        tail: AcceptedPageRegionHistoryTail,
+    ) -> Result<(), ForkArenaError> {
+        let selected = self
+            .regions
+            .iter_mut()
+            .find(|region| region.id() == tail.selected_region)
+            .ok_or(ForkArenaError::InvalidRegion)?;
+        selected.accept_checkpoint_candidate(tail.selected)
+    }
+
+    pub(crate) fn restore_checkpoint(
+        &mut self,
+        key: PageRegionCheckpointKey,
+    ) -> Result<(), ForkArenaError> {
+        let selected = self
+            .regions
+            .iter()
+            .position(|region| region.validates_checkpoint(key))
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        self.regions.truncate(selected.saturating_add(1));
+        self.current_mut().restore_checkpoint(key)
+    }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.regions.iter().map(PageRegion::retained_bytes).sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn finish_shipout(
+        &mut self,
+        held_over: PageListId,
+    ) -> Result<PageListId, ForkArenaError> {
+        self.prepare_shipout(held_over)?;
+        Ok(self
+            .commit_prepared_shipout()
+            .expect("just-prepared page succession commits"))
+    }
+
+    pub(crate) fn prepare_shipout(&mut self, held_over: PageListId) -> Result<(), ForkArenaError> {
+        if self.pending_successor.is_some() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        self.pending_successor = Some(self.current_mut().prepare_successor(held_over)?);
+        Ok(())
+    }
+
+    pub(crate) fn cancel_prepared_shipout(&mut self) {
+        self.pending_successor = None;
+    }
+
+    pub(crate) fn commit_prepared_shipout(&mut self) -> Result<PageListId, ForkArenaError> {
+        let prepared = self
+            .pending_successor
+            .take()
+            .ok_or(ForkArenaError::InvalidRegion)?;
+        let old = self
+            .regions
+            .pop()
+            .expect("page history always has a current region");
+        let succession = old.commit_successor(prepared);
+        let PageRegionSuccession {
+            current,
+            retained_prior,
+            held_over,
+        } = succession;
+        if let Some(prior) = retained_prior {
+            self.regions.push(prior);
+        }
+        self.regions.push(current);
+        Ok(held_over)
     }
 }
 
@@ -895,25 +1102,22 @@ impl PageRegion {
     /// the new region; unrelated shipped and historical material is never
     /// visited.  An old region with retained rows moves into history as one
     /// owner, while an uncheckpointed old region drops wholesale.
-    pub fn finish_shipout(
-        mut self,
+    fn prepare_successor(
+        &mut self,
         held_over: PageListId,
-    ) -> Result<PageRegionSuccession, (ForkArenaError, Self)> {
+    ) -> Result<PreparedPageRegionSuccessor, ForkArenaError> {
         if !self.nodes.contains(held_over) {
             self.counters.cross_region_node_reference_rejections = self
                 .counters
                 .cross_region_node_reference_rejections
                 .saturating_add(1);
-            return Err((ForkArenaError::InvalidRegion, self));
+            return Err(ForkArenaError::InvalidRegion);
         }
         let mut current = PageRegion::new();
         if self.nodes.semantic_identity_enabled() {
             current.nodes.enable_semantic_identity();
         }
-        let (held_over, copied) = match current.nodes.copy_closure_from(&self.nodes, held_over) {
-            Ok(copied) => copied,
-            Err(error) => return Err((error, self)),
-        };
+        let (held_over, copied) = current.nodes.copy_closure_from(&self.nodes, held_over)?;
         current.counters = self.counters;
         current.counters.page_regions_started =
             current.counters.page_regions_started.saturating_add(1);
@@ -924,8 +1128,16 @@ impl PageRegion {
         if !held_over.is_empty() {
             current
                 .builder
-                .append_contributions(&mut current.nodes, held_over);
+                .push_current_page_list(&mut current.nodes, held_over);
         }
+        Ok(PreparedPageRegionSuccessor { current, held_over })
+    }
+
+    fn commit_successor(mut self, prepared: PreparedPageRegionSuccessor) -> PageRegionSuccession {
+        let PreparedPageRegionSuccessor {
+            mut current,
+            held_over,
+        } = prepared;
         let retained_prior = if self.checkpoints.is_empty() {
             current.counters.page_regions_dropped =
                 current.counters.page_regions_dropped.saturating_add(1);
@@ -937,11 +1149,22 @@ impl PageRegion {
                 current.counters.page_regions_retained.saturating_add(1);
             Some(self)
         };
-        Ok(PageRegionSuccession {
+        PageRegionSuccession {
             current,
             retained_prior,
             held_over,
-        })
+        }
+    }
+
+    pub fn finish_shipout(
+        mut self,
+        held_over: PageListId,
+    ) -> Result<PageRegionSuccession, (ForkArenaError, Self)> {
+        let prepared = match self.prepare_successor(held_over) {
+            Ok(prepared) => prepared,
+            Err(error) => return Err((error, self)),
+        };
+        Ok(self.commit_successor(prepared))
     }
 }
 

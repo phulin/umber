@@ -25,7 +25,7 @@ use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_arena::{DurableListId, NodeArenaError, PageListId};
 use crate::page::{
-    AcceptedPageRegionTail, PageCheckpointMark, PageRegion, PageRegionCheckpointKey,
+    AcceptedPageRegionHistoryTail, PageCheckpointMark, PageRegionCheckpointKey, PageRegionHistory,
 };
 use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
@@ -203,7 +203,7 @@ struct CheckpointStateCandidate<G> {
     mark: StateCheckpointMark<G>,
     generation: GenerationCursor,
     core: AcceptedStateCoreTail<G>,
-    page: AcceptedPageRegionTail,
+    page: AcceptedPageRegionHistoryTail,
     source_mark: SourceMapMark,
     sources: AcceptedSourceMapTail,
     font_mark: FontStoreMark,
@@ -713,7 +713,7 @@ impl From<NodeArenaError> for UniverseError {
 pub struct Universe<G> {
     pub(crate) interner: Option<InternerLease>,
     pub(crate) core: Option<StateCore<G>>,
-    pub(crate) page_region: PageRegion,
+    pub(crate) page_region: PageRegionHistory,
     checkpoint_candidate: Option<CheckpointStateCandidate<G>>,
     shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
@@ -1175,7 +1175,7 @@ impl<G> Universe<G> {
             .state()
             .install_font_runtime(crate::font::NULL_FONT, prepared)
             .expect("null-font runtime row is first");
-        let page_region = PageRegion::new();
+        let page_region = PageRegionHistory::default();
         let command_generation_owner = core.generation_owner();
         Self {
             interner: Some(interner),
@@ -2797,6 +2797,32 @@ impl<G> Universe<G> {
             engine_usage: &mut self.engine_usage,
             dynamic_memory_scratch: &mut self.dynamic_memory_scratch,
         }))
+    }
+
+    /// Prepares §1012's page-owner transition using the exact insertion
+    /// holdover root already selected by the page-break traversal.
+    ///
+    /// Production installation remains blocked until durable box closures and
+    /// executor `ModeList` values transfer their page coordinates into owners
+    /// independent of the old region. Callers must not retain the old region
+    /// through an alias or replace those transfers with a root scan.
+    pub fn prepare_page_region_after_output(
+        &mut self,
+        held_over: PageListId,
+    ) -> Result<(), UniverseError> {
+        self.page_region
+            .prepare_shipout(held_over)
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))
+    }
+
+    pub fn commit_page_region_after_output(&mut self) -> Result<PageListId, UniverseError> {
+        self.page_region
+            .commit_prepared_shipout()
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))
+    }
+
+    pub fn cancel_page_region_after_output(&mut self) {
+        self.page_region.cancel_prepared_shipout();
     }
 
     /// Selects every capacity owned by the executable process profile.

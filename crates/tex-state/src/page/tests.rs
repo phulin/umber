@@ -1,5 +1,5 @@
 use super::state_hash::PageHashCache;
-use super::{PageBuilderState, PageInsertion, PageRegion};
+use super::{PageBuilderState, PageInsertion, PageRegion, PageRegionHistory};
 use crate::node::{KernKind, Node, NodeTokenList};
 use crate::page::PageMark;
 use crate::page_node_arena::{PageListId, PageMaterialArena};
@@ -813,4 +813,84 @@ fn foreign_held_over_root_is_rejected_without_consuming_page_owner() {
     assert_eq!(error, crate::fork_arena::ForkArenaError::InvalidRegion);
     assert_eq!(old.counters().cross_region_node_reference_rejections, 1);
     assert_eq!(old.counters().page_regions_dropped, 0);
+}
+
+#[test]
+fn page_history_reject_restores_detached_later_regions_wholesale() {
+    let mut history = PageRegionHistory::default();
+    let first_root = publish_nodes(history.nodes_mut(), [kern(1), kern(2)]);
+    let (nodes, builder) = history.parts_mut();
+    builder.push_current_page_list(nodes, first_root);
+    let first = history.seal_checkpoint().expect("first-page checkpoint");
+    let held_over = publish_nodes(history.nodes_mut(), [kern(3), kern(4)]);
+    history.finish_shipout(held_over).expect("page succession");
+    let later_region = history.current().id();
+    let later = history.seal_checkpoint().expect("later-page checkpoint");
+
+    let tail = history
+        .begin_checkpoint_candidate(first)
+        .expect("fork selected old page");
+    assert_eq!(history.current().id(), first.region);
+    let candidate = publish_nodes(history.nodes_mut(), [kern(9)]);
+    history
+        .finish_shipout(candidate)
+        .expect("candidate creates a later page");
+    assert_ne!(history.current().id(), later_region);
+
+    history
+        .reject_checkpoint_candidate(tail)
+        .expect("rejection restores accepted suffix");
+    assert_eq!(history.current().id(), later_region);
+    assert!(history.validates_checkpoint(first));
+    assert!(history.validates_checkpoint(later));
+}
+
+#[test]
+fn page_history_accept_drops_superseded_later_regions() {
+    let mut history = PageRegionHistory::default();
+    let first = history.seal_checkpoint().expect("first-page checkpoint");
+    let held_over = publish_nodes(history.nodes_mut(), [kern(5)]);
+    history.finish_shipout(held_over).expect("page succession");
+    let superseded_root = history.builder().current_page;
+    let superseded = history.seal_checkpoint().expect("later-page checkpoint");
+
+    let tail = history
+        .begin_checkpoint_candidate(first)
+        .expect("fork selected old page");
+    history
+        .accept_checkpoint_candidate(tail)
+        .expect("accept selected-page replacement");
+
+    assert!(history.validates_checkpoint(first));
+    assert!(!history.validates_checkpoint(superseded));
+    assert!(!history.nodes().contains(superseded_root));
+}
+
+#[test]
+fn prepared_successor_does_not_drop_current_owner_before_shipout_commit() {
+    let mut history = PageRegionHistory::default();
+    let old_region = history.current().id();
+    let held_over = publish_nodes(history.nodes_mut(), [kern(31), kern(32)]);
+
+    history
+        .prepare_shipout(held_over)
+        .expect("prepare exact held-over evacuation");
+    assert_eq!(history.current().id(), old_region);
+    assert!(history.nodes().contains(held_over));
+
+    let copied = history
+        .commit_prepared_shipout()
+        .expect("commit successor after output consumption");
+    assert_ne!(history.current().id(), old_region);
+    assert!(!history.nodes().contains(held_over));
+    assert_eq!(
+        history
+            .nodes()
+            .list(copied)
+            .expect("copied holdover belongs to successor")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [kern(31), kern(32)]
+    );
 }
