@@ -110,6 +110,17 @@ pub(crate) fn with_admitted<G, R>(
     setup(&mut context)
 }
 
+/// Publishes a complete immutable page list through the production command
+/// mutation boundary while keeping fixture setup concise.
+pub(crate) fn publish_page_nodes<G>(
+    universe: &mut Universe<G>,
+    nodes: impl IntoIterator<Item = tex_state::node::Node>,
+) -> tex_state::node_arena::PageListId {
+    with_admitted(universe, |context| {
+        context.publish_page_nodes(nodes.into_iter().collect())
+    })
+}
+
 /// Assigns an integer parameter through the admitted state boundary.
 pub(crate) fn assign_int_param<G>(
     universe: &mut Universe<G>,

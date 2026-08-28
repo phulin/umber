@@ -61,20 +61,21 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let empty = PageListId::empty();
 
+        let horizontal_rows = stores.publish_page_nodes(vec![
+            Node::Rule {
+                width: None,
+                height: None,
+                depth: None,
+            },
+            Node::Rule {
+                width: Some(sp(7)),
+                height: Some(sp(3)),
+                depth: Some(sp(1)),
+            },
+        ]);
         let horizontal = set_alignment_nodes(
             AlignmentKind::HAlign,
-            &[
-                Node::Rule {
-                    width: None,
-                    height: None,
-                    depth: None,
-                },
-                Node::Rule {
-                    width: Some(sp(7)),
-                    height: Some(sp(3)),
-                    depth: Some(sp(1)),
-                },
-            ],
+            horizontal_rows,
             &ResolvedWidths {
                 columns: vec![sp(11)],
                 tabskips: vec![
@@ -106,13 +107,14 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
                 && *fixed_depth == sp(1)
         ));
 
+        let vertical_rows = stores.publish_page_nodes(vec![Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        }]);
         let vertical = set_alignment_nodes(
             AlignmentKind::VAlign,
-            &[Node::Rule {
-                width: None,
-                height: None,
-                depth: None,
-            }],
+            vertical_rows,
             &ResolvedWidths {
                 columns: vec![sp(13)],
                 tabskips: vec![
@@ -143,13 +145,14 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         // TeX82 §806's second half: a nonzero §800 `o` wraps the rule in an
         // `hpack(q,natural)` whose `shift_amount` is `o`, because a rule node has
         // no shift field of its own.
+        let shifted_rows = stores.publish_page_nodes(vec![Node::Rule {
+            width: None,
+            height: Some(sp(2)),
+            depth: Some(sp(1)),
+        }]);
         let shifted = set_alignment_nodes(
             AlignmentKind::HAlign,
-            &[Node::Rule {
-                width: None,
-                height: Some(sp(2)),
-                depth: Some(sp(1)),
-            }],
+            shifted_rows,
             &ResolvedWidths {
                 columns: vec![sp(11)],
                 tabskips: vec![
@@ -177,7 +180,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             .page_node_list(wrapper.children)
             .expect("wrapper children belong to the page arena")
             .nodes()
-            .to_vec();
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
         let [
             Node::Rule {
                 width: Some(width), ..
@@ -244,9 +249,10 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             box_node: box_node(10, 2, empty),
         };
 
+        let rows = stores.publish_page_nodes(vec![row]);
         let set = set_alignment_nodes(
             AlignmentKind::HAlign,
-            &[row],
+            rows,
             &resolved,
             &prototype,
             empty,
@@ -267,7 +273,9 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             .page_node_list(row.children)
             .expect("row children belong to the page arena")
             .nodes()
-            .to_vec();
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
         let [
             Node::Glue {
                 kind: GlueKind::TabSkip,
@@ -334,18 +342,19 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             children,
         }));
         let marker = Node::Penalty(731);
+        let rows = stores.publish_page_nodes(vec![
+            marker.clone(),
+            Node::Rule {
+                width: None,
+                height: Some(sp(2)),
+                depth: Some(sp(1)),
+            },
+            row,
+            marker.clone(),
+        ]);
         let set = set_alignment_nodes(
             AlignmentKind::HAlign,
-            &[
-                marker.clone(),
-                Node::Rule {
-                    width: None,
-                    height: Some(sp(2)),
-                    depth: Some(sp(1)),
-                },
-                row,
-                marker.clone(),
-            ],
+            rows,
             &ResolvedWidths {
                 columns: vec![sp(4)],
                 tabskips: vec![tex_state::glue::GlueSpec::ZERO; 2],

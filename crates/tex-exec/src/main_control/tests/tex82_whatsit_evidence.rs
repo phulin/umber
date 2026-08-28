@@ -295,7 +295,7 @@ fn extension_dispatch_executes_every_selector_in_every_tex82_mode() {
                     context.page_contributions().iter().cloned().collect()
                 })
             } else {
-                control.modes.current_list().nodes().to_vec()
+                mode_vec(&control, universe)
             };
             let live_whatsits: Vec<_> = live_nodes
                 .iter()
@@ -537,12 +537,16 @@ fn base_whatsits_are_passive_for_page_and_vertical_break_visits() {
             let mut decorated = whatsits.clone();
             decorated.extend(bare.clone());
             let typeset = crate::typeset_context::TypesetContext::new(context);
-            let bare_break =
-                tex_typeset::vert_break(&typeset, &bare, Scaled::from_raw(0), Scaled::from_raw(0))
-                    .expect("bare vertical break");
+            let bare_break = tex_typeset::vert_break(
+                &typeset,
+                tex_state::node_arena::NodeCursor::owned(&bare),
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+            )
+            .expect("bare vertical break");
             let decorated_break = tex_typeset::vert_break(
                 &typeset,
-                &decorated,
+                tex_state::node_arena::NodeCursor::owned(&decorated),
                 Scaled::from_raw(0),
                 Scaled::from_raw(0),
             )

@@ -41,13 +41,13 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
         let unrelated = insertion(&mut stores, class + 1, 12);
         let last = insertion(&mut stores, class, 13);
         let later = insertion(&mut stores, class, 14);
-        let page_nodes = vec![
+        let page_nodes = stores.publish_page_nodes(vec![
             first,
             unrelated.clone(),
             Node::Penalty(29),
             last,
             later.clone(),
-        ];
+        ]);
 
         let mut record = PageInsertion::new(class, Scaled::from_raw(0));
         record.set_last_ins_index(Some(3));
@@ -82,8 +82,22 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
         )
         .expect("hbox recovery is nonfatal");
 
-        assert_eq!(distributed.page_nodes, [Node::Penalty(29)]);
-        assert_eq!(distributed.heldover, [unrelated, later]);
+        assert!(matches!(
+            stores
+                .page_node_list(distributed.page_nodes)
+                .expect("distributed page list remains live")
+                .nodes()
+                .first(),
+            Some(Node::Penalty(29))
+        ));
+        assert!(
+            stores
+                .page_node_list(distributed.heldover)
+                .expect("held-over list remains live")
+                .nodes()
+                .iter()
+                .eq([&unrelated, &later])
+        );
         assert_eq!(distributed.heldover_count, 2);
         let register = stores
             .copy_box_to_page(class)
@@ -92,19 +106,19 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             .page_node_list(register)
             .expect("register belongs to the page arena")
             .nodes()
-            .to_vec()
-            .into_iter()
-            .next()
+            .first()
+            .cloned()
             .expect("register contains its vbox")
         else {
             panic!("insertion register must become a vbox");
         };
-        assert_eq!(
+        assert!(
             stores
                 .page_node_list(box_node.children)
                 .expect("register children belong to the page arena")
-                .nodes(),
-            [rule(11), rule(13)]
+                .nodes()
+                .iter()
+                .eq([rule(11), rule(13)].iter())
         );
         drop(stores);
         universe
@@ -155,15 +169,15 @@ fn input_free_box255_recovery_uses_explicit_context() {
 fn fire_up_preserves_void_and_vbox_insertion_queues() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        assert_eq!(
+        assert!(
             insertion_box_nodes(
                 &mut stores,
                 &mut tex_state::diagnostic::DiagnosticEffects::new(),
                 2,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
-            .expect("void box is valid"),
-            []
+            .expect("void box is valid")
+            .is_empty()
         );
         assert!(stores.copy_box_to_page(2).is_none());
 
@@ -184,15 +198,20 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
             .assign_page_box(2, Some(register), tex_state::AssignmentScope::Local)
             .expect("box assignment");
 
-        assert_eq!(
-            insertion_box_nodes(
-                &mut stores,
-                &mut tex_state::diagnostic::DiagnosticEffects::new(),
-                2,
-                &crate::diagnostics::ExecutionDiagnosticContext::default(),
-            )
-            .expect("vbox is valid"),
-            [rule(17), Node::Penalty(23)]
+        let insertion_nodes = insertion_box_nodes(
+            &mut stores,
+            &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            2,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("vbox is valid");
+        assert!(
+            stores
+                .page_node_list(insertion_nodes)
+                .expect("insertion children remain live")
+                .nodes()
+                .iter()
+                .eq([rule(17), Node::Penalty(23)].iter())
         );
         let retained = stores
             .copy_box_to_page(2)
@@ -225,13 +244,20 @@ fn earlier_break_preserves_unrelated_pending_penalty() {
             kind: GlueKind::Normal,
             leader: None,
         };
-        let mut after_break = vec![chosen_break.clone()];
+        let after_break = stores.publish_page_nodes(vec![chosen_break.clone()]);
 
-        let penalty =
-            output_penalty_and_rewrite_break(&mut stores, &mut after_break, fire_up(1, 2));
+        let (penalty, after_break) =
+            output_penalty_and_rewrite_break(&mut stores, after_break, fire_up(1, 2));
 
         assert_eq!(penalty, INF_PENALTY);
-        assert_eq!(after_break, [chosen_break]);
+        assert_eq!(
+            stores
+                .page_node_list(after_break)
+                .expect("unchosen break remains live")
+                .nodes()
+                .first(),
+            Some(&chosen_break)
+        );
         assert_eq!(stores.page_contributions().len(), 1);
         assert_eq!(
             stores.page_contributions().front(),
@@ -245,13 +271,20 @@ fn chosen_pending_penalty_is_rewritten() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
-        let mut after_break = Vec::new();
+        let after_break = tex_state::node_arena::PageListId::empty();
 
-        let penalty =
-            output_penalty_and_rewrite_break(&mut stores, &mut after_break, fire_up(1, 1));
+        let (penalty, after_break) =
+            output_penalty_and_rewrite_break(&mut stores, after_break, fire_up(1, 1));
 
         assert_eq!(penalty, EJECT_PENALTY);
-        assert_eq!(after_break, [Node::Penalty(INF_PENALTY)]);
+        assert!(matches!(
+            stores
+                .page_node_list(after_break)
+                .expect("rewritten break remains live")
+                .nodes()
+                .first(),
+            Some(Node::Penalty(INF_PENALTY))
+        ));
         assert!(stores.page_contributions().is_empty());
     });
 }

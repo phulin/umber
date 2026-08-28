@@ -159,12 +159,16 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
                 &diagnostic_context,
             );
 
+            let prototype_nodes = stores
+                .page_node_list(prototype.box_node.children)
+                .expect("prototype children belong to the page arena")
+                .nodes()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
             let dump = crate::node_dump::dump_node_slice(
                 &stores,
-                stores
-                    .page_node_list(prototype.box_node.children)
-                    .expect("prototype children belong to the page arena")
-                    .nodes(),
+                &prototype_nodes,
                 crate::node_dump::DumpConfig {
                     breadth: 10,
                     depth: 10,
@@ -212,9 +216,10 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
             ],
         );
 
+        let rows = stores.publish_page_nodes(vec![row]);
         let finished = finish_alignment(
             &state,
-            &[row],
+            rows,
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),

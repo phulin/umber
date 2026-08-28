@@ -209,7 +209,19 @@ fn page_vec<G>(stores: &Universe<G>, root: tex_state::node_arena::PageListId) ->
         .page_node_list(root)
         .expect("test list belongs to the page arena")
         .nodes()
-        .to_vec()
+        .iter()
+        .cloned()
+        .collect()
+}
+
+fn mode_vec<G>(control: &MainControl<G>, stores: &mut Universe<G>) -> Vec<Node> {
+    admitted!(stores, |context| control
+        .modes
+        .current_list()
+        .nodes(context)
+        .iter()
+        .cloned()
+        .collect())
 }
 
 #[test]
@@ -258,7 +270,7 @@ fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
         let alias = stores
             .page_node_list(alias)
             .expect("alias publishes back into the current page arena");
-        assert!(matches!(alias.nodes(), [Node::HList(_)]));
+        assert!(matches!(alias.nodes().first(), Some(Node::HList(_))));
     });
 }
 
@@ -3104,10 +3116,8 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
             "body expansion saw disc_group; terminal={}",
             terminal_text(stores)
         );
-        let disc = control
-            .modes
-            .current_list()
-            .nodes()
+        let current_nodes = mode_vec(&control, stores);
+        let disc = current_nodes
             .iter()
             .find_map(|node| match node {
                 Node::Disc {
@@ -3161,17 +3171,17 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
 
         run_to_end(&mut control, stores);
 
-        let current_list = control.modes.current_list();
+        let current_nodes = mode_vec(&control, stores);
         let [
             Node::Disc {
                 pre, post, replace, ..
             },
             ..,
-        ] = current_list.nodes().expect_contiguous()
+        ] = current_nodes.as_slice()
         else {
             panic!(
                 "the forbidden nested discretionary is pruned from the retained outer discretionary: {:?}",
-                control.modes.current_list().nodes()
+                current_nodes
             );
         };
         assert!(
@@ -7907,14 +7917,17 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
     };
     use tex_state::scaled::GlueSetRatio;
 
-    let leaf = stores.publish_page_nodes(&[
-        Node::Penalty(19),
-        Node::Rule {
-            width: Some(Scaled::from_raw(101)),
-            height: Some(Scaled::from_raw(102)),
-            depth: Some(Scaled::from_raw(103)),
-        },
-    ]);
+    let leaf = crate::test_harness::publish_page_nodes(
+        stores,
+        [
+            Node::Penalty(19),
+            Node::Rule {
+                width: Some(Scaled::from_raw(101)),
+                height: Some(Scaled::from_raw(102)),
+                depth: Some(Scaled::from_raw(103)),
+            },
+        ],
+    );
     let box_node = |children| {
         BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(201),
@@ -7955,82 +7968,94 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
             .collect::<Vec<_>>())
         .to_vec(),
     );
-    let pre = stores.publish_page_nodes(&[Node::Char {
-        font: NULL_FONT,
-        ch: 'p',
-        origin: tex_state::token::OriginId::UNKNOWN,
-    }]);
-    let post = stores.publish_page_nodes(&[Node::Kern {
-        amount: Scaled::from_raw(401),
-        kind: tex_state::node::KernKind::Explicit,
-    }]);
-    let replace = stores.publish_page_nodes(&[Node::Lig {
-        font: NULL_FONT,
-        ch: 'L',
-        orig: vec!['f', 'i'],
-        origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
-        left_hit: false,
-        right_hit: false,
-    }]);
-
-    let children = stores.publish_page_nodes(&[
-        Node::Rule {
-            width: Some(Scaled::from_raw(1)),
-            height: None,
-            depth: Some(Scaled::from_raw(3)),
-        },
-        Node::Glue {
-            spec: glue,
-            kind: GlueKind::Leaders,
-            leader: Some(LeaderPayload::HList(box_node(leaf))),
-        },
-        Node::Ins {
-            class: 7,
-            size: Scaled::from_raw(501),
-            split_top_skip: glue,
-            split_max_depth: Scaled::from_raw(502),
-            floating_penalty: 503,
-            content: leaf,
-        },
-        Node::Mark { class: 9, tokens },
-        Node::Adjust(AdjustNode {
-            content: post,
-            pre: true,
-        }),
-        Node::MathOn(Scaled::from_raw(601)),
-        Node::MathOff(Scaled::from_raw(602)),
-        Node::Direction(MathBoundary::BeginR),
-        Node::Lig {
+    let pre = crate::test_harness::publish_page_nodes(
+        stores,
+        [Node::Char {
+            font: NULL_FONT,
+            ch: 'p',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        }],
+    );
+    let post = crate::test_harness::publish_page_nodes(
+        stores,
+        [Node::Kern {
+            amount: Scaled::from_raw(401),
+            kind: tex_state::node::KernKind::Explicit,
+        }],
+    );
+    let replace = crate::test_harness::publish_page_nodes(
+        stores,
+        [Node::Lig {
             font: NULL_FONT,
             ch: 'L',
             orig: vec!['f', 'i'],
             origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
             left_hit: false,
             right_hit: false,
-        },
-        Node::Disc {
-            kind: DiscKind::Discretionary,
-            pre,
-            post,
-            replace,
-            physical_replace_count: 1,
-        },
-        Node::HList(box_node(pre)),
-        Node::VList(box_node(post)),
-        Node::Unset(UnsetNode::new(UnsetNodeFields {
-            kind: UnsetKind::HBox,
-            width: Scaled::from_raw(701),
-            height: Scaled::from_raw(702),
-            depth: Scaled::from_raw(703),
-            span_count: 4,
-            stretch: Scaled::from_raw(704),
-            stretch_order: Order::Fill,
-            shrink: Scaled::from_raw(705),
-            shrink_order: Order::Fil,
-            children: replace,
-        })),
-    ]);
-    stores.publish_page_nodes(&[Node::HList(box_node(children))])
+        }],
+    );
+
+    let children = crate::test_harness::publish_page_nodes(
+        stores,
+        [
+            Node::Rule {
+                width: Some(Scaled::from_raw(1)),
+                height: None,
+                depth: Some(Scaled::from_raw(3)),
+            },
+            Node::Glue {
+                spec: glue,
+                kind: GlueKind::Leaders,
+                leader: Some(LeaderPayload::HList(box_node(leaf))),
+            },
+            Node::Ins {
+                class: 7,
+                size: Scaled::from_raw(501),
+                split_top_skip: glue,
+                split_max_depth: Scaled::from_raw(502),
+                floating_penalty: 503,
+                content: leaf,
+            },
+            Node::Mark { class: 9, tokens },
+            Node::Adjust(AdjustNode {
+                content: post,
+                pre: true,
+            }),
+            Node::MathOn(Scaled::from_raw(601)),
+            Node::MathOff(Scaled::from_raw(602)),
+            Node::Direction(MathBoundary::BeginR),
+            Node::Lig {
+                font: NULL_FONT,
+                ch: 'L',
+                orig: vec!['f', 'i'],
+                origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+                left_hit: false,
+                right_hit: false,
+            },
+            Node::Disc {
+                kind: DiscKind::Discretionary,
+                pre,
+                post,
+                replace,
+                physical_replace_count: 1,
+            },
+            Node::HList(box_node(pre)),
+            Node::VList(box_node(post)),
+            Node::Unset(UnsetNode::new(UnsetNodeFields {
+                kind: UnsetKind::HBox,
+                width: Scaled::from_raw(701),
+                height: Scaled::from_raw(702),
+                depth: Scaled::from_raw(703),
+                span_count: 4,
+                stretch: Scaled::from_raw(704),
+                stretch_order: Order::Fill,
+                shrink: Scaled::from_raw(705),
+                shrink_order: Order::Fil,
+                children: replace,
+            })),
+        ],
+    );
+    crate::test_harness::publish_page_nodes(stores, [Node::HList(box_node(children))])
 }
 
 fn recursive_node_signature<G>(
@@ -8529,7 +8554,7 @@ fn outer_vertical_kern_joins_contributions_without_running_page_builder() {
 
         run_to_end(&mut control, stores);
 
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         assert!(matches!(
             admitted!(stores, |context| context.page_contributions().to_vec()).as_slice(),
             [Node::Kern { amount, kind: KernKind::Explicit }]
@@ -8983,7 +9008,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive
             ));
             assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
-            assert!(control.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&control, stores).is_empty());
 
             crate::test_harness::assign_int_param(
                 stores,
@@ -8996,8 +9021,8 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 control.step(stores).expect("graphics command retries"),
                 MainControlStep::Continue
             );
-            let current_list = control.modes.current_list();
-            let [node] = current_list.nodes().expect_contiguous() else {
+            let current_nodes = mode_vec(&control, stores);
+            let [node] = current_nodes.as_slice() else {
                 panic!("{expected}: retry must append exactly one node");
             };
             assert!(
@@ -9007,13 +9032,12 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 ) || matches!((expected, node), ("matrix", Node::Whatsit(Whatsit::PdfSetMatrix { payload })) if payload == b"1 0 0 1")
                     || matches!((expected, node), ("color", Node::Whatsit(Whatsit::PdfColorStack { id: 0, action: tex_state::PdfColorStackAction::Push(payload) })) if payload == b"0 g")
             );
-            drop(current_list);
             assert_eq!(
                 control.step(stores).expect("following command remains"),
                 MainControlStep::Continue
             );
             assert!(matches!(
-                control.modes.current_list().nodes().last(),
+                mode_vec(&control, stores).last(),
                 Some(Node::Whatsit(Whatsit::PdfSave))
             ));
         });
@@ -9032,7 +9056,7 @@ fn pdfsavepos_remains_available_in_dvi_mode() {
             MainControlStep::Continue
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSavePos)]
         ));
     });
@@ -9068,7 +9092,7 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
             register_source(&mut control, source);
             let _ = control.step(stores).expect("recoverable bad stack id");
             assert!(matches!(
-                control.modes.current_list().nodes().expect_contiguous(),
+                mode_vec(&control, stores).as_slice(),
                 [Node::Whatsit(Whatsit::PdfColorStack { id: 0, .. })]
             ));
             let terminal = terminal_text(stores);
@@ -9090,12 +9114,12 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
         let mut control = pdftex_graphics_control(stores);
         register_source(&mut control, br"\pdfcolorstack0\pdfsave");
         let _ = control.step(stores).expect("missing action is recoverable");
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         let _ = control
             .step(stores)
             .expect("following command remains available");
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSave)]
         ));
         let terminal = terminal_text(stores);
@@ -9184,19 +9208,22 @@ fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
 
 fn install_test_hbox<G>(stores: &mut Universe<G>, register: u16, width: Scaled) {
     let children = tex_state::node_arena::PageListId::empty();
-    let list = stores.publish_page_nodes(&[Node::HList(tex_state::node::BoxNode::new(
-        tex_state::node::BoxNodeFields {
-            width,
-            height: Scaled::from_raw(2),
-            depth: Scaled::from_raw(3),
-            shift: Scaled::from_raw(0),
-            box_lr: tex_state::node::BoxLr::Normal,
-            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
-            glue_sign: tex_state::node::Sign::Normal,
-            glue_order: Order::Normal,
-            children,
-        },
-    ))]);
+    let list = crate::test_harness::publish_page_nodes(
+        stores,
+        [Node::HList(tex_state::node::BoxNode::new(
+            tex_state::node::BoxNodeFields {
+                width,
+                height: Scaled::from_raw(2),
+                depth: Scaled::from_raw(3),
+                shift: Scaled::from_raw(0),
+                box_lr: tex_state::node::BoxLr::Normal,
+                glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+                glue_sign: tex_state::node::Sign::Normal,
+                glue_order: Order::Normal,
+                children,
+            },
+        ))],
+    );
     stores.assign_page_box_local(register, list);
 }
 
@@ -9479,7 +9506,7 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
             usize::from(admitted!(stores, |context| context.pdf_raw_object(1)).is_some()),
             1
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         crate::test_harness::assign_int_param(
             stores,
@@ -9494,7 +9521,7 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
                 .expect("PDF retry preserves the integer operand"),
             MainControlStep::Continue
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         assert!(matches!(
             admitted!(stores, |context| context.page_contributions().to_vec()).as_slice(),
             [Node::Whatsit(Whatsit::PdfReferenceObject { object: 1 })]
@@ -9518,7 +9545,7 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         crate::test_harness::assign_int_param(
             stores,
@@ -9532,7 +9559,7 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
             Err(ExecError::PdfReferencedObjectNotFound)
         ));
         assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
     });
 }
 
@@ -9567,7 +9594,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
                 .expect("PDF integer")),
             0
         );
-        assert!(create.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&create, create_stores).is_empty());
 
         crate::test_harness::assign_int_param(
             create_stores,
@@ -9616,7 +9643,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
                 reference_stores.journal_cursor().expect("state cursor"),
                 state_before
             );
-            assert!(reference.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&reference, reference_stores).is_empty());
 
             crate::test_harness::assign_int_param(
                 reference_stores,
@@ -9632,7 +9659,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
                 MainControlStep::Continue
             );
             assert!(matches!(
-                reference.modes.current_list().nodes().expect_contiguous(),
+                mode_vec(&reference, reference_stores).as_slice(),
                 [Node::Whatsit(Whatsit::PdfRefXForm { object: 1, .. })]
             ));
         });
@@ -9750,7 +9777,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
                     missing.step(missing_stores),
                     Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
                 ));
-                assert!(missing.modes.current_list().nodes().is_empty());
+                assert!(mode_vec(&missing, missing_stores).is_empty());
                 crate::test_harness::assign_int_param(
                     missing_stores,
                     IntParam::PDF_OUTPUT,
@@ -9762,7 +9789,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
                     missing.step(missing_stores),
                     Err(ExecError::PdfReferencedObjectNotFound)
                 ));
-                assert!(missing.modes.current_list().nodes().is_empty());
+                assert!(mode_vec(&missing, missing_stores).is_empty());
             });
         });
     });
@@ -9794,7 +9821,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
                 .expect("PDF image integer"))
                 == 0
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         crate::test_harness::assign_int_param(
             stores,
@@ -9867,7 +9894,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
             image.dimensions().depth,
             Scaled::from_raw(3 * Scaled::UNITY)
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
@@ -9903,7 +9930,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
                 .expect("PDF image integer"))
                 == 0
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         crate::test_harness::assign_int_param(
             stores,
@@ -9948,7 +9975,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
             ),
             1
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
     });
 }
 
@@ -9986,7 +10013,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
                 state_before,
                 "mode {mode:?}"
             );
-            assert!(control.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&control, stores).is_empty());
             assert!(terminal_text(stores).is_empty());
         });
     }
@@ -10015,7 +10042,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
                 if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefximage"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         crate::test_harness::assign_int_param(
             stores,
@@ -10031,7 +10058,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
             StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfRefXImage {
                 object: 1,
                 width,
@@ -10061,7 +10088,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
                 missing.advance(missing_stores),
                 Err(ExecError::PdfReferencedObjectNotFound)
             ));
-            assert!(missing.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&missing, missing_stores).is_empty());
         });
     });
 }
@@ -10101,7 +10128,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
         assert!(
             matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         crate::test_harness::assign_int_param(
 
@@ -10122,7 +10149,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
                 .expect("PDF retry preserves the complete command"),
             MainControlStep::Continue
         );
-        assert_eq!(control.modes.current_list().nodes().len(), 1);
+        assert_eq!(mode_vec(&control, stores).len(), 1);
             });
 }
 
@@ -10135,7 +10162,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
             assert!(
                 matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
             );
-            assert!(control.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&control, stores).is_empty());
         });
     }
 }
@@ -10173,7 +10200,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             "pdfTeX error (ext1): \\pdfstartlink cannot be used in vertical mode"
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
 
         control
             .modes
@@ -10196,7 +10223,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             stores.world().error_channel().history(),
             tex_state::print::ErrorHistory::FatalErrorStop
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
     });
 }
 
@@ -10225,7 +10252,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             control.step(stores).expect("start link"),
             MainControlStep::Continue
         );
-        assert_eq!(control.modes.current_list().nodes().len(), 1);
+        assert_eq!(mode_vec(&control, stores).len(), 1);
 
         crate::test_harness::assign_int_param(
             stores,
@@ -10238,7 +10265,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             control.step(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfendlink"))
         ));
-        assert_eq!(control.modes.current_list().nodes().len(), 1);
+        assert_eq!(mode_vec(&control, stores).len(), 1);
 
         crate::test_harness::assign_int_param(
             stores,
@@ -10252,7 +10279,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             MainControlStep::Continue
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [
                 Node::Whatsit(Whatsit::PdfLinkStart { .. }),
                 Node::Whatsit(Whatsit::PdfLinkEnd { .. })
@@ -10281,7 +10308,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
             assert!(
                 matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
             );
-            assert!(control.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&control, stores).is_empty());
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -10293,7 +10320,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
                 control.step(stores).expect("retry preserves every operand"),
                 MainControlStep::Continue
             );
-            assert_eq!(control.modes.current_list().nodes().len(), 1);
+            assert_eq!(mode_vec(&control, stores).len(), 1);
         });
     }
 }
@@ -10341,13 +10368,12 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                 control.step(stores).expect("destination command"),
                 MainControlStep::Continue
             );
-            let current_list = control.modes.current_list();
-            let [Node::Whatsit(Whatsit::PdfDestination(destination))] =
-                current_list.nodes().expect_contiguous()
+            let current_nodes = mode_vec(&control, stores);
+            let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
             else {
                 panic!(
                     "mode {mode:?}: expected one destination, got {:?}",
-                    control.modes.current_list().nodes()
+                    current_nodes
                 );
             };
             assert_eq!(destination.structure, Some(9));
@@ -10390,13 +10416,13 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed destination command"),
             MainControlStep::Continue
         );
-        assert_eq!(control.modes.current_list().nodes().len(), 1);
+        assert_eq!(mode_vec(&control, stores).len(), 1);
 
         crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
             let mut dvi = pdftex_destination_control(dvi_stores);
@@ -10408,7 +10434,7 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
                 dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfdest"))
             ));
-            assert!(dvi.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&dvi, dvi_stores).is_empty());
             crate::test_harness::assign_int_param(
                 dvi_stores,
                 IntParam::PDF_OUTPUT,
@@ -10421,9 +10447,8 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
                     .expect("failed destination retries with every operand intact"),
                 MainControlStep::Continue
             );
-            let current_list = dvi.modes.current_list();
-            let [Node::Whatsit(Whatsit::PdfDestination(destination))] =
-                current_list.nodes().expect_contiguous()
+            let current_nodes = mode_vec(&dvi, dvi_stores);
+            let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
             else {
                 panic!("one retried destination expected");
             };
@@ -10473,7 +10498,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfDestination(destination))]
                 if matches!(
                     destination.kind,
@@ -10484,7 +10509,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("destination state restores");
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         for label in [
             "retried open group",
             "retried destination",
@@ -10497,7 +10522,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         }
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfDestination(destination))]
                 if matches!(
                     destination.kind,
@@ -10539,7 +10564,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
                 MainControlStep::Continue
             );
             assert!(
-                control.modes.current_list().nodes().is_empty(),
+                mode_vec(&control, stores).is_empty(),
                 "mode {mode:?}: outlines are immediate document state"
             );
         });
@@ -10696,11 +10721,10 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
                     MainControlStep::Continue
                 );
             }
-            let current_list = control.modes.current_list();
-            let nodes = current_list.nodes().expect_contiguous();
+            let nodes = mode_vec(&control, stores);
             assert!(
                 matches!(
-                    nodes,
+                    nodes.as_slice(),
                     [
                         Node::Whatsit(Whatsit::PdfSnapRefPoint),
                         Node::Whatsit(Whatsit::PdfSnapY { .. }),
@@ -10740,14 +10764,14 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed snapping command"),
             MainControlStep::Continue
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSnapRefPoint)]
         ));
 
@@ -10758,7 +10782,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
                 dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfsnapy"))
             ));
-            assert!(dvi.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&dvi, dvi_stores).is_empty());
             crate::test_harness::assign_int_param(
                 dvi_stores,
                 IntParam::PDF_OUTPUT,
@@ -10772,7 +10796,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
                 MainControlStep::Continue
             );
             assert!(matches!(
-                dvi.modes.current_list().nodes().expect_contiguous(),
+                mode_vec(&dvi, dvi_stores).as_slice(),
                 [Node::Whatsit(Whatsit::PdfSnapY { .. })]
             ));
         });
@@ -10797,7 +10821,7 @@ fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
                 "pdfTeX error (ext1): negative snap glue"
             ))
         ));
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
     });
 }
 
@@ -10847,7 +10871,7 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
             MainControlStep::Continue
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [
                 Node::Whatsit(Whatsit::PdfSnapRefPoint),
                 Node::Whatsit(Whatsit::PdfSnapY { .. }),
@@ -11035,10 +11059,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
             );
             run_to_end(&mut control, stores);
 
-            let controls: Vec<_> = control
-                .modes
-                .current_list()
-                .nodes()
+            let controls: Vec<_> = mode_vec(&control, stores)
                 .iter()
                 .filter_map(|node| match node {
                     Node::Whatsit(Whatsit::PdfAccessibility(control)) => Some(*control),
@@ -11069,7 +11090,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
         register_source(&mut grouped, br"{\pdffakespace}");
         run_to_end(&mut grouped, grouped_stores);
         assert!(matches!(
-            grouped.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&grouped, grouped_stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfAccessibility(
                 tex_state::node::PdfAccessibilityControl::FakeSpace
             ))]
@@ -11100,14 +11121,14 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfAccessibility(
                 tex_state::node::PdfAccessibilityControl::InterwordSpaceOn
             ))]
@@ -11120,7 +11141,7 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
                 dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdffakespace"))
             ));
-            assert!(dvi_control.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&dvi_control, dvi_stores).is_empty());
         });
     });
 }
@@ -11161,10 +11182,7 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             MainControlStep::Continue
         );
 
-        let controls: Vec<_> = control
-            .modes
-            .current_list()
-            .nodes()
+        let controls: Vec<_> = mode_vec(&control, stores)
             .iter()
             .filter_map(|node| match node {
                 Node::Whatsit(Whatsit::PdfAccessibility(control)) => Some(*control),
@@ -11208,10 +11226,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
             register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
             run_to_end(&mut control, stores);
 
-            let toggles = control
-                .modes
-                .current_list()
-                .nodes()
+            let toggles = mode_vec(&control, stores)
                 .iter()
                 .filter_map(|node| match node {
                     Node::Whatsit(Whatsit::PdfRunningLink(enabled)) => Some(*enabled),
@@ -11238,7 +11253,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
         register_source(&mut grouped, br"{\pdfrunninglinkoff\pdfrunninglinkon}");
         run_to_end(&mut grouped, grouped_stores);
         assert!(matches!(
-            grouped.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&grouped, grouped_stores).as_slice(),
             [
                 Node::Whatsit(Whatsit::PdfRunningLink(false)),
                 Node::Whatsit(Whatsit::PdfRunningLink(true))
@@ -11270,14 +11285,14 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(mode_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
         assert!(matches!(
-            control.modes.current_list().nodes().expect_contiguous(),
+            mode_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfRunningLink(false))]
         ));
 
@@ -11288,7 +11303,7 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
                 dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
             ));
-            assert!(dvi_control.modes.current_list().nodes().is_empty());
+            assert!(mode_vec(&dvi_control, dvi_stores).is_empty());
         });
     });
 }
@@ -11329,10 +11344,7 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
             MainControlStep::Continue
         );
 
-        let toggles = control
-            .modes
-            .current_list()
-            .nodes()
+        let toggles = mode_vec(&control, stores)
             .iter()
             .filter_map(|node| match node {
                 Node::Whatsit(Whatsit::PdfRunningLink(enabled)) => Some(*enabled),
@@ -16045,10 +16057,13 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
             MathField::SubBox(empty_list),
             MathField::SubMlist(empty_list),
         ] {
-            let list = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
-                NoadKind::Normal(NoadClass::Ord),
-                nucleus,
-            ))]);
+            let list = crate::test_harness::publish_page_nodes(
+                stores,
+                [Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    nucleus,
+                ))],
+            );
             assert_eq!(
                 collapse_singleton_math_group(
                     &stores.command_context().expect("live generation"),
@@ -16058,26 +16073,35 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
             );
         }
 
-        let scripted = stores.publish_page_nodes(&[Node::MathNoad(MathNoad {
-            kind: NoadKind::Normal(NoadClass::Ord),
-            nucleus: MathField::MathChar(ch),
-            subscript: MathField::MathChar(ch),
-            superscript: MathField::Empty,
-        })]);
-        let non_ord = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
-            NoadKind::Normal(NoadClass::Open),
-            MathField::MathChar(ch),
-        ))]);
-        let multiple = stores.publish_page_nodes(&[
-            Node::MathNoad(MathNoad::new(
-                NoadKind::Normal(NoadClass::Ord),
+        let scripted = crate::test_harness::publish_page_nodes(
+            stores,
+            [Node::MathNoad(MathNoad {
+                kind: NoadKind::Normal(NoadClass::Ord),
+                nucleus: MathField::MathChar(ch),
+                subscript: MathField::MathChar(ch),
+                superscript: MathField::Empty,
+            })],
+        );
+        let non_ord = crate::test_harness::publish_page_nodes(
+            stores,
+            [Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Open),
                 MathField::MathChar(ch),
-            )),
-            Node::MathNoad(MathNoad::new(
-                NoadKind::Normal(NoadClass::Ord),
-                MathField::MathChar(ch),
-            )),
-        ]);
+            ))],
+        );
+        let multiple = crate::test_harness::publish_page_nodes(
+            stores,
+            [
+                Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::MathChar(ch),
+                )),
+                Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::MathChar(ch),
+                )),
+            ],
+        );
         for list in [scripted, non_ord, multiple] {
             assert_eq!(
                 collapse_singleton_math_group(

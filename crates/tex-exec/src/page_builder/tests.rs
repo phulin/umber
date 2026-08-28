@@ -169,7 +169,15 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
 
         build_page(&mut stores).expect("page-top snapping classification");
 
-        assert_eq!(stores.take_page_discards(), [snap]);
+        let discards = stores.take_page_discards();
+        assert_eq!(
+            stores
+                .page_node_list(discards)
+                .expect("saved page discards remain live")
+                .nodes()
+                .first(),
+            Some(&snap)
+        );
         let current_page = stores.current_page_nodes().cloned().collect::<Vec<_>>();
         assert_eq!(
             current_page,

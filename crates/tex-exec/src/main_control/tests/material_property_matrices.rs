@@ -12,7 +12,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Token, TokenWord};
 use tex_state::{CommandContext, GenerationBrand, ResolvedMeaning, Universe};
 
-use super::{MainControl, MainControlStep};
+use super::{MainControl, MainControlStep, mode_vec};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Shape {
@@ -295,7 +295,9 @@ fn page_vec_context<G>(
         .page_node_list(root)
         .expect("test list belongs to the page arena")
         .nodes()
-        .to_vec()
+        .iter()
+        .cloned()
+        .collect()
 }
 
 fn shapes_context<G>(context: &CommandContext<'_, G>, nodes: &[Node]) -> Vec<Shape> {
@@ -1694,10 +1696,8 @@ fn structured_material_legal_mode_and_source_order_matrix() {
                         br"\noindent$\insert5{\kern5pt}\mark{math}\penalty53\global\count0=1",
                         1,
                         |math_control, math_stores| {
-                            let math = shapes(
-                                math_stores,
-                                &math_control.modes.current_list().nodes().to_vec(),
-                            );
+                            let nodes = mode_vec(math_control, math_stores);
+                            let math = shapes(math_stores, &nodes);
                             assert!(
                                 matches!(math.as_slice(), [Shape::Insert { class: 5, content, .. }, Shape::Mark(0, mark), Shape::Penalty(53)]
             if content == &[Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)] && mark == "math"),
@@ -1893,10 +1893,8 @@ fn delete_last_matches_only_the_live_tail_in_h_v_and_math_modes() {
             with_run_until_count(
         br"\noindent$\unpenalty\kern9pt\unkern\kern10pt\unskip\mskip11mu\unskip\penalty12\unpenalty\global\count0=1",
         1, |math_control, math_stores| {
-    let math = shapes(
-        math_stores,
-        &math_control.modes.current_list().nodes().to_vec(),
-    );
+    let nodes = mode_vec(math_control, math_stores);
+    let math = shapes(math_stores, &nodes);
     assert!(
         math.as_slice() == [Shape::Kern(10 * Scaled::UNITY, KernKind::Explicit)],
         "{math:?}"
@@ -2011,10 +2009,8 @@ fn italic_correction_uses_font_tail_math_zero_and_forbidden_recovery() {
                 br"\noindent$\kern1pt\/\global\count0=1",
                 1,
                 |math_control, math_stores| {
-                    let math = shapes(
-                        math_stores,
-                        &math_control.modes.current_list().nodes().to_vec(),
-                    );
+                    let nodes = mode_vec(math_control, math_stores);
+                    let math = shapes(math_stores, &nodes);
                     assert!(
                         math.as_slice()
                             == [
@@ -2074,10 +2070,8 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
                 br"\noindent$\vadjust{\kern8pt}\global\count0=1",
                 1,
                 |math_control, math_stores| {
-                    let math = shapes(
-                        math_stores,
-                        &math_control.modes.current_list().nodes().to_vec(),
-                    );
+                    let nodes = mode_vec(math_control, math_stores);
+                    let math = shapes(math_stores, &nodes);
                     assert!(
                         math.as_slice()
                             == [Shape::Adjust(vec![Shape::Kern(

@@ -23,6 +23,23 @@ fn kern(value: i32) -> Node {
     }
 }
 
+fn with_context<R>(
+    test: impl for<'id> FnOnce(&mut tex_state::CommandContext<'_, tex_state::GenerationBrand<'id>>) -> R,
+) -> R {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        crate::test_harness::with_admitted(universe, test)
+    })
+}
+
+fn list_nodes<G>(list: &super::ModeList, context: &tex_state::CommandContext<'_, G>) -> Vec<Node> {
+    list.nodes(context).iter().cloned().collect()
+}
+
+fn nest_nodes<G>(nest: &ModeNest, context: &tex_state::CommandContext<'_, G>) -> Vec<Node> {
+    let list = nest.current_list();
+    list_nodes(&list, context)
+}
+
 #[cfg(feature = "profiling")]
 fn semantic_apply_allocations() -> tex_state::measurement::HotCoreAllocationMeasurement {
     tex_state::measurement::hot_core_thread_allocation_measurement(
@@ -197,65 +214,61 @@ fn independent_mode_summary_materialization_resets_usage_high_water() {
 
 #[test]
 fn mode_summary_restores_an_independent_semantic_builder() {
-    let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal).expect("test mode push");
-    nest.current_list_mutation().push(kern(1));
-    let summary = nest.summary();
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.push(Mode::Horizontal).expect("test mode push");
+        nest.current_list_mutation().push(context, kern(1));
+        let summary = nest.summary();
 
-    let snapshot_nodes = summary
-        .levels
-        .last()
-        .expect("horizontal level")
-        .list
-        .sequence
-        .semantic()
-        .to_vec();
+        let snapshot_nodes = list_nodes(
+            &summary.levels.last().expect("horizontal level").list,
+            context,
+        );
 
-    let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
-    restored.current_list_mutation().push(kern(2));
+        let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
+        restored.current_list_mutation().push(context, kern(2));
 
-    let restored_list = restored.current_list();
-    let restored_nodes = restored_list.nodes();
-    assert_eq!(snapshot_nodes.len(), 1);
-    assert_eq!(
-        summary
-            .levels
-            .last()
-            .expect("horizontal level")
-            .list
-            .nodes()
+        assert_eq!(snapshot_nodes.len(), 1);
+        assert_eq!(
+            list_nodes(
+                &summary.levels.last().expect("horizontal level").list,
+                context,
+            )
             .len(),
-        1
-    );
-    assert_eq!(restored_nodes.len(), 2);
+            1
+        );
+        assert_eq!(nest_nodes(&restored, context).len(), 2);
+    });
 }
 
 #[test]
 fn preexisting_node_write_barriers_apply_scoped_mutations() {
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation().push(kern(11));
-    nest.current_list_mutation()
-        .with_node_mut(0, |node| {
-            let Node::Kern { amount, .. } = node else {
-                panic!("fixture node must be a kern");
-            };
-            *amount = Scaled::from_raw(17);
-        })
-        .expect("fixture node");
-    nest.current_list_mutation()
-        .with_last_node_mut(|node| {
-            let Node::Kern { amount, .. } = node else {
-                panic!("fixture tail must be a kern");
-            };
-            *amount = Scaled::from_raw(23);
-        })
-        .expect("fixture tail");
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(context, kern(11));
+        nest.current_list_mutation()
+            .with_node_mut(context, 0, |node| {
+                let Node::Kern { amount, .. } = node else {
+                    panic!("fixture node must be a kern");
+                };
+                *amount = Scaled::from_raw(17);
+            })
+            .expect("fixture node");
+        nest.current_list_mutation()
+            .with_last_node_mut(context, |node| {
+                let Node::Kern { amount, .. } = node else {
+                    panic!("fixture tail must be a kern");
+                };
+                *amount = Scaled::from_raw(23);
+            })
+            .expect("fixture tail");
 
-    let current_list = nest.current_list();
-    let Node::Kern { amount, .. } = &current_list.nodes()[0] else {
-        panic!("fixture node must remain a kern");
-    };
-    assert_eq!(*amount, Scaled::from_raw(23));
+        let nodes = nest_nodes(&nest, context);
+        let Node::Kern { amount, .. } = &nodes[0] else {
+            panic!("fixture node must remain a kern");
+        };
+        assert_eq!(*amount, Scaled::from_raw(23));
+    });
 }
 
 #[test]
@@ -272,17 +285,18 @@ fn pushing_a_mode_nest_preserves_the_prior_summary() {
 
 #[test]
 fn mode_projection_is_canonical_and_content_sensitive() {
-    let mut first = ModeNest::new();
-    first.push(Mode::Horizontal).expect("test mode push");
-    first.current_list_mutation().push(kern(11));
-    let mut equal = ModeNest::new();
-    equal.push(Mode::Horizontal).expect("test mode push");
-    equal.current_list_mutation().push(kern(11));
-    let mut changed = ModeNest::new();
-    changed.push(Mode::Horizontal).expect("test mode push");
-    changed.current_list_mutation().push(kern(12));
-
     crate::test_harness::with_nonstop_universe(|universe| {
+        let mut first = ModeNest::new();
+        first.push(Mode::Horizontal).expect("test mode push");
+        let mut equal = ModeNest::new();
+        equal.push(Mode::Horizontal).expect("test mode push");
+        let mut changed = ModeNest::new();
+        changed.push(Mode::Horizontal).expect("test mode push");
+        crate::test_harness::with_admitted(universe, |context| {
+            first.current_list_mutation().push(context, kern(11));
+            equal.current_list_mutation().push(context, kern(11));
+            changed.current_list_mutation().push(context, kern(12));
+        });
         let first_hash = first.summary().semantic_fingerprint(universe);
         assert_eq!(equal.summary().semantic_fingerprint(universe), first_hash);
         assert_ne!(changed.summary().semantic_fingerprint(universe), first_hash);
@@ -335,75 +349,79 @@ fn semantic_nest_six_modes_and_fields_initialize_canonically() {
 
 #[test]
 fn semantic_nest_push_and_pop_preserve_fields_and_start_empty_list() {
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation().set_prev_graf(7);
-    nest.current_list_mutation().push(kern(11));
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().set_prev_graf(7);
+        nest.current_list_mutation().push(context, kern(11));
 
-    for mode in [Mode::Horizontal, Mode::Math, Mode::InternalVertical] {
-        nest.push(mode).expect("test mode push");
-        assert_eq!(nest.current_mode(), mode);
+        for mode in [Mode::Horizontal, Mode::Math, Mode::InternalVertical] {
+            nest.push(mode).expect("test mode push");
+            assert_eq!(nest.current_mode(), mode);
+            assert!(nest.current_list().is_empty());
+        }
+        nest.current_list_mutation()
+            .set_prev_depth(Scaled::from_raw(23));
+        nest.current_list_mutation().push(context, kern(29));
+
+        let inner = nest.pop().expect("nested mode pops");
+        assert_eq!(inner.mode(), Mode::InternalVertical);
+        assert_eq!(inner.list().prev_depth(), Some(Scaled::from_raw(23)));
+        assert_eq!(list_nodes(inner.list(), context), [kern(29)]);
+        assert_eq!(nest.current_mode(), Mode::Math);
         assert!(nest.current_list().is_empty());
-    }
-    nest.current_list_mutation()
-        .set_prev_depth(Scaled::from_raw(23));
-    nest.current_list_mutation().push(kern(29));
 
-    let inner = nest.pop().expect("nested mode pops");
-    assert_eq!(inner.mode(), Mode::InternalVertical);
-    assert_eq!(inner.list().prev_depth(), Some(Scaled::from_raw(23)));
-    assert_eq!(inner.list().nodes(), &[kern(29)]);
-    assert_eq!(nest.current_mode(), Mode::Math);
-    assert!(nest.current_list().is_empty());
-
-    nest.pop().expect("math mode pops");
-    nest.pop().expect("horizontal mode pops");
-    assert_eq!(nest.current_mode(), Mode::Vertical);
-    assert_eq!(nest.current_list().prev_graf(), 7);
-    assert_eq!(nest.current_list().nodes(), &[kern(11)]);
-    assert!(nest.pop().is_err());
+        nest.pop().expect("math mode pops");
+        nest.pop().expect("horizontal mode pops");
+        assert_eq!(nest.current_mode(), Mode::Vertical);
+        assert_eq!(nest.current_list().prev_graf(), 7);
+        assert_eq!(nest_nodes(&nest, context), [kern(11)]);
+        assert!(nest.pop().is_err());
+    });
 }
 
 #[test]
 fn semantic_nest_capacity_and_bottom_pop_recovery_match_tex82() {
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation().set_prev_graf(7);
-    nest.current_list_mutation().push(kern(11));
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().set_prev_graf(7);
+        nest.current_list_mutation().push(context, kern(11));
 
-    for _ in 0..ModeNest::TEX82_NEST_SIZE {
-        nest.push(Mode::Horizontal)
-            .expect("TeX82 permits nest_size saved semantic levels");
-    }
-    nest.current_list_mutation().push(kern(29));
-    let full = nest.summary();
+        for _ in 0..ModeNest::TEX82_NEST_SIZE {
+            nest.push(Mode::Horizontal)
+                .expect("TeX82 permits nest_size saved semantic levels");
+        }
+        nest.current_list_mutation().push(context, kern(29));
+        let full = nest.summary();
 
-    let error = nest.push(Mode::Math).expect_err("nest_size overflow");
-    assert!(matches!(
-        &error,
-        ExecError::Fatal(FatalError::CapacityExceeded {
-            resource: "semantic nest size",
-            amount: 40
-        })
-    ));
-    assert_eq!(
-        error.as_fatal(),
-        Some(FatalError::CapacityExceeded {
-            resource: "semantic nest size",
-            amount: 40,
-        })
-    );
-    assert_eq!(nest.summary(), full);
+        let error = nest.push(Mode::Math).expect_err("nest_size overflow");
+        assert!(matches!(
+            &error,
+            ExecError::Fatal(FatalError::CapacityExceeded {
+                resource: "semantic nest size",
+                amount: 40
+            })
+        ));
+        assert_eq!(
+            error.as_fatal(),
+            Some(FatalError::CapacityExceeded {
+                resource: "semantic nest size",
+                amount: 40,
+            })
+        );
+        assert_eq!(nest.summary(), full);
 
-    while nest.depth() > 1 {
-        nest.pop().expect("saved semantic level pops");
-    }
-    assert_eq!(nest.current_mode(), Mode::Vertical);
-    assert_eq!(nest.current_list().prev_graf(), 7);
-    assert_eq!(nest.current_list().nodes(), &[kern(11)]);
-    assert!(matches!(nest.pop(), Err(ExecError::CannotPopBaseMode)));
+        while nest.depth() > 1 {
+            nest.pop().expect("saved semantic level pops");
+        }
+        assert_eq!(nest.current_mode(), Mode::Vertical);
+        assert_eq!(nest.current_list().prev_graf(), 7);
+        assert_eq!(nest_nodes(&nest, context), [kern(11)]);
+        assert!(matches!(nest.pop(), Err(ExecError::CannotPopBaseMode)));
 
-    nest.push(Mode::Math)
-        .expect("bottom-pop rejection leaves the nest reusable");
-    assert_eq!(nest.current_mode(), Mode::Math);
+        nest.push(Mode::Math)
+            .expect("bottom-pop rejection leaves the nest reusable");
+        assert_eq!(nest.current_mode(), Mode::Math);
+    });
 }
 
 #[test]
@@ -476,104 +494,117 @@ fn align_state() -> AlignState {
 
 #[test]
 fn journal_append_watermarks_restore_scalars_without_append_inverses() {
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation().push(kern(1));
-    let before = nest.summary();
-    nest.reset_journal_for_test();
-    let cursor = nest.begin_journal();
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(context, kern(1));
+        let before = nest.summary();
+        nest.reset_journal_for_test();
+        let cursor = nest.begin_journal();
 
-    {
-        let mut list = nest.current_list_mutation();
-        list.push(kern(2));
-        list.append([kern(3), kern(4)]);
-        list.push_reconstituted(None, kern(5), Some(kern(6)), Some(kern(7)));
-        list.set_space_factor(777);
-        list.set_no_boundary(true);
-        list.set_hyphen_language(9);
-        list.set_prev_depth(Scaled::from_raw(11));
-        list.set_prev_graf(12);
-        list.begin_pending_hchars(
-            FontId::testing_new(2),
-            'x',
-            tex_state::token::OriginId::UNKNOWN,
+        {
+            let mut list = nest.current_list_mutation();
+            list.push(context, kern(2));
+            list.append(context, [kern(3), kern(4)]);
+            list.push_reconstituted(context, None, kern(5), Some(kern(6)), Some(kern(7)));
+            list.set_space_factor(777);
+            list.set_no_boundary(true);
+            list.set_hyphen_language(9);
+            list.set_prev_depth(Scaled::from_raw(11));
+            list.set_prev_graf(12);
+            list.begin_pending_hchars(
+                FontId::testing_new(2),
+                'x',
+                tex_state::token::OriginId::UNKNOWN,
+            );
+            list.set_align_state(align_state());
+            list.set_incomplete_fraction(IncompleteFraction {
+                numerator: tex_state::node_arena::PageListId::empty(),
+                thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
+                left_delimiter: Some(5),
+                right_delimiter: Some(6),
+            });
+            list.set_display_interrupt(DisplayInterrupt {
+                active_directions: Vec::new(),
+                prototype: None,
+            });
+            list.set_display_eq_no(DisplayEqNo {
+                side: EqNoSide::Right,
+                display: tex_state::node_arena::PageListId::empty(),
+            });
+
+            // Later writes in the same frame must preserve the first inverse for
+            // each field rather than append another tagged record.
+            list.set_space_factor(778);
+            list.set_no_boundary(false);
+            list.set_hyphen_language(10);
+            list.set_prev_depth(Scaled::from_raw(13));
+            list.set_prev_graf(14);
+            list.set_align_state(align_state());
+            list.set_incomplete_fraction(IncompleteFraction {
+                numerator: tex_state::node_arena::PageListId::empty(),
+                thickness: FractionThickness::Default,
+                left_delimiter: None,
+                right_delimiter: None,
+            });
+            list.set_display_interrupt(DisplayInterrupt {
+                active_directions: vec![tex_state::node::Direction::BeginR],
+                prototype: None,
+            });
+            list.set_display_eq_no(DisplayEqNo {
+                side: EqNoSide::Left,
+                display: tex_state::node_arena::PageListId::empty(),
+            });
+        }
+
+        assert_eq!(
+            nest.journal_inverse_len_for_test(),
+            11,
+            "the detached PageListId replacement records one root inverse, and every later node write deduplicates against it"
         );
-        list.set_align_state(align_state());
-        list.set_incomplete_fraction(IncompleteFraction {
-            numerator: tex_state::node_arena::PageListId::empty(),
-            thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
-            left_delimiter: Some(5),
-            right_delimiter: Some(6),
-        });
-        list.set_display_interrupt(DisplayInterrupt {
-            active_directions: Vec::new(),
-            prototype: None,
-        });
-        list.set_display_eq_no(DisplayEqNo {
-            side: EqNoSide::Right,
-            display: tex_state::node_arena::PageListId::empty(),
-        });
-
-        // Later writes in the same frame must preserve the first inverse for
-        // each field rather than append another tagged record.
-        list.set_space_factor(778);
-        list.set_no_boundary(false);
-        list.set_hyphen_language(10);
-        list.set_prev_depth(Scaled::from_raw(13));
-        list.set_prev_graf(14);
-        list.set_align_state(align_state());
-        list.set_incomplete_fraction(IncompleteFraction {
-            numerator: tex_state::node_arena::PageListId::empty(),
-            thickness: FractionThickness::Default,
-            left_delimiter: None,
-            right_delimiter: None,
-        });
-        list.set_display_interrupt(DisplayInterrupt {
-            active_directions: vec![tex_state::node::Direction::BeginR],
-            prototype: None,
-        });
-        list.set_display_eq_no(DisplayEqNo {
-            side: EqNoSide::Left,
-            display: tex_state::node_arena::PageListId::empty(),
-        });
-    }
-
-    assert_eq!(nest.journal_inverse_len_for_test(), 10);
-    nest.rollback_journal(cursor).expect("rollback");
-    assert_eq!(nest.summary(), before);
+        nest.rollback_journal(cursor).expect("rollback");
+        assert_eq!(nest.summary(), before);
+    });
 }
 
 #[test]
 fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation()
-        .append([kern(10), kern(20), kern(30)]);
-    nest.current_list_mutation().set_align_state(align_state());
-    let before = nest.summary();
-    nest.reset_journal_for_test();
-    let cursor = nest.begin_journal();
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation()
+            .append(context, [kern(10), kern(20), kern(30)]);
+        nest.current_list_mutation().set_align_state(align_state());
+        let before = nest.summary();
+        nest.reset_journal_for_test();
+        let cursor = nest.begin_journal();
 
-    nest.current_list_mutation()
-        .with_node_mut(0, |node| *node = kern(11));
-    nest.current_list_mutation()
-        .with_last_node_mut(|node| *node = kern(31));
-    nest.current_list_mutation()
-        .with_reconstitution_target(|nodes| {
-            nodes.remove(1);
-            nodes.insert(0, kern(99));
+        nest.current_list_mutation()
+            .with_node_mut(context, 0, |node| *node = kern(11));
+        nest.current_list_mutation()
+            .with_last_node_mut(context, |node| *node = kern(31));
+        nest.current_list_mutation()
+            .with_reconstitution_target(context, |nodes| {
+                nodes.remove(1);
+                nodes.insert(0, kern(99));
+            });
+        nest.current_list_mutation().push_reconstituted(
+            context,
+            Some((1, kern(88))),
+            kern(77),
+            None,
+            None,
+        );
+        nest.current_list_mutation().with_align_state_mut(|state| {
+            state.start_cell(4, 3);
+            state.finish_row();
         });
-    nest.current_list_mutation()
-        .push_reconstituted(Some((1, kern(88))), kern(77), None, None);
-    nest.current_list_mutation().with_align_state_mut(|state| {
-        state.start_cell(4, 3);
-        state.finish_row();
-    });
-    let _ = nest.current_list_mutation().take_align_state();
-    let _ = nest.current_list_mutation().pop_last_node();
-    let _ = nest.current_list_mutation().take_nodes();
+        let _ = nest.current_list_mutation().take_align_state();
+        let _ = nest.current_list_mutation().pop_last_node(context);
+        let _ = nest.current_list_mutation().take_nodes();
 
-    assert_eq!(nest.journal_inverse_len_for_test(), 2);
-    nest.rollback_journal(cursor).expect("rollback");
-    assert_eq!(nest.summary(), before);
+        assert_eq!(nest.journal_inverse_len_for_test(), 2);
+        nest.rollback_journal(cursor).expect("rollback");
+        assert_eq!(nest.summary(), before);
+    });
 }
 
 #[test]
@@ -620,102 +651,120 @@ fn alignment_template_coordinates_survive_destructive_journal_rollback() {
 
 #[test]
 fn journal_math_and_display_ownership_transfers_restore() {
-    let mut nest = ModeNest::new();
-    {
-        let mut list = nest.current_list_mutation();
-        list.set_incomplete_fraction(IncompleteFraction {
-            numerator: tex_state::node_arena::PageListId::empty(),
-            thickness: FractionThickness::Default,
-            left_delimiter: None,
-            right_delimiter: Some(9),
-        });
-        list.set_display_interrupt(DisplayInterrupt {
-            active_directions: vec![tex_state::node::Direction::BeginR],
-            prototype: None,
-        });
-        list.set_display_eq_no(DisplayEqNo {
-            side: EqNoSide::Left,
-            display: tex_state::node_arena::PageListId::empty(),
-        });
-    }
-    let before = nest.summary();
-    nest.reset_journal_for_test();
-    let cursor = nest.begin_journal();
-    {
-        let mut list = nest.current_list_mutation();
-        assert!(list.take_incomplete_fraction().is_some());
-        assert!(list.take_display_interrupt().is_some());
-        assert!(list.take_display_eq_no().is_some());
-    }
-    nest.rollback_journal(cursor).expect("rollback");
-    assert_eq!(nest.summary(), before);
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        {
+            let mut list = nest.current_list_mutation();
+            list.set_incomplete_fraction(IncompleteFraction {
+                numerator: tex_state::node_arena::PageListId::empty(),
+                thickness: FractionThickness::Default,
+                left_delimiter: None,
+                right_delimiter: Some(9),
+            });
+            list.set_display_interrupt(DisplayInterrupt {
+                active_directions: vec![tex_state::node::Direction::BeginR],
+                prototype: None,
+            });
+            list.set_display_eq_no(DisplayEqNo {
+                side: EqNoSide::Left,
+                display: tex_state::node_arena::PageListId::empty(),
+            });
+        }
+        let before = nest.summary();
+        nest.reset_journal_for_test();
+        let cursor = nest.begin_journal();
+        {
+            let mut list = nest.current_list_mutation();
+            assert!(list.take_incomplete_fraction().is_some());
+            assert!(list.take_display_interrupt().is_some());
+            assert!(list.take_display_eq_no().is_some());
+        }
+        nest.rollback_journal(cursor).expect("rollback");
+        assert_eq!(nest.summary(), before);
 
-    let mut display = ModeNest::new();
-    display
-        .current_list_mutation()
-        .set_display_alignment(vec![kern(7), kern(8)], Some(Scaled::from_raw(9)));
-    let before = display.summary();
-    display.reset_journal_for_test();
-    let cursor = display.begin_journal();
-    assert_eq!(
+        let mut display = ModeNest::new();
+        let display_nodes = context.publish_page_nodes(vec![kern(7), kern(8)]);
         display
+            .current_list_mutation()
+            .set_display_alignment(display_nodes, Some(Scaled::from_raw(9)));
+        let before = display.summary();
+        display.reset_journal_for_test();
+        let cursor = display.begin_journal();
+        let restored_nodes = display
             .current_list_mutation()
             .take_display_alignment()
             .expect("display alignment")
-            .0,
-        vec![kern(7), kern(8)]
-    );
-    display.rollback_journal(cursor).expect("display rollback");
-    assert_eq!(display.summary(), before);
+            .0;
+        assert_eq!(
+            context
+                .page_node_list(restored_nodes)
+                .expect("display alignment remains live")
+                .nodes()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [kern(7), kern(8)]
+        );
+        display.rollback_journal(cursor).expect("display rollback");
+        assert_eq!(display.summary(), before);
+    });
 }
 
 #[test]
 fn journal_nested_commit_and_rollback_compose() {
-    let mut outer_rollback = ModeNest::new();
-    outer_rollback.reset_journal_for_test();
-    let outer = outer_rollback.begin_journal();
-    outer_rollback.current_list_mutation().push(kern(1));
-    let inner = outer_rollback.begin_journal();
-    outer_rollback.current_list_mutation().push(kern(2));
-    outer_rollback.commit_journal(inner).expect("inner commit");
-    outer_rollback
-        .rollback_journal(outer)
-        .expect("outer rollback");
-    assert!(outer_rollback.current_list().is_empty());
+    with_context(|context| {
+        let mut outer_rollback = ModeNest::new();
+        outer_rollback.reset_journal_for_test();
+        let outer = outer_rollback.begin_journal();
+        outer_rollback
+            .current_list_mutation()
+            .push(context, kern(1));
+        let inner = outer_rollback.begin_journal();
+        outer_rollback
+            .current_list_mutation()
+            .push(context, kern(2));
+        outer_rollback.commit_journal(inner).expect("inner commit");
+        outer_rollback
+            .rollback_journal(outer)
+            .expect("outer rollback");
+        assert!(outer_rollback.current_list().is_empty());
 
-    let mut outer_commit = ModeNest::new();
-    outer_commit.reset_journal_for_test();
-    let outer = outer_commit.begin_journal();
-    outer_commit.current_list_mutation().push(kern(1));
-    let inner = outer_commit.begin_journal();
-    outer_commit.current_list_mutation().push(kern(2));
-    outer_commit
-        .rollback_journal(inner)
-        .expect("inner rollback");
-    outer_commit.commit_journal(outer).expect("outer commit");
-    assert_eq!(outer_commit.current_list().nodes(), &[kern(1)]);
+        let mut outer_commit = ModeNest::new();
+        outer_commit.reset_journal_for_test();
+        let outer = outer_commit.begin_journal();
+        outer_commit.current_list_mutation().push(context, kern(1));
+        let inner = outer_commit.begin_journal();
+        outer_commit.current_list_mutation().push(context, kern(2));
+        outer_commit
+            .rollback_journal(inner)
+            .expect("inner rollback");
+        outer_commit.commit_journal(outer).expect("outer commit");
+        assert_eq!(nest_nodes(&outer_commit, context), [kern(1)]);
+    });
 }
 
 #[test]
 fn journal_level_identity_handles_push_pop_replacement_and_nested_edits() {
-    let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal).expect("test mode push");
-    nest.current_list_mutation().push(kern(1));
-    let before = nest.summary();
-    nest.reset_journal_for_test();
-    let outer = nest.begin_journal();
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.push(Mode::Horizontal).expect("test mode push");
+        nest.current_list_mutation().push(context, kern(1));
+        let before = nest.summary();
+        nest.reset_journal_for_test();
+        let outer = nest.begin_journal();
 
-    let removed = nest.pop().expect("pop horizontal");
-    nest.push(Mode::Math).expect("test mode push");
-    nest.current_list_mutation().push(kern(2));
-    let inner = nest.begin_journal();
-    nest.push(Mode::InternalVertical).expect("test mode push");
-    nest.current_list_mutation().push(kern(3));
-    nest.rollback_journal(inner).expect("inner rollback");
-    assert_eq!(nest.current_mode(), Mode::Math);
-    drop(removed);
-    nest.rollback_journal(outer).expect("outer rollback");
-    assert_eq!(nest.summary(), before);
+        let removed = nest.pop().expect("pop horizontal");
+        nest.push(Mode::Math).expect("test mode push");
+        nest.current_list_mutation().push(context, kern(2));
+        let inner = nest.begin_journal();
+        nest.push(Mode::InternalVertical).expect("test mode push");
+        nest.current_list_mutation().push(context, kern(3));
+        nest.rollback_journal(inner).expect("inner rollback");
+        assert_eq!(nest.current_mode(), Mode::Math);
+        drop(removed);
+        nest.rollback_journal(outer).expect("outer rollback");
+        assert_eq!(nest.summary(), before);
+    });
 }
 
 #[test]
@@ -756,169 +805,192 @@ fn journal_rejects_a_non_innermost_cursor_without_state_drift() {
 
 #[test]
 fn journal_fatal_commit_model_and_operational_invisibility_hold() {
-    let mut nest = ModeNest::new();
-    nest.reset_journal_for_test();
-    let cursor = nest.begin_journal();
-    let semantic_before = nest.clone();
-    let debug_before = format!("{nest:?}");
-    nest.current_list_mutation().push(kern(42));
-    nest.commit_journal(cursor)
-        .expect("fatal path commits partial semantic state");
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.reset_journal_for_test();
+        let cursor = nest.begin_journal();
+        let semantic_before = nest.clone();
+        let debug_before = format!("{nest:?}");
+        nest.current_list_mutation().push(context, kern(42));
+        nest.commit_journal(cursor)
+            .expect("fatal path commits partial semantic state");
 
-    assert_ne!(nest, semantic_before);
-    assert_eq!(format!("{semantic_before:?}"), debug_before);
-    assert_eq!(nest.current_list().nodes(), &[kern(42)]);
-    assert_eq!(nest.journal_inverse_len_for_test(), 0);
+        assert_ne!(nest, semantic_before);
+        assert_eq!(format!("{semantic_before:?}"), debug_before);
+        assert_eq!(nest_nodes(&nest, context), [kern(42)]);
+        assert_eq!(nest.journal_inverse_len_for_test(), 0);
+    });
 }
 
 #[test]
 fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
-    let mut source = ModeNest::new();
-    source.current_list_mutation().push(kern(-1));
-    let checkpoint = source.checkpoint();
-    for index in 0..4_096 {
-        source.current_list_mutation().push(kern(index));
-    }
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        source.current_list_mutation().push(context, kern(-1));
+        let checkpoint = source.checkpoint();
+        for index in 0..4_096 {
+            source.current_list_mutation().push(context, kern(index));
+        }
 
-    {
-        let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
-        assert_eq!(candidate.current_list().nodes(), &[kern(-1)]);
-        candidate
-            .current_list_mutation()
-            .with_node_mut(0, |node| *node = kern(-2));
-        assert_eq!(candidate.current_list().nodes(), &[kern(-2)]);
-        candidate.current_list_mutation().push(kern(9_001));
-        assert_eq!(candidate.current_list().nodes().len(), 2);
-        assert_eq!(
-            candidate.current_list_mutation().pop_last_node(),
-            Some(kern(9_001))
-        );
-        assert_eq!(
-            candidate.current_list_mutation().pop_last_node(),
-            Some(kern(-2))
-        );
-        assert!(candidate.current_list().nodes().is_empty());
-    }
+        {
+            let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
+            assert_eq!(nest_nodes(&candidate, context), [kern(-1)]);
+            candidate
+                .current_list_mutation()
+                .with_node_mut(context, 0, |node| *node = kern(-2));
+            assert_eq!(nest_nodes(&candidate, context), [kern(-2)]);
+            candidate.current_list_mutation().push(context, kern(9_001));
+            assert_eq!(nest_nodes(&candidate, context).len(), 2);
+            assert_eq!(
+                candidate.current_list_mutation().pop_last_node(context),
+                Some(kern(9_001))
+            );
+            assert_eq!(
+                candidate.current_list_mutation().pop_last_node(context),
+                Some(kern(-2))
+            );
+            assert!(candidate.current_list().is_empty());
+        }
 
-    assert_eq!(source.current_list().nodes().len(), 4_097);
-    assert_eq!(source.current_list().nodes().first(), Some(&kern(-1)));
-    assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
+        let source_nodes = nest_nodes(&source, context);
+        assert_eq!(source_nodes.len(), 4_097);
+        assert_eq!(source_nodes.first(), Some(&kern(-1)));
+        assert_eq!(source_nodes.last(), Some(&kern(4_095)));
+    });
 }
 
 #[test]
 fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
-    let mut source = ModeNest::new();
-    source.current_list_mutation().push(kern(1));
-    let checkpoint = source.checkpoint();
-    source.push(Mode::Horizontal).expect("accepted push");
-    source.current_list_mutation().push(kern(2));
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        source.current_list_mutation().push(context, kern(1));
+        let checkpoint = source.checkpoint();
+        source.push(Mode::Horizontal).expect("accepted push");
+        source.current_list_mutation().push(context, kern(2));
 
-    let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
-    assert_eq!(candidate.depth(), 1);
-    assert_eq!(candidate.current_list().nodes(), &[kern(1)]);
-    candidate.push(Mode::Vertical).expect("candidate push");
-    candidate.current_list_mutation().push(kern(3));
-    candidate.accept_checkpoint_candidate();
-    assert_eq!(candidate.depth(), 2);
-    assert_eq!(candidate.current_list().nodes(), &[kern(3)]);
+        let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
+        assert_eq!(candidate.depth(), 1);
+        assert_eq!(nest_nodes(&candidate, context), [kern(1)]);
+        candidate.push(Mode::Vertical).expect("candidate push");
+        candidate.current_list_mutation().push(context, kern(3));
+        candidate.accept_checkpoint_candidate();
+        assert_eq!(candidate.depth(), 2);
+        assert_eq!(nest_nodes(&candidate, context), [kern(3)]);
 
-    {
-        let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling fork");
-        assert_eq!(sibling.depth(), 1);
-        assert_eq!(sibling.current_list().nodes(), &[kern(1)]);
-    }
-    assert_eq!(candidate.depth(), 2);
-    assert_eq!(candidate.current_list().nodes(), &[kern(3)]);
+        {
+            let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling fork");
+            assert_eq!(sibling.depth(), 1);
+            assert_eq!(nest_nodes(&sibling, context), [kern(1)]);
+        }
+        assert_eq!(candidate.depth(), 2);
+        assert_eq!(nest_nodes(&candidate, context), [kern(3)]);
+    });
 }
 
 #[test]
 fn accepted_candidate_keeps_its_published_mark_seedable() {
-    let mut source = ModeNest::new();
-    let root = source.checkpoint();
-    let mut candidate = ModeNest::fork_checkpoint(&root).expect("rooted fork");
-    candidate.current_list_mutation().push(kern(1));
-    let published = candidate.checkpoint();
-    candidate.current_list_mutation().push(kern(2));
-    candidate.accept_checkpoint_candidate();
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        let root = source.checkpoint();
+        let mut candidate = ModeNest::fork_checkpoint(&root).expect("rooted fork");
+        candidate.current_list_mutation().push(context, kern(1));
+        let published = candidate.checkpoint();
+        candidate.current_list_mutation().push(context, kern(2));
+        candidate.accept_checkpoint_candidate();
 
-    let restarted = ModeNest::fork_checkpoint(&published).expect("published fork");
-    assert_eq!(restarted.current_list().nodes(), &[kern(1)]);
+        let restarted = ModeNest::fork_checkpoint(&published).expect("published fork");
+        assert_eq!(nest_nodes(&restarted, context), [kern(1)]);
+    });
 }
 
 #[test]
 fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
-    let mut source = ModeNest::new();
-    source.current_list_mutation().push(kern(-1));
-    let checkpoint = source.checkpoint();
-    for index in 0..4_096 {
-        source.current_list_mutation().push(kern(index));
-    }
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        source.current_list_mutation().push(context, kern(-1));
+        let checkpoint = source.checkpoint();
+        for index in 0..4_096 {
+            source.current_list_mutation().push(context, kern(index));
+        }
 
-    {
-        let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
-        candidate.current_list_mutation().push(kern(-2));
-        assert_eq!(
-            candidate.current_list_mutation().take_nodes(),
-            [kern(-1), kern(-2)]
-        );
-        assert!(candidate.current_list().nodes().is_empty());
-    }
+        {
+            let mut candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted fork");
+            candidate.current_list_mutation().push(context, kern(-2));
+            let taken = candidate.current_list_mutation().take_nodes();
+            assert_eq!(
+                context
+                    .page_node_list(taken)
+                    .expect("taken candidate list remains live")
+                    .nodes()
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                [kern(-1), kern(-2)]
+            );
+            assert!(candidate.current_list().is_empty());
+        }
 
-    assert_eq!(source.current_list().nodes().len(), 4_097);
-    assert_eq!(source.current_list().nodes().last(), Some(&kern(4_095)));
+        let source_nodes = nest_nodes(&source, context);
+        assert_eq!(source_nodes.len(), 4_097);
+        assert_eq!(source_nodes.last(), Some(&kern(4_095)));
+    });
 }
 
 #[test]
 fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
-    let mut nest = ModeNest::new();
-    nest.enable_reachable_state_identity();
-    let initial = nest
-        .checkpoint()
-        .reachable_state_identity_root()
-        .expect("mode root is available");
-    nest.current_list_mutation().set_prev_graf(7);
-    let scalar = nest
-        .checkpoint()
-        .reachable_state_identity_root()
-        .expect("mode root is available");
-    assert_ne!(scalar, initial);
-    nest.current_list_mutation().push(kern(11));
-    let rooted = nest.checkpoint();
-    let expected = rooted
-        .reachable_state_identity_root()
-        .expect("mode root is available");
-    for index in 0..4_096 {
-        nest.current_list_mutation().push(kern(index));
-    }
-    assert_ne!(
-        nest.checkpoint().reachable_state_identity_root(),
-        Some(expected)
-    );
-    nest.restore_checkpoint(&rooted).expect("root restores");
-    assert_eq!(
-        nest.checkpoint().reachable_state_identity_root(),
-        Some(expected)
-    );
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.enable_reachable_state_identity();
+        let initial = nest
+            .checkpoint()
+            .reachable_state_identity_root()
+            .expect("mode root is available");
+        nest.current_list_mutation().set_prev_graf(7);
+        let scalar = nest
+            .checkpoint()
+            .reachable_state_identity_root()
+            .expect("mode root is available");
+        assert_ne!(scalar, initial);
+        nest.current_list_mutation().push(context, kern(11));
+        let rooted = nest.checkpoint();
+        let expected = rooted
+            .reachable_state_identity_root()
+            .expect("mode root is available");
+        for index in 0..4_096 {
+            nest.current_list_mutation().push(context, kern(index));
+        }
+        assert_ne!(
+            nest.checkpoint().reachable_state_identity_root(),
+            Some(expected)
+        );
+        nest.restore_checkpoint(&rooted).expect("root restores");
+        assert_eq!(
+            nest.checkpoint().reachable_state_identity_root(),
+            Some(expected)
+        );
+    });
 }
 
 #[test]
 fn rooted_mode_candidate_identity_rejects_without_layout_dependence() {
-    let mut source = ModeNest::new();
-    source.enable_reachable_state_identity();
-    source.current_list_mutation().push(kern(1));
-    let root = source.checkpoint();
-    let expected = root.reachable_state_identity_root();
-    for index in 0..4_096 {
-        source.current_list_mutation().push(kern(index));
-    }
-    {
-        let mut candidate = ModeNest::fork_checkpoint(&root).expect("candidate fork");
-        assert_eq!(candidate.reachable_state_identity_root(), expected);
-        candidate.current_list_mutation().push(kern(9_001));
-        assert_ne!(candidate.reachable_state_identity_root(), expected);
-    }
-    assert_ne!(
-        source.checkpoint().reachable_state_identity_root(),
-        expected
-    );
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        source.enable_reachable_state_identity();
+        source.current_list_mutation().push(context, kern(1));
+        let root = source.checkpoint();
+        let expected = root.reachable_state_identity_root();
+        for index in 0..4_096 {
+            source.current_list_mutation().push(context, kern(index));
+        }
+        {
+            let mut candidate = ModeNest::fork_checkpoint(&root).expect("candidate fork");
+            assert_eq!(candidate.reachable_state_identity_root(), expected);
+            candidate.current_list_mutation().push(context, kern(9_001));
+            assert_ne!(candidate.reachable_state_identity_root(), expected);
+        }
+        assert_ne!(
+            source.checkpoint().reachable_state_identity_root(),
+            expected
+        );
+    });
 }

@@ -340,22 +340,27 @@ impl ModeList {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_reconstitution_target<R>(
+    pub(crate) fn with_reconstitution_target<G, R>(
         &mut self,
+        stores: &mut CommandContext<'_, G>,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
     ) -> R {
-        self.sequence.mutate_semantic(mutate)
+        let mut nodes = self.nodes(stores).iter().cloned().collect::<Vec<_>>();
+        let result = mutate(&mut nodes);
+        self.nodes = stores.publish_page_nodes(nodes);
+        result
     }
 
     #[cfg(test)]
-    pub(crate) fn push_reconstituted(
+    pub(crate) fn push_reconstituted<G>(
         &mut self,
+        stores: &mut CommandContext<'_, G>,
         insertion: Option<(usize, Node)>,
         first: Node,
         second: Option<Node>,
         third: Option<Node>,
     ) {
-        self.sequence.mutate_semantic(|target| {
+        self.with_reconstitution_target(stores, |target| {
             target.reserve(
                 usize::from(insertion.is_some())
                     + 1
@@ -756,17 +761,19 @@ impl ModeListMutation<'_> {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_reconstitution_target<R>(
+    pub(crate) fn with_reconstitution_target<G, R>(
         &mut self,
+        stores: &mut CommandContext<'_, G>,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
     ) -> R {
         self.record_nodes();
-        self.list.with_reconstitution_target(mutate)
+        self.list.with_reconstitution_target(stores, mutate)
     }
 
     #[cfg(test)]
-    pub(crate) fn push_reconstituted(
+    pub(crate) fn push_reconstituted<G>(
         &mut self,
+        stores: &mut CommandContext<'_, G>,
         insertion: Option<(usize, Node)>,
         first: Node,
         second: Option<Node>,
@@ -776,7 +783,7 @@ impl ModeListMutation<'_> {
             self.record_nodes();
         }
         self.list
-            .push_reconstituted(insertion, first, second, third);
+            .push_reconstituted(stores, insertion, first, second, third);
     }
 
     pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {

@@ -93,7 +93,8 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
             row(&mut stores, &[cell(empty, 20, 3)]),
         ];
 
-        let requirements = collect_width_requirements(AlignmentKind::HAlign, &rows, &stores)
+        let rows = tex_state::node_arena::NodeCursor::owned(&rows);
+        let requirements = collect_width_requirements(AlignmentKind::HAlign, rows, &stores)
             .expect("valid unset rows produce width requirements");
         assert_eq!(
             requirements
@@ -105,7 +106,7 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
         );
 
         let resolved =
-            resolve_widths(&alignment, &rows, &stores).expect("ordered span requirements resolve");
+            resolve_widths(&alignment, rows, &stores).expect("ordered span requirements resolve");
         assert_eq!(resolved.columns, vec![sp(2), sp(7), sp(9)]);
     });
 }
@@ -129,7 +130,12 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
             row(&mut stores, &[cell(empty, 10, 2)]),
         ];
 
-        let resolved = resolve_widths(&state, &rows, &stores).expect("span recurrence resolves");
+        let resolved = resolve_widths(
+            &state,
+            tex_state::node_arena::NodeCursor::owned(&rows),
+            &stores,
+        )
+        .expect("span recurrence resolves");
 
         assert_eq!(resolved.columns, vec![sp(4), sp(5)]);
         assert_eq!(
@@ -153,8 +159,12 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
         let empty = PageListId::empty();
         let rows = [row(&mut stores, &[cell(empty, 4, 1)])];
 
-        let resolved =
-            resolve_widths(&state, &rows, &stores).expect("null columns resolve to zero");
+        let resolved = resolve_widths(
+            &state,
+            tex_state::node_arena::NodeCursor::owned(&rows),
+            &stores,
+        )
+        .expect("null columns resolve to zero");
 
         assert_eq!(resolved.columns, vec![sp(4), Scaled::from_raw(0)]);
         assert_eq!(resolved.tabskips[1], middle);
@@ -186,8 +196,12 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
             row(&mut stores, &[cell(empty, 25, 3)]),
         ];
 
-        let resolved =
-            resolve_widths(&alignment, &rows, &stores).expect("§802 recurrence resolves");
+        let resolved = resolve_widths(
+            &alignment,
+            tex_state::node_arena::NodeCursor::owned(&rows),
+            &stores,
+        )
+        .expect("§802 recurrence resolves");
         assert_eq!(resolved.columns, vec![sp(10), sp(6), sp(5)]);
 
         let empty_state = state(
@@ -199,8 +213,12 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
             ],
         );
         let empty_rows = [row(&mut stores, &[cell(empty, -3, 2)])];
-        let resolved = resolve_widths(&empty_state, &empty_rows, &stores)
-            .expect("negative residual and null leading column resolve");
+        let resolved = resolve_widths(
+            &empty_state,
+            tex_state::node_arena::NodeCursor::owned(&empty_rows),
+            &stores,
+        )
+        .expect("negative residual and null leading column resolve");
         assert_eq!(resolved.columns, vec![Scaled::from_raw(0), sp(-3)]);
         assert_eq!(resolved.tabskips[1], tex_state::glue::GlueSpec::ZERO);
     });

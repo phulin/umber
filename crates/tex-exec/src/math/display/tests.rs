@@ -52,11 +52,15 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
             (100, 8, 2)
         );
         assert_eq!(reused.shift.raw(), 5);
+        let nodes = stores
+            .page_node_list(reused.children)
+            .expect("display children belong to the page arena")
+            .nodes()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
         assert!(matches!(
-            stores
-                .page_node_list(reused.children)
-                .expect("display children belong to the page arena")
-                .nodes(),
+            nodes.as_slice(),
             [
                 Node::Direction(Direction::BeginM),
                 Node::Kern { amount: left, kind: KernKind::Font },

@@ -57,9 +57,9 @@ fn pending_text<G>(stores: &Universe<G>) -> String {
 #[test]
 fn completed_page_release_drops_exact_nested_region() {
     tex_state::with_universe(budget(), |stores| {
-        let older = stores.publish_page_nodes(&[Node::Penalty(1)]);
+        let older = crate::test_harness::publish_page_nodes(stores, [Node::Penalty(1)]);
         let region = stores.begin_page_node_region();
-        let child = stores.publish_page_nodes(&[Node::Penalty(2)]);
+        let child = crate::test_harness::publish_page_nodes(stores, [Node::Penalty(2)]);
         let page = Node::VList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -71,8 +71,8 @@ fn completed_page_release_drops_exact_nested_region() {
             glue_order: Order::Normal,
             children: child,
         }));
-        let root = stores.publish_page_nodes(&[page]);
-        let speculative = stores.publish_page_nodes(&[Node::Penalty(3)]);
+        let root = crate::test_harness::publish_page_nodes(stores, [page]);
+        let speculative = crate::test_harness::publish_page_nodes(stores, [Node::Penalty(3)]);
 
         release_published_page(stores, Some(region));
 

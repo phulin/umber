@@ -48,7 +48,9 @@ fn page_vec<G>(context: &tex_state::CommandContext<'_, G>, root: PageListId) -> 
         .page_node_list(root)
         .expect("test list belongs to the page arena")
         .nodes()
-        .to_vec()
+        .iter()
+        .cloned()
+        .collect()
 }
 
 /// TeX82 §§696--697 print and test the four packed delimiter quarters.

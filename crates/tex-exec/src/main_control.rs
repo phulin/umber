@@ -13590,16 +13590,18 @@ mod discretionary_hyphen_tests {
                 control.step(stores).expect("explicit hyphen"),
                 MainControlStep::Continue
             );
-            let current_list = control.modes.current_list();
-            let Some(Node::Disc {
-                kind: DiscKind::ExplicitHyphen,
-                pre,
-                ..
-            }) = current_list.nodes().last()
-            else {
-                panic!("canonical replay appended an explicit discretionary hyphen");
-            };
-            assert!(pre.is_empty());
+            crate::test_harness::with_admitted(stores, |context| {
+                let current_list = control.modes.current_list();
+                let Some(Node::Disc {
+                    kind: DiscKind::ExplicitHyphen,
+                    pre,
+                    ..
+                }) = current_list.nodes(context).last()
+                else {
+                    panic!("canonical replay appended an explicit discretionary hyphen");
+                };
+                assert!(pre.is_empty());
+            });
         });
     }
 
@@ -13633,11 +13635,13 @@ mod discretionary_hyphen_tests {
                 control.step(stores).expect("explicit hyphen"),
                 MainControlStep::Continue
             );
-            let current_list = control.modes.current_list();
-            let Some(Node::Disc { pre, .. }) = current_list.nodes().last() else {
-                panic!("canonical replay appended an explicit discretionary hyphen");
-            };
-            assert!(pre.is_empty());
+            crate::test_harness::with_admitted(stores, |context| {
+                let current_list = control.modes.current_list();
+                let Some(Node::Disc { pre, .. }) = current_list.nodes(context).last() else {
+                    panic!("canonical replay appended an explicit discretionary hyphen");
+                };
+                assert!(pre.is_empty());
+            });
         });
     }
 

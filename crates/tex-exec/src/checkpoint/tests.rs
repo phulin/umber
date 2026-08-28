@@ -3,26 +3,140 @@ use tex_command::{
     CommandRestoreError, CommandState,
 };
 use tex_state::env::AssignmentScope;
+use tex_state::interner::InternerBudget;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TokenWord};
+use tex_state::{ReachabilityStore, World};
 
 use super::{
     CheckpointOwnerFamily, CheckpointRestoreError, EngineBoundary, EngineCheckpoint,
     ReachableStateRoots,
 };
 use crate::{
-    AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, ExecutionBudgetCounters, Mode,
-    ModeNest,
+    AdmittedEngineGeneration, AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec,
+    ExecutionBudgetCounters, Mode, ModeNest, RestoredCheckpointRuntime, RetainedCheckpointKey,
+    RetainedEngineAttachmentKey, RetainedEngineGeneration, RetainedEngineOperation,
 };
+
+fn retained_store() -> ReachabilityStore {
+    ReachabilityStore::new(
+        InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
+            .expect("checkpoint test interner budget"),
+    )
+}
+
+struct CaptureModeCheckpoint {
+    checkpoint_penalty: Option<i32>,
+    accepted_tail_len: usize,
+}
+
+impl RetainedEngineOperation for CaptureModeCheckpoint {
+    type Output = RetainedCheckpointKey;
+
+    fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        let mut control = crate::MainControl::tex82_initex(admitted.universe());
+        if let Some(penalty) = self.checkpoint_penalty {
+            let mut context = admitted
+                .universe()
+                .command_context()
+                .expect("checkpoint context");
+            control
+                .mode_nest_mut_for_test()
+                .push_current_node(&mut context, tex_state::node::Node::Penalty(penalty));
+        }
+        let checkpoint = control
+            .capture_checkpoint(
+                EngineBoundary::OuterParagraphEnd,
+                admitted.universe(),
+                ExecutionBudgetCounters::default(),
+            )
+            .expect("checkpoint captures");
+        for index in 0..self.accepted_tail_len {
+            let penalty = i32::try_from(index).expect("test penalty fits");
+            let mut context = admitted
+                .universe()
+                .command_context()
+                .expect("accepted context");
+            control
+                .mode_nest_mut_for_test()
+                .push_current_node(&mut context, tex_state::node::Node::Penalty(penalty));
+            context.append_page_contribution(tex_state::node::Node::Penalty(penalty));
+        }
+        admitted.retain_checkpoint(checkpoint)
+    }
+}
+
+struct InspectAndRejectModeFork {
+    runtime: RetainedEngineAttachmentKey,
+    append_penalty: Option<i32>,
+}
+
+impl RetainedEngineOperation for InspectAndRejectModeFork {
+    type Output = Vec<i32>;
+
+    fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        let RestoredCheckpointRuntime {
+            mut control,
+            mut ledger,
+        } = admitted
+            .take_attachment::<RestoredCheckpointRuntime<G>>(self.runtime)
+            .expect("fork owns restored runtime");
+        if let Some(penalty) = self.append_penalty {
+            let mut context = admitted
+                .universe()
+                .command_context()
+                .expect("candidate context");
+            control
+                .mode_nest_mut_for_test()
+                .push_current_node(&mut context, tex_state::node::Node::Penalty(penalty));
+        }
+        let penalties = {
+            let context = admitted
+                .universe()
+                .command_context()
+                .expect("candidate inspection context");
+            control
+                .mode_nest_for_test()
+                .current_list()
+                .nodes(&context)
+                .iter()
+                .filter_map(|node| match node {
+                    tex_state::node::Node::Penalty(penalty) => Some(*penalty),
+                    _ => None,
+                })
+                .collect()
+        };
+        control.reject_checkpoint_candidate();
+        ledger.reject_checkpoint_candidate();
+        penalties
+    }
+}
+
+struct PageContributionCount;
+
+impl RetainedEngineOperation for PageContributionCount {
+    type Output = usize;
+
+    fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        admitted
+            .universe()
+            .command_context()
+            .expect("page inspection context")
+            .page_contributions()
+            .len()
+    }
+}
 
 #[test]
 fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut command = CommandState::default();
         let mut modes = ModeNest::new();
-        modes
-            .current_list_mutation()
-            .push(tex_state::node::Node::Penalty(17));
+        crate::test_harness::with_admitted(universe, |context| {
+            modes
+                .current_list_mutation()
+                .push(context, tex_state::node::Node::Penalty(17));
+        });
         crate::mode::reset_semantic_fingerprint_calls_for_test();
 
         let ordinary = EngineCheckpoint::capture_checkpoint(
@@ -423,100 +537,92 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
 
 #[test]
 fn rejected_mode_fork_returns_the_coarse_timeline_without_branch_nodes() {
-    crate::test_harness::with_nonstop_universe(|universe| {
-        let mut command = CommandState::default();
-        let mut modes = ModeNest::new();
-        modes.push_current_node(tex_state::node::Node::Penalty(11));
-        let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::OuterParagraphEnd,
-            &mut command,
-            &mut modes,
-            universe,
-            ExecutionBudgetCounters::default(),
-        )
-        .expect("checkpoint captures");
-        drop(command);
+    let store = retained_store();
+    let mut accepted =
+        RetainedEngineGeneration::new(&store, World::default()).expect("accepted generation");
+    let checkpoint = accepted
+        .with_admitted(CaptureModeCheckpoint {
+            checkpoint_penalty: Some(11),
+            accepted_tail_len: 0,
+        })
+        .expect("checkpoint admission");
 
-        let (mut rejected, mut branch, _ledger) = checkpoint
-            .fork_state(universe)
-            .expect("mode timeline forks");
-        branch
-            .mode_nest_mut_for_test()
-            .push_current_node(tex_state::node::Node::Penalty(22));
-        universe.reject_checkpoint_candidate(&mut rejected);
-        drop(branch);
-        drop(rejected);
+    let (mut rejected, runtime, _) = accepted
+        .fork_checkpoint(&checkpoint)
+        .expect("mode timeline forks");
+    assert_eq!(
+        rejected
+            .with_admitted(InspectAndRejectModeFork {
+                runtime,
+                append_penalty: Some(22),
+            })
+            .expect("candidate admission"),
+        [11, 22],
+        "the candidate sees the checkpoint root plus its detached branch"
+    );
+    drop(rejected);
 
-        let (mut retried, retry, _ledger) = checkpoint
-            .fork_state(universe)
-            .expect("returned mode timeline forks again");
-        assert_eq!(
-            retry.mode_nest_for_test().current_list().nodes(),
-            &[tex_state::node::Node::Penalty(11)],
-            "candidate-only nodes must not escape the rejected coarse owner"
-        );
-        universe.reject_checkpoint_candidate(&mut retried);
-        drop(retry);
-    });
+    let (mut retried, runtime, _) = accepted
+        .fork_checkpoint(&checkpoint)
+        .expect("returned mode timeline forks again");
+    assert_eq!(
+        retried
+            .with_admitted(InspectAndRejectModeFork {
+                runtime,
+                append_penalty: None,
+            })
+            .expect("retry admission"),
+        [11],
+        "candidate-only nodes must not escape the rejected coarse owner"
+    );
+    drop(retried);
 }
 
 #[test]
 fn early_rootless_fork_rejects_without_losing_the_large_accepted_head() {
-    crate::test_harness::with_nonstop_universe(|universe| {
-        let mut command = CommandState::default();
-        let mut modes = ModeNest::new();
-        let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::JobStart,
-            &mut command,
-            &mut modes,
-            universe,
-            ExecutionBudgetCounters::default(),
-        )
-        .expect("early checkpoint captures");
+    let store = retained_store();
+    let mut accepted =
+        RetainedEngineGeneration::new(&store, World::default()).expect("accepted generation");
+    let checkpoint = accepted
+        .with_admitted(CaptureModeCheckpoint {
+            checkpoint_penalty: None,
+            accepted_tail_len: 512,
+        })
+        .expect("early checkpoint admission");
 
-        for index in 0..512 {
-            modes.push_current_node(tex_state::node::Node::Penalty(index));
-            universe
-                .command_context()
-                .expect("accepted context")
-                .append_page_contribution(tex_state::node::Node::Penalty(index));
-        }
-        // The command timeline returns its exclusive roots before an aggregate
-        // candidate may borrow them.
-        drop(command);
+    let (mut rejected, runtime, _) = accepted
+        .fork_checkpoint(&checkpoint)
+        .expect("early checkpoint forks");
+    assert_eq!(
+        rejected
+            .with_admitted(InspectAndRejectModeFork {
+                runtime,
+                append_penalty: Some(900),
+            })
+            .expect("candidate admission"),
+        [900],
+        "the early checkpoint begins with a rootless current mode list"
+    );
+    drop(rejected);
 
-        let (mut rejected, mut branch, _ledger) = checkpoint
-            .fork_state(universe)
-            .expect("early checkpoint forks");
-        assert!(
-            branch
-                .mode_nest_for_test()
-                .current_list()
-                .nodes()
-                .is_empty()
-        );
-        branch
-            .mode_nest_mut_for_test()
-            .push_current_node(tex_state::node::Node::Penalty(900));
-        universe.reject_checkpoint_candidate(&mut rejected);
-        drop(branch);
-        drop(rejected);
-
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("restored source")
-                .page_contributions()
-                .len(),
-            512,
-            "rejection returns the untouched accepted page payload",
-        );
-        let (mut retried, retry, _ledger) = checkpoint
-            .fork_state(universe)
-            .expect("returned early checkpoint forks again");
-        assert!(retry.mode_nest_for_test().current_list().nodes().is_empty());
-        universe.reject_checkpoint_candidate(&mut retried);
-        drop(retry);
-        drop(retried);
-    });
+    assert_eq!(
+        accepted
+            .with_admitted(PageContributionCount)
+            .expect("restored source admission"),
+        512,
+        "rejection returns the untouched accepted page payload",
+    );
+    let (mut retried, runtime, _) = accepted
+        .fork_checkpoint(&checkpoint)
+        .expect("returned early checkpoint forks again");
+    assert!(
+        retried
+            .with_admitted(InspectAndRejectModeFork {
+                runtime,
+                append_penalty: None,
+            })
+            .expect("retry admission")
+            .is_empty()
+    );
+    drop(retried);
 }
