@@ -420,6 +420,7 @@ pub enum NodeArenaError {
     InvalidList,
     CyclicList,
     TooManyRegions,
+    PartialRangeTransfer,
 }
 
 #[derive(Default)]
@@ -725,6 +726,12 @@ struct NodeArenaAllocation<L, Glue, Tokens> {
     tex82_words: (usize, usize),
     etex_words: (usize, usize),
     accounting: MemoryAccounting,
+}
+
+impl<L, Glue, Tokens> NodeArenaAllocation<L, Glue, Tokens> {
+    fn into_nodes(mut self) -> Vec<Node<NodeListId<L>, Glue, Tokens>> {
+        core::mem::take(&mut self.nodes).into_vec()
+    }
 }
 
 impl<L, Glue, Tokens> Drop for NodeArenaAllocation<L, Glue, Tokens> {
@@ -1279,6 +1286,58 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             arena: self,
             ranges,
         })
+    }
+
+    /// Moves one complete published segment back out of the arena.
+    ///
+    /// This is the reverse half of [`Self::publish_range`].  It is restricted
+    /// to a whole segment so no sibling descriptor can retain a partially
+    /// moved payload.  Aggregate rejection uses it before truncating candidate
+    /// arena destinations, returning the exact nodes to their source owner
+    /// without cloning them.
+    pub fn take_range_nodes(
+        &mut self,
+        range: NodeRangeId<L>,
+    ) -> Result<Vec<Node<NodeListId<L>, Glue, Tokens>>, NodeArenaError> {
+        let index = range.list.index().ok_or(NodeArenaError::InvalidList)?;
+        if range.list.owner != self.owner {
+            return Err(NodeArenaError::InvalidList);
+        }
+        let row = self
+            .rows
+            .get(index)
+            .and_then(Option::as_ref)
+            .ok_or(NodeArenaError::InvalidList)?;
+        if row.generation != range.list.generation {
+            return Err(NodeArenaError::InvalidList);
+        }
+        let allocation = self
+            .allocation(index)
+            .expect("validated row retains its allocation");
+        if range.start != 0 || range.end as usize != allocation.nodes.len() {
+            return Err(NodeArenaError::PartialRangeTransfer);
+        }
+
+        let row = self.rows[index]
+            .take()
+            .expect("validated range row remains present");
+        let segment_index = row.segment as usize;
+        let segment = self.segments[segment_index]
+            .as_mut()
+            .and_then(Rc::get_mut)
+            .expect("live node segment is exclusively owned");
+        let allocation = segment.rows[row.offset as usize]
+            .take()
+            .expect("validated range allocation remains present");
+        self.segment_live_rows[segment_index] -= 1;
+        if self.segment_live_rows[segment_index] == 0 {
+            self.segments[segment_index] = None;
+        }
+        while self.rows.last().is_some_and(Option::is_none) {
+            self.rows.pop();
+        }
+        self.trim_empty_tail_segments();
+        Ok(allocation.into_nodes())
     }
 
     /// Whether a coordinate resolves directly in this owner.

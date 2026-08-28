@@ -290,6 +290,52 @@ fn candidate_range_rejection_restores_the_accepted_payload_at_the_same_coordinat
 }
 
 #[test]
+fn whole_range_transfer_moves_payload_out_and_preserves_later_rows() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let transferred = arena
+        .publish_range(vec![Node::Penalty(2), Node::Penalty(3)])
+        .expect("test range publishes");
+    let retained = arena
+        .publish(vec![Node::Penalty(4)])
+        .expect("later row publishes");
+
+    let nodes = arena
+        .take_range_nodes(transferred)
+        .expect("whole range transfers");
+
+    assert_eq!(nodes, [Node::Penalty(2), Node::Penalty(3)]);
+    assert!(matches!(
+        arena.get_range(transferred),
+        Err(NodeArenaError::InvalidList)
+    ));
+    assert_eq!(
+        arena.get(retained).expect("later row remains live").nodes(),
+        [Node::Penalty(4)]
+    );
+}
+
+#[test]
+fn partial_range_cannot_be_destructively_transferred() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let whole = arena
+        .publish_range(vec![Node::Penalty(2), Node::Penalty(3)])
+        .expect("test range publishes");
+    let (partial, _) = whole.split_at(1).expect("split is valid");
+
+    assert_eq!(
+        arena.take_range_nodes(partial),
+        Err(NodeArenaError::PartialRangeTransfer)
+    );
+    assert_eq!(
+        arena
+            .get_range(whole)
+            .expect("failed transfer leaves source live")
+            .nodes(),
+        [Node::Penalty(2), Node::Penalty(3)]
+    );
+}
+
+#[test]
 fn rollback_cursor_is_owner_checked_and_truncates_only_suffix() {
     let mut arena = NodeArena::<PageLifetime>::new();
     let retained = arena
