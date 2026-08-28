@@ -707,6 +707,16 @@ pub struct PageRegionSuccession {
     held_over: PageListId,
 }
 
+/// Proof that the live executor mode nest admitted every root against the
+/// current page region and retained no root across page succession.
+///
+/// The constructor is kept at the admitted [`crate::CommandContext`]
+/// boundary; production succession consumes the receipt instead of accepting
+/// an unchecked boolean or a naked region id.
+pub struct ModeListRegionPreflight {
+    pub(crate) region: NodeRegionId,
+}
+
 struct PreparedPageRegionSuccessor {
     current: PageRegion,
     held_over: PageListId,
@@ -728,7 +738,7 @@ impl Default for PageRegionHistory {
 }
 
 impl PageRegionHistory {
-    fn current(&self) -> &PageRegion {
+    pub(crate) fn current(&self) -> &PageRegion {
         self.regions
             .last()
             .expect("page history always has a current region")

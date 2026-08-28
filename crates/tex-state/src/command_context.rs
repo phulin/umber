@@ -3648,6 +3648,49 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| NodeArenaError::InvalidList)
     }
 
+    /// Returns the generation-checked owner of every page-list coordinate
+    /// admitted by this command episode.
+    #[must_use]
+    pub const fn page_node_region_id(&self) -> crate::node_region::NodeRegionId {
+        self.page_nodes.region_id()
+    }
+
+    /// Admits one complete node closure against this episode's page region.
+    /// Direct parent/child links are checked when nodes are published, so a
+    /// constant-time root check proves closure membership without a payload
+    /// scan or a root census.
+    #[must_use]
+    pub fn admits_page_node_closure(&self, root: PageListId) -> bool {
+        self.page_nodes.contains(root)
+    }
+
+    /// Exposes the immutable payload address only for cross-crate stability
+    /// controls. Semantic code must use the borrowed node cursor instead.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn page_node_address_for_test(
+        &self,
+        root: PageListId,
+        index: usize,
+    ) -> Option<*const crate::node::Node> {
+        self.page_nodes
+            .list(root)
+            .ok()?
+            .get(index)
+            .map(std::ptr::from_ref)
+    }
+
+    /// Seals the owner identity after the executor has proved that its mode
+    /// nest retains no page-list root. The resulting move-only receipt is the
+    /// only production input accepted by page-region succession.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn seal_mode_list_region_preflight(&self) -> crate::page::ModeListRegionPreflight {
+        crate::page::ModeListRegionPreflight {
+            region: self.page_nodes.region_id(),
+        }
+    }
+
     /// Borrows the live page-builder sequence for diagnostic rendering only.
     pub fn current_page_nodes(&self) -> impl DoubleEndedIterator<Item = &crate::node::Node> {
         self.page.current_page(self.page_nodes)

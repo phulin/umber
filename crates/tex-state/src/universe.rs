@@ -2802,14 +2802,19 @@ impl<G> Universe<G> {
     /// Prepares §1012's page-owner transition using the exact insertion
     /// holdover root already selected by the page-break traversal.
     ///
-    /// Production installation remains blocked until durable box closures and
-    /// executor `ModeList` values transfer their page coordinates into owners
-    /// independent of the old region. Callers must not retain the old region
-    /// through an alias or replace those transfers with a root scan.
+    /// Production installation remains blocked until durable box and form
+    /// closures transfer their page coordinates into owners independent of the
+    /// old region. The move-only `modes` receipt proves executor mode lists no
+    /// longer retain that owner; callers must not replace either transfer with
+    /// a root scan.
     pub fn prepare_page_region_after_output(
         &mut self,
+        modes: crate::page::ModeListRegionPreflight,
         held_over: PageListId,
     ) -> Result<(), UniverseError> {
+        if modes.region != self.page_region.current().id() {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
         self.page_region
             .prepare_shipout(held_over)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))

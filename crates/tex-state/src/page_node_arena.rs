@@ -99,6 +99,11 @@ impl PageListId {
         self.coordinate
     }
 
+    #[must_use]
+    pub(crate) const fn belongs_to_arena(self, arena: u32) -> bool {
+        self.is_empty() || self.coordinate.arena_identity() == arena
+    }
+
     pub(crate) fn rebrand_arena(self, arena: u32) -> Self {
         Self {
             coordinate: self.coordinate.rebrand_arena(arena),
@@ -340,15 +345,21 @@ impl PageMaterialArena {
         let mut identity = self
             .semantic_identity_enabled
             .then(SemanticSequenceIdentity::empty);
+        let mut semantic_hash_work = 0_u64;
+        let arena = self.region.pub_arena.region_identity();
         let mut builder = self.region.pub_arena.begin_builder(&mut self.pool.chunks)?;
         for node in nodes {
+            if !node_children_belong_to_arena(&node, arena) {
+                return Err(ForkArenaError::InvalidRegion);
+            }
             if let Some(identity) = &mut identity {
                 identity.push_back(semantic_node_identity(&node));
-                self.semantic_hash_work += 1;
+                semantic_hash_work = semantic_hash_work.saturating_add(1);
             }
             builder.push(node)?;
         }
         let coordinate = builder.seal()?;
+        self.semantic_hash_work = self.semantic_hash_work.saturating_add(semantic_hash_work);
         Ok(PageListId::from_parts(coordinate, identity))
     }
 
@@ -384,6 +395,9 @@ impl PageMaterialArena {
         builder: &mut PageMaterialActiveListBuilder,
         node: PageMaterialNode,
     ) -> Result<(), ForkArenaError> {
+        if !node_children_belong_to_arena(&node, self.region.pub_arena.region_identity()) {
+            return Err(ForkArenaError::InvalidRegion);
+        }
         if let Some(identity) = &mut builder.identity {
             identity.push_back(semantic_node_identity(&node));
             self.semantic_hash_work = self.semantic_hash_work.saturating_add(1);
@@ -677,6 +691,12 @@ impl PageMaterialArena {
             }
         }
     }
+}
+
+fn node_children_belong_to_arena(node: &PageMaterialNode, arena: u32) -> bool {
+    let mut valid = true;
+    node.visit_node_lists(|child| valid &= child.belongs_to_arena(arena));
+    valid
 }
 
 fn copy_closure_between_page_arenas(

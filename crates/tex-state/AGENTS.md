@@ -195,7 +195,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   owner-relative checkpoint rows; active insertion classes and sparse mark
   classes retain canonical iteration order beside dense direct lookup indexes.
   Exact edit settlement and shipout succession keep roots and payload suffixes
-  atomic, and held-over evacuation uses the explicit semantic-copy boundary.
+  atomic, direct node parent/child publication is same-region checked, and
+  held-over evacuation uses the explicit semantic-copy boundary. Succession
+  preparation consumes the executor's move-only rootless-mode receipt; durable
+  box/form carriers still keep the production tail on the existing region.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, allocation-free scalar checkpoint marks,

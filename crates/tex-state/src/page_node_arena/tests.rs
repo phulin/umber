@@ -35,6 +35,36 @@ fn disabled_demand_performs_no_semantic_hash_work() {
 }
 
 #[test]
+fn parent_nodes_reject_foreign_region_children_without_partial_publication() {
+    let mut local = PageMaterialArena::with_chunk_bytes(32);
+    local.enable_semantic_identity();
+    let before_hash_work = local.semantic_hash_work();
+    let mut foreign = PageMaterialArena::with_chunk_bytes(32);
+    let foreign_child = foreign
+        .publish_owned(penalties(&[91]))
+        .expect("foreign child");
+
+    let result = local.publish_owned([
+        Node::Penalty(1),
+        Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: foreign_child,
+            post: PageListId::empty(),
+            replace: PageListId::empty(),
+            physical_replace_count: 0,
+        },
+    ]);
+
+    assert_eq!(
+        result,
+        Err(crate::fork_arena::ForkArenaError::InvalidRegion)
+    );
+    assert_eq!(local.len(), 0);
+    assert_eq!(local.counters().source_nodes_copied, 0);
+    assert_eq!(local.semantic_hash_work(), before_hash_work);
+}
+
+#[test]
 fn active_list_preserves_disabled_demand_and_appends_ranges_without_copying() {
     let mut arena = PageMaterialArena::with_chunk_bytes(32);
     let source = arena.publish_owned(penalties(&[10, 20])).expect("source");

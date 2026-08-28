@@ -493,6 +493,11 @@ impl<Lane> Hash for ArenaListId<Lane> {
 }
 
 impl<Lane> ArenaListId<Lane> {
+    #[must_use]
+    pub(crate) const fn arena_identity(self) -> u32 {
+        self.arena
+    }
+
     /// Returns the owner-independent canonical empty-list coordinate.
     #[must_use]
     pub const fn empty() -> Self {
