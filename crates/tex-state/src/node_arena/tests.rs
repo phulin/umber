@@ -1,5 +1,6 @@
 use super::{
-    NodeArena, NodeArenaError, NodeListId, NodeRelocationScratch, PageLifetime, ScratchLifetime,
+    NodeArena, NodeArenaError, NodeListId, NodeRanges, NodeRelocationScratch, PageLifetime,
+    ScratchLifetime,
 };
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
@@ -206,6 +207,85 @@ fn checkpoint_candidate_reuses_coordinates_and_rejection_redoes_accepted_rows() 
             .expect("accepted row restored")
             .nodes(),
         [Node::Penalty(8)]
+    );
+}
+
+#[test]
+fn bounded_ranges_split_and_iterate_without_materializing_source_nodes() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let whole = arena
+        .publish_range(vec![
+            Node::Penalty(1),
+            Node::Penalty(2),
+            Node::Penalty(3),
+            Node::Penalty(4),
+        ])
+        .expect("test range publishes");
+    let (left, right) = whole.split_at(2).expect("split is in bounds");
+    let mut ranges = NodeRanges::default();
+    ranges.push(left).expect("first region fits");
+    ranges.push(right).expect("adjacent regions coalesce");
+
+    assert_eq!(ranges.region_count(), 1);
+    assert_eq!(ranges.as_slice(), [whole]);
+    assert_eq!(
+        arena
+            .get_ranges(ranges)
+            .expect("range owner matches")
+            .iter()
+            .collect::<Vec<_>>(),
+        [
+            &Node::Penalty(1),
+            &Node::Penalty(2),
+            &Node::Penalty(3),
+            &Node::Penalty(4),
+        ]
+    );
+}
+
+#[test]
+fn bounded_ranges_reject_a_fifth_disjoint_region() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let mut ranges = NodeRanges::default();
+    for value in 0..4 {
+        let range = arena
+            .publish_range(vec![Node::Penalty(value)])
+            .expect("test range publishes");
+        ranges.push(range).expect("four inline regions fit");
+    }
+    let fifth = arena
+        .publish_range(vec![Node::Penalty(5)])
+        .expect("test range publishes");
+    assert_eq!(ranges.push(fifth), Err(NodeArenaError::TooManyRegions));
+}
+
+#[test]
+fn candidate_range_rejection_restores_the_accepted_payload_at_the_same_coordinate() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let _prefix = arena
+        .publish_range(vec![Node::Penalty(1)])
+        .expect("test range publishes");
+    let mark = arena.cursor();
+    let accepted_range = arena
+        .publish_range(vec![Node::Penalty(2), Node::Penalty(3)])
+        .expect("accepted range publishes");
+    let accepted = arena
+        .begin_checkpoint_candidate(mark)
+        .expect("accepted rewind");
+    let candidate_range = arena
+        .publish_range(vec![Node::Penalty(8), Node::Penalty(9)])
+        .expect("candidate range publishes");
+    assert_eq!(candidate_range, accepted_range);
+
+    arena
+        .reject_checkpoint_candidate(mark, accepted)
+        .expect("candidate rejection");
+    assert_eq!(
+        arena
+            .get_range(accepted_range)
+            .expect("accepted range is restored")
+            .nodes(),
+        [Node::Penalty(2), Node::Penalty(3)]
     );
 }
 

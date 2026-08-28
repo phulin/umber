@@ -183,6 +183,192 @@ pub type PageListId = NodeListId<PageLifetime>;
 /// List coordinate retained by one revision generation.
 pub type DurableListId<G> = NodeListId<G>;
 
+/// Copy-only coordinate of one immutable subrange in a node-arena row.
+///
+/// The arena row is the coarse payload segment.  This value owns no nodes and
+/// is meaningful only while borrowed through the matching arena.  Splitting
+/// or moving a range therefore changes only coordinates; it never clones or
+/// materializes the source nodes.
+pub struct NodeRangeId<L> {
+    list: NodeListId<L>,
+    start: u32,
+    end: u32,
+}
+
+impl<L> NodeRangeId<L> {
+    const EMPTY: Self = Self {
+        list: NodeListId::empty(),
+        start: 0,
+        end: 0,
+    };
+
+    /// Returns the canonical empty range.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::EMPTY
+    }
+
+    /// Returns the immutable arena row containing this range.
+    #[must_use]
+    pub const fn list(self) -> NodeListId<L> {
+        self.list
+    }
+
+    /// Number of nodes in this logical range.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        (self.end - self.start) as usize
+    }
+
+    /// Whether the logical range contains no nodes.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+
+    /// Splits this coordinate without touching its payload.
+    #[must_use]
+    pub fn split_at(self, index: usize) -> Option<(Self, Self)> {
+        let index = u32::try_from(index).ok()?;
+        if index > self.end - self.start {
+            return None;
+        }
+        let middle = self.start.checked_add(index)?;
+        Some((
+            Self {
+                list: self.list,
+                start: self.start,
+                end: middle,
+            },
+            Self {
+                list: self.list,
+                start: middle,
+                end: self.end,
+            },
+        ))
+    }
+}
+
+impl<L> Clone for NodeRangeId<L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<L> Copy for NodeRangeId<L> {}
+
+impl<L> core::fmt::Debug for NodeRangeId<L> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("NodeRangeId")
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<L> PartialEq for NodeRangeId<L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.list == other.list && self.start == other.start && self.end == other.end
+    }
+}
+
+impl<L> Eq for NodeRangeId<L> {}
+
+/// Open-mode and page-builder immutable node-range coordinate.
+pub type PageNodeRange = NodeRangeId<PageLifetime>;
+
+const MAX_NODE_RANGE_REGIONS: usize = 4;
+
+/// Bounded inline logical list made from immutable arena regions.
+///
+/// Four regions cover the current-front/prior/current-back page deque and one
+/// additional unchanged/new transform boundary.  The descriptor never spills
+/// to the heap and cannot silently grow into a per-node ownership overlay.
+pub struct NodeRanges<L> {
+    regions: [NodeRangeId<L>; MAX_NODE_RANGE_REGIONS],
+    len: u8,
+}
+
+impl<L> Default for NodeRanges<L> {
+    fn default() -> Self {
+        Self {
+            regions: [NodeRangeId::empty(); MAX_NODE_RANGE_REGIONS],
+            len: 0,
+        }
+    }
+}
+
+impl<L> Clone for NodeRanges<L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<L> Copy for NodeRanges<L> {}
+
+impl<L> core::fmt::Debug for NodeRanges<L> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("NodeRanges")
+            .field("regions", &self.as_slice())
+            .finish()
+    }
+}
+
+impl<L> NodeRanges<L> {
+    /// Number of occupied coarse regions.
+    #[must_use]
+    pub const fn region_count(self) -> usize {
+        self.len as usize
+    }
+
+    /// Total logical node count.
+    #[must_use]
+    pub fn len(self) -> usize {
+        self.as_slice().iter().map(|range| range.len()).sum()
+    }
+
+    /// Whether the logical list contains no nodes.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the occupied inline descriptors in logical order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[NodeRangeId<L>] {
+        &self.regions[..usize::from(self.len)]
+    }
+
+    /// Appends one coarse region, coalescing adjacent slices of the same row.
+    pub fn push(&mut self, range: NodeRangeId<L>) -> Result<(), NodeArenaError> {
+        if range.is_empty() {
+            return Ok(());
+        }
+        if let Some(last) = self
+            .len
+            .checked_sub(1)
+            .map(|index| &mut self.regions[usize::from(index)])
+        {
+            if last.list == range.list && last.end == range.start {
+                last.end = range.end;
+                return Ok(());
+            }
+        }
+        let index = usize::from(self.len);
+        if index == MAX_NODE_RANGE_REGIONS {
+            return Err(NodeArenaError::TooManyRegions);
+        }
+        self.regions[index] = range;
+        self.len += 1;
+        Ok(())
+    }
+}
+
+/// Open-mode and page-builder bounded logical range list.
+pub type PageNodeRanges = NodeRanges<PageLifetime>;
+
 /// Owner-checked suffix watermark for one node arena.
 pub struct NodeArenaCursor<L> {
     owner: u64,
@@ -233,6 +419,7 @@ pub enum NodeArenaError {
     CursorBeyondEnd,
     InvalidList,
     CyclicList,
+    TooManyRegions,
 }
 
 #[derive(Default)]
@@ -1021,12 +1208,77 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         ))
     }
 
+    /// Publishes one immutable payload segment and returns its whole range.
+    ///
+    /// The supplied vector is consumed into the arena exactly once.  Logical
+    /// lists can subsequently split and move the returned coordinate without
+    /// allocating or copying nodes.
+    pub fn publish_range(
+        &mut self,
+        nodes: Vec<Node<NodeListId<L>, Glue, Tokens>>,
+    ) -> Result<NodeRangeId<L>, NodeArenaError>
+    where
+        Glue: Hash,
+        Tokens: Hash,
+    {
+        let len = u32::try_from(nodes.len()).map_err(|_| NodeArenaError::CapacityOverflow)?;
+        let list = self.publish(nodes)?;
+        Ok(NodeRangeId {
+            list,
+            start: 0,
+            end: len,
+        })
+    }
+
     /// Borrows one complete list.
     pub fn get(&self, id: NodeListId<L>) -> Result<NodeList<'_, L, Glue, Tokens>, NodeArenaError> {
         if !self.contains(id) {
             return Err(NodeArenaError::InvalidList);
         }
         Ok(NodeList { arena: self, id })
+    }
+
+    /// Creates an owner-checked immutable subrange of one arena row.
+    pub fn range(
+        &self,
+        list: NodeListId<L>,
+        range: core::ops::Range<usize>,
+    ) -> Result<NodeRangeId<L>, NodeArenaError> {
+        let len = self.get(list)?.len();
+        if range.start > range.end || range.end > len {
+            return Err(NodeArenaError::InvalidList);
+        }
+        Ok(NodeRangeId {
+            list,
+            start: u32::try_from(range.start).map_err(|_| NodeArenaError::CapacityOverflow)?,
+            end: u32::try_from(range.end).map_err(|_| NodeArenaError::CapacityOverflow)?,
+        })
+    }
+
+    /// Borrows one immutable range through this coarse arena owner.
+    pub fn get_range(
+        &self,
+        range: NodeRangeId<L>,
+    ) -> Result<NodeRange<'_, L, Glue, Tokens>, NodeArenaError> {
+        let list = self.get(range.list)?;
+        if range.start > range.end || range.end as usize > list.len() {
+            return Err(NodeArenaError::InvalidList);
+        }
+        Ok(NodeRange { list, range })
+    }
+
+    /// Borrows a bounded logical list through this coarse arena owner.
+    pub fn get_ranges(
+        &self,
+        ranges: NodeRanges<L>,
+    ) -> Result<NodeRangesView<'_, L, Glue, Tokens>, NodeArenaError> {
+        for range in ranges.as_slice() {
+            let _ = self.get_range(*range)?;
+        }
+        Ok(NodeRangesView {
+            arena: self,
+            ranges,
+        })
     }
 
     /// Whether a coordinate resolves directly in this owner.
@@ -1423,6 +1675,148 @@ pub struct NodeList<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
     arena: &'a NodeArena<L, Glue, Tokens>,
     id: NodeListId<L>,
 }
+
+/// Borrowed immutable view of one arena range.
+pub struct NodeRange<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
+    list: NodeList<'a, L, Glue, Tokens>,
+    range: NodeRangeId<L>,
+}
+
+impl<L, Glue, Tokens> core::fmt::Debug for NodeRange<'_, L, Glue, Tokens> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("NodeRange")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, L, Glue, Tokens> NodeRange<'a, L, Glue, Tokens> {
+    /// Returns the immutable source slice.  The slice cannot outlive the
+    /// arena borrow used to resolve its descriptor.
+    #[must_use]
+    pub fn nodes(&self) -> &'a [Node<NodeListId<L>, Glue, Tokens>] {
+        &self.list.nodes()[self.range.start as usize..self.range.end as usize]
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> NodeRangeId<L> {
+        self.range
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.range.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.range.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&'a Node<NodeListId<L>, Glue, Tokens>> {
+        self.nodes().get(index)
+    }
+
+    pub fn iter(&self) -> core::slice::Iter<'a, Node<NodeListId<L>, Glue, Tokens>> {
+        self.nodes().iter()
+    }
+}
+
+/// Borrowed immutable view of a bounded logical range list.
+pub struct NodeRangesView<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
+    arena: &'a NodeArena<L, Glue, Tokens>,
+    ranges: NodeRanges<L>,
+}
+
+impl<L, Glue, Tokens> core::fmt::Debug for NodeRangesView<'_, L, Glue, Tokens> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("NodeRangesView")
+            .field("len", &self.len())
+            .field("regions", &self.ranges.region_count())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, L, Glue, Tokens> NodeRangesView<'a, L, Glue, Tokens> {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(&self, mut index: usize) -> Option<&'a Node<NodeListId<L>, Glue, Tokens>> {
+        for range in self.ranges.as_slice() {
+            if index < range.len() {
+                return self
+                    .arena
+                    .get_range(*range)
+                    .expect("bounded range view was validated")
+                    .get(index);
+            }
+            index -= range.len();
+        }
+        None
+    }
+
+    pub fn iter(self) -> NodeRangesIter<'a, L, Glue, Tokens> {
+        let back = self.len();
+        NodeRangesIter {
+            view: self,
+            front: 0,
+            back,
+        }
+    }
+
+    #[must_use]
+    pub const fn ranges(&self) -> NodeRanges<L> {
+        self.ranges
+    }
+}
+
+/// Exact-size iterator over a bounded borrowed range list.
+pub struct NodeRangesIter<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
+    view: NodeRangesView<'a, L, Glue, Tokens>,
+    front: usize,
+    back: usize,
+}
+
+impl<'a, L, Glue, Tokens> Iterator for NodeRangesIter<'a, L, Glue, Tokens> {
+    type Item = &'a Node<NodeListId<L>, Glue, Tokens>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+        let index = self.front;
+        self.front += 1;
+        self.view.get(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.back - self.front;
+        (len, Some(len))
+    }
+}
+
+impl<L, Glue, Tokens> DoubleEndedIterator for NodeRangesIter<'_, L, Glue, Tokens> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+        self.back -= 1;
+        self.view.get(self.back)
+    }
+}
+
+impl<L, Glue, Tokens> ExactSizeIterator for NodeRangesIter<'_, L, Glue, Tokens> {}
 
 /// Immutable logical node sequence resolved through one arena borrow.
 pub type NodeSlice<L, Glue = GlueSpec, Tokens = NodeTokenList> =
