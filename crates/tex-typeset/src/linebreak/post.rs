@@ -119,25 +119,41 @@ impl<'a> LineMaterializer<'a> {
                     )
                 }
                 super::ParagraphSource::ArenaId {
-                    sequence,
-                    high_cell_lineages,
+                    semantic,
+                    physical,
+                    physical_boundaries,
+                    semantic_high_cell_lineages,
+                    physical_high_cell_lineages,
                 } => {
-                    let len = sequence.len();
-                    let physical_lineages = high_cell_lineages.clone();
+                    let semantic_len = semantic.len();
+                    let physical_len = physical.len();
+                    let physical_breaks = if let Some(boundaries) = physical_boundaries {
+                        breaks
+                            .iter()
+                            .map(|decision| BreakDecision {
+                                position: *boundaries
+                                    .get(decision.position)
+                                    .expect("break position is a semantic boundary"),
+                                ..*decision
+                            })
+                            .collect()
+                    } else {
+                        breaks.clone()
+                    };
                     (
                         ChannelNodes::ArenaId {
-                            sequence,
-                            cursor: sequence.cursor(),
-                            remaining: len,
+                            sequence: semantic,
+                            cursor: semantic.cursor(),
+                            remaining: semantic_len,
                         },
                         ChannelNodes::ArenaId {
-                            sequence,
-                            cursor: sequence.cursor(),
-                            remaining: len,
+                            sequence: physical,
+                            cursor: physical.cursor(),
+                            remaining: physical_len,
                         },
-                        high_cell_lineages,
-                        physical_lineages,
-                        breaks.clone(),
+                        semantic_high_cell_lineages,
+                        physical_high_cell_lineages,
+                        physical_breaks,
                     )
                 }
             };

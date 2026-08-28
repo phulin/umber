@@ -3439,6 +3439,57 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
 }
 
 #[test]
+fn coordinate_paragraph_tape_keeps_distinct_physical_channel_in_arena() {
+    use tex_state::node_arena::ArenaNodeSequenceId;
+
+    let mut universe = TestState::new();
+    let empty = universe.publish_page_nodes(&[]);
+    let semantic = universe.publish_page_node_range(vec![Node::Penalty(1), Node::Penalty(3)]);
+    let physical = universe.publish_page_node_range(vec![
+        Node::Penalty(1),
+        Node::Penalty(2),
+        Node::Penalty(3),
+    ]);
+    let tape = ParagraphTape::analyze_arena_projection_ids(
+        &universe,
+        ArenaNodeSequenceId::Direct(semantic),
+        ArenaNodeSequenceId::Direct(physical),
+        Some(vec![0, 2, 3]),
+        &params(100),
+    );
+    let mut materializer = LineMaterializer::new(
+        tape,
+        vec![BreakDecision {
+            position: 2,
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        }],
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: GlueSpec::ZERO,
+            right_skip: GlueSpec::ZERO,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+    let line = materializer
+        .materialize_next(&universe, Vec::new())
+        .expect("projected line materializes");
+
+    assert_eq!(&line.nodes[..2], [Node::Penalty(1), Node::Penalty(3)]);
+    assert_eq!(
+        &line.physical_nodes[..3],
+        [Node::Penalty(1), Node::Penalty(2), Node::Penalty(3)]
+    );
+}
+
+#[test]
 fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() {
     let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;

@@ -207,8 +207,11 @@ enum ParagraphSource<'a> {
     BorrowedMirrored(&'a [Node]),
     BorrowedArena(ArenaNodeSequence<'a, PageLifetime>),
     ArenaId {
-        sequence: PageNodeSequenceId,
-        high_cell_lineages: Vec<DirectHighCellLineages>,
+        semantic: PageNodeSequenceId,
+        physical: PageNodeSequenceId,
+        physical_boundaries: Option<Vec<usize>>,
+        semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
+        physical_high_cell_lineages: Vec<DirectHighCellLineages>,
     },
 }
 
@@ -277,11 +280,46 @@ impl ParagraphTape<'static> {
         sequence: PageNodeSequenceId,
         params: &LineBreakParams,
     ) -> Self {
+        Self::analyze_arena_projection_ids(state, sequence, sequence, None, params)
+    }
+
+    /// Analyzes distinct semantic and TeX-physical arena projections while
+    /// retaining only coordinates plus scalar/index lineage scratch.
+    ///
+    /// `physical_boundaries` maps every semantic boundary, including the
+    /// terminal boundary, to its physical-channel position. A mirrored input
+    /// passes `None` and shares the same coordinate for both channels.
+    #[must_use]
+    pub fn analyze_arena_projection_ids<S: TypesetState>(
+        state: &S,
+        semantic: PageNodeSequenceId,
+        physical: PageNodeSequenceId,
+        physical_boundaries: Option<Vec<usize>>,
+        params: &LineBreakParams,
+    ) -> Self {
+        if let Some(boundaries) = &physical_boundaries {
+            assert_eq!(boundaries.len(), semantic.len() + 1);
+            assert_eq!(boundaries.first(), Some(&0));
+            assert_eq!(boundaries.last(), Some(&physical.len()));
+            assert!(boundaries.windows(2).all(|pair| pair[0] <= pair[1]));
+        } else {
+            assert_eq!(semantic.len(), physical.len());
+        }
         let view = state
-            .page_node_sequence(sequence)
+            .page_node_sequence(semantic)
             .expect("paragraph sequence belongs to the typesetting page arena");
-        let high_cell_lineages =
+        let semantic_high_cell_lineages =
             tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(view.iter());
+        let physical_high_cell_lineages = if semantic == physical {
+            semantic_high_cell_lineages.clone()
+        } else {
+            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(
+                state
+                    .page_node_sequence(physical)
+                    .expect("physical paragraph sequence belongs to the page arena")
+                    .iter(),
+            )
+        };
         let nodes = NodeCursor::arena(view);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
         let break_sites = analyzer
@@ -302,8 +340,11 @@ impl ParagraphTape<'static> {
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::ArenaId {
-                sequence,
-                high_cell_lineages,
+                semantic,
+                physical,
+                physical_boundaries,
+                semantic_high_cell_lineages,
+                physical_high_cell_lineages,
             },
             break_sites,
             materialization,
@@ -390,9 +431,9 @@ impl<'a> ParagraphTape<'a> {
             ParagraphSource::Owned(sequence) => NodeCursor::owned(sequence.semantic()),
             ParagraphSource::BorrowedMirrored(nodes) => NodeCursor::owned(nodes),
             ParagraphSource::BorrowedArena(sequence) => NodeCursor::arena(*sequence),
-            ParagraphSource::ArenaId { sequence, .. } => NodeCursor::arena(
+            ParagraphSource::ArenaId { semantic, .. } => NodeCursor::arena(
                 state
-                    .page_node_sequence(*sequence)
+                    .page_node_sequence(*semantic)
                     .expect("paragraph sequence remains live while its tape is consumed"),
             ),
         }
@@ -408,8 +449,8 @@ impl<'a> ParagraphTape<'a> {
             ParagraphSource::Owned(sequence) => sequence.into_semantic(),
             ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
             ParagraphSource::BorrowedArena(sequence) => sequence.iter().cloned().collect(),
-            ParagraphSource::ArenaId { sequence, .. } => state
-                .page_node_sequence(sequence)
+            ParagraphSource::ArenaId { semantic, .. } => state
+                .page_node_sequence(semantic)
                 .expect("paragraph sequence remains live while its tape is consumed")
                 .iter()
                 .cloned()
