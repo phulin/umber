@@ -52,7 +52,6 @@ pub(super) struct PendingHRunProjection {
     current: super::PendingHRunChar,
     insertion_index: usize,
     source_len: usize,
-    source_suffix: Option<Vec<super::PendingHChar>>,
     script: tex_fonts::Script,
     source_identity_root: u64,
     semantic_identity_root: u64,
@@ -65,7 +64,6 @@ impl PendingHRunProjection {
             current: run.current.clone(),
             insertion_index: run.insertion_index,
             source_len: run.source.len(),
-            source_suffix: None,
             script: run.script,
             source_identity_root: run.source_identity_root,
             semantic_identity_root: run.semantic_identity_root,
@@ -81,27 +79,6 @@ impl PendingHRunProjection {
         run.source_identity_root = self.source_identity_root;
         run.semantic_identity_root = self.semantic_identity_root;
     }
-
-    fn swap(&mut self, run: &mut super::PendingHRun) {
-        std::mem::swap(&mut self.first, &mut run.first);
-        std::mem::swap(&mut self.current, &mut run.current);
-        std::mem::swap(&mut self.insertion_index, &mut run.insertion_index);
-        std::mem::swap(&mut self.script, &mut run.script);
-        std::mem::swap(
-            &mut self.source_identity_root,
-            &mut run.source_identity_root,
-        );
-        std::mem::swap(
-            &mut self.semantic_identity_root,
-            &mut run.semantic_identity_root,
-        );
-        if let Some(mut suffix) = self.source_suffix.take() {
-            debug_assert_eq!(run.source.len(), self.source_len);
-            run.source.append(&mut suffix);
-        } else {
-            self.source_suffix = Some(run.source.split_off(self.source_len));
-        }
-    }
 }
 
 struct Frame {
@@ -109,16 +86,6 @@ struct Frame {
     id: u64,
     cursor: usize,
     projection_start: usize,
-}
-
-struct AcceptedFrame {
-    frame: Option<Frame>,
-    projections: Vec<ListProjection>,
-    inverses: Vec<Inverse>,
-}
-
-pub(super) struct AcceptedModeTail {
-    frames: Vec<AcceptedFrame>,
 }
 
 #[expect(
@@ -191,108 +158,70 @@ enum PendingHcharsRollback {
 }
 
 impl Inverse {
-    /// Exchanges the live value with the value retained by this entry. The
-    /// same operation therefore performs accepted rewind and rejection redo.
-    fn swap(&mut self, storage: &mut ModeNestStorage) {
+    /// Restores one operation-local inverse. Aggregate checkpoints retain no
+    /// mode journal tail, so an inverse is consumed exactly once and never
+    /// needs a forward-redo payload.
+    fn restore(self, storage: &mut ModeNestStorage) {
         match self {
             Self::ListRoot { level_id, old } => {
-                std::mem::swap(&mut storage.level_by_id_mut(*level_id).list.nodes, old);
+                storage.level_by_id_mut(level_id).list.nodes = old;
             }
             #[cfg(test)]
             Self::AlignState { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.align_state,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.align_state = old;
             }
             Self::IncompleteFraction { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.incomplete_fraction,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.incomplete_fraction = old;
             }
             Self::DisplayInterrupt { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.display_interrupt,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.display_interrupt = old;
             }
             Self::DisplayEqNo { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.display_eq_no,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.display_eq_no = old;
             }
             Self::DisplayAlignment { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.display_alignment,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.display_alignment = old;
             }
             Self::PrevDepth { level_id, old } => {
-                std::mem::swap(&mut storage.level_by_id_mut(*level_id).list.prev_depth, old);
+                storage.level_by_id_mut(level_id).list.prev_depth = old;
             }
             Self::PrevGraf { level_id, old } => {
-                std::mem::swap(&mut storage.level_by_id_mut(*level_id).list.prev_graf, old);
+                storage.level_by_id_mut(level_id).list.prev_graf = old;
             }
             Self::PendingHchars { level_id, old } => {
-                let pending = &mut storage.level_by_id_mut(*level_id).list.pending_hchars;
+                let pending = &mut storage.level_by_id_mut(level_id).list.pending_hchars;
                 match old {
-                    PendingHcharsRollback::Absent => {
-                        *old = PendingHcharsRollback::Value(pending.take());
-                    }
-                    PendingHcharsRollback::Projection(projection) => projection.swap(
+                    PendingHcharsRollback::Absent => *pending = None,
+                    PendingHcharsRollback::Projection(projection) => projection.restore(
                         pending
                             .as_mut()
                             .expect("projected pending run remains in place"),
                     ),
-                    PendingHcharsRollback::Value(value) => std::mem::swap(pending, value),
+                    PendingHcharsRollback::Value(value) => *pending = value,
                 }
             }
             Self::SpaceFactor { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.space_factor,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.space_factor = old;
             }
             Self::NoBoundary { level_id, old } => {
-                std::mem::swap(
-                    &mut storage.level_by_id_mut(*level_id).list.no_boundary,
-                    old,
-                );
+                storage.level_by_id_mut(level_id).list.no_boundary = old;
             }
             Self::HyphenContext { level_id, old } => {
-                let list = &mut storage.level_by_id_mut(*level_id).list;
-                let current = (
-                    list.hyphen_language,
-                    list.left_hyphen_min,
-                    list.right_hyphen_min,
-                );
+                let list = &mut storage.level_by_id_mut(level_id).list;
                 (
                     list.hyphen_language,
                     list.left_hyphen_min,
                     list.right_hyphen_min,
-                ) = *old;
-                *old = current;
+                ) = old;
             }
             Self::Push { level_id } => {
-                let id = *level_id;
-                let index = storage.level_index(id);
-                let level = storage.levels.remove(index);
+                let index = storage.level_index(level_id);
+                storage.levels.remove(index);
                 storage.journal.level_ids.remove(index);
-                *self = Self::Pop {
-                    level_id: id,
-                    level,
-                };
             }
-            Self::Pop { level_id, .. } => {
-                let id = *level_id;
-                let Self::Pop { level, .. } = std::mem::replace(self, Self::Push { level_id: id })
-                else {
-                    unreachable!()
-                };
+            Self::Pop { level_id, level } => {
                 storage.levels.push(level);
-                storage.journal.level_ids.push(id);
+                storage.journal.level_ids.push(level_id);
             }
         }
     }
@@ -329,29 +258,6 @@ impl ModeJournal {
         !self.frames.is_empty()
     }
 
-    pub(super) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(
-                self.level_ids
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
-                self.frames
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Frame>()),
-            )
-            .saturating_add(
-                self.projections
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ListProjection>()),
-            )
-            .saturating_add(
-                self.inverses
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Inverse>()),
-            )
-    }
     pub(super) fn enabled(level_count: usize) -> Self {
         Self::with_capacities(
             level_count,
@@ -631,198 +537,6 @@ impl ListJournal<'_> {
 }
 
 impl ModeNestStorage {
-    pub(super) fn validates_checkpoint_cursor(&self, cursor: Cursor) -> bool {
-        cursor.generation == self.journal.generation
-            && cursor.cursor <= self.journal.inverses.len()
-            && self.journal.frames.iter().any(|frame| {
-                frame.generation == cursor.generation
-                    && frame.id == cursor.frame_id
-                    && frame.cursor == cursor.cursor
-            })
-    }
-
-    pub(super) fn restore_checkpoint_cursor(&mut self, cursor: Cursor) -> Result<(), CursorError> {
-        if !self.validates_checkpoint_cursor(cursor) {
-            return Err(CursorError::WrongGeneration);
-        }
-        loop {
-            let frame = self
-                .journal
-                .frames
-                .last()
-                .expect("validated checkpoint frame remains present");
-            let active = Cursor {
-                generation: frame.generation,
-                frame_id: frame.id,
-                cursor: frame.cursor,
-            };
-            self.rollback_journal(active)?;
-            if active.frame_id == cursor.frame_id {
-                break;
-            }
-        }
-        let _replacement = self.begin_journal();
-        Ok(())
-    }
-
-    /// Rewinds the accepted owner to `cursor` while retaining every displaced
-    /// value exactly once for either rejection redo or acceptance pruning.
-    pub(super) fn begin_checkpoint_candidate(
-        &mut self,
-        cursor: Cursor,
-    ) -> Result<(AcceptedModeTail, Cursor), CursorError> {
-        if !self.validates_checkpoint_cursor(cursor) {
-            return Err(CursorError::WrongGeneration);
-        }
-        let mut accepted = AcceptedModeTail { frames: Vec::new() };
-        loop {
-            let is_selected = self
-                .journal
-                .frames
-                .last()
-                .is_some_and(|frame| frame.id == cursor.frame_id);
-            let frame = if is_selected {
-                None
-            } else {
-                Some(
-                    self.journal
-                        .frames
-                        .pop()
-                        .ok_or(CursorError::WrongGeneration)?,
-                )
-            };
-            let (frame_cursor, projection_start) = frame.as_ref().map_or_else(
-                || {
-                    let selected = self
-                        .journal
-                        .frames
-                        .last()
-                        .expect("selected checkpoint frame exists");
-                    (selected.cursor, selected.projection_start)
-                },
-                |frame| (frame.cursor, frame.projection_start),
-            );
-            let mut inverses = self.journal.inverses.split_off(frame_cursor);
-            for inverse in inverses.iter_mut().rev() {
-                self.journal.replay_work = self.journal.replay_work.saturating_add(1);
-                inverse.swap(self);
-            }
-            let projections = if is_selected {
-                let projections = self.journal.projections[projection_start..].to_vec();
-                for projection in &mut self.journal.projections[projection_start..] {
-                    projection.inverse_positions = [UNRECORDED; FIELD_COUNT];
-                }
-                projections
-            } else {
-                self.journal.projections.drain(projection_start..).collect()
-            };
-            for projection in &projections {
-                let level = self.level_by_id_mut(projection.id);
-                level.list.nodes = projection.root;
-                level.list.semantic_identity_root = projection.list_semantic_identity_root;
-                level.list.component_roots = projection.component_roots;
-            }
-            accepted.frames.push(AcceptedFrame {
-                frame,
-                projections,
-                inverses,
-            });
-            if is_selected {
-                break;
-            }
-        }
-        let candidate = self.begin_journal();
-        Ok((accepted, candidate))
-    }
-
-    /// Undoes the live candidate suffix, then redoes the accepted frames in
-    /// their original order and restores their journal coordinates.
-    pub(super) fn reject_checkpoint_candidate(
-        &mut self,
-        candidate: Cursor,
-        mut accepted: AcceptedModeTail,
-    ) -> Result<(), CursorError> {
-        while self
-            .journal
-            .frames
-            .last()
-            .is_some_and(|frame| frame.id != candidate.frame_id)
-        {
-            let frame = self
-                .journal
-                .frames
-                .last()
-                .expect("checked candidate descendant exists");
-            let descendant = Cursor {
-                generation: frame.generation,
-                frame_id: frame.id,
-                cursor: frame.cursor,
-            };
-            self.rollback_journal(descendant)?;
-        }
-        self.rollback_journal(candidate)?;
-        for mut accepted_frame in accepted.frames.drain(..).rev() {
-            for inverse in &mut accepted_frame.inverses {
-                inverse.swap(self);
-            }
-            self.journal.inverses.append(&mut accepted_frame.inverses);
-            if let Some(frame) = accepted_frame.frame {
-                debug_assert_eq!(self.journal.projections.len(), frame.projection_start);
-                self.journal
-                    .projections
-                    .append(&mut accepted_frame.projections);
-                self.journal.frames.push(frame);
-            } else {
-                let selected = self
-                    .journal
-                    .frames
-                    .last()
-                    .expect("selected checkpoint frame remains installed");
-                debug_assert_eq!(
-                    self.journal.projections.len() - selected.projection_start,
-                    accepted_frame.projections.len()
-                );
-                self.journal.projections[selected.projection_start..]
-                    .copy_from_slice(&accepted_frame.projections);
-            }
-        }
-        Ok(())
-    }
-
-    /// Promotes the live candidate while retaining any named marks published
-    /// beneath it. Only the hidden aggregate frame and its duplicate list
-    /// projections are removed.
-    pub(super) fn accept_checkpoint_candidate(
-        &mut self,
-        candidate: Cursor,
-    ) -> Result<(), CursorError> {
-        let index = self
-            .journal
-            .frames
-            .iter()
-            .position(|frame| {
-                frame.generation == candidate.generation && frame.id == candidate.frame_id
-            })
-            .ok_or(CursorError::WrongGeneration)?;
-        let frame = self.journal.frames.remove(index);
-        if frame.cursor != candidate.cursor {
-            return Err(CursorError::WrongGeneration);
-        }
-        let projection_end = self
-            .journal
-            .frames
-            .get(index)
-            .map_or(self.journal.projections.len(), |next| next.projection_start);
-        let removed = projection_end - frame.projection_start;
-        self.journal
-            .projections
-            .drain(frame.projection_start..projection_end);
-        for descendant in &mut self.journal.frames[index..] {
-            descendant.projection_start -= removed;
-        }
-        Ok(())
-    }
-
     #[cfg(test)]
     pub(super) fn reset_journal_for_test(&mut self) {
         assert!(self.journal.frames.is_empty());
@@ -888,8 +602,8 @@ impl ModeNestStorage {
         let frame = self.journal.frames.pop().expect("validated frame exists");
         while self.journal.inverses.len() > frame.cursor {
             self.journal.replay_work = self.journal.replay_work.saturating_add(1);
-            let mut inverse = self.journal.inverses.pop().expect("cursor bounds inverses");
-            inverse.swap(self);
+            let inverse = self.journal.inverses.pop().expect("cursor bounds inverses");
+            inverse.restore(self);
         }
         for index in frame.projection_start..self.journal.projections.len() {
             let projection = self.journal.projections[index];
@@ -935,23 +649,23 @@ impl ModeNestStorage {
 impl ModeNest {
     #[cfg(test)]
     pub(super) fn reset_journal_for_test(&mut self) {
-        self.storage.borrow_mut().reset_journal_for_test();
+        self.storage.reset_journal_for_test();
     }
 
     pub(crate) fn begin_journal(&mut self) -> Cursor {
-        self.storage.borrow_mut().begin_journal()
+        self.storage.begin_journal()
     }
 
     #[cfg(test)]
     pub(super) fn journal_inverse_len_for_test(&self) -> usize {
-        self.storage.borrow().journal_inverse_len_for_test()
+        self.storage.journal_inverse_len_for_test()
     }
 
     pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
-        self.storage.borrow_mut().commit_journal(cursor)
+        self.storage.commit_journal(cursor)
     }
 
     pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
-        self.storage.borrow_mut().rollback_journal(cursor)
+        self.storage.rollback_journal(cursor)
     }
 }

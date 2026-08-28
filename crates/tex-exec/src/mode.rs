@@ -1,6 +1,7 @@
 use ahash::RandomState;
 use smallvec::{SmallVec, smallvec};
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
@@ -638,7 +639,6 @@ impl ModeList {
 /// higher-ranked closure whose mutable borrow cannot escape.
 enum ModeListBorrow<'a> {
     Direct(&'a mut ModeList),
-    Shared(std::cell::RefMut<'a, ModeList>),
 }
 
 impl std::ops::Deref for ModeListBorrow<'_> {
@@ -647,7 +647,6 @@ impl std::ops::Deref for ModeListBorrow<'_> {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Direct(list) => list,
-            Self::Shared(list) => list,
         }
     }
 }
@@ -656,15 +655,14 @@ impl std::ops::DerefMut for ModeListBorrow<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             Self::Direct(list) => list,
-            Self::Shared(list) => list,
         }
     }
 }
 
 enum ModeListJournalBorrow<'a> {
     None,
-    Shared {
-        journal: std::cell::RefMut<'a, journal::ModeJournal>,
+    Journaled {
+        journal: &'a mut journal::ModeJournal,
         index: usize,
     },
 }
@@ -684,13 +682,13 @@ impl ModeListMutation<'_> {
     fn journal_is_active(&self) -> bool {
         match &self.journal {
             ModeListJournalBorrow::None => false,
-            ModeListJournalBorrow::Shared { journal, .. } => journal.has_active_frame(),
+            ModeListJournalBorrow::Journaled { journal, .. } => journal.has_active_frame(),
         }
     }
     fn list_journal(&mut self) -> Option<journal::ListJournal<'_>> {
         match &mut self.journal {
             ModeListJournalBorrow::None => None,
-            ModeListJournalBorrow::Shared { journal, index } => journal.list(*index),
+            ModeListJournalBorrow::Journaled { journal, index } => journal.list(*index),
         }
     }
 
@@ -1880,18 +1878,20 @@ struct ModeNestStorage {
     identity_enabled: bool,
 }
 
+static NEXT_MODE_CHECKPOINT_OWNER: AtomicUsize = AtomicUsize::new(1);
+
 /// Opaque bounded root of one mode timeline position.
 pub(crate) struct ModeCheckpoint {
-    owner: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
-    cursor: ModeJournalCursor,
+    owner: usize,
+    outer: ModeLevelSummary,
     reachable_state_identity_root: Option<u64>,
 }
 
 impl Clone for ModeCheckpoint {
     fn clone(&self) -> Self {
         Self {
-            owner: std::rc::Rc::clone(&self.owner),
-            cursor: self.cursor,
+            owner: self.owner,
+            outer: self.outer.clone(),
             reachable_state_identity_root: self.reachable_state_identity_root,
         }
     }
@@ -1901,9 +1901,7 @@ impl std::fmt::Debug for ModeCheckpoint {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ModeCheckpoint")
-            .field("generation", &self.cursor.generation)
-            .field("frame", &self.cursor.frame_id)
-            .field("cursor", &self.cursor.cursor)
+            .field("owner", &self.owner)
             .finish_non_exhaustive()
     }
 }
@@ -1911,11 +1909,11 @@ impl std::fmt::Debug for ModeCheckpoint {
 impl ModeCheckpoint {
     #[cfg(feature = "profiling")]
     pub(crate) fn replay_work(&self) -> u64 {
-        self.owner.borrow().replay_work()
+        0
     }
 
     pub(crate) fn retention_owner_address(&self) -> usize {
-        std::rc::Rc::as_ptr(&self.owner) as usize
+        self.owner
     }
 
     pub(crate) const fn reachable_state_identity_root(&self) -> Option<u64> {
@@ -1923,15 +1921,7 @@ impl ModeCheckpoint {
     }
 
     pub(crate) fn retained_owner_bytes(&self) -> usize {
-        let storage = self.owner.borrow();
-        std::mem::size_of::<ModeNestStorage>()
-            .saturating_add(
-                storage
-                    .levels
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ModeLevelSummary>()),
-            )
-            .saturating_add(storage.journal.retained_bytes())
+        std::mem::size_of::<ModeLevelSummary>()
     }
 
     pub(crate) fn retains_page_node_handles(&self) -> bool {
@@ -1940,42 +1930,27 @@ impl ModeCheckpoint {
 
     pub(crate) fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
-            levels: self.owner.borrow().levels.clone(),
+            levels: vec![self.outer.clone()],
         }
-    }
-
-    fn restore_storage(&self) -> Result<(), ExecError> {
-        self.owner
-            .borrow_mut()
-            .restore_checkpoint_cursor(self.cursor)
-            .map_err(|_| ExecError::EmptyModeNestSummary)
     }
 }
 
 pub struct ModeNest {
-    storage: std::rc::Rc<std::cell::RefCell<ModeNestStorage>>,
-    loan: Option<ModeNestLoan>,
+    storage: ModeNestStorage,
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
     max_nest_stack: usize,
 }
 
-struct ModeNestLoan {
-    accepted: journal::AcceptedModeTail,
-    candidate_cursor: ModeJournalCursor,
-}
-
 impl Clone for ModeNest {
     fn clone(&self) -> Self {
-        let storage = self.storage.borrow();
-        let levels = storage.levels.clone();
+        let levels = self.storage.levels.clone();
         Self {
-            storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
+            storage: ModeNestStorage {
                 journal: journal::ModeJournal::enabled(levels.len()),
                 levels,
-                identity_enabled: storage.identity_enabled,
-            })),
-            loan: None,
+                identity_enabled: self.storage.identity_enabled,
+            },
             max_nest_stack: self.max_nest_stack,
         }
     }
@@ -1985,20 +1960,14 @@ impl std::fmt::Debug for ModeNest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ModeNest")
-            .field("levels", &self.storage.borrow().levels)
+            .field("levels", &self.storage.levels)
             .finish()
     }
 }
 
 impl PartialEq for ModeNest {
     fn eq(&self, other: &Self) -> bool {
-        self.storage.borrow().levels == other.storage.borrow().levels
-    }
-}
-
-impl Drop for ModeNest {
-    fn drop(&mut self) {
-        self.reject_checkpoint_candidate();
+        self.storage.levels == other.storage.levels
     }
 }
 
@@ -2011,29 +1980,12 @@ impl Default for ModeNest {
 impl ModeNest {
     /// Promotes the current mode owner. This is called only by the aggregate
     /// candidate barrier; ordinary `Drop` remains the emergency reject path.
-    pub(crate) fn accept_checkpoint_candidate(&mut self) {
-        let Some(loan) = self.loan.take() else {
-            return;
-        };
-        self.storage
-            .borrow_mut()
-            .accept_checkpoint_candidate(loan.candidate_cursor)
-            .expect("candidate mode journal remains live");
-        drop(loan.accepted);
-    }
+    pub(crate) fn accept_checkpoint_candidate(&mut self) {}
 
     /// Returns candidate-owned ranges to the accepted mode owner after every
     /// destination owner has completed its rejection phase. `Drop` calls the
     /// same path only as an unwind guard.
-    pub(crate) fn reject_checkpoint_candidate(&mut self) {
-        let Some(loan) = self.loan.take() else {
-            return;
-        };
-        self.storage
-            .borrow_mut()
-            .reject_checkpoint_candidate(loan.candidate_cursor, loan.accepted)
-            .expect("candidate mode journal remains innermost");
-    }
+    pub(crate) fn reject_checkpoint_candidate(&mut self) {}
 
     /// TeX82 §11's maximum number of simultaneously saved semantic levels.
     const TEX82_NEST_SIZE: usize = 40;
@@ -2047,12 +1999,11 @@ impl ModeNest {
         let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
         levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
-            storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
+            storage: ModeNestStorage {
                 levels,
                 journal: journal::ModeJournal::enabled(1),
                 identity_enabled: false,
-            })),
-            loan: None,
+            },
             max_nest_stack: 0,
         }
     }
@@ -2069,12 +2020,11 @@ impl ModeNest {
             )));
         }
         Ok(Self {
-            storage: std::rc::Rc::new(std::cell::RefCell::new(ModeNestStorage {
+            storage: ModeNestStorage {
                 journal: journal::ModeJournal::enabled(summary.levels.len()),
                 levels: summary.levels,
                 identity_enabled: false,
-            })),
-            loan: None,
+            },
             max_nest_stack: 0,
         })
     }
@@ -2082,23 +2032,22 @@ impl ModeNest {
     #[must_use]
     pub fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
-            levels: self.storage.borrow().levels.clone(),
+            levels: self.storage.levels.clone(),
         }
     }
 
     #[must_use]
     #[cfg(test)]
     pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
-        let storage = self.storage.borrow();
-        storage
+        self.storage
             .identity_enabled
-            .then(|| mode_nest_semantic_identity(&storage.levels))
+            .then(|| mode_nest_semantic_identity(&self.storage.levels))
     }
 
     /// Enables semantic-root maintenance for one convergence session.
     #[doc(hidden)]
     pub fn enable_reachable_state_identity(&mut self) {
-        let mut storage = self.storage.borrow_mut();
+        let storage = &mut self.storage;
         if storage.identity_enabled {
             return;
         }
@@ -2113,25 +2062,21 @@ impl ModeNest {
     }
 
     pub(crate) fn checkpoint(&mut self) -> ModeCheckpoint {
-        {
-            let storage = self.storage.borrow();
-            assert!(
-                storage.levels.len() == 1
-                    && storage.levels[0].mode == Mode::Vertical
-                    && storage.levels[0].list.is_checkpoint_rootless(),
-                "restart checkpoint requires one quiescent empty outer vertical mode"
-            );
-        }
-        let reachable_state_identity_root = {
-            let storage = self.storage.borrow();
-            storage
-                .identity_enabled
-                .then(|| mode_nest_semantic_identity(&storage.levels))
-        };
-        let cursor = self.storage.borrow_mut().begin_journal();
+        assert!(
+            self.storage.levels.len() == 1
+                && self.storage.levels[0].mode == Mode::Vertical
+                && self.storage.levels[0].list.is_checkpoint_rootless(),
+            "restart checkpoint requires one quiescent empty outer vertical mode"
+        );
+        let reachable_state_identity_root = self
+            .storage
+            .identity_enabled
+            .then(|| mode_nest_semantic_identity(&self.storage.levels));
+        let owner = NEXT_MODE_CHECKPOINT_OWNER.fetch_add(1, Ordering::Relaxed);
+        assert_ne!(owner, 0, "mode checkpoint owner identity exhausted");
         ModeCheckpoint {
-            owner: std::rc::Rc::clone(&self.storage),
-            cursor,
+            owner,
+            outer: self.storage.levels[0].clone(),
             reachable_state_identity_root,
         }
     }
@@ -2143,7 +2088,7 @@ impl ModeNest {
     /// [`ModeNestSummary`] and every retained list merely to answer the
     /// lifetime question.
     pub(crate) fn retains_page_node_handles(&self) -> bool {
-        self.storage.borrow().levels.iter().any(|level| {
+        self.storage.levels.iter().any(|level| {
             let list = &level.list;
             !list.nodes.is_empty()
                 || list
@@ -2166,30 +2111,29 @@ impl ModeNest {
         &mut self,
         checkpoint: &ModeCheckpoint,
     ) -> Result<(), ExecError> {
-        checkpoint.restore_storage()?;
-        self.storage = std::rc::Rc::clone(&checkpoint.owner);
+        self.storage.levels.clear();
+        self.storage.levels.push(checkpoint.outer.clone());
+        self.storage.journal = journal::ModeJournal::enabled(1);
+        self.storage.identity_enabled = checkpoint.reachable_state_identity_root.is_some();
         Ok(())
     }
 
     pub(crate) fn fork_checkpoint(checkpoint: &ModeCheckpoint) -> Result<Self, ExecError> {
-        let (accepted, candidate_cursor) = checkpoint
-            .owner
-            .borrow_mut()
-            .begin_checkpoint_candidate(checkpoint.cursor)
-            .map_err(|_| ExecError::EmptyModeNestSummary)?;
+        let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
+        levels.push(checkpoint.outer.clone());
         Ok(Self {
-            storage: std::rc::Rc::clone(&checkpoint.owner),
-            loan: Some(ModeNestLoan {
-                accepted,
-                candidate_cursor,
-            }),
+            storage: ModeNestStorage {
+                levels,
+                journal: journal::ModeJournal::enabled(1),
+                identity_enabled: checkpoint.reachable_state_identity_root.is_some(),
+            },
             max_nest_stack: 0,
         })
     }
 
     #[must_use]
     pub fn depth(&self) -> usize {
-        self.storage.borrow().levels.len()
+        self.storage.levels.len()
     }
 
     /// TeX82 §216's maximum `nest_ptr` observed before a semantic push.
@@ -2209,7 +2153,6 @@ impl ModeNest {
     #[must_use]
     pub fn current_mode(&self) -> Mode {
         self.storage
-            .borrow()
             .levels
             .last()
             .expect("ModeNest always has at least one level")
@@ -2228,7 +2171,7 @@ impl ModeNest {
     /// Enters a semantic level while retaining TeX's `mode_line` diagnostic
     /// context. A negative line identifies the output-routine level.
     pub(crate) fn push_at_line(&mut self, mode: Mode, entry_line: i32) -> Result<(), ExecError> {
-        let depth = self.storage.borrow().levels.len();
+        let depth = self.storage.levels.len();
         if depth > Self::TEX82_NEST_SIZE {
             return Err(ExecError::Fatal(tex_command::FatalError::overflow(
                 "semantic nest size",
@@ -2241,20 +2184,20 @@ impl ModeNest {
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.mutate_list(|list| list.set_space_factor(1000));
         }
-        let mut storage = self.storage.borrow_mut();
+        let storage = &mut self.storage;
         storage.levels.push(level);
         storage.journal.record_level_push();
         Ok(())
     }
 
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {
-        if self.storage.borrow().levels.len() == 1 {
+        if self.storage.levels.len() == 1 {
             return Err(ExecError::CannotPopBaseMode);
         }
         if self.current_list().pending_hchars().is_some() {
             return Err(ExecError::UncommittedPendingHchars);
         }
-        let mut storage = self.storage.borrow_mut();
+        let storage = &mut self.storage;
         let popped = storage
             .levels
             .pop()
@@ -2263,14 +2206,12 @@ impl ModeNest {
         Ok(popped)
     }
 
-    pub fn current_list(&self) -> std::cell::Ref<'_, ModeList> {
-        std::cell::Ref::map(self.storage.borrow(), |storage| {
-            storage
-                .levels
-                .last()
-                .expect("ModeNest always has at least one level")
-                .list()
-        })
+    pub fn current_list(&self) -> &ModeList {
+        self.storage
+            .levels
+            .last()
+            .expect("ModeNest always has at least one level")
+            .list()
     }
 
     /// Appends one owned node to the current mode list through its journaled
@@ -2280,52 +2221,46 @@ impl ModeNest {
     }
 
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
-        let storage = self.storage.borrow_mut();
+        let storage = &mut self.storage;
         let index = storage.levels.len() - 1;
-        let (levels, journal) = std::cell::RefMut::map_split(storage, |storage| {
-            (&mut storage.levels, &mut storage.journal)
-        });
-        let list = std::cell::RefMut::map(levels, |levels| {
-            &mut levels
-                .last_mut()
-                .expect("ModeNest always has at least one level")
-                .list
-        });
+        let (levels, journal) = (&mut storage.levels, &mut storage.journal);
+        let list = &mut levels
+            .last_mut()
+            .expect("ModeNest always has at least one level")
+            .list;
         ModeListMutation {
-            list: ModeListBorrow::Shared(list),
-            journal: ModeListJournalBorrow::Shared { journal, index },
+            list: ModeListBorrow::Direct(list),
+            journal: ModeListJournalBorrow::Journaled { journal, index },
         }
     }
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
-        let storage = self.storage.borrow_mut();
+        let storage = &mut self.storage;
         storage.levels.get(index)?;
-        let (levels, journal) = std::cell::RefMut::map_split(storage, |storage| {
-            (&mut storage.levels, &mut storage.journal)
-        });
-        let list = std::cell::RefMut::map(levels, |levels| &mut levels[index].list);
+        let (levels, journal) = (&mut storage.levels, &mut storage.journal);
+        let list = &mut levels[index].list;
         Some(ModeListMutation {
-            list: ModeListBorrow::Shared(list),
-            journal: ModeListJournalBorrow::Shared { journal, index },
+            list: ModeListBorrow::Direct(list),
+            journal: ModeListJournalBorrow::Journaled { journal, index },
         })
     }
 
     #[must_use]
     pub fn enclosing_vertical_prev_graf(&self) -> i32 {
-        let storage = self.storage.borrow();
+        let storage = &self.storage;
         let index = enclosing_vertical_index(&storage.levels);
         storage.levels[index].list().prev_graf()
     }
 
     #[must_use]
     pub fn enclosing_vertical_prev_depth(&self) -> Option<Scaled> {
-        let storage = self.storage.borrow();
+        let storage = &self.storage;
         let index = enclosing_vertical_index(&storage.levels);
         storage.levels[index].list().prev_depth()
     }
 
     pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
-        let index = enclosing_vertical_index(&self.storage.borrow().levels);
+        let index = enclosing_vertical_index(&self.storage.levels);
         self.list_mutation(index)
             .expect("enclosing vertical level exists")
             .set_prev_graf(lines);

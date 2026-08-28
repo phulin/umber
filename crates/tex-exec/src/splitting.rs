@@ -81,9 +81,7 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
     split_top_skip: GlueSpec,
 ) -> (PageListId, PageListId) {
     let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    let mut discarded = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut retained);
-    stores.open_page_active_list(&mut discarded);
     let mut found_box = false;
     for index in 0..source.len() {
         if found_box {
@@ -94,14 +92,14 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
             .page_node_list(source)
             .expect("page-top source belongs to the live page arena")
             .nodes()
-            .owned_node(index)
+            .get(index)
             .expect("page-top source index remains in range");
-        match &node {
-            Node::HList(_) | Node::VList(_) | Node::Rule { .. } => {
+        match node {
+            NodeRef::HList(_) | NodeRef::VList(_) | NodeRef::Rule { .. } => {
                 let adjusted = GlueSpec {
                     width: split_top_skip
                         .width
-                        .checked_sub(vertical_height(&node))
+                        .checked_sub(vertical_height_ref(&node))
                         .filter(|width| width.raw() > 0)
                         .unwrap_or_else(|| Scaled::from_raw(0)),
                     stretch: split_top_skip.stretch,
@@ -120,16 +118,36 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
                 stores.append_page_active_list_range(&mut retained, source, index..index + 1);
                 found_box = true;
             }
-            _ if is_page_top_discardable(&node) => {
-                stores.append_page_active_list_range(&mut discarded, source, index..index + 1);
-            }
+            _ if is_page_top_discardable_ref(&node) => {}
             _ => stores.append_page_active_list_range(&mut retained, source, index..index + 1),
         }
     }
-    (
-        stores.finalize_page_active_list(&mut retained),
-        stores.finalize_page_active_list(&mut discarded),
-    )
+    let retained = stores.finalize_page_active_list(&mut retained);
+
+    // The page-material lane owns one persistent builder. The discard prefix
+    // is a second coordinate-only projection and therefore starts only after
+    // the retained projection has been sealed.
+    let mut discarded = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut discarded);
+    for index in 0..source.len() {
+        let node = stores
+            .page_node_list(source)
+            .expect("page-top source belongs to the live page arena")
+            .nodes()
+            .get(index)
+            .expect("page-top source index remains in range");
+        if matches!(
+            node,
+            NodeRef::HList(_) | NodeRef::VList(_) | NodeRef::Rule { .. }
+        ) {
+            break;
+        }
+        if is_page_top_discardable_ref(&node) {
+            stores.append_page_active_list_range(&mut discarded, source, index..index + 1);
+        }
+    }
+    let discarded = stores.finalize_page_active_list(&mut discarded);
+    (retained, discarded)
 }
 
 /// TeX82 §969's discardable page-top material plus pdfTeX §1378's snap node.
@@ -190,6 +208,21 @@ fn vertical_height(node: &Node) -> Scaled {
     NodeRef::from(node)
         .vertical_dimensions()
         .map_or(Scaled::from_raw(0), |(height, _)| height)
+}
+
+fn vertical_height_ref(node: &NodeRef<'_>) -> Scaled {
+    node.vertical_dimensions()
+        .map_or(Scaled::from_raw(0), |(height, _)| height)
+}
+
+fn is_page_top_discardable_ref(node: &NodeRef<'_>) -> bool {
+    matches!(
+        node,
+        NodeRef::Glue { .. }
+            | NodeRef::Kern { .. }
+            | NodeRef::Penalty(_)
+            | NodeRef::Whatsit(Whatsit::PdfSnapY { .. })
+    )
 }
 
 #[cfg(test)]

@@ -458,7 +458,10 @@ fn active_logical_subrange_crosses_source_descriptors_without_copying_payload() 
         .expect("finalize destination");
     let output = active.take_sealed().expect("sealed destination");
     let output_view = arena.list(&pool, output).expect("output view");
-    assert_eq!(output_view.iter().copied().collect::<Vec<_>>(), vec![2, 3, 4]);
+    assert_eq!(
+        output_view.iter().copied().collect::<Vec<_>>(),
+        vec![2, 3, 4]
+    );
     assert_eq!(
         output_view.get(0).expect("retained source") as *const u32,
         source_address

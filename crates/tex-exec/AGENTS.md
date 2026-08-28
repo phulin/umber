@@ -101,13 +101,13 @@ Command operands are scanned by `tex-command` into typed request and result valu
   unified executor's optional append-bounded evidence publication seam; every
   allocating category closes before operation commit while warmed category
   capacity remains with the operation owner.
-- `src/mode.rs` and `src/mode/`: mode nest, mutable native semantic/physical
-  node buffers, direct-value paragraph/alignment glue, copy-only
-  pending-character provenance, summaries, and the coarse owner-relative
-  rollback timeline. Named boundaries retain a fixed owner/cursor root;
-  candidate forks loan the whole store and short typed guards prevent an
-  interior borrow from crossing executor suspension or checkpoint boundaries.
-  Alignment brace depth belongs only to `tex-command`.
+- `src/mode.rs` and `src/mode/`: mode nest, page-arena list roots with detached
+  active builders, direct-value paragraph/alignment glue, copy-only
+  pending-character provenance, summaries, and the operation-local rollback
+  journal. Restart eligibility proves a sole empty outer vertical level, so a
+  named boundary stores that fixed scalar level directly and candidate forks
+  retain no shared mode tail or transient mode payload. Alignment brace depth
+  belongs only to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.

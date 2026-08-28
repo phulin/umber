@@ -69,9 +69,13 @@ The existing aggregate ordering remains authoritative:
    already-owned identifiers and become observable only after aggregate
    rollback has restored the matching `Universe` timeline.
 
-Semantic hashing and named checkpoints read only live mode state. Journal
-cursors, inverse capacity, and spare allocation are operational state and must
-not enter semantic equality, traces, formats, or durable summaries.
+Semantic hashing and named checkpoints read only live mode state. Restart
+eligibility proves the sole outer vertical level is empty and quiescent, so a
+named checkpoint copies only that fixed scalar level and its optional
+demand-maintained identity. It does not retain the operation journal, an
+accepted tail, an active builder, or transient mode payload. Journal cursors,
+inverse capacity, and spare allocation are operational state and must not enter
+semantic equality, traces, formats, or durable summaries.
 
 ## Implementation
 
@@ -100,11 +104,13 @@ maximum-enum argument between the producer and the log. This keeps rollback
 ordering and O(1) field marks in one representation without a side payload
 arena, boxing, whole-list snapshot, or retained cache.
 
-Every live `ModeNest` owns an enabled journal. Cloning or rehydrating a
-`ModeNest` creates a fresh operational journal over the cloned live levels;
+Every live `ModeNest` directly owns an enabled journal. Cloning or rehydrating
+a `ModeNest` creates a fresh operational journal over the cloned live levels;
 journal generation, cursors, log length, and capacity remain excluded from
 `Debug`, equality, summaries, semantic hashes, formats, and durable
-checkpoints.
+checkpoints. Aggregate fork and restore are narrower: they construct the sole
+rootless outer level from the eligible checkpoint scalar and therefore require
+no `Rc<RefCell<_>>`, journal rewind, `split_off`, or forward-tail replay.
 
 Successful ordinary, resource, PDF/effect/output, ErrorStop, observed,
 tracked, private-revision, and output-capable box-closing commands create no

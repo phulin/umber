@@ -328,40 +328,47 @@ pub(crate) fn split_hpack_migrations<G>(
     tex_state::node_arena::PageListId,
     tex_state::node_arena::PageListId,
 ) {
-    let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    let mut pre_migrated = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    let mut migrated = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut retained);
-    stores.open_page_active_list(&mut pre_migrated);
-    stores.open_page_active_list(&mut migrated);
-    for index in 0..nodes.len() {
-        let disposition = match stores
-            .page_node_list(nodes)
-            .expect("hpack source belongs to the live page arena")
-            .nodes()
-            .owned_node(index)
-            .expect("hpack source index remains in range")
-        {
-            Node::Mark { .. } | Node::Ins { .. } => (2, None),
-            Node::Adjust(adjust) => (usize::from(!adjust.pre) + 1, Some(adjust.content)),
-            _ => (0, None),
-        };
-        let target = match disposition.0 {
-            0 => &mut retained,
-            1 => &mut pre_migrated,
-            _ => &mut migrated,
-        };
-        if let Some(content) = disposition.1 {
-            stores.append_page_active_list(target, content);
-        } else {
-            stores.append_page_active_list_range(target, nodes, index..index + 1);
+    fn select<G>(
+        stores: &mut CommandContext<'_, G>,
+        nodes: tex_state::node_arena::PageListId,
+        selected_class: usize,
+    ) -> tex_state::node_arena::PageListId {
+        let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+        stores.open_page_active_list(&mut output);
+        for index in 0..nodes.len() {
+            let (class, adjustment) = match stores
+                .page_node_list(nodes)
+                .expect("hpack source belongs to the live page arena")
+                .nodes()
+                .get(index)
+                .expect("hpack source index remains in range")
+            {
+                tex_state::node_arena::NodeRef::Mark { .. }
+                | tex_state::node_arena::NodeRef::Ins { .. } => (2, None),
+                tex_state::node_arena::NodeRef::Adjust(adjust) => {
+                    (usize::from(!adjust.pre) + 1, Some(adjust.content))
+                }
+                _ => (0, None),
+            };
+            if class != selected_class {
+                continue;
+            }
+            if let Some(content) = adjustment {
+                stores.append_page_active_list(&mut output, content);
+            } else {
+                stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
+            }
         }
+        stores.finalize_page_active_list(&mut output)
     }
-    (
-        stores.finalize_page_active_list(&mut retained),
-        stores.finalize_page_active_list(&mut pre_migrated),
-        stores.finalize_page_active_list(&mut migrated),
-    )
+
+    // A ForkArena lane admits exactly one persistent builder. Build the three
+    // disjoint zero-copy projections sequentially so no partial operation
+    // coordinates overlap.
+    let retained = select(stores, nodes, 0);
+    let pre_migrated = select(stores, nodes, 1);
+    let migrated = select(stores, nodes, 2);
+    (retained, pre_migrated, migrated)
 }
 
 fn append_unboxed<G>(

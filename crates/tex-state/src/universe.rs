@@ -768,7 +768,8 @@ impl<G> Universe<G> {
         let mut page = std::mem::take(&mut self.page);
         page.begin_checkpoint_fork(checkpoint.page);
         page.push_contribution(&mut self.page_nodes, crate::node::Node::Penalty(19));
-        let contribution = if let Some(carrier) = page.pop_contribution_front(&mut self.page_nodes) {
+        let contribution = if let Some(carrier) = page.pop_contribution_front(&mut self.page_nodes)
+        {
             page.discard_carrier(carrier);
             1
         } else {

@@ -3934,9 +3934,8 @@ impl<G> MainControl<G> {
                     })?;
             }
             if published.boundary == crate::EngineBoundary::OuterParagraphEnd {
-                self.completed_checkpoint_eligibilities.push(
-                    crate::checkpoint::CheckpointEligibility::outer_paragraph_end(),
-                );
+                self.completed_checkpoint_eligibilities
+                    .push(crate::checkpoint::CheckpointEligibility::outer_paragraph_end());
             }
             self.completed_boundaries.push(published.boundary);
             return Ok(Some(published.boundary));
