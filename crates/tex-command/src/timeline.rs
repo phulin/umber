@@ -304,7 +304,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         if self.top == self.rows.len() {
             self.rows.push(value);
             self.touched.push(self.interval);
-        } else if self.recording {
+        } else if self.recording && self.touched[self.top] != self.interval {
             self.displaced.warm_first_page();
             let old = std::mem::replace(&mut self.rows[self.top], value);
             let payload = self.displaced.insert(old);
@@ -314,6 +314,13 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             });
             self.touched[self.top] = self.interval;
         } else {
+            // This physical row was admitted after the newest observable
+            // mark, or was already replaced once in its interval. No retained
+            // cursor can name its current payload: a mark would have advanced
+            // `interval` before making that version observable. Reuse the row
+            // directly so an arbitrary number of push/pop transitions inside
+            // one command operation or named-boundary interval retain only
+            // the stack high water, not one displaced payload per push.
             self.rows[self.top] = value;
             self.touched[self.top] = self.interval;
         }
@@ -621,6 +628,62 @@ mod tests {
         assert_eq!(stack.counters().coalesced_mutations, 1_023);
         assert!(stack.restore(mark));
         assert_eq!(stack.as_slice(), &[10]);
+    }
+
+    #[test]
+    fn unobserved_pop_push_reuses_one_row_without_history() {
+        let mut stack = LogicalStack::default();
+        let root = stack.mark().expect("empty stack marks");
+
+        stack.push(1);
+        assert_eq!(stack.pop_copy(), Some(1));
+        stack.push(2);
+        assert_eq!(stack.pop_copy(), Some(2));
+
+        assert_eq!(stack.as_slice(), &[]);
+        assert_eq!(stack.counters().undo_records, 0);
+        assert_eq!(stack.counters().displaced_payloads, 0);
+        assert!(stack.restore(root));
+        assert_eq!(stack.as_slice(), &[]);
+    }
+
+    #[test]
+    fn first_replacement_after_a_mark_preserves_exactly_one_version() {
+        let mut stack = LogicalStack::default();
+        stack.push(1);
+        let root = stack.mark().expect("live row marks");
+
+        assert_eq!(stack.pop_copy(), Some(1));
+        stack.push(2);
+        assert_eq!(stack.pop_copy(), Some(2));
+        stack.push(3);
+
+        assert_eq!(stack.as_slice(), &[3]);
+        assert_eq!(stack.counters().undo_records, 1);
+        assert_eq!(stack.counters().displaced_payloads, 1);
+        assert!(stack.restore(root));
+        assert_eq!(stack.as_slice(), &[1]);
+        assert_eq!(stack.counters().displaced_payloads, 0);
+    }
+
+    #[test]
+    fn ten_million_unobserved_pushes_retain_only_one_warmed_row() {
+        let mut stack = LogicalStack::default();
+        let root = stack.mark().expect("empty stack marks");
+
+        stack.push(0);
+        assert_eq!(stack.pop_copy(), Some(0));
+        let warmed_bytes = stack.retained_bytes();
+        for value in 1..=10_000_000 {
+            stack.push(value);
+            assert_eq!(stack.pop_copy(), Some(value));
+        }
+
+        assert_eq!(stack.retained_bytes(), warmed_bytes);
+        assert_eq!(stack.counters().payload_admissions, 10_000_001);
+        assert_eq!(stack.counters().undo_records, 0);
+        assert_eq!(stack.counters().displaced_payloads, 0);
+        assert!(stack.restore(root));
     }
 
     #[test]

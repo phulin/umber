@@ -1190,6 +1190,31 @@ impl<G> CommandState<G> {
         }
     }
 
+    /// Reuses one physical input-stack row repeatedly after its current
+    /// interval has reached the requested high water. No retained checkpoint
+    /// observes an intermediate frame, so the loop must allocate and append
+    /// no rollback history after the caller's one-transition warmup.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_repeated_input_level_reuse(
+        &mut self,
+        stores: &tex_state::CommandContext<'_, G>,
+        tokens: tex_state::TokenListId<G>,
+        transitions: usize,
+    ) {
+        for _ in 0..transitions {
+            let words = stores.token_list(tokens.clone());
+            self.push_token_level(
+                crate::input::PackedTokenSpanHandle::durable(words),
+                crate::input::TokenBehavior::Ordinary,
+                crate::input::RetirementBehavior::Pop,
+                crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
+            );
+            self.pop_input_level_at_end_of_job()
+                .expect("profiling reuse retires its just-pushed token frame");
+        }
+    }
+
     /// Returns structural packed-journal evidence for standalone gates.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]

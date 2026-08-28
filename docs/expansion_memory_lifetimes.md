@@ -627,14 +627,18 @@ not supplied the file.
 No step creates a scanner arena, promotes a scratch chunk, copies an arena
 owner into each frame, or treats A, B, or C as revision history.
 
-Checkpoint history likewise does not make expansion or input frames into
-revision payloads. `LogicalStack` admits each immutable frame payload once and
-journals only packed row handles plus the small cursor, phase, or status state
-that changed. Repeated safe state changes coalesce within the checkpoint
-interval. A displaced row or rare large source execution state occupies one
-slot in a reusable fixed slab until prior/current settlement; acceptance or
-rejection releases that slot without scanning roots, cloning `InputLevel`, or
-retaining a third lineage.
+Checkpoint history retains only frame versions that an observable mark can
+name. `LogicalStack` admits a frame into one reusable physical row and tags
+that row with the current checkpoint interval. A push after a pop overwrites
+the row directly when it was admitted or already replaced in that same
+interval: no intervening checkpoint or operation mark can observe the old
+payload. The first replacement of a row visible at a mark moves its old
+payload into one generation-checked slab slot and journals only that handle;
+later replacements and mutable cursor, phase, or status changes coalesce in
+the same interval. Acceptance, rejection, or rollback releases the required
+old version without scanning roots, cloning `InputLevel`, or retaining a third
+lineage. Memory therefore follows physical stack high water plus one required
+version per marked depth and interval, never unobserved push/pop count.
 
 ## Retention audit
 

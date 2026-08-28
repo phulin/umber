@@ -25,6 +25,7 @@ struct GateCounts {
     fork_first_mutation: Counts,
     repeated_scalar_mutations: Counts,
     repeated_input_frame_mutations: Counts,
+    repeated_input_level_reuse: Counts,
     logical_history: LogicalHistoryCounts,
 }
 
@@ -59,11 +60,15 @@ fn main() {
             "repeated_input_frame_mutations",
             shallow.repeated_input_frame_mutations,
         ),
+        (
+            "repeated_input_level_reuse",
+            shallow.repeated_input_level_reuse,
+        ),
     ] {
         assert_eq!(counts, Counts::ZERO, "{name} must remain allocation-free");
     }
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} logical_history={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -72,6 +77,7 @@ fn main() {
         shallow.fork_first_mutation,
         shallow.repeated_scalar_mutations,
         shallow.repeated_input_frame_mutations,
+        shallow.repeated_input_level_reuse,
         shallow.logical_history,
     );
 }
@@ -193,6 +199,30 @@ fn run_fixture(units: usize) -> GateCounts {
         command
             .restore_summary(&summary, universe)
             .expect("input-frame coalescing cleanup restores");
+        command.profile_repeated_input_level_reuse(
+            &universe.command_context().expect("reuse warmup context"),
+            tokens.clone(),
+            1,
+        );
+        let reuse_before = command.profile_timeline_counters();
+        let (_, repeated_input_level_reuse) = measure(|| {
+            command.profile_repeated_input_level_reuse(
+                &universe
+                    .command_context()
+                    .expect("reuse measurement context"),
+                tokens.clone(),
+                8_192,
+            );
+        });
+        let reuse_after = command.profile_timeline_counters();
+        assert_eq!(
+            reuse_after.logical_records, reuse_before.logical_records,
+            "unobserved input-frame reuse appends no rollback history"
+        );
+        assert_eq!(
+            reuse_after.displaced_payloads, reuse_before.displaced_payloads,
+            "unobserved input-frame reuse retains no displaced payload"
+        );
         let (candidate, fork) = measure(|| {
             CommandState::profile_fork_summary(command, &summary, universe)
                 .expect("checkpoint forks")
@@ -223,6 +253,7 @@ fn run_fixture(units: usize) -> GateCounts {
             fork_first_mutation,
             repeated_scalar_mutations,
             repeated_input_frame_mutations,
+            repeated_input_level_reuse,
             logical_history,
         }
     })

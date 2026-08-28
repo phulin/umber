@@ -95,5 +95,8 @@ the first scalar mutation after capture, command-only candidate fork, and the
 first mutation after fork. It additionally performs 8,192 writes to one hot
 scalar in a single interval and requires one packed record, 8,191 coalesced
 writes, zero scalar-list descriptor publications, at most 32 record bytes, and
-zero warmed heap allocation. It also rejects a candidate mutation and forks
-the same accepted mark again to prove exact rollback and lineage isolation.
+zero warmed heap allocation. A second 8,192-transition loop repeatedly pushes
+and pops one input frame after warming its physical depth; it requires zero
+allocation, no new logical undo record, and no additional displaced payload.
+The gate also rejects a candidate mutation and forks the same accepted mark
+again to prove exact rollback and lineage isolation.

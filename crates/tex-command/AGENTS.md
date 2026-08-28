@@ -67,11 +67,14 @@ collector (see `src/conditionals.rs`).
 - `src/timeline.rs`: generation-owned reversible stack storage. Immutable frame
   payloads are admitted once in dense rows; fixed-chunk journals retain only
   first-touch inline execution state or generation-checked handles into a
-  reusable stored-state/displaced-payload slab. Physical input, parameter,
-  condition, group, aftergroup, and alignment rows survive a logical pop while
-  a checkpoint can reach them. Fixed marks retain logical tops and packed
-  journal positions; reject redoes the detached accepted suffix and accept
-  releases its obsolete slab slots without a frame clone or third lineage.
+  reusable stored-state/displaced-payload slab. A row admitted or already
+  replaced after the newest observable mark is overwritten directly on
+  pop/push reuse; only the first replacement of a marked version retains a
+  displaced payload. Physical input, parameter, condition, group, aftergroup,
+  and alignment rows survive a logical pop while a checkpoint can reach them.
+  Fixed marks retain logical tops and packed journal positions; reject redoes
+  the detached accepted suffix and accept releases its obsolete slab slots
+  without a frame clone or third lineage.
 - `src/scalar_journal.rs` and `src/scalar_journal/tests.rs`: reusable fixed-chunk
   bidirectional command-root journal, scalar marks, two-lineage suffix
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.

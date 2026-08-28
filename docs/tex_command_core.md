@@ -1790,12 +1790,18 @@ execution phase. A token row owns its span, behavior, trace, and identity once;
 its packed frame and retirement phase form a fixed inline state record. Source
 rows similarly retain backing and nesting payload once, while the rarer
 line/backing execution state uses a separate reusable fixed slab so it cannot
-inflate token-cursor records. The first mutation of one row in a legal
-checkpoint interval records the old state; later cursor advances coalesce into
-that record and the live row holds the final state. Pop/push replacement moves
-the displaced payload into a generation-checked slab slot and journals only
-that handle. No input history entry clones `InputLevel`, a token span, macro
-definition, source ancestry, or command frame.
+inflate token-cursor records. The first mutation of one row visible at a legal
+checkpoint or operation mark records the old state; later cursor advances
+coalesce into that record and the live row holds the final state. A row first
+pushed after the newest mark is not observable rollback state. Pop/push at that
+depth therefore overwrites the same physical row directly, and repeated reuse
+retains no displaced payload or undo record. Pop/push replacement of a row
+that _was_ visible at the mark moves its old payload into one
+generation-checked slab slot and journals only that handle; further replacement
+in the interval again coalesces. No input history entry clones `InputLevel`, a
+token span, macro definition, source ancestry, or command frame, and retained
+memory is independent of unmarked push/pop count after the live-depth high
+water is warm.
 
 Detached resource continuations deliberately do not serialize a runtime frame
 or arena coordinate. Detachment projects packed words, backup coordinates,
