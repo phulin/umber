@@ -884,10 +884,128 @@ impl<G> DenseState<G> {
         {
             return false;
         }
-        self.reachable_state_identity = Some(crate::state_hash::SemanticMapIdentity::empty(
-            0x636f_7265_5f65_6e76,
-        ));
-        true
+        let mut root = crate::state_hash::SemanticMapIdentity::empty(0x636f_7265_5f65_6e76);
+        let mut complete = true;
+        let mut include =
+            |cell, word: StateWord<G>| match state_word_semantic_contribution(cell, &word) {
+                Ok(Some(value)) => {
+                    root.replace(state_cell_semantic_key(cell), None, Some(value));
+                }
+                Ok(None) => {}
+                Err(()) => complete = false,
+            };
+        for (index, meaning) in self.meanings.values().enumerate() {
+            include(
+                StateCell::Meaning(index as u32),
+                StateWord::Meaning(meaning),
+            );
+        }
+        for index in u16::MIN..=u16::MAX {
+            include(
+                StateCell::Count(index),
+                StateWord::Integer(self.counts.get(index).expect("u16 register").value),
+            );
+            include(
+                StateCell::Dimension(index),
+                StateWord::Dimension(self.dimensions.get(index).expect("u16 register").value),
+            );
+            include(
+                StateCell::TokenRegister(index),
+                StateWord::TokenList(
+                    self.token_registers
+                        .get(index)
+                        .expect("u16 register")
+                        .value
+                        .clone(),
+                ),
+            );
+            include(
+                StateCell::GlueRegister(index),
+                StateWord::Glue(self.glue_registers.get(index).expect("u16 register").value),
+            );
+            include(
+                StateCell::MuGlueRegister(index),
+                StateWord::Glue(
+                    self.mu_glue_registers
+                        .get(index)
+                        .expect("u16 register")
+                        .value,
+                ),
+            );
+        }
+        for index in 0..PARAMETER_COUNT as u16 {
+            include(
+                StateCell::IntegerParameter(index),
+                StateWord::Integer(
+                    self.integer_parameters
+                        .get(u32::from(index))
+                        .expect("parameter")
+                        .value,
+                ),
+            );
+            include(
+                StateCell::DimensionParameter(index),
+                StateWord::Dimension(
+                    self.dimension_parameters
+                        .get(u32::from(index))
+                        .expect("parameter")
+                        .value,
+                ),
+            );
+            include(
+                StateCell::TokenParameter(index),
+                StateWord::TokenList(
+                    self.token_parameters
+                        .get(u32::from(index))
+                        .expect("parameter")
+                        .value
+                        .clone(),
+                ),
+            );
+            include(
+                StateCell::GlueParameter(index),
+                StateWord::Glue(
+                    self.glue_parameters
+                        .get(u32::from(index))
+                        .expect("parameter")
+                        .value,
+                ),
+            );
+        }
+        include(
+            StateCell::CurrentFont,
+            StateWord::Font(self.current_font.value),
+        );
+        for (index, font) in self.math_family_fonts.values().enumerate() {
+            include(
+                StateCell::MathFamilyFont(index as u8),
+                StateWord::Font(font),
+            );
+        }
+        for (kind, bank) in [
+            (CodeTableKind::Catcode, &self.catcodes),
+            (CodeTableKind::Lccode, &self.lccodes),
+            (CodeTableKind::Uccode, &self.uccodes),
+            (CodeTableKind::Sfcode, &self.sfcodes),
+            (CodeTableKind::Mathcode, &self.mathcodes),
+            (CodeTableKind::Delcode, &self.delcodes),
+        ] {
+            for (scalar, value) in bank.nondefault_values() {
+                include(StateCell::Code(kind, scalar), StateWord::Code(value));
+            }
+        }
+        self.font_runtime.visit_cells(|cell, value| match value {
+            BankCellValue::Integer(value) => include(
+                StateCell::FontRuntime(cell),
+                StateWord::Integer(value.value),
+            ),
+            BankCellValue::Dimension(value) => include(
+                StateCell::FontRuntime(cell),
+                StateWord::Dimension(value.value),
+            ),
+        });
+        self.reachable_state_identity = complete.then_some(root);
+        complete
     }
 
     pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
@@ -2055,6 +2173,13 @@ impl<G> DenseState<G> {
             return Err(StateError::CellKindMismatch);
         }
         Ok(())
+    }
+
+    pub(crate) fn release_checkpoint_prefix(
+        &mut self,
+        cursor: JournalCursor<G>,
+    ) -> Result<usize, StateError> {
+        self.journal_mut().release_checkpoint_prefix(cursor)
     }
 
     fn validate_operation_restore(&self, operation: &StateOperation<G>) -> Result<(), StateError> {

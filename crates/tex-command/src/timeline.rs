@@ -424,6 +424,16 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         restored
     }
 
+    pub(crate) fn release_prefix(&mut self, mark: LogicalStackMark) -> Option<usize> {
+        if self.fork.is_some() || !self.validates(mark) {
+            return None;
+        }
+        let (displaced, stored_states) = (&mut self.displaced, &mut self.stored_states);
+        self.undo.release_prefix(mark.undo, |inverse| {
+            inverse.release(displaced, stored_states);
+        })
+    }
+
     pub(crate) fn begin_checkpoint_candidate(&mut self, mark: LogicalStackMark) {
         assert!(
             self.fork.is_none(),
@@ -708,5 +718,27 @@ mod tests {
         stack.accept_checkpoint_candidate();
         assert_eq!(stack.as_slice(), &[1, 5]);
         assert_eq!(stack.counters().displaced_payloads, 1);
+    }
+
+    #[test]
+    fn released_stack_floor_drops_old_alternates_and_restores_from_the_new_base() {
+        let mut stack = LogicalStack::default();
+        stack.push(1);
+        let root = stack.mark().expect("root mark");
+        assert_eq!(stack.pop_copy(), Some(1));
+        stack.push(2);
+        let floor = stack.mark().expect("ordinary floor");
+        assert_eq!(stack.counters().displaced_payloads, 1);
+
+        assert_eq!(stack.release_prefix(floor), Some(1));
+        assert!(!stack.validates(root));
+        assert!(stack.validates(floor));
+        assert_eq!(stack.counters().displaced_payloads, 0);
+
+        assert_eq!(stack.pop_copy(), Some(2));
+        stack.push(3);
+        assert!(stack.restore(floor));
+        assert_eq!(stack.as_slice(), [2]);
+        assert_eq!(stack.counters().displaced_payloads, 0);
     }
 }

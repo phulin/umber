@@ -194,6 +194,79 @@ fn checkpoint_marks_are_whole_chunk_boundaries_and_rejection_reattaches_prior() 
 }
 
 #[test]
+fn released_checkpoint_prefix_reuses_chunks_and_keeps_rebased_reject_exact() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let empty = {
+        let boundary = arena.seal_boundary(&mut pool).expect("empty boundary");
+        arena.checkpoint_mark(boundary).expect("empty checkpoint")
+    };
+    let released = list(&mut arena, &mut pool, [1, 2]);
+    let floor = {
+        let boundary = arena.seal_boundary(&mut pool).expect("floor boundary");
+        arena.checkpoint_mark(boundary).expect("floor checkpoint")
+    };
+    let accepted = list(&mut arena, &mut pool, [3, 4]);
+    let accepted_address = std::ptr::from_ref(
+        arena
+            .list(&pool, accepted)
+            .expect("accepted suffix")
+            .get(0)
+            .expect("accepted value"),
+    );
+    let pages = pool.page_count();
+
+    assert_eq!(
+        arena
+            .release_accepted_prefix(&mut pool, floor)
+            .expect("accepted prefix releases"),
+        2,
+        "one payload and one descriptor chunk are returned"
+    );
+    assert!(!arena.validates_checkpoint(empty));
+    assert!(arena.validates_checkpoint(floor));
+    assert!(matches!(
+        arena.list(&pool, released),
+        Err(ForkArenaError::InvalidRange)
+    ));
+
+    arena
+        .begin_checkpoint_candidate(floor)
+        .expect("rebased floor forks");
+    let candidate = list(&mut arena, &mut pool, [9]);
+    assert_eq!(pool.page_count(), pages, "released chunks are reused");
+    let settlement = arena.seal_boundary(&mut pool).expect("candidate boundary");
+    arena
+        .reject_checkpoint_candidate(&mut pool, settlement)
+        .expect("rebased candidate rejects");
+
+    assert_eq!(
+        arena
+            .list(&pool, accepted)
+            .expect("accepted suffix reattaches")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [3, 4]
+    );
+    assert_eq!(
+        std::ptr::from_ref(
+            arena
+                .list(&pool, accepted)
+                .expect("accepted suffix")
+                .get(0)
+                .expect("accepted value"),
+        ),
+        accepted_address,
+        "rejection reindexes the same physical accepted chunk"
+    );
+    assert!(matches!(
+        arena.list(&pool, candidate),
+        Err(ForkArenaError::InvalidRange)
+    ));
+}
+
+#[test]
 fn forked_journal_visitors_preserve_reverse_undo_and_forward_redo_order() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

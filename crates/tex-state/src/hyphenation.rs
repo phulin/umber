@@ -484,17 +484,30 @@ impl HyphenationTable {
         if self.reachable_state_identity.is_some() {
             return true;
         }
-        if !self.patterns.is_building()
-            || !self.patterns.languages().is_empty()
-            || !self.runtime.exceptions.is_empty()
-            || !self.runtime.hyphen_codes.is_empty()
-        {
-            return false;
-        }
         let mut root = SemanticMapIdentity::empty(0x6879_7068_5f72_7431);
         root.replace(0, None, Some(self.trie_capacity as u64));
         root.replace(1, None, Some(self.runtime.exception_capacity as u64));
-        root.replace(2, None, Some(0));
+        root.replace(2, None, Some(u64::from(!self.patterns.is_building())));
+        for (&language, nodes) in self.patterns.languages() {
+            let mut letters = Vec::new();
+            seed_pattern_identity(&mut root, language, nodes, 0, &mut letters);
+        }
+        for (&language, exceptions) in &self.runtime.exceptions {
+            for (word, positions) in exceptions {
+                let key = semantic_scalar_root(0x6879_7068_5f65_786b, |hasher| {
+                    hasher.u8(language);
+                    hasher.str(word);
+                });
+                root.replace(key, None, Some(positions_identity(positions)));
+            }
+        }
+        for (&language, codes) in &self.runtime.hyphen_codes {
+            root.replace(
+                semantic_scalar_root(0x6879_7068_5f63_6f6b, |hasher| hasher.u8(language)),
+                None,
+                Some(hyphen_codes_identity(codes)),
+            );
+        }
         self.reachable_state_identity = Some(root);
         true
     }
@@ -665,6 +678,31 @@ impl HyphenationTable {
             _ => unreachable!("validated hyphenation dependency kind"),
         }
         hasher.finish()
+    }
+}
+
+fn seed_pattern_identity(
+    root: &mut SemanticMapIdentity,
+    language: u8,
+    nodes: &[TrieNode],
+    node: usize,
+    letters: &mut Vec<char>,
+) {
+    let current = &nodes[node];
+    if !current.values.is_empty() {
+        root.replace(
+            pattern_key_identity(language, letters),
+            None,
+            Some(byte_sequence_identity(
+                0x6879_7068_5f70_6f6c,
+                &current.values,
+            )),
+        );
+    }
+    for &(letter, child) in &current.edges {
+        letters.push(letter);
+        seed_pattern_identity(root, language, nodes, child, letters);
+        letters.pop();
     }
 }
 

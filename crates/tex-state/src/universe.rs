@@ -2430,20 +2430,22 @@ impl<G> Universe<G> {
     /// Selects maintained mode/page convergence identity before page material
     /// is published for an incremental session.
     #[doc(hidden)]
-    pub fn enable_reachable_state_identity(&mut self) {
-        if let Some(core) = &mut self.core {
-            let _ = core.enable_reachable_state_identity();
-        }
-        let _ = self.durable_boxes.enable_semantic_identity();
-        let _ = self.world.enable_reachable_state_identity();
-        let _ = self.hyphenation.enable_reachable_state_identity();
-        let _ = self.dependencies.enable_reachable_state_identity();
-        let _ = self.sources.enable_reachable_state_identity();
-        let _ = self.fonts.enable_reachable_state_identity();
+    pub fn enable_reachable_state_identity(&mut self) -> bool {
+        let core = self
+            .core
+            .as_mut()
+            .is_some_and(StateCore::enable_reachable_state_identity);
+        let boxes = self.durable_boxes.enable_semantic_identity();
+        let world = self.world.enable_reachable_state_identity();
+        let hyphenation = self.hyphenation.enable_reachable_state_identity();
+        let dependencies = self.dependencies.enable_reachable_state_identity();
+        let sources = self.sources.enable_reachable_state_identity();
+        let fonts = self.fonts.enable_reachable_state_identity();
         self.page_region
             .builder_mut()
             .enable_reachable_state_identity();
         self.page_region.nodes_mut().enable_semantic_identity();
+        core && boxes && world && hyphenation && dependencies && sources && fonts
     }
 
     /// Captures runtime roots while incorporating executor-owned page
@@ -2589,16 +2591,14 @@ impl<G> Universe<G> {
     /// Releases the private runtime rows owned solely by one outer restart
     /// checkpoint.
     ///
-    /// `oldest_nonprotected` is validated as the next ordinary floor but does
-    /// not supersede protected JobStart. Head-relative dense journals remain
-    /// anchored until that protected root is materialized independently; the
-    /// page owner can still remove its keyed row immediately and retire a
-    /// noncurrent region when that was its final live owner.
+    /// `oldest_retained` is validated as the next ordinary floor. JobStart is
+    /// frozen outside the live generation, so dense journals can advance to
+    /// that floor while the page owner removes the released keyed row.
     #[doc(hidden)]
     pub fn validate_runtime_checkpoint_release(
         &self,
         released: &RuntimeCheckpoint<G>,
-        oldest_nonprotected: Option<&RuntimeCheckpoint<G>>,
+        oldest_retained: Option<&RuntimeCheckpoint<G>>,
     ) -> Result<(), UniverseError> {
         let retained = |checkpoint: &RuntimeCheckpoint<G>| {
             self.world.snapshot_is_retained(&checkpoint.world)
@@ -2608,9 +2608,7 @@ impl<G> Universe<G> {
                 && self.checkpoint_state_is_ready(checkpoint)
                 && self.page_region.validates_checkpoint(checkpoint.page)
         };
-        if !retained(released)
-            || oldest_nonprotected.is_some_and(|checkpoint| !retained(checkpoint))
-        {
+        if !retained(released) || oldest_retained.is_some_and(|checkpoint| !retained(checkpoint)) {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         Ok(())
@@ -2620,9 +2618,16 @@ impl<G> Universe<G> {
     pub fn release_runtime_checkpoint(
         &mut self,
         released: &RuntimeCheckpoint<G>,
-        oldest_nonprotected: Option<&RuntimeCheckpoint<G>>,
+        oldest_retained: Option<&RuntimeCheckpoint<G>>,
     ) -> Result<crate::page::PageRegionReleaseReceipt, UniverseError> {
-        self.validate_runtime_checkpoint_release(released, oldest_nonprotected)?;
+        self.validate_runtime_checkpoint_release(released, oldest_retained)?;
+        let floor = oldest_retained.unwrap_or(released);
+        let mark = floor.state.mark();
+        self.core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .state_mut()
+            .release_checkpoint_prefix(*mark.journal())?;
         self.page_region
             .release_checkpoint(released.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))

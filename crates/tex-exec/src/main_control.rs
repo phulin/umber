@@ -2080,6 +2080,15 @@ impl<G> MainControl<G> {
         (command, PreparedCheckpointControl { modes })
     }
 
+    /// Parks a quiescent command owner from an independently materialized
+    /// JobStart lane. No mode or command fork exists in this case, so there is
+    /// deliberately no settlement receipt: retained checkpoints already own
+    /// their rootless mode summaries and the live terminal mode nest can drop.
+    pub(crate) fn into_independent_parked_command(self) -> CommandState<G> {
+        debug_assert!(self.command.named_boundary_is_quiescent());
+        self.command.into_state()
+    }
+
     /// Convenience barrier used by owner-local tests. Aggregate callers use
     /// [`Self::prepare_checkpoint_candidate`] so destination owners settle
     /// first.
@@ -2803,6 +2812,16 @@ impl<G> MainControl<G> {
         self.command
             .set_engine_semantics(binary.command_semantics());
         self.engine_binary = Some(binary);
+    }
+
+    /// Installs the executable-owned immutable store capacities before a
+    /// pre-job aggregate checkpoint is captured. Normal startup repeats this
+    /// selection idempotently when it frames the root input.
+    pub fn prepare_job_start_stores(&self, stores: &mut Universe<G>) {
+        let binary = self.engine_binary.unwrap_or_else(|| {
+            crate::job::EngineBinaryIdentity::for_profile(self.command_profile())
+        });
+        stores.set_engine_capacity_profile(binary.capacity_profile());
     }
 
     /// tex.web §1333 `close_files_and_terminate`'s prints: §642's DVI page

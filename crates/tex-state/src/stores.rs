@@ -31,6 +31,14 @@ pub(crate) struct AcceptedStateCoreTail<G> {
 }
 
 impl<G> StateCore<G> {
+    /// Selects semantic identities for immutable format payloads before the
+    /// destination publishes them. Dense cells are deliberately enabled only
+    /// after materialization, because format installation writes those banks
+    /// directly and their exact root must be seeded from the completed image.
+    pub(crate) fn prepare_format_reachable_state_identity(&mut self) -> bool {
+        self.generation.generation_mut().enable_semantic_identity()
+    }
+
     pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
         let generation = self.generation.generation_mut().enable_semantic_identity();
         if !generation || !self.state.enable_reachable_state_identity() {

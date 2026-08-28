@@ -54,7 +54,7 @@ fn capture(source: &[u8], demand: EngineCompletionDemand) -> DetachedEngineCompl
             }
         };
         ledger
-            .close_revision(&mut control, universe, &terminal, demand)
+            .close_revision(&mut control, universe, &terminal, demand, 0)
             .expect("terminal completion detaches")
     })
 }

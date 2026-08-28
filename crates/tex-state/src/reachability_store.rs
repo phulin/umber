@@ -25,7 +25,19 @@ struct ReachabilityStorage {
 struct CandidateTransactionSlots {
     source: ReachabilityGenerationKey,
     candidate: ReachabilityGenerationKey,
+    origin: CandidateTransactionOrigin,
     phase: CandidateTransactionPhase,
+}
+
+/// Whether the current slot borrowed reversible owners from the accepted
+/// source or was materialized independently from a frozen JobStart anchor.
+/// The distinction belongs to the aggregate transaction, not to individual
+/// state families: an independent current slot has nothing to return on
+/// rejection and nothing to promote in-place on acceptance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CandidateTransactionOrigin {
+    Forked,
+    Independent,
 }
 
 /// State of the one aggregate accepted/current transaction. Components do not
@@ -126,6 +138,19 @@ impl ReachabilityStore {
             .is_some_and(|transaction| transaction.candidate == key)
     }
 
+    pub(crate) fn generation_is_independent_candidate(
+        &self,
+        key: ReachabilityGenerationKey,
+    ) -> bool {
+        self.storage
+            .borrow()
+            .candidate_transaction
+            .is_some_and(|transaction| {
+                transaction.candidate == key
+                    && transaction.origin == CandidateTransactionOrigin::Independent
+            })
+    }
+
     pub(crate) fn insert_generation(
         &self,
         generation: PhysicalStateGeneration,
@@ -169,6 +194,7 @@ impl ReachabilityStore {
         let mut transaction = CandidateTransactionSlots {
             source,
             candidate,
+            origin: CandidateTransactionOrigin::Forked,
             phase: CandidateTransactionPhase::AcceptedRewound,
         };
         debug_assert_eq!(
@@ -177,6 +203,27 @@ impl ReachabilityStore {
         );
         transaction.phase = CandidateTransactionPhase::CandidateLive;
         storage.candidate_transaction = Some(transaction);
+        Ok(candidate)
+    }
+
+    /// Installs a freshly materialized current slot beside one accepted slot.
+    /// Unlike a rooted fork, this does not rewind or lend any source owner.
+    /// It still uses the sole aggregate candidate transaction so the fixed
+    /// prior/current slot bound and atomic accept/reject barriers are shared.
+    pub(crate) fn insert_independent_candidate_generation(
+        &self,
+        source: ReachabilityGenerationKey,
+        generation: PhysicalStateGeneration,
+    ) -> Result<ReachabilityGenerationKey, ReachabilityStoreError> {
+        let candidate = self.insert_generation(generation)?;
+        let mut storage = self.storage.borrow_mut();
+        assert!(storage.candidate_transaction.is_none());
+        storage.candidate_transaction = Some(CandidateTransactionSlots {
+            source,
+            candidate,
+            origin: CandidateTransactionOrigin::Independent,
+            phase: CandidateTransactionPhase::CandidateLive,
+        });
         Ok(candidate)
     }
 
@@ -273,11 +320,13 @@ impl ReachabilityStore {
         if transaction.phase != CandidateTransactionPhase::CandidateLive {
             return Err(ReachabilityStoreError::CandidateTransactionMismatch);
         }
-        let candidate = storage.slots[transaction.candidate.slot]
-            .generation
-            .as_mut()
-            .ok_or(ReachabilityStoreError::StaleGeneration)?;
-        candidate.universe.accept_checkpoint_candidate();
+        if transaction.origin == CandidateTransactionOrigin::Forked {
+            let candidate = storage.slots[transaction.candidate.slot]
+                .generation
+                .as_mut()
+                .ok_or(ReachabilityStoreError::StaleGeneration)?;
+            candidate.universe.accept_checkpoint_candidate();
+        }
         transaction.phase = CandidateTransactionPhase::DestinationAcceptCommitted;
         storage.candidate_transaction = Some(transaction);
         Ok(())
@@ -318,23 +367,31 @@ impl ReachabilityStore {
         if transaction.phase != CandidateTransactionPhase::CandidateLive {
             return Err(ReachabilityStoreError::CandidateTransactionMismatch);
         }
-        let [source, candidate] = two_slots_mut(
-            &mut storage.slots,
-            transaction.source.slot,
-            transaction.candidate.slot,
-        );
-        let source = source
-            .generation
-            .as_mut()
-            .ok_or(ReachabilityStoreError::StaleGeneration)?;
-        let candidate = candidate
-            .generation
-            .as_mut()
-            .ok_or(ReachabilityStoreError::StaleGeneration)?;
-        candidate.clear_attachment();
-        source
-            .universe
-            .reject_checkpoint_candidate(&mut candidate.universe);
+        if transaction.origin == CandidateTransactionOrigin::Forked {
+            let [source, candidate] = two_slots_mut(
+                &mut storage.slots,
+                transaction.source.slot,
+                transaction.candidate.slot,
+            );
+            let source = source
+                .generation
+                .as_mut()
+                .ok_or(ReachabilityStoreError::StaleGeneration)?;
+            let candidate = candidate
+                .generation
+                .as_mut()
+                .ok_or(ReachabilityStoreError::StaleGeneration)?;
+            candidate.clear_attachment();
+            source
+                .universe
+                .reject_checkpoint_candidate(&mut candidate.universe);
+        } else {
+            storage.slots[transaction.candidate.slot]
+                .generation
+                .as_mut()
+                .ok_or(ReachabilityStoreError::StaleGeneration)?
+                .clear_attachment();
+        }
         transaction.phase = CandidateTransactionPhase::DestinationRejectReturned;
         storage.candidate_transaction = Some(transaction);
         Ok(())

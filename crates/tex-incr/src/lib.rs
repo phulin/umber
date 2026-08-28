@@ -102,6 +102,96 @@ pub struct RetentionMetrics {
     pub diagnostic_bytes: usize,
     pub output_bytes: usize,
     pub protected_overage_bytes: usize,
+    /// Immutable bytes owned by the session's frozen pre-job anchor.
+    pub job_start_anchor_bytes: usize,
+}
+
+/// Capture and materialization costs for the session's frozen JobStart base.
+/// Capture happens once for a fresh session; loaded formats reuse their
+/// already-validated bytes. Restore is a cold fallback operation and never
+/// runs at an ordinary paragraph boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct JobStartAnchorMetrics {
+    /// Byte-exact schema-12 image retained by the anchor.
+    pub image_bytes: usize,
+    /// Fixed session semantics required to interpret the image as JobStart.
+    pub session_metadata_bytes: usize,
+    pub bytes: usize,
+    pub capture_latency: Duration,
+    pub restore_count: u64,
+    pub restore_latency: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct JobStartSessionMetadata {
+    profile: CommandProfile,
+    compatibility: CommandCompatibility,
+    job_clock: JobClock,
+}
+
+#[derive(Clone, Debug)]
+struct FrozenJobStartAnchor {
+    image: Arc<[u8]>,
+    session: Option<JobStartSessionMetadata>,
+    metrics: JobStartAnchorMetrics,
+}
+
+impl FrozenJobStartAnchor {
+    fn loaded(image: DetachedFormatImage) -> Self {
+        let image: Arc<[u8]> = image.into_bytes().into();
+        Self {
+            metrics: JobStartAnchorMetrics {
+                image_bytes: image.len(),
+                bytes: image.len(),
+                ..JobStartAnchorMetrics::default()
+            },
+            image,
+            session: None,
+        }
+    }
+
+    fn captured(
+        image: DetachedFormatImage,
+        session: JobStartSessionMetadata,
+        capture_latency: Duration,
+    ) -> Self {
+        let mut anchor = Self::loaded(image);
+        anchor.bind_session(session);
+        anchor.metrics.capture_latency = capture_latency;
+        anchor
+    }
+
+    fn materialize_image(
+        &mut self,
+        session: JobStartSessionMetadata,
+    ) -> Result<DetachedFormatImage, SessionError> {
+        match self.session {
+            Some(bound) if bound != session => {
+                return Err(SessionError::JobStartSessionMismatch);
+            }
+            Some(_) => {}
+            None => self.bind_session(session),
+        }
+        let started = Timer::start();
+        let image = DetachedFormatImage::try_from_bytes(self.image.as_ref().to_vec())
+            .map_err(SessionError::Format)?;
+        self.metrics.restore_count = self.metrics.restore_count.saturating_add(1);
+        self.metrics.restore_latency = self
+            .metrics
+            .restore_latency
+            .saturating_add(started.elapsed());
+        Ok(image)
+    }
+
+    fn bind_session(&mut self, session: JobStartSessionMetadata) {
+        debug_assert!(self.session.is_none());
+        self.session = Some(session);
+        self.metrics.session_metadata_bytes = size_of::<JobStartSessionMetadata>();
+        self.metrics.bytes = self
+            .metrics
+            .image_bytes
+            .saturating_add(self.metrics.session_metadata_bytes);
+    }
 }
 
 /// Work and reuse observed while accepting a revision.
@@ -362,6 +452,7 @@ pub struct RevisionTransaction<'store> {
     checkpoint_metadata_bytes: usize,
     detached_boundary_bytes: usize,
     checkpoint_protected_overage_bytes: usize,
+    job_start_anchor: FrozenJobStartAnchor,
     _candidate_lease: CandidateLease,
 }
 
@@ -442,6 +533,7 @@ struct CandidateCompletion {
     checkpoint_metadata_bytes: usize,
     detached_boundary_bytes: usize,
     checkpoint_protected_overage_bytes: usize,
+    job_start_anchor: FrozenJobStartAnchor,
 }
 
 /// Command spellings and fresh-state conventions layered over a canonical
@@ -470,6 +562,7 @@ pub struct RevisionCandidate<'store> {
     registered_inputs: BTreeMap<PathBuf, Arc<[u8]>>,
     profile: CommandProfile,
     compatibility: CommandCompatibility,
+    required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     initex: bool,
     dvi_output: bool,
     root_framing: SourceFramingPolicy,
@@ -490,6 +583,8 @@ pub struct RevisionCandidate<'store> {
     checkpoint_control_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     candidate_lease: Option<CandidateLease>,
+    job_start_anchor: Option<FrozenJobStartAnchor>,
+    materialized_job_start: bool,
 }
 
 /// Result of driving a revision until it suspends or completes.
@@ -500,9 +595,29 @@ pub enum RevisionCandidateResult {
 }
 
 impl<'store> RevisionCandidate<'store> {
+    fn job_start_session_metadata(&self) -> JobStartSessionMetadata {
+        JobStartSessionMetadata {
+            profile: self.profile,
+            compatibility: self.compatibility,
+            job_clock: self.job_clock,
+        }
+    }
+
     fn new_retained_generation(
-        &self,
+        &mut self,
     ) -> Result<tex_exec::RetainedEngineGeneration<'store>, SessionError> {
+        let metadata = self.job_start_session_metadata();
+        if let Some(anchor) = self.job_start_anchor.as_mut() {
+            let image = anchor.materialize_image(metadata)?;
+            self.materialized_job_start = true;
+            return tex_exec::RetainedEngineGeneration::from_format_owned_with_page_node_identity_demand(
+                self.reachability_store.clone(),
+                World::memory_with_clock(self.job_clock),
+                image,
+                true,
+            )
+            .map_err(SessionError::Format);
+        }
         tex_exec::RetainedEngineGeneration::new_owned(
             self.reachability_store.clone(),
             World::memory_with_clock(self.job_clock),
@@ -634,6 +749,10 @@ impl<'store> RevisionCandidate<'store> {
             protected_overage_bytes: self.completed.as_ref().map_or(0, |completion| {
                 completion.checkpoint_protected_overage_bytes
             }),
+            job_start_anchor_bytes: self
+                .job_start_anchor
+                .as_ref()
+                .map_or(0, |anchor| anchor.metrics.bytes),
         }
     }
 
@@ -787,19 +906,24 @@ struct CandidateRunResult {
 
 struct SettleCandidateRuntime {
     key: tex_exec::RetainedEngineAttachmentKey,
+    independent_job_start: bool,
 }
 
 struct PreparedCandidateRuntime {
-    control: tex_exec::PreparedCheckpointControl,
+    control: Option<tex_exec::PreparedCheckpointControl>,
 }
 
 impl PreparedCandidateRuntime {
     fn accept(self) {
-        self.control.accept();
+        if let Some(control) = self.control {
+            control.accept();
+        }
     }
 
     fn reject(self) {
-        self.control.reject();
+        if let Some(control) = self.control {
+            control.reject();
+        }
     }
 }
 
@@ -811,8 +935,12 @@ impl tex_exec::RetainedEngineOperation for SettleCandidateRuntime {
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
         let _runtime = admitted.take_attachment::<CandidateRuntime>(self.key)?;
+        if self.independent_job_start {
+            admitted.park_independent_checkpoint_control()?;
+            return Ok(PreparedCandidateRuntime { control: None });
+        }
         Ok(PreparedCandidateRuntime {
-            control: admitted.prepare_live_checkpoint_control()?,
+            control: Some(admitted.prepare_live_checkpoint_control()?),
         })
     }
 }
@@ -824,53 +952,19 @@ fn prepare_candidate_runtime(
     let Some(key) = key else {
         return Ok(None);
     };
-    let prepared = generation.with_admitted(SettleCandidateRuntime { key })??;
+    let independent_job_start = generation.is_independent_job_start_candidate();
+    let prepared = generation.with_admitted(SettleCandidateRuntime {
+        key,
+        independent_job_start,
+    })??;
     Ok(Some(prepared))
-}
-
-struct PublishInitialFormatCheckpoint {
-    profile: CommandProfile,
-    compatibility: CommandCompatibility,
-    required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
-}
-
-impl tex_exec::RetainedEngineOperation for PublishInitialFormatCheckpoint {
-    type Output = Result<tex_exec::RetainedCheckpointKey, SessionError>;
-
-    fn run<G: 'static>(
-        self,
-        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
-    ) -> Self::Output {
-        let universe = admitted.universe();
-        universe.begin_retained_session()?;
-        universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        register_materialized_primitives(universe, self.profile, self.compatibility);
-        if self.required_font_layout_policy == Some(tex_fonts::FontLayoutPolicy::OpenTypePreferred)
-            && let Some(font) = universe
-                .command_context()
-                .map_err(SessionError::Universe)?
-                .font_artifact_recipes()
-                .into_iter()
-                .skip(1)
-                .find(|font| font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred)
-        {
-            return Err(SessionError::FormatFontPolicy { name: font.name });
-        }
-        let mut control = MainControl::with_profile(self.profile);
-        let checkpoint = control
-            .capture_job_start_checkpoint(universe, tex_exec::ExecutionBudgetCounters::default())?;
-        admitted
-            .prepare_checkpoint_control(control)
-            .map_err(SessionError::RetainedEngine)?
-            .accept();
-        Ok(admitted.retain_checkpoint(checkpoint))
-    }
 }
 
 struct CandidateRuntime {
     history: LiveHistoryState,
     delivered_commands: usize,
     answered_needs: Vec<ResourceNeed>,
+    job_start_anchor: Option<FrozenJobStartAnchor>,
 }
 
 struct LiveHistoryState {
@@ -1082,6 +1176,7 @@ impl LiveHistoryState {
 struct LiveHistorySink<'state, 'generation, G> {
     state: &'state mut LiveHistoryState,
     retained: tex_exec::RetainedCheckpointStore<'generation, G>,
+    pending_release: Option<tex_exec::EngineCheckpointRelease<G>>,
 }
 
 impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
@@ -1124,6 +1219,16 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             checkpoint.artifact_prefix_len(),
             checkpoint.reachable_state_identity(),
         );
+        if boundary == EngineBoundary::JobStart {
+            // The session's detached frozen anchor is the authoritative
+            // restart owner. Keep schedule evidence, but never publish this
+            // initial cursor as a live journal root.
+            self.state.checkpoint_keys.push(None);
+            self.state.checkpoint_retentions.push(None);
+            self.retained.retain_evidence(evidence);
+            self.pending_release = Some(checkpoint.release_unretained());
+            return;
+        }
         self.state.observe_shared_owners(retention);
         self.state.checkpoint_metadata_bytes = self
             .state
@@ -1136,7 +1241,9 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
     }
 
     fn take_checkpoint_release(&mut self) -> Option<tex_exec::EngineCheckpointRelease<G>> {
-        self.state.take_budget_release(&mut self.retained)
+        self.pending_release
+            .take()
+            .or_else(|| self.state.take_budget_release(&mut self.retained))
     }
 }
 
@@ -1152,6 +1259,7 @@ fn initialize_candidate_runtime<G: 'static>(
             .is_some_and(|key| key.boundary != EngineBoundary::JobStart);
     let (universe, _ledger, mut checkpoints) = admitted.parts();
     let rooted = restored.is_some();
+    let materialized_job_start = candidate.materialized_job_start;
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if !rooted_restart {
         universe.begin_retained_session()?;
@@ -1161,8 +1269,12 @@ fn initialize_candidate_runtime<G: 'static>(
     // this demand path and therefore performs none of the added hash work.
     universe.enable_reachable_state_identity();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    if restored.is_none() {
+    if restored.is_none() && !materialized_job_start {
         install_plain_catcodes(universe)?;
+    }
+    if materialized_job_start {
+        register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
+        validate_materialized_font_policy(universe, candidate.required_font_layout_policy)?;
     }
     for (path, bytes) in &candidate.registered_inputs {
         universe
@@ -1183,7 +1295,7 @@ fn initialize_candidate_runtime<G: 'static>(
         root_framing: candidate.root_framing,
         root_framing_name: candidate.root_framing_name.as_deref(),
     };
-    let mut control = candidate_control(universe, &options, restored)?;
+    let mut control = candidate_control(universe, &options, restored, materialized_job_start)?;
     control
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
@@ -1205,8 +1317,20 @@ fn initialize_candidate_runtime<G: 'static>(
                 &mut LiveHistorySink {
                     state: &mut history,
                     retained: checkpoints,
+                    pending_release: None,
                 },
             )?;
+            if candidate.job_start_anchor.is_none() {
+                let started = Timer::start();
+                let image = universe
+                    .capture_format_image()
+                    .map_err(SessionError::Format)?;
+                candidate.job_start_anchor = Some(FrozenJobStartAnchor::captured(
+                    image,
+                    candidate.job_start_session_metadata(),
+                    started.elapsed(),
+                ));
+            }
         }
         start_candidate_job(universe, &mut control, options)?;
     }
@@ -1215,6 +1339,7 @@ fn initialize_candidate_runtime<G: 'static>(
             history,
             delivered_commands: 0,
             answered_needs: Vec::new(),
+            job_start_anchor: candidate.job_start_anchor.clone(),
         },
         control,
     ))
@@ -1236,10 +1361,12 @@ fn execute_plan<G>(
         history,
         delivered_commands,
         answered_needs,
+        job_start_anchor,
     } = runtime;
     let mut sink = LiveHistorySink {
         state: history,
         retained: checkpoints,
+        pending_release: None,
     };
     loop {
         if cancellation.is_cancelled() {
@@ -1332,6 +1459,7 @@ fn execute_plan<G>(
                         EngineCompletionDemand::new(
                             candidate.profile.dialect() == tex_command::CommandDialect::Pdftex14029,
                         ),
+                        0,
                     )?;
                     let checkpoint_retained_bytes = sink.state.retained_bytes();
                     let checkpoint_shared_owner_bytes = sink.state.shared_owner_bytes();
@@ -1350,6 +1478,9 @@ fn execute_plan<G>(
                             checkpoint_metadata_bytes,
                             detached_boundary_bytes,
                             checkpoint_protected_overage_bytes,
+                            job_start_anchor: job_start_anchor
+                                .take()
+                                .expect("every executing candidate owns a frozen JobStart anchor"),
                         }),
                         control.fuel_burned(),
                     ));
@@ -1423,6 +1554,24 @@ fn register_materialized_primitives<G>(
     }
 }
 
+fn validate_materialized_font_policy<G>(
+    universe: &mut Universe<G>,
+    required: Option<tex_fonts::FontLayoutPolicy>,
+) -> Result<(), SessionError> {
+    if required == Some(tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+        && let Some(font) = universe
+            .command_context()
+            .map_err(SessionError::Universe)?
+            .font_artifact_recipes()
+            .into_iter()
+            .skip(1)
+            .find(|font| font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+    {
+        return Err(SessionError::FormatFontPolicy { name: font.name });
+    }
+    Ok(())
+}
+
 fn install_latex_compatibility<G>(universe: &mut Universe<G>) -> Result<(), SessionError> {
     tex_command::install_latex_expandable_primitives(universe);
     for character in ['{', '}', '$', '&', '#', '^', '_'] {
@@ -1492,8 +1641,9 @@ fn candidate_control<G>(
     universe: &mut Universe<G>,
     options: &CandidateControlOptions<'_>,
     restored_control: Option<MainControl<G>>,
+    materialized_job_start: bool,
 ) -> Result<MainControl<G>, SessionError> {
-    if restored_control.is_none() && options.initex {
+    if restored_control.is_none() && options.initex && !materialized_job_start {
         tex_command::install_tex82_expandable_primitives(universe);
         tex_exec::install_unexpandable_primitives(universe);
         if matches!(
@@ -1524,6 +1674,11 @@ fn candidate_control<G>(
     if options.profile.dialect() == tex_command::CommandDialect::Pdftex14029 {
         control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
     }
+    // The frozen JobStart anchor is captured before startup framing invokes
+    // `begin_job_*`, so install the executable's immutable capacity contract
+    // here as part of the pre-job aggregate. Startup repeats this selection
+    // idempotently after materialization.
+    control.prepare_job_start_stores(universe);
     control.set_dvi_output(options.emit_dvi);
     control
         .capabilities_mut()
@@ -1705,9 +1860,20 @@ pub struct Session<'store> {
     prior_generation: Option<RetainedRevisionGeneration<'store>>,
     retired_generations: usize,
     candidate_lease: Arc<CandidateLeaseState>,
+    /// Complete immutable pre-job base. It is checkpoint-owned data, not a
+    /// retained runtime generation or a mutable journal lineage.
+    job_start_anchor: Option<FrozenJobStartAnchor>,
 }
 
 impl<'store> Session<'store> {
+    fn job_start_session_metadata(&self) -> JobStartSessionMetadata {
+        JobStartSessionMetadata {
+            profile: self.effective_command_profile(),
+            compatibility: self.command_compatibility,
+            job_clock: self.job_clock,
+        }
+    }
+
     /// Starts an editor session with no admitted generation.
     ///
     /// `template` is accepted only as a migration-time configuration marker;
@@ -1845,6 +2011,7 @@ impl<'store> Session<'store> {
             prior_generation: None,
             retired_generations: 0,
             candidate_lease: CandidateLeaseState::new(),
+            job_start_anchor: None,
         })
     }
 
@@ -1899,10 +2066,9 @@ impl<'store> Session<'store> {
         self.command_compatibility = compatibility;
     }
 
-    /// Consumes one validated transport image and atomically publishes its
-    /// materialized runtime as the session's ordinary initial accepted
-    /// checkpoint. The image and all decoded payload vectors drop before this
-    /// method returns.
+    /// Installs one validated transport image as the immutable pre-job base.
+    /// Runtime materialization is deferred until a candidate actually starts;
+    /// the anchor itself consumes neither retained-generation slot.
     pub fn set_format_image(&mut self, image: DetachedFormatImage) -> Result<(), SessionError> {
         assert!(self.history.is_empty(), "format is fixed after execution");
         assert!(
@@ -1913,29 +2079,7 @@ impl<'store> Session<'store> {
             !self.candidate_lease.is_claimed(),
             "format admission precedes candidate construction"
         );
-        let mut generation =
-            tex_exec::RetainedEngineGeneration::from_format_owned_with_page_node_identity_demand(
-                self.reachability_store.clone(),
-                World::memory_with_clock(self.job_clock),
-                image,
-                true,
-            )
-            .map_err(SessionError::Format)?;
-        let checkpoint = generation
-            .with_admitted(PublishInitialFormatCheckpoint {
-                profile: self.effective_command_profile(),
-                compatibility: self.command_compatibility,
-                required_font_layout_policy: self.required_font_layout_policy,
-            })
-            .map_err(SessionError::RetainedEngine)??;
-        generation
-            .preflight_terminal(std::slice::from_ref(&checkpoint))
-            .map_err(SessionError::RetainedEngine)?;
-        self.prior_generation = Some(RetainedRevisionGeneration {
-            revision: self.revision,
-            generation,
-            checkpoint_count: 1,
-        });
+        self.job_start_anchor = Some(FrozenJobStartAnchor::loaded(image));
         self.initex = false;
         Ok(())
     }
@@ -2000,6 +2144,11 @@ impl<'store> Session<'store> {
                 .saturating_add(self.render_maps.borrow().retained_bytes);
             retention
         })
+    }
+
+    #[must_use]
+    pub fn job_start_anchor_metrics(&self) -> Option<JobStartAnchorMetrics> {
+        self.job_start_anchor.as_ref().map(|anchor| anchor.metrics)
     }
 
     /// Number of previously accepted coarse generations retired as complete
@@ -2180,9 +2329,37 @@ impl<'store> Session<'store> {
         mut plan: CandidatePlan,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
         let candidate_lease = self.candidate_lease.claim()?;
-        let (generation, checkpoint_control_key, inherited_boundary) = if let Some(prior) =
-            self.prior_generation.as_mut()
-        {
+        let job_start_fallback = self.prior_generation.is_some()
+            && plan
+                .restart_boundary
+                .is_none_or(|key| key.boundary == EngineBoundary::JobStart);
+        let mut materialized_job_start = false;
+        let (generation, checkpoint_control_key, inherited_boundary) = if job_start_fallback {
+            let metadata = self.job_start_session_metadata();
+            let anchor = self
+                .job_start_anchor
+                .as_mut()
+                .ok_or(SessionError::MissingJobStartAnchor)?;
+            let image = anchor.materialize_image(metadata)?;
+            let generation = self
+                .prior_generation
+                .as_mut()
+                .expect("JobStart fallback has an accepted generation")
+                .generation
+                .materialize_job_start_candidate(
+                    World::memory_with_clock(self.job_clock),
+                    image,
+                    true,
+                )
+                .map_err(SessionError::Format)?;
+            plan.restart_boundary = self
+                .history
+                .iter()
+                .find(|record| record.key.boundary == EngineBoundary::JobStart)
+                .map(|record| record.key);
+            materialized_job_start = true;
+            (Some(generation), None, None)
+        } else if let Some(prior) = self.prior_generation.as_mut() {
             let selected = plan
                 .restart_boundary
                 .map(|key| (key.position, key.boundary, key.ordinal));
@@ -2219,6 +2396,7 @@ impl<'store> Session<'store> {
             registered_inputs: self.registered_inputs.clone(),
             profile: self.effective_command_profile(),
             compatibility: self.command_compatibility,
+            required_font_layout_policy: self.required_font_layout_policy,
             initex: self.initex,
             dvi_output: self.dvi_output,
             root_framing: self.root_framing,
@@ -2239,6 +2417,8 @@ impl<'store> Session<'store> {
             checkpoint_control_key,
             runtime_key: None,
             candidate_lease: Some(candidate_lease),
+            job_start_anchor: self.job_start_anchor.clone(),
+            materialized_job_start,
         })
     }
 
@@ -2330,6 +2510,7 @@ impl<'store> Session<'store> {
             checkpoint_metadata_bytes: completion.checkpoint_metadata_bytes,
             detached_boundary_bytes: completion.detached_boundary_bytes,
             checkpoint_protected_overage_bytes: completion.checkpoint_protected_overage_bytes,
+            job_start_anchor: completion.job_start_anchor,
             _candidate_lease: candidate_lease,
         })
     }
@@ -2396,7 +2577,9 @@ impl<'store> Session<'store> {
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        if let Some(selected) = transaction.restart_boundary {
+        if let Some(selected) = transaction.restart_boundary
+            && selected.boundary != EngineBoundary::JobStart
+        {
             let prefix = self
                 .history
                 .iter()
@@ -2405,9 +2588,26 @@ impl<'store> Session<'store> {
             self.history.truncate(prefix);
             self.history.extend(transaction.history);
         } else {
-            self.history = transaction.history;
+            let mut history = transaction.history;
+            if let Some(selected) = transaction
+                .restart_boundary
+                .filter(|key| key.boundary == EngineBoundary::JobStart)
+                && let Some(anchor_revision) = self
+                    .history
+                    .iter()
+                    .find(|record| record.key == selected)
+                    .map(|record| record.revision)
+                && let Some(anchor) = history.iter_mut().find(|record| record.key == selected)
+            {
+                // The independently materialized boundary publishes fresh
+                // identity/effect coordinates, but it still describes the
+                // session's original frozen anchor.
+                anchor.revision = anchor_revision;
+            }
+            self.history = history;
         }
         self.prior_generation = Some(incoming);
+        self.job_start_anchor = Some(transaction.job_start_anchor);
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
@@ -2424,6 +2624,10 @@ impl<'store> Session<'store> {
                 .saturating_add(self.layout.retained_bytes()),
             output_bytes,
             protected_overage_bytes: transaction.checkpoint_protected_overage_bytes,
+            job_start_anchor_bytes: self
+                .job_start_anchor
+                .as_ref()
+                .map_or(0, |anchor| anchor.metrics.bytes),
         };
         self.accepted_retention = Some(retention);
         let mut reuse = transaction.reuse;
@@ -2951,6 +3155,8 @@ pub enum SessionError {
     CandidateKindMismatch,
     CandidateAlreadyLive,
     CandidateNotComplete,
+    MissingJobStartAnchor,
+    JobStartSessionMismatch,
     UnexpectedResource,
     ResourceNoProgress {
         need: Box<ResourceNeed>,
@@ -2995,6 +3201,12 @@ impl fmt::Display for SessionError {
                 f.write_str("session already has a live revision candidate")
             }
             Self::CandidateNotComplete => f.write_str("revision candidate is not complete"),
+            Self::MissingJobStartAnchor => {
+                f.write_str("accepted session has no frozen JobStart anchor")
+            }
+            Self::JobStartSessionMismatch => {
+                f.write_str("frozen JobStart anchor belongs to different session semantics")
+            }
             Self::UnexpectedResource => f.write_str("resource fulfillment does not match"),
             Self::ResourceNoProgress { need, .. } => {
                 write!(f, "resource replay made no progress for {need:?}")

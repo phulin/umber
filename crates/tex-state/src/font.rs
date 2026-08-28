@@ -1409,23 +1409,27 @@ impl FontStore {
         if self.reachable_state_identity.is_some() {
             return true;
         }
-        if self.len() != 1
-            || !self.identifier_writes.is_empty()
+        if !self.identifier_writes.is_empty()
             || !self.expansion_writes.is_empty()
+            || !self.identifier_overrides.is_empty()
+            || !self.expansion_overrides.is_empty()
         {
             return false;
         }
-        let null = NULL_FONT;
-        let immutable = *self.hash_fragment(null);
         let mut root = SemanticMapIdentity::empty(0x666f_6e74_5f72_7431);
-        root.replace(
-            immutable.fingerprint(),
-            None,
-            Some(font_state_identity(
-                self.complete_fragment(null),
-                self.expansion(null),
-            )),
-        );
+        for raw in 0..self.len() {
+            let id = self
+                .id_at(raw as u32)
+                .expect("live font slot has an identity");
+            root.replace(
+                self.hash_fragment(id).fingerprint(),
+                None,
+                Some(font_state_identity(
+                    self.complete_fragment(id),
+                    self.expansion(id),
+                )),
+            );
+        }
         self.reachable_state_identity = Some(root);
         true
     }

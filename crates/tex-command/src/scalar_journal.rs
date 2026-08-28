@@ -99,6 +99,8 @@ pub(crate) struct PackedJournal<T, const RECORDS: usize> {
     tail: Option<ChunkKey>,
     chunks: u32,
     records: u64,
+    base_chunks: u32,
+    base_records: u64,
     detached_head: Option<ChunkKey>,
     fork: Option<JournalFork>,
     interval_tail_open: bool,
@@ -115,6 +117,8 @@ impl<T, const RECORDS: usize> Default for PackedJournal<T, RECORDS> {
             tail: None,
             chunks: 0,
             records: 0,
+            base_chunks: 0,
+            base_records: 0,
             detached_head: None,
             fork: None,
             interval_tail_open: false,
@@ -162,11 +166,18 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
     }
 
     pub(crate) fn validates(&self, mark: PackedJournalMark) -> bool {
-        if mark.chunks > self.chunks || mark.records > self.records {
+        if mark.chunks < self.base_chunks
+            || mark.records < self.base_records
+            || mark.chunks > self.chunks
+            || mark.records > self.records
+        {
             return false;
         }
+        if self.is_base(mark) {
+            return true;
+        }
         match mark.tail {
-            None => mark.chunks == 0 && mark.records == 0,
+            None => false,
             Some(key) => self.chunk(key).is_some_and(|chunk| {
                 chunk.live
                     && chunk.lane == ChunkLane::Current
@@ -174,6 +185,47 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
                     && chunk.records_before.saturating_add(u64::from(chunk.used)) == mark.records
             }),
         }
+    }
+
+    /// Releases every whole interval chunk at or before `mark`, making that
+    /// logical coordinate the new accepted base. The base coordinate remains
+    /// valid without retaining the chunk key it once named.
+    pub(crate) fn release_prefix(
+        &mut self,
+        mark: PackedJournalMark,
+        mut release: impl FnMut(T),
+    ) -> Option<usize> {
+        if self.fork.is_some() || !self.validates(mark) {
+            return None;
+        }
+        if self.is_base(mark) {
+            return Some(0);
+        }
+        let floor = mark.tail?;
+        let next = self.chunk(floor)?.next;
+        let mut cursor = self.head;
+        let mut released = 0usize;
+        loop {
+            let key = cursor?;
+            cursor = self.chunk(key)?.next;
+            self.release_chunk(key, &mut release);
+            released = released.saturating_add(1);
+            if key == floor {
+                break;
+            }
+        }
+        self.head = next;
+        if let Some(head) = next {
+            self.chunk_mut(head)
+                .expect("journal prefix successor remains live")
+                .previous = None;
+        } else {
+            self.tail = None;
+        }
+        self.base_chunks = mark.chunks;
+        self.base_records = mark.records;
+        self.interval_tail_open = false;
+        Some(released)
     }
 
     pub(crate) fn append(&mut self, value: T) {
@@ -244,9 +296,10 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         let prior_tail = self.tail;
         let prior_chunks = self.chunks;
         let prior_records = self.records;
-        let suffix_head = match mark.tail {
-            Some(tail) => self.chunk(tail).and_then(|chunk| chunk.next),
-            None => self.head,
+        let at_base = self.is_base(mark);
+        let suffix_head = match (at_base, mark.tail) {
+            (true, _) | (false, None) => self.head,
+            (false, Some(tail)) => self.chunk(tail).and_then(|chunk| chunk.next),
         };
         self.detached_head = suffix_head;
         if let Some(head) = suffix_head {
@@ -262,14 +315,14 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
             chunk.lane = ChunkLane::Detached;
             detached = chunk.next;
         }
-        if let Some(tail) = mark.tail {
+        if !at_base && let Some(tail) = mark.tail {
             self.chunk_mut(tail)
                 .expect("selected journal tail remains live")
                 .next = None;
         } else {
             self.head = None;
         }
-        self.tail = mark.tail;
+        self.tail = (!at_base).then_some(mark.tail).flatten();
         self.chunks = mark.chunks;
         self.records = mark.records;
         self.fork = Some(JournalFork {
@@ -410,8 +463,9 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         mark: PackedJournalMark,
         swap: &mut impl FnMut(&mut T),
     ) {
+        let stop = (!self.is_base(mark)).then_some(mark.tail).flatten();
         let mut cursor = self.tail;
-        while cursor != mark.tail {
+        while cursor != stop {
             let key = cursor.expect("validated journal suffix reaches its mark");
             let previous = self.chunk(key).expect("live journal suffix chunk").previous;
             let used = usize::from(self.chunk(key).expect("live journal suffix chunk").used);
@@ -443,14 +497,16 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
     }
 
     fn release_current_suffix(&mut self, mark: PackedJournalMark, release: &mut impl FnMut(T)) {
+        let at_base = self.is_base(mark);
+        let stop = (!at_base).then_some(mark.tail).flatten();
         let mut cursor = self.tail;
-        while cursor != mark.tail {
+        while cursor != stop {
             let key = cursor.expect("validated journal suffix reaches mark");
             cursor = self.chunk(key).expect("live journal suffix chunk").previous;
             self.release_chunk(key, release);
         }
-        self.tail = mark.tail;
-        if let Some(tail) = mark.tail {
+        self.tail = stop;
+        if let Some(tail) = stop {
             self.chunk_mut(tail)
                 .expect("selected journal tail remains live")
                 .next = None;
@@ -459,6 +515,10 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         }
         self.chunks = mark.chunks;
         self.records = mark.records;
+    }
+
+    const fn is_base(&self, mark: PackedJournalMark) -> bool {
+        mark.chunks == self.base_chunks && mark.records == self.base_records
     }
 
     fn release_detached(&mut self, release: &mut impl FnMut(T)) {

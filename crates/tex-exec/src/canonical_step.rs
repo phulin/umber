@@ -273,6 +273,7 @@ impl OutputLedger {
         universe: &mut Universe<G>,
         receipt: &TerminalRevisionReceipt,
         demand: crate::EngineCompletionDemand,
+        artifact_base: usize,
     ) -> Result<crate::DetachedEngineCompletion, crate::EngineCompletionError> {
         if self.terminal_closed
             || self.terminal_step != Some(receipt.step)
@@ -298,13 +299,21 @@ impl OutputLedger {
             .raw()
             .saturating_sub(u64::try_from(world.effect_records().len()).unwrap_or(u64::MAX));
         let (effects, stream_open_contexts) = world.detached_effect_records();
+        let artifacts = world
+            .committed_artifacts()
+            .get(artifact_base..)
+            .ok_or(crate::EngineCompletionError::ArtifactPublicationCount)?;
+        let artifact_publications = world
+            .artifact_publications()
+            .get(artifact_base..)
+            .ok_or(crate::EngineCompletionError::ArtifactPublicationCount)?;
         let output_checkpoint = self.checkpoint();
         let completion = crate::DetachedEngineCompletion::capture_borrowed_pages(
             effect_base,
             effects,
             stream_open_contexts,
-            world.committed_artifacts().to_vec(),
-            world.artifact_publications(),
+            artifacts.to_vec(),
+            artifact_publications,
             self.prepared_page_count,
             |visit| {
                 self.pages

@@ -420,12 +420,12 @@ fn dropping_a_summary_never_mutates_its_physical_timeline() {
 }
 
 #[test]
-fn checkpoint_release_recycles_its_frame_and_preserves_protected_journals() {
+fn checkpoint_release_recycles_its_frame_at_the_current_journal_floor() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
-        let protected = command
+        let root = command
             .publish_summary(universe)
-            .expect("protected summary publishes");
+            .expect("root summary publishes");
         let released = command
             .publish_summary(universe)
             .expect("interior summary publishes");
@@ -453,8 +453,8 @@ fn checkpoint_release_recycles_its_frame_and_preserves_protected_journals() {
         ));
 
         command
-            .restore_summary(&protected, universe)
-            .expect("protected root remains exact after release observation");
+            .restore_summary(&root, universe)
+            .expect("unreleased root remains exact after release observation");
     });
 }
 
@@ -462,29 +462,39 @@ fn checkpoint_release_recycles_its_frame_and_preserves_protected_journals() {
 fn released_command_frames_plateau_across_thousands_of_boundaries() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
-        let protected = command
+        let job_start = command
             .publish_summary(universe)
-            .expect("protected summary publishes");
+            .expect("JobStart summary publishes");
+        command
+            .release_checkpoint_summary(&job_start, None)
+            .expect("frozen JobStart releases its live frame");
         let mut prior = command
             .publish_summary(universe)
             .expect("first ordinary summary publishes");
+        let mut command_chunks_released = 0usize;
 
         for _ in 0..4_096 {
+            command.begin_file_name().expect("toggle command scalar");
+            command.end_file_name();
             let next = command
                 .publish_summary(universe)
                 .expect("next ordinary summary publishes");
-            command
+            let receipt = command
                 .release_checkpoint_summary(&prior, Some(&next))
                 .expect("obsolete command frame releases");
+            command_chunks_released =
+                command_chunks_released.saturating_add(receipt.command_journal_chunks_released());
             prior = next;
         }
 
-        assert_eq!(command.timeline.live_frame_count(), 2);
+        assert_eq!(command.timeline.live_frame_count(), 1);
         assert_eq!(command.timeline.frame_capacity(), COMMAND_FRAMES_PER_PAGE);
         assert!(command.timeline.frames_reused >= 4_000);
-        command
-            .restore_summary(&protected, universe)
-            .expect("protected root remains exact");
+        assert_eq!(command_chunks_released, 4_096);
+        assert!(matches!(
+            command.restore_summary(&job_start, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
     });
 }
 

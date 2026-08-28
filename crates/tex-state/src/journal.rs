@@ -918,6 +918,18 @@ impl<G> SaveJournal<G> {
         self.save_stack = cursor.save_stack;
     }
 
+    pub(crate) fn release_checkpoint_prefix(
+        &mut self,
+        cursor: JournalCursor<G>,
+    ) -> Result<usize, crate::StateError> {
+        if !self.validate_cursor(cursor) || self.checkpoint_fork {
+            return Err(crate::StateError::InvalidCursor);
+        }
+        self.checkpoint_arena
+            .release_accepted_prefix(&mut self.checkpoint_pool, cursor.checkpoint_mark())
+            .map_err(|_| crate::StateError::InvalidCursor)
+    }
+
     pub(crate) fn finish_operation_rollback(&mut self, operation: StateOperation<G>) {
         self.validate_operation(&operation);
         while self.active_groups.len() > operation.group_depth as usize {

@@ -306,6 +306,20 @@ impl<G> CommandTimeline<G> {
         true
     }
 
+    fn release_prefix(&mut self, mark: CommandTimelineMark) -> Option<usize> {
+        if self.fork.is_some()
+            || !self.scalars.validates(mark.scalars)
+            || !self.pending_input.validates(mark.pending_input)
+        {
+            return None;
+        }
+        let scalars = self.scalars.release_prefix(mark.scalars, drop)?;
+        let pending = self
+            .pending_input
+            .release_prefix(mark.pending_input, drop)?;
+        Some(scalars.saturating_add(pending))
+    }
+
     fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(
@@ -635,12 +649,10 @@ pub struct CommandTimelineCounters {
 /// Command-owner evidence produced when aggregate checkpoint history releases
 /// one summary.
 ///
-/// The protected `JobStart` summary remains a head-relative exact root. Until
-/// that root is materialized independently, releasing a later interior summary
-/// cannot remove command journal or logical-stack chunks without invalidating
-/// the protected cursor. The receipt makes that zero-release fact explicit
-/// while reporting the authoritative physical frame occupancy for the
-/// aggregate release transaction.
+/// `JobStart` is frozen outside the live command owner. Releasing an interior
+/// summary can therefore advance the journal and logical-stack floors to the
+/// earliest surviving restart root. This receipt reports both returned prefix
+/// chunks and authoritative physical frame occupancy.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[doc(hidden)]
 pub struct CommandCheckpointReleaseReceipt {
@@ -1857,38 +1869,91 @@ impl<G> CommandState<G> {
     /// Validates one aggregate checkpoint-history release against this sole
     /// physical command owner and reports its exact storage effect.
     ///
-    /// `oldest_nonprotected` is also validated when present so a stale or
-    /// foreign aggregate low-water cannot be published. The protected
-    /// head-relative `JobStart` root currently prevents command-journal prefix
-    /// reclamation. The independently keyed packed timeline frame is returned
-    /// to its reusable row pool. Unobserved stack reuse is reclaimed at
-    /// operation time by [`crate::timeline::LogicalStack`]'s first-touch
-    /// interval rule.
+    /// `oldest_retained` is also validated when present so a stale or foreign
+    /// aggregate low-water cannot be published. JobStart is frozen
+    /// independently, so the chosen ordinary low-water becomes the journals'
+    /// logical base and every whole prefix chunk is returned to its pool.
     #[doc(hidden)]
     pub fn release_checkpoint_summary(
         &mut self,
         released: &CommandSummary<G>,
-        oldest_nonprotected: Option<&CommandSummary<G>>,
+        oldest_retained: Option<&CommandSummary<G>>,
     ) -> Result<CommandCheckpointReleaseReceipt, CommandRestoreError> {
         if released.generation().timeline_owner != self.timeline.owner
-            || oldest_nonprotected
+            || oldest_retained
                 .is_some_and(|oldest| oldest.generation().timeline_owner != self.timeline.owner)
         {
             return Err(CommandRestoreError::ForeignGeneration);
         }
         self.resolve_restore(released.generation(), released.cursor())?;
-        if let Some(oldest) = oldest_nonprotected {
+        if let Some(oldest) = oldest_retained {
             self.resolve_restore(oldest.generation(), oldest.cursor())?;
         }
+        let floor = oldest_retained.unwrap_or(released);
         if !self.timeline.release_frame(released.generation().timeline) {
             return Err(CommandRestoreError::InvalidCursor);
         }
+        let command_journal_chunks_released = self
+            .timeline
+            .release_prefix(floor.generation().timeline)
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        let cursor = floor.cursor();
+        let arenas = cursor.arenas();
+        let stacks = cursor.stacks();
+        let mut logical_stack_chunks_released = 0usize;
+        macro_rules! release_stack_prefix {
+            ($stack:expr, $top:expr, $undo:expr) => {
+                logical_stack_chunks_released = logical_stack_chunks_released.saturating_add(
+                    $stack
+                        .release_prefix(crate::timeline::LogicalStackMark {
+                            top: $top,
+                            undo: $undo,
+                        })
+                        .ok_or(CommandRestoreError::InvalidCursor)?,
+                );
+            };
+        }
+        release_stack_prefix!(
+            self.input.levels,
+            stacks.input_depth(),
+            arenas.input_rows_mark()
+        );
+        release_stack_prefix!(
+            self.parameters.activations,
+            stacks.parameter_depth(),
+            arenas.input_words_mark()
+        );
+        release_stack_prefix!(
+            self.conditions.frames,
+            stacks.condition_depth(),
+            arenas.parameter_words_mark()
+        );
+        release_stack_prefix!(
+            self.group_payloads,
+            stacks.group_payload_depth(),
+            arenas.builder_words_mark()
+        );
+        release_stack_prefix!(
+            self.aftergroup_payloads,
+            stacks.aftergroup_payload_count(),
+            stacks.aftergroup_payload_undo()
+        );
+        release_stack_prefix!(
+            self.alignment.align_stack,
+            stacks.alignment_depth(),
+            stacks.alignment_undo()
+        );
+        release_stack_prefix!(
+            self.alignment.suspended,
+            stacks.suspended_alignment_depth(),
+            stacks.suspended_alignment_undo()
+        );
         Ok(CommandCheckpointReleaseReceipt {
             timeline_frames_live: self.timeline.live_frame_count(),
             timeline_frame_capacity: self.timeline.frame_capacity(),
             timeline_frames_released: self.timeline.frames_released,
-            command_journal_chunks_released: 0,
-            logical_stack_chunks_released: 0,
+            command_journal_chunks_released,
+            logical_stack_chunks_released,
         })
     }
 

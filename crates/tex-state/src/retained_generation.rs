@@ -325,6 +325,56 @@ impl<'store> RetainedStateGeneration<'store> {
         })
     }
 
+    /// Materializes one independent current generation beside this accepted
+    /// source. The frozen image is the complete pre-job base; no mutable owner
+    /// is rewound or loaned from `self`.
+    #[doc(hidden)]
+    pub fn materialize_independent_format_candidate(
+        &mut self,
+        world: World,
+        image: DetachedFormatImage,
+        wants_page_node_semantic_identity: bool,
+    ) -> Result<Self, FormatError> {
+        self.store.preflight_generation_insert().map_err(|error| {
+            FormatError::InvalidState(format!(
+                "reachability store rejected JobStart candidate: {error:?}"
+            ))
+        })?;
+        let interner = self.store.epoch().lease().map_err(|error| {
+            FormatError::InvalidState(format!("session epoch is not available: {error:?}"))
+        })?;
+        let generation = Generation::<PhysicalGenerationCoordinate>::new();
+        let mut universe = crate::format::materialize_retained_format(
+            interner,
+            generation,
+            world,
+            image,
+            wants_page_node_semantic_identity,
+        )?;
+        drop(universe.release_session_epoch());
+        let physical = PhysicalStateGeneration {
+            incarnation: next_incarnation(),
+            universe,
+            attachment: None,
+            #[cfg(feature = "profiling")]
+            _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
+        };
+        let source = self.key.expect("an accepted generation has a store slot");
+        let key = self
+            .store
+            .insert_independent_candidate_generation(source, physical)
+            .map_err(|error| {
+                FormatError::InvalidState(format!(
+                    "reachability store rejected JobStart candidate: {error:?}"
+                ))
+            })?;
+        Ok(Self {
+            store: self.store.clone(),
+            key: Some(key),
+            owner: core::marker::PhantomData,
+        })
+    }
+
     /// Admits the bundle under an operation whose output cannot name the
     /// private physical coordinate.
     pub fn with_admitted<O: RetainedStateOperation>(&mut self, operation: O) -> O::Output {
@@ -460,6 +510,12 @@ impl<'store> RetainedStateGeneration<'store> {
             .key
             .expect("a live retained generation has a store slot");
         self.store.generation_is_candidate(key)
+    }
+
+    #[must_use]
+    pub fn is_independent_candidate_transaction_destination(&self) -> bool {
+        let key = self.key.expect("a live generation has a store slot");
+        self.store.generation_is_independent_candidate(key)
     }
 
     /// Runs one typed sidecar operation against the exclusive accepted/current

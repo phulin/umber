@@ -307,36 +307,65 @@ fn loaded_format_checkpoint_survives_rejection_and_seeds_later_revisions() {
             .to_vec(),
     )
     .expect("detached format image");
+    let image_bytes = image.as_bytes().to_vec();
 
     let mut loaded = session(RevisionId::new(1), r"\message{first=\fmtvalue}\end");
     loaded.set_utf8_input_as_bytes(true);
     loaded
         .set_format_image(image)
         .expect("initial format checkpoint admission");
-    let format_generation = loaded
-        .prior_generation
-        .as_ref()
-        .expect("loaded format is the accepted prior")
-        .generation
-        .witness();
-    assert_eq!(loaded.retained_generation_count(), 1);
-    assert_eq!(loaded.current_retained_checkpoint_count(), 1);
+    assert_eq!(
+        loaded
+            .job_start_anchor
+            .as_ref()
+            .expect("loaded anchor")
+            .image
+            .as_ref(),
+        image_bytes,
+        "format admission retains the validated bytes exactly"
+    );
+    assert!(loaded.prior_generation.is_none());
+    assert_eq!(loaded.retained_generation_count(), 0);
+    assert_eq!(loaded.current_retained_checkpoint_count(), 0);
+    let anchor = loaded
+        .job_start_anchor_metrics()
+        .expect("loaded format owns an immutable anchor");
+    assert!(anchor.bytes > 0);
+    assert_eq!(anchor.image_bytes, image_bytes.len());
+    assert_eq!(anchor.session_metadata_bytes, 0);
+    assert_eq!(anchor.restore_count, 0);
 
     let rejected = loaded.start_cold_candidate().expect("first candidate");
-    let rejected_generation = rejected
-        .generation
-        .as_ref()
-        .expect("format checkpoint forked eagerly")
-        .witness();
+    assert!(
+        rejected.generation.is_none(),
+        "cold materialization is lazy"
+    );
+    assert_eq!(loaded.retained_generation_count(), 0);
+    assert_eq!(
+        loaded
+            .job_start_anchor_metrics()
+            .expect("anchor metrics")
+            .restore_count,
+        0
+    );
     drop(rejected);
-    assert!(format_generation.is_live());
-    assert!(!rejected_generation.is_live());
+    assert_eq!(loaded.retained_generation_count(), 0);
 
     let first = loaded.cold().expect("replacement first candidate");
     assert!(terminal_effect_text(&first).contains("first=41"));
-    assert!(
-        !format_generation.is_live(),
-        "acceptance retires the transport-loaded format generation"
+    assert_eq!(
+        loaded
+            .job_start_anchor_metrics()
+            .expect("anchor metrics")
+            .restore_count,
+        1
+    );
+    assert_eq!(
+        loaded
+            .job_start_anchor_metrics()
+            .expect("anchor metrics")
+            .session_metadata_bytes,
+        size_of::<JobStartSessionMetadata>()
     );
     let first_generation = loaded
         .prior_generation
@@ -405,6 +434,83 @@ fn loaded_format_node_rows_publish_with_job_start_identity_and_survive_the_sessi
             boundary: EngineBoundary::JobStart,
             ordinal: 0,
         })
+    );
+}
+
+#[test]
+fn loaded_job_start_round_trip_preserves_dense_hyphenation_and_pdf_identity() {
+    let mut format = session(
+        RevisionId::new(1),
+        r"\count23=314
+          \toks4={anchor}
+          \skip5=2pt plus 1fil
+          \def\fmtvalue{41}
+          \patterns{a1b}
+          \hyphenation{hy-phen}
+          \pdfoutput=1
+          \immediate\pdfobj{format-object}
+          \dump",
+    );
+    format.set_command_profile(CommandProfile::PDFTEX14029, true);
+    format.set_utf8_input_as_bytes(true);
+    let format = format.cold().expect("PDF format construction");
+    let image = DetachedFormatImage::try_from_bytes(
+        format
+            .format_dump()
+            .expect("PDF format dump")
+            .image
+            .as_bytes()
+            .to_vec(),
+    )
+    .expect("detached PDF format image");
+
+    let mut loaded = session(
+        RevisionId::new(1),
+        r"\message{value=\fmtvalue,count=\the\count23,toks=\the\toks4}\shipout\vbox{}\end",
+    );
+    loaded.set_command_profile(CommandProfile::PDFTEX14029, false);
+    loaded.set_utf8_input_as_bytes(true);
+    loaded
+        .set_format_image(image)
+        .expect("install frozen anchor");
+    let first = loaded.cold().expect("first loaded-format job");
+    assert!(terminal_effect_text(&first).contains("value=41,count=314,toks=anchor"));
+    let first_job_start = loaded.history()[0]
+        .reachable_state_identity()
+        .expect("loaded dense/hyphenation/PDF owners publish a complete identity");
+
+    let mut fallback = loaded
+        .start_advance_candidate_from_job_start(RevisionId::new(2), edit(&loaded, 0..0, ""))
+        .expect("forced JobStart fallback");
+    drive_synchronous_candidate(&mut fallback, &mut DirectResourceHost)
+        .expect("drive frozen fallback");
+    let transaction = loaded
+        .prepare_revision_candidate(fallback)
+        .expect("prepare fallback acceptance");
+    let accepted = loaded
+        .accept_revision(transaction)
+        .expect("accept frozen fallback");
+
+    assert_detached_output_eq(&accepted, &first);
+    assert_eq!(
+        accepted.reuse.restart_boundary,
+        Some(BoundaryKey {
+            position: 0,
+            boundary: EngineBoundary::JobStart,
+            ordinal: 0,
+        })
+    );
+    assert_eq!(
+        loaded.history()[0].reachable_state_identity(),
+        Some(first_job_start),
+        "byte-identical anchor materialization reproduces every aggregate owner root"
+    );
+    assert_eq!(
+        loaded
+            .job_start_anchor_metrics()
+            .expect("anchor metrics")
+            .restore_count,
+        2
     );
 }
 
@@ -879,12 +985,12 @@ fn history_budget_keeps_job_start_and_newest_observation() {
     );
     assert_eq!(
         session.current_retained_checkpoint_count(),
-        1,
-        "only protected JobStart remains restartable; newest evidence is detached"
+        0,
+        "JobStart is frozen session-owned data; newest evidence is detached"
     );
     let bounded = session.retention_metrics().expect("bounded retention");
     assert!(
-        bounded.protected_overage_bytes > 0
+        bounded.job_start_anchor_bytes > 0
             && bounded.checkpoint_root_bytes >= size_of::<BoundaryRecord>() * 2
     );
 

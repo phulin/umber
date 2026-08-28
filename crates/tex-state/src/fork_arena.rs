@@ -46,6 +46,14 @@ struct ChunkPage<T> {
     slots: Box<[Option<T>]>,
 }
 
+fn unindex_resolved_chunk(resolver: &mut [Option<(u32, usize)>], key: RawChunkKey) {
+    if let Some(entry) = resolver.get_mut(key.slot as usize)
+        && entry.is_some_and(|(generation, _)| generation == key.generation)
+    {
+        *entry = None;
+    }
+}
+
 /// Stable coarse-page storage shared by typed semantic lanes.
 ///
 /// A logical chunk is a fixed slot range inside a page allocation. Growing
@@ -880,6 +888,8 @@ pub struct ForkArena<T, Lane> {
     owner: u32,
     pool_owner: Option<u32>,
     ownership: ForkOwnership,
+    base_payload_chunks: u32,
+    base_descriptor_chunks: u32,
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
@@ -911,6 +921,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             owner: NEXT_ARENA_OWNER.fetch_add(1, Ordering::Relaxed),
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
+            base_payload_chunks: 0,
+            base_descriptor_chunks: 0,
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -928,6 +940,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             owner: NEXT_ARENA_OWNER.fetch_add(1, Ordering::Relaxed),
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
+            base_payload_chunks: 0,
+            base_descriptor_chunks: 0,
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -987,13 +1001,13 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     fn validate_live_chunks(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
         self.validate_pool(pool)?;
-        for position in 0..self.live_payload_len() {
+        for position in self.base_payload_chunks as usize..self.live_payload_len() {
             let key = self
                 .live_key_at(false, position)
                 .ok_or(ForkArenaError::InvalidChunk)?;
             pool.payload.validate(key, self.owner)?;
         }
-        for position in 0..self.live_descriptor_len() {
+        for position in self.base_descriptor_chunks as usize..self.live_descriptor_len() {
             let key = self
                 .live_key_at(true, position)
                 .ok_or(ForkArenaError::InvalidChunk)?;
@@ -1063,21 +1077,23 @@ impl<T, Lane> ForkArena<T, Lane> {
     }
 
     fn live_payload_len(&self) -> usize {
-        match &self.ownership {
-            ForkOwnership::Accepted(chunks) => chunks.payload.len(),
-            ForkOwnership::Forked {
-                prefix, current, ..
-            } => prefix.payload.len() + current.payload.len(),
-        }
+        self.base_payload_chunks as usize
+            + match &self.ownership {
+                ForkOwnership::Accepted(chunks) => chunks.payload.len(),
+                ForkOwnership::Forked {
+                    prefix, current, ..
+                } => prefix.payload.len() + current.payload.len(),
+            }
     }
 
     fn live_descriptor_len(&self) -> usize {
-        match &self.ownership {
-            ForkOwnership::Accepted(chunks) => chunks.descriptors.len(),
-            ForkOwnership::Forked {
-                prefix, current, ..
-            } => prefix.descriptors.len() + current.descriptors.len(),
-        }
+        self.base_descriptor_chunks as usize
+            + match &self.ownership {
+                ForkOwnership::Accepted(chunks) => chunks.descriptors.len(),
+                ForkOwnership::Forked {
+                    prefix, current, ..
+                } => prefix.descriptors.len() + current.descriptors.len(),
+            }
     }
 
     fn current_chunks_mut(&mut self) -> &mut ChunkSet {
@@ -1088,6 +1104,12 @@ impl<T, Lane> ForkArena<T, Lane> {
     }
 
     fn live_key_at(&self, descriptor: bool, index: usize) -> Option<RawChunkKey> {
+        let base = if descriptor {
+            self.base_descriptor_chunks as usize
+        } else {
+            self.base_payload_chunks as usize
+        };
+        let index = index.checked_sub(base)?;
         match &self.ownership {
             ForkOwnership::Accepted(chunks) => {
                 if descriptor {
@@ -1324,7 +1346,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         } else {
             self.live_payload_len()
         };
-        if chunks > live_len {
+        let base = if descriptor {
+            self.base_descriptor_chunks as usize
+        } else {
+            self.base_payload_chunks as usize
+        };
+        if chunks < base || chunks > live_len {
             return Err(ForkArenaError::InvalidOperationMark);
         }
         while if descriptor {
@@ -1350,7 +1377,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
             self.counters.candidate_chunks_truncated += 1;
         }
-        if chunks != 0 {
+        if chunks != base {
             let key = self
                 .live_key_at(descriptor, chunks - 1)
                 .ok_or(ForkArenaError::InvalidOperationMark)?;
@@ -1836,18 +1863,58 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     pub fn validates_checkpoint(&self, mark: CheckpointMark<Lane>) -> bool {
         mark.arena == self.owner
+            && mark.payload_chunks >= self.base_payload_chunks
+            && mark.descriptor_chunks >= self.base_descriptor_chunks
             && mark.payload_chunks as usize <= self.live_payload_len()
             && mark.descriptor_chunks as usize <= self.live_descriptor_len()
-            && mark.payload_tail
-                == mark
-                    .payload_chunks
-                    .checked_sub(1)
-                    .and_then(|index| self.live_key_at(false, index as usize))
-            && mark.descriptor_tail
-                == mark
-                    .descriptor_chunks
-                    .checked_sub(1)
-                    .and_then(|index| self.live_key_at(true, index as usize))
+            && (mark.payload_chunks == self.base_payload_chunks
+                || mark.payload_tail
+                    == mark
+                        .payload_chunks
+                        .checked_sub(1)
+                        .and_then(|index| self.live_key_at(false, index as usize)))
+            && (mark.descriptor_chunks == self.base_descriptor_chunks
+                || mark.descriptor_tail
+                    == mark
+                        .descriptor_chunks
+                        .checked_sub(1)
+                        .and_then(|index| self.live_key_at(true, index as usize)))
+    }
+
+    /// Returns whole accepted prefix chunks to the pool while retaining
+    /// `mark` as a logical base coordinate independent of the released keys.
+    pub(crate) fn release_accepted_prefix(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+    ) -> Result<usize, ForkArenaError> {
+        self.bind_pool(pool)?;
+        if self.active_builder
+            || self.pending_batch.is_some()
+            || !matches!(self.ownership, ForkOwnership::Accepted(_))
+            || !self.validates_checkpoint(mark)
+        {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        let payload_count = (mark.payload_chunks - self.base_payload_chunks) as usize;
+        let descriptor_count = (mark.descriptor_chunks - self.base_descriptor_chunks) as usize;
+        let ForkOwnership::Accepted(accepted) = &mut self.ownership else {
+            unreachable!()
+        };
+        let owner = self.owner;
+        let payload_resolver = &mut self.payload_resolver;
+        for key in accepted.payload.drain(..payload_count) {
+            unindex_resolved_chunk(payload_resolver, key);
+            pool.payload.release(key, owner)?;
+        }
+        let descriptor_resolver = &mut self.descriptor_resolver;
+        for key in accepted.descriptors.drain(..descriptor_count) {
+            unindex_resolved_chunk(descriptor_resolver, key);
+            pool.descriptors.release(key, owner)?;
+        }
+        self.base_payload_chunks = mark.payload_chunks;
+        self.base_descriptor_chunks = mark.descriptor_chunks;
+        Ok(payload_count.saturating_add(descriptor_count))
     }
 
     /// Returns whether an accepted arena can detach its suffix at `mark`.
@@ -1871,7 +1938,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if !self.validates_checkpoint(mark) {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        for position in 0..mark.payload_chunks as usize {
+        for position in self.base_payload_chunks as usize..mark.payload_chunks as usize {
             let key = self
                 .live_key_at(false, position)
                 .ok_or(ForkArenaError::InvalidCheckpoint)?;
@@ -2119,10 +2186,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             unreachable!()
         };
         let detached_prior = ChunkSet {
-            payload: accepted.payload.split_off(mark.payload_chunks as usize),
+            payload: accepted
+                .payload
+                .split_off((mark.payload_chunks - self.base_payload_chunks) as usize),
             descriptors: accepted
                 .descriptors
-                .split_off(mark.descriptor_chunks as usize),
+                .split_off((mark.descriptor_chunks - self.base_descriptor_chunks) as usize),
         };
         for key in &detached_prior.payload {
             self.unindex_chunk(false, *key);
@@ -2185,8 +2254,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.counters.accepted_chunks_reattached.saturating_add(
                 (detached_prior.payload.len() + detached_prior.descriptors.len()) as u64,
             );
-        let payload_start = prefix.payload.len();
-        let descriptor_start = prefix.descriptors.len();
+        let payload_start = self.base_payload_chunks as usize + prefix.payload.len();
+        let descriptor_start = self.base_descriptor_chunks as usize + prefix.descriptors.len();
         for (offset, key) in detached_prior.payload.iter().copied().enumerate() {
             self.index_chunk(false, key, payload_start + offset);
         }
@@ -2960,10 +3029,15 @@ impl<T, Lane> ForkArena<T, Lane> {
         descriptor: bool,
         start: usize,
     ) -> Result<Vec<RawChunkKey>, ForkArenaError> {
+        let base = if descriptor {
+            self.base_descriptor_chunks as usize
+        } else {
+            self.base_payload_chunks as usize
+        };
         let prefix_len = match &self.ownership {
-            ForkOwnership::Accepted(_) => 0,
+            ForkOwnership::Accepted(_) => base,
             ForkOwnership::Forked { prefix, .. } => {
-                if descriptor {
+                base + if descriptor {
                     prefix.descriptors.len()
                 } else {
                     prefix.payload.len()

@@ -97,6 +97,57 @@ fn cursor_from_another_state_is_rejected_even_with_the_same_brand() {
 }
 
 #[test]
+fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
+    let mut journal = SaveJournal::<TestGeneration>::new();
+    let root = journal.checkpoint_cursor(0);
+    let released_records = journal.checkpoint_pool.chunk_capacity().saturating_mul(16);
+    for index in 0..released_records {
+        journal.record_mutation(Mutation::new(
+            StateCell::Count(index as u16),
+            StateWord::Integer(index as i32),
+            1,
+            None,
+        ));
+    }
+    let floor = journal.checkpoint_cursor(0);
+    journal.record_mutation(Mutation::new(
+        StateCell::Count(released_records as u16),
+        StateWord::Integer(released_records as i32),
+        1,
+        None,
+    ));
+    let accepted = journal.checkpoint_cursor(0);
+    let pages = journal.checkpoint_pool.page_count();
+
+    assert!(
+        journal
+            .release_checkpoint_prefix(floor)
+            .expect("dense prefix releases")
+            >= 16,
+        "the complete first payload page is returned to the pool"
+    );
+    assert!(!journal.validate_cursor(root));
+    assert!(journal.validate_cursor(floor));
+    assert!(journal.validate_cursor(accepted));
+
+    for index in released_records + 1..released_records.saturating_mul(2) {
+        journal.record_mutation(Mutation::new(
+            StateCell::Count(index as u16),
+            StateWord::Integer(index as i32),
+            1,
+            None,
+        ));
+    }
+    assert_eq!(
+        journal.checkpoint_pool.page_count(),
+        pages,
+        "released dense chunks satisfy the next accepted suffix"
+    );
+    journal.truncate_checkpoint(floor);
+    assert!(journal.validate_cursor(floor));
+}
+
+#[test]
 fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     let _start = journal.checkpoint_cursor(0);

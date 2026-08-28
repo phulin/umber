@@ -1114,14 +1114,14 @@ impl<'a, G> EngineSession<'a, G> {
                 self.stores,
                 &terminal,
                 tex_exec::EngineCompletionDemand::without_pdf(),
+                self.artifact_cursor,
             )
             .map_err(SessionError::EngineCompletion)?;
-        let artifact_start = self.artifact_cursor.min(completion.pages().len());
         let (_materialized_effects, _, pages, _) = completion.into_parts();
-        let mut artifacts = Vec::with_capacity(pages.len().saturating_sub(artifact_start));
+        let mut artifacts = Vec::with_capacity(pages.len());
         let mut dvi_pages = Vec::with_capacity(prepared_page_count);
         let mut committed_artifacts = Vec::with_capacity(artifacts.capacity());
-        for page in pages.into_iter().skip(artifact_start) {
+        for page in pages {
             let (artifact, dvi) = page.into_parts();
             artifacts.push(artifact.hash());
             if let Some(dvi) = dvi {
@@ -1129,7 +1129,9 @@ impl<'a, G> EngineSession<'a, G> {
             }
             committed_artifacts.push(artifact);
         }
-        self.artifact_cursor = artifact_start.saturating_add(committed_artifacts.len());
+        self.artifact_cursor = self
+            .artifact_cursor
+            .saturating_add(committed_artifacts.len());
         self.effect_cursor = effect_end;
         if let Some(position) = self.terminal_input_cursor.take() {
             self.stores.restore_terminal_input_position(position)?;

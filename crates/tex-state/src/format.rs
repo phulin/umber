@@ -1204,6 +1204,16 @@ pub(crate) fn materialize_retained_format<G>(
     let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
     if wants_page_node_semantic_identity {
+        if !universe
+            .core
+            .as_mut()
+            .expect("format candidate retains core")
+            .prepare_format_reachable_state_identity()
+        {
+            return Err(FormatError::InvalidState(
+                "format semantic-identity destination is not empty".to_owned(),
+            ));
+        }
         universe.page_region.nodes_mut().enable_semantic_identity();
     }
     let DetachedFormatImage { bytes, decoded } = image;
@@ -1215,6 +1225,11 @@ pub(crate) fn materialize_retained_format<G>(
     universe.refresh_job_clock_parameters().map_err(|error| {
         FormatError::InvalidState(format!("retained format clock refresh failed: {error:?}"))
     })?;
+    if wants_page_node_semantic_identity && !universe.enable_reachable_state_identity() {
+        return Err(FormatError::InvalidState(
+            "loaded format cannot publish a complete reachable-state identity".to_owned(),
+        ));
+    }
     Ok(universe)
 }
 

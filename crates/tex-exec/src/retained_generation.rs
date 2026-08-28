@@ -148,6 +148,18 @@ impl<G> AdmittedEngineGeneration<'_, G> {
         self.prepare_checkpoint_control(control)
     }
 
+    /// Parks a completed independently materialized JobStart command owner.
+    /// Unlike [`Self::prepare_live_checkpoint_control`], this returns no
+    /// source-settlement receipt because no command or mode owner was forked.
+    pub fn park_independent_checkpoint_control(&mut self) -> Result<(), RetainedEngineAccessError> {
+        if self.sidecars.command.is_some() {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        let control = self.take_checkpoint_control()?;
+        self.sidecars.command = Some(control.into_independent_parked_command());
+        Ok(())
+    }
+
     pub fn attachment_mut<T: 'static>(
         &mut self,
         key: &RetainedEngineAttachmentKey,
@@ -193,6 +205,13 @@ impl<G> RetainedCheckpointStore<'_, G> {
         evidence: RetainedBoundaryEvidence,
     ) -> RetainedCheckpointKey {
         self.boundaries.append(checkpoint, evidence)
+    }
+
+    /// Retains schedule/comparison evidence without a live restart root.
+    /// Frozen JobStart uses this because restart ownership lives in its
+    /// immutable anchor rather than in the accepted journal lineage.
+    pub fn retain_evidence(&mut self, evidence: RetainedBoundaryEvidence) {
+        self.boundaries.append_evidence(evidence);
     }
 
     /// Releases one restart root during publication-time budget enforcement.
@@ -515,6 +534,44 @@ impl<'store> RetainedEngineGeneration<'store> {
         })
     }
 
+    /// Materializes the session's frozen JobStart image into the sole current
+    /// slot without rewinding or borrowing any owner from this accepted
+    /// generation. The resulting pair still settles through the ordinary
+    /// aggregate accept/reject barrier.
+    #[doc(hidden)]
+    pub fn materialize_job_start_candidate(
+        &mut self,
+        world: World,
+        image: DetachedFormatImage,
+        wants_page_node_semantic_identity: bool,
+    ) -> Result<Self, FormatError> {
+        let generation = next_generation();
+        let mut state = self
+            .state
+            .as_mut()
+            .expect("an accepted generation owns state")
+            .materialize_independent_format_candidate(
+                world,
+                image,
+                wants_page_node_semantic_identity,
+            )?;
+        let sidecars = state.with_admitted(InitializeSidecars { generation });
+        Ok(Self {
+            generation,
+            state: Some(state),
+            sidecars,
+            liveness: Arc::new(()),
+        })
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_independent_job_start_candidate(&self) -> bool {
+        self.state
+            .as_ref()
+            .is_some_and(RetainedStateGeneration::is_independent_candidate_transaction_destination)
+    }
+
     pub fn with_admitted<O: RetainedEngineOperation>(
         &mut self,
         operation: O,
@@ -622,13 +679,16 @@ impl<'store> RetainedEngineGeneration<'store> {
     /// prior generation retires. No individual component may commit itself.
     #[doc(hidden)]
     pub fn prepare_candidate_accept(&mut self, candidate: &mut Self) {
-        candidate
-            .state
-            .as_mut()
-            .expect("a live candidate owns state")
-            .with_candidate_source(SettleOutputLedger::Accept)
-            .expect("the accepted/current pair settles one output owner")
-            .expect("the accepted/current sidecars own the output ledger");
+        let independent = candidate.is_independent_job_start_candidate();
+        if !independent {
+            candidate
+                .state
+                .as_mut()
+                .expect("a live candidate owns state")
+                .with_candidate_source(SettleOutputLedger::Accept)
+                .expect("the accepted/current pair settles one output owner")
+                .expect("the accepted/current sidecars own the output ledger");
+        }
         self.state
             .as_mut()
             .expect("an accepted generation owns state")
@@ -659,10 +719,12 @@ impl<'store> RetainedEngineGeneration<'store> {
     pub fn prepare_candidate_reject(&mut self) {
         let state = self.state.as_mut().expect("a live candidate owns state");
         if state.is_candidate_transaction_destination() {
-            state
-                .with_candidate_source(SettleOutputLedger::Reject)
-                .expect("the rejected current pair returns one output owner")
-                .expect("the accepted/current sidecars own the output ledger");
+            if !state.is_independent_candidate_transaction_destination() {
+                state
+                    .with_candidate_source(SettleOutputLedger::Reject)
+                    .expect("the rejected current pair returns one output owner")
+                    .expect("the accepted/current sidecars own the output ledger");
+            }
             state.prepare_candidate_reject();
         }
     }
@@ -719,6 +781,10 @@ impl Drop for RetainedEngineGeneration<'_> {
             return;
         };
         if !state.is_candidate_transaction_destination() {
+            return;
+        }
+        if state.is_independent_candidate_transaction_destination() {
+            state.prepare_candidate_reject();
             return;
         }
         let settled = state
@@ -1079,7 +1145,6 @@ impl<G> BoundaryLane<G> {
         self.append_cell(Some(checkpoint), evidence)
     }
 
-    #[cfg(test)]
     fn append_evidence(&mut self, evidence: RetainedBoundaryEvidence) {
         let _ = self.append_cell(None, evidence);
     }
@@ -1230,20 +1295,20 @@ impl<G> BoundaryLane<G> {
             .checkpoint
             .expect("validated boundary row owns its restart root");
         self.live_roots = self.live_roots.saturating_sub(1);
-        let mut oldest_nonprotected = None;
+        let mut oldest_retained = None;
         self.visit_visible_cells(|cell| {
-            if oldest_nonprotected.is_none()
+            if oldest_retained.is_none()
                 && let Some(checkpoint) = cell.checkpoint.as_ref()
                 && checkpoint.boundary() != crate::EngineBoundary::JobStart
             {
-                oldest_nonprotected = Some(crate::checkpoint::CheckpointReleaseFloor::capture(
+                oldest_retained = Some(crate::checkpoint::CheckpointReleaseFloor::capture(
                     checkpoint,
                 ));
             }
         })?;
         Ok(crate::EngineCheckpointRelease::new(
             removed,
-            oldest_nonprotected,
+            oldest_retained,
         ))
     }
 

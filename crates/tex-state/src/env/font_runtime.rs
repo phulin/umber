@@ -52,6 +52,50 @@ pub(super) struct AcceptedFontRuntimeTail {
 }
 
 impl FontRuntimeBank {
+    pub(super) fn visit_cells(&self, mut visit: impl FnMut(FontRuntimeCell, BankCellValue)) {
+        for (font, row) in self.rows.iter().enumerate() {
+            let font = u32::try_from(font).expect("font runtime row fits u32");
+            visit(
+                FontRuntimeCell::ParameterCount(font),
+                BankCellValue::Integer(row.parameter_count.clone()),
+            );
+            for (number, value) in row.parameters.iter().cloned().enumerate() {
+                visit(
+                    FontRuntimeCell::Dimen {
+                        font,
+                        number: u32::try_from(number).expect("font parameter number fits u32"),
+                    },
+                    BankCellValue::Dimension(value),
+                );
+            }
+            visit(
+                FontRuntimeCell::HyphenChar(font),
+                BankCellValue::Integer(row.hyphen_char.clone()),
+            );
+            visit(
+                FontRuntimeCell::SkewChar(font),
+                BankCellValue::Integer(row.skew_char.clone()),
+            );
+            for (table, values) in row.pdf_codes.iter().enumerate() {
+                let Some(values) = values else { continue };
+                for (code, value) in values.iter().cloned().enumerate() {
+                    visit(
+                        FontRuntimeCell::PdfCode {
+                            table: u8::try_from(table).expect("PDF font table fits u8"),
+                            font,
+                            code: u8::try_from(code).expect("PDF font code fits u8"),
+                        },
+                        BankCellValue::Integer(value),
+                    );
+                }
+            }
+            visit(
+                FontRuntimeCell::LigaturesDisabled(font),
+                BankCellValue::Integer(row.ligatures_disabled.clone()),
+            );
+        }
+    }
+
     pub(crate) const fn new() -> Self {
         Self { rows: Vec::new() }
     }
