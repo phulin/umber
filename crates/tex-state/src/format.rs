@@ -1186,7 +1186,7 @@ pub(crate) fn materialize_retained_format<G>(
     let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
     if wants_page_node_semantic_identity {
-        universe.page_nodes.enable_semantic_identity();
+        universe.page_region.nodes_mut().enable_semantic_identity();
     }
     let DetachedFormatImage { bytes, decoded } = image;
     drop(bytes);
