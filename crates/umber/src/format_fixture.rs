@@ -814,12 +814,12 @@ fn push_detached_node_outline<G>(
 
 fn push_detached_node_children<G>(
     universe: &tex_state::Universe<G>,
-    nodes: &[tex_state::node::Node],
+    nodes: tex_state::node_arena::NodeCursor<'_>,
     path: &mut Vec<usize>,
     depth: u8,
     output: &mut Vec<DetachedNodeOutlineEntry>,
 ) -> Result<(), FormatFixtureError> {
-    for (index, node) in nodes.iter().enumerate() {
+    for (index, node) in nodes.into_iter().enumerate() {
         path.push(index);
         output.push(DetachedNodeOutlineEntry {
             path: path.clone(),

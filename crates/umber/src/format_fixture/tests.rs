@@ -5,7 +5,10 @@ use std::thread;
 use tempfile::TempDir;
 use tex_command::{CommandObservation, CommandObserver};
 use tex_state::env::banks::IntParam;
+use tex_state::glue::Order;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, NodeKind, Sign};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::*;
 
@@ -594,6 +597,75 @@ fn complete_channel_projection_materializes_the_terminal_suffix_once() {
         assert_eq!(channels.terminal, b"committed-terminal");
         assert_eq!(channels.log, b"committed-terminal");
         assert!(channels.pending_effects.is_empty());
+    })
+    .expect("fresh universe");
+}
+
+#[test]
+fn detached_box_outline_walks_borrowed_page_ranges_in_recursive_order() {
+    crate::with_engine_world(World::memory(), |universe| {
+        let children = universe.publish_page_nodes_owned(vec![Node::Penalty(7), Node::Penalty(8)]);
+        let boxed = BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        });
+        let root = universe.publish_page_nodes_owned(vec![
+            Node::Penalty(1),
+            Node::HList(boxed),
+            Node::Penalty(2),
+        ]);
+        universe
+            .assign_page_box(17, Some(root), tex_state::AssignmentScope::Global)
+            .expect("box root remains live");
+
+        let projection = capture_loaded_projection(
+            universe,
+            &LoadedFormatProjectionDemand {
+                box_outlines: vec![LoadedBoxOutlineDemand {
+                    register: 17,
+                    depth: 1,
+                }],
+                ..LoadedFormatProjectionDemand::default()
+            },
+            tex_exec::RootCompletionPolicy::StopAtRootEof,
+        )
+        .expect("box outline projection");
+
+        assert_eq!(
+            projection.boxes,
+            [DetachedBoxOutline {
+                register: 17,
+                nodes: Some(vec![
+                    DetachedNodeOutlineEntry {
+                        path: vec![0],
+                        kind: NodeKind::Penalty,
+                    },
+                    DetachedNodeOutlineEntry {
+                        path: vec![1],
+                        kind: NodeKind::HList,
+                    },
+                    DetachedNodeOutlineEntry {
+                        path: vec![1, 0],
+                        kind: NodeKind::Penalty,
+                    },
+                    DetachedNodeOutlineEntry {
+                        path: vec![1, 1],
+                        kind: NodeKind::Penalty,
+                    },
+                    DetachedNodeOutlineEntry {
+                        path: vec![2],
+                        kind: NodeKind::Penalty,
+                    },
+                ]),
+            }]
+        );
     })
     .expect("fresh universe");
 }
