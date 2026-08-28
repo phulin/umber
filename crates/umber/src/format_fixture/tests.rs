@@ -748,6 +748,31 @@ fn loaded_page_job_reports_exact_serialized_dvi_length() {
     );
 }
 
+#[test]
+fn loaded_no_page_job_reports_no_pages_without_dvi_serialization() {
+    let recipe = FormatRecipe::raw_tex82();
+    let cache_root = TempDir::new().expect("cache");
+    let fixture =
+        ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw format");
+    let mut observations = Recorder::default();
+    let run = fixture
+        .load(test_world())
+        .expect("load")
+        .run(
+            "empty.tex",
+            Arc::from(&br"\end"[..]),
+            &[],
+            &mut observations,
+        )
+        .expect("loaded empty run");
+
+    assert!(run.result.dvi_pages.is_empty());
+    assert!(run.result.artifacts.is_empty());
+    assert!(run.result.committed_artifacts.is_empty());
+    assert!(run.result.terminal_text.contains("No pages of output."));
+    assert!(!run.result.terminal_text.contains("Output written on"));
+}
+
 fn run_explicit_fresh_compatibility(
     recipe: &FormatRecipe,
     source_name: &str,

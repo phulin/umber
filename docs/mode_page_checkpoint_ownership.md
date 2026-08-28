@@ -126,6 +126,12 @@ the candidate appends a private suffix. Rejection drops that suffix and
 reattaches the saved tail, while acceptance drops the superseded tail and keeps
 the live prefix plus candidate suffix. Earlier receipts are never copied into a
 candidate, and MainControl has no `Arc<Vec<_>>` copy-on-write receipt buffer.
+At terminal completion, the unforgeable terminal-revision receipt authorizes a
+borrowed visit of that same ledger. A loaded job serializes the exact retained
+DVI plans before TeX prints its byte-count report, then terminal capture closes
+the ledger after the report and moves the already-aligned pages into the run
+result. The runner never consults the drained MainControl page queue or builds
+a second page-plan vector.
 
 The storage may retain bounded spare capacity up to the generation's observed
 high-water mark. That capacity is reusable storage, not live semantic payload.

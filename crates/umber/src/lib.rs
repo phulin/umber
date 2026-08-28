@@ -1760,10 +1760,6 @@ pub(crate) fn run_memory_collecting_initex_artifacts_with_profile<G>(
     session.run(&mut host, &mut NoCheckpoints)
 }
 
-fn uncommitted_terminal_text<G>(stores: &Universe<G>) -> String {
-    terminal_text_from_effects(stores.world().effect_records())
-}
-
 fn terminal_text_from_effects(records: &[EffectRecord]) -> String {
     let mut text = String::new();
     for record in records {

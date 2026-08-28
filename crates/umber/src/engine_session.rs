@@ -18,7 +18,7 @@ use tex_exec::{
     DiagnosticStepResult, MainControl, ResourceFulfillment, ResourceHost, ResourceNeed,
     ResourceOutcome, ResourceWorld,
 };
-use tex_out::dvi::DviPagePlan;
+use tex_out::dvi::DviStreamWriter;
 use tex_state::print::{Printer, Selector};
 use tex_state::{FileContent, Universe};
 
@@ -192,6 +192,7 @@ pub enum SessionError {
     CooperativeStopRequested,
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
+    EngineCompletion(tex_exec::EngineCompletionError),
     Execution(tex_exec::ExecError),
     FormatDump(tex_exec::FormatDumpError),
     World(tex_state::WorldError),
@@ -221,6 +222,7 @@ impl fmt::Display for SessionError {
             }
             Self::SourceRegistration(error) => error.fmt(formatter),
             Self::CommandSummary(error) => error.fmt(formatter),
+            Self::EngineCompletion(error) => error.fmt(formatter),
             Self::Execution(error) => error.fmt(formatter),
             Self::FormatDump(error) => error.fmt(formatter),
             Self::World(error) => error.fmt(formatter),
@@ -273,6 +275,7 @@ pub struct EngineSession<'a, G> {
     headline_printed: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
     terminated: bool,
+    terminal_step: Option<tex_exec::MainControlStep>,
     artifact_cursor: usize,
     effect_cursor: usize,
     terminal_text_cursor: tex_state::EffectPos,
@@ -332,6 +335,7 @@ impl<'a, G> EngineSession<'a, G> {
             started: false,
             headline_printed: false,
             terminated: false,
+            terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
             output_ledger: tex_exec::OutputLedger::default(),
@@ -363,6 +367,7 @@ impl<'a, G> EngineSession<'a, G> {
             started: false,
             headline_printed: false,
             terminated: false,
+            terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
             output_ledger: tex_exec::OutputLedger::default(),
@@ -393,6 +398,7 @@ impl<'a, G> EngineSession<'a, G> {
             started: false,
             headline_printed: false,
             terminated: false,
+            terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
             output_ledger: tex_exec::OutputLedger::default(),
@@ -844,6 +850,7 @@ impl<'a, G> EngineSession<'a, G> {
                         observer.committed(engine_termination_observation());
                     }
                     self.terminated = true;
+                    self.terminal_step = Some(step);
                     return self.finish();
                 }
                 CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
@@ -1001,20 +1008,48 @@ impl<'a, G> EngineSession<'a, G> {
 
     fn finish(&mut self) -> Result<SessionState, SessionError> {
         self.control.finalize_pdf_navigation(self.stores);
-        let receipts = self.control.take_prepared_dvi_pages();
-        let dvi_pages = receipts
-            .iter()
-            .cloned()
-            .map(tex_exec::PreparedDviPage::into_plan)
-            .collect::<Vec<DviPagePlan>>();
-        let dvi_output = if !self.loaded_job_framing || dvi_pages.is_empty() {
+        let terminal_step = self.terminal_step.ok_or_else(|| {
+            SessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(
+                "terminal output capture has no completed canonical step".into(),
+            ))
+        })?;
+        let terminal = self
+            .output_ledger
+            .terminal_receipt(&self.control, terminal_step)
+            .map_err(SessionError::EngineCompletion)?;
+        let mut dvi_writer = self
+            .loaded_job_framing
+            .then(|| DviStreamWriter::new(Vec::new()));
+        let mut dvi_error = None;
+        let prepared_page_count = self
+            .output_ledger
+            .visit_terminal_dvi_pages(&mut self.control, &terminal, &mut |plan| {
+                if dvi_error.is_none()
+                    && let Some(writer) = dvi_writer.as_mut()
+                    && let Err(error) = writer.write_page_plan(plan)
+                {
+                    dvi_error = Some(error);
+                }
+            })
+            .map_err(SessionError::EngineCompletion)?;
+        if let Some(error) = dvi_error {
+            return Err(SessionError::Execution(
+                tex_exec::ExecError::InvalidShipoutArtifact(format!(
+                    "DVI serialization failed before job framing: {error}"
+                )),
+            ));
+        }
+        let dvi_output = if !self.loaded_job_framing || prepared_page_count == 0 {
             None
         } else {
-            let dvi = crate::dvi_from_page_plans(&dvi_pages).map_err(|error| {
-                SessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(format!(
-                    "DVI serialization failed before job framing: {error}"
-                )))
-            })?;
+            let dvi = dvi_writer
+                .expect("loaded job created its DVI writer")
+                .finish()
+                .map_err(|error| {
+                    SessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(format!(
+                        "DVI serialization failed before job framing: {error}"
+                    )))
+                })?;
             Some(tex_exec::DviJobOutput {
                 file_name: self.control.dvi_output_name(self.stores)?,
                 byte_len: dvi.len() as u64,
@@ -1023,31 +1058,17 @@ impl<'a, G> EngineSession<'a, G> {
         if self.loaded_job_framing {
             self.control.finish_job(self.stores, dvi_output, None);
         }
-        let commits = self.stores.world().artifact_commits();
-        let artifact_start = self.artifact_cursor.min(commits.len());
-        let artifacts = commits[artifact_start..].to_vec();
-        let emits_dvi = !self
-            .control
-            .command_profile()
-            .capabilities()
-            .supports_pdftex();
-        if (emits_dvi && receipts.len() != artifacts.len())
-            || receipts
-                .iter()
-                .zip(&artifacts)
-                .any(|(receipt, hash)| receipt.hash() != *hash)
-        {
-            return Err(SessionError::Execution(
-                tex_exec::ExecError::InvalidShipoutArtifact(
-                    "DVI receipts are not aligned with committed artifacts".into(),
-                ),
-            ));
-        }
-        let committed_artifacts =
-            self.stores.world().committed_artifacts()[artifact_start..commits.len()].to_vec();
-        let effect_records = self.stores.world().effect_records();
+        let completion = self
+            .output_ledger
+            .close_revision(
+                &mut self.control,
+                self.stores,
+                &terminal,
+                tex_exec::EngineCompletionDemand::without_pdf(),
+            )
+            .map_err(SessionError::EngineCompletion)?;
+        let effect_records = completion.effects();
         let effect_start = self.effect_cursor.min(effect_records.len());
-        let effects = effect_records[effect_start..].to_vec();
         let terminal_text = if self.project_root_body_terminal_text {
             let effect_end = self.stores.world().effect_pos().raw();
             let effect_base = effect_end.saturating_sub(effect_records.len() as u64);
@@ -1065,10 +1086,25 @@ impl<'a, G> EngineSession<'a, G> {
             .max(terminal_start);
             crate::terminal_text_from_effects(&effect_records[terminal_start..terminal_end])
         } else {
-            crate::uncommitted_terminal_text(self.stores)
+            crate::terminal_text_from_effects(effect_records)
         };
-        self.artifact_cursor = commits.len();
-        self.effect_cursor = effect_records.len();
+        let artifact_start = self.artifact_cursor.min(completion.pages().len());
+        let effect_end = effect_records.len();
+        let (effects, _, pages, _) = completion.into_parts();
+        let mut artifacts = Vec::with_capacity(pages.len().saturating_sub(artifact_start));
+        let mut dvi_pages = Vec::with_capacity(prepared_page_count);
+        let mut committed_artifacts = Vec::with_capacity(artifacts.capacity());
+        for page in pages.into_iter().skip(artifact_start) {
+            let (artifact, dvi) = page.into_parts();
+            artifacts.push(artifact.hash());
+            if let Some(dvi) = dvi {
+                dvi_pages.push(dvi);
+            }
+            committed_artifacts.push(artifact);
+        }
+        let effects = effects.into_iter().skip(effect_start).collect();
+        self.artifact_cursor = artifact_start.saturating_add(committed_artifacts.len());
+        self.effect_cursor = effect_end;
         if let Some(position) = self.terminal_input_cursor.take() {
             self.stores.restore_terminal_input_position(position)?;
         }

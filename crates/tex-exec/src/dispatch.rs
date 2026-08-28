@@ -163,6 +163,14 @@ pub(crate) struct CommittedPagePublication {
 }
 
 impl PreparedDviPage {
+    /// Borrows the page-local DVI plan retained by the canonical output
+    /// ledger.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn plan(&self) -> &DviPagePlan {
+        &self.plan
+    }
+
     #[doc(hidden)]
     #[must_use]
     pub const fn publication(&self) -> tex_state::ArtifactPublicationRecord {

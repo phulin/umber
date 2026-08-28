@@ -58,11 +58,17 @@ impl DetachedPreparedPage {
     pub const fn dvi(&self) -> Option<&DviPagePlan> {
         self.dvi.as_ref()
     }
+
+    #[doc(hidden)]
+    pub fn into_parts(self) -> (CommittedArtifact, Option<DviPagePlan>) {
+        (self.artifact, self.dvi)
+    }
 }
 
 /// Handle-free output of one admitted terminal engine episode.
 #[derive(Debug)]
 pub struct DetachedEngineCompletion {
+    effect_base: u64,
     effects: Vec<EffectRecord>,
     stream_open_contexts: Vec<Option<String>>,
     pages: Vec<DetachedPreparedPage>,
@@ -74,6 +80,7 @@ impl DetachedEngineCompletion {
     /// output-ledger rows. The only page vector created is the final detached
     /// completion; no accumulated `PreparedDviPage` prefix is materialized.
     pub(crate) fn capture_borrowed_pages(
+        effect_base: u64,
         effects: Vec<EffectRecord>,
         stream_open_contexts: Vec<Option<String>>,
         artifacts: Vec<CommittedArtifact>,
@@ -90,7 +97,7 @@ impl DetachedEngineCompletion {
             return Err(EngineCompletionError::DviPageCount);
         }
         for (index, artifact) in artifacts.iter().enumerate() {
-            validate_artifact(index, artifact, &effects)?;
+            validate_artifact(index, artifact, effect_base, &effects)?;
         }
 
         let mut pages = artifacts
@@ -133,6 +140,7 @@ impl DetachedEngineCompletion {
             validate_pdf(pdf, artifacts)?;
         }
         Ok(Self {
+            effect_base,
             effects,
             stream_open_contexts,
             pages,
@@ -155,9 +163,29 @@ impl DetachedEngineCompletion {
         self.pdf.as_ref()
     }
 
+    #[doc(hidden)]
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<EffectRecord>,
+        Vec<Option<String>>,
+        Vec<DetachedPreparedPage>,
+        Option<DetachedPdfCompletion>,
+    ) {
+        (
+            self.effects,
+            self.stream_open_contexts,
+            self.pages,
+            self.pdf,
+        )
+    }
+
     /// Performs all structural validation before a destination World can be
     /// mutated and consumes the detached value into a non-Clone transaction.
     pub fn into_publication(self) -> Result<PreparedEnginePublication, EnginePublicationError> {
+        if self.effect_base != 0 {
+            return Err(EnginePublicationError::MaterializedEffectBase);
+        }
         validate_prepared(&self.effects, &self.pages, self.pdf.as_ref())?;
         Ok(PreparedEnginePublication {
             effects: self.effects,
@@ -260,6 +288,7 @@ impl CompletionPublicationFailure {
 
 #[derive(Debug)]
 pub enum EnginePublicationError {
+    MaterializedEffectBase,
     InvalidArtifact { page: usize, message: String },
     InvalidArtifactIdentity { page: usize },
     InvalidEffectOrdinal { page: usize, ordinal: u32 },
@@ -549,7 +578,8 @@ fn validate_prepared(
     pdf: Option<&DetachedPdfCompletion>,
 ) -> Result<(), EnginePublicationError> {
     for (index, page) in pages.iter().enumerate() {
-        validate_artifact(index, &page.artifact, effects).map_err(publication_validation_error)?;
+        validate_artifact(index, &page.artifact, 0, effects)
+            .map_err(publication_validation_error)?;
     }
     if let Some(pdf) = pdf {
         let artifacts: Vec<_> = pages.iter().map(|page| page.artifact.clone()).collect();
@@ -561,6 +591,7 @@ fn validate_prepared(
 fn validate_artifact(
     page: usize,
     artifact: &CommittedArtifact,
+    effect_base: u64,
     effects: &[EffectRecord],
 ) -> Result<(), EngineCompletionError> {
     let expected = ContentHash::for_domain(ContentDomain::Artifact, artifact.bytes());
@@ -575,8 +606,11 @@ fn validate_artifact(
     })?;
     for (occurrence, ordinal) in artifact.open_out_occurrences() {
         let raw = ordinal.index();
-        let Some(index) = raw
-            .checked_sub(1)
+        if u64::from(raw) <= effect_base {
+            continue;
+        }
+        let Some(index) = u64::from(raw)
+            .checked_sub(effect_base.saturating_add(1))
             .and_then(|value| usize::try_from(value).ok())
         else {
             return Err(EngineCompletionError::InvalidEffectOrdinal { page, ordinal: raw });

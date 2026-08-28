@@ -235,6 +235,35 @@ impl OutputLedger {
         })
     }
 
+    /// Visits the terminal revision's retained DVI plans without moving or
+    /// duplicating the sole output-ledger page owner.
+    pub fn visit_terminal_dvi_pages<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        receipt: &TerminalRevisionReceipt,
+        visit: &mut dyn FnMut(&tex_out::dvi::DviPagePlan),
+    ) -> Result<usize, crate::EngineCompletionError> {
+        if self.terminal_closed
+            || self.terminal_step != Some(receipt.step)
+            || self.suspension_serial != receipt.suspension_serial
+            || !control.terminal_revision_is_quiescent(receipt.step)
+        {
+            return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
+        }
+        self.collect_prepared_pages(control);
+        let output_checkpoint = self.checkpoint();
+        self.pages
+            .visit_checkpoint_values(
+                &self.pool,
+                output_checkpoint.mark,
+                &mut |page: &crate::PreparedDviPage| {
+                    visit(page.plan());
+                },
+            )
+            .expect("terminal output visits its sealed accepted/current lineage");
+        Ok(self.prepared_page_count)
+    }
+
     /// Closes all executor-owned output ledgers after a terminal committed
     /// step. Suspension never calls this method and therefore cannot expose a
     /// partial revision patch.
@@ -264,14 +293,14 @@ impl OutputLedger {
             })
             .transpose()?;
         let world = universe.world();
-        if world.effect_pos().raw()
-            != u64::try_from(world.effect_records().len()).unwrap_or(u64::MAX)
-        {
-            return Err(crate::EngineCompletionError::MaterializedEffectBase);
-        }
+        let effect_base = world
+            .effect_pos()
+            .raw()
+            .saturating_sub(u64::try_from(world.effect_records().len()).unwrap_or(u64::MAX));
         let (effects, stream_open_contexts) = world.detached_effect_records();
         let output_checkpoint = self.checkpoint();
         let completion = crate::DetachedEngineCompletion::capture_borrowed_pages(
+            effect_base,
             effects,
             stream_open_contexts,
             world.committed_artifacts().to_vec(),
