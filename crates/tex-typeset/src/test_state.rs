@@ -13,7 +13,9 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::{MATH_FAMILY_COUNT, MathFontSize};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeArenaError, NodeCursor, PageListId, PageNodeArena};
+use tex_state::node_arena::{NodeArenaError, NodeCursor, PageListId};
+use tex_state::node_region::NodePool;
+use tex_state::page_node_arena::{PageMaterialArena, PageMaterialRegion, PageMaterialView};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -43,7 +45,8 @@ impl TestFont {
 
 /// Value-only state and typed page owner used by crate-internal kernel tests.
 pub(crate) struct TestState {
-    pages: PageNodeArena,
+    page_pool: NodePool,
+    pages: PageMaterialRegion,
     fonts: Vec<TestFont>,
     math_families: [FontId; 3 * MATH_FAMILY_COUNT as usize],
     integers: [i32; PARAMETER_COUNT],
@@ -72,8 +75,11 @@ impl TestState {
             vec![Scaled::from_raw(0); 7],
             tex_fonts::FontMetrics::default(),
         );
+        let mut page_pool = NodePool::new();
+        let pages = PageMaterialRegion::new(&mut page_pool);
         Self {
-            pages: PageNodeArena::new(),
+            page_pool,
+            pages,
             fonts: vec![TestFont::new(null)],
             math_families: [NULL_FONT; 3 * MATH_FAMILY_COUNT as usize],
             integers: [0; PARAMETER_COUNT],
@@ -85,8 +91,16 @@ impl TestState {
         }
     }
 
+    fn pages(&self) -> PageMaterialView<'_> {
+        PageMaterialView::new(&self.page_pool, &self.pages)
+    }
+
+    fn pages_mut(&mut self) -> PageMaterialArena<'_> {
+        PageMaterialArena::new(&mut self.page_pool, &mut self.pages)
+    }
+
     pub(crate) fn publish_page_nodes(&mut self, nodes: &[Node]) -> PageListId {
-        self.pages
+        self.pages_mut()
             .publish_owned(nodes.to_vec())
             .expect("test nodes contain only fixture-owned children")
     }
@@ -95,7 +109,7 @@ impl TestState {
         &mut self,
         nodes: Vec<Node>,
     ) -> tex_state::node_arena::PageNodeRange {
-        self.pages
+        self.pages_mut()
             .publish_range(nodes)
             .expect("test nodes contain only fixture-owned children")
     }
@@ -104,7 +118,7 @@ impl TestState {
         &mut self,
         inputs: &[tex_state::node_arena::PageNodeSequenceId],
     ) -> tex_state::node_arena::PageNodeSequenceId {
-        self.pages
+        self.pages_mut()
             .compose_sequences(inputs)
             .expect("test sequences belong to fixture page arena")
     }
@@ -113,7 +127,7 @@ impl TestState {
         &self,
         list: PageListId,
     ) -> Result<NodeCursor<'_>, NodeArenaError> {
-        self.pages
+        self.pages()
             .node_cursor(list)
             .map_err(|_| NodeArenaError::InvalidList)
     }
@@ -217,13 +231,13 @@ impl TestState {
     pub(crate) fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         let source = self.box_registers[usize::from(index)]?;
         let nodes = self
-            .pages
+            .pages()
             .node_cursor(source)
             .ok()?
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        self.pages.publish_owned(nodes).ok()
+        self.pages_mut().publish_owned(nodes).ok()
     }
 
     fn font(&self, id: FontId) -> &TestFont {
@@ -254,7 +268,7 @@ impl TestState {
 
 impl TypesetState for TestState {
     fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
-        self.pages
+        self.pages()
             .node_cursor(list)
             .expect("live test page coordinate")
     }
@@ -263,7 +277,7 @@ impl TypesetState for TestState {
         &self,
         sequence: tex_state::node_arena::PageNodeSequenceId,
     ) -> Option<tex_state::node_arena::NodeCursor<'_>> {
-        self.pages.node_cursor(sequence).ok()
+        self.pages().node_cursor(sequence).ok()
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {

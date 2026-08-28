@@ -174,8 +174,7 @@ pub(crate) enum PreparedShipoutSource {
 #[derive(Debug)]
 pub(crate) struct PreparedShipout {
     pub(crate) source: PreparedShipoutSource,
-    pub(crate) region:
-        Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
+    pub(crate) region: Option<tex_state::node_region::PageClosureBuildMark>,
 }
 
 /// The exact parent-list field that TeX82 §1153 saved before `push_math`.
@@ -447,14 +446,13 @@ struct SetBoxTarget {
 #[derive(Debug)]
 struct PendingSetBox {
     target: SetBoxTarget,
-    region: tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
+    region: tex_state::node_region::PageClosureBuildMark,
 }
 
 #[derive(Debug)]
 struct ActiveReplayBox {
     target: Option<PendingSetBox>,
-    shipout_region:
-        Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
+    shipout_region: Option<tex_state::node_region::PageClosureBuildMark>,
     kind: ReplayBoxKind,
     group_kind: GroupKind,
     packing: PackSpec,
@@ -590,8 +588,7 @@ struct ActiveReplayAlignment<G> {
 #[derive(Debug)]
 struct ReplayBoxes<G> {
     pending_setbox: Option<PendingSetBox>,
-    pending_shipout:
-        Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
+    pending_shipout: Option<tex_state::node_region::PageClosureBuildMark>,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment<G>>,

@@ -7,8 +7,10 @@ use crate::fork_arena::{CheckpointMark, ForkArenaError, PageMaterialLane};
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
+use crate::node_region::NodePool;
 use crate::node_region::NodeRegionId;
 use crate::node_sequence::SemanticSequenceIdentity;
+use crate::page_node_arena::{PageMaterialRegion, PageMaterialView};
 use crate::scaled::Scaled;
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -671,7 +673,7 @@ pub struct PageRegionCounters {
 /// together in this aggregate.  Raw page roots are therefore never sibling
 /// owners in `Universe`.
 pub struct PageRegion {
-    nodes: PageNodeArena,
+    nodes: PageMaterialRegion,
     builder: PageBuilderState,
     checkpoints: Vec<PageRegionCheckpoint>,
     next_boundary: u64,
@@ -690,6 +692,7 @@ pub(crate) struct AcceptedPageRegionTail {
 /// because their contiguous checkpoint interval is non-empty; no node-root
 /// census participates in their retention.
 pub(crate) struct PageRegionHistory {
+    pool: NodePool,
     regions: Vec<PageRegion>,
     pending_successor: Option<PreparedPageRegionSuccessor>,
 }
@@ -722,16 +725,13 @@ struct PreparedPageRegionSuccessor {
     held_over: PageListId,
 }
 
-impl Default for PageRegion {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Default for PageRegionHistory {
     fn default() -> Self {
+        let mut pool = NodePool::new();
+        let current = PageRegion::new(&mut pool);
         Self {
-            regions: vec![PageRegion::new()],
+            pool,
+            regions: vec![current],
             pending_successor: None,
         }
     }
@@ -754,12 +754,16 @@ impl PageRegionHistory {
         self.regions.iter().find(|region| region.id() == key.region)
     }
 
-    pub(crate) fn nodes(&self) -> &PageNodeArena {
-        self.current().nodes()
+    pub(crate) fn nodes(&self) -> PageMaterialView<'_> {
+        PageMaterialView::new(&self.pool, &self.current().nodes)
     }
 
-    pub(crate) fn nodes_mut(&mut self) -> &mut PageNodeArena {
-        self.current_mut().nodes_mut()
+    pub(crate) fn nodes_mut(&mut self) -> PageNodeArena<'_> {
+        let current = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region");
+        PageNodeArena::new(&mut self.pool, &mut current.nodes)
     }
 
     pub(crate) fn builder(&self) -> &PageBuilderState {
@@ -770,17 +774,28 @@ impl PageRegionHistory {
         self.current_mut().builder_mut()
     }
 
-    pub(crate) fn parts_mut(&mut self) -> (&mut PageNodeArena, &mut PageBuilderState) {
-        self.current_mut().parts_mut()
+    pub(crate) fn parts_mut(&mut self) -> (PageNodeArena<'_>, &mut PageBuilderState) {
+        let current = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region");
+        (
+            PageNodeArena::new(&mut self.pool, &mut current.nodes),
+            &mut current.builder,
+        )
     }
 
     pub(crate) fn seal_checkpoint(&mut self) -> Result<PageRegionCheckpointKey, ForkArenaError> {
-        self.current_mut().seal_checkpoint()
+        let current = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region");
+        current.seal_checkpoint(&mut self.pool)
     }
 
     pub(crate) fn validates_checkpoint(&self, key: PageRegionCheckpointKey) -> bool {
         self.region(key)
-            .is_some_and(|region| region.validates_checkpoint(key))
+            .is_some_and(|region| region.validates_checkpoint(&self.pool, key))
     }
 
     pub(crate) fn arena_checkpoint(
@@ -806,7 +821,7 @@ impl PageRegionHistory {
         let selected = self
             .regions
             .iter()
-            .position(|region| region.validates_checkpoint(key))
+            .position(|region| region.validates_checkpoint(&self.pool, key))
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
         let later_regions = self.regions.split_off(selected.saturating_add(1));
         let selected_region = self.current().id();
@@ -815,7 +830,11 @@ impl PageRegionHistory {
             .counters
             .later_page_regions_detached
             .saturating_add(later_regions.len() as u64);
-        let selected = self.current_mut().begin_checkpoint_candidate(key)?;
+        let selected = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region")
+            .begin_checkpoint_candidate(&mut self.pool, key)?;
         Ok(AcceptedPageRegionHistoryTail {
             selected,
             later_regions,
@@ -833,22 +852,30 @@ impl PageRegionHistory {
             .position(|region| region.id() == tail.selected_region)
             .ok_or(ForkArenaError::InvalidRegion)?;
         self.regions.truncate(selected.saturating_add(1));
-        self.current_mut()
-            .reject_checkpoint_candidate(tail.selected)?;
+        self.regions
+            .last_mut()
+            .expect("page history always has a current region")
+            .reject_checkpoint_candidate(&mut self.pool, tail.selected)?;
         self.regions.append(&mut tail.later_regions);
         Ok(())
     }
 
     pub(crate) fn accept_checkpoint_candidate(
         &mut self,
-        tail: AcceptedPageRegionHistoryTail,
+        mut tail: AcceptedPageRegionHistoryTail,
     ) -> Result<(), ForkArenaError> {
         let selected = self
             .regions
             .iter_mut()
             .find(|region| region.id() == tail.selected_region)
             .ok_or(ForkArenaError::InvalidRegion)?;
-        selected.accept_checkpoint_candidate(tail.selected)
+        selected.accept_checkpoint_candidate(&mut self.pool, tail.selected)?;
+        for region in tail.later_regions.drain(..) {
+            region
+                .retire(&mut self.pool)
+                .expect("accepted history tail contains quiescent regions");
+        }
+        Ok(())
     }
 
     pub(crate) fn restore_checkpoint(
@@ -858,10 +885,24 @@ impl PageRegionHistory {
         let selected = self
             .regions
             .iter()
-            .position(|region| region.validates_checkpoint(key))
+            .position(|region| region.validates_checkpoint(&self.pool, key))
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
-        self.regions.truncate(selected.saturating_add(1));
-        self.current_mut().restore_checkpoint(key)
+        let mut later_regions = self.regions.split_off(selected.saturating_add(1));
+        let restored = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region")
+            .restore_checkpoint(&mut self.pool, key);
+        if let Err(error) = restored {
+            self.regions.append(&mut later_regions);
+            return Err(error);
+        }
+        for region in later_regions {
+            region
+                .retire(&mut self.pool)
+                .expect("restored history suffix contains quiescent regions");
+        }
+        Ok(())
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
@@ -883,12 +924,22 @@ impl PageRegionHistory {
         if self.pending_successor.is_some() {
             return Err(ForkArenaError::InvalidRegion);
         }
-        self.pending_successor = Some(self.current_mut().prepare_successor(held_over)?);
+        self.pending_successor = Some(
+            self.regions
+                .last_mut()
+                .expect("page history always has a current region")
+                .prepare_successor(&mut self.pool, held_over)?,
+        );
         Ok(())
     }
 
     pub(crate) fn cancel_prepared_shipout(&mut self) {
-        self.pending_successor = None;
+        if let Some(prepared) = self.pending_successor.take() {
+            prepared
+                .current
+                .retire(&mut self.pool)
+                .expect("canceled successor is a quiescent unpublished region");
+        }
     }
 
     pub(crate) fn commit_prepared_shipout(&mut self) -> Result<PageListId, ForkArenaError> {
@@ -900,7 +951,7 @@ impl PageRegionHistory {
             .regions
             .pop()
             .expect("page history always has a current region");
-        let succession = old.commit_successor(prepared);
+        let succession = old.commit_successor(&mut self.pool, prepared);
         let PageRegionSuccession {
             current,
             retained_prior,
@@ -916,9 +967,9 @@ impl PageRegionHistory {
 
 impl PageRegion {
     #[must_use]
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(pool: &mut NodePool) -> Self {
         Self {
-            nodes: PageNodeArena::new(),
+            nodes: PageMaterialRegion::new(pool),
             builder: PageBuilderState::default(),
             checkpoints: Vec::with_capacity(64),
             next_boundary: 1,
@@ -929,19 +980,31 @@ impl PageRegion {
         }
     }
 
+    fn retire(self, pool: &mut NodePool) -> Result<(), ForkArenaError> {
+        self.nodes.retire(pool)
+    }
+
     #[must_use]
     pub(crate) const fn id(&self) -> NodeRegionId {
         self.nodes.region_id()
     }
 
-    #[must_use]
-    pub(crate) const fn nodes(&self) -> &PageNodeArena {
-        &self.nodes
+    #[cfg(test)]
+    fn nodes<'a>(&'a self, pool: &'a NodePool) -> PageMaterialView<'a> {
+        PageMaterialView::new(pool, &self.nodes)
     }
 
-    #[must_use]
-    pub(crate) const fn nodes_mut(&mut self) -> &mut PageNodeArena {
-        &mut self.nodes
+    #[cfg(test)]
+    fn nodes_mut<'a>(&'a mut self, pool: &'a mut NodePool) -> PageNodeArena<'a> {
+        PageNodeArena::new(pool, &mut self.nodes)
+    }
+
+    #[cfg(test)]
+    fn parts_mut<'a>(
+        &'a mut self,
+        pool: &'a mut NodePool,
+    ) -> (PageNodeArena<'a>, &'a mut PageBuilderState) {
+        (PageNodeArena::new(pool, &mut self.nodes), &mut self.builder)
     }
 
     #[must_use]
@@ -954,13 +1017,13 @@ impl PageRegion {
         &mut self.builder
     }
 
-    pub(crate) fn parts_mut(&mut self) -> (&mut PageNodeArena, &mut PageBuilderState) {
-        (&mut self.nodes, &mut self.builder)
-    }
-
-    pub(crate) fn seal_checkpoint(&mut self) -> Result<PageRegionCheckpointKey, ForkArenaError> {
-        let boundary = self.nodes.seal_boundary()?;
-        let nodes = self.nodes.checkpoint_mark(boundary)?;
+    pub(crate) fn seal_checkpoint(
+        &mut self,
+        pool: &mut NodePool,
+    ) -> Result<PageRegionCheckpointKey, ForkArenaError> {
+        let mut nodes = PageNodeArena::new(pool, &mut self.nodes);
+        let boundary = nodes.seal_boundary()?;
+        let node_mark = nodes.checkpoint_mark(boundary)?;
         let builder = self.builder.checkpoint_mark();
         let key = PageRegionCheckpointKey {
             region: self.id(),
@@ -972,7 +1035,7 @@ impl PageRegion {
             .ok_or(ForkArenaError::CapacityOverflow)?;
         self.checkpoints.push(PageRegionCheckpoint {
             key,
-            nodes,
+            nodes: node_mark,
             builder,
         });
         Ok(key)
@@ -990,9 +1053,14 @@ impl PageRegion {
     }
 
     #[must_use]
-    pub(crate) fn validates_checkpoint(&self, key: PageRegionCheckpointKey) -> bool {
+    pub(crate) fn validates_checkpoint(
+        &self,
+        pool: &NodePool,
+        key: PageRegionCheckpointKey,
+    ) -> bool {
+        let nodes = PageMaterialView::new(pool, &self.nodes);
         self.checkpoint(key).is_some_and(|checkpoint| {
-            self.nodes.can_restore_checkpoint(checkpoint.nodes)
+            nodes.can_restore_checkpoint(checkpoint.nodes)
                 && self.builder.validates_checkpoint_mark(checkpoint.builder)
         })
     }
@@ -1014,12 +1082,13 @@ impl PageRegion {
 
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
+        pool: &mut NodePool,
         key: PageRegionCheckpointKey,
     ) -> Result<AcceptedPageRegionTail, ForkArenaError> {
         let checkpoint = self
             .checkpoint(key)
             .filter(|checkpoint| {
-                self.nodes.can_restore_checkpoint(checkpoint.nodes)
+                PageMaterialView::new(pool, &self.nodes).can_restore_checkpoint(checkpoint.nodes)
                     && self.builder.validates_checkpoint_mark(checkpoint.builder)
             })
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
@@ -1029,7 +1098,7 @@ impl PageRegion {
             .position(|row| row.key == key)
             .expect("validated page-region checkpoint row remains present");
         let builder = self.builder.begin_checkpoint_candidate(checkpoint.builder);
-        self.nodes
+        PageNodeArena::new(pool, &mut self.nodes)
             .begin_checkpoint_candidate(checkpoint.nodes)
             .expect("complete page-region preflight makes arena fork infallible");
         let later_rows = self.checkpoints.split_off(selected.saturating_add(1));
@@ -1043,12 +1112,13 @@ impl PageRegion {
 
     pub(crate) fn reject_checkpoint_candidate(
         &mut self,
+        pool: &mut NodePool,
         mut tail: AcceptedPageRegionTail,
     ) -> Result<(), ForkArenaError> {
-        let boundary = self.nodes.seal_boundary()?;
+        let boundary = PageNodeArena::new(pool, &mut self.nodes).seal_boundary()?;
         self.builder
             .prepare_checkpoint_candidate_rejection(&tail.builder);
-        self.nodes.reject_checkpoint_candidate(boundary)?;
+        PageNodeArena::new(pool, &mut self.nodes).reject_checkpoint_candidate(boundary)?;
         self.builder
             .finish_checkpoint_candidate_rejection(tail.builder);
         let selected = self
@@ -1063,9 +1133,10 @@ impl PageRegion {
 
     pub(crate) fn accept_checkpoint_candidate(
         &mut self,
+        pool: &mut NodePool,
         tail: AcceptedPageRegionTail,
     ) -> Result<(), ForkArenaError> {
-        let boundary = self.nodes.seal_boundary()?;
+        let boundary = PageNodeArena::new(pool, &mut self.nodes).seal_boundary()?;
         debug_assert!(
             self.checkpoints
                 .iter()
@@ -1073,22 +1144,23 @@ impl PageRegion {
         );
         self.builder
             .prepare_checkpoint_candidate_acceptance(tail.builder);
-        self.nodes.accept_checkpoint_candidate(boundary)
+        PageNodeArena::new(pool, &mut self.nodes).accept_checkpoint_candidate(boundary)
     }
 
     pub(crate) fn restore_checkpoint(
         &mut self,
+        pool: &mut NodePool,
         key: PageRegionCheckpointKey,
     ) -> Result<(), ForkArenaError> {
         let checkpoint = self
             .checkpoint(key)
             .filter(|checkpoint| {
-                self.nodes.can_restore_checkpoint(checkpoint.nodes)
+                PageMaterialView::new(pool, &self.nodes).can_restore_checkpoint(checkpoint.nodes)
                     && self.builder.validates_checkpoint_mark(checkpoint.builder)
             })
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
         self.builder.restore_checkpoint_mark(checkpoint.builder);
-        self.nodes.restore_checkpoint(checkpoint.nodes)
+        PageNodeArena::new(pool, &mut self.nodes).restore_checkpoint(checkpoint.nodes)
     }
 
     #[must_use]
@@ -1114,20 +1186,34 @@ impl PageRegion {
     /// owner, while an uncheckpointed old region drops wholesale.
     fn prepare_successor(
         &mut self,
+        pool: &mut NodePool,
         held_over: PageListId,
     ) -> Result<PreparedPageRegionSuccessor, ForkArenaError> {
-        if !self.nodes.contains(held_over) {
+        if !PageMaterialView::new(pool, &self.nodes).contains(held_over) {
             self.counters.cross_region_node_reference_rejections = self
                 .counters
                 .cross_region_node_reference_rejections
                 .saturating_add(1);
             return Err(ForkArenaError::InvalidRegion);
         }
-        let mut current = PageRegion::new();
-        if self.nodes.semantic_identity_enabled() {
-            current.nodes.enable_semantic_identity();
+        let mut current = PageRegion::new(pool);
+        if PageMaterialView::new(pool, &self.nodes).semantic_identity_enabled() {
+            PageNodeArena::new(pool, &mut current.nodes).enable_semantic_identity();
         }
-        let (held_over, copied) = current.nodes.copy_closure_from(&self.nodes, held_over)?;
+        let (held_over, copied) = match PageMaterialRegion::copy_closure_between(
+            pool,
+            &mut current.nodes,
+            &self.nodes,
+            held_over,
+        ) {
+            Ok(copied) => copied,
+            Err(error) => {
+                current
+                    .retire(pool)
+                    .expect("failed successor remains a quiescent empty region");
+                return Err(error);
+            }
+        };
         current.counters = self.counters;
         current.counters.page_regions_started =
             current.counters.page_regions_started.saturating_add(1);
@@ -1136,14 +1222,19 @@ impl PageRegion {
             .held_over_nodes_copied
             .saturating_add(copied as u64);
         if !held_over.is_empty() {
+            let mut nodes = PageNodeArena::new(pool, &mut current.nodes);
             current
                 .builder
-                .push_current_page_list(&mut current.nodes, held_over);
+                .push_current_page_list(&mut nodes, held_over);
         }
         Ok(PreparedPageRegionSuccessor { current, held_over })
     }
 
-    fn commit_successor(mut self, prepared: PreparedPageRegionSuccessor) -> PageRegionSuccession {
+    fn commit_successor(
+        mut self,
+        pool: &mut NodePool,
+        prepared: PreparedPageRegionSuccessor,
+    ) -> PageRegionSuccession {
         let PreparedPageRegionSuccessor {
             mut current,
             held_over,
@@ -1151,6 +1242,8 @@ impl PageRegion {
         let retained_prior = if self.checkpoints.is_empty() {
             current.counters.page_regions_dropped =
                 current.counters.page_regions_dropped.saturating_add(1);
+            self.retire(pool)
+                .expect("uncheckpointed prior page region is quiescent");
             None
         } else {
             self.counters.page_regions_retained =
@@ -1169,13 +1262,14 @@ impl PageRegion {
     #[allow(clippy::result_large_err)] // Failed succession must return the exclusive page region.
     pub fn finish_shipout(
         mut self,
+        pool: &mut NodePool,
         held_over: PageListId,
     ) -> Result<PageRegionSuccession, (ForkArenaError, Self)> {
-        let prepared = match self.prepare_successor(held_over) {
+        let prepared = match self.prepare_successor(pool, held_over) {
             Ok(prepared) => prepared,
             Err(error) => return Err((error, self)),
         };
-        Ok(self.commit_successor(prepared))
+        Ok(self.commit_successor(pool, prepared))
     }
 }
 
@@ -1200,7 +1294,11 @@ impl PageRegionSuccession {
 
     /// Removes one retained boundary and drops its old page owner when the
     /// contiguous interval becomes empty.
-    pub fn prune_retained_checkpoint(&mut self, key: PageRegionCheckpointKey) -> bool {
+    pub fn prune_retained_checkpoint(
+        &mut self,
+        pool: &mut NodePool,
+        key: PageRegionCheckpointKey,
+    ) -> bool {
         let Some(prior) = &mut self.retained_prior else {
             return false;
         };
@@ -1209,7 +1307,11 @@ impl PageRegionSuccession {
         };
         prior.checkpoints.remove(position);
         if prior.checkpoints.is_empty() {
-            self.retained_prior = None;
+            self.retained_prior
+                .take()
+                .expect("validated retained prior remains present")
+                .retire(pool)
+                .expect("pruned prior page region is quiescent");
             self.current.counters.page_regions_dropped =
                 self.current.counters.page_regions_dropped.saturating_add(1);
         }
@@ -1308,6 +1410,12 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    #[must_use]
+    #[cfg(test)]
+    pub(crate) const fn contribution_root(&self) -> PageListId {
+        self.contribution
+    }
+
     pub(crate) fn enable_reachable_state_identity(&mut self) {
         if self.identity_enabled {
             return;

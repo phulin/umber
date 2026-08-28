@@ -1,8 +1,17 @@
-use super::{PageListId, PageMaterialActiveListBuilder, PageMaterialArena};
+use super::{PageListId, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion};
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
+use crate::node_region::NodePool;
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::scaled::{GlueSetRatio, Scaled};
+
+macro_rules! page_arena {
+    ($arena:ident, $pool:ident, $state:ident, $bytes:expr) => {
+        let mut $pool = NodePool::with_chunk_bytes($bytes);
+        let mut $state = PageMaterialRegion::new(&mut $pool);
+        let mut $arena = PageMaterialArena::new(&mut $pool, &mut $state);
+    };
+}
 
 type PageMaterialNode = Node<PageListId>;
 
@@ -39,7 +48,7 @@ fn boxed(children: PageListId) -> PageMaterialNode {
 
 #[test]
 fn disabled_demand_performs_no_semantic_hash_work() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     let list = arena
         .publish_owned(penalties(&[10, 20, 30]))
         .expect("publish");
@@ -53,10 +62,10 @@ fn disabled_demand_performs_no_semantic_hash_work() {
 
 #[test]
 fn parent_nodes_reject_foreign_region_children_without_partial_publication() {
-    let mut local = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(local, local_pool, local_state, 32);
     local.enable_semantic_identity();
     let before_hash_work = local.semantic_hash_work();
-    let mut foreign = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(foreign, foreign_pool, foreign_state, 32);
     let foreign_child = foreign
         .publish_owned(penalties(&[91]))
         .expect("foreign child");
@@ -110,7 +119,7 @@ fn disabled_demand_keeps_range_and_composition_identity_work_at_zero() {
 
 #[test]
 fn active_list_preserves_disabled_demand_and_appends_ranges_without_copying() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     let source = arena.publish_owned(penalties(&[10, 20])).expect("source");
     let source_address = arena
         .list(source)
@@ -149,7 +158,7 @@ fn active_list_preserves_disabled_demand_and_appends_ranges_without_copying() {
 
 #[test]
 fn source_copy_counter_has_a_real_negative_control() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     let source = arena.publish_owned(penalties(&[4, 5])).expect("source");
     let copied = arena
         .publish_source_copy(source)
@@ -162,7 +171,7 @@ fn source_copy_counter_has_a_real_negative_control() {
 
 #[test]
 fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     let source = arena
         .publish_owned(penalties(&[10, 20, 30]))
         .expect("source");
@@ -206,7 +215,7 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
 
 #[test]
 fn active_list_concatenates_maintained_semantic_identity() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     arena.enable_semantic_identity();
     let source_nodes = penalties(&[1, 2]);
     let source = arena
@@ -236,7 +245,7 @@ fn active_list_concatenates_maintained_semantic_identity() {
 
 #[test]
 fn identity_is_preserved_across_build_split_and_compose() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     arena.enable_semantic_identity();
     let nodes = penalties(&[1, 2, 3, 4]);
     let whole = arena
@@ -386,7 +395,7 @@ fn partial_operation_restore_restores_payload_chunk_summary() {
 
 #[test]
 fn accepted_identity_survives_reject_accept_and_prune() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    page_arena!(arena, pool, state, 32);
     arena.enable_semantic_identity();
     let prefix = arena
         .publish_owned(penalties(&[7, 8]))

@@ -1059,16 +1059,18 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
         let mut candidate = universe
             .fork_runtime_checkpoint(&first)
             .expect("older page mark forks");
+        let candidate_root = candidate.page_region.builder().contribution_root();
         assert_eq!(
             candidate
                 .page_region
-                .builder()
-                .contribution(candidate.page_region.nodes())
+                .nodes()
+                .node_cursor(candidate_root)
+                .expect("candidate contribution root")
                 .len(),
             1
         );
-        let (nodes, page) = candidate.page_region.parts_mut();
-        page.push_contribution(nodes, Node::Penalty(3));
+        let (mut nodes, page) = candidate.page_region.parts_mut();
+        page.push_contribution(&mut nodes, Node::Penalty(3));
         universe.reject_checkpoint_candidate(&mut candidate);
 
         assert_eq!(

@@ -190,18 +190,22 @@ All production mutation of live TeX state should pass through `Universe` or simi
   and stale-coordinate rejection after bounded row reuse.
 - `src/node_region.rs` and `src/node_region/tests.rs`: Exclusive move-only node
   regions above the shared fixed-chunk pool, generation-checked owner-relative
-  roots and borrows, atomic nested-coordinate transfer/rebranding, and explicit
-  recursive closure copy; production page and durable carrier cutovers remain
-  separate migration stages.
+  roots and borrows, sealed `ClosureBuildMark` suffix loans, mutation-free
+  recursive transfer preflight, address-stable detach/rollback/rebranding, and
+  reason-counted structural-copy fallback; production durable carrier cutover
+  remains a separate migration stage.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four PageBuilder roots, scalar state, reversible journal, and private
   owner-relative checkpoint rows; active insertion classes and sparse mark
   classes retain canonical iteration order beside dense direct lookup indexes.
   Exact edit settlement and shipout succession keep roots and payload suffixes
   atomic, direct node parent/child publication is same-region checked, and
-  held-over evacuation uses the explicit semantic-copy boundary. Succession
-  preparation consumes the executor's move-only rootless-mode receipt; durable
-  box/form carriers still keep the production tail on the existing region.
+  held-over evacuation uses the explicit semantic-copy boundary. One
+  `PageRegionHistory`-owned `NodePool` physically backs current and retained
+  page regions, and every discarded region retires its envelopes and stale id.
+  Succession preparation consumes the executor's move-only rootless-mode
+  receipt; durable box/form carriers still keep the production tail on the
+  existing region.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, allocation-free scalar checkpoint marks,

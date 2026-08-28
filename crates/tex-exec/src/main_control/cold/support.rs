@@ -545,9 +545,7 @@ pub(in crate::main_control) fn glue_scale(
 pub(in crate::main_control) fn begin_replay_box<G>(
     construction: ScannedBoxConstruction,
     target: Option<PendingSetBox>,
-    shipout_region: Option<
-        tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
-    >,
+    shipout_region: Option<tex_state::node_region::PageClosureBuildMark>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
@@ -773,7 +771,7 @@ pub(in crate::main_control) enum BoxContext {
     /// box register", `eq_define`/`geq_define` by `\setbox`/`\global\setbox`.
     SetBox(PendingSetBox),
     /// `box_context=ship_out_flag`: §1075's `ship_out(cur_box)`.
-    ShipOut(tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>),
+    ShipOut(tex_state::node_region::PageClosureBuildMark),
 }
 
 pub(in crate::main_control) fn read_box_register<G>(
@@ -881,9 +879,9 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         },
     );
     command.retain_assignment_receipt(receipt);
-    stores
-        .retain_page_node_region(region)
-        .expect("published setbox transfers its complete page suffix");
+    let _compatibility_receipt = stores
+        .finish_compatibility_page_node_region(region)
+        .expect("published setbox retains its complete page suffix");
 }
 
 /// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already

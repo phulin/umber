@@ -10,8 +10,8 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    ArenaListView, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane,
-    RegionValue, SequenceSummaryWork,
+    ArenaListView, BatchMark, ChunkPool, DetachedBatch, ForkArena, ForkArenaCounters,
+    ForkArenaError, PageMaterialLane, RegionValue, SequenceSummaryWork,
 };
 use crate::node::Node;
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
@@ -61,6 +61,27 @@ pub struct NodePool {
     pub(crate) chunks: ChunkPool<RegionNode>,
     regions: Vec<RegionSlot>,
     free_regions: Vec<u32>,
+    closure_transitions: ClosureTransitionCounters,
+}
+
+/// Demand-free observations of explicit closure lifetime transitions.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ClosureTransitionCounters {
+    pub envelope_moves: u64,
+    pub rebrand_scan_nodes: u64,
+    pub transient_rollbacks: u64,
+    pub structural_fallbacks: u64,
+    pub interleaved_prefix_fallbacks: u64,
+    pub foreign_root_fallbacks: u64,
+    pub retained_root_fallbacks: u64,
+}
+
+/// Why a caller deliberately selected the bounded recursive-copy seam.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StructuralCopyReason {
+    InterleavedPrefixChild,
+    ForeignRoot,
+    RetainedRoot,
 }
 
 impl Default for NodePool {
@@ -71,18 +92,24 @@ impl Default for NodePool {
 
 impl NodePool {
     #[must_use]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::with_chunk_bytes(4 * 1024)
     }
 
     #[must_use]
-    pub(crate) fn with_chunk_bytes(chunk_bytes: usize) -> Self {
+    pub fn with_chunk_bytes(chunk_bytes: usize) -> Self {
         Self {
             id: NEXT_NODE_POOL_ID.fetch_add(1, Ordering::Relaxed),
             chunks: ChunkPool::with_chunk_bytes(chunk_bytes),
             regions: Vec::new(),
             free_regions: Vec::new(),
+            closure_transitions: ClosureTransitionCounters::default(),
         }
+    }
+
+    #[must_use]
+    pub const fn closure_transition_counters(&self) -> ClosureTransitionCounters {
+        self.closure_transitions
     }
 
     pub(crate) fn start_region<Role>(&mut self) -> Result<NodeRegion<Role>, ForkArenaError> {
@@ -116,6 +143,7 @@ impl NodePool {
                 generation,
             },
             pub_arena: arena,
+            next_closure_build: 1,
             _role: PhantomData,
         })
     }
@@ -180,6 +208,7 @@ impl NodePool {
 pub struct NodeRegion<Role> {
     id: NodeRegionId,
     pub(crate) pub_arena: ForkArena<RegionNode, PageMaterialLane>,
+    next_closure_build: u64,
     _role: PhantomData<fn(Role) -> Role>,
 }
 
@@ -205,6 +234,161 @@ impl<Role> NodeRegion<Role> {
             list: PageListId::from_parts(builder.seal()?, None),
             _role: PhantomData,
         })
+    }
+
+    /// Seals the current payload and descriptor tails and opens one fresh
+    /// whole-envelope construction suffix. Unlike an operation mark, this
+    /// capability can only be consumed by closure sealing.
+    pub(crate) fn begin_closure_build(
+        &mut self,
+        pool: &mut NodePool,
+    ) -> Result<ClosureBuildMark<Role>, ForkArenaError> {
+        pool.validate_region(self)?;
+        let serial = self.next_closure_build;
+        self.next_closure_build = serial
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        let batch = self.pub_arena.begin_batch(&mut pool.chunks)?;
+        let rollback = self.pub_arena.operation_mark(&pool.chunks);
+        Ok(ClosureBuildMark {
+            region: self.id,
+            serial,
+            batch,
+            rollback,
+            _role: PhantomData,
+        })
+    }
+
+    pub(crate) fn cancel_closure_build(
+        &mut self,
+        pool: &mut NodePool,
+        mark: ClosureBuildMark<Role>,
+    ) -> Result<(), ForkArenaError> {
+        pool.validate_region(self)?;
+        if mark.region != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        self.pub_arena
+            .restore_operation(&mut pool.chunks, mark.rollback)
+    }
+
+    pub(crate) fn compatibility_closure_build_receipt(
+        &self,
+        mark: ClosureBuildMark<Role>,
+    ) -> Result<CompatibilityClosureBuildReceipt<Role>, ForkArenaError> {
+        if mark.region != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok(CompatibilityClosureBuildReceipt {
+            region: mark.region,
+            serial: mark.serial,
+            _role: PhantomData,
+        })
+    }
+
+    /// Converts the caller's owner-local root audit into the receipt consumed
+    /// by closure sealing. Production callers may invoke this only after the
+    /// PageBuilder, ModeList, operation journal, and checkpoint owner have
+    /// removed every root created after `mark`.
+    pub(crate) fn consumed_closure_roots_receipt(
+        &self,
+        mark: &ClosureBuildMark<Role>,
+    ) -> Result<ConsumedClosureRootsReceipt<Role>, ForkArenaError> {
+        if mark.region != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok(ConsumedClosureRootsReceipt {
+            region: self.id,
+            serial: mark.serial,
+            _role: PhantomData,
+        })
+    }
+
+    /// Preflights and detaches one self-contained recursive closure suffix.
+    /// Any failure leaves all chunk envelopes attached to this region.
+    pub(crate) fn seal_closure(
+        &mut self,
+        pool: &mut NodePool,
+        mark: ClosureBuildMark<Role>,
+        root: RegionRoot<Role>,
+        receipt: ConsumedClosureRootsReceipt<Role>,
+    ) -> Result<SealedNodeClosure<Role>, ClosureSealError<Role>> {
+        if let Err(error) = pool.validate_region(self) {
+            return Err(ClosureSealError { error, mark });
+        }
+        if mark.region != self.id
+            || receipt.region != self.id
+            || receipt.serial != mark.serial
+            || root.region != self.id
+        {
+            return Err(ClosureSealError {
+                error: ForkArenaError::InvalidRegion,
+                mark,
+            });
+        }
+        if let Err(error) = self.pub_arena.preflight_batch_closure(
+            &pool.chunks,
+            &mark.batch,
+            &[root.list.coordinate()],
+        ) {
+            return Err(ClosureSealError { error, mark });
+        }
+        let batch = match self.pub_arena.seal_batch(
+            &mut pool.chunks,
+            mark.batch,
+            vec![root.list.coordinate()],
+        ) {
+            Ok(batch) => batch,
+            Err(error) => return Err(ClosureSealError { error, mark }),
+        };
+        let batch = match self.pub_arena.detach_batch(&mut pool.chunks, batch) {
+            Ok(batch) => batch,
+            Err(failure) => {
+                self.pub_arena
+                    .cancel_batch(failure.batch)
+                    .expect("failed closure preflight returns its source authority");
+                return Err(ClosureSealError {
+                    error: failure.error,
+                    mark,
+                });
+            }
+        };
+        Ok(SealedNodeClosure {
+            source: self.id,
+            root,
+            batch,
+        })
+    }
+
+    /// Returns a transient transfer loan to the exact construction suffix.
+    pub(crate) fn rollback_closure(
+        &mut self,
+        pool: &mut NodePool,
+        closure: SealedNodeClosure<Role>,
+    ) -> Result<(), SealedNodeClosureError<Role>> {
+        if closure.source != self.id || closure.root.region != self.id {
+            return Err(SealedNodeClosureError {
+                error: ForkArenaError::InvalidRegion,
+                closure,
+            });
+        }
+        match self.pub_arena.reattach_batch(&pool.chunks, closure.batch) {
+            Ok(()) => {
+                pool.closure_transitions.transient_rollbacks = pool
+                    .closure_transitions
+                    .transient_rollbacks
+                    .saturating_add(1);
+                Ok(())
+            }
+            Err(failure) => Err(SealedNodeClosureError {
+                error: failure.error,
+                closure: SealedNodeClosure {
+                    source: closure.source,
+                    root: closure.root,
+                    batch: failure.batch,
+                },
+            }),
+        }
     }
 
     pub(crate) fn root(
@@ -259,6 +443,99 @@ impl<Role> NodeRegion<Role> {
     #[must_use]
     pub(crate) const fn counters(&self) -> ForkArenaCounters {
         self.pub_arena.counters()
+    }
+}
+
+/// Sealed payload-plus-descriptor boundary taken before closure construction.
+pub struct ClosureBuildMark<Role> {
+    region: NodeRegionId,
+    serial: u64,
+    batch: BatchMark<PageMaterialLane>,
+    rollback: crate::fork_arena::OperationMark<PageMaterialLane>,
+    _role: PhantomData<fn(Role) -> Role>,
+}
+
+impl<Role> core::fmt::Debug for ClosureBuildMark<Role> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ClosureBuildMark")
+            .field("region", &self.region)
+            .field("serial", &self.serial)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Page-owned closure boundary used by execution-facing construction APIs.
+pub type PageClosureBuildMark = ClosureBuildMark<PageRole>;
+
+/// Explicit receipt for a legacy owner which intentionally keeps a completed
+/// closure in the page region instead of sealing/transferring it.
+pub struct CompatibilityClosureBuildReceipt<Role> {
+    region: NodeRegionId,
+    serial: u64,
+    _role: PhantomData<fn(Role) -> Role>,
+}
+
+impl<Role> CompatibilityClosureBuildReceipt<Role> {
+    #[must_use]
+    pub const fn region_id(&self) -> NodeRegionId {
+        self.region
+    }
+
+    #[must_use]
+    pub const fn build_serial(&self) -> u64 {
+        self.serial
+    }
+}
+
+/// Consumed proof that no owner-local root outside the closure names its
+/// suffix. It is intentionally neither clonable nor constructible from raw
+/// coordinates.
+pub(crate) struct ConsumedClosureRootsReceipt<Role> {
+    region: NodeRegionId,
+    serial: u64,
+    _role: PhantomData<fn(Role) -> Role>,
+}
+
+/// Move-only detached closure suffix. Payload addresses remain stable while
+/// this loan is transferred or rolled back.
+#[must_use = "a detached closure loan must be transferred or rolled back"]
+pub(crate) struct SealedNodeClosure<Role> {
+    source: NodeRegionId,
+    root: RegionRoot<Role>,
+    batch: DetachedBatch<PageMaterialLane>,
+}
+
+pub(crate) struct SealedNodeClosureError<Role> {
+    pub(crate) error: ForkArenaError,
+    pub(crate) closure: SealedNodeClosure<Role>,
+}
+
+impl<Role> SealedNodeClosureError<Role> {
+    pub(crate) fn into_parts(self) -> (ForkArenaError, SealedNodeClosure<Role>) {
+        (self.error, self.closure)
+    }
+}
+
+/// Failed seal with the original move-only construction authority restored.
+pub(crate) struct ClosureSealError<Role> {
+    pub(crate) error: ForkArenaError,
+    pub(crate) mark: ClosureBuildMark<Role>,
+}
+
+impl<Role> ClosureSealError<Role> {
+    pub(crate) fn into_parts(self) -> (ForkArenaError, ClosureBuildMark<Role>) {
+        (self.error, self.mark)
+    }
+}
+
+impl<Role> core::fmt::Debug for ClosureSealError<Role> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ClosureSealError")
+            .field("error", &self.error)
+            .field("mark", &self.mark)
+            .finish()
     }
 }
 
@@ -319,6 +596,11 @@ impl<Role> RegionRoot<Role> {
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.list.is_empty()
+    }
+
+    #[must_use]
+    pub(crate) const fn page_list(self) -> PageListId {
+        self.list
     }
 }
 
@@ -393,6 +675,57 @@ pub(crate) struct ClosureTransferError<Role> {
     pub(crate) closure: OwnedNodeClosure<Role>,
 }
 
+/// Commits a detached construction suffix into a destination region. Failed
+/// destination validation returns the move-only suffix loan unchanged.
+pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<Source>,
+    closure: SealedNodeClosure<Source>,
+    destination: &mut NodeRegion<Destination>,
+) -> Result<RegionRoot<Destination>, SealedNodeClosureError<Source>> {
+    if pool.validate_region(source).is_err()
+        || pool.validate_region(destination).is_err()
+        || closure.source != source.id
+        || closure.root.region != source.id
+    {
+        return Err(SealedNodeClosureError {
+            error: ForkArenaError::InvalidRegion,
+            closure,
+        });
+    }
+    let original_root = closure.root;
+    match source.pub_arena.promote_detached_batch_into(
+        &mut pool.chunks,
+        &mut destination.pub_arena,
+        closure.batch,
+    ) {
+        Ok((coordinates, scanned)) => {
+            let [coordinate]: [_; 1] = coordinates
+                .try_into()
+                .expect("one sealed closure root produces one transferred root");
+            pool.closure_transitions.envelope_moves =
+                pool.closure_transitions.envelope_moves.saturating_add(1);
+            pool.closure_transitions.rebrand_scan_nodes = pool
+                .closure_transitions
+                .rebrand_scan_nodes
+                .saturating_add(scanned);
+            Ok(RegionRoot {
+                region: destination.id,
+                list: original_root.list.with_coordinate(coordinate),
+                _role: PhantomData,
+            })
+        }
+        Err(failure) => Err(SealedNodeClosureError {
+            error: failure.error,
+            closure: SealedNodeClosure {
+                source: source.id,
+                root: original_root,
+                batch: failure.batch,
+            },
+        }),
+    }
+}
+
 /// Moves a whole self-contained closure envelope and rebrands every nested
 /// child coordinate without moving any node address.
 #[allow(clippy::result_large_err)] // Transfer failure must return the exclusive closure owner.
@@ -450,42 +783,13 @@ pub(crate) fn copy_closure_into<Source, Destination>(
     destination: &mut NodeRegion<Destination>,
     semantic_identity_enabled: bool,
 ) -> Result<RegionRoot<Destination>, ForkArenaError> {
-    pool.validate_region(&source.region)?;
-    pool.validate_region(destination)?;
-    let operation = destination.pub_arena.operation_mark(&pool.chunks);
-    let mut stack = Vec::new();
-    let copied = copy_list_recursive::<Source, Destination>(
-        &mut pool.chunks,
-        &source.region.pub_arena,
-        &mut destination.pub_arena,
-        source.root.list,
-        &mut stack,
+    copy_region_root_into(
+        pool,
+        &source.region,
+        source.root,
+        destination,
         semantic_identity_enabled,
-    );
-    let (list, count) = match copied {
-        Ok(copied) => copied,
-        Err(error) => {
-            destination
-                .pub_arena
-                .restore_operation(&mut pool.chunks, operation)
-                .expect("copy destination rollback mark remains valid");
-            return Err(error);
-        }
-    };
-    destination.pub_arena.record_source_nodes_copied(count);
-    if semantic_identity_enabled {
-        destination
-            .pub_arena
-            .record_identity_work(SequenceSummaryWork {
-                hashed_values: count as u64,
-                ..SequenceSummaryWork::default()
-            });
-    }
-    Ok(RegionRoot {
-        region: destination.id,
-        list,
-        _role: PhantomData,
-    })
+    )
 }
 
 /// Recursively copies one owner-relative root between live regions.
@@ -538,6 +842,37 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
         list,
         _role: PhantomData,
     })
+}
+
+/// Explicit bounded structural-copy fallback. The reason is observed but
+/// never used as liveness authority or to select another representation.
+pub(crate) fn structural_copy_fallback<Source, Destination>(
+    pool: &mut NodePool,
+    source: &NodeRegion<Source>,
+    root: RegionRoot<Source>,
+    destination: &mut NodeRegion<Destination>,
+    reason: StructuralCopyReason,
+) -> Result<RegionRoot<Destination>, ForkArenaError> {
+    let copied = copy_region_root_into(
+        pool,
+        source,
+        root,
+        destination,
+        root.list.semantic_identity().is_some(),
+    )?;
+    pool.closure_transitions.structural_fallbacks = pool
+        .closure_transitions
+        .structural_fallbacks
+        .saturating_add(1);
+    let reason_counter = match reason {
+        StructuralCopyReason::InterleavedPrefixChild => {
+            &mut pool.closure_transitions.interleaved_prefix_fallbacks
+        }
+        StructuralCopyReason::ForeignRoot => &mut pool.closure_transitions.foreign_root_fallbacks,
+        StructuralCopyReason::RetainedRoot => &mut pool.closure_transitions.retained_root_fallbacks,
+    };
+    *reason_counter = reason_counter.saturating_add(1);
+    Ok(copied)
 }
 
 fn copy_list_recursive<Source, Destination>(

@@ -545,6 +545,37 @@ old region moves into history and the current destination receives that exact
 closure copy. Glue and stored token values retain their selected explicit
 shared owners. No per-node or per-list reference count is added.
 
+`PageRegionHistory` owns the one page-lifetime `NodePool`; an individual
+`PageMaterialRegion` contains a `NodeRegion<PageRole>` plus region-local scratch
+and semantic-identity state, never another pool. Mutable and immutable
+`PageMaterialArena`/`PageMaterialView` facades borrow both authorities
+explicitly. Current and retained prior page regions can therefore own distinct
+chunk envelopes across succession while payload addresses remain stable.
+History acceptance, restore, canceled successor preparation, last-checkpoint
+pruning, and uncheckpointed succession explicitly retire discarded region
+envelopes and generation-invalidate their ids.
+
+A `ClosureBuildMark` seals payload and descriptor tails before structural box
+construction. Sealing first proves that the owner-relative root, every range,
+every recursively stored child coordinate, and every referenced chunk lie in
+the suffix; the caller supplies a consumed-roots receipt after auditing its
+PageBuilder, ModeList, journal, and checkpoint roots. Rejection mutates neither
+source authority nor lifecycle counters and returns the move-only build mark.
+Success detaches whole envelopes into a `SealedNodeClosure`; a transient loan
+can reattach them without copying, while transfer rebrands only coordinates in
+the bounded suffix scan and preserves payload addresses. Interleaved prefix
+children and foreign or independently retained roots use the explicit
+reason-counted structural-copy fallback.
+
+This is a transfer foundation, not the durable-carrier cutover. Production
+setbox completion and failed shipout currently consume an explicit
+compatibility receipt and retain their constructed suffix in the page region.
+Page succession still recursively copies exactly the held-over closure into the
+new region. TeX `\copy`/`\unhcopy` and explicit `publish_source_copy` remain
+semantic structural copies. No production path yet transfers a sealed suffix
+into a `DurableRole` carrier, and no second representation, reference count,
+compaction, or forwarding coordinate is introduced.
+
 Paragraph post-line materialization is the range-preserving case where its
 input is already immutable page material. The production tape consumes one
 `PageListId` plus scalar break actions and reborrows it through `NodeCursor`.

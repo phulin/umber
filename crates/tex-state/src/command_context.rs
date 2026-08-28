@@ -519,7 +519,7 @@ pub struct CommandContext<'a, G> {
     world: &'a mut World,
     dependencies: &'a mut DependencyRuntime,
     fonts: &'a mut FontStore,
-    page_nodes: &'a mut PageNodeArena,
+    page_nodes: PageNodeArena<'a>,
     durable_boxes: &'a mut DurableBoxState,
     durable_forms: &'a mut DurableFormState,
     shipout_scratch: &'a mut ShipoutScratchArena<G>,
@@ -541,7 +541,7 @@ pub(super) struct CommandContextParts<'a, G> {
     pub world: &'a mut World,
     pub dependencies: &'a mut DependencyRuntime,
     pub fonts: &'a mut FontStore,
-    pub page_nodes: &'a mut PageNodeArena,
+    pub page_nodes: PageNodeArena<'a>,
     pub durable_boxes: &'a mut DurableBoxState,
     pub durable_forms: &'a mut DurableFormState,
     pub shipout_scratch: &'a mut ShipoutScratchArena<G>,
@@ -1205,7 +1205,7 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
         let current_level = self.admitted.state_ref().current_level();
         self.durable_boxes
-            .assign(self.page_nodes, index, durable, scope, current_level)
+            .assign(&mut self.page_nodes, index, durable, scope, current_level)
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
@@ -1227,7 +1227,7 @@ impl<'a, G> CommandContext<'a, G> {
             .copy_page_root_to_durable(value)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
         self.durable_boxes
-            .replace(self.page_nodes, index, Some(durable))
+            .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
@@ -1237,19 +1237,19 @@ impl<'a, G> CommandContext<'a, G> {
     /// TeX's independent page-lifetime copy.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         self.durable_boxes
-            .copy_to_page(self.page_nodes, index)
+            .copy_to_page(&mut self.page_nodes, index)
             .expect("box copy allocation")
     }
 
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         self.durable_boxes
-            .take_to_page(self.page_nodes, index)
+            .take_to_page(&mut self.page_nodes, index)
             .expect("box transfer allocation")
     }
 
     pub fn clear_box_preserving_level(&mut self, index: u16) {
         self.durable_boxes
-            .replace(self.page_nodes, index, None)
+            .replace(&mut self.page_nodes, index, None)
             .expect("void box replacement cannot allocate");
     }
 
@@ -1465,7 +1465,7 @@ impl<'a, G> CommandContext<'a, G> {
         let trace = self.admitted.state_ref().group_restoration_trace_state()?;
         let durable = self
             .durable_boxes
-            .end_group(self.page_nodes, receipt.frame().level())?;
+            .end_group(&mut self.page_nodes, receipt.frame().level())?;
         receipt.append_durable(durable, trace);
         // Closing a save level replays an ordered environment-journal suffix.
         // That timeline mutation cannot be validated from the individual live
@@ -2800,7 +2800,7 @@ impl<'a, G> CommandContext<'a, G> {
         immediate: bool,
     ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
         let semantic_id = page_list_semantic_id(
-            self.page_nodes,
+            &self.page_nodes,
             self.fonts,
             self.admitted.state_ref(),
             box_list,
@@ -2834,7 +2834,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
         self.durable_forms
-            .copy_to_page(self.page_nodes, object)
+            .copy_to_page(&mut self.page_nodes, object)
             .expect("PDF form copy must succeed")
     }
 
@@ -3301,28 +3301,35 @@ impl<'a, G> CommandContext<'a, G> {
     /// Opens one nested structural suffix in the live page arena.
     #[must_use]
     pub fn begin_page_node_region(
-        &self,
-    ) -> crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane> {
-        self.page_nodes.operation_mark()
+        &mut self,
+    ) -> crate::node_region::ClosureBuildMark<crate::node_region::PageRole> {
+        self.page_nodes
+            .begin_closure_build()
+            .expect("page closure-build boundary is available")
     }
 
     /// Releases a complete structural suffix after its survivor has been
     /// promoted or detached.
     pub fn release_page_node_region(
         &mut self,
-        region: crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane>,
+        region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
     ) -> Result<(), NodeArenaError> {
         self.page_nodes
-            .restore_operation(region)
+            .cancel_closure_build(region)
             .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Consumes a completed region whose rows now have a durable box owner.
-    pub fn retain_page_node_region(
-        &self,
-        _region: crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane>,
-    ) -> Result<(), NodeArenaError> {
-        Ok(())
+    pub fn finish_compatibility_page_node_region(
+        &mut self,
+        region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
+    ) -> Result<
+        crate::node_region::CompatibilityClosureBuildReceipt<crate::node_region::PageRole>,
+        NodeArenaError,
+    > {
+        self.page_nodes
+            .compatibility_closure_build_receipt(region)
+            .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Resolves one page-lifetime list while the admitted context is live.
@@ -3640,7 +3647,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Borrows the live page-builder sequence for diagnostic rendering only.
     pub fn current_page_nodes(&self) -> impl DoubleEndedIterator<Item = &crate::node::Node> {
-        self.page.current_page(self.page_nodes)
+        self.page.current_page(&self.page_nodes)
     }
 
     #[must_use]
@@ -3717,55 +3724,56 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn start_page_after_output(&mut self) {
-        self.page.start_page_after_output(self.page_nodes);
+        self.page.start_page_after_output(&self.page_nodes);
     }
 
     pub fn start_new_page(&mut self) {
-        self.page.start_new_page(self.page_nodes);
+        self.page.start_new_page(&self.page_nodes);
     }
 
     #[must_use]
     pub fn page_contributions(&self) -> crate::page::PageContributionView<'_> {
-        self.page.contribution(self.page_nodes)
+        self.page.contribution(&self.page_nodes)
     }
 
     pub fn append_page_contribution(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.push_contribution(self.page_nodes, node);
+        self.page.push_contribution(&mut self.page_nodes, node);
     }
 
     pub fn prepend_page_contribution(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.prepend_contribution(self.page_nodes, node);
+        self.page.prepend_contribution(&mut self.page_nodes, node);
     }
 
     pub fn prepend_page_contributions(&mut self, nodes: PageListId) {
-        self.page.prepend_contributions(self.page_nodes, nodes);
+        self.page.prepend_contributions(&mut self.page_nodes, nodes);
     }
 
     pub fn append_page_contributions(&mut self, nodes: PageListId) {
-        self.page.append_contributions(self.page_nodes, nodes);
+        self.page.append_contributions(&mut self.page_nodes, nodes);
     }
 
     pub fn remove_page_contribution_range(
         &mut self,
         range: std::ops::RangeInclusive<usize>,
     ) -> crate::page::PageNodeCarrier {
-        self.page.remove_contribution_range(self.page_nodes, range)
+        self.page
+            .remove_contribution_range(&mut self.page_nodes, range)
     }
 
     #[must_use]
     pub fn page_contribution_front(&self) -> Option<&crate::node::Node> {
-        self.page.contribution_front(self.page_nodes)
+        self.page.contribution_front(&self.page_nodes)
     }
 
     #[must_use]
     pub fn page_contribution_second(&self) -> Option<&crate::node::Node> {
-        self.page.contribution_second(self.page_nodes)
+        self.page.contribution_second(&self.page_nodes)
     }
 
     pub fn pop_page_contribution_front(&mut self) -> Option<crate::page::PageNodeCarrier> {
-        self.page.pop_contribution_front(self.page_nodes)
+        self.page.pop_contribution_front(&mut self.page_nodes)
     }
 
     pub fn discard_page_node(&mut self, carrier: crate::page::PageNodeCarrier) {
@@ -3791,12 +3799,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn current_page_tail(&self) -> Option<&crate::node::Node> {
-        self.page.current_page_tail(self.page_nodes)
+        self.page.current_page_tail(&self.page_nodes)
     }
 
     pub fn push_current_page_node(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.push_current_page(self.page_nodes, node);
+        self.page.push_current_page(&mut self.page_nodes, node);
     }
 
     pub fn push_current_page_carrier(&mut self, carrier: crate::page::PageNodeCarrier) {
@@ -3810,11 +3818,11 @@ impl<'a, G> CommandContext<'a, G> {
             self.assert_live_node_font_roots(node);
         }
         self.page
-            .push_current_page_carrier(self.page_nodes, carrier);
+            .push_current_page_carrier(&mut self.page_nodes, carrier);
     }
 
     pub fn push_current_page_list(&mut self, list: PageListId) {
-        self.page.push_current_page_list(self.page_nodes, list);
+        self.page.push_current_page_list(&mut self.page_nodes, list);
     }
 
     pub fn push_current_page_replacement(
@@ -3824,12 +3832,12 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         self.assert_live_node_font_roots(&replacement);
         self.page
-            .push_current_page_replacement(self.page_nodes, carrier, replacement);
+            .push_current_page_replacement(&mut self.page_nodes, carrier, replacement);
     }
 
     pub fn take_current_page_prefix(&mut self, split_index: usize) -> (PageListId, PageListId) {
         self.page
-            .take_current_page_prefix(self.page_nodes, split_index)
+            .take_current_page_prefix(&mut self.page_nodes, split_index)
     }
 
     pub fn update_page_last_from_node(&mut self, node: &crate::node::Node) {
@@ -3863,7 +3871,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn push_page_discard(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.push_page_discard(self.page_nodes, node);
+        self.page.push_page_discard(&mut self.page_nodes, node);
     }
 
     pub fn push_page_discard_carrier(&mut self, carrier: crate::page::PageNodeCarrier) {
@@ -3877,27 +3885,27 @@ impl<'a, G> CommandContext<'a, G> {
             self.assert_live_node_font_roots(node);
         }
         self.page
-            .push_page_discard_carrier(self.page_nodes, carrier);
+            .push_page_discard_carrier(&mut self.page_nodes, carrier);
     }
 
     pub fn take_page_discards(&mut self) -> PageListId {
-        self.page.take_page_discards(self.page_nodes)
+        self.page.take_page_discards(&self.page_nodes)
     }
 
     pub fn clear_page_discards(&mut self) {
-        self.page.clear_page_discards(self.page_nodes);
+        self.page.clear_page_discards(&self.page_nodes);
     }
 
     pub fn set_split_discards(&mut self, nodes: PageListId) {
-        self.page.set_split_discards(self.page_nodes, nodes);
+        self.page.set_split_discards(&self.page_nodes, nodes);
     }
 
     pub fn take_split_discards(&mut self) -> PageListId {
-        self.page.take_split_discards(self.page_nodes)
+        self.page.take_split_discards(&self.page_nodes)
     }
 
     pub fn clear_split_discards(&mut self) {
-        self.page.clear_split_discards(self.page_nodes);
+        self.page.clear_split_discards(&self.page_nodes);
     }
 
     #[must_use]
@@ -4567,13 +4575,13 @@ fn box_glue_setting_text<List>(node: &crate::node::BoxNode<List>) -> String {
 }
 
 fn page_list_semantic_id<G>(
-    page_nodes: &PageNodeArena,
+    page_nodes: &PageNodeArena<'_>,
     fonts: &FontStore,
     state: &DenseState<G>,
     root: PageListId,
 ) -> crate::state_hash::StateHashFragment {
     struct PageSemanticHasher<'a, G> {
-        page_nodes: &'a PageNodeArena,
+        page_nodes: &'a PageNodeArena<'a>,
         fonts: &'a FontStore,
         state: &'a DenseState<G>,
         hasher: crate::state_hash::StateHasher,

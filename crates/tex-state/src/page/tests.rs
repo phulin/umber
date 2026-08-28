@@ -1,11 +1,21 @@
 use super::state_hash::PageHashCache;
 use super::{PageBuilderState, PageInsertion, PageRegion, PageRegionHistory};
 use crate::node::{KernKind, Node, NodeTokenList};
+use crate::node_region::NodePool;
 use crate::page::PageMark;
-use crate::page_node_arena::{PageListId, PageMaterialArena};
+use crate::page_node_arena::{PageListId, PageMaterialArena, PageMaterialRegion};
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
 use crate::token::{Token, TokenWord};
+
+macro_rules! page_arena {
+    ($arena:ident, $pool:ident, $state:ident) => {
+        let mut $pool = NodePool::new();
+        let mut $state = PageMaterialRegion::new(&mut $pool);
+        #[allow(unused_mut)]
+        let mut $arena = PageMaterialArena::new(&mut $pool, &mut $state);
+    };
+}
 
 fn kern(value: i32) -> Node {
     Node::Kern {
@@ -59,7 +69,7 @@ fn carrier_node(arena: &PageMaterialArena, carrier: &super::PageNodeCarrier) -> 
 
 #[test]
 fn page_buffers_mutate_directly_without_cow_roots() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     page.push_contribution(&mut arena, kern(1));
     page.push_current_page(&mut arena, kern(2));
@@ -92,7 +102,7 @@ fn scalar_and_class_marks_store_handle_free_page_values() {
 
 #[test]
 fn sparse_mark_classes_use_dense_positions_and_canonical_order() {
-    let arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     let low = tokens(&[Token::param(1)]);
     let middle = tokens(&[Token::param(2)]);
@@ -174,7 +184,7 @@ fn hash_page(page: &PageBuilderState, arena: &PageMaterialArena) -> u64 {
 
 #[test]
 fn page_semantic_hash_tracks_direct_suffix_changes() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     page.push_current_page(&mut arena, kern(1));
     let before = hash_page(&page, &arena);
@@ -184,7 +194,7 @@ fn page_semantic_hash_tracks_direct_suffix_changes() {
 
 #[test]
 fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     page.push_contribution(&mut arena, kern(1));
     page.push_current_page(&mut arena, kern(2));
@@ -228,7 +238,7 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
 
 #[test]
 fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     let rooted_mark = tokens(&[Token::param(7)]);
     page.push_contribution(&mut arena, kern(-1));
@@ -288,7 +298,7 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
 
 #[test]
 fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     page.push_contribution(&mut arena, kern(-1));
     page.push_current_page(&mut arena, kern(-2));
@@ -329,7 +339,7 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
 
 #[test]
 fn repeated_accept_keeps_prefix_checkpoint_frames_physically_stable() {
-    let mut arena = PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     page.push_contribution(&mut arena, kern(1));
     let first = page.checkpoint_mark();
@@ -368,7 +378,7 @@ fn repeated_accept_keeps_prefix_checkpoint_frames_physically_stable() {
 
 #[test]
 fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut source = PageBuilderState::default();
     source.push_contribution(&mut arena, kern(1));
     source.push_current_page(&mut arena, kern(2));
@@ -389,7 +399,7 @@ fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
 
 #[test]
 fn insertion_classes_use_dense_direct_positions_and_canonical_iteration_order() {
-    let arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     let mut page = PageBuilderState::default();
     page.upsert_page_insertion(PageInsertion::new(4095, Scaled::from_raw(3)));
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(1)));
@@ -416,7 +426,7 @@ fn insertion_classes_use_dense_direct_positions_and_canonical_iteration_order() 
 
 #[test]
 fn maintained_page_identity_covers_mutation_matrix_and_restore() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     arena.enable_semantic_identity();
     let mut page = PageBuilderState::default();
     page.enable_reachable_state_identity();
@@ -456,7 +466,7 @@ fn maintained_page_identity_covers_mutation_matrix_and_restore() {
 
 #[test]
 fn page_identity_is_order_invariant_for_sparse_maps_and_constant_read_after_suffix() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     arena.enable_semantic_identity();
     let mut left = PageBuilderState::default();
     let mut right = PageBuilderState::default();
@@ -488,7 +498,7 @@ fn page_identity_is_order_invariant_for_sparse_maps_and_constant_read_after_suff
 
 #[test]
 fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
-    let mut arena = crate::page_node_arena::PageMaterialArena::default();
+    page_arena!(arena, pool, state);
     arena.enable_semantic_identity();
     let mut page = PageBuilderState::default();
     page.enable_reachable_state_identity();
@@ -539,39 +549,44 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
 
 #[test]
 fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
-    let mut region = PageRegion::new();
+    let mut pool = NodePool::new();
+    let mut region = PageRegion::new(&mut pool);
     let region_id = region.id();
     {
-        let (nodes, page) = region.parts_mut();
-        page.push_contribution(nodes, kern(1));
+        let (mut nodes, page) = region.parts_mut(&mut pool);
+        page.push_contribution(&mut nodes, kern(1));
     }
     let first_root = region.builder().contribution;
     let first_address = region
-        .nodes()
+        .nodes(&pool)
         .list(first_root)
         .expect("first contribution")
         .get(0)
         .map(std::ptr::from_ref)
         .expect("first contribution address");
-    let before = region.nodes().counters();
+    let before = region.nodes(&pool).counters();
 
     let mut keys = Vec::new();
     for value in 2..=64 {
-        keys.push(region.seal_checkpoint().expect("sealed page checkpoint"));
-        let (nodes, page) = region.parts_mut();
-        page.push_contribution(nodes, kern(value));
+        keys.push(
+            region
+                .seal_checkpoint(&mut pool)
+                .expect("sealed page checkpoint"),
+        );
+        let (mut nodes, page) = region.parts_mut(&mut pool);
+        page.push_contribution(&mut nodes, kern(value));
     }
 
     assert!(keys.iter().all(|key| key.region == region_id));
     assert_eq!(region.checkpoints.len(), keys.len());
-    assert_eq!(region.nodes().counters().source_nodes_copied, 0);
+    assert_eq!(region.nodes(&pool).counters().source_nodes_copied, 0);
     assert_eq!(
-        region.nodes().counters().new_semantic_nodes,
+        region.nodes(&pool).counters().new_semantic_nodes,
         before.new_semantic_nodes + 63
     );
     assert_eq!(
         region
-            .nodes()
+            .nodes(&pool)
             .list(first_root)
             .expect("unchanged prefix remains live")
             .get(0)
@@ -583,100 +598,98 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
 
 #[test]
 fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
-    let mut region = PageRegion::new();
+    let mut pool = NodePool::new();
+    let mut region = PageRegion::new(&mut pool);
     {
-        let (nodes, page) = region.parts_mut();
-        page.push_contribution(nodes, kern(1));
-        page.push_current_page(nodes, kern(2));
-        page.push_page_discard(nodes, kern(3));
-        set_split_discards(page, nodes, [kern(4)]);
+        let (mut nodes, page) = region.parts_mut(&mut pool);
+        page.push_contribution(&mut nodes, kern(1));
+        page.push_current_page(&mut nodes, kern(2));
+        page.push_page_discard(&mut nodes, kern(3));
+        set_split_discards(page, &mut nodes, [kern(4)]);
     }
-    let selected = region.seal_checkpoint().expect("selected checkpoint");
+    let selected = region
+        .seal_checkpoint(&mut pool)
+        .expect("selected checkpoint");
     let prefix = region.builder().contribution;
     let prefix_address = region
-        .nodes()
+        .nodes(&pool)
         .list(prefix)
         .expect("selected prefix")
         .get(0)
         .map(std::ptr::from_ref)
         .expect("selected prefix address");
     {
-        let (nodes, page) = region.parts_mut();
-        page.push_contribution(nodes, kern(10));
-        page.push_current_page(nodes, kern(20));
-        page.push_page_discard(nodes, kern(30));
-        set_split_discards(page, nodes, [kern(40)]);
+        let (mut nodes, page) = region.parts_mut(&mut pool);
+        page.push_contribution(&mut nodes, kern(10));
+        page.push_current_page(&mut nodes, kern(20));
+        page.push_page_discard(&mut nodes, kern(30));
+        set_split_discards(page, &mut nodes, [kern(40)]);
     }
     let superseded = region
-        .seal_checkpoint()
+        .seal_checkpoint(&mut pool)
         .expect("accepted suffix checkpoint");
-    let accepted = [
-        region.builder().contribution(region.nodes()).to_vec(),
-        region
-            .builder()
-            .current_page(region.nodes())
-            .cloned()
-            .collect(),
-        list_nodes(region.nodes(), region.builder().page_discards),
-        list_nodes(region.nodes(), region.builder().split_discards),
+    let accepted_roots = [
+        region.builder().contribution,
+        region.builder().current_page,
+        region.builder().page_discards,
+        region.builder().split_discards,
     ];
+    let accepted = {
+        let nodes = region.nodes_mut(&mut pool);
+        accepted_roots.map(|root| list_nodes(&nodes, root))
+    };
 
     let rejected = region
-        .begin_checkpoint_candidate(selected)
+        .begin_checkpoint_candidate(&mut pool, selected)
         .expect("fork selected page row");
     {
-        let (nodes, page) = region.parts_mut();
-        page.push_contribution(nodes, kern(11));
-        page.push_current_page(nodes, kern(21));
-        page.push_page_discard(nodes, kern(31));
-        set_split_discards(page, nodes, [kern(41)]);
+        let (mut nodes, page) = region.parts_mut(&mut pool);
+        page.push_contribution(&mut nodes, kern(11));
+        page.push_current_page(&mut nodes, kern(21));
+        page.push_page_discard(&mut nodes, kern(31));
+        set_split_discards(page, &mut nodes, [kern(41)]);
     }
     region
-        .reject_checkpoint_candidate(rejected)
+        .reject_checkpoint_candidate(&mut pool, rejected)
         .expect("atomic page rejection");
-    assert_eq!(
-        region.builder().contribution(region.nodes()).to_vec(),
-        accepted[0]
-    );
-    assert_eq!(
-        region
-            .builder()
-            .current_page(region.nodes())
-            .cloned()
-            .collect::<Vec<_>>(),
-        accepted[1]
-    );
-    assert_eq!(
-        list_nodes(region.nodes(), region.builder().page_discards),
-        accepted[2]
-    );
-    assert_eq!(
-        list_nodes(region.nodes(), region.builder().split_discards),
-        accepted[3]
-    );
-    assert!(region.validates_checkpoint(superseded));
+    let restored_roots = [
+        region.builder().contribution,
+        region.builder().current_page,
+        region.builder().page_discards,
+        region.builder().split_discards,
+    ];
+    let restored = {
+        let nodes = region.nodes_mut(&mut pool);
+        restored_roots.map(|root| list_nodes(&nodes, root))
+    };
+    assert_eq!(restored, accepted);
+    assert!(region.validates_checkpoint(&pool, superseded));
 
     let accepted_tail = region
-        .begin_checkpoint_candidate(selected)
+        .begin_checkpoint_candidate(&mut pool, selected)
         .expect("refork selected page row");
     {
-        let (nodes, page) = region.parts_mut();
-        page.push_contribution(nodes, kern(12));
-        page.push_current_page(nodes, kern(22));
-        page.push_page_discard(nodes, kern(32));
-        set_split_discards(page, nodes, [kern(42)]);
+        let (mut nodes, page) = region.parts_mut(&mut pool);
+        page.push_contribution(&mut nodes, kern(12));
+        page.push_current_page(&mut nodes, kern(22));
+        page.push_page_discard(&mut nodes, kern(32));
+        set_split_discards(page, &mut nodes, [kern(42)]);
     }
-    let candidate = region.seal_checkpoint().expect("candidate checkpoint");
+    let candidate = region
+        .seal_checkpoint(&mut pool)
+        .expect("candidate checkpoint");
     region
-        .accept_checkpoint_candidate(accepted_tail)
+        .accept_checkpoint_candidate(&mut pool, accepted_tail)
         .expect("atomic page acceptance");
 
-    assert!(!region.validates_checkpoint(superseded));
+    assert!(!region.validates_checkpoint(&pool, superseded));
     let candidate_row = region
         .checkpoint(candidate)
         .expect("candidate row retained");
     assert!(
-        region.nodes().validates_checkpoint(candidate_row.nodes),
+        region
+            .nodes(&pool)
+            .validates_checkpoint(candidate_row.nodes),
         "candidate arena mark remains accepted"
     );
     assert!(
@@ -685,35 +698,37 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
             .validates_checkpoint_mark(candidate_row.builder),
         "candidate builder mark remains accepted"
     );
-    assert_eq!(region.nodes().counters().source_nodes_copied, 0);
+    assert_eq!(region.nodes(&pool).counters().source_nodes_copied, 0);
     assert_eq!(
         region
-            .nodes()
+            .nodes(&pool)
             .list(prefix)
             .expect("unchanged prefix survives acceptance")
             .get(0)
             .map(std::ptr::from_ref),
         Some(prefix_address)
     );
+    let contribution = region.builder().contribution;
     assert_eq!(
-        region.builder().contribution(region.nodes()).to_vec(),
+        list_nodes(&region.nodes_mut(&mut pool), contribution),
         [kern(1), kern(12)]
     );
 }
 
 #[test]
 fn held_over_material_is_self_contained_in_next_page_region() {
-    let mut old = PageRegion::new();
+    let mut pool = NodePool::new();
+    let mut old = PageRegion::new(&mut pool);
     let shipped = old
-        .nodes_mut()
+        .nodes_mut(&mut pool)
         .publish_owned((0..128).map(kern))
         .expect("shipped prefix");
     let child = old
-        .nodes_mut()
+        .nodes_mut(&mut pool)
         .publish_owned([kern(201), kern(202)])
         .expect("held-over child");
     let held_over = old
-        .nodes_mut()
+        .nodes_mut(&mut pool)
         .publish_owned([Node::Disc {
             kind: crate::node::DiscKind::Discretionary,
             pre: child,
@@ -725,7 +740,7 @@ fn held_over_material_is_self_contained_in_next_page_region() {
     let old_id = old.id();
 
     let succession = old
-        .finish_shipout(held_over)
+        .finish_shipout(&mut pool, held_over)
         .map_err(|(error, _)| error)
         .expect("page succession");
     assert_ne!(succession.current.id(), old_id);
@@ -734,20 +749,28 @@ fn held_over_material_is_self_contained_in_next_page_region() {
     assert_eq!(succession.current.counters().page_regions_dropped, 1);
     assert_eq!(succession.current.counters().held_over_nodes_copied, 3);
     assert_eq!(
-        succession.current.nodes().counters().source_nodes_copied,
+        succession
+            .current
+            .nodes(&pool)
+            .counters()
+            .source_nodes_copied,
         3,
         "only the recursively selected held-over closure is a semantic copy"
     );
     assert_eq!(
-        succession.current.nodes().counters().new_semantic_nodes,
+        succession
+            .current
+            .nodes(&pool)
+            .counters()
+            .new_semantic_nodes,
         3,
         "the 128-node shipped prefix is never copied"
     );
-    assert!(!succession.current.nodes().contains(shipped));
-    assert!(!succession.current.nodes().contains(held_over));
+    assert!(!succession.current.nodes(&pool).contains(shipped));
+    assert!(!succession.current.nodes(&pool).contains(held_over));
     let copied_root = succession
         .current
-        .nodes()
+        .nodes(&pool)
         .list(succession.held_over)
         .expect("held-over root belongs to next region");
     let Node::Disc { pre, .. } = copied_root.get(0).expect("copied discretionary") else {
@@ -756,7 +779,7 @@ fn held_over_material_is_self_contained_in_next_page_region() {
     assert_eq!(
         succession
             .current
-            .nodes()
+            .nodes(&pool)
             .list(*pre)
             .expect("nested child is region-local")
             .iter()
@@ -767,21 +790,34 @@ fn held_over_material_is_self_contained_in_next_page_region() {
 }
 
 #[test]
+fn shared_pool_retires_uncheckpointed_page_region_on_succession() {
+    let mut history = PageRegionHistory::default();
+    let old = history.current().id();
+    let held_over = publish_nodes(&mut history.nodes_mut(), [kern(5)]);
+
+    history.finish_shipout(held_over).expect("page succession");
+
+    assert!(!history.pool.validates_id(old));
+    assert_ne!(history.current().id(), old);
+}
+
+#[test]
 fn checkpoint_retains_old_page_region_until_last_row_is_pruned() {
-    let mut old = PageRegion::new();
+    let mut pool = NodePool::new();
+    let mut old = PageRegion::new(&mut pool);
     let held_over = old
-        .nodes_mut()
+        .nodes_mut(&mut pool)
         .publish_owned([kern(7)])
         .expect("held-over node");
     {
-        let (nodes, page) = old.parts_mut();
-        page.push_current_page(nodes, kern(8));
+        let (mut nodes, page) = old.parts_mut(&mut pool);
+        page.push_current_page(&mut nodes, kern(8));
     }
-    let checkpoint = old.seal_checkpoint().expect("old-page checkpoint");
+    let checkpoint = old.seal_checkpoint(&mut pool).expect("old-page checkpoint");
     let old_id = old.id();
 
     let mut succession = old
-        .finish_shipout(held_over)
+        .finish_shipout(&mut pool, held_over)
         .map_err(|(error, _)| error)
         .expect("page succession");
     let retained = succession
@@ -789,24 +825,26 @@ fn checkpoint_retains_old_page_region_until_last_row_is_pruned() {
         .as_ref()
         .expect("checkpoint history owns the old page region");
     assert_eq!(retained.id(), old_id);
-    assert!(retained.validates_checkpoint(checkpoint));
+    assert!(retained.validates_checkpoint(&pool, checkpoint));
     assert_eq!(succession.current.counters().page_regions_retained, 1);
 
-    assert!(succession.prune_retained_checkpoint(checkpoint));
+    assert!(succession.prune_retained_checkpoint(&mut pool, checkpoint));
     assert!(succession.retained_prior.is_none());
     assert_eq!(succession.current.counters().page_regions_dropped, 1);
 }
 
 #[test]
 fn foreign_held_over_root_is_rejected_without_consuming_page_owner() {
-    let old = PageRegion::new();
-    let mut foreign = PageRegion::new();
+    let mut old_pool = NodePool::new();
+    let old = PageRegion::new(&mut old_pool);
+    let mut foreign_pool = NodePool::new();
+    let mut foreign = PageRegion::new(&mut foreign_pool);
     let root = foreign
-        .nodes_mut()
+        .nodes_mut(&mut foreign_pool)
         .publish_owned([kern(9)])
         .expect("foreign root");
 
-    let (error, old) = match old.finish_shipout(root) {
+    let (error, old) = match old.finish_shipout(&mut old_pool, root) {
         Ok(_) => panic!("foreign held-over root must reject"),
         Err(failure) => failure,
     };
@@ -818,11 +856,11 @@ fn foreign_held_over_root_is_rejected_without_consuming_page_owner() {
 #[test]
 fn page_history_reject_restores_detached_later_regions_wholesale() {
     let mut history = PageRegionHistory::default();
-    let first_root = publish_nodes(history.nodes_mut(), [kern(1), kern(2)]);
-    let (nodes, builder) = history.parts_mut();
-    builder.push_current_page_list(nodes, first_root);
+    let first_root = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
+    let (mut nodes, builder) = history.parts_mut();
+    builder.push_current_page_list(&mut nodes, first_root);
     let first = history.seal_checkpoint().expect("first-page checkpoint");
-    let held_over = publish_nodes(history.nodes_mut(), [kern(3), kern(4)]);
+    let held_over = publish_nodes(&mut history.nodes_mut(), [kern(3), kern(4)]);
     history.finish_shipout(held_over).expect("page succession");
     let later_region = history.current().id();
     let later = history.seal_checkpoint().expect("later-page checkpoint");
@@ -831,7 +869,7 @@ fn page_history_reject_restores_detached_later_regions_wholesale() {
         .begin_checkpoint_candidate(first)
         .expect("fork selected old page");
     assert_eq!(history.current().id(), first.region);
-    let candidate = publish_nodes(history.nodes_mut(), [kern(9)]);
+    let candidate = publish_nodes(&mut history.nodes_mut(), [kern(9)]);
     history
         .finish_shipout(candidate)
         .expect("candidate creates a later page");
@@ -849,7 +887,7 @@ fn page_history_reject_restores_detached_later_regions_wholesale() {
 fn page_history_accept_drops_superseded_later_regions() {
     let mut history = PageRegionHistory::default();
     let first = history.seal_checkpoint().expect("first-page checkpoint");
-    let held_over = publish_nodes(history.nodes_mut(), [kern(5)]);
+    let held_over = publish_nodes(&mut history.nodes_mut(), [kern(5)]);
     history.finish_shipout(held_over).expect("page succession");
     let superseded_root = history.builder().current_page;
     let superseded = history.seal_checkpoint().expect("later-page checkpoint");
@@ -870,7 +908,7 @@ fn page_history_accept_drops_superseded_later_regions() {
 fn prepared_successor_does_not_drop_current_owner_before_shipout_commit() {
     let mut history = PageRegionHistory::default();
     let old_region = history.current().id();
-    let held_over = publish_nodes(history.nodes_mut(), [kern(31), kern(32)]);
+    let held_over = publish_nodes(&mut history.nodes_mut(), [kern(31), kern(32)]);
 
     history
         .prepare_shipout(held_over)

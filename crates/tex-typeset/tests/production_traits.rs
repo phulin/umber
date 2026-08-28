@@ -6,35 +6,45 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::{MathFontSize, MathStyle};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeCursor, PageListId, PageNodeArena};
+use tex_state::node_arena::{NodeCursor, PageListId};
+use tex_state::node_region::NodePool;
+use tex_state::page_node_arena::{PageMaterialArena, PageMaterialRegion, PageMaterialView};
 use tex_state::scaled::Scaled;
 use tex_typeset::linebreak::{LineBreakParams, LineShape, try_line_break_without_hyphenation};
 use tex_typeset::math::{MathParamState, MathParams, MathTypesetState, Style, mlist_to_hlist};
 use tex_typeset::{HpackParams, PackSpec, TypesetState, hpack};
 
 struct KernelState {
-    pages: PageNodeArena,
+    page_pool: NodePool,
+    pages: PageMaterialRegion,
     widths: [Scaled; 256],
     characters: [Option<CharMetrics>; 256],
 }
 
 impl KernelState {
     fn new() -> Self {
+        let mut page_pool = NodePool::new();
+        let pages = PageMaterialRegion::new(&mut page_pool);
         Self {
-            pages: PageNodeArena::new(),
+            page_pool,
+            pages,
             widths: [Scaled::from_raw(0); 256],
             characters: [None; 256],
         }
     }
 
     fn publish(&mut self, nodes: Vec<Node>) -> PageListId {
-        self.pages.publish_owned(nodes).expect("valid page list")
+        PageMaterialArena::new(&mut self.page_pool, &mut self.pages)
+            .publish_owned(nodes)
+            .expect("valid page list")
     }
 }
 
 impl TypesetState for KernelState {
     fn page_nodes(&self, list: PageListId) -> NodeCursor<'_> {
-        self.pages.node_cursor(list).expect("live page coordinate")
+        PageMaterialView::new(&self.page_pool, &self.pages)
+            .node_cursor(list)
+            .expect("live page coordinate")
     }
 
     fn font_char_metrics(&self, _font: FontId, code: u8) -> Option<CharMetrics> {

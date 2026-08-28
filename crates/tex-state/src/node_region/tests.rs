@@ -303,3 +303,277 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
     );
     assert_eq!(destination.counters().source_nodes_copied, 3);
 }
+
+#[test]
+fn closure_build_transfer_is_zero_copy_and_address_stable() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [Node::Penalty(41), Node::Penalty(43)])
+        .expect("closure root");
+    let address = source
+        .list(&pool, root)
+        .expect("source list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("source address");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("self-contained closure");
+    assert!(
+        source.list(&pool, root).is_err(),
+        "detached suffix is unavailable through the source owner"
+    );
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    let moved = transfer_sealed_closure_into(&mut pool, &mut source, closure, &mut destination)
+        .map_err(|failure| failure.error)
+        .expect("transfer closure");
+
+    assert_eq!(
+        destination
+            .list(&pool, moved)
+            .expect("moved list")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(address)
+    );
+    assert_eq!(destination.counters().source_nodes_copied, 0);
+    assert_eq!(pool.closure_transition_counters().envelope_moves, 1);
+    assert_eq!(pool.closure_transition_counters().rebrand_scan_nodes, 2);
+}
+
+#[test]
+fn closure_build_transfer_rebrands_nested_suffix_children() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let child = source
+        .publish_owned(&mut pool, [Node::Penalty(47)])
+        .expect("child");
+    let child_address = source
+        .list(&pool, child)
+        .expect("source child")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("child address");
+    let root = source
+        .publish_owned(&mut pool, [boxed(child.list)])
+        .expect("parent");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("nested suffix");
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    let moved = transfer_sealed_closure_into(&mut pool, &mut source, closure, &mut destination)
+        .map_err(|failure| failure.error)
+        .expect("nested transfer");
+    let parent = destination.list(&pool, moved).expect("moved parent");
+    let Node::HList(box_node) = parent.get(0).expect("parent node") else {
+        panic!("moved parent lost box shape");
+    };
+    let moved_child = destination
+        .pub_arena
+        .list(&pool.chunks, box_node.children.coordinate())
+        .expect("moved child");
+    assert_eq!(
+        moved_child.get(0).map(std::ptr::from_ref),
+        Some(child_address)
+    );
+}
+
+#[test]
+fn checkpoint_before_closure_build_does_not_force_a_copy() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let prefix = source
+        .publish_owned(&mut pool, [Node::Penalty(53)])
+        .expect("checkpoint prefix");
+    let boundary = source
+        .pub_arena
+        .seal_boundary(&mut pool.chunks)
+        .expect("checkpoint boundary");
+    let checkpoint = source
+        .pub_arena
+        .checkpoint_mark(boundary)
+        .expect("checkpoint mark");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [Node::Penalty(59)])
+        .expect("closure root");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("closure after checkpoint");
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    transfer_sealed_closure_into(&mut pool, &mut source, closure, &mut destination)
+        .map_err(|failure| failure.error)
+        .expect("transfer after checkpoint");
+
+    assert!(source.pub_arena.validates_checkpoint(checkpoint));
+    assert_eq!(
+        source
+            .list(&pool, prefix)
+            .expect("checkpoint prefix remains live")
+            .get(0),
+        Some(&Node::Penalty(53))
+    );
+    assert_eq!(pool.closure_transition_counters().structural_fallbacks, 0);
+}
+
+#[test]
+fn transient_closure_loan_rolls_back_without_copying() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [Node::Penalty(61)])
+        .expect("closure root");
+    let address = source
+        .list(&pool, root)
+        .expect("source list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("source address");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("closure loan");
+    source
+        .rollback_closure(&mut pool, closure)
+        .map_err(|failure| failure.error)
+        .expect("rollback loan");
+
+    assert_eq!(
+        source
+            .list(&pool, root)
+            .expect("reattached source")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(address)
+    );
+    assert_eq!(pool.closure_transition_counters().transient_rollbacks, 1);
+}
+
+#[test]
+fn prefix_child_rejects_without_mutation_and_fallback_is_counted() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let child = source
+        .publish_owned(&mut pool, [Node::Penalty(67)])
+        .expect("prefix child");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [boxed(child.list)])
+        .expect("interleaved parent");
+    let before = source.counters();
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let failure = match source.seal_closure(&mut pool, mark, root, receipt) {
+        Ok(_) => panic!("prefix child is outside the suffix"),
+        Err(failure) => failure,
+    };
+    assert_eq!(failure.error, ForkArenaError::InvalidRegion);
+    source
+        .compatibility_closure_build_receipt(failure.mark)
+        .expect("failed seal returns the original build authority");
+    assert_eq!(source.counters(), before);
+    assert!(source.list(&pool, child).is_ok());
+    assert!(source.list(&pool, root).is_ok());
+
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    let copied = structural_copy_fallback(
+        &mut pool,
+        &source,
+        root,
+        &mut destination,
+        StructuralCopyReason::InterleavedPrefixChild,
+    )
+    .expect("bounded fallback copy");
+    assert_eq!(destination.list(&pool, copied).expect("copy").len(), 1);
+    assert_eq!(pool.closure_transition_counters().structural_fallbacks, 1);
+    assert_eq!(
+        pool.closure_transition_counters()
+            .interleaved_prefix_fallbacks,
+        1
+    );
+}
+
+#[test]
+fn foreign_root_receipt_rejects_without_detaching_suffix() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let local = source
+        .publish_owned(&mut pool, [Node::Penalty(71)])
+        .expect("local suffix");
+    let foreign = pool.start_region::<PageRole>().expect("foreign");
+    let foreign_root = RegionRoot {
+        region: foreign.id(),
+        list: local.list,
+        _role: PhantomData,
+    };
+    let before = source.counters();
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let failure = match source.seal_closure(&mut pool, mark, foreign_root, receipt) {
+        Ok(_) => panic!("foreign root cannot name the suffix"),
+        Err(failure) => failure,
+    };
+    assert_eq!(failure.error, ForkArenaError::InvalidRegion);
+    source
+        .compatibility_closure_build_receipt(failure.mark)
+        .expect("foreign rejection returns the original build authority");
+    assert_eq!(source.counters(), before);
+    assert!(source.list(&pool, local).is_ok());
+}
+
+#[test]
+fn shared_pool_retires_transferred_source_and_rejects_stale_id() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let stale = source.id();
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [Node::Penalty(73)])
+        .expect("closure root");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("owner-local roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("sealed closure");
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    transfer_sealed_closure_into(&mut pool, &mut source, closure, &mut destination)
+        .map_err(|failure| failure.error)
+        .expect("transfer");
+    assert!(pool.retire_region(source).is_ok(), "empty source retires");
+    assert!(!pool.validates_id(stale));
+    let replacement = pool.start_region::<PageRole>().expect("replacement");
+    assert_ne!(replacement.id(), stale);
+}

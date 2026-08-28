@@ -547,7 +547,7 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
             self.universe.pdf.rollback(rollback.pdf);
             self.universe
                 .durable_forms
-                .truncate(self.universe.page_region.nodes_mut(), form_count);
+                .truncate(&mut self.universe.page_region.nodes_mut(), form_count);
             self.universe.world.rollback(&rollback.world);
             self.universe.prepared_mag = rollback.prepared_mag;
             self.universe.engine_usage = rollback.engine_usage;
@@ -779,7 +779,7 @@ impl<G> Universe<G> {
             core.restore_generation_cursor(checkpoint.generation);
         }
         self.durable_boxes
-            .restore(self.page_region.nodes_mut(), *mark.durable());
+            .restore(&mut self.page_region.nodes_mut(), *mark.durable());
         Ok(())
     }
 
@@ -799,17 +799,17 @@ impl<G> Universe<G> {
             .page_region
             .begin_checkpoint_candidate(checkpoint.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
-        let (page_nodes, page) = self.page_region.parts_mut();
-        page.push_contribution(page_nodes, crate::node::Node::Penalty(19));
-        let contribution = if let Some(carrier) = page.pop_contribution_front(page_nodes) {
+        let (mut page_nodes, page) = self.page_region.parts_mut();
+        page.push_contribution(&mut page_nodes, crate::node::Node::Penalty(19));
+        let contribution = if let Some(carrier) = page.pop_contribution_front(&mut page_nodes) {
             page.discard_carrier(carrier);
             1
         } else {
             0
         };
-        let current = u64::from(page.pop_current_page(page_nodes).is_some());
-        page.clear_page_discards(page_nodes);
-        page.clear_split_discards(page_nodes);
+        let current = u64::from(page.pop_current_page(&mut page_nodes).is_some());
+        page.clear_page_discards(&page_nodes);
+        page.clear_split_discards(&page_nodes);
         page.upsert_page_insertion(crate::page::PageInsertion::new(
             7,
             crate::scaled::Scaled::from_raw(29),
@@ -901,7 +901,7 @@ impl<G> Universe<G> {
             .begin_checkpoint_candidate(*mark.journal(), *mark.input(), checkpoint.generation)?;
         let durable_box_tail = self
             .durable_boxes
-            .begin_checkpoint_candidate(self.page_region.nodes_mut(), *mark.durable())
+            .begin_checkpoint_candidate(&mut self.page_region.nodes_mut(), *mark.durable())
             .map_err(StateError::Bank)?;
         self.durable_forms
             .begin_candidate(checkpoint.pdf.form_count());
@@ -1000,13 +1000,13 @@ impl<G> Universe<G> {
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
         candidate.durable_boxes.reject_checkpoint_candidate(
-            candidate.page_region.nodes_mut(),
+            &mut candidate.page_region.nodes_mut(),
             *mark.durable(),
             transaction.durable_boxes,
         );
         candidate
             .durable_forms
-            .reject_candidate(candidate.page_region.nodes_mut());
+            .reject_candidate(&mut candidate.page_region.nodes_mut());
         let mut core = candidate
             .core
             .take()
@@ -1045,9 +1045,12 @@ impl<G> Universe<G> {
             .expect("the current lineage owns the direct state core")
             .accept_checkpoint_candidate(transaction.core);
         self.durable_boxes
-            .accept_checkpoint_candidate(self.page_region.nodes_mut(), transaction.durable_boxes);
+            .accept_checkpoint_candidate(
+                &mut self.page_region.nodes_mut(),
+                transaction.durable_boxes,
+            );
         self.durable_forms
-            .accept_candidate(self.page_region.nodes_mut());
+            .accept_candidate(&mut self.page_region.nodes_mut());
         self.world.accept_checkpoint_candidate(transaction.world);
         self.dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
@@ -2099,29 +2102,40 @@ impl<G> Universe<G> {
     /// Opens one nested page-storage suffix owned by a structural box or
     /// shipout operation.
     #[must_use]
-    pub fn begin_page_node_region(&self) -> OperationMark<PageMaterialLane> {
-        self.page_region.nodes().operation_mark()
+    pub fn begin_page_node_region(
+        &mut self,
+    ) -> crate::node_region::ClosureBuildMark<crate::node_region::PageRole> {
+        self.page_region
+            .nodes_mut()
+            .begin_closure_build()
+            .expect("page closure-build boundary is available")
     }
 
     /// Consumes and releases a complete page-storage suffix after every
     /// survivor has crossed into durable storage or detached output.
     pub fn release_page_node_region(
         &mut self,
-        region: OperationMark<PageMaterialLane>,
+        region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
     ) -> Result<(), NodeArenaError> {
         self.page_region
             .nodes_mut()
-            .restore_operation(region)
+            .cancel_closure_build(region)
             .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Transfers a failed nested suffix back to the enclosing page owner when
     /// an outer rollback can restore roots into it.
-    pub fn retain_page_node_region(
-        &self,
-        _region: OperationMark<PageMaterialLane>,
-    ) -> Result<(), NodeArenaError> {
-        Ok(())
+    pub fn finish_compatibility_page_node_region(
+        &mut self,
+        region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
+    ) -> Result<
+        crate::node_region::CompatibilityClosureBuildReceipt<crate::node_region::PageRole>,
+        NodeArenaError,
+    > {
+        self.page_region
+            .nodes_mut()
+            .compatibility_closure_build_receipt(region)
+            .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Truncates a rejected page-arena suffix after canonical roots restore.
@@ -2233,7 +2247,7 @@ impl<G> Universe<G> {
             .current_level();
         self.durable_boxes
             .assign(
-                self.page_region.nodes_mut(),
+                &mut self.page_region.nodes_mut(),
                 index,
                 durable,
                 scope,
@@ -2271,7 +2285,7 @@ impl<G> Universe<G> {
             .copy_page_root_to_durable(value)
             .expect("live page box copy must succeed");
         self.durable_boxes
-            .replace(self.page_region.nodes_mut(), index, Some(durable))
+            .replace(&mut self.page_region.nodes_mut(), index, Some(durable))
             .expect("box register index is admitted")
     }
 
@@ -2282,7 +2296,7 @@ impl<G> Universe<G> {
     /// once into the destination arena on first use.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         self.durable_boxes
-            .copy_to_page(self.page_region.nodes_mut(), index)
+            .copy_to_page(&mut self.page_region.nodes_mut(), index)
             .expect("box copy must succeed")
     }
 
@@ -2290,14 +2304,14 @@ impl<G> Universe<G> {
     /// register's TeX eq level.
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         self.durable_boxes
-            .take_to_page(self.page_region.nodes_mut(), index)
+            .take_to_page(&mut self.page_region.nodes_mut(), index)
             .expect("box transfer must succeed")
     }
 
     /// Voids one register without changing its TeX eq level.
     pub fn clear_box_preserving_level(&mut self, index: u16) {
         self.durable_boxes
-            .replace(self.page_region.nodes_mut(), index, None)
+            .replace(&mut self.page_region.nodes_mut(), index, None)
             .expect("box register index is admitted")
     }
 
@@ -2307,7 +2321,7 @@ impl<G> Universe<G> {
 
     pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
         self.durable_forms
-            .copy_to_page(self.page_region.nodes_mut(), object)
+            .copy_to_page(&mut self.page_region.nodes_mut(), object)
             .expect("PDF form copy must succeed")
     }
 
@@ -2361,7 +2375,7 @@ impl<G> Universe<G> {
     ) -> Result<(), UniverseError> {
         let durable = operation.take_durable_box();
         self.durable_boxes
-            .commit_operation(self.page_region.nodes_mut(), durable);
+            .commit_operation(&mut self.page_region.nodes_mut(), durable);
         self.live_state_mut()?.commit_state_operation(operation);
         Ok(())
     }
@@ -2384,7 +2398,7 @@ impl<G> Universe<G> {
     pub fn restore_state(&mut self, mut operation: StateOperation<G>) -> Result<(), UniverseError> {
         let durable = operation.take_durable_box();
         self.durable_boxes
-            .rollback_operation(self.page_region.nodes_mut(), durable);
+            .rollback_operation(&mut self.page_region.nodes_mut(), durable);
         self.live_state_mut()?.rollback_state_operation(operation)?;
         Ok(())
     }
@@ -2648,7 +2662,7 @@ impl<G> Universe<G> {
             let form_count = checkpoint.pdf.form_count();
             self.pdf.rollback(checkpoint.pdf.clone());
             self.durable_forms
-                .truncate(self.page_region.nodes_mut(), form_count);
+                .truncate(&mut self.page_region.nodes_mut(), form_count);
         }
         if !generation_fork {
             self.world.rollback(&checkpoint.world);
@@ -2780,7 +2794,7 @@ impl<G> Universe<G> {
             .group_restoration_trace_state()?;
         let durable = self
             .durable_boxes
-            .end_group(self.page_region.nodes_mut(), receipt.frame().level())
+            .end_group(&mut self.page_region.nodes_mut(), receipt.frame().level())
             .map_err(StateError::Bank)?;
         receipt.append_durable(durable, trace);
         Ok(receipt)
@@ -2943,9 +2957,9 @@ impl<G> Universe<G> {
                 .expect("live generation has one command authority"),
         );
         std::mem::replace(&mut self.durable_boxes, DurableBoxState::new())
-            .retire_all(self.page_region.nodes_mut());
+            .retire_all(&mut self.page_region.nodes_mut());
         std::mem::replace(&mut self.durable_forms, DurableFormState::new())
-            .retire_all(self.page_region.nodes_mut());
+            .retire_all(&mut self.page_region.nodes_mut());
         self.core.take().map_or_else(
             || Ok(StateCoreRetirement::transferred()),
             |core| core.retire().map_err(UniverseError::State),
@@ -3089,7 +3103,7 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
             .expect("restore plan validated a live state core");
         core.state_mut().restore_checkpoint_cursor(*mark.input());
         self.durable_boxes
-            .restore(self.page_region.nodes_mut(), *mark.durable());
+            .restore(&mut self.page_region.nodes_mut(), *mark.durable());
         self.page_region
             .nodes_mut()
             .restore_checkpoint(*mark.page())

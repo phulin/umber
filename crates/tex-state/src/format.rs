@@ -144,7 +144,7 @@ struct DecodedFormat {
 }
 
 struct FormatNodeCollector<'a> {
-    page_nodes: &'a crate::node_arena::PageNodeArena,
+    page_nodes: crate::page_node_arena::PageMaterialView<'a>,
     token_lists: &'a mut Vec<Vec<u32>>,
     glue: &'a mut Vec<FormatGlue>,
     rows: Vec<FormatNodeList>,
@@ -159,7 +159,7 @@ struct FormatNodeCollector<'a> {
 
 impl<'a> FormatNodeCollector<'a> {
     fn new(
-        page_nodes: &'a crate::node_arena::PageNodeArena,
+        page_nodes: crate::page_node_arena::PageMaterialView<'a>,
         token_lists: &'a mut Vec<Vec<u32>>,
         glue: &'a mut Vec<FormatGlue>,
     ) -> Self {
@@ -1408,7 +1408,7 @@ impl<G> Universe<G> {
                 .map_err(|_| FormatError::AllocationFailed)?;
             self.durable_boxes
                 .assign(
-                    self.page_region.nodes_mut(),
+                    &mut self.page_region.nodes_mut(),
                     index,
                     Some(owner),
                     crate::AssignmentScope::Global,

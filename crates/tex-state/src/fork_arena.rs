@@ -692,6 +692,26 @@ pub struct SealedBatch<Lane> {
     lists: Vec<ArenaListId<Lane>>,
 }
 
+/// A prevalidated whole-chunk suffix temporarily loaned out of its source
+/// arena. The chunk payload remains owned by the source arena until the loan
+/// is either returned or committed into a destination arena.
+pub(crate) struct DetachedBatch<Lane> {
+    arena: u32,
+    serial: u64,
+    payload_start: u32,
+    descriptor_start: u32,
+    payload: Vec<RawChunkKey>,
+    descriptors: Vec<RawChunkKey>,
+    lists: Vec<ArenaListId<Lane>>,
+    rebrand_values: u64,
+}
+
+/// Failed detached-suffix settlement returns the move-only loan unchanged.
+pub(crate) struct DetachedBatchTransferError<Lane> {
+    pub(crate) error: ForkArenaError,
+    pub(crate) batch: DetachedBatch<Lane>,
+}
+
 /// Failed transfer which returns the still-exclusive sealed suffix token.
 pub(crate) struct BatchTransferError<Lane> {
     pub(crate) error: ForkArenaError,
@@ -726,6 +746,14 @@ pub struct BatchMark<Lane> {
     descriptor_start: u32,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
+
+impl<Lane> Clone for BatchMark<Lane> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Lane> Copy for BatchMark<Lane> {}
 
 /// Lifecycle work counters; payload copy is absent by construction.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2288,7 +2316,60 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
-    #[cfg(test)]
+    /// Mutation-free closure preflight for a build suffix whose final tails
+    /// have not yet been sealed. This lets semantic rejection preserve even
+    /// lifecycle counters and sealed-capacity state.
+    pub(crate) fn preflight_batch_closure(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: &BatchMark<Lane>,
+        lists: &[ArenaListId<Lane>],
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.validate_pool(pool)?;
+        if self.active_builder || self.pending_batch.is_some() || mark.arena != self.owner {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let payload_end = self.live_payload_len();
+        let descriptor_end = self.live_descriptor_len();
+        let payload = self.validate_suffix(false, mark.payload_start as usize, payload_end)?;
+        self.validate_suffix(true, mark.descriptor_start as usize, descriptor_end)?;
+        for list in lists {
+            self.validate_list_in_suffix(
+                pool,
+                *list,
+                mark.payload_start as usize,
+                mark.descriptor_start as usize,
+            )?;
+        }
+        for key in payload {
+            let used = pool.payload.used(key, self.owner)?;
+            for offset in 0..used {
+                let value = pool
+                    .payload
+                    .get(key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidChunk)?;
+                let mut valid = true;
+                value.visit_region_lists(&mut |list| {
+                    valid &= self
+                        .validate_list_in_suffix(
+                            pool,
+                            list,
+                            mark.payload_start as usize,
+                            mark.descriptor_start as usize,
+                        )
+                        .is_ok();
+                });
+                if !valid {
+                    return Err(ForkArenaError::InvalidRegion);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn cancel_batch(&mut self, batch: SealedBatch<Lane>) -> Result<(), ForkArenaError> {
         if batch.arena != self.owner
             || self.pending_batch
@@ -2304,6 +2385,207 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         self.pending_batch = None;
         Ok(())
+    }
+
+    /// Detaches a prevalidated self-contained suffix without copying payload
+    /// or changing chunk ownership. The returned loan is the only authority
+    /// which may reattach or transfer those envelopes.
+    pub(crate) fn detach_batch(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        batch: SealedBatch<Lane>,
+    ) -> Result<DetachedBatch<Lane>, BatchTransferError<Lane>>
+    where
+        T: RegionValue<Lane>,
+    {
+        let rebrand_values = match self.preflight_self_contained_batch(pool, &batch) {
+            Ok(values) => values,
+            Err(error) => return Err(BatchTransferError { error, batch }),
+        };
+        let payload = self
+            .detach_suffix(false, batch.payload_start as usize)
+            .expect("self-contained payload suffix was preflighted");
+        let descriptors = self
+            .detach_suffix(true, batch.descriptor_start as usize)
+            .expect("self-contained descriptor suffix was preflighted");
+        for key in &payload {
+            self.unindex_chunk(false, *key);
+        }
+        for key in &descriptors {
+            self.unindex_chunk(true, *key);
+        }
+        Ok(DetachedBatch {
+            arena: batch.arena,
+            serial: batch.serial,
+            payload_start: batch.payload_start,
+            descriptor_start: batch.descriptor_start,
+            payload,
+            descriptors,
+            lists: batch.lists,
+            rebrand_values,
+        })
+    }
+
+    /// Returns a transient transfer loan to its exact source suffix without
+    /// copying or changing any payload address.
+    pub(crate) fn reattach_batch(
+        &mut self,
+        pool: &ChunkPool<T>,
+        batch: DetachedBatch<Lane>,
+    ) -> Result<(), DetachedBatchTransferError<Lane>> {
+        let expected = PendingBatch {
+            serial: batch.serial,
+            payload_start: batch.payload_start,
+            payload_end: batch
+                .payload_start
+                .saturating_add(batch.payload.len() as u32),
+            descriptor_start: batch.descriptor_start,
+            descriptor_end: batch
+                .descriptor_start
+                .saturating_add(batch.descriptors.len() as u32),
+        };
+        let valid = self.validate_pool(pool).and_then(|()| {
+            if batch.arena != self.owner
+                || self.pending_batch != Some(expected)
+                || self.live_payload_len() != batch.payload_start as usize
+                || self.live_descriptor_len() != batch.descriptor_start as usize
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+            for key in &batch.payload {
+                pool.payload.used(*key, self.owner)?;
+            }
+            for key in &batch.descriptors {
+                pool.descriptors.used(*key, self.owner)?;
+            }
+            Ok(())
+        });
+        if let Err(error) = valid {
+            return Err(DetachedBatchTransferError { error, batch });
+        }
+        for (offset, key) in batch.payload.iter().copied().enumerate() {
+            self.index_chunk(false, key, batch.payload_start as usize + offset);
+        }
+        for (offset, key) in batch.descriptors.iter().copied().enumerate() {
+            self.index_chunk(true, key, batch.descriptor_start as usize + offset);
+        }
+        {
+            let current = self.current_chunks_mut();
+            current.payload.extend(batch.payload);
+            current.descriptors.extend(batch.descriptors);
+        }
+        self.pending_batch = None;
+        Ok(())
+    }
+
+    /// Commits a detached suffix into another arena. All fallible destination
+    /// checks precede payload rebranding or chunk-owner mutation.
+    pub(crate) fn promote_detached_batch_into<Destination>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Destination>,
+        batch: DetachedBatch<Lane>,
+    ) -> Result<(Vec<ArenaListId<Destination>>, u64), DetachedBatchTransferError<Lane>>
+    where
+        T: RegionValue<Lane>,
+    {
+        let expected = PendingBatch {
+            serial: batch.serial,
+            payload_start: batch.payload_start,
+            payload_end: batch
+                .payload_start
+                .saturating_add(batch.payload.len() as u32),
+            descriptor_start: batch.descriptor_start,
+            descriptor_end: batch
+                .descriptor_start
+                .saturating_add(batch.descriptors.len() as u32),
+        };
+        let preflight = self.validate_pool(pool).and_then(|()| {
+            destination.validate_pool(pool)?;
+            if batch.arena != self.owner
+                || self.owner == destination.owner
+                || self.pending_batch != Some(expected)
+                || self.live_payload_len() != batch.payload_start as usize
+                || self.live_descriptor_len() != batch.descriptor_start as usize
+                || destination.active_builder
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+            if destination.pending_batch.is_some() {
+                return Err(ForkArenaError::ActiveBatch);
+            }
+            destination.can_seal_boundary(pool)?;
+            for key in &batch.payload {
+                if !pool.payload.is_sealed(*key, self.owner)? {
+                    return Err(ForkArenaError::UnsealedBoundary);
+                }
+            }
+            for key in &batch.descriptors {
+                if !pool.descriptors.is_sealed(*key, self.owner)? {
+                    return Err(ForkArenaError::UnsealedBoundary);
+                }
+            }
+            Ok(())
+        });
+        if let Err(error) = preflight {
+            return Err(DetachedBatchTransferError { error, batch });
+        }
+
+        destination
+            .seal_boundary(pool)
+            .expect("detached destination boundary was preflighted");
+        for key in &batch.payload {
+            let used = pool
+                .payload
+                .used(*key, self.owner)
+                .expect("detached payload owner was preflighted");
+            for offset in 0..used {
+                pool.payload
+                    .get_mut(*key, self.owner, offset)
+                    .expect("detached payload cell was preflighted")
+                    .rebrand_region_lists(destination.owner);
+            }
+        }
+        for key in &batch.payload {
+            pool.payload
+                .transfer(*key, self.owner, destination.owner)
+                .expect("detached payload transfer was preflighted");
+        }
+        for key in &batch.descriptors {
+            pool.descriptors
+                .transfer(*key, self.owner, destination.owner)
+                .expect("detached descriptor transfer was preflighted");
+        }
+        let promoted_lists = batch
+            .lists
+            .iter()
+            .copied()
+            .map(|list| rebrand_list(list, destination.owner))
+            .collect::<Vec<_>>();
+        let payload_start = destination.live_payload_len();
+        let descriptor_start = destination.live_descriptor_len();
+        for (offset, key) in batch.payload.iter().copied().enumerate() {
+            destination.index_chunk(false, key, payload_start + offset);
+        }
+        for (offset, key) in batch.descriptors.iter().copied().enumerate() {
+            destination.index_chunk(true, key, descriptor_start + offset);
+        }
+        let promoted = batch.payload.len() + batch.descriptors.len();
+        {
+            let current = destination.current_chunks_mut();
+            current.payload.extend(batch.payload);
+            current.descriptors.extend(batch.descriptors);
+        }
+        self.counters.chunks_promoted = self
+            .counters
+            .chunks_promoted
+            .saturating_add(promoted as u64);
+        destination.counters.chunks_promoted = destination
+            .counters
+            .chunks_promoted
+            .saturating_add(promoted as u64);
+        self.pending_batch = None;
+        Ok((promoted_lists, batch.rebrand_values))
     }
 
     pub(crate) fn promote_batch_into<Destination>(
@@ -2414,6 +2696,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: RegionValue<Lane>,
     {
+        self.preflight_self_contained_batch(pool, batch)?;
         self.validate_pool(pool)?;
         destination.validate_pool(pool)?;
         if self.owner == destination.owner || destination.active_builder {
@@ -2433,6 +2716,31 @@ impl<T, Lane> ForkArena<T, Lane> {
                 descriptor_start: batch.descriptor_start,
                 descriptor_end: batch.descriptor_end,
             })
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        destination.can_seal_boundary(pool)?;
+        Ok(())
+    }
+
+    fn preflight_self_contained_batch(
+        &self,
+        pool: &ChunkPool<T>,
+        batch: &SealedBatch<Lane>,
+    ) -> Result<u64, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.validate_pool(pool)?;
+        if batch.arena != self.owner
+            || self.pending_batch
+                != Some(PendingBatch {
+                    serial: batch.serial,
+                    payload_start: batch.payload_start,
+                    payload_end: batch.payload_end,
+                    descriptor_start: batch.descriptor_start,
+                    descriptor_end: batch.descriptor_end,
+                })
         {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -2456,7 +2764,6 @@ impl<T, Lane> ForkArena<T, Lane> {
                 return Err(ForkArenaError::UnsealedBoundary);
             }
         }
-        destination.can_seal_boundary(pool)?;
         for list in &batch.lists {
             self.validate_list_in_suffix(
                 pool,
@@ -2465,6 +2772,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 batch.descriptor_start as usize,
             )?;
         }
+        let mut visited = 0_u64;
         for key in &payload {
             let used = pool.payload.used(*key, self.owner)?;
             for offset in 0..used {
@@ -2472,6 +2780,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .payload
                     .get(*key, self.owner, offset)
                     .ok_or(ForkArenaError::InvalidChunk)?;
+                visited = visited.saturating_add(1);
                 let mut invalid = None;
                 value.visit_region_lists(&mut |list| {
                     if invalid.is_none()
@@ -2492,7 +2801,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 }
             }
         }
-        Ok(())
+        Ok(visited)
     }
 
     pub(crate) fn preflight_whole_region_transfer<Destination>(

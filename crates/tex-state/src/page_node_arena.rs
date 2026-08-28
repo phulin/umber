@@ -14,8 +14,8 @@ use crate::fork_arena::{
 };
 use crate::node::Node;
 use crate::node_region::{
-    DurableRole, NodePool, NodeRegion, OwnedNodeClosure, PageRole, copy_closure_into,
-    copy_region_root_into, transfer_closure_into,
+    ClosureBuildMark, CompatibilityClosureBuildReceipt, DurableRole, NodePool, NodeRegion,
+    OwnedNodeClosure, PageRole, copy_closure_into, copy_region_root_into, transfer_closure_into,
 };
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
@@ -191,9 +191,9 @@ impl Hash for PageListId {
 
 const _: () = assert!(core::mem::size_of::<PageListId>() <= 32);
 
-/// Runtime page payload owner. Every `Node` is appended exactly once.
-pub struct PageMaterialArena {
-    pool: NodePool,
+/// Region-local page payload state. The physical pool is owned once by the
+/// enclosing page-region history and is borrowed explicitly for every access.
+pub struct PageMaterialRegion {
     region: NodeRegion<PageRole>,
     range_scratch: Vec<ArenaRange<PageMaterialLane>>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
@@ -214,26 +214,22 @@ pub(crate) struct DurableTransitionCounters {
     pub(crate) node_closure_scan_nodes: u64,
 }
 
-impl Default for PageMaterialArena {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Exclusive admitted access to one page-material region and the shared pool.
+pub struct PageMaterialArena<'a> {
+    pool: &'a mut NodePool,
+    region: &'a mut NodeRegion<PageRole>,
+    range_scratch: &'a mut Vec<ArenaRange<PageMaterialLane>>,
+    coordinate_scratch: &'a mut Vec<ArenaListId<PageMaterialLane>>,
+    semantic_identity_enabled: &'a mut bool,
+    durable_transitions: &'a mut DurableTransitionCounters,
 }
 
-impl PageMaterialArena {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::with_chunk_bytes(4 * 1024)
-    }
-
-    #[must_use]
-    pub fn with_chunk_bytes(chunk_bytes: usize) -> Self {
-        let mut pool = NodePool::with_chunk_bytes(chunk_bytes);
+impl PageMaterialRegion {
+    pub fn new(pool: &mut NodePool) -> Self {
         let region = pool
             .start_region()
             .expect("page-material region identity capacity");
         Self {
-            pool,
             region,
             range_scratch: Vec::new(),
             coordinate_scratch: Vec::new(),
@@ -242,13 +238,62 @@ impl PageMaterialArena {
         }
     }
 
+    pub(crate) const fn region_id(&self) -> crate::node_region::NodeRegionId {
+        self.region.id()
+    }
+
+    pub(crate) fn retire(self, pool: &mut NodePool) -> Result<(), ForkArenaError> {
+        pool.retire_region(self.region).map_err(|(error, _)| error)
+    }
+
+    pub(crate) fn copy_closure_between(
+        pool: &mut NodePool,
+        destination: &mut Self,
+        source: &Self,
+        root: PageListId,
+    ) -> Result<(PageListId, usize), ForkArenaError> {
+        if destination.region.id() == source.region.id()
+            || destination.semantic_identity_enabled != source.semantic_identity_enabled
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let source_root = source.region.root(pool, root)?;
+        let before = destination.region.counters().source_nodes_copied;
+        let copied = copy_region_root_into(
+            pool,
+            &source.region,
+            source_root,
+            &mut destination.region,
+            source.semantic_identity_enabled,
+        )?;
+        let count = destination
+            .region
+            .counters()
+            .source_nodes_copied
+            .saturating_sub(before) as usize;
+        Ok((copied.page_list(), count))
+    }
+}
+
+impl<'a> PageMaterialArena<'a> {
+    pub fn new(pool: &'a mut NodePool, state: &'a mut PageMaterialRegion) -> Self {
+        Self {
+            pool,
+            region: &mut state.region,
+            range_scratch: &mut state.range_scratch,
+            coordinate_scratch: &mut state.coordinate_scratch,
+            semantic_identity_enabled: &mut state.semantic_identity_enabled,
+            durable_transitions: &mut state.durable_transitions,
+        }
+    }
+
     pub fn enable_semantic_identity(&mut self) {
         assert!(
             self.region.pub_arena.counters().new_semantic_nodes == 0
-                || self.semantic_identity_enabled,
+                || *self.semantic_identity_enabled,
             "semantic identity demand starts before page-node publication"
         );
-        self.semantic_identity_enabled = true;
+        *self.semantic_identity_enabled = true;
     }
 
     #[must_use]
@@ -263,8 +308,8 @@ impl PageMaterialArena {
     }
 
     #[must_use]
-    pub const fn semantic_identity_enabled(&self) -> bool {
-        self.semantic_identity_enabled
+    pub fn semantic_identity_enabled(&self) -> bool {
+        *self.semantic_identity_enabled
     }
 
     #[must_use]
@@ -282,7 +327,7 @@ impl PageMaterialArena {
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
-        self.durable_transitions
+        *self.durable_transitions
     }
 
     #[cfg(test)]
@@ -294,9 +339,7 @@ impl PageMaterialArena {
         &mut self,
         nodes: impl IntoIterator<Item = PageMaterialNode>,
     ) -> Result<PageListId, ForkArenaError> {
-        let mut identity = self
-            .semantic_identity_enabled
-            .then(SemanticSequenceIdentity::empty);
+        let mut identity = (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
         let arena = self.region.pub_arena.region_identity();
         let mut builder = self.region.pub_arena.begin_builder(&mut self.pool.chunks)?;
         for node in nodes {
@@ -354,7 +397,7 @@ impl PageMaterialArena {
             &self.region,
             source,
             &mut durable,
-            self.semantic_identity_enabled,
+            *self.semantic_identity_enabled,
         ) {
             Ok(root) => root,
             Err(error) => {
@@ -409,7 +452,7 @@ impl PageMaterialArena {
             &mut self.pool,
             closure,
             &mut self.region,
-            self.semantic_identity_enabled,
+            *self.semantic_identity_enabled,
         )?;
         let copied = self
             .region
@@ -436,7 +479,7 @@ impl PageMaterialArena {
             &mut self.pool,
             closure,
             &mut self.region,
-            self.semantic_identity_enabled,
+            *self.semantic_identity_enabled,
         )?;
         let copied = self
             .region
@@ -465,7 +508,7 @@ impl PageMaterialArena {
             &mut self.pool,
             closure,
             &mut destination,
-            self.semantic_identity_enabled,
+            *self.semantic_identity_enabled,
         ) {
             Ok(root) => root,
             Err(error) => {
@@ -498,18 +541,18 @@ impl PageMaterialArena {
     }
 
     /// Borrows one durable closure under the matching pool owner.
-    pub(crate) fn durable_list<'a>(
-        &'a self,
-        closure: &'a DurableNodeClosure,
-    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+    pub(crate) fn durable_list<'b>(
+        &'b self,
+        closure: &'b DurableNodeClosure,
+    ) -> Result<crate::node_region::RegionList<'b, DurableRole>, ForkArenaError> {
         closure.list(&self.pool)
     }
 
-    pub(crate) fn durable_child_list<'a>(
-        &'a self,
-        closure: &'a DurableNodeClosure,
+    pub(crate) fn durable_child_list<'b>(
+        &'b self,
+        closure: &'b DurableNodeClosure,
         child: PageListId,
-    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+    ) -> Result<crate::node_region::RegionList<'b, DurableRole>, ForkArenaError> {
         closure.child_list(&self.pool, child)
     }
 
@@ -535,9 +578,8 @@ impl PageMaterialArena {
         self.region
             .pub_arena
             .open_active_list(&self.pool.chunks, &mut builder.inner)?;
-        builder.identity = self
-            .semantic_identity_enabled
-            .then(SemanticSequenceIdentity::empty);
+        builder.identity =
+            (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
         Ok(())
     }
 
@@ -605,7 +647,7 @@ impl PageMaterialArena {
         list: PageListId,
         selected: Range<usize>,
     ) -> Result<(), ForkArenaError> {
-        let selected_identity = if self.semantic_identity_enabled {
+        let selected_identity = if *self.semantic_identity_enabled {
             let (identity, work) = self.region.pub_arena.append_active_list_range_summarized(
                 &mut self.pool.chunks,
                 &mut builder.inner,
@@ -665,7 +707,7 @@ impl PageMaterialArena {
         &mut self,
         lists: &[PageListId],
     ) -> Result<PageListId, ForkArenaError> {
-        let identity = if self.semantic_identity_enabled {
+        let identity = if *self.semantic_identity_enabled {
             let mut identity = SemanticSequenceIdentity::empty();
             for list in lists {
                 identity = identity.concat(
@@ -682,8 +724,8 @@ impl PageMaterialArena {
             .extend(lists.iter().map(|list| list.coordinate()));
         let coordinate = self.region.pub_arena.compose_lists(
             &mut self.pool.chunks,
-            &self.coordinate_scratch,
-            &mut self.range_scratch,
+            self.coordinate_scratch,
+            self.range_scratch,
         )?;
         if identity.is_some() {
             self.region
@@ -702,12 +744,12 @@ impl PageMaterialArena {
         selected: Range<usize>,
         _scratch: &mut Vec<PageListId>,
     ) -> Result<PageListId, ForkArenaError> {
-        if self.semantic_identity_enabled {
+        if *self.semantic_identity_enabled {
             let (coordinate, identity, work) = self.region.pub_arena.slice_list_summarized(
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
-                &mut self.range_scratch,
+                self.range_scratch,
                 semantic_node_identity,
             )?;
             self.region.pub_arena.record_identity_work(work);
@@ -717,7 +759,7 @@ impl PageMaterialArena {
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
-                &mut self.range_scratch,
+                self.range_scratch,
             )?;
             Ok(PageListId::from_parts(coordinate, None))
         }
@@ -771,6 +813,24 @@ impl PageMaterialArena {
         self.region
             .pub_arena
             .restore_operation(&mut self.pool.chunks, mark)
+    }
+
+    pub fn begin_closure_build(&mut self) -> Result<ClosureBuildMark<PageRole>, ForkArenaError> {
+        self.region.begin_closure_build(self.pool)
+    }
+
+    pub fn cancel_closure_build(
+        &mut self,
+        mark: ClosureBuildMark<PageRole>,
+    ) -> Result<(), ForkArenaError> {
+        self.region.cancel_closure_build(self.pool, mark)
+    }
+
+    pub fn compatibility_closure_build_receipt(
+        &self,
+        mark: ClosureBuildMark<PageRole>,
+    ) -> Result<CompatibilityClosureBuildReceipt<PageRole>, ForkArenaError> {
+        self.region.compatibility_closure_build_receipt(mark)
     }
 
     pub fn seal_boundary(&mut self) -> Result<SealedBoundary<PageMaterialLane>, ForkArenaError> {
@@ -827,37 +887,6 @@ impl PageMaterialArena {
             .pub_arena
             .accept_checkpoint_candidate(&mut self.pool.chunks, boundary)
     }
-
-    /// Recursively copies one exact closure from another page region.
-    ///
-    /// This is the shared semantic-copy primitive for explicit lifetime
-    /// transitions.  Ordinary appends continue to use `publish_owned`; this
-    /// path additionally records the exact source-node copy count and rewrites
-    /// every child coordinate into the destination region.
-    pub(crate) fn copy_closure_from(
-        &mut self,
-        source: &Self,
-        root: PageListId,
-    ) -> Result<(PageListId, usize), ForkArenaError> {
-        if self.region.id() == source.region.id()
-            || self.semantic_identity_enabled != source.semantic_identity_enabled
-        {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        let operation = self.operation_mark();
-        let result = copy_closure_between_page_arenas(self, source, root, &mut Vec::new());
-        match result {
-            Ok((copied, count)) => {
-                self.region.pub_arena.record_source_nodes_copied(count);
-                Ok((copied, count))
-            }
-            Err(error) => {
-                self.restore_operation(operation)
-                    .expect("semantic-copy rollback mark remains valid");
-                Err(error)
-            }
-        }
-    }
 }
 
 fn node_children_belong_to_arena(node: &PageMaterialNode, arena: u32) -> bool {
@@ -866,46 +895,128 @@ fn node_children_belong_to_arena(node: &PageMaterialNode, arena: u32) -> bool {
     valid
 }
 
-fn copy_closure_between_page_arenas(
-    destination: &mut PageMaterialArena,
-    source: &PageMaterialArena,
-    root: PageListId,
-    stack: &mut Vec<PageListId>,
-) -> Result<(PageListId, usize), ForkArenaError> {
-    if root.is_empty() {
-        return Ok((PageListId::empty(), 0));
+/// Read-only admitted access used by retained history and format capture.
+pub struct PageMaterialView<'a> {
+    pool: &'a NodePool,
+    state: &'a PageMaterialRegion,
+}
+
+impl<'a> PageMaterialView<'a> {
+    pub const fn new(pool: &'a NodePool, state: &'a PageMaterialRegion) -> Self {
+        Self { pool, state }
     }
-    if stack.contains(&root) {
-        return Err(ForkArenaError::InvalidRegion);
+
+    #[must_use]
+    pub const fn semantic_identity_enabled(&self) -> bool {
+        self.state.semantic_identity_enabled
     }
-    let nodes = source.list(root)?.iter().cloned().collect::<Vec<_>>();
-    stack.push(root);
-    let mut copied = Vec::with_capacity(nodes.len());
-    let mut count = nodes.len();
-    for mut node in nodes {
-        let mut child_result = Ok(());
-        node.visit_node_lists_mut(|child| {
-            if child_result.is_err() {
-                return;
-            }
-            match copy_closure_between_page_arenas(destination, source, *child, stack) {
-                Ok((copied, copied_count)) => {
-                    *child = copied;
-                    count = count.saturating_add(copied_count);
-                }
-                Err(error) => child_result = Err(error),
-            }
-        });
-        if let Err(error) = child_result {
-            stack.pop();
-            return Err(error);
-        }
-        copied.push(node);
+
+    #[must_use]
+    pub const fn semantic_hash_work(&self) -> u64 {
+        self.state.region.pub_arena.counters().identity_nodes_hashed
     }
-    stack.pop();
-    destination
-        .publish_owned(copied)
-        .map(|copied| (copied, count))
+
+    #[must_use]
+    pub const fn semantic_summary_work(&self) -> u64 {
+        self.state
+            .region
+            .pub_arena
+            .counters()
+            .identity_summaries_combined
+    }
+
+    #[must_use]
+    pub const fn counters(&self) -> ForkArenaCounters {
+        self.state.region.pub_arena.counters()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.state
+            .region
+            .pub_arena
+            .live_payload_values(&self.pool.chunks)
+    }
+
+    pub fn list(
+        &self,
+        list: PageListId,
+    ) -> Result<ArenaListView<'a, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
+        self.state
+            .region
+            .pub_arena
+            .list(&self.pool.chunks, list.coordinate())
+    }
+
+    pub fn get(
+        &self,
+        list: PageListId,
+    ) -> Result<ArenaListView<'a, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
+        self.list(list)
+    }
+
+    pub fn node_cursor(
+        &self,
+        list: PageListId,
+    ) -> Result<crate::node_arena::NodeCursor<'a>, ForkArenaError> {
+        self.list(list)
+            .map(crate::node_arena::NodeCursor::fork_arena)
+    }
+
+    pub fn get_sequence(
+        &self,
+        list: PageListId,
+    ) -> Result<crate::node_arena::NodeCursor<'a>, ForkArenaError> {
+        self.node_cursor(list)
+    }
+
+    pub(crate) fn durable_list(
+        &self,
+        closure: &'a DurableNodeClosure,
+    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+        closure.list(self.pool)
+    }
+
+    pub(crate) fn durable_child_list(
+        &self,
+        closure: &'a DurableNodeClosure,
+        child: PageListId,
+    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+        closure.child_list(self.pool, child)
+    }
+
+    #[must_use]
+    pub fn contains(&self, list: PageListId) -> bool {
+        self.list(list).is_ok()
+    }
+
+    #[must_use]
+    pub fn operation_mark(&self) -> OperationMark<PageMaterialLane> {
+        self.state
+            .region
+            .pub_arena
+            .operation_mark(&self.pool.chunks)
+    }
+
+    #[must_use]
+    pub fn validates_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
+        self.state.region.pub_arena.validates_checkpoint(mark)
+    }
+
+    #[must_use]
+    pub fn can_restore_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
+        self.state
+            .region
+            .pub_arena
+            .can_begin_checkpoint_candidate(mark)
+    }
+
+    pub fn checkpoint_mark(
+        &self,
+        boundary: SealedBoundary<PageMaterialLane>,
+    ) -> Result<CheckpointMark<PageMaterialLane>, ForkArenaError> {
+        self.state.region.pub_arena.checkpoint_mark(boundary)
+    }
 }
 
 #[cfg(test)]
