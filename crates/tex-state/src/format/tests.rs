@@ -1040,12 +1040,14 @@ fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
                 .box_register(12)
                 .expect("box register")
                 .expect("box root");
-            let admitted = universe.core.as_ref().expect("core").admit();
+            let context = universe.command_context().expect("node admission");
+            let nodes = context.node_list(root).expect("node list").nodes();
             assert!(matches!(
-                admitted.node_list(root).expect("node list").nodes(),
-                [Node::Char { font: node_font, ch: 'X', .. }] if *node_font == font
+                nodes.owned_node(0),
+                Some(Node::Char { font: node_font, ch: 'X', .. })
+                    if *node_font == font && nodes.len() == 1
             ));
-            drop(admitted);
+            drop(context);
             let context = universe.command_context().expect("PDF admission");
             assert!(context.pdf_raw_object(raw_object).is_some());
             assert!(context.pdf_form(form_object).is_some());

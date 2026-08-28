@@ -13,10 +13,7 @@ use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
-use crate::node_arena::{
-    DurableListId, NodeArenaError, NodeArenaRegion, NodeList, PageLifetime, PageListId,
-    PageNodeArena,
-};
+use crate::node_arena::{DurableListId, NodeArenaError, PageListId, PageNodeArena};
 use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
 use crate::provenance::OriginRecord;
@@ -534,7 +531,6 @@ pub struct CommandContext<'a, G> {
     dependencies: &'a mut DependencyRuntime,
     fonts: &'a mut FontStore,
     page_nodes: &'a mut PageNodeArena,
-    durable_page_bound: &'a mut crate::node_arena::NodeArenaCursor<PageLifetime>,
     shipout_scratch: &'a mut ShipoutScratchArena<G>,
     page: &'a mut PageBuilderState,
     pdf: &'a mut PdfState<G>,
@@ -556,7 +552,6 @@ pub(super) struct CommandContextParts<'a, G> {
     pub dependencies: &'a mut DependencyRuntime,
     pub fonts: &'a mut FontStore,
     pub page_nodes: &'a mut PageNodeArena,
-    pub durable_page_bound: &'a mut crate::node_arena::NodeArenaCursor<PageLifetime>,
     pub shipout_scratch: &'a mut ShipoutScratchArena<G>,
     pub page: &'a mut PageBuilderState,
     pub pdf: &'a mut PdfState<G>,
@@ -580,7 +575,6 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
-            durable_page_bound,
             shipout_scratch,
             page,
             pdf,
@@ -601,7 +595,6 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
-            durable_page_bound,
             shipout_scratch,
             page,
             pdf,
@@ -1226,7 +1219,6 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<(), crate::NodePromotionError> {
         let durable = value.map(|root| root.rebrand());
         if durable.is_some() {
-            *self.durable_page_bound = self.page_nodes.cursor();
             #[cfg(feature = "profiling")]
             crate::measurement::record_node_coordinate_transfer();
         }
@@ -1250,7 +1242,6 @@ impl<'a, G> CommandContext<'a, G> {
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
         let durable = value.rebrand();
-        *self.durable_page_bound = self.page_nodes.cursor();
         #[cfg(feature = "profiling")]
         crate::measurement::record_node_coordinate_transfer();
         self.admitted
@@ -1267,32 +1258,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         let root = self.box_register(index).ok().flatten()?;
         let page_root = root.rebrand();
-        if self.page_nodes.contains(page_root) {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_node_logical_alias();
-            return Some(page_root);
-        }
-        let words = self
-            .admitted
-            .copied_node_closure_tex_memory_words(
-                root,
-                self.engine_usage.uses_etex_node_sizes(),
-                self.dynamic_memory_scratch,
-            )
-            .expect("durable box closure belongs to the admitted generation");
-        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
-        let current_dynamic = self
-            .admitted
-            .current_dynamic_memory_words(etex_node_sizes)
-            .expect("admitted state owns valid durable node roots")
-            .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
-        let copied = self
-            .admitted
-            .materialize_loaded_node_into_page(root, self.page_nodes, self.dynamic_memory_scratch)
-            .expect("durable box closure belongs to the admitted generation");
-        self.engine_usage
-            .observe_node_copy(words.0, current_dynamic, words.1);
-        Some(copied)
+        self.page_nodes.contains(page_root).then_some(page_root)
     }
 
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
@@ -1317,23 +1283,20 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn node_list(
         &self,
         id: DurableListId<G>,
-    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
-        let page = id.rebrand();
-        if self.page_nodes.contains(page) {
-            return self.page_nodes.get(page);
-        }
-        self.admitted.node_list(id)
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .node_cursor(id.rebrand())
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     /// Resolves a child coordinate borrowed from a durable root.
     pub fn durable_child_node_list(
         &self,
         id: PageListId,
-    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
-        if self.page_nodes.contains(id) {
-            return self.page_nodes.get(id);
-        }
-        self.admitted.node_list(id.rebrand())
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .node_cursor(id)
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     #[inline(always)]
@@ -1651,7 +1614,9 @@ impl<'a, G> CommandContext<'a, G> {
         let id = self.box_register(index).ok().flatten()?;
         let list = self.node_list(id).ok()?;
         let children = match (list.len(), list.nodes().first()) {
-            (1, Some(crate::node::Node::HList(node))) => list.child(node.children).ok()?,
+            (1, Some(crate::node::Node::HList(node))) => {
+                self.durable_child_node_list(node.children).ok()?
+            }
             _ => return None,
         };
         let candidate = match side {
@@ -2879,7 +2844,6 @@ impl<'a, G> CommandContext<'a, G> {
             box_list,
         );
         let box_list = box_list.rebrand();
-        *self.durable_page_bound = self.page_nodes.cursor();
         #[cfg(feature = "profiling")]
         crate::measurement::record_node_coordinate_transfer();
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
@@ -3081,7 +3045,6 @@ impl<'a, G> CommandContext<'a, G> {
                     self.page_nodes
                         .get(list)
                         .expect("page shipout color row is live")
-                        .nodes()
                         .get(source.index)
                         .expect("page shipout color index is live"),
                     id,
@@ -3090,10 +3053,9 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Durable(list) => {
                 let action = action(
-                    self.admitted
-                        .node_list(list)
+                    self.page_nodes
+                        .get(list.rebrand())
                         .expect("durable shipout color row is live")
-                        .nodes()
                         .get(source.index)
                         .expect("durable shipout color index is live"),
                     id,
@@ -3179,6 +3141,65 @@ impl<'a, G> CommandContext<'a, G> {
         self.publish_page_node_range(nodes).list()
     }
 
+    pub fn open_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+    ) {
+        self.page_nodes
+            .open_active_list(builder)
+            .expect("page active-list builder opens against its live owner");
+    }
+
+    pub fn push_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        node: crate::node::Node,
+    ) {
+        self.assert_live_node_font_roots(&node);
+        self.page_nodes
+            .push_active_list(builder, node)
+            .expect("page active-list builder belongs to its live owner");
+    }
+
+    pub fn append_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        list: PageListId,
+    ) {
+        self.page_nodes
+            .append_to_active_list(builder, list)
+            .expect("page active-list source belongs to its live owner");
+    }
+
+    pub fn append_page_active_list_range(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        list: PageListId,
+        selected: core::ops::Range<usize>,
+    ) {
+        self.page_nodes
+            .append_range_to_active_list(builder, list, selected)
+            .expect("page active-list source range belongs to its live owner");
+    }
+
+    pub fn finalize_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+    ) -> PageListId {
+        self.page_nodes
+            .finalize_active_list(builder)
+            .expect("page active-list builder belongs to its live owner")
+    }
+
+    pub fn rollback_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+    ) {
+        self.page_nodes
+            .rollback_active_list(builder)
+            .expect("page active-list rollback belongs to its live owner");
+    }
+
     /// Publishes one immutable payload segment inside this admitted episode.
     pub fn publish_page_node_range(
         &mut self,
@@ -3226,6 +3247,24 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page sequence range belongs to the live page arena")
     }
 
+    /// Borrows an immutable logical subrange using the identity accumulated
+    /// by the caller while it was already traversing that range.
+    pub fn slice_page_node_sequence_with_identity(
+        &mut self,
+        sequence: crate::node_arena::PageNodeSequenceId,
+        range: core::ops::Range<usize>,
+        identity: Option<crate::node_sequence::SemanticSequenceIdentity>,
+    ) -> crate::node_arena::PageNodeSequenceId {
+        self.page_nodes
+            .slice_with_identity(sequence, range, identity)
+            .expect("page sequence range belongs to the live page arena")
+    }
+
+    #[must_use]
+    pub fn page_node_semantic_identity_enabled(&self) -> bool {
+        self.page_nodes.semantic_identity_enabled()
+    }
+
     /// Starts a descriptor-only transform in caller-owned reusable scratch.
     pub fn begin_page_node_transform(
         &self,
@@ -3261,9 +3300,7 @@ impl<'a, G> CommandContext<'a, G> {
         }
         scratch.new_semantic_nodes = scratch.new_semantic_nodes.saturating_add(nodes.len());
         let range = self.publish_page_node_range(nodes);
-        scratch
-            .pieces
-            .push(crate::node_arena::ArenaNodeSequenceId::Direct(range));
+        scratch.pieces.push(range);
     }
 
     /// Completes a transform by flattening only its compact descriptors.
@@ -3284,52 +3321,55 @@ impl<'a, G> CommandContext<'a, G> {
     /// cloning it. Partial or shared-row extraction is deliberately rejected.
     pub fn take_page_node_range(
         &mut self,
-        range: crate::node_arena::PageNodeRange,
+        _range: crate::node_arena::PageNodeRange,
     ) -> Vec<crate::node::Node> {
-        self.page_nodes
-            .take_range_nodes(range)
-            .expect("page range is one live whole payload segment")
+        panic!("page-material ranges are immutable; callers must consume builders before sealing")
     }
 
     /// Opens one nested structural suffix in the live page arena.
     #[must_use]
-    pub fn begin_page_node_region(&self) -> NodeArenaRegion<PageLifetime> {
-        self.page_nodes.begin_region()
+    pub fn begin_page_node_region(
+        &self,
+    ) -> crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane> {
+        self.page_nodes.operation_mark()
     }
 
     /// Releases a complete structural suffix after its survivor has been
     /// promoted or detached.
     pub fn release_page_node_region(
         &mut self,
-        region: NodeArenaRegion<PageLifetime>,
+        region: crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane>,
     ) -> Result<(), NodeArenaError> {
-        self.page_nodes.release_region(region)
+        self.page_nodes
+            .restore_operation(region)
+            .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Consumes a completed region whose rows now have a durable box owner.
     pub fn retain_page_node_region(
         &self,
-        region: NodeArenaRegion<PageLifetime>,
+        _region: crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane>,
     ) -> Result<(), NodeArenaError> {
-        self.page_nodes.retain_region(region)
+        Ok(())
     }
 
     /// Resolves one page-lifetime list while the admitted context is live.
     pub fn page_node_list(
         &self,
         list: PageListId,
-    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
-        self.page_nodes.get(list)
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .node_cursor(list)
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     pub fn page_node_sequence(
         &self,
         sequence: crate::node_arena::PageNodeSequenceId,
-    ) -> Result<
-        crate::node_arena::ArenaNodeSequence<'_, PageLifetime>,
-        crate::node_arena::NodeArenaError,
-    > {
-        self.page_nodes.get_sequence(sequence)
+    ) -> Result<crate::node_arena::NodeCursor<'_>, crate::node_arena::NodeArenaError> {
+        self.page_nodes
+            .get_sequence(sequence)
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     /// Resolves shipout-only derived nodes while the aggregate transaction is
@@ -3437,10 +3477,10 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Durable(list) => {
                 let node = self
-                    .admitted
-                    .node_list(list)
+                    .page_nodes
+                    .get(list.rebrand())
                     .ok()
-                    .and_then(|list| list.nodes().get(source.index))
+                    .and_then(|list| list.get(source.index))
                     .expect("shipout token source belongs to the live durable row");
                 if let Some(identifier) = identifier(node, source.field) {
                     identifier.words().iter().copied().try_for_each(&mut visit)
@@ -3493,7 +3533,6 @@ impl<'a, G> CommandContext<'a, G> {
                     .page_nodes
                     .get(list)
                     .expect("page shipout token row is live")
-                    .nodes()
                     .get(source.index)
                     .expect("page shipout token index is live");
                 let tokens = match (node, source.field) {
@@ -3556,37 +3595,12 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Durable(list) => {
                 let page = list.rebrand();
-                let node = if self.page_nodes.contains(page) {
-                    self.page_nodes
-                        .get(page)
-                        .expect("durable page token row is live")
-                        .nodes()
-                        .get(source.index)
-                        .expect("durable page token index is live")
-                } else {
-                    let words = self
-                        .admitted
-                        .node_list(list)
-                        .expect("loaded durable token row is live")
-                        .nodes()
-                        .get(source.index)
-                        .and_then(|node| match (node, source.field) {
-                            (
-                                crate::node::Node::Whatsit(
-                                    crate::node::Whatsit::DeferredWrite { tokens, .. }
-                                    | crate::node::Whatsit::DeferredSpecial { tokens, .. }
-                                    | crate::node::Whatsit::DeferredPdfLiteral { tokens, .. },
-                                ),
-                                crate::ShipoutTokenField::DeferredWrite
-                                | crate::ShipoutTokenField::DeferredSpecial
-                                | crate::ShipoutTokenField::DeferredPdfLiteral,
-                            ) => Some(tokens.words().to_vec()),
-                            _ => None,
-                        })
-                        .expect("loaded durable shipout token field matches its source node");
-                    append(&mut self.admitted, &words)?;
-                    return self.seal_token_list_builder(builder);
-                };
+                let node = self
+                    .page_nodes
+                    .get(page)
+                    .expect("durable page token row is live")
+                    .get(source.index)
+                    .expect("durable page token index is live");
                 let tokens = match (node, source.field) {
                     (
                         crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
@@ -3618,13 +3632,18 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Resolves the node slice consumed by pure typesetting kernels.
-    pub fn page_nodes(&self, list: PageListId) -> Result<&[crate::node::Node], NodeArenaError> {
-        Ok(self.page_nodes.get(list)?.nodes())
+    pub fn page_nodes(
+        &self,
+        list: PageListId,
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .node_cursor(list)
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     /// Borrows the live page-builder sequence for diagnostic rendering only.
     pub fn current_page_nodes(&self) -> impl DoubleEndedIterator<Item = &crate::node::Node> {
-        self.page.current_page()
+        self.page.current_page(self.page_nodes)
     }
 
     #[must_use]
@@ -3701,58 +3720,71 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn start_page_after_output(&mut self) {
-        self.page.start_page_after_output();
+        self.page.start_page_after_output(self.page_nodes);
     }
 
     pub fn start_new_page(&mut self) {
-        self.page.start_new_page();
+        self.page.start_new_page(self.page_nodes);
     }
 
     #[must_use]
     pub fn page_contributions(&self) -> crate::page::PageContributionView<'_> {
-        self.page.contribution()
+        self.page.contribution(self.page_nodes)
     }
 
     pub fn append_page_contribution(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.push_contribution(node);
+        self.page.push_contribution(self.page_nodes, node);
     }
 
     pub fn prepend_page_contribution(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.prepend_contribution(node);
+        self.page.prepend_contribution(self.page_nodes, node);
     }
 
-    pub fn prepend_page_contributions(&mut self, nodes: Vec<crate::node::Node>) {
-        for node in &nodes {
-            self.assert_live_node_font_roots(node);
-        }
-        self.page.prepend_contributions(nodes);
+    pub fn prepend_page_contributions(&mut self, nodes: PageListId) {
+        self.page.prepend_contributions(self.page_nodes, nodes);
+    }
+
+    pub fn append_page_contributions(&mut self, nodes: PageListId) {
+        self.page.append_contributions(self.page_nodes, nodes);
     }
 
     pub fn remove_page_contribution_range(
         &mut self,
         range: std::ops::RangeInclusive<usize>,
-    ) -> Vec<crate::node::Node> {
-        self.page.remove_contribution_range(range)
+    ) -> crate::page::PageNodeCarrier {
+        self.page.remove_contribution_range(self.page_nodes, range)
     }
 
     #[must_use]
     pub fn page_contribution_front(&self) -> Option<&crate::node::Node> {
-        self.page.contribution_front()
+        self.page.contribution_front(self.page_nodes)
     }
 
     #[must_use]
     pub fn page_contribution_second(&self) -> Option<&crate::node::Node> {
-        self.page.contribution_second()
+        self.page.contribution_second(self.page_nodes)
     }
 
     pub fn pop_page_contribution_front(&mut self) -> Option<crate::page::PageNodeCarrier> {
-        self.page.pop_contribution_front()
+        self.page.pop_contribution_front(self.page_nodes)
     }
 
     pub fn discard_page_node(&mut self, carrier: crate::page::PageNodeCarrier) {
         self.page.discard_carrier(carrier);
+    }
+
+    #[must_use]
+    pub fn page_carrier_node<'b>(
+        &'b self,
+        carrier: &crate::page::PageNodeCarrier,
+    ) -> &'b crate::node::Node {
+        self.page_nodes
+            .list(carrier.list())
+            .expect("page carrier belongs to the live arena")
+            .get(0)
+            .expect("page carrier contains one node")
     }
 
     #[must_use]
@@ -3762,17 +3794,30 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn current_page_tail(&self) -> Option<&crate::node::Node> {
-        self.page.current_page_tail()
+        self.page.current_page_tail(self.page_nodes)
     }
 
     pub fn push_current_page_node(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.push_current_page(node);
+        self.page.push_current_page(self.page_nodes, node);
     }
 
     pub fn push_current_page_carrier(&mut self, carrier: crate::page::PageNodeCarrier) {
-        self.assert_live_node_font_roots(carrier.node());
-        self.page.push_current_page_carrier(carrier);
+        {
+            let node = self
+                .page_nodes
+                .list(carrier.list())
+                .expect("page carrier belongs to the live arena")
+                .get(0)
+                .expect("page carrier contains one node");
+            self.assert_live_node_font_roots(node);
+        }
+        self.page
+            .push_current_page_carrier(self.page_nodes, carrier);
+    }
+
+    pub fn push_current_page_list(&mut self, list: PageListId) {
+        self.page.push_current_page_list(self.page_nodes, list);
     }
 
     pub fn push_current_page_replacement(
@@ -3782,14 +3827,12 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         self.assert_live_node_font_roots(&replacement);
         self.page
-            .push_current_page_replacement(carrier, replacement);
+            .push_current_page_replacement(self.page_nodes, carrier, replacement);
     }
 
-    pub fn take_current_page_prefix(
-        &mut self,
-        split_index: usize,
-    ) -> (Vec<crate::node::Node>, Vec<crate::node::Node>) {
-        self.page.take_current_page_prefix(split_index)
+    pub fn take_current_page_prefix(&mut self, split_index: usize) -> (PageListId, PageListId) {
+        self.page
+            .take_current_page_prefix(self.page_nodes, split_index)
     }
 
     pub fn update_page_last_from_node(&mut self, node: &crate::node::Node) {
@@ -3823,15 +3866,24 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn push_page_discard(&mut self, node: crate::node::Node) {
         self.assert_live_node_font_roots(&node);
-        self.page.push_page_discard(node);
+        self.page.push_page_discard(self.page_nodes, node);
     }
 
     pub fn push_page_discard_carrier(&mut self, carrier: crate::page::PageNodeCarrier) {
-        self.assert_live_node_font_roots(carrier.node());
-        self.page.push_page_discard_carrier(carrier);
+        {
+            let node = self
+                .page_nodes
+                .list(carrier.list())
+                .expect("page carrier belongs to the live arena")
+                .get(0)
+                .expect("page carrier contains one node");
+            self.assert_live_node_font_roots(node);
+        }
+        self.page
+            .push_page_discard_carrier(self.page_nodes, carrier);
     }
 
-    pub fn take_page_discards(&mut self) -> Vec<crate::node::Node> {
+    pub fn take_page_discards(&mut self) -> PageListId {
         self.page.take_page_discards()
     }
 
@@ -3839,14 +3891,11 @@ impl<'a, G> CommandContext<'a, G> {
         self.page.clear_page_discards();
     }
 
-    pub fn set_split_discards(&mut self, nodes: Vec<crate::node::Node>) {
-        for node in &nodes {
-            self.assert_live_node_font_roots(node);
-        }
+    pub fn set_split_discards(&mut self, nodes: PageListId) {
         self.page.set_split_discards(nodes);
     }
 
-    pub fn take_split_discards(&mut self) -> Vec<crate::node::Node> {
+    pub fn take_split_discards(&mut self) -> PageListId {
         self.page.take_split_discards()
     }
 
@@ -4540,7 +4589,7 @@ fn page_list_semantic_id<G>(
                 .get(root)
                 .expect("PDF form root belongs to the live page arena");
             self.hasher.usize(list.nodes().len());
-            for node in list.nodes() {
+            for node in list.iter() {
                 self.node(node);
             }
         }

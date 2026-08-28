@@ -133,6 +133,12 @@ impl Clone for PageListId {
     }
 }
 
+impl Default for PageListId {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl Copy for PageListId {}
 
 impl core::fmt::Debug for PageListId {

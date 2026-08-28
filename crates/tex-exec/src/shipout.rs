@@ -113,7 +113,9 @@ impl<'a, G> ShipoutTransaction<'a, G> {
     pub(crate) fn stage_page(
         &mut self,
         source: direct::ShipoutRoot<G>,
-        region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+        region: Option<
+            tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
+        >,
         origin: ShipoutOrigin,
         pending_effect_end: usize,
         stores: &mut Universe<G>,

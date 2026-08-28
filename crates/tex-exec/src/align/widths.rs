@@ -27,14 +27,21 @@ use crate::packing_params::{hpack, hpack_params as read_hpack_params, vpack, vpa
 /// enclosing the alignment level, and applied to both.
 pub(crate) fn finish_alignment<G>(
     state: &AlignState,
-    rows: &[Node],
+    rows: PageListId,
     offset: Scaled,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
-    let resolved = resolution::resolve_widths(state, rows, stores)?;
+    let resolved = resolution::resolve_widths(
+        state,
+        stores
+            .page_node_list(rows)
+            .expect("alignment rows belong to the live page arena")
+            .nodes(),
+        stores,
+    )?;
     let empty = PageListId::empty();
     let prototype = pack_prototype(
         state,

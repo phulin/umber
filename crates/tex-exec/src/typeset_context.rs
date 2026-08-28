@@ -27,18 +27,15 @@ impl<'a, 'state, G> TypesetContext<'a, 'state, G> {
 
 impl<G> TypesetState for TypesetContext<'_, '_, G> {
     fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
-        tex_state::node_arena::NodeCursor::compact(
-            self.state
-                .page_nodes(list)
-                .expect("typesetting list belongs to the admitted page arena"),
-        )
+        self.state
+            .page_nodes(list)
+            .expect("typesetting list belongs to the admitted page arena")
     }
 
     fn page_node_sequence(
         &self,
         sequence: PageNodeSequenceId,
-    ) -> Option<tex_state::node_arena::ArenaNodeSequence<'_, tex_state::node_arena::PageLifetime>>
-    {
+    ) -> Option<tex_state::node_arena::NodeCursor<'_>> {
         self.state.page_node_sequence(sequence).ok()
     }
 

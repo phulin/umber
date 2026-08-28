@@ -1,17 +1,15 @@
 //! Snapshot-owned page-builder state.
 
-mod sequence;
 #[cfg(test)]
 mod state_hash;
 
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
+use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 use crate::scaled::Scaled;
 use ahash::RandomState;
-use sequence::PageNodeSequence;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -313,12 +311,10 @@ impl PageInsertion {
     }
 }
 
-/// Borrowed logical contribution deque across the candidate's bounded regions.
-#[derive(Clone, Copy, Debug)]
+/// Borrowed canonical contribution list.
+#[derive(Clone, Copy)]
 pub struct PageContributionView<'a> {
-    front: Option<&'a VecDeque<Node>>,
-    prior: Option<(&'a VecDeque<Node>, usize, usize)>,
-    back: &'a VecDeque<Node>,
+    nodes: NodeCursor<'a>,
 }
 
 pub struct PageInsertionView<'a> {
@@ -421,9 +417,7 @@ impl Iterator for MarkClassIdIter<'_> {
 impl<'a> PageContributionView<'a> {
     #[must_use]
     pub fn len(self) -> usize {
-        self.front.map_or(0, VecDeque::len)
-            + self.prior.map_or(0, |(_, start, end)| end - start)
-            + self.back.len()
+        self.nodes.len()
     }
 
     #[must_use]
@@ -433,17 +427,7 @@ impl<'a> PageContributionView<'a> {
 
     #[must_use]
     pub fn get(self, index: usize) -> Option<&'a Node> {
-        let front_len = self.front.map_or(0, VecDeque::len);
-        if index < front_len {
-            return self.front.and_then(|front| front.get(index));
-        }
-        let index = index - front_len;
-        let prior_len = self.prior.map_or(0, |(_, start, end)| end - start);
-        if index < prior_len {
-            let (prior, start, _) = self.prior?;
-            return prior.get(start + index);
-        }
-        self.back.get(index - prior_len)
+        self.nodes.owned_node(index)
     }
 
     #[must_use]
@@ -457,11 +441,7 @@ impl<'a> PageContributionView<'a> {
     }
 
     pub fn iter(self) -> PageContributionIter<'a> {
-        PageContributionIter {
-            view: self,
-            front: 0,
-            back: self.len(),
-        }
+        self.nodes.iter()
     }
 
     #[must_use]
@@ -470,98 +450,16 @@ impl<'a> PageContributionView<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct PageContributionIter<'a> {
-    view: PageContributionView<'a>,
-    front: usize,
-    back: usize,
-}
-
-impl<'a> Iterator for PageContributionIter<'a> {
-    type Item = &'a Node;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
-        }
-        let index = self.front;
-        self.front += 1;
-        self.view.get(index)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.back - self.front;
-        (len, Some(len))
-    }
-}
-
-impl DoubleEndedIterator for PageContributionIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
-        }
-        self.back -= 1;
-        self.view.get(self.back)
-    }
-}
-
-impl ExactSizeIterator for PageContributionIter<'_> {}
-
-pub(crate) struct PageCurrentIter<'a> {
-    prior: Option<(&'a PageNodeSequence, usize)>,
-    current: &'a PageNodeSequence,
-    front: usize,
-    back: usize,
-}
-
-impl<'a> PageCurrentIter<'a> {
-    fn get(&self, index: usize) -> Option<&'a Node> {
-        let prior_len = self.prior.map_or(0, |(_, end)| end);
-        if index < prior_len {
-            self.prior.and_then(|(prior, _)| prior.get(index))
-        } else {
-            self.current.get(index - prior_len)
-        }
-    }
-}
-
-impl<'a> Iterator for PageCurrentIter<'a> {
-    type Item = &'a Node;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
-        }
-        let index = self.front;
-        self.front += 1;
-        self.get(index)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.back - self.front;
-        (len, Some(len))
-    }
-}
-
-impl DoubleEndedIterator for PageCurrentIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
-        }
-        self.back -= 1;
-        self.get(self.back)
-    }
-}
-
-impl ExactSizeIterator for PageCurrentIter<'_> {}
+pub type PageContributionIter<'a> = NodeCursorIter<'a>;
+pub(crate) type PageCurrentIter<'a> = NodeCursorIter<'a>;
 
 /// Snapshot-owned state for TeX.web's page builder.
 #[derive(Clone)]
 pub(crate) struct PageBuilderState {
-    contribution: VecDeque<Node>,
-    current_page: PageNodeSequence,
-    page_discards: Vec<Node>,
-    split_discards: Vec<Node>,
+    contribution: PageListId,
+    current_page: PageListId,
+    page_discards: PageListId,
+    split_discards: PageListId,
     page_goal: Scaled,
     page_total: Scaled,
     page_stretch: Scaled,
@@ -598,69 +496,7 @@ pub(crate) struct PageBuilderState {
     page_node_root_count: usize,
     identity_enabled: bool,
     semantic_roots: PageSemanticRoots,
-    node_stream: PageNodeStream,
     checkpoint_journal: PageCheckpointJournal,
-}
-
-/// Generation-owned immutable storage for node ranges displaced by the page
-/// timeline.  Journal entries carry only coordinates into this stream; node
-/// payload is appended once and is never cloned merely to make an inverse.
-#[derive(Clone, Default)]
-struct PageNodeStream {
-    nodes: Vec<Option<Node>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PageNodeRange {
-    start: usize,
-    end: usize,
-}
-
-impl PageNodeStream {
-    fn reserve_one(&mut self) -> PageNodeRange {
-        let start = self.nodes.len();
-        self.nodes.push(None);
-        PageNodeRange {
-            start,
-            end: start + 1,
-        }
-    }
-
-    fn store(&mut self, nodes: impl IntoIterator<Item = Node>) -> PageNodeRange {
-        let start = self.nodes.len();
-        self.nodes.extend(nodes.into_iter().map(Some));
-        PageNodeRange {
-            start,
-            end: self.nodes.len(),
-        }
-    }
-
-    fn take(&mut self, range: PageNodeRange) -> Vec<Node> {
-        assert!(range.start <= range.end && range.end <= self.nodes.len());
-        self.nodes[range.start..range.end]
-            .iter_mut()
-            .map(|node| node.take().expect("page move range is occupied"))
-            .collect()
-    }
-
-    fn store_one(&mut self, node: Node) -> PageNodeRange {
-        self.store(std::iter::once(node))
-    }
-
-    fn take_one(&mut self, range: PageNodeRange) -> Node {
-        assert_eq!(range.end, range.start + 1);
-        self.nodes[range.start]
-            .take()
-            .expect("page move coordinate is occupied")
-    }
-
-    fn put_one(&mut self, range: PageNodeRange, node: Node) {
-        assert_eq!(range.end, range.start + 1);
-        assert!(
-            self.nodes[range.start].replace(node).is_none(),
-            "page move coordinate is vacant"
-        );
-    }
 }
 
 /// One node detached from a page lane together with its coarse journal move
@@ -670,20 +506,13 @@ impl PageNodeStream {
 #[must_use = "a detached page node must be returned to a page destination or explicitly discarded"]
 #[derive(Debug)]
 pub struct PageNodeCarrier {
-    node: Node,
-    range: Option<PageNodeRange>,
+    list: PageListId,
 }
 
 impl PageNodeCarrier {
     #[must_use]
-    pub const fn node(&self) -> &Node {
-        &self.node
-    }
-}
-
-impl PartialEq<Node> for PageNodeCarrier {
-    fn eq(&self, other: &Node) -> bool {
-        self.node == *other
+    pub const fn list(&self) -> PageListId {
+        self.list
     }
 }
 
@@ -701,11 +530,10 @@ pub(crate) struct PageCheckpointMark {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct PagePayloadRoots {
-    contribution_start: usize,
-    contribution_end: usize,
-    current_page_end: usize,
-    page_discards_end: usize,
-    split_discards_end: usize,
+    contribution: PageListId,
+    current_page: PageListId,
+    page_discards: PageListId,
+    split_discards: PageListId,
     insertion_end: usize,
     mark_end: usize,
 }
@@ -740,21 +568,16 @@ pub(crate) struct AcceptedPageTail {
     future_frames: Vec<PageCheckpointFrame>,
     origin_scalars: PageScalars,
     origin_semantic_roots: PageSemanticRoots,
-    contribution_before: VecDeque<Node>,
-    contribution_after: VecDeque<Node>,
-    current_page_after: Vec<Node>,
-    page_discards_after: Vec<Node>,
-    split_discards_after: Vec<Node>,
     insertion_lane_after: Vec<InsertionLaneRecord>,
     mark_lane_after: Vec<MarkLaneRecord>,
 }
 
 #[derive(Clone, Default)]
 struct PagePayload {
-    contribution: VecDeque<Node>,
-    current_page: PageNodeSequence,
-    page_discards: Vec<Node>,
-    split_discards: Vec<Node>,
+    contribution: PageListId,
+    current_page: PageListId,
+    page_discards: PageListId,
+    split_discards: PageListId,
     insertions: Vec<PageInsertion>,
     insertion_positions: Vec<Option<u16>>,
     top_mark: Option<NodeTokenList>,
@@ -773,32 +596,10 @@ struct PagePayload {
 enum PageInverse {
     Noop,
     Scalars(PageScalars),
-    ContributionPushBack(Option<PageNodeRange>),
-    ContributionPushFront(Option<PageNodeRange>),
-    ContributionRemoved {
-        start: usize,
-        count: usize,
-        nodes: Option<PageNodeRange>,
-    },
-    ContributionPoppedFront {
-        range: Option<PageNodeRange>,
-        live: bool,
-    },
-    ContributionPrepended {
-        count: usize,
-        nodes: Option<PageNodeRange>,
-    },
-    CurrentPagePush {
-        range: Option<PageNodeRange>,
-        live: bool,
-    },
-    CurrentPageReplace(PageNodeRange),
-    PageDiscardsPush {
-        range: Option<PageNodeRange>,
-        live: bool,
-    },
-    PageDiscardsReplace(PageNodeRange),
-    SplitDiscardsReplace(PageNodeRange),
+    Contribution(PageListId),
+    CurrentPage(PageListId),
+    PageDiscards(PageListId),
+    SplitDiscards(PageListId),
     InsertionsReplace {
         insertions: Vec<PageInsertion>,
         positions: Vec<Option<u16>>,
@@ -872,10 +673,10 @@ pub(crate) struct PageMemoState {
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
-            contribution: VecDeque::new(),
-            current_page: PageNodeSequence::default(),
-            page_discards: Vec::new(),
-            split_discards: Vec::new(),
+            contribution: PageListId::empty(),
+            current_page: PageListId::empty(),
+            page_discards: PageListId::empty(),
+            split_discards: PageListId::empty(),
             page_goal: Scaled::from_raw(0),
             page_total: Scaled::from_raw(0),
             page_stretch: Scaled::from_raw(0),
@@ -912,7 +713,6 @@ impl Default for PageBuilderState {
             page_node_root_count: 0,
             identity_enabled: false,
             semantic_roots: PageSemanticRoots::default(),
-            node_stream: PageNodeStream::default(),
             checkpoint_journal: PageCheckpointJournal {
                 timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
                 next_frame: 1,
@@ -954,13 +754,6 @@ impl PageBuilderState {
             "page semantic identity must be selected before execution"
         );
         self.identity_enabled = true;
-        self.current_page.enable_semantic_identity();
-        self.semantic_roots.contribution =
-            SemanticSequenceIdentity::from_nodes(self.contribution.iter());
-        self.semantic_roots.page_discards =
-            SemanticSequenceIdentity::from_nodes(&self.page_discards);
-        self.semantic_roots.split_discards =
-            SemanticSequenceIdentity::from_nodes(&self.split_discards);
         self.semantic_roots.insertions = self
             .insertions
             .iter()
@@ -1020,10 +813,10 @@ impl PageBuilderState {
             })
             .hash(&mut hasher);
         for sequence in [
-            self.semantic_roots.contribution,
-            self.current_page.semantic_identity(),
-            self.semantic_roots.page_discards,
-            self.semantic_roots.split_discards,
+            list_identity(self.contribution),
+            list_identity(self.current_page),
+            list_identity(self.page_discards),
+            list_identity(self.split_discards),
         ] {
             (sequence.len() as u64).hash(&mut hasher);
             sequence.raw().hash(&mut hasher);
@@ -1043,11 +836,10 @@ impl PageBuilderState {
         let cursor = self.checkpoint_journal.applied;
         let scalars = self.scalar_snapshot();
         let direct_roots = PagePayloadRoots {
-            contribution_start: 0,
-            contribution_end: self.contribution.len(),
-            current_page_end: self.current_page.len(),
-            page_discards_end: self.page_discards.len(),
-            split_discards_end: self.split_discards.len(),
+            contribution: self.contribution,
+            current_page: self.current_page,
+            page_discards: self.page_discards,
+            split_discards: self.split_discards,
             insertion_end: self.insertion_lane.len(),
             mark_end: self.mark_lane.len(),
         };
@@ -1134,39 +926,12 @@ impl PageBuilderState {
             .checkpoint_journal
             .accepted_rewind_transitions
             .saturating_add(1);
-        let mut selected = self.take_payload();
-        let contribution_before = selected
-            .contribution
-            .drain(..mark.roots.contribution_start)
-            .collect();
-        let contribution_after = selected
-            .contribution
-            .split_off(mark.roots.contribution_end - mark.roots.contribution_start);
-        let (current_page_before, current_page_after) = selected
-            .current_page
-            .take_prefix(mark.roots.current_page_end);
-        selected.current_page = PageNodeSequence::from_nodes(current_page_before);
-        if self.identity_enabled {
-            selected.current_page.enable_semantic_identity();
-        }
-        let page_discards_after = selected
-            .page_discards
-            .split_off(mark.roots.page_discards_end);
-        let split_discards_after = selected
-            .split_discards
-            .split_off(mark.roots.split_discards_end);
-        let insertion_lane_after = selected.insertion_lane.split_off(mark.roots.insertion_end);
-        let mark_lane_after = selected.mark_lane.split_off(mark.roots.mark_end);
-        selected.insertions.clear();
-        selected.insertion_positions.clear();
-        selected.top_mark = None;
-        selected.first_mark = None;
-        selected.bot_mark = None;
-        selected.split_first_mark = None;
-        selected.split_bot_mark = None;
-        selected.mark_classes.clear();
-        selected.mark_class_positions.clear();
-        self.install_payload(selected);
+        self.contribution = mark.roots.contribution;
+        self.current_page = mark.roots.current_page;
+        self.page_discards = mark.roots.page_discards;
+        self.split_discards = mark.roots.split_discards;
+        let insertion_lane_after = self.insertion_lane.split_off(mark.roots.insertion_end);
+        let mark_lane_after = self.mark_lane.split_off(mark.roots.mark_end);
         self.rebuild_canonical_lane_values();
         self.restore_scalars(mark.scalars);
         self.semantic_roots = mark.semantic_roots;
@@ -1194,11 +959,6 @@ impl PageBuilderState {
             future_frames,
             origin_scalars,
             origin_semantic_roots,
-            contribution_before,
-            contribution_after,
-            current_page_after,
-            page_discards_after,
-            split_discards_after,
             insertion_lane_after,
             mark_lane_after,
         }
@@ -1210,26 +970,8 @@ impl PageBuilderState {
             self.toggle_page_inverse(self.checkpoint_journal.applied);
         }
         self.checkpoint_journal.candidate_root_frame = None;
-        let mut restored = self.take_payload();
-        tail.contribution_before.append(&mut restored.contribution);
-        tail.contribution_before
-            .append(&mut tail.contribution_after);
-        restored.contribution = tail.contribution_before;
-        let mut current_page = restored.current_page.into_nodes();
-        current_page.append(&mut tail.current_page_after);
-        restored.current_page = PageNodeSequence::from_nodes(current_page);
-        if self.identity_enabled {
-            restored.current_page.enable_semantic_identity();
-        }
-        restored.page_discards.append(&mut tail.page_discards_after);
-        restored
-            .split_discards
-            .append(&mut tail.split_discards_after);
-        restored
-            .insertion_lane
-            .append(&mut tail.insertion_lane_after);
-        restored.mark_lane.append(&mut tail.mark_lane_after);
-        self.install_payload(restored);
+        self.insertion_lane.append(&mut tail.insertion_lane_after);
+        self.mark_lane.append(&mut tail.mark_lane_after);
         self.rebuild_canonical_lane_values();
         self.checkpoint_journal.inverses = tail.future;
         self.checkpoint_journal.frames = tail.future_frames;
@@ -1417,139 +1159,21 @@ impl PageBuilderState {
                 self.restore_scalars(old);
                 PageInverse::Scalars(current)
             }
-            PageInverse::ContributionPushBack(mut range) => {
-                if let Some(range) = range.take() {
-                    self.contribution
-                        .push_back(self.node_stream.take_one(range));
-                } else {
-                    range = self
-                        .contribution
-                        .pop_back()
-                        .map(|node| self.node_stream.store_one(node));
-                }
-                PageInverse::ContributionPushBack(range)
+            PageInverse::Contribution(mut old) => {
+                std::mem::swap(&mut self.contribution, &mut old);
+                PageInverse::Contribution(old)
             }
-            PageInverse::ContributionPushFront(mut range) => {
-                if let Some(range) = range.take() {
-                    self.contribution
-                        .push_front(self.node_stream.take_one(range));
-                } else {
-                    range = self
-                        .contribution
-                        .pop_front()
-                        .map(|node| self.node_stream.store_one(node));
-                }
-                PageInverse::ContributionPushFront(range)
+            PageInverse::CurrentPage(mut old) => {
+                std::mem::swap(&mut self.current_page, &mut old);
+                PageInverse::CurrentPage(old)
             }
-            PageInverse::ContributionRemoved {
-                start,
-                count,
-                mut nodes,
-            } => {
-                if let Some(range) = nodes.take() {
-                    let restored = self.node_stream.take(range);
-                    for (offset, node) in restored.into_iter().enumerate() {
-                        self.contribution.insert(start + offset, node);
-                    }
-                } else {
-                    nodes = Some(
-                        self.node_stream
-                            .store(self.contribution.drain(start..start + count)),
-                    );
-                }
-                PageInverse::ContributionRemoved {
-                    start,
-                    count,
-                    nodes,
-                }
+            PageInverse::PageDiscards(mut old) => {
+                std::mem::swap(&mut self.page_discards, &mut old);
+                PageInverse::PageDiscards(old)
             }
-            PageInverse::ContributionPoppedFront { mut range, live } => {
-                if !live {
-                    let coordinate = range.expect("journaled page source has a move coordinate");
-                    self.contribution
-                        .push_front(self.node_stream.take_one(coordinate));
-                } else {
-                    let node = self
-                        .contribution
-                        .pop_front()
-                        .expect("redone page source move has a front node");
-                    if let Some(coordinate) = range {
-                        self.node_stream.put_one(coordinate, node);
-                    } else {
-                        range = Some(self.node_stream.store_one(node));
-                    }
-                }
-                PageInverse::ContributionPoppedFront { range, live: !live }
-            }
-            PageInverse::ContributionPrepended { count, mut nodes } => {
-                if let Some(range) = nodes.take() {
-                    let restored = self.node_stream.take(range);
-                    for node in restored.into_iter().rev() {
-                        self.contribution.push_front(node);
-                    }
-                } else {
-                    nodes = Some(self.node_stream.store(self.contribution.drain(..count)));
-                }
-                PageInverse::ContributionPrepended { count, nodes }
-            }
-            PageInverse::CurrentPagePush { mut range, live } => {
-                if live {
-                    let node = self
-                        .current_page
-                        .pop()
-                        .expect("rewound page destination move has a tail node");
-                    if let Some(coordinate) = range {
-                        self.node_stream.put_one(coordinate, node);
-                    } else {
-                        range = Some(self.node_stream.store_one(node));
-                    }
-                } else {
-                    self.current_page.push(
-                        self.node_stream
-                            .take_one(range.expect("rewound page destination has a coordinate")),
-                    );
-                }
-                PageInverse::CurrentPagePush { range, live: !live }
-            }
-            PageInverse::CurrentPageReplace(old) => {
-                let restored = PageNodeSequence::from_nodes(self.node_stream.take(old));
-                let current = self
-                    .node_stream
-                    .store(std::mem::replace(&mut self.current_page, restored).into_nodes());
-                PageInverse::CurrentPageReplace(current)
-            }
-            PageInverse::PageDiscardsPush { mut range, live } => {
-                if live {
-                    let node = self
-                        .page_discards
-                        .pop()
-                        .expect("rewound page-discard move has a tail node");
-                    if let Some(coordinate) = range {
-                        self.node_stream.put_one(coordinate, node);
-                    } else {
-                        range = Some(self.node_stream.store_one(node));
-                    }
-                } else {
-                    self.page_discards.push(
-                        self.node_stream
-                            .take_one(range.expect("rewound page discard has a coordinate")),
-                    );
-                }
-                PageInverse::PageDiscardsPush { range, live: !live }
-            }
-            PageInverse::PageDiscardsReplace(old) => {
-                let restored = self.node_stream.take(old);
-                let current = self
-                    .node_stream
-                    .store(std::mem::replace(&mut self.page_discards, restored));
-                PageInverse::PageDiscardsReplace(current)
-            }
-            PageInverse::SplitDiscardsReplace(old) => {
-                let restored = self.node_stream.take(old);
-                let current = self
-                    .node_stream
-                    .store(std::mem::replace(&mut self.split_discards, restored));
-                PageInverse::SplitDiscardsReplace(current)
+            PageInverse::SplitDiscards(mut old) => {
+                std::mem::swap(&mut self.split_discards, &mut old);
+                PageInverse::SplitDiscards(old)
             }
             PageInverse::InsertionsReplace {
                 mut insertions,
@@ -1904,22 +1528,6 @@ impl PageBuilderState {
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(
-                self.contribution
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Node>()),
-            )
-            .saturating_add(self.current_page.retained_bytes())
-            .saturating_add(
-                self.page_discards
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Node>()),
-            )
-            .saturating_add(
-                self.split_discards
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Node>()),
-            )
-            .saturating_add(
                 self.insertions
                     .capacity()
                     .saturating_mul(std::mem::size_of::<PageInsertion>()),
@@ -2267,8 +1875,8 @@ impl PageBuilderState {
         self.best_size = Scaled::from_raw(0);
     }
 
-    pub(crate) fn start_new_page(&mut self) {
-        self.start_page_after_output();
+    pub(crate) fn start_new_page(&mut self, arena: &PageNodeArena) {
+        self.start_page_after_output(arena);
         self.page_goal = Scaled::from_raw(0);
         self.page_total = Scaled::from_raw(0);
         self.page_stretch = Scaled::from_raw(0);
@@ -2281,31 +1889,33 @@ impl PageBuilderState {
     /// TeX82 §1012's reset after `fire_up`: the page list and builder
     /// controls are empty, while `page_so_far` remains observable until §991
     /// freezes the next page's specifications.
-    pub(crate) fn start_page_after_output(&mut self) {
+    pub(crate) fn start_page_after_output(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
         self.insertion_lane
             .extend(self.insertions.iter().map(|insertion| InsertionLaneRecord {
                 class: insertion.class(),
                 value: None,
             }));
-        let released = dynamic_words(self.current_page.iter());
-        let released_page_roots = self
-            .current_page
+        let current = arena
+            .list(self.current_page)
+            .expect("current page root belongs to the live arena");
+        let released = dynamic_words(current.iter());
+        let released_page_roots = current
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
+        drop(current);
         if !self.checkpoint_journal.frames.is_empty() {
             let current_page = std::mem::take(&mut self.current_page);
             let insertions = std::mem::take(&mut self.insertions);
             let positions = std::mem::take(&mut self.insertion_positions);
-            let current_page = self.node_stream.store(current_page.into_nodes());
-            self.record_page_inverse(PageInverse::CurrentPageReplace(current_page));
+            self.record_page_inverse(PageInverse::CurrentPage(current_page));
             self.record_page_inverse(PageInverse::InsertionsReplace {
                 insertions,
                 positions,
             });
         } else {
-            self.current_page.clear();
+            self.current_page = PageListId::empty();
             self.insertions.clear();
             self.insertion_positions.clear();
         }
@@ -2388,273 +1998,327 @@ impl PageBuilderState {
         self.fire_up
     }
 
-    pub(crate) fn push_contribution(&mut self, node: Node) {
+    pub(crate) fn push_contribution(&mut self, arena: &mut PageNodeArena, node: Node) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::ContributionPushBack(None));
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
-        if self.identity_enabled {
-            self.semantic_roots
-                .contribution
-                .push_back(semantic_node_identity(&node));
-        }
-        self.contribution.push_back(node);
+        let node = arena
+            .publish_owned([node])
+            .expect("page arena accepts contribution");
+        self.contribution = arena
+            .compose_sequences(&[self.contribution, node])
+            .expect("page contribution roots belong to the live arena");
+        self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
     pub(crate) fn remove_contribution_range(
         &mut self,
+        arena: &mut PageNodeArena,
         range: std::ops::RangeInclusive<usize>,
-    ) -> Vec<Node> {
+    ) -> PageNodeCarrier {
         let start = *range.start();
-        let removed = self.contribution.drain(range).collect::<Vec<_>>();
-        if !removed.is_empty() {
-            self.record_scalars();
-            let stored = self.node_stream.store(removed.clone());
-            self.record_page_inverse(PageInverse::ContributionRemoved {
-                start,
-                count: removed.len(),
-                nodes: Some(stored),
-            });
-        }
-        self.release_dynamic_nodes(&removed);
-        if self.identity_enabled {
-            self.semantic_roots.contribution =
-                SemanticSequenceIdentity::from_nodes(self.contribution.iter());
-        }
-        removed
+        let end = range.end().saturating_add(1);
+        assert!(start <= end && end <= self.contribution.len());
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
+        let removed = arena
+            .slice_sequence(self.contribution, start..end, &mut Vec::new())
+            .expect("removed contribution range belongs to the live arena");
+        let prefix = arena
+            .slice_sequence(self.contribution, 0..start, &mut Vec::new())
+            .expect("contribution prefix belongs to the live arena");
+        let suffix = arena
+            .slice_sequence(
+                self.contribution,
+                end..self.contribution.len(),
+                &mut Vec::new(),
+            )
+            .expect("contribution suffix belongs to the live arena");
+        let removed_view = arena
+            .list(removed)
+            .expect("removed contribution remains live");
+        let words = dynamic_words(removed_view.iter());
+        let roots = removed_view
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        drop(removed_view);
+        self.release_dynamic_word_totals(words);
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(roots)
+            .expect("released more page roots than were live");
+        self.contribution = arena
+            .compose_sequences(&[prefix, suffix])
+            .expect("remaining contribution ranges compose");
+        self.semantic_roots.contribution = list_identity(self.contribution);
+        PageNodeCarrier { list: removed }
     }
 
-    pub(crate) fn prepend_contribution(&mut self, node: Node) {
+    pub(crate) fn prepend_contribution(&mut self, arena: &mut PageNodeArena, node: Node) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::ContributionPushFront(None));
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
-        if self.identity_enabled {
-            self.semantic_roots
-                .contribution
-                .push_front(semantic_node_identity(&node));
-        }
-        self.contribution.push_front(node);
+        let node = arena
+            .publish_owned([node])
+            .expect("page arena accepts contribution");
+        self.contribution = arena
+            .compose_sequences(&[node, self.contribution])
+            .expect("page contribution roots belong to the live arena");
+        self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
-    pub(crate) fn contribution(&self) -> PageContributionView<'_> {
+    pub(crate) fn contribution<'a>(&self, arena: &'a PageNodeArena) -> PageContributionView<'a> {
         PageContributionView {
-            front: None,
-            prior: None,
-            back: &self.contribution,
+            nodes: arena
+                .node_cursor(self.contribution)
+                .expect("page contribution root belongs to the live arena"),
         }
     }
 
-    pub(crate) fn contribution_front(&self) -> Option<&Node> {
-        self.contribution().front()
+    pub(crate) fn contribution_front<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
+        self.contribution(arena).front()
     }
 
-    pub(crate) fn contribution_second(&self) -> Option<&Node> {
-        self.contribution().get(1)
+    pub(crate) fn contribution_second<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
+        self.contribution(arena).get(1)
     }
 
-    pub(crate) fn pop_contribution_front(&mut self) -> Option<PageNodeCarrier> {
-        let node = self.contribution.pop_front()?;
+    pub(crate) fn pop_contribution_front(
+        &mut self,
+        arena: &mut PageNodeArena,
+    ) -> Option<PageNodeCarrier> {
+        if self.contribution.is_empty() {
+            return None;
+        }
+        let node = arena.list(self.contribution).ok()?.get(0)?;
+        let words = node.tex_memory_words(false).1;
+        let etex_words = node.tex_memory_words(true).1;
+        let retains_root = node_retains_page_handle(node);
         self.record_scalars();
-        let inverse =
-            (!self.checkpoint_journal.frames.is_empty()).then(|| self.node_stream.reserve_one());
-        self.record_page_inverse(PageInverse::ContributionPoppedFront {
-            range: inverse,
-            live: false,
-        });
-        self.release_dynamic_node(&node);
-        if self.identity_enabled {
-            self.semantic_roots
-                .contribution
-                .pop_front(semantic_node_identity(&node));
-        }
-        Some(PageNodeCarrier {
-            node,
-            range: inverse,
-        })
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
+        let removed = arena
+            .slice_sequence(self.contribution, 0..1, &mut Vec::new())
+            .ok()?;
+        self.contribution = arena
+            .slice_sequence(
+                self.contribution,
+                1..self.contribution.len(),
+                &mut Vec::new(),
+            )
+            .ok()?;
+        self.release_dynamic_word_totals((words, etex_words));
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(usize::from(retains_root))
+            .expect("released more page roots than were live");
+        self.semantic_roots.contribution = list_identity(self.contribution);
+        Some(PageNodeCarrier { list: removed })
     }
 
-    pub(crate) fn prepend_contributions(&mut self, nodes: Vec<Node>) {
+    pub(crate) fn prepend_contributions(&mut self, arena: &mut PageNodeArena, nodes: PageListId) {
         if nodes.is_empty() {
             return;
         }
         self.record_scalars();
-        self.record_page_inverse(PageInverse::ContributionPrepended {
-            count: nodes.len(),
-            nodes: None,
-        });
-        self.allocate_dynamic_nodes(&nodes);
-        if self.identity_enabled {
-            let prefix = SemanticSequenceIdentity::from_nodes(&nodes);
-            self.semantic_roots.contribution = prefix.concat(self.semantic_roots.contribution);
-        }
-        let mut queue = VecDeque::with_capacity(nodes.len() + self.contribution.len());
-        queue.extend(nodes);
-        queue.extend(self.contribution.iter().cloned());
-        self.contribution = queue;
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
+        let view = arena
+            .list(nodes)
+            .expect("heldover page contribution is live");
+        let words = dynamic_words(view.iter());
+        let roots = view
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        drop(view);
+        self.allocate_dynamic_word_totals(words);
+        self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
+        self.contribution = arena
+            .compose_sequences(&[nodes, self.contribution])
+            .expect("heldover and live contribution roots compose");
+        self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
-    pub(crate) fn current_page(&self) -> PageCurrentIter<'_> {
-        PageCurrentIter {
-            prior: None,
-            current: &self.current_page,
-            front: 0,
-            back: self.current_page.len(),
+    pub(crate) fn append_contributions(&mut self, arena: &mut PageNodeArena, nodes: PageListId) {
+        if nodes.is_empty() {
+            return;
         }
-    }
-
-    pub(crate) fn push_page_discard(&mut self, node: Node) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::PageDiscardsPush {
-            range: None,
-            live: true,
-        });
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
+        let view = arena.list(nodes).expect("page contribution list is live");
+        let words = dynamic_words(view.iter());
+        let roots = view
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        self.allocate_dynamic_word_totals(words);
+        self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
+        self.contribution = arena
+            .compose_sequences(&[self.contribution, nodes])
+            .expect("page contribution roots compose");
+        self.semantic_roots.contribution = list_identity(self.contribution);
+    }
+
+    pub(crate) fn current_page<'a>(&self, arena: &'a PageNodeArena) -> PageCurrentIter<'a> {
+        arena
+            .node_cursor(self.current_page)
+            .expect("current page root belongs to the live arena")
+            .iter()
+    }
+
+    pub(crate) fn push_page_discard(&mut self, arena: &mut PageNodeArena, node: Node) {
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.allocate_dynamic_node(&node);
-        if self.identity_enabled {
-            self.semantic_roots
-                .page_discards
-                .push_back(semantic_node_identity(&node));
-        }
-        self.page_discards.push(node);
+        let node = arena
+            .publish_owned([node])
+            .expect("page arena accepts discard");
+        self.page_discards = arena
+            .compose_sequences(&[self.page_discards, node])
+            .expect("page discard roots compose");
+        self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
 
-    pub(crate) fn push_page_discard_carrier(&mut self, carrier: PageNodeCarrier) {
+    pub(crate) fn push_page_discard_carrier(
+        &mut self,
+        arena: &mut PageNodeArena,
+        carrier: PageNodeCarrier,
+    ) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::PageDiscardsPush {
-            range: carrier.range,
-            live: true,
-        });
-        self.allocate_dynamic_node(&carrier.node);
-        if self.identity_enabled {
-            self.semantic_roots
-                .page_discards
-                .push_back(semantic_node_identity(&carrier.node));
-        }
-        self.page_discards.push(carrier.node);
+        self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
+        self.page_discards = arena
+            .compose_sequences(&[self.page_discards, carrier.list])
+            .expect("page discard carrier belongs to the live arena");
+        let node = arena
+            .list(carrier.list)
+            .expect("carrier is live")
+            .get(0)
+            .unwrap();
+        self.allocate_dynamic_node(node);
+        self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
 
-    pub(crate) fn take_page_discards(&mut self) -> Vec<Node> {
+    pub(crate) fn take_page_discards(&mut self) -> PageListId {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self.node_stream.store(self.page_discards.clone());
-            self.record_page_inverse(PageInverse::PageDiscardsReplace(range));
-        }
+        self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         let nodes = std::mem::take(&mut self.page_discards);
-        self.release_dynamic_nodes(&nodes);
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
         nodes
     }
 
     pub(crate) fn clear_page_discards(&mut self) {
         self.record_scalars();
-        let nodes = std::mem::take(&mut self.page_discards);
-        self.release_dynamic_nodes(&nodes);
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self.node_stream.store(nodes);
-            self.record_page_inverse(PageInverse::PageDiscardsReplace(range));
-        }
+        self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
+        self.page_discards = PageListId::empty();
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
     }
 
-    pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
+    pub(crate) fn set_split_discards(&mut self, nodes: PageListId) {
         self.record_scalars();
-        let added = dynamic_words(nodes.iter());
-        let added_page_roots = nodes
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
-        if self.identity_enabled {
-            self.semantic_roots.split_discards = SemanticSequenceIdentity::from_nodes(&nodes);
-        }
+        self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
+        self.semantic_roots.split_discards = list_identity(nodes);
         let old = std::mem::replace(&mut self.split_discards, nodes);
-        self.release_dynamic_nodes(&old);
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self.node_stream.store(old);
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(range));
-        }
-        self.allocate_dynamic_word_totals(added);
-        self.page_node_root_count = self
-            .page_node_root_count
-            .checked_add(added_page_roots)
-            .expect("page root accounting overflow");
+        let _ = old;
     }
 
-    pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
+    pub(crate) fn take_split_discards(&mut self) -> PageListId {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self.node_stream.store(self.split_discards.clone());
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(range));
-        }
+        self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         let nodes = std::mem::take(&mut self.split_discards);
-        self.release_dynamic_nodes(&nodes);
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
         nodes
     }
 
     pub(crate) fn clear_split_discards(&mut self) {
         self.record_scalars();
-        let nodes = std::mem::take(&mut self.split_discards);
-        self.release_dynamic_nodes(&nodes);
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self.node_stream.store(nodes);
-            self.record_page_inverse(PageInverse::SplitDiscardsReplace(range));
-        }
+        self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
+        self.split_discards = PageListId::empty();
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
     }
 
-    pub(crate) fn current_page_tail(&self) -> Option<&Node> {
-        self.current_page().next_back()
+    pub(crate) fn current_page_tail<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
+        self.current_page(arena).next_back()
     }
 
     pub(crate) fn current_page_len(&self) -> usize {
-        self.current_page().len()
+        self.current_page.len()
     }
 
-    pub(crate) fn push_current_page(&mut self, node: Node) {
+    pub(crate) fn push_current_page(&mut self, arena: &mut PageNodeArena, node: Node) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::CurrentPagePush {
-            range: None,
-            live: true,
-        });
+        self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         self.allocate_dynamic_node(&node);
-        self.current_page.push(node);
+        let node = arena
+            .publish_owned([node])
+            .expect("page arena accepts current node");
+        self.current_page = arena
+            .compose_sequences(&[self.current_page, node])
+            .expect("current page roots compose");
     }
 
-    pub(crate) fn push_current_page_carrier(&mut self, carrier: PageNodeCarrier) {
+    pub(crate) fn push_current_page_carrier(
+        &mut self,
+        arena: &mut PageNodeArena,
+        carrier: PageNodeCarrier,
+    ) {
         self.record_scalars();
-        self.record_page_inverse(PageInverse::CurrentPagePush {
-            range: carrier.range,
-            live: true,
-        });
-        self.allocate_dynamic_node(&carrier.node);
-        self.current_page.push(carrier.node);
+        self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
+        let node = arena
+            .list(carrier.list)
+            .expect("carrier is live")
+            .get(0)
+            .unwrap();
+        self.allocate_dynamic_node(node);
+        self.current_page = arena
+            .compose_sequences(&[self.current_page, carrier.list])
+            .expect("current page carrier belongs to the live arena");
+    }
+
+    pub(crate) fn push_current_page_list(&mut self, arena: &mut PageNodeArena, list: PageListId) {
+        if list.is_empty() {
+            return;
+        }
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
+        let view = arena.list(list).expect("current-page list is live");
+        let words = dynamic_words(view.iter());
+        let roots = view
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        self.allocate_dynamic_word_totals(words);
+        self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
+        self.current_page = arena
+            .compose_sequences(&[self.current_page, list])
+            .expect("current-page roots compose");
     }
 
     pub(crate) fn push_current_page_replacement(
         &mut self,
+        arena: &mut PageNodeArena,
         carrier: PageNodeCarrier,
         replacement: Node,
     ) {
         self.discard_carrier(carrier);
-        self.push_current_page(replacement);
+        self.push_current_page(arena, replacement);
     }
 
-    pub(crate) fn discard_carrier(&mut self, carrier: PageNodeCarrier) {
-        if let Some(range) = carrier.range {
-            self.node_stream.put_one(range, carrier.node);
-        }
-    }
+    pub(crate) fn discard_carrier(&mut self, _carrier: PageNodeCarrier) {}
 
     /// Removes one logical current-page tail.
     #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn pop_current_page(&mut self) -> Option<Node> {
-        let node = self.current_page.pop()?;
+    pub(crate) fn pop_current_page(&mut self, arena: &mut PageNodeArena) -> Option<Node> {
+        let len = self.current_page.len();
+        let node = arena
+            .list(self.current_page)
+            .ok()?
+            .get(len.checked_sub(1)?)?
+            .clone();
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self.node_stream.store_one(node.clone());
-            self.record_page_inverse(PageInverse::CurrentPagePush {
-                range: Some(range),
-                live: false,
-            });
-        }
+        self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
+        self.current_page = arena
+            .slice_sequence(self.current_page, 0..len - 1, &mut Vec::new())
+            .ok()?;
         self.release_dynamic_node(&node);
         Some(node)
     }
@@ -2721,19 +2385,38 @@ impl PageBuilderState {
 
     pub(crate) fn take_current_page_prefix(
         &mut self,
+        arena: &mut PageNodeArena,
         split_index: usize,
-    ) -> (Vec<Node>, Vec<Node>) {
+    ) -> (PageListId, PageListId) {
         self.record_scalars();
-        if !self.checkpoint_journal.frames.is_empty() {
-            let range = self
-                .node_stream
-                .store(self.current_page.clone().into_nodes());
-            self.record_page_inverse(PageInverse::CurrentPageReplace(range));
-        }
-        let nodes = self.current_page.take_prefix(split_index);
-        self.release_dynamic_nodes(&nodes.0);
-        self.release_dynamic_nodes(&nodes.1);
-        nodes
+        self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
+        let split_index = split_index.min(self.current_page.len());
+        let prefix = arena
+            .slice_sequence(self.current_page, 0..split_index, &mut Vec::new())
+            .expect("current-page prefix belongs to the live arena");
+        let suffix = arena
+            .slice_sequence(
+                self.current_page,
+                split_index..self.current_page.len(),
+                &mut Vec::new(),
+            )
+            .expect("current-page suffix belongs to the live arena");
+        let current = arena
+            .list(self.current_page)
+            .expect("current page belongs to the live arena");
+        let words = dynamic_words(current.iter());
+        let roots = current
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        drop(current);
+        self.current_page = PageListId::empty();
+        self.release_dynamic_word_totals(words);
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(roots)
+            .expect("released more page roots than were live");
+        (prefix, suffix)
     }
 
     fn allocate_dynamic_node(&mut self, node: &Node) {
@@ -2942,6 +2625,10 @@ fn dynamic_words<'a>(nodes: impl Iterator<Item = &'a Node>) -> (usize, usize) {
             words.1.saturating_add(node.tex_memory_words(true).1),
         )
     })
+}
+
+fn list_identity(list: PageListId) -> SemanticSequenceIdentity {
+    SemanticSequenceIdentity::from_raw(list.semantic_identity().unwrap_or(0), list.len())
 }
 
 fn node_retains_page_handle(node: &Node) -> bool {

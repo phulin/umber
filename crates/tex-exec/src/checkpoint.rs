@@ -464,16 +464,32 @@ impl<G> EngineCheckpoint<G> {
         let mode_before = self.modes.replay_work();
         let mut modes =
             ModeNest::fork_checkpoint(&self.modes).map_err(CheckpointRestoreError::Mode)?;
+        let mut context = source
+            .command_context()
+            .expect("profile mode/page admission");
         let mode_replace = u64::from(
             modes
                 .current_list_mutation()
-                .with_node_mut(0, |node| *node = tex_state::node::Node::Penalty(13))
+                .with_node_mut(&mut context, 0, |node| {
+                    *node = tex_state::node::Node::Penalty(13)
+                })
                 .is_some(),
         );
-        modes.push_current_node(tex_state::node::Node::Penalty(17));
-        let mode_private_pop = u64::from(modes.current_list_mutation().pop_last_node().is_some());
-        let mode_root_pop = u64::from(modes.current_list_mutation().pop_last_node().is_some());
+        modes.push_current_node(&mut context, tex_state::node::Node::Penalty(17));
+        let mode_private_pop = u64::from(
+            modes
+                .current_list_mutation()
+                .pop_last_node(&mut context)
+                .is_some(),
+        );
+        let mode_root_pop = u64::from(
+            modes
+                .current_list_mutation()
+                .pop_last_node(&mut context)
+                .is_some(),
+        );
         drop(modes);
+        drop(context);
         let mode_work = self.modes.replay_work().saturating_sub(mode_before);
         let page_work = source
             .profile_page_owner_cycle(&self.runtime)

@@ -8,6 +8,12 @@ use tex_typeset::PackSpec;
 use super::{scaled_add, scaled_sub};
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 
+#[derive(Clone, Copy)]
+enum PrototypeBoundary {
+    Glue(GlueSpec, GlueKind),
+    Kern(KernKind),
+}
+
 /// Merged e-TeX §§1475 and 1478's saved prototype for a display preceded by
 /// a nonempty paragraph. Only the two skip boundaries and the finalized last
 /// line's box setting survive until `app_display`; the paragraph material
@@ -77,18 +83,31 @@ pub(super) fn package_directed_display_line<G>(
         end
     };
 
-    let mut payload = if display_line.box_lr == BoxLr::DList {
-        vec![Node::HList(display_line)]
+    let payload = if display_line.box_lr == BoxLr::DList {
+        stores.publish_page_nodes(vec![Node::HList(display_line.clone())])
     } else {
-        let mut children = stores
+        let children = stores
             .page_node_list(display_line.children)
             .expect("display line belongs to the live page arena")
-            .nodes()
-            .to_vec();
-        if pre_display_direction < 0 {
-            children.reverse();
+            .nodes();
+        let len = children.len();
+        drop(children);
+        if pre_display_direction >= 0 {
+            display_line.children
+        } else {
+            let mut slices = Vec::new();
+            let pieces = (0..len)
+                .rev()
+                .map(|index| {
+                    stores.slice_page_node_sequence(
+                        display_line.children,
+                        index..index + 1,
+                        &mut slices,
+                    )
+                })
+                .collect::<Vec<_>>();
+            stores.compose_page_node_sequences(&pieces)
         }
-        children
     };
     if let Some(mut prototype) = prototype {
         // e-TeX §1479 copies the prototype and adjusts the two edge
@@ -103,79 +122,91 @@ pub(super) fn package_directed_display_line<G>(
             end_displacement,
             scaled_sub(scaled_sub(prototype.width, display_width), display_indent),
         );
-        let [left, right] = stores
+        let boundaries = stores
             .page_node_list(prototype.children)
             .expect("display prototype belongs to the live page arena")
-            .nodes()
-            .to_vec()
-            .try_into()
-            .unwrap_or_else(|_| panic!("e-TeX display prototype has exactly two boundaries"));
-        let mut children = Vec::with_capacity(payload.len() + 6);
-        match left {
+            .nodes();
+        assert_eq!(
+            boundaries.len(),
+            2,
+            "e-TeX display prototype has exactly two boundaries"
+        );
+        let left = match boundaries
+            .owned_node(0)
+            .expect("display prototype has a left boundary")
+        {
             Node::Glue {
                 spec,
                 kind,
                 leader: None,
-            } => {
-                children.push(Node::Glue {
-                    spec,
-                    kind,
-                    leader: None,
-                });
-                children.push(Node::Direction(tex_state::node::Direction::BeginM));
-                children.push(cancel_display_skip(stores, &spec, kind, displacement));
-            }
-            Node::Kern { kind, .. } => {
-                children.push(Node::Direction(tex_state::node::Direction::BeginM));
-                children.push(Node::Kern {
-                    amount: displacement,
-                    kind,
-                });
-            }
+            } => PrototypeBoundary::Glue(*spec, *kind),
+            Node::Kern { kind, .. } => PrototypeBoundary::Kern(*kind),
             _ => panic!("e-TeX display prototype left boundary is glue or kern"),
-        }
-        children.append(&mut payload);
-        match right {
+        };
+        let right = match boundaries
+            .owned_node(1)
+            .expect("display prototype has a right boundary")
+        {
             Node::Glue {
                 spec,
                 kind,
                 leader: None,
-            } => {
-                children.push(cancel_display_skip(stores, &spec, kind, end_displacement));
-                children.push(Node::Direction(tex_state::node::Direction::EndM));
-                children.push(Node::Glue {
-                    spec,
-                    kind,
-                    leader: None,
-                });
-            }
-            Node::Kern { kind, .. } => {
-                children.push(Node::Kern {
-                    amount: end_displacement,
-                    kind,
-                });
-                children.push(Node::Direction(tex_state::node::Direction::EndM));
-            }
+            } => PrototypeBoundary::Glue(*spec, *kind),
+            Node::Kern { kind, .. } => PrototypeBoundary::Kern(*kind),
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
+        };
+        drop(boundaries);
+
+        let mut slices = Vec::new();
+        let mut pieces = Vec::with_capacity(5);
+        let mut prefix = Vec::with_capacity(2);
+        if let PrototypeBoundary::Glue(spec, kind) = left {
+            pieces.push(stores.slice_page_node_sequence(prototype.children, 0..1, &mut slices));
+            prefix.push(Node::Direction(tex_state::node::Direction::BeginM));
+            prefix.push(cancel_display_skip(stores, &spec, kind, displacement));
+        } else if let PrototypeBoundary::Kern(kind) = left {
+            prefix.push(Node::Direction(tex_state::node::Direction::BeginM));
+            prefix.push(Node::Kern {
+                amount: displacement,
+                kind,
+            });
         }
-        let children = stores.publish_page_nodes(children);
-        prototype.children = children;
+        pieces.push(stores.publish_page_nodes(prefix));
+        pieces.push(payload);
+
+        let mut suffix = Vec::with_capacity(2);
+        if let PrototypeBoundary::Glue(spec, kind) = right {
+            suffix.push(cancel_display_skip(stores, &spec, kind, end_displacement));
+            suffix.push(Node::Direction(tex_state::node::Direction::EndM));
+            pieces.push(stores.publish_page_nodes(suffix));
+            pieces.push(stores.slice_page_node_sequence(prototype.children, 1..2, &mut slices));
+        } else if let PrototypeBoundary::Kern(kind) = right {
+            suffix.push(Node::Kern {
+                amount: end_displacement,
+                kind,
+            });
+            suffix.push(Node::Direction(tex_state::node::Direction::EndM));
+            pieces.push(stores.publish_page_nodes(suffix));
+        }
+        prototype.children = stores.compose_page_node_sequences(&pieces);
         return prototype;
     }
 
-    let mut children = Vec::with_capacity(payload.len() + 4);
-    children.push(Node::Direction(tex_state::node::Direction::BeginM));
-    children.push(Node::Kern {
-        amount: displacement,
-        kind: KernKind::Font,
-    });
-    children.append(&mut payload);
-    children.push(Node::Kern {
-        amount: end_displacement,
-        kind: KernKind::Font,
-    });
-    children.push(Node::Direction(tex_state::node::Direction::EndM));
-    let list = stores.publish_page_nodes(children);
+    let prefix = stores.publish_page_nodes(vec![
+        Node::Direction(tex_state::node::Direction::BeginM),
+        Node::Kern {
+            amount: displacement,
+            kind: KernKind::Font,
+        },
+    ]);
+    let suffix = stores.publish_page_nodes(vec![
+        Node::Kern {
+            amount: end_displacement,
+            kind: KernKind::Font,
+        },
+        Node::Direction(tex_state::node::Direction::EndM),
+    ]);
+    let list = stores.compose_page_node_sequences(&[prefix, payload, suffix]);
     let mut boxed = hpack_nodes(
         stores,
         diagnostic_effects,

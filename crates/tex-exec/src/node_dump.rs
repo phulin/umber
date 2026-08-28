@@ -58,9 +58,10 @@ pub(crate) fn dump_page_list<G>(
     let list = stores
         .page_node_list(owner)
         .expect("diagnostic root belongs to the live page arena");
+    let nodes = list.nodes();
     dump_nodes::<_, _, _, _, PageDumpStorage>(
         stores,
-        list.nodes(),
+        &nodes,
         &config,
         -1,
         ListContext::Neutral,
@@ -79,9 +80,10 @@ pub(crate) fn dump_durable_list<G>(
     let list = stores
         .node_list(owner)
         .expect("diagnostic root belongs to the live durable generation");
+    let nodes = list.nodes();
     dump_nodes::<_, _, _, _, PageDumpStorage>(
         stores,
-        list.nodes(),
+        &nodes,
         &config,
         -1,
         ListContext::Neutral,
@@ -99,7 +101,25 @@ pub(crate) fn dump_node_slice<G>(
     let mut out = String::new();
     dump_nodes::<_, _, _, _, PageDumpStorage>(
         stores,
-        nodes,
+        &nodes,
+        &config,
+        -1,
+        ListContext::Neutral,
+        false,
+        &mut out,
+    );
+    out
+}
+
+pub(crate) fn dump_node_sequence_view<G>(
+    stores: &CommandContext<'_, G>,
+    nodes: tex_state::node_arena::NodeCursor<'_>,
+    config: DumpConfig,
+) -> String {
+    let mut out = String::new();
+    dump_nodes::<_, _, _, _, PageDumpStorage>(
+        stores,
+        &nodes,
         &config,
         -1,
         ListContext::Neutral,
@@ -166,9 +186,10 @@ impl<G> DumpListProjection<G, PageDumpStorage> for PageListId {
         let list = stores
             .page_node_list(*self)
             .expect("diagnostic child belongs to the live page arena");
+        let nodes = list.nodes();
         dump_nodes::<_, _, _, _, PageDumpStorage>(
             stores,
-            list.nodes(),
+            &nodes,
             config,
             depth,
             context,
@@ -195,9 +216,10 @@ impl<G> DumpListProjection<G, DurableDumpStorage> for tex_state::node_arena::Dur
         let list = stores
             .node_list(*self)
             .expect("diagnostic child belongs to the live durable generation");
+        let nodes = list.nodes();
         dump_nodes::<_, _, _, _, PageDumpStorage>(
             stores,
-            list.nodes(),
+            &nodes,
             config,
             depth,
             context,
@@ -258,9 +280,48 @@ fn dump_projected_list<G, List: DumpListProjection<G, Storage>, Storage>(
     list.dump(stores, config, depth, context, false, out);
 }
 
+trait DumpNodeCollection<List, Glue, Tokens> {
+    fn len(&self) -> usize;
+    fn get(&self, index: usize) -> Option<&Node<List, Glue, Tokens>>;
+}
+
+impl<List, Glue, Tokens> DumpNodeCollection<List, Glue, Tokens> for &[Node<List, Glue, Tokens>] {
+    fn len(&self) -> usize {
+        <[Node<List, Glue, Tokens>]>::len(self)
+    }
+
+    fn get(&self, index: usize) -> Option<&Node<List, Glue, Tokens>> {
+        <[Node<List, Glue, Tokens>]>::get(self, index)
+    }
+}
+
+impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
+    for tex_state::node_arena::NodeCursor<'_>
+{
+    fn len(&self) -> usize {
+        tex_state::node_arena::NodeCursor::len(self)
+    }
+
+    fn get(&self, index: usize) -> Option<&Node> {
+        self.owned_node(index)
+    }
+}
+
+impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
+    for tex_state::node_sequence::NodeSequenceView<'_>
+{
+    fn len(&self) -> usize {
+        tex_state::node_sequence::NodeSequenceView::len(*self)
+    }
+
+    fn get(&self, index: usize) -> Option<&Node> {
+        tex_state::node_sequence::NodeSequenceView::get(*self, index)
+    }
+}
+
 fn dump_nodes<G, List, Glue, Tokens, Storage>(
     stores: &CommandContext<'_, G>,
-    nodes: &[Node<List, Glue, Tokens>],
+    nodes: &impl DumpNodeCollection<List, Glue, Tokens>,
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
@@ -301,18 +362,32 @@ fn dump_nodes<G, List, Glue, Tokens, Storage>(
             dump_node(stores, disc, config, depth, context, out);
             displayed += 1;
             if displayed < limit {
-                dump_node(stores, &nodes[index], config, depth, context, out);
+                dump_node(
+                    stores,
+                    nodes.get(index).expect("diagnostic index is in bounds"),
+                    config,
+                    depth,
+                    context,
+                    out,
+                );
                 displayed += 1;
             }
             if displayed < limit {
-                dump_node(stores, &nodes[index + 2], config, depth, context, out);
+                dump_node(
+                    stores,
+                    nodes.get(index + 2).expect("diagnostic index is in bounds"),
+                    config,
+                    depth,
+                    context,
+                    out,
+                );
                 displayed += 1;
             }
             index += 3;
             continue;
         }
 
-        let node = &nodes[index];
+        let node = nodes.get(index).expect("diagnostic index is in bounds");
         index += 1;
         displayed += 1;
         dump_node(stores, node, config, depth, context, out);

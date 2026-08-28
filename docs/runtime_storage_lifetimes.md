@@ -511,11 +511,15 @@ Nodes have four storage roles:
    retained checkpoints can name only sealed whole-chunk boundaries. A
    shared `&ChunkPool` yields stable direct payload borrows; every append,
    seal, transfer, rollback, or prune requires the caller's exclusive
-   `&mut ChunkPool`. A conservative durable bound protects page chunks
+   `&mut ChunkPool`. Persistent active lists retain only a move-only checked
+   builder coordinate and scalar tail state; they never retain that borrow.
+   A conservative durable bound protects page chunks
    rebranded into state carriers.
-3. Cold format materialization may own a physically separate generation-local
-   node arena. Loaded roots retain that arena; an ordinary runtime builder does
-   not publish into it.
+3. Cold format decode stages validated node rows directly into the same
+   generation-local page-material pool as its immutable initial accepted
+   prefix, then seals the initial checkpoint. Loaded durable roots are typed
+   rebrands of those canonical coordinates; ordinary resolution has no cold
+   fallback or later materialization copy.
 4. One generation-owned `ShipoutScratchArena<G>` contains only nodes genuinely
    derived by an active output attempt, currently math lowering. Stable rows
    retain warmed capacity; nested attempts take scalar marks and reset their

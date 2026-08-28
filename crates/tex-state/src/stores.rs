@@ -11,10 +11,7 @@ use crate::generation::{
     AcceptedGenerationTail, Generation, GenerationCursor, GenerationOwner, GenerationRetirement,
 };
 use crate::glue::GlueSpec;
-use crate::node_arena::{
-    AcceptedNodeArenaTail, DurableListId, NodeArenaCursor, NodeArenaError, NodeList,
-    NodeMemoryScratch, NodeRelocationScratch, PageLifetime, PageListId, PageNodeArena,
-};
+use crate::node_arena::NodeArenaError;
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
@@ -26,13 +23,11 @@ mod tests;
 /// Every mutable and immutable state owner for one revision generation.
 pub(crate) struct StateCore<G> {
     generation: GenerationOwner<G>,
-    nodes: PageNodeArena,
     state: DenseState<G>,
 }
 
 pub(crate) struct AcceptedStateCoreTail<G> {
     dense: AcceptedDenseStateTail<G>,
-    nodes: AcceptedNodeArenaTail<PageLifetime>,
     generation: AcceptedGenerationTail,
 }
 
@@ -42,7 +37,6 @@ impl<G> StateCore<G> {
         if !generation || !self.state.enable_reachable_state_identity() {
             return false;
         }
-        self.nodes.enable_semantic_identity();
         true
     }
 
@@ -119,10 +113,8 @@ impl<G> StateCore<G> {
     }
 
     pub(crate) fn new(generation: Generation<G>) -> Result<Self, StateError> {
-        let accounting = generation.memory_accounting();
         Ok(Self {
             generation: GenerationOwner::new(generation),
-            nodes: PageNodeArena::with_memory_accounting(accounting),
             state: DenseState::new()?,
         })
     }
@@ -137,7 +129,6 @@ impl<G> StateCore<G> {
     pub(crate) fn admit(&self) -> AdmittedState<'_, G> {
         AdmittedState {
             generation: self.generation.generation(),
-            nodes: &self.nodes,
             state: &self.state,
         }
     }
@@ -147,7 +138,6 @@ impl<G> StateCore<G> {
     pub(crate) fn admit_mut(&mut self) -> Result<AdmittedStateMut<'_, G>, StateError> {
         Ok(AdmittedStateMut {
             generation: self.generation.generation_mut(),
-            nodes: &mut self.nodes,
             state: &mut self.state,
         })
     }
@@ -162,50 +152,39 @@ impl<G> StateCore<G> {
     }
 
     #[must_use]
-    pub(crate) fn durable_node_cursor(&self) -> NodeArenaCursor<PageLifetime> {
-        self.nodes.cursor()
-    }
+    pub(crate) const fn durable_node_cursor(&self) {}
 
-    pub(crate) fn validate_durable_node_cursor(
-        &self,
-        cursor: NodeArenaCursor<PageLifetime>,
-    ) -> Result<(), NodeArenaError> {
-        self.nodes.validate_cursor(cursor)
+    pub(crate) fn validate_durable_node_cursor(&self, _cursor: ()) -> Result<(), NodeArenaError> {
+        Ok(())
     }
 
     pub(crate) fn durable_font_roots_are_live(
         &self,
-        cursor: NodeArenaCursor<PageLifetime>,
-        is_live: impl FnMut(crate::ids::FontId) -> bool,
+        _cursor: (),
+        _is_live: impl FnMut(crate::ids::FontId) -> bool,
     ) -> Result<bool, NodeArenaError> {
-        self.nodes.font_roots_are_live(cursor, is_live)
+        Ok(true)
     }
 
-    pub(crate) fn truncate_durable_nodes(
-        &mut self,
-        cursor: NodeArenaCursor<PageLifetime>,
-    ) -> Result<(), NodeArenaError> {
-        self.nodes.truncate(cursor)
+    pub(crate) fn truncate_durable_nodes(&mut self, _cursor: ()) -> Result<(), NodeArenaError> {
+        Ok(())
     }
 
     pub(crate) fn restore_durable_node_cursor(
         &mut self,
-        cursor: NodeArenaCursor<PageLifetime>,
+        _cursor: (),
     ) -> Result<(), NodeArenaError> {
-        self.nodes.restore_checkpoint_cursor(cursor)
+        Ok(())
     }
 
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         journal: crate::journal::JournalCursor<G>,
         dense: DenseStateCursor,
-        durable: NodeArenaCursor<PageLifetime>,
+        _durable: (),
         generation: GenerationCursor,
     ) -> Result<AcceptedStateCoreTail<G>, StateError> {
         self.state.validate_restore(journal)?;
-        self.nodes
-            .validate_cursor(durable)
-            .map_err(|_| StateError::InvalidCursor)?;
         if !self.generation.generation().validates_cursor(generation) {
             return Err(StateError::InvalidCursor);
         }
@@ -213,14 +192,9 @@ impl<G> StateCore<G> {
             .generation
             .generation_mut()
             .begin_checkpoint_candidate(generation);
-        let node_tail = self
-            .nodes
-            .begin_checkpoint_candidate(durable)
-            .map_err(|_| StateError::InvalidCursor)?;
         let dense = self.state.begin_checkpoint_candidate(journal, dense)?;
         Ok(AcceptedStateCoreTail {
             dense,
-            nodes: node_tail,
             generation: generation_tail,
         })
     }
@@ -229,15 +203,12 @@ impl<G> StateCore<G> {
         &mut self,
         journal: crate::journal::JournalCursor<G>,
         dense: DenseStateCursor,
-        durable: NodeArenaCursor<PageLifetime>,
+        _durable: (),
         generation: GenerationCursor,
         tail: AcceptedStateCoreTail<G>,
     ) -> Result<(), StateError> {
         self.state
             .reject_checkpoint_candidate(journal, dense, tail.dense)?;
-        self.nodes
-            .reject_checkpoint_candidate(durable, tail.nodes)
-            .map_err(|_| StateError::InvalidCursor)?;
         self.generation
             .generation_mut()
             .reject_checkpoint_candidate(generation, tail.generation);
@@ -245,7 +216,6 @@ impl<G> StateCore<G> {
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedStateCoreTail<G>) {
-        self.nodes.accept_checkpoint_candidate(tail.nodes);
         drop(tail.dense);
         drop(tail.generation);
     }
@@ -254,7 +224,7 @@ impl<G> StateCore<G> {
     pub(crate) fn retire(self) -> Result<StateCoreRetirement, StateError> {
         let journal_entries = self.state.journal_len();
         let allocated_overflow_pages = self.state.allocated_overflow_pages();
-        let durable_node_lists = self.nodes.len();
+        let durable_node_lists = 0;
         let generation = self
             .generation
             .retire()
@@ -283,26 +253,17 @@ impl<G> StateCore<G> {
     }
 }
 
-pub(crate) struct DynamicMemoryScratch<G> {
-    nodes: NodeMemoryScratch<PageLifetime>,
-    durable_to_page: NodeRelocationScratch<PageLifetime, PageLifetime>,
-    _brand: core::marker::PhantomData<fn(&G) -> &G>,
-}
+pub(crate) struct DynamicMemoryScratch<G>(core::marker::PhantomData<fn(&G) -> &G>);
 
 impl<G> Default for DynamicMemoryScratch<G> {
     fn default() -> Self {
-        Self {
-            nodes: NodeMemoryScratch::default(),
-            durable_to_page: NodeRelocationScratch::default(),
-            _brand: core::marker::PhantomData,
-        }
+        Self(core::marker::PhantomData)
     }
 }
 
 /// Immutable, already-admitted hot view.
 pub(crate) struct AdmittedState<'a, G> {
     generation: RwLockReadGuard<'a, Generation<G>>,
-    nodes: &'a PageNodeArena,
     state: &'a DenseState<G>,
 }
 
@@ -333,44 +294,6 @@ impl<'a, G> AdmittedState<'a, G> {
         self.generation.glue().get(id)
     }
 
-    #[inline(always)]
-    pub(crate) fn node_list(
-        &self,
-        id: DurableListId<G>,
-    ) -> Result<NodeList<'a, PageLifetime>, NodeArenaError> {
-        self.nodes.get(id.rebrand())
-    }
-
-    pub(crate) fn materialize_loaded_node_into_page(
-        &self,
-        root: DurableListId<G>,
-        destination: &mut PageNodeArena,
-        scratch: &mut DynamicMemoryScratch<G>,
-    ) -> Result<PageListId, NodeArenaError> {
-        Ok(self.nodes.promote_into_with_scratch(
-            &[root.rebrand()],
-            destination,
-            &mut scratch.durable_to_page,
-            core::convert::identity,
-            core::convert::identity,
-        )?[0])
-    }
-
-    pub(crate) fn copied_node_closure_tex_memory_words(
-        &self,
-        root: DurableListId<G>,
-        etex_node_sizes: bool,
-        scratch: &mut DynamicMemoryScratch<G>,
-    ) -> Result<(usize, usize), NodeArenaError> {
-        let (variable, dynamic, _) = self.nodes.semantic_memory_usage(
-            root.rebrand(),
-            etex_node_sizes,
-            &mut scratch.nodes,
-            |_| {},
-        )?;
-        Ok((variable.saturating_mul(2), dynamic))
-    }
-
     #[cfg(test)]
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
@@ -380,7 +303,6 @@ impl<'a, G> AdmittedState<'a, G> {
 /// Unique admitted view used for assignment and commit publication.
 pub(crate) struct AdmittedStateMut<'a, G> {
     generation: RwLockWriteGuard<'a, Generation<G>>,
-    nodes: &'a mut PageNodeArena,
     state: &'a mut DenseState<G>,
 }
 
@@ -397,10 +319,6 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
     pub(crate) fn state(&mut self) -> &mut DenseState<G> {
         self.state
-    }
-
-    pub(crate) fn nodes_mut(&mut self) -> &mut PageNodeArena {
-        self.nodes
     }
 
     #[inline(always)]
@@ -495,48 +413,11 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.glue_mut().allocate(value)
     }
 
-    pub(crate) fn node_list(
-        &self,
-        id: DurableListId<G>,
-    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
-        self.nodes.get(id.rebrand())
-    }
-
-    pub(crate) fn copied_node_closure_tex_memory_words(
-        &self,
-        root: DurableListId<G>,
-        etex_node_sizes: bool,
-        scratch: &mut DynamicMemoryScratch<G>,
-    ) -> Result<(usize, usize), NodeArenaError> {
-        let (variable, dynamic, _) = self.nodes.semantic_memory_usage(
-            root.rebrand(),
-            etex_node_sizes,
-            &mut scratch.nodes,
-            |_| {},
-        )?;
-        Ok((variable.saturating_mul(2), dynamic))
-    }
-
     pub(crate) fn allocate_provenance(
         &mut self,
         value: OriginRecord,
     ) -> Result<ProvenanceId<G>, DurableAllocationError> {
         self.generation.provenance_mut().allocate(value)
-    }
-
-    pub(crate) fn materialize_loaded_node_into_page(
-        &self,
-        root: DurableListId<G>,
-        destination: &mut PageNodeArena,
-        scratch: &mut DynamicMemoryScratch<G>,
-    ) -> Result<PageListId, NodeArenaError> {
-        Ok(self.nodes.promote_into_with_scratch(
-            &[root.rebrand()],
-            destination,
-            &mut scratch.durable_to_page,
-            core::convert::identity,
-            core::convert::identity,
-        )?[0])
     }
 
     /// Promotes one already-validated batch while this unique admitted borrow

@@ -385,18 +385,26 @@ fn split_page_insertion<G>(
         capacity = remaining_cap;
     }
 
-    let mut content_nodes = stores
+    let content_nodes = stores
         .page_node_list(content)
         .expect("insertion content belongs to the live page arena")
-        .nodes()
-        .to_vec();
+        .nodes();
     let split = vert_break(
         &crate::typeset_context::TypesetContext::new(stores),
-        &content_nodes,
+        content_nodes,
         capacity,
         split_max_depth,
     )
     .map_err(vertical_break_error)?;
+    let break_penalty = split.break_index.map_or(EJECT_PENALTY, |index| {
+        content_nodes
+            .owned_node(index)
+            .map_or(0, |node| match node {
+                Node::Penalty(value) => *value,
+                _ => 0,
+            })
+    });
+    drop(content_nodes);
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
         trace_insertion_split(
             stores,
@@ -404,14 +412,14 @@ fn split_page_insertion<G>(
             class,
             capacity,
             &split,
-            &content_nodes,
+            break_penalty,
         );
     }
     let replacement = normalize_insert_content_shrink(
         stores,
         diagnostic_effects,
         node,
-        &mut content_nodes,
+        content,
         &split.infinite_shrink_glue,
         diagnostic_context,
     )?;
@@ -427,9 +435,8 @@ fn split_page_insertion<G>(
     match split.break_index {
         None => add_insert_penalty(stores, EJECT_PENALTY),
         Some(index) => {
-            if let Some(Node::Penalty(penalty)) = content_nodes.get(index) {
-                add_insert_penalty(stores, *penalty);
-            }
+            let _ = index;
+            add_insert_penalty(stores, break_penalty);
         }
     }
     Ok(replacement)
@@ -442,14 +449,8 @@ fn trace_insertion_split<G>(
     class: u16,
     capacity: Scaled,
     split: &tex_typeset::VerticalBreak,
-    content: &[Node],
+    penalty: i32,
 ) {
-    let penalty = split.break_index.map_or(EJECT_PENALTY, |index| {
-        content.get(index).map_or(0, |node| match node {
-            Node::Penalty(value) => *value,
-            _ => 0,
-        })
-    });
     let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic.print_nl("% split").print_int(i32::from(class));
     diagnostic.print(" to ").print_scaled(capacity);
@@ -590,7 +591,7 @@ fn normalize_insert_content_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     insert_node: &Node,
-    content_nodes: &mut [Node],
+    content: tex_state::node_arena::PageListId,
     indices: &[usize],
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<Node>, ExecError> {
@@ -598,31 +599,44 @@ fn normalize_insert_content_shrink<G>(
         return Ok(None);
     }
 
-    let mut changed = false;
+    let content_nodes = stores
+        .page_node_list(content)
+        .expect("insertion content belongs to the live page arena")
+        .nodes();
+    let mut replacements = Vec::new();
     for &index in indices {
-        let Some(Node::Glue { spec, kind, leader }) = content_nodes.get(index) else {
+        let Some(Node::Glue { spec, kind, leader }) = content_nodes.owned_node(index) else {
             continue;
         };
         let mut finite = *spec;
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
+        finite.shrink_order = Order::Normal;
+        replacements.push((index, finite, *kind, *leader));
+    }
+    let content_len = content_nodes.len();
+    drop(content_nodes);
+    if replacements.is_empty() {
+        return Ok(None);
+    }
+    let mut slices = Vec::new();
+    let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
+    let mut start = 0;
+    for (index, spec, kind, leader) in replacements {
         diagnostics::report_split_infinite_shrinkage(
             stores,
             diagnostic_effects,
             diagnostic_context,
         )?;
-        finite.shrink_order = Order::Normal;
-        content_nodes[index] = Node::Glue {
-            spec: finite,
-            kind: *kind,
-            leader: *leader,
-        };
-        changed = true;
+        if start < index {
+            pieces.push(stores.slice_page_node_sequence(content, start..index, &mut slices));
+        }
+        pieces.push(stores.publish_page_nodes(vec![Node::Glue { spec, kind, leader }]));
+        start = index + 1;
     }
-
-    if !changed {
-        return Ok(None);
+    if start < content_len {
+        pieces.push(stores.slice_page_node_sequence(content, start..content_len, &mut slices));
     }
     let Node::Ins {
         class,
@@ -635,7 +649,7 @@ fn normalize_insert_content_shrink<G>(
     else {
         return Ok(None);
     };
-    let content = stores.publish_page_nodes(content_nodes.to_vec());
+    let content = stores.compose_page_node_sequences(&pieces);
     Ok(Some(Node::Ins {
         class: *class,
         size: *size,

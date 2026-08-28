@@ -180,10 +180,10 @@ impl<'a, G> FormatNodeCollector<'a, G> {
         let nodes = self
             .page_nodes
             .get(page_root)
-            .or_else(|_| self.admitted.node_list(root))
             .map_err(|_| "format node root is not live".to_owned())?
-            .nodes()
-            .to_vec();
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
         for node in &nodes {
             let mut children = Vec::new();
             node.visit_node_lists(|child| children.push(*child));
@@ -968,7 +968,7 @@ fn validate_pdf_format_roots(
                 return Err("PDF node root is out of range".to_owned());
             }
             Ok((
-                crate::node_arena::DurableListId::format_validation_coordinate(row),
+                crate::node_arena::DurableListId::empty(),
                 crate::state_hash::StateHashFragment::from_builder(
                     0x666d_745f_6e6f_6465,
                     |hasher| hasher.u32(row),
@@ -1410,13 +1410,8 @@ impl<G> Universe<G> {
                     .collect::<Result<Vec<_>, FormatError>>()?
             };
             let id = self
-                .core
-                .as_mut()
-                .expect("format candidate retains core")
-                .admit_mut()
-                .map_err(|_| FormatError::AllocationFailed)?
-                .nodes_mut()
-                .publish(nodes)
+                .page_nodes
+                .publish_owned(nodes)
                 .map_err(|_| FormatError::AllocationFailed)?;
             installed.push(id.rebrand());
         }

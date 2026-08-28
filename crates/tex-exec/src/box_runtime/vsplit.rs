@@ -14,7 +14,7 @@ use tex_typeset::{PackSpec, VerticalBreakError, vert_break};
 use crate::ExecError;
 use crate::diagnostics;
 use crate::packing_params::{vpack, vpack_params};
-use crate::splitting::{prune_page_top_with_discards, vpack_natural};
+use crate::splitting::{prune_page_top_list_with_discards, vpack_natural};
 
 pub(crate) fn split_vbox_register<G>(
     stores: &mut CommandContext<'_, G>,
@@ -60,31 +60,33 @@ pub(crate) fn split_vbox_register<G>(
         return Ok(None);
     };
 
-    let mut split_nodes = stores
-        .page_node_list(source_box.children)
-        .expect("vsplit source belongs to the live page arena")
-        .nodes()
-        .to_vec();
+    let split_nodes = source_box.children;
     let split = vert_break(
         &crate::typeset_context::TypesetContext::new(stores),
-        &split_nodes,
+        stores
+            .page_node_list(split_nodes)
+            .expect("vsplit source belongs to the live page arena")
+            .nodes(),
         height,
         split_max_depth,
     )
     .map_err(vertical_break_error)?;
-    normalize_split_infinite_shrink(
+    let split_nodes = normalize_split_infinite_shrink(
         stores,
-        &mut split_nodes,
+        split_nodes,
         &split.infinite_shrink_glue,
         diagnostic_context,
         diagnostic_effects,
     )?;
-    let remainder = match split.break_index {
-        Some(index) => split_nodes.split_off(index),
-        None => Vec::new(),
+    let (split_list, remainder) = match split.break_index {
+        Some(index) => (
+            stores.slice_page_node_sequence(split_nodes, 0..index, &mut Vec::new()),
+            stores.slice_page_node_sequence(split_nodes, index..split_nodes.len(), &mut Vec::new()),
+        ),
+        None => (split_nodes, tex_state::node_arena::PageListId::empty()),
     };
 
-    update_split_marks(stores, &split_nodes);
+    update_split_marks(stores, split_list);
     replace_split_source(
         stores,
         diagnostic_effects,
@@ -95,7 +97,6 @@ pub(crate) fn split_vbox_register<G>(
         split_top_skip,
     );
 
-    let split_list = stores.publish_page_nodes(split_nodes);
     let mut params = vpack_params(stores);
     params.box_max_depth = split_max_depth;
     Ok(Some(Node::VList(
@@ -114,16 +115,33 @@ pub(crate) fn split_vbox_register<G>(
 
 fn normalize_split_infinite_shrink<G>(
     stores: &mut CommandContext<'_, G>,
-    nodes: &mut [Node],
+    nodes: tex_state::node_arena::PageListId,
     indices: &[usize],
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<(), ExecError> {
-    for &index in indices {
-        let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let mut next_replacement = 0;
+    for index in 0..nodes.len() {
+        if indices.get(next_replacement).copied() != Some(index) {
+            stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
+            continue;
+        }
+        next_replacement += 1;
+        let replacement = match stores
+            .page_node_list(nodes)
+            .expect("vsplit source remains live")
+            .nodes()
+            .owned_node(index)
+        {
+            Some(Node::Glue { spec, kind, leader }) => Some((*spec, *kind, *leader)),
+            _ => None,
+        };
+        let Some((mut finite, kind, leader)) = replacement else {
+            stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
             continue;
         };
-        let mut finite = *spec;
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
@@ -133,13 +151,16 @@ fn normalize_split_infinite_shrink<G>(
             diagnostic_context,
         )?;
         finite.shrink_order = Order::Normal;
-        nodes[index] = Node::Glue {
-            spec: finite,
-            kind: *kind,
-            leader: *leader,
-        };
+        stores.push_page_active_list(
+            &mut output,
+            Node::Glue {
+                spec: finite,
+                kind,
+                leader,
+            },
+        );
     }
-    Ok(())
+    Ok(stores.finalize_page_active_list(&mut output))
 }
 
 fn replace_split_source<G>(
@@ -148,10 +169,10 @@ fn replace_split_source<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
-    remainder: Vec<Node>,
+    remainder: tex_state::node_arena::PageListId,
     split_top_skip: tex_state::glue::GlueSpec,
 ) {
-    let (pruned, discarded) = prune_page_top_with_discards(stores, remainder, split_top_skip);
+    let (pruned, discarded) = prune_page_top_list_with_discards(stores, remainder, split_top_skip);
     if stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0 {
         stores.set_split_discards(discarded);
     }
@@ -160,13 +181,12 @@ fn replace_split_source<G>(
         return;
     }
 
-    let remainder_list = stores.publish_page_nodes(pruned);
     let packed = vpack_natural(
         stores,
         diagnostic_effects,
         geometry,
         diagnostic_context,
-        remainder_list,
+        pruned,
     );
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores
@@ -174,10 +194,18 @@ fn replace_split_source<G>(
         .expect("split remainder stays in admitted page storage");
 }
 
-fn update_split_marks<G>(stores: &mut CommandContext<'_, G>, nodes: &[Node]) {
+fn update_split_marks<G>(
+    stores: &mut CommandContext<'_, G>,
+    nodes: tex_state::node_arena::PageListId,
+) {
     clear_split_marks(stores);
     let mut classes = BTreeMap::new();
-    for node in nodes {
+    for node in stores
+        .page_node_list(nodes)
+        .expect("vsplit prefix remains live")
+        .nodes()
+        .iter()
+    {
         if let Node::Mark { class, tokens } = node {
             let (first, bot) = classes.entry(*class).or_insert((None, None));
             if first.is_none() {

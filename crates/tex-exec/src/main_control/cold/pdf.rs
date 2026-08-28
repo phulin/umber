@@ -514,7 +514,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
             Node::Whatsit(Whatsit::PdfColorStack { id, action })
         }
     };
-    modes.current_list_mutation().push(node);
+    modes.current_list_mutation().push(stores, node);
     Ok(ReplayStep::Continue)
 }
 

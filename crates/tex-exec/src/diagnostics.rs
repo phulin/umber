@@ -541,11 +541,17 @@ pub(crate) fn execute_showlists<G>(
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
-            text.push_str(&dump_node_slice(
-                stores,
-                &nodes,
-                DumpConfig::read(stores).for_profile(profile),
-            ));
+            let config = DumpConfig::read(stores).for_profile(profile);
+            match nodes {
+                ShowlistsNodes::Page(list) => {
+                    text.push_str(&crate::node_dump::dump_page_list(stores, list, config));
+                }
+                ShowlistsNodes::Mode(nodes) => {
+                    text.push_str(&crate::node_dump::dump_node_sequence_view(
+                        stores, nodes, config,
+                    ));
+                }
+            }
         }
         match level.mode() {
             Mode::Vertical | Mode::InternalVertical => {
@@ -651,26 +657,26 @@ fn page_activity_snapshot<G>(
 /// linked display-level head still roots that mlist for `show_activities`;
 /// project Umber's typed `DisplayEqNo` owner back onto that level instead of
 /// displaying the now-empty construction list.
-fn showlists_level_nodes<G>(
-    stores: &CommandContext<'_, G>,
+enum ShowlistsNodes<'a> {
+    Page(tex_state::node_arena::PageListId),
+    Mode(tex_state::node_arena::NodeCursor<'a>),
+}
+
+fn showlists_level_nodes<'a, G>(
+    stores: &'a CommandContext<'_, G>,
     levels: &[crate::mode::ModeLevelSummary],
     index: usize,
-) -> Option<Vec<tex_state::node::Node>> {
+) -> Option<ShowlistsNodes<'a>> {
     let level = &levels[index];
     if level.mode() == Mode::DisplayMath
         && let Some(eq_no) = levels
             .get(index + 1)
             .and_then(|inner| inner.list().display_eq_no())
     {
-        return Some(
-            stores
-                .page_node_list(eq_no.display)
-                .expect("display equation belongs to the live page arena")
-                .nodes()
-                .to_vec(),
-        );
+        return Some(ShowlistsNodes::Page(eq_no.display));
     }
-    (!level.list().physical_nodes().is_empty()).then(|| level.list().physical_nodes().to_vec())
+    (!level.list().physical_nodes(stores).is_empty())
+        .then(|| ShowlistsNodes::Mode(level.list().physical_nodes(stores)))
 }
 
 /// TeX82 §218's insertion-record tail of `show_activities`.

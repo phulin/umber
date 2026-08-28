@@ -59,17 +59,7 @@ pub(crate) fn hpack_unreported<G>(
     spec: PackSpec,
     params: HpackParams,
 ) -> (PackedBox, Option<(usize, usize)>) {
-    let mut recovered = stores
-        .page_node_list(list)
-        .expect("packing input belongs to the live page arena")
-        .nodes()
-        .to_vec();
-    let lr_problems = recover_texxet_directions(stores, &mut recovered);
-    let list = if lr_problems.is_some() {
-        stores.publish_page_nodes(recovered)
-    } else {
-        list
-    };
+    let (list, lr_problems) = recover_frozen_texxet_directions(stores, list);
     let packed = tex_typeset::hpack(
         &crate::typeset_context::TypesetContext::new(stores),
         list,
@@ -79,6 +69,72 @@ pub(crate) fn hpack_unreported<G>(
     stores.set_last_badness(packed.badness);
     geometry.committed_hpack(packed.node.width, packed.node.height, packed.node.depth);
     (packed, lr_problems)
+}
+
+fn recover_frozen_texxet_directions<G>(
+    stores: &mut CommandContext<'_, G>,
+    list: PageListId,
+) -> (PageListId, Option<(usize, usize)>) {
+    if stores.int_param(IntParam::TEX_XET_STATE) <= 0 {
+        return (list, None);
+    }
+    let nodes = stores
+        .page_node_list(list)
+        .expect("packing input belongs to the live page arena")
+        .nodes();
+    let mut expected = Vec::new();
+    let mut extra_indices = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        let Node::Direction(direction) = node else {
+            continue;
+        };
+        let closes = match direction {
+            Direction::BeginM => Some(Direction::EndM),
+            Direction::BeginL => Some(Direction::EndL),
+            Direction::BeginR => Some(Direction::EndR),
+            Direction::EndM | Direction::EndL | Direction::EndR => None,
+        };
+        if let Some(closes) = closes {
+            expected.push(closes);
+        } else if expected.last() == Some(direction) {
+            let _ = expected.pop();
+        } else {
+            extra_indices.push(index);
+        }
+    }
+    let source_len = nodes.len();
+    let missing = expected.len();
+    let extra = extra_indices.len();
+    drop(nodes);
+    if missing == 0 && extra == 0 {
+        return (list, None);
+    }
+
+    let mut slices = Vec::new();
+    let mut pieces = Vec::with_capacity(extra.saturating_mul(2) + 2);
+    let mut start = 0;
+    for index in extra_indices {
+        if start < index {
+            pieces.push(stores.slice_page_node_sequence(list, start..index, &mut slices));
+        }
+        pieces.push(stores.publish_page_nodes(vec![Node::Kern {
+            amount: Scaled::from_raw(0),
+            kind: KernKind::Explicit,
+        }]));
+        start = index + 1;
+    }
+    if start < source_len {
+        pieces.push(stores.slice_page_node_sequence(list, start..source_len, &mut slices));
+    }
+    if missing != 0 {
+        pieces.push(
+            stores.publish_page_nodes(expected.into_iter().rev().map(Node::Direction).collect()),
+        );
+    }
+    (
+        stores.compose_page_node_sequences(&pieces),
+        Some((missing, extra)),
+    )
 }
 
 pub(crate) fn report_hpack<G>(

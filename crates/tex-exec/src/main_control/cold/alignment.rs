@@ -301,15 +301,18 @@ pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
                 .current_list_mutation()
                 .set_prev_depth(Scaled::from_raw(0)),
         }
-        modes.current_list_mutation().push(Node::Glue {
-            spec: active
-                .tabskips
-                .first()
-                .cloned()
-                .unwrap_or(active.default_tabskip),
-            kind: GlueKind::TabSkip,
-            leader: None,
-        });
+        modes.current_list_mutation().push(
+            stores,
+            Node::Glue {
+                spec: active
+                    .tabskips
+                    .first()
+                    .cloned()
+                    .unwrap_or(active.default_tabskip),
+                kind: GlueKind::TabSkip,
+                leader: None,
+            },
+        );
         active.captured_rows.push(Vec::new());
         active.row_open = true;
     }
@@ -363,15 +366,15 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
             cell.list_mutation().take_nodes(),
             false,
         );
-        let (retained, mut pre_migrated, migrated) =
+        let (retained, pre_migrated, migrated) =
             crate::box_runtime::split_hpack_migrations(stores, material);
-        pre_migrated.extend(migrated);
-        active.row_migrations.extend(pre_migrated);
+        let migrations = stores.compose_page_node_sequences(&[pre_migrated, migrated]);
+        active.row_migrations =
+            stores.compose_page_node_sequences(&[active.row_migrations, migrations]);
         retained
     } else {
         cell.list_mutation().take_nodes()
     };
-    let material = stores.publish_page_nodes(material);
     active
         .captured_rows
         .last_mut()
@@ -389,16 +392,19 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         active.cell_span,
         crate::align::packaging::UnsetPackContext::Cell,
     )?;
-    modes.current_list_mutation().push(cell);
-    modes.current_list_mutation().push(Node::Glue {
-        spec: active
-            .tabskips
-            .get(active.column.saturating_add(1))
-            .cloned()
-            .unwrap_or(active.default_tabskip),
-        kind: GlueKind::TabSkip,
-        leader: None,
-    });
+    modes.current_list_mutation().push(stores, cell);
+    modes.current_list_mutation().push(
+        stores,
+        Node::Glue {
+            spec: active
+                .tabskips
+                .get(active.column.saturating_add(1))
+                .cloned()
+                .unwrap_or(active.default_tabskip),
+            kind: GlueKind::TabSkip,
+            leader: None,
+        },
+    );
     active.cell_open = false;
     Ok(())
 }
@@ -417,7 +423,7 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     }
 
     let mut row = crate::box_runtime::commit_current_list(modes, stores, diagnostic_effects, fuel)?;
-    let children = stores.publish_page_nodes(row.list_mutation().take_nodes());
+    let children = row.list_mutation().take_nodes();
     let row = crate::align::packaging::make_unset_node(
         stores,
         diagnostic_effects,
@@ -449,15 +455,20 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
             // must not pass through §679's vertical baseline calculation;
             // doing so inserts baselineskip between rows, and a surrounding
             // hpack then counts that vertical glue as horizontal cell width.
-            modes.current_list_mutation().push(row);
+            modes.current_list_mutation().push(stores, row);
             modes.current_list_mutation().set_space_factor(1000);
         }
     }
     // §799 continues `if cur_head<>cur_tail then begin link(tail):=link(cur_head);
     // tail:=cur_tail end`: the migrated material is spliced immediately after the
     // row, as a plain list splice with no interline glue of its own.
-    for node in std::mem::take(&mut active.row_migrations) {
-        crate::vertical::append_vertical_contribution(modes, stores, node);
+    let migrations = std::mem::take(&mut active.row_migrations);
+    if crate::vertical::is_outer_vertical(modes) {
+        stores.append_page_contributions(migrations);
+    } else {
+        modes
+            .current_list_mutation()
+            .append_list(stores, migrations);
     }
     active.row_open = false;
     Ok(())
@@ -563,13 +574,14 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     };
     let finished = crate::align::widths::finish_alignment(
         &state,
-        &rows,
+        rows,
         offset,
         stores,
         diagnostic_effects,
         geometry,
         diagnostic_context,
     )?;
+    let finished = stores.publish_page_nodes(finished);
     let aux_prev_depth = alignment.list().prev_depth();
     let aux_space_factor = matches!(
         alignment.mode(),

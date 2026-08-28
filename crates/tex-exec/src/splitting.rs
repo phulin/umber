@@ -18,6 +18,128 @@ pub(crate) fn prune_page_top<G>(
     prune_page_top_with_discards(stores, nodes, split_top_skip).0
 }
 
+pub(crate) fn prune_page_top_list<G>(
+    stores: &mut CommandContext<'_, G>,
+    source: PageListId,
+    split_top_skip: GlueSpec,
+) -> PageListId {
+    let nodes = stores
+        .page_node_list(source)
+        .expect("page-top source belongs to the live page arena")
+        .nodes();
+    let mut retained = Vec::<core::ops::Range<usize>>::new();
+    let mut run_start = None;
+    let mut first_box = None;
+    let mut adjusted_top_skip = None;
+    for (index, node) in nodes.iter().enumerate() {
+        if matches!(node, Node::HList(_) | Node::VList(_) | Node::Rule { .. }) {
+            if let Some(start) = run_start.take() {
+                retained.push(start..index);
+            }
+            let adjusted = GlueSpec {
+                width: split_top_skip
+                    .width
+                    .checked_sub(vertical_height(node))
+                    .filter(|width| width.raw() > 0)
+                    .unwrap_or_else(|| Scaled::from_raw(0)),
+                stretch: split_top_skip.stretch,
+                stretch_order: split_top_skip.stretch_order,
+                shrink: split_top_skip.shrink,
+                shrink_order: split_top_skip.shrink_order,
+            };
+            adjusted_top_skip = Some(adjusted);
+            first_box = Some(index);
+            break;
+        }
+        if is_page_top_discardable(node) {
+            if let Some(start) = run_start.take() {
+                retained.push(start..index);
+            }
+        } else {
+            run_start.get_or_insert(index);
+        }
+    }
+    if first_box.is_none()
+        && let Some(start) = run_start
+    {
+        retained.push(start..nodes.len());
+    }
+    let source_len = nodes.len();
+    drop(nodes);
+
+    let mut slices = Vec::new();
+    let mut pieces = Vec::with_capacity(retained.len() + 2);
+    for range in retained {
+        pieces.push(stores.slice_page_node_sequence(source, range, &mut slices));
+    }
+    if let (Some(index), Some(spec)) = (first_box, adjusted_top_skip) {
+        pieces.push(stores.publish_page_nodes(vec![Node::Glue {
+            spec,
+            kind: GlueKind::SplitTopSkip,
+            leader: None,
+        }]));
+        pieces.push(stores.slice_page_node_sequence(source, index..source_len, &mut slices));
+    }
+    stores.compose_page_node_sequences(&pieces)
+}
+
+pub(crate) fn prune_page_top_list_with_discards<G>(
+    stores: &mut CommandContext<'_, G>,
+    source: PageListId,
+    split_top_skip: GlueSpec,
+) -> (PageListId, PageListId) {
+    let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    let mut discarded = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut retained);
+    stores.open_page_active_list(&mut discarded);
+    let mut found_box = false;
+    for index in 0..source.len() {
+        if found_box {
+            stores.append_page_active_list_range(&mut retained, source, index..index + 1);
+            continue;
+        }
+        let node = stores
+            .page_node_list(source)
+            .expect("page-top source belongs to the live page arena")
+            .nodes()
+            .owned_node(index)
+            .expect("page-top source index remains in range");
+        match &node {
+            Node::HList(_) | Node::VList(_) | Node::Rule { .. } => {
+                let adjusted = GlueSpec {
+                    width: split_top_skip
+                        .width
+                        .checked_sub(vertical_height(&node))
+                        .filter(|width| width.raw() > 0)
+                        .unwrap_or_else(|| Scaled::from_raw(0)),
+                    stretch: split_top_skip.stretch,
+                    stretch_order: split_top_skip.stretch_order,
+                    shrink: split_top_skip.shrink,
+                    shrink_order: split_top_skip.shrink_order,
+                };
+                stores.push_page_active_list(
+                    &mut retained,
+                    Node::Glue {
+                        spec: adjusted,
+                        kind: GlueKind::SplitTopSkip,
+                        leader: None,
+                    },
+                );
+                stores.append_page_active_list_range(&mut retained, source, index..index + 1);
+                found_box = true;
+            }
+            _ if is_page_top_discardable(&node) => {
+                stores.append_page_active_list_range(&mut discarded, source, index..index + 1);
+            }
+            _ => stores.append_page_active_list_range(&mut retained, source, index..index + 1),
+        }
+    }
+    (
+        stores.finalize_page_active_list(&mut retained),
+        stores.finalize_page_active_list(&mut discarded),
+    )
+}
+
 pub(crate) fn prune_page_top_with_discards<G>(
     _stores: &mut CommandContext<'_, G>,
     nodes: Vec<Node>,

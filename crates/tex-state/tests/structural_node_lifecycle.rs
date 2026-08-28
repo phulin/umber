@@ -7,8 +7,8 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::{Universe, with_universe};
 
 fn boxed_penalty<G>(universe: &mut Universe<G>, penalty: i32) -> PageListId {
-    let children = universe.publish_page_nodes(&[Node::Penalty(penalty)]);
-    universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
+    let children = universe.publish_page_nodes_owned(vec![Node::Penalty(penalty)]);
+    universe.publish_page_nodes_owned(vec![Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),

@@ -17,10 +17,6 @@ use crate::glue::GlueSpec;
 use crate::memory_accounting::MemoryAccounting;
 use crate::node::{Node, NodeTokenList};
 
-#[cfg(test)]
-#[path = "node_arena/tests.rs"]
-mod tests;
-
 static NEXT_ARENA_OWNER: AtomicU64 = AtomicU64::new(1);
 static NEXT_LIST_GENERATION: AtomicU64 = AtomicU64::new(1);
 const LIST_GENERATION_STRIDE: u64 = 1_u64 << 32;
@@ -178,10 +174,12 @@ impl<L> core::hash::Hash for NodeListId<L> {
 pub type ScratchListId = NodeListId<ScratchLifetime>;
 
 /// List coordinate used by open modes and the page builder.
-pub type PageListId = NodeListId<PageLifetime>;
+pub use crate::page_node_arena::PageListId;
 
 /// List coordinate retained by one revision generation.
-pub type DurableListId<G> = NodeListId<G>;
+pub use crate::page_node_arena::DurableListId;
+
+pub(crate) type LegacyPageListId = NodeListId<PageLifetime>;
 
 /// Copy-only coordinate of one immutable subrange in a node-arena row.
 ///
@@ -276,7 +274,7 @@ impl<L> PartialEq for NodeRangeId<L> {
 impl<L> Eq for NodeRangeId<L> {}
 
 /// Open-mode and page-builder immutable node-range coordinate.
-pub type PageNodeRange = NodeRangeId<PageLifetime>;
+pub type PageNodeRange = PageListId;
 
 const MAX_NODE_RANGE_REGIONS: usize = 4;
 
@@ -494,7 +492,7 @@ impl<L> PartialEq for ArenaNodeSequenceId<L> {
 impl<L> Eq for ArenaNodeSequenceId<L> {}
 
 /// Page-arena logical node sequence coordinate.
-pub type PageNodeSequenceId = ArenaNodeSequenceId<PageLifetime>;
+pub type PageNodeSequenceId = PageListId;
 
 /// Caller-owned reusable descriptor scratch for one immutable node transform.
 ///
@@ -2553,56 +2551,6 @@ impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     }
 }
 
-impl<'a> NodeList<'a, PageLifetime> {
-    #[must_use]
-    pub fn get(&self, index: usize) -> Option<NodeRef<'a>> {
-        self.nodes().get(index).map(NodeRef::from)
-    }
-
-    #[must_use]
-    pub fn first(self) -> Option<NodeRef<'a>> {
-        self.get(0)
-    }
-
-    #[must_use]
-    pub fn last(self) -> Option<NodeRef<'a>> {
-        self.len().checked_sub(1).and_then(|index| self.get(index))
-    }
-
-    pub fn iter(self) -> impl ExactSizeIterator<Item = NodeRef<'a>> {
-        self.nodes().iter().map(NodeRef::from)
-    }
-
-    #[must_use]
-    pub fn contains_direction(self) -> bool {
-        self.nodes()
-            .iter()
-            .any(|node| matches!(node, Node::Direction(_)))
-    }
-
-    #[must_use]
-    pub fn requires_shipout_normalization(self) -> bool {
-        self.nodes().iter().any(node_requires_shipout_normalization)
-    }
-
-    #[must_use]
-    pub fn node_requires_shipout_normalization(self, index: usize) -> Option<bool> {
-        self.nodes()
-            .get(index)
-            .map(node_requires_shipout_normalization)
-    }
-
-    #[must_use]
-    pub fn char_run(self, index: usize) -> Option<CharRun<'a>> {
-        CharRun::new(self.nodes(), index)
-    }
-
-    #[must_use]
-    pub fn char_codes(self, index: usize) -> Option<CharCodes<'a>> {
-        CharCodes::new(NodeCursor::compact(self.nodes()), index)
-    }
-}
-
 fn node_requires_shipout_normalization(node: &Node) -> bool {
     matches!(
         node,
@@ -2631,7 +2579,9 @@ fn node_requires_shipout_normalization(node: &Node) -> bool {
 pub type ScratchNodeArena = NodeArena<ScratchLifetime>;
 
 /// Open-mode and page-builder node storage.
-pub type PageNodeArena = NodeArena<PageLifetime>;
+pub use crate::page_node_arena::PageMaterialArena as PageNodeArena;
+
+pub(crate) type LegacyPageNodeArena = NodeArena<PageLifetime>;
 
 /// Revision-generation durable node storage.
 pub type DurableNodeArena<G> = NodeArena<G, GlueId<G>, TokenListId<G>>;
@@ -3071,14 +3021,29 @@ pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
 }
 
+impl core::fmt::Debug for NodeCursor<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl PartialEq for NodeCursor<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
 #[derive(Clone, Copy)]
 enum NodeCursorSource<'a> {
     Slice(&'a [Node]),
-    Arena(ArenaNodeSequence<'a, PageLifetime>),
     Fork(crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>),
 }
 
 impl<'a> NodeCursor<'a> {
+    #[must_use]
+    pub const fn nodes(self) -> Self {
+        self
+    }
     #[must_use]
     pub const fn owned(nodes: &'a [Node]) -> Self {
         Self {
@@ -3088,12 +3053,6 @@ impl<'a> NodeCursor<'a> {
     #[must_use]
     pub const fn compact(nodes: &'a [Node]) -> Self {
         Self::owned(nodes)
-    }
-    #[must_use]
-    pub const fn arena(sequence: ArenaNodeSequence<'a, PageLifetime>) -> Self {
-        Self {
-            source: NodeCursorSource::Arena(sequence),
-        }
     }
     #[must_use]
     pub const fn fork_arena(
@@ -3107,7 +3066,6 @@ impl<'a> NodeCursor<'a> {
     pub const fn len(&self) -> usize {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.len(),
-            NodeCursorSource::Arena(sequence) => sequence.len(),
             NodeCursorSource::Fork(view) => view.len(),
         }
     }
@@ -3123,7 +3081,6 @@ impl<'a> NodeCursor<'a> {
     pub fn owned_node(&self, index: usize) -> Option<&'a Node> {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.get(index),
-            NodeCursorSource::Arena(sequence) => sequence.get(index),
             NodeCursorSource::Fork(view) => view.get(index),
         }
     }
@@ -3141,10 +3098,14 @@ impl<'a> NodeCursor<'a> {
     pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {
         CharCodes::new(*self, index)
     }
+
+    #[must_use]
+    pub fn char_run(&self, index: usize) -> Option<CharRun<'a>> {
+        CharRun::new(*self, index)
+    }
     pub fn iter(&self) -> NodeCursorIter<'a> {
         match self.source {
             NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(nodes.iter()),
-            NodeCursorSource::Arena(sequence) => NodeCursorIter::Arena(sequence.iter()),
             NodeCursorSource::Fork(view) => NodeCursorIter::Fork {
                 view,
                 front: 0,
@@ -3154,9 +3115,17 @@ impl<'a> NodeCursor<'a> {
     }
 }
 
+impl<'a> IntoIterator for NodeCursor<'a> {
+    type Item = &'a Node;
+    type IntoIter = NodeCursorIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 pub enum NodeCursorIter<'a> {
     Slice(core::slice::Iter<'a, Node>),
-    Arena(ArenaNodeSequenceIter<'a, PageLifetime>),
     Fork {
         view: crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>,
         front: usize,
@@ -3170,7 +3139,6 @@ impl<'a> Iterator for NodeCursorIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Slice(nodes) => nodes.next(),
-            Self::Arena(nodes) => nodes.next(),
             Self::Fork { view, front, back } => {
                 if *front == *back {
                     return None;
@@ -3185,7 +3153,6 @@ impl<'a> Iterator for NodeCursorIter<'a> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             Self::Slice(nodes) => nodes.size_hint(),
-            Self::Arena(nodes) => nodes.size_hint(),
             Self::Fork { front, back, .. } => {
                 let remaining = *back - *front;
                 (remaining, Some(remaining))
@@ -3195,6 +3162,21 @@ impl<'a> Iterator for NodeCursorIter<'a> {
 }
 
 impl ExactSizeIterator for NodeCursorIter<'_> {}
+
+impl<'a> DoubleEndedIterator for NodeCursorIter<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Slice(nodes) => nodes.next_back(),
+            Self::Fork { view, front, back } => {
+                if *front == *back {
+                    return None;
+                }
+                *back -= 1;
+                view.get(*back)
+            }
+        }
+    }
+}
 
 /// Lazy same-font byte-character run.
 pub struct CharCodes<'a> {
@@ -3239,15 +3221,15 @@ impl Iterator for CharCodes<'_> {
 /// Borrowed maximal run of page-arena byte characters with one font.
 #[derive(Clone, Copy, Debug)]
 pub struct CharRun<'a> {
-    nodes: &'a [Node],
+    nodes: NodeCursor<'a>,
     start: usize,
     end: usize,
     font: crate::ids::FontId,
 }
 
 impl<'a> CharRun<'a> {
-    fn new(nodes: &'a [Node], start: usize) -> Option<Self> {
-        let Node::Char { font, ch, .. } = nodes.get(start)? else {
+    fn new(nodes: NodeCursor<'a>, start: usize) -> Option<Self> {
+        let Node::Char { font, ch, .. } = nodes.owned_node(start)? else {
             return None;
         };
         u8::try_from(*ch as u32).ok()?;
@@ -3256,7 +3238,7 @@ impl<'a> CharRun<'a> {
             font: candidate,
             ch,
             ..
-        }) = nodes.get(end)
+        }) = nodes.owned_node(end)
         {
             if candidate != font || u8::try_from(*ch as u32).is_err() {
                 break;
@@ -3287,7 +3269,11 @@ impl<'a> CharRun<'a> {
     }
 
     pub fn codes(self) -> impl ExactSizeIterator<Item = u8> + 'a {
-        self.nodes[self.start..self.end].iter().map(|node| {
+        (self.start..self.end).map(move |index| {
+            let node = self
+                .nodes
+                .owned_node(index)
+                .expect("character-run index remains live");
             let Node::Char { ch, .. } = node else {
                 unreachable!("character-run bounds contain only characters")
             };
@@ -3296,7 +3282,11 @@ impl<'a> CharRun<'a> {
     }
 
     pub fn origins(self) -> impl ExactSizeIterator<Item = crate::token::OriginId> + 'a {
-        self.nodes[self.start..self.end].iter().map(|node| {
+        (self.start..self.end).map(move |index| {
+            let node = self
+                .nodes
+                .owned_node(index)
+                .expect("character-run index remains live");
             let Node::Char { origin, .. } = node else {
                 unreachable!("character-run bounds contain only characters")
             };

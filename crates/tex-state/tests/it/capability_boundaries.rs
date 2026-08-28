@@ -50,9 +50,6 @@ fn restricted_capabilities_reject_privileged_apis() {
         "shipout-scratch-checkpoint-forbidden",
         &manifest_dir.join("tests/ui/shipout_scratch_checkpoint_forbidden.rs"),
         &dependencies,
-        &[
-            "expected `NodeListId<PageLifetime>`",
-            "found `ShipoutScratchListId`",
-        ],
+        &["expected `PageListId`", "found `ShipoutScratchListId`"],
     );
 }

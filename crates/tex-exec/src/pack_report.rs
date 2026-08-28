@@ -352,7 +352,7 @@ fn append_short_display<G>(
         .nodes();
     append_short_display_cursor(
         stores,
-        tex_state::node_arena::NodeCursor::compact(nodes),
+        nodes,
         0,
         nodes.len(),
         match list_layout {

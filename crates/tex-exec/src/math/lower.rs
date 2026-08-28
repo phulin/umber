@@ -423,12 +423,10 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
 
 impl<G> TypesetState for LoweredMathSink<'_, '_, G> {
     fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
-        tex_state::node_arena::NodeCursor::compact(
-            self.stores
-                .page_node_list(list)
-                .expect("math list belongs to the admitted page arena")
-                .nodes(),
-        )
+        self.stores
+            .page_node_list(list)
+            .expect("math list belongs to the admitted page arena")
+            .nodes()
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
@@ -664,28 +662,45 @@ pub(crate) fn finish_math_lists_owned<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    nodes: Vec<Node>,
+    nodes: tex_state::node_arena::PageListId,
     insert_penalties: bool,
-) -> Vec<Node> {
-    if !nodes.iter().any(|node| matches!(node, Node::MathList(_))) {
+) -> tex_state::node_arena::PageListId {
+    let math_indexes = stores
+        .page_node_list(nodes)
+        .expect("math-list source belongs to the live page arena")
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| matches!(node, Node::MathList(_)).then_some(index))
+        .collect::<Vec<_>>();
+    if math_indexes.is_empty() {
         return nodes;
     }
-    let mut out = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        match node {
-            Node::MathList(list) => {
-                out.extend(finish_math_list_node(
-                    stores,
-                    diagnostic_effects,
-                    geometry,
-                    list,
-                    insert_penalties,
-                ));
-            }
-            node => out.push(node),
+    let source_len = nodes.len();
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let mut copied_through = 0;
+    for index in math_indexes {
+        stores.append_page_active_list_range(&mut output, nodes, copied_through..index);
+        let list = match stores
+            .page_node_list(nodes)
+            .expect("math-list source remains live")
+            .nodes()
+            .owned_node(index)
+            .expect("recorded math-list index remains in range")
+        {
+            Node::MathList(list) => list.clone(),
+            _ => unreachable!("recorded index is a math-list node"),
+        };
+        for node in
+            finish_math_list_node(stores, diagnostic_effects, geometry, list, insert_penalties)
+        {
+            stores.push_page_active_list(&mut output, node);
         }
+        copied_through = index + 1;
     }
-    out
+    stores.append_page_active_list_range(&mut output, nodes, copied_through..source_len);
+    stores.finalize_page_active_list(&mut output)
 }
 
 fn lower_math_box<List>(boxed: &MathBox, children: List) -> BoxNode<List> {

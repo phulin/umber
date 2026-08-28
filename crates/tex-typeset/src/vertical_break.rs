@@ -1,5 +1,6 @@
 use tex_state::glue::Order;
 use tex_state::node::Node;
+use tex_state::node_arena::NodeCursor;
 use tex_state::page::{AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY};
 use tex_state::scaled::Scaled;
 
@@ -23,7 +24,7 @@ pub enum VerticalBreakError {
 /// TeX.web `vert_break`: choose the least-cost breakpoint in a vertical list.
 pub fn vert_break(
     state: &impl TypesetState,
-    nodes: &[Node],
+    nodes: NodeCursor<'_>,
     goal: Scaled,
     max_depth: Scaled,
 ) -> Result<VerticalBreak, VerticalBreakError> {
@@ -37,7 +38,7 @@ pub fn vert_break(
     let mut prev_node = nodes.first();
 
     for index in 0..=nodes.len() {
-        let node = nodes.get(index);
+        let node = nodes.owned_node(index);
         let mut update_spacing = false;
         let mut penalty = None;
 
@@ -72,7 +73,7 @@ pub fn vert_break(
                 }
             }
             Some(Node::Kern { .. } | Node::MarginKern { .. }) => {
-                if matches!(nodes.get(index + 1), Some(Node::Glue { .. })) {
+                if matches!(nodes.owned_node(index + 1), Some(Node::Glue { .. })) {
                     penalty = Some(0);
                     update_spacing = true;
                 } else {

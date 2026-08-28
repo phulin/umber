@@ -115,12 +115,16 @@ pub(crate) fn finish_display_math<G>(
     // adjustments before §663's `short_display` examines an overfull
     // formula. Keep the migrated material beside the display instead of
     // leaving zero-dimensional wrappers inside its packed hlist.
-    let (display_nodes, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
-    let shrink = hlist_shrink(stores, &display_nodes);
-    let display_starts_with_glue = display_nodes
+    let display_nodes = stores.publish_page_nodes(display_nodes);
+    let (display_list, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
+    let display_view = stores
+        .page_node_list(display_list)
+        .expect("display list belongs to the live page arena")
+        .nodes();
+    let shrink = hlist_shrink(display_view);
+    let display_starts_with_glue = display_view
         .first()
         .is_some_and(|node| matches!(node, Node::Glue { .. }));
-    let display_list = stores.publish_page_nodes(display_nodes);
     let mut display_box = hpack_nodes(
         stores,
         diagnostic_effects,
@@ -264,9 +268,7 @@ pub(crate) fn finish_display_math<G>(
             pre_display_direction,
         );
     }
-    for node in pre_migrated {
-        append_vertical_contribution(nest, stores, node);
-    }
+    append_display_list(nest, stores, pre_migrated);
     append_node_to_vertical_list(nest, stores, Node::HList(display_line))?;
 
     if let Some(mut boxed) = eq_box
@@ -285,9 +287,7 @@ pub(crate) fn finish_display_math<G>(
     // tail ahead of the post-display penalty. Appending it immediately after
     // the formula exposes adjustment penalties as page-break candidates
     // before a non-fitting equation-number line contributes its height.
-    for node in migrated {
-        append_vertical_contribution(nest, stores, node);
-    }
+    append_display_list(nest, stores, migrated);
 
     append_vertical_contribution(
         nest,
@@ -337,9 +337,20 @@ pub(crate) fn finish_display_alignment<G>(
     // `append_vertical_contribution` is that direct tail/page-contribution
     // router; unlike `append_node_to_vertical_list`, it inserts no baseline
     // glue around the rows §799 already separated.
-    for node in finished.nodes {
-        append_vertical_contribution(nest, stores, display_alignment_node(node));
+    let mut aligned = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut aligned);
+    for index in 0..finished.nodes.len() {
+        let node = stores
+            .page_node_list(finished.nodes)
+            .expect("display alignment belongs to the live page arena")
+            .nodes()
+            .owned_node(index)
+            .expect("display alignment index remains in range")
+            .clone();
+        stores.push_page_active_list(&mut aligned, display_alignment_node(node));
     }
+    let aligned = stores.finalize_page_active_list(&mut aligned);
+    append_display_list(nest, stores, aligned);
     if let Some(prev_depth) = finished.aux_prev_depth {
         nest.current_list_mutation().set_prev_depth(prev_depth);
     }
@@ -446,9 +457,9 @@ struct ShrinkTotals {
     filll: Scaled,
 }
 
-fn hlist_shrink<G>(_stores: &CommandContext<'_, G>, nodes: &[Node]) -> ShrinkTotals {
+fn hlist_shrink(nodes: tex_state::node_arena::NodeCursor<'_>) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
-    for node in nodes {
+    for node in nodes.iter() {
         if let Node::Glue { spec, .. } = node {
             let glue = spec;
             totals[glue.shrink_order as usize] = totals[glue.shrink_order as usize] + glue.shrink;
@@ -462,6 +473,18 @@ fn hlist_shrink<G>(_stores: &CommandContext<'_, G>, nodes: &[Node]) -> ShrinkTot
     }
 }
 
+fn append_display_list<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    nodes: tex_state::node_arena::PageListId,
+) {
+    if crate::vertical::is_outer_vertical(nest) {
+        stores.append_page_contributions(nodes);
+    } else {
+        nest.current_list_mutation().append_list(stores, nodes);
+    }
+}
+
 pub(crate) fn pre_display_size<G>(stores: &CommandContext<'_, G>, line: &BoxNode) -> Scaled {
     let quad = stores.font_parameter(stores.current_font(), 6);
     let mut v = line.shift + quad + quad;
@@ -471,7 +494,7 @@ pub(crate) fn pre_display_size<G>(stores: &CommandContext<'_, G>, line: &BoxNode
         .expect("display line belongs to the live page arena")
         .iter()
     {
-        let (d, visible, glue_depends_on_set) = pre_display_node_width(stores, line, node);
+        let (d, visible, glue_depends_on_set) = pre_display_node_width(stores, line, node.into());
         if glue_depends_on_set {
             v = Scaled::MAX_DIMEN;
         }

@@ -176,7 +176,7 @@ pub(crate) enum PreparedShipoutSource<G> {
 pub(crate) struct PreparedShipout<G> {
     pub(crate) source: PreparedShipoutSource<G>,
     pub(crate) region:
-        Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+        Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
 }
 
 /// The exact parent-list field that TeX82 §1153 saved before `push_math`.
@@ -442,14 +442,14 @@ struct SetBoxTarget {
 #[derive(Debug)]
 struct PendingSetBox {
     target: SetBoxTarget,
-    region: tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+    region: tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
 }
 
 #[derive(Debug)]
 struct ActiveReplayBox {
     target: Option<PendingSetBox>,
     shipout_region:
-        Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+        Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
     kind: ReplayBoxKind,
     group_kind: GroupKind,
     packing: PackSpec,
@@ -573,7 +573,7 @@ struct ActiveReplayAlignment<G> {
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
     /// and `\vadjust` contents §796's `hpack` migrated out of this row's
     /// columns, waiting for §799 `fin_row` to append them after the row.
-    row_migrations: Vec<Node>,
+    row_migrations: tex_state::node_arena::PageListId,
     cell_span: u16,
     row_open: bool,
     cell_open: bool,
@@ -583,7 +583,7 @@ struct ActiveReplayAlignment<G> {
 struct ReplayBoxes<G> {
     pending_setbox: Option<PendingSetBox>,
     pending_shipout:
-        Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+        Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment<G>>,
@@ -1543,7 +1543,7 @@ struct DirectOperationMark<G> {
     state: tex_state::StateOperation<G>,
     mode: crate::mode::ModeJournalCursor,
     attempt: tex_command::CommandAttemptOperation,
-    page: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
+    page: tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
 }
 
 #[derive(Clone, Copy)]
@@ -3143,7 +3143,7 @@ impl<G> MainControl<G> {
         if self.modes.current_list().pending_hchars().is_some() {
             return None;
         }
-        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
+        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes(context).iter())
             .and_then(|tail| Self::classify_last_node(context, tail.node()))
     }
 
@@ -3162,7 +3162,7 @@ impl<G> MainControl<G> {
         if self.modes.current_list().pending_hchars().is_some() {
             return 0;
         }
-        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
+        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes(context).iter())
             .map_or(-1, |tail| tail.node().etex_type())
     }
 
@@ -3197,9 +3197,8 @@ impl<G> MainControl<G> {
                 .page_node_list(*replace)
                 .expect("discretionary replacement belongs to the live page arena")
                 .nodes()
-                .to_vec()
-                .pop()
-                .and_then(|node| Self::classify_last_node(stores, &node)),
+                .last()
+                .and_then(|node| Self::classify_last_node(stores, node)),
             _ => None,
         }
     }
@@ -4011,25 +4010,27 @@ impl<G> MainControl<G> {
         // first forbidden node `p`, severs `link(q)`. Thus the prefix remains
         // this discretionary part while `show_box(p)` reports and flushes the
         // entire suffix beginning at the offending node.
-        let first_forbidden = level.list().nodes().iter().position(|node| {
-            !matches!(
-                node,
-                Node::Char { .. }
-                    | Node::Lig { .. }
-                    | Node::Kern { .. }
-                    | Node::Rule { .. }
-                    | Node::HList(_)
-                    | Node::VList(_)
-            )
-        });
-        let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
-        let (nodes, deleted) = {
+        let (nodes, deleted, prefix_end) = {
             let context = stores.command_context().expect("live generation");
             let mut stores = LinearCommandContext::new(context);
-            let mut part = level.list_mutation().take_nodes();
-            let deleted = first_forbidden.map(|index| part.split_off(index));
-            let nodes = stores.publish_page_nodes(part);
-            let deleted = deleted.map(|nodes| stores.publish_page_nodes(nodes));
+            let first_forbidden = level.list().nodes(&stores).iter().position(|node| {
+                !matches!(
+                    node,
+                    Node::Char { .. }
+                        | Node::Lig { .. }
+                        | Node::Kern { .. }
+                        | Node::Rule { .. }
+                        | Node::HList(_)
+                        | Node::VList(_)
+                )
+            });
+            let part_len = level.list().nodes(&stores).len();
+            let prefix_end = first_forbidden.unwrap_or(part_len);
+            let part = level.list_mutation().take_nodes();
+            let mut slices = Vec::new();
+            let nodes = stores.slice_page_node_sequence(part, 0..prefix_end, &mut slices);
+            let deleted = first_forbidden
+                .map(|index| stores.slice_page_node_sequence(part, index..part_len, &mut slices));
             let aftergroup = leave_group_payloads(
                 &mut stores,
                 &mut self.command,
@@ -4044,7 +4045,7 @@ impl<G> MainControl<G> {
                 &mut stores,
                 aftergroup,
             )?;
-            (nodes, deleted)
+            (nodes, deleted, prefix_end)
         };
 
         let (part_count, replacement_too_long) = {
@@ -4147,13 +4148,16 @@ impl<G> MainControl<G> {
             .len()
             .try_into()
             .expect("TeX discretionary replacement count fits a quarterword");
-        self.modes.current_list_mutation().push(Node::Disc {
-            kind: DiscKind::Discretionary,
-            pre,
-            post,
-            replace,
-            physical_replace_count,
-        });
+        self.modes.current_list_mutation().push(
+            &mut stores.command_context().expect("live generation"),
+            Node::Disc {
+                kind: DiscKind::Discretionary,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            },
+        );
         Ok(ReplayStep::Continue)
     }
 
@@ -4210,13 +4214,16 @@ impl<G> MainControl<G> {
             }
         };
         let empty = tex_state::node_arena::PageListId::empty();
-        self.modes.current_list_mutation().push(Node::Disc {
-            kind: DiscKind::ExplicitHyphen,
-            pre,
-            post: empty,
-            replace: empty,
-            physical_replace_count: 0,
-        });
+        self.modes.current_list_mutation().push(
+            &mut stores.command_context().expect("live generation"),
+            Node::Disc {
+                kind: DiscKind::ExplicitHyphen,
+                pre,
+                post: empty,
+                replace: empty,
+                physical_replace_count: 0,
+            },
+        );
         Ok(ReplayStep::Continue)
     }
 
@@ -6230,7 +6237,7 @@ impl<G> MainControl<G> {
         };
         fill_math_field_target(
             &mut self.modes,
-            &stores.command_context().expect("math-field admission"),
+            &mut stores.command_context().expect("math-field admission"),
             target,
             field,
         );
@@ -6247,7 +6254,7 @@ impl<G> MainControl<G> {
             MathRequest::Character(value) => {
                 append_math_char(
                     self.modes.current_list_mutation(),
-                    &stores.command_context().expect("live generation"),
+                    &mut stores.command_context().expect("live generation"),
                     u32::from(value.code),
                     value.provenance.primary,
                 )?;
@@ -6255,7 +6262,7 @@ impl<G> MainControl<G> {
             MathRequest::Delimiter(value) => {
                 append_math_char(
                     self.modes.current_list_mutation(),
-                    &stores.command_context().expect("live generation"),
+                    &mut stores.command_context().expect("live generation"),
                     value.code >> 12,
                     value.provenance.primary,
                 )?;
@@ -6268,13 +6275,13 @@ impl<G> MainControl<G> {
                 // its parent level, with an empty subsidiary field.  Reserve
                 // that exact parent-list position before entering the live
                 // group, then fill it after the scan completes.
-                let node_index = self.modes.current_list().nodes().len();
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
-                        noad_kind_for_text(kind),
-                        MathField::Empty,
-                    )));
+                let mut context = stores.command_context().expect("math text-field admission");
+                let node_index = self.modes.current_list().nodes(&context).len();
+                self.modes.current_list_mutation().push(
+                    &mut context,
+                    Node::MathNoad(MathNoad::new(noad_kind_for_text(kind), MathField::Empty)),
+                );
+                drop(context);
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
                 self.accept_math_field(
                     episode,
@@ -6302,7 +6309,11 @@ impl<G> MainControl<G> {
                 )?;
             }
             MathRequest::Limits(kind) => {
-                if !apply_limits(self.modes.current_list_mutation(), kind) {
+                if !apply_limits(
+                    self.modes.current_list_mutation(),
+                    &mut stores.command_context().expect("math limits admission"),
+                    kind,
+                ) {
                     // §1159 falls through to the error only when the tail is
                     // not an `op_noad`; the switch is dropped and the job
                     // continues.
@@ -6330,16 +6341,15 @@ impl<G> MainControl<G> {
                     report.error().defer_recovery(diagnostic_effects)?;
                 }
             }
-            MathRequest::Style(style) => {
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathStyle(match style {
-                        MathStyleKind::Display => MathStyle::Display,
-                        MathStyleKind::Text => MathStyle::Text,
-                        MathStyleKind::Script => MathStyle::Script,
-                        MathStyleKind::ScriptScript => MathStyle::ScriptScript,
-                    }))
-            }
+            MathRequest::Style(style) => self.modes.current_list_mutation().push(
+                &mut stores.command_context().expect("math style admission"),
+                Node::MathStyle(match style {
+                    MathStyleKind::Display => MathStyle::Display,
+                    MathStyleKind::Text => MathStyle::Text,
+                    MathStyleKind::Script => MathStyle::Script,
+                    MathStyleKind::ScriptScript => MathStyle::ScriptScript,
+                }),
+            ),
             MathRequest::Choice => {
                 // TeX82 §1172's `append_choices` opens the first branch with
                 // `push_math(math_choice_group); scan_left_brace`, and
@@ -6373,25 +6383,29 @@ impl<G> MainControl<G> {
                 })();
                 self.active_math_choices.pop();
                 let (display, text, script, script_script) = branches?;
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathChoice(MathChoice {
+                self.modes.current_list_mutation().push(
+                    &mut stores.command_context().expect("math choice admission"),
+                    Node::MathChoice(MathChoice {
                         display,
                         text,
                         script,
                         script_script,
-                    }));
+                    }),
+                );
             }
             MathRequest::Radical(delimiter) => {
-                let node_index = self.modes.current_list().nodes().len();
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
+                let mut context = stores.command_context().expect("math radical admission");
+                let node_index = self.modes.current_list().nodes(&context).len();
+                self.modes.current_list_mutation().push(
+                    &mut context,
+                    Node::MathNoad(MathNoad::new(
                         NoadKind::Radical {
                             delimiter: delimiter.code,
                         },
                         MathField::Empty,
-                    )));
+                    )),
+                );
+                drop(context);
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
                 self.accept_math_field(
                     episode,
@@ -6431,13 +6445,13 @@ impl<G> MainControl<G> {
                     accent.provenance.primary,
                 )?
                 .1;
-                let node_index = self.modes.current_list().nodes().len();
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
-                        NoadKind::Accent { accent },
-                        MathField::Empty,
-                    )));
+                let mut context = stores.command_context().expect("math accent admission");
+                let node_index = self.modes.current_list().nodes(&context).len();
+                self.modes.current_list_mutation().push(
+                    &mut context,
+                    Node::MathNoad(MathNoad::new(NoadKind::Accent { accent }, MathField::Empty)),
+                );
+                drop(context);
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
                 self.accept_math_field(
                     episode,
@@ -6450,17 +6464,23 @@ impl<G> MainControl<G> {
                 )?;
             }
             MathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
-                self.modes.current_list_mutation().push(Node::Glue {
-                    spec: glue,
-                    kind: GlueKind::MuSkip,
-                    leader: None,
-                })
+                self.modes.current_list_mutation().push(
+                    &mut stores.command_context().expect("math glue admission"),
+                    Node::Glue {
+                        spec: glue,
+                        kind: GlueKind::MuSkip,
+                        leader: None,
+                    },
+                )
             }
             MathRequest::MuMaterial(ScannedMathMuMaterial::Kern(amount)) => {
-                self.modes.current_list_mutation().push(Node::Kern {
-                    amount,
-                    kind: KernKind::Mu,
-                })
+                self.modes.current_list_mutation().push(
+                    &mut stores.command_context().expect("math kern admission"),
+                    Node::Kern {
+                        amount,
+                        kind: KernKind::Mu,
+                    },
+                )
             }
             MathRequest::EquationNumber(number) => {
                 if self.modes.current_mode() != Mode::DisplayMath {
@@ -6902,7 +6922,9 @@ impl<G> MainControl<G> {
             insert_penalties,
             conversion_error_context,
         );
-        self.modes.current_list_mutation().append(nodes);
+        self.modes
+            .current_list_mutation()
+            .append(&mut context, nodes);
         self.modes.current_list_mutation().set_space_factor(1000);
         let aftergroup = leave_group_payloads(
             &mut context,
@@ -7185,9 +7207,12 @@ impl<G> MainControl<G> {
             .current_list_mutation()
             .set_hyphen_context(language, left, right);
         self.modes.current_list_mutation().set_space_factor(1000);
-        self.modes
-            .current_list_mutation()
-            .append(directions.into_iter().map(Node::Direction));
+        self.modes.current_list_mutation().append(
+            &mut stores
+                .command_context()
+                .expect("display direction admission"),
+            directions.into_iter().map(Node::Direction),
+        );
         if scan_optional_space {
             self.scan_optional_space(stores, diagnostic_effects)?;
         }
@@ -7302,14 +7327,15 @@ impl<G> MainControl<G> {
                         .unwrap_or(i32::MAX),
                 )?;
                 self.active_math_left_boundaries.push(false);
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
+                self.modes.current_list_mutation().push(
+                    &mut stores.command_context().expect("math-left admission"),
+                    Node::MathNoad(MathNoad::new(
                         NoadKind::LeftDelimiter {
                             delimiter: boundary.delimiter.code,
                         },
                         MathField::Empty,
-                    )));
+                    )),
+                );
             }
             MathDelimiterBoundaryKind::Middle => {
                 if left_group_open(&self.modes, stores) {
@@ -7359,19 +7385,17 @@ impl<G> MainControl<G> {
                             .unwrap_or(i32::MAX),
                     )?;
                     self.active_math_left_boundaries.push(true);
-                    let segment = context
-                        .page_node_list(content)
-                        .expect("math segment belongs to the live page arena")
-                        .nodes()
-                        .to_vec();
-                    self.modes
-                        .current_list_mutation()
-                        .append(segment.into_iter().chain([Node::MathNoad(MathNoad::new(
+                    let mut list = self.modes.current_list_mutation();
+                    list.append_list(&mut context, content);
+                    list.push(
+                        &mut context,
+                        Node::MathNoad(MathNoad::new(
                             NoadKind::MiddleDelimiter {
                                 delimiter: boundary.delimiter.code,
                             },
                             MathField::Empty,
-                        ))]));
+                        )),
+                    );
                 } else {
                     // etex.ch [48.1192] splits §1192's report by noad type.
                     let mut command_context = stores.command_context().expect("live generation");
@@ -7429,24 +7453,20 @@ impl<G> MainControl<G> {
                     &mut context,
                     aftergroup,
                 )?;
-                let mut nodes = context
-                    .page_node_list(content)
-                    .expect("math segment belongs to the live page arena")
-                    .nodes()
-                    .to_vec();
-                nodes.push(Node::MathNoad(MathNoad::new(
+                let boundary = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
                     NoadKind::RightDelimiter {
                         delimiter: boundary.delimiter.code,
                     },
                     MathField::Empty,
-                )));
-                let content = context.publish_page_nodes(nodes);
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
+                ))]);
+                let content = context.compose_page_node_sequences(&[content, boundary]);
+                self.modes.current_list_mutation().push(
+                    &mut context,
+                    Node::MathNoad(MathNoad::new(
                         NoadKind::Normal(NoadClass::Inner),
                         MathField::SubMlist(content),
-                    )));
+                    )),
+                );
             }
         }
         Ok(ReplayStep::Continue)
@@ -9556,15 +9576,18 @@ fn math_char<G>(
 
 fn append_math_char<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &CommandContext<'_, G>,
+    stores: &mut CommandContext<'_, G>,
     code: u32,
     origin: tex_state::token::OriginId,
 ) -> Result<(), ExecError> {
     let (class, character) = math_char(stores, code, origin)?;
-    list.push(Node::MathNoad(MathNoad::new(
-        NoadKind::Normal(class),
-        MathField::MathChar(character),
-    )));
+    list.push(
+        stores,
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(class),
+            MathField::MathChar(character),
+        )),
+    );
     Ok(())
 }
 
@@ -9685,32 +9708,42 @@ pub(crate) fn reserve_script_target<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     kind: MathScriptKind,
 ) -> Result<ScriptTarget, ExecError> {
+    let mut context = stores.command_context().expect("math script admission");
     // `t<>empty`: the tail was eligible but already carries this script.
-    let tail_index = list.nodes().len().checked_sub(1);
-    let (eligible, occupied) = match tail_index.and_then(|index| list.nodes().get(index)) {
-        Some(node) if scripts_allowed(node) => {
-            let Node::MathNoad(noad) = node else {
-                unreachable!("scripts_allowed admits only noads")
-            };
-            let occupied = match kind {
-                MathScriptKind::Superscript => !matches!(noad.superscript, MathField::Empty),
-                MathScriptKind::Subscript => !matches!(noad.subscript, MathField::Empty),
-            };
-            (true, occupied)
-        }
-        _ => (false, false),
-    };
+    let tail_index = list.nodes(&context).len().checked_sub(1);
+    let (eligible, occupied) =
+        match tail_index.and_then(|index| list.nodes(&context).owned_node(index)) {
+            Some(Node::MathNoad(noad))
+                if !matches!(
+                    noad.kind,
+                    NoadKind::LeftDelimiter { .. }
+                        | NoadKind::RightDelimiter { .. }
+                        | NoadKind::MiddleDelimiter { .. }
+                ) =>
+            {
+                let occupied = match kind {
+                    MathScriptKind::Superscript => !matches!(noad.superscript, MathField::Empty),
+                    MathScriptKind::Subscript => !matches!(noad.subscript, MathField::Empty),
+                };
+                (true, occupied)
+            }
+            _ => (false, false),
+        };
 
     let node_index = if eligible && !occupied {
         tail_index.expect("eligible tail has an index")
     } else {
-        let index = list.nodes().len();
-        list.push(Node::MathNoad(MathNoad::new(
-            NoadKind::Normal(NoadClass::Ord),
-            MathField::Empty,
-        )));
+        let index = list.nodes(&context).len();
+        list.push(
+            &mut context,
+            Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::Empty,
+            )),
+        );
         index
     };
+    drop(context);
 
     if occupied {
         let (message, help) = match kind {
@@ -9731,12 +9764,13 @@ pub(crate) fn reserve_script_target<G>(
     Ok(ScriptTarget { node_index, kind })
 }
 
-pub(crate) fn fill_script_target(
+pub(crate) fn fill_script_target<G>(
     mut list: crate::mode::ModeListMutation<'_>,
+    stores: &mut CommandContext<'_, G>,
     target: ScriptTarget,
     field: MathField,
 ) {
-    list.with_node_mut(target.node_index, |node| {
+    list.with_node_mut(stores, target.node_index, |node| {
         let Node::MathNoad(noad) = node else {
             unreachable!("reserved canonical script target must remain a noad")
         };
@@ -9751,13 +9785,13 @@ pub(crate) fn fill_script_target(
 /// the opener. The mode level containing the field has already been popped.
 fn fill_math_field_target<G>(
     modes: &mut ModeNest,
-    stores: &CommandContext<'_, G>,
+    stores: &mut CommandContext<'_, G>,
     target: ActiveMathFieldTarget,
     field: MathField,
 ) {
     match target {
         ActiveMathFieldTarget::Script(target) => {
-            fill_script_target(modes.current_list_mutation(), target, field);
+            fill_script_target(modes.current_list_mutation(), stores, target, field);
         }
         ActiveMathFieldTarget::Nucleus {
             node_index,
@@ -9766,21 +9800,25 @@ fn fill_math_field_target<G>(
             // TeX82 §1186's second brace simplification: when a braced
             // field contains exactly one accent noad and is the nucleus of
             // an Ord atom, replace that Ord atom by the accent itself.
-            let accent = if simplify_accent
-                && let MathField::SubMlist(list) = field
-                && let [Node::MathNoad(accent)] = stores
+            let accent = if simplify_accent && let MathField::SubMlist(list) = field {
+                let nodes = stores
                     .page_node_list(list)
                     .expect("math field belongs to the live page arena")
-                    .nodes()
-                && matches!(accent.kind, NoadKind::Accent { .. })
-            {
-                Some(accent.clone())
+                    .nodes();
+                match nodes.owned_node(0) {
+                    Some(Node::MathNoad(accent))
+                        if nodes.len() == 1 && matches!(accent.kind, NoadKind::Accent { .. }) =>
+                    {
+                        Some(accent.clone())
+                    }
+                    _ => None,
+                }
             } else {
                 None
             };
             modes
                 .current_list_mutation()
-                .with_node_mut(node_index, |node| {
+                .with_node_mut(stores, node_index, |node| {
                     if let Some(accent) = accent {
                         *node = Node::MathNoad(accent);
                     } else {
@@ -9796,11 +9834,15 @@ fn fill_math_field_target<G>(
     }
 }
 
-fn apply_limits(mut list: crate::mode::ModeListMutation<'_>, kind: MathLimitKind) -> bool {
+fn apply_limits<G>(
+    mut list: crate::mode::ModeListMutation<'_>,
+    stores: &mut CommandContext<'_, G>,
+    kind: MathLimitKind,
+) -> bool {
     // TeX82 §1159's `math_limit_switch`: the subtype is set only when
     // `head<>tail` *and* the tail is an `op_noad`. `with_last_node_mut`
     // returns `None` for the empty list, which is `head=tail`.
-    list.with_last_node_mut(|node| {
+    list.with_last_node_mut(stores, |node| {
         let Node::MathNoad(noad) = node else {
             return false;
         };
@@ -9828,7 +9870,7 @@ fn start_fraction<G>(
     if list.incomplete_fraction().is_some() {
         return false;
     }
-    let numerator = stores.publish_page_nodes_owned(list.take_nodes());
+    let numerator = list.take_nodes();
     list.set_incomplete_fraction(crate::mode::IncompleteFraction {
         numerator,
         thickness: match fraction.thickness {
@@ -9842,21 +9884,20 @@ fn start_fraction<G>(
 }
 
 fn finish_math_list<G>(
-    mut output: Vec<Node>,
+    output: tex_state::node_arena::PageListId,
     incomplete: Option<crate::mode::IncompleteFraction>,
     stores: &mut CommandContext<'_, G>,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
     if let Some(fraction) = incomplete {
-        let denominator = stores.publish_page_nodes(output);
+        let denominator = output;
         // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
         // recent `\left` or `\middle` in a math-left group.  Completion moves
         // only the nodes after that boundary into the numerator, then links
         // the fraction noad immediately after the boundary.
-        let mut numerator_nodes = stores
+        let numerator_nodes = stores
             .page_node_list(fraction.numerator)
             .expect("fraction numerator belongs to the live page arena")
-            .nodes()
-            .to_vec();
+            .nodes();
         let boundary = numerator_nodes.iter().rposition(|node| {
             matches!(
                 node,
@@ -9866,16 +9907,24 @@ fn finish_math_list<G>(
                 })
             )
         });
-        let (prefix, numerator_nodes) = if let Some(boundary) = boundary {
-            let numerator = numerator_nodes.split_off(boundary + 1);
-            (numerator_nodes, numerator)
+        let numerator_len = numerator_nodes.len();
+        drop(numerator_nodes);
+        let mut slices = Vec::new();
+        let (prefix, numerator) = if let Some(boundary) = boundary {
+            (
+                Some(stores.slice_page_node_sequence(
+                    fraction.numerator,
+                    0..boundary + 1,
+                    &mut slices,
+                )),
+                stores.slice_page_node_sequence(
+                    fraction.numerator,
+                    boundary + 1..numerator_len,
+                    &mut slices,
+                ),
+            )
         } else {
-            (Vec::new(), numerator_nodes)
-        };
-        let numerator = if prefix.is_empty() {
-            fraction.numerator
-        } else {
-            stores.publish_page_nodes(numerator_nodes)
+            (None, fraction.numerator)
         };
         let fraction = Node::FractionNoad(MathFraction {
             numerator,
@@ -9884,9 +9933,12 @@ fn finish_math_list<G>(
             left_delimiter: fraction.left_delimiter,
             right_delimiter: fraction.right_delimiter,
         });
-        output = prefix.into_iter().chain([fraction]).collect();
+        if let Some(prefix) = prefix {
+            let fraction = stores.publish_page_nodes(vec![fraction]);
+            return Ok(stores.compose_page_node_sequences(&[prefix, fraction]));
+        }
+        return Ok(stores.publish_page_nodes(vec![fraction]));
     }
-    let output = stores.publish_page_nodes(output);
     Ok(output)
 }
 
@@ -9904,7 +9956,8 @@ fn collapse_singleton_math_group<G>(
         .page_node_list(list)
         .expect("math group belongs to the live page arena")
         .nodes();
-    if let [Node::MathNoad(noad)] = nodes
+    if nodes.len() == 1
+        && let Some(Node::MathNoad(noad)) = nodes.owned_node(0)
         && noad.kind == NoadKind::Normal(NoadClass::Ord)
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
@@ -10076,12 +10129,13 @@ fn left_group_open<G>(modes: &ModeNest, stores: &mut Universe<G>) -> bool {
             }))
         )
     };
-    starts_left_node(modes.current_list().nodes().first())
+    let context = stores.command_context().expect("math-left query admission");
+    starts_left_node(modes.current_list().nodes(&context).first())
         || modes
             .current_list()
             .incomplete_fraction()
             .is_some_and(|fraction| {
-                stores
+                context
                     .page_node_list(fraction.numerator)
                     .ok()
                     .and_then(|list| list.nodes().first())

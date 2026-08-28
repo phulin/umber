@@ -188,7 +188,7 @@ fn project_physical_pre_break_spans<G>(
         if replacement.len() != 1
             || !matches!(
                 replacement.first(),
-                Some(tex_state::node_arena::NodeRef::Kern {
+                Some(Node::Kern {
                     kind: KernKind::Font,
                     ..
                 })

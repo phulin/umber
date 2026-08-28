@@ -138,7 +138,7 @@ pub(crate) fn append_whatsit<G>(
         // ownership, allowing §1054's end-job ejection to ship the reference.
         crate::vertical::append_vertical_contribution(nest, stores, node);
     } else {
-        nest.current_list_mutation().push(node);
+        nest.current_list_mutation().push(stores, node);
     }
     Ok(())
 }
@@ -187,7 +187,7 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
         let shaped = shape_open_type_chars(stores, &pending.source, &breaks);
         let mut list = nest.current_list_mutation();
         list.set_no_boundary(false);
-        list.append(shaped);
+        list.append(stores, shaped);
         return Ok(());
     }
     let no_boundary = nest.current_list().no_boundary();
@@ -208,7 +208,7 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     };
     let mut list = nest.current_list_mutation();
     list.set_no_boundary(false);
-    list.append(nodes);
+    list.append(stores, nodes);
     Ok(())
 }
 
@@ -261,13 +261,16 @@ pub(crate) fn append_space_after_flush<G>(
     };
     let (mut spec, kind) = interword_glue(stores, sf);
     if configuration.adjusts_interword_glue() {
-        adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
+        adjust_interword_glue(stores, nest.current_list().nodes(stores), &mut spec);
     }
-    nest.current_list_mutation().push(Node::Glue {
-        spec,
-        kind,
-        leader: None,
-    });
+    nest.current_list_mutation().push(
+        stores,
+        Node::Glue {
+            spec,
+            kind,
+            leader: None,
+        },
+    );
     Ok(())
 }
 
@@ -284,13 +287,16 @@ pub(crate) fn append_control_space_glue_after_flush<G>(
 ) -> Result<(), ExecError> {
     let (mut spec, kind) = space_skip_or_font_space(stores, 1000);
     if stores.pdf_font_configuration().adjusts_interword_glue() {
-        adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
+        adjust_interword_glue(stores, nest.current_list().nodes(stores), &mut spec);
     }
-    nest.current_list_mutation().push(Node::Glue {
-        spec,
-        kind,
-        leader: None,
-    });
+    nest.current_list_mutation().push(
+        stores,
+        Node::Glue {
+            spec,
+            kind,
+            leader: None,
+        },
+    );
     Ok(())
 }
 
@@ -443,16 +449,18 @@ pub(crate) fn indent_in_hmode<G>(
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let indent_box = make_indent_box(stores);
         let list = stores.publish_page_nodes(vec![indent_box]);
-        nest.current_list_mutation()
-            .push(Node::MathNoad(MathNoad::new(
+        nest.current_list_mutation().push(
+            stores,
+            Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
                 MathField::SubBox(list),
-            )));
+            )),
+        );
     } else {
         flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
         nest.current_list_mutation().set_space_factor(1000);
         let indent_box = make_indent_box(stores);
-        nest.current_list_mutation().push(indent_box);
+        nest.current_list_mutation().push(stores, indent_box);
     }
     Ok(())
 }
@@ -1102,7 +1110,7 @@ pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
 
 pub(crate) fn adjust_interword_glue<G>(
     stores: &CommandContext<'_, G>,
-    nodes: tex_state::node_sequence::NodeSequenceView<'_>,
+    nodes: tex_state::node_arena::NodeCursor<'_>,
     spec: &mut GlueSpec,
 ) {
     let mut glyph = None;
@@ -1331,7 +1339,7 @@ pub(crate) fn append_italic_correction_with_fuel<G>(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
-    let Some((font, ch)) = last_font_char(nest.current_list().nodes()) else {
+    let Some((font, ch)) = last_font_char(nest.current_list().nodes(stores)) else {
         return Ok(());
     };
     let Ok(code) = font_code(ch) else {
@@ -1340,15 +1348,18 @@ pub(crate) fn append_italic_correction_with_fuel<G>(
     let Some(metrics) = stores.font_char_metrics(font, code) else {
         return Ok(());
     };
-    nest.current_list_mutation().push(Node::Kern {
-        amount: metrics.italic_correction,
-        kind: KernKind::Explicit,
-    });
+    nest.current_list_mutation().push(
+        stores,
+        Node::Kern {
+            amount: metrics.italic_correction,
+            kind: KernKind::Explicit,
+        },
+    );
     Ok(())
 }
 
 pub(crate) fn last_font_char(
-    nodes: tex_state::node_sequence::NodeSequenceView<'_>,
+    nodes: tex_state::node_arena::NodeCursor<'_>,
 ) -> Option<(tex_state::ids::FontId, char)> {
     match nodes.last()? {
         Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => Some((*font, *ch)),

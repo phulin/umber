@@ -40,8 +40,7 @@ pub trait TypesetState {
     fn page_node_sequence(
         &self,
         _sequence: tex_state::node_arena::PageNodeSequenceId,
-    ) -> Option<tex_state::node_arena::ArenaNodeSequence<'_, tex_state::node_arena::PageLifetime>>
-    {
+    ) -> Option<tex_state::node_arena::NodeCursor<'_>> {
         None
     }
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;

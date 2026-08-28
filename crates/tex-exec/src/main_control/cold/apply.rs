@@ -110,7 +110,7 @@ pub(in crate::main_control) fn apply<G>(
                 )?;
                 modes
                     .current_list_mutation()
-                    .push(Node::Direction(direction));
+                    .push(stores, Node::Direction(direction));
             } else {
                 let name = match direction {
                     tex_state::node::Direction::BeginM => "beginM",
@@ -347,11 +347,14 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            modes.current_list_mutation().push(Node::Glue {
-                spec: value,
-                kind: GlueKind::Normal,
-                leader: None,
-            });
+            modes.current_list_mutation().push(
+                stores,
+                Node::Glue {
+                    spec: value,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ColdOperation::Kern { amount } => {
@@ -477,10 +480,13 @@ pub(in crate::main_control) fn apply<G>(
                     // overridden here (unlike hmode's italic-correction kern,
                     // or an explicit `\kern`), so it must not become a legal
                     // kern-then-glue line-break point.
-                    modes.current_list_mutation().push(Node::Kern {
-                        amount: Scaled::from_raw(0),
-                        kind: KernKind::Font,
-                    });
+                    modes.current_list_mutation().push(
+                        stores,
+                        Node::Kern {
+                            amount: Scaled::from_raw(0),
+                            kind: KernKind::Font,
+                        },
+                    );
                 }
                 Mode::Vertical | Mode::InternalVertical => {
                     unreachable!("vertical \\/ is scanned as IllegalItalicCorrection")
@@ -537,11 +543,14 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::NonScript => {
             // TeX82 §1171: a zero glue with the `cond_math_glue` subtype.
-            modes.current_list_mutation().push(Node::Glue {
-                spec: GlueSpec::ZERO,
-                kind: GlueKind::NonScript,
-                leader: None,
-            });
+            modes.current_list_mutation().push(
+                stores,
+                Node::Glue {
+                    spec: GlueSpec::ZERO,
+                    kind: GlueKind::NonScript,
+                    leader: None,
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ColdOperation::CharacterCode {
@@ -598,11 +607,14 @@ pub(in crate::main_control) fn apply<G>(
                     // (§1041) appends real interword glue in math mode, unlike
                     // an ordinary `mmode+spacer`, which §1045 makes a no-op.
                     let spec = crate::box_runtime::control_space_glue_spec(stores);
-                    modes.current_list_mutation().push(Node::Glue {
-                        spec,
-                        kind: GlueKind::Normal,
-                        leader: None,
-                    });
+                    modes.current_list_mutation().push(
+                        stores,
+                        Node::Glue {
+                            spec,
+                            kind: GlueKind::Normal,
+                            leader: None,
+                        },
+                    );
                 }
                 Mode::Vertical | Mode::InternalVertical => {
                     start_paragraph(
@@ -750,11 +762,14 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            modes.current_list_mutation().push(Node::Glue {
-                spec: crate::box_runtime::fixed_infinite_glue(primitive),
-                kind: GlueKind::Normal,
-                leader: None,
-            });
+            modes.current_list_mutation().push(
+                stores,
+                Node::Glue {
+                    spec: crate::box_runtime::fixed_infinite_glue(primitive),
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ColdOperation::VerticalSkip { value } => {
@@ -3156,7 +3171,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            let children = stores.publish_page_nodes(level.list_mutation().take_nodes());
+            let children = level.list_mutation().take_nodes();
             // TeX82 §1086 snapshots `d:=box_max_depth` before `unsave`.
             // The box body may assign a local, signed `\boxmaxdepth`; that
             // value governs this package operation even though the assignment
@@ -3249,12 +3264,10 @@ pub(in crate::main_control) fn apply<G>(
             // context every other branch below classifies is inapplicable.
             if box_state.kind == ReplayBoxKind::VCenter {
                 let boxed = stores.publish_page_nodes(vec![node]);
-                modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
-                        NoadKind::VCenter,
-                        MathField::SubBox(boxed),
-                    )));
+                modes.current_list_mutation().push(
+                    stores,
+                    Node::MathNoad(MathNoad::new(NoadKind::VCenter, MathField::SubBox(boxed))),
+                );
                 return Ok(ReplayStep::Continue);
             }
             if let Some(kind) = box_state.leader_kind {
@@ -3324,7 +3337,7 @@ pub(in crate::main_control) fn apply<G>(
             // the alignment list; retaining either here makes §812's display
             // alignment handoff collide with pre-alignment math material.
             if modes.current_mode() == Mode::DisplayMath {
-                let has_formula = !modes.current_list().nodes().is_empty()
+                let has_formula = !modes.current_list().nodes(stores).is_empty()
                     || modes.current_list().incomplete_fraction().is_some();
                 if has_formula {
                     let primitive = if vertical { "\\valign" } else { "\\halign" };
@@ -3385,7 +3398,7 @@ pub(in crate::main_control) fn apply<G>(
                 captured_rows: Vec::new(),
                 tabskips: vec![default_tabskip],
                 default_tabskip,
-                row_migrations: Vec::new(),
+                row_migrations: tex_state::node_arena::PageListId::empty(),
                 cell_span: 1,
                 row_open: false,
                 cell_open: false,

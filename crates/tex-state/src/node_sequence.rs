@@ -24,6 +24,10 @@ pub struct SemanticSequenceIdentity {
 
 impl SemanticSequenceIdentity {
     #[must_use]
+    pub(crate) const fn from_raw(hash: u64, len: usize) -> Self {
+        Self { hash, len }
+    }
+    #[must_use]
     pub const fn empty() -> Self {
         Self { hash: 0, len: 0 }
     }

@@ -7,7 +7,7 @@ use crate::vertical::append_vertical_contribution;
 use crate::{Mode, ModeNest};
 
 pub(crate) struct FinishedAlignment {
-    pub(crate) nodes: Vec<Node>,
+    pub(crate) nodes: tex_state::node_arena::PageListId,
     pub(crate) aux_prev_depth: Option<tex_state::scaled::Scaled>,
     pub(crate) aux_space_factor: Option<i32>,
 }
@@ -29,11 +29,10 @@ pub(crate) fn append_finished_alignment<G>(
     {
         nest.current_list_mutation().set_space_factor(space_factor);
     }
-    for node in finished.nodes {
-        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-            append_vertical_contribution(nest, stores, node);
-        } else {
-            nest.current_list_mutation().push(node);
-        }
+    if crate::vertical::is_outer_vertical(nest) {
+        stores.append_page_contributions(finished.nodes);
+    } else {
+        nest.current_list_mutation()
+            .append_list(stores, finished.nodes);
     }
 }

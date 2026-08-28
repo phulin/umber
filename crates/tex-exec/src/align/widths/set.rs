@@ -30,7 +30,7 @@ struct SetConfig<'a> {
 #[allow(clippy::too_many_arguments)] // Alignment resolution applies one explicit immutable width plan.
 pub(super) fn set_alignment_nodes<G>(
     kind: AlignmentKind,
-    rows: &[Node],
+    rows: PageListId,
     resolved: &ResolvedWidths,
     prototype: &Prototype,
     empty: PageListId,
@@ -48,21 +48,34 @@ pub(super) fn set_alignment_nodes<G>(
         offset,
     };
     let mut out = Vec::with_capacity(rows.len());
-    for node in rows {
+    for index in 0..rows.len() {
+        let node = stores
+            .page_node_list(rows)
+            .expect("alignment rows belong to the live page arena")
+            .nodes()
+            .owned_node(index)
+            .expect("alignment row index remains in range")
+            .clone();
         match node {
             Node::Unset(row) => {
-                let set = set_row(&config, row, stores)?;
+                let set = set_row(&config, &row, stores)?;
                 out.push(set);
             }
-            Node::Rule { .. } => out.push(set_running_rule(
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => out.push(set_running_rule(
                 &config,
-                node,
+                width,
+                height,
+                depth,
                 stores,
                 diagnostic_effects,
                 geometry,
                 diagnostic_context,
             )),
-            _ => out.push(node.clone()),
+            _ => out.push(node),
         }
     }
     Ok(out)
@@ -80,21 +93,15 @@ pub(super) fn set_alignment_nodes<G>(
 /// beside it was indented (`umber2-jnfg`).
 fn set_running_rule<G>(
     config: &SetConfig<'_>,
-    node: &Node,
+    width: Option<Scaled>,
+    height: Option<Scaled>,
+    depth: Option<Scaled>,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Node {
     let prototype = &config.prototype.box_node;
-    let Node::Rule {
-        width,
-        height,
-        depth,
-    } = node
-    else {
-        return node.clone();
-    };
     // TeX82 §808 applies all three tests independently; alignment direction
     // affects how the prototype was packed, not which running dimensions are
     // resolved from it.
@@ -127,7 +134,6 @@ fn set_row<G>(
     stores: &mut CommandContext<'_, G>,
 ) -> Result<Node, ExecError> {
     let children = set_row_children(config, row, stores)?;
-    let children = stores.publish_page_nodes(children);
     let fields = match config.kind {
         AlignmentKind::HAlign => BoxNodeFields {
             width: config.prototype.box_node.width,
@@ -161,34 +167,49 @@ fn set_row<G>(
 fn set_row_children<G>(
     config: &SetConfig<'_>,
     row: &UnsetNode,
-    stores: &CommandContext<'_, G>,
-) -> Result<Vec<Node>, ExecError> {
-    let mut out = Vec::new();
-    let mut column = 0usize;
-    for child in stores
+    stores: &mut CommandContext<'_, G>,
+) -> Result<PageListId, ExecError> {
+    let children = stores
         .page_node_list(row.children)
         .expect("alignment row belongs to the live page arena")
-        .iter()
-    {
-        match child {
-            tex_state::node_arena::NodeRef::Unset(cell) => {
-                let span = usize::from(cell.span_count) + 1;
-                out.push(set_cell(config, row, &cell, column, span, stores)?);
-                for offset in 1..span {
-                    let spanned_column = column + offset;
-                    out.push(tabskip_node(config.resolved.tabskips[spanned_column]));
-                    out.push(empty_column_box(
-                        config.kind,
-                        config.resolved.columns[spanned_column],
-                        config.empty,
-                    ));
-                }
-                column += span;
+        .nodes();
+    let mut replacements = Vec::new();
+    let mut column = 0usize;
+    for (index, child) in children.iter().enumerate() {
+        if let Node::Unset(cell) = child {
+            let span = usize::from(cell.span_count) + 1;
+            let mut output = Vec::with_capacity(span.saturating_mul(2).saturating_sub(1));
+            output.push(set_cell(config, row, cell, column, span, stores)?);
+            for offset in 1..span {
+                let spanned_column = column + offset;
+                output.push(tabskip_node(config.resolved.tabskips[spanned_column]));
+                output.push(empty_column_box(
+                    config.kind,
+                    config.resolved.columns[spanned_column],
+                    config.empty,
+                ));
             }
-            _ => out.push(child.to_owned_with(core::convert::identity)),
+            column += span;
+            replacements.push((index, output));
         }
     }
-    Ok(out)
+    let source_len = children.len();
+    drop(children);
+
+    let mut slices = Vec::new();
+    let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
+    let mut start = 0;
+    for (index, output) in replacements {
+        if start < index {
+            pieces.push(stores.slice_page_node_sequence(row.children, start..index, &mut slices));
+        }
+        pieces.push(stores.publish_page_nodes(output));
+        start = index + 1;
+    }
+    if start < source_len {
+        pieces.push(stores.slice_page_node_sequence(row.children, start..source_len, &mut slices));
+    }
+    Ok(stores.compose_page_node_sequences(&pieces))
 }
 
 fn set_cell<G>(

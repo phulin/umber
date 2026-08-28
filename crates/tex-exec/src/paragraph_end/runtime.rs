@@ -61,20 +61,24 @@ pub(crate) fn break_current_paragraph<G>(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
-    let active_directions = active_text_directions(nest.current_list().nodes());
+    let active_directions = active_text_directions(nest.current_list().nodes(stores));
     let mut params = snapshot_paragraph_params(nest, stores);
     {
         let mut list = nest.current_list_mutation();
-        if matches!(list.nodes().last(), Some(Node::Glue { .. })) {
-            let _ = list.pop_last_node();
+        if matches!(list.nodes(stores).last(), Some(Node::Glue { .. })) {
+            let _ = list.pop_last_node(stores);
         }
     }
-    nest.current_list_mutation().push(Node::Penalty(10_000));
-    nest.current_list_mutation().push(Node::Glue {
-        spec: params.par_fill_skip,
-        kind: GlueKind::ParFillSkip,
-        leader: None,
-    });
+    nest.current_list_mutation()
+        .push(stores, Node::Penalty(10_000));
+    nest.current_list_mutation().push(
+        stores,
+        Node::Glue {
+            spec: params.par_fill_skip,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    );
     let mut level = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
     let paragraph_diagnostic_context = diagnostic_context.with_pack_begin_line(level.entry_line());
     let mut hlist = crate::math::finish_math_lists_owned(
@@ -85,10 +89,10 @@ pub(crate) fn break_current_paragraph<G>(
         true,
     );
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
-    normalize_paragraph_infinite_shrink(
+    let hlist = normalize_paragraph_infinite_shrink(
         stores,
         &mut params,
-        &mut hlist,
+        hlist,
         tracing,
         &diagnostic_context,
         diagnostic_effects,
@@ -97,7 +101,10 @@ pub(crate) fn break_current_paragraph<G>(
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps = tex_typeset::linebreak::validate_paragraph_expansion(
             &crate::typeset_context::TypesetContext::new(stores),
-            &hlist,
+            stores
+                .page_node_list(hlist)
+                .expect("paragraph belongs to the live page arena")
+                .nodes(),
         )?;
     }
     let (mut decisions, trace, missing_hyphens) = break_hlist_with_trace(
@@ -313,50 +320,85 @@ fn materialize_pdf_line<G>(
 fn normalize_paragraph_infinite_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     params: &mut ParagraphParams,
-    nodes: &mut [Node],
+    nodes: tex_state::node_arena::PageListId,
     tracing: bool,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<(), ExecError> {
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let mut reported = false;
-    let mut normalize = |spec: &mut tex_state::glue::GlueSpec| -> Result<(), ExecError> {
-        let mut glue = *spec;
-        if glue.shrink.raw() == 0 || glue.shrink_order == Order::Normal {
-            return Ok(());
-        }
-        if !reported {
-            if tracing {
-                // TeX82 §825 temporarily closes the active paragraph
-                // diagnostic with `end_diagnostic(true)` before `print_err`.
-                // Umber materializes the detached trace later, but must keep
-                // this print-channel boundary at the recovery point.
-                // This empty diagnostic is TeX's live tracing-paragraph
-                // scope. Its `end_diagnostic(true)` contributes the canonical
-                // separator only when published before synchronous
-                // `print_err`; publishing it at the outer command boundary
-                // would move that newline after the recovery report.
-                stores.begin_diagnostic(diagnostic_effects).end(true);
-                stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
+    normalize_paragraph_glue(
+        stores,
+        &mut params.left_skip,
+        tracing,
+        diagnostic_context,
+        diagnostic_effects,
+        &mut reported,
+    )?;
+    normalize_paragraph_glue(
+        stores,
+        &mut params.right_skip,
+        tracing,
+        diagnostic_context,
+        diagnostic_effects,
+        &mut reported,
+    )?;
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    for index in 0..nodes.len() {
+        let replacement = match stores
+            .page_node_list(nodes)
+            .expect("paragraph belongs to the live page arena")
+            .nodes()
+            .owned_node(index)
+        {
+            Some(Node::Glue { spec, kind, leader })
+                if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
+            {
+                Some((*spec, *kind, *leader))
             }
-            crate::diagnostics::report_paragraph_infinite_shrinkage(
+            _ => None,
+        };
+        if let Some((mut spec, kind, leader)) = replacement {
+            normalize_paragraph_glue(
                 stores,
-                diagnostic_effects,
+                &mut spec,
+                tracing,
                 diagnostic_context,
+                diagnostic_effects,
+                &mut reported,
             )?;
-            reported = true;
-        }
-        glue.shrink_order = Order::Normal;
-        *spec = glue;
-        Ok(())
-    };
-
-    normalize(&mut params.left_skip)?;
-    normalize(&mut params.right_skip)?;
-    for node in nodes {
-        if let Node::Glue { spec, .. } = node {
-            normalize(spec)?;
+            stores.push_page_active_list(&mut output, Node::Glue { spec, kind, leader });
+        } else {
+            stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
         }
     }
+    Ok(stores.finalize_page_active_list(&mut output))
+}
+
+fn normalize_paragraph_glue<G>(
+    stores: &mut CommandContext<'_, G>,
+    spec: &mut tex_state::glue::GlueSpec,
+    tracing: bool,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_effects: &mut DiagnosticEffects,
+    reported: &mut bool,
+) -> Result<(), ExecError> {
+    if spec.shrink.raw() == 0 || spec.shrink_order == Order::Normal {
+        return Ok(());
+    }
+    if !*reported {
+        if tracing {
+            stores.begin_diagnostic(diagnostic_effects).end(true);
+            stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
+        }
+        crate::diagnostics::report_paragraph_infinite_shrinkage(
+            stores,
+            diagnostic_effects,
+            diagnostic_context,
+        )?;
+        *reported = true;
+    }
+    spec.shrink_order = Order::Normal;
     Ok(())
 }
 
@@ -474,7 +516,7 @@ fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensio
     }
 }
 
-fn active_text_directions(nodes: tex_state::node_sequence::NodeSequenceView<'_>) -> Vec<Direction> {
+fn active_text_directions(nodes: tex_state::node_arena::NodeCursor<'_>) -> Vec<Direction> {
     let mut active = Vec::new();
     for node in nodes {
         match node {
@@ -496,7 +538,7 @@ fn active_text_directions(nodes: tex_state::node_sequence::NodeSequenceView<'_>)
 fn break_hlist_with_trace<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    hlist: Vec<Node>,
+    hlist: tex_state::node_arena::PageListId,
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
     tracing: bool,
@@ -515,10 +557,9 @@ fn break_hlist_with_trace<G>(
     if line_params.pretolerance < 0 {
         stores.close_hyphenation_patterns();
     }
-    let source = stores.publish_page_node_range(hlist);
     let tape = ParagraphTape::analyze_arena_id(
         &crate::typeset_context::TypesetContext::new(stores),
-        tex_state::node_arena::ArenaNodeSequenceId::Direct(source),
+        hlist,
         &line_params,
     );
     let (first, trace) = if tracing {
@@ -541,7 +582,13 @@ fn break_hlist_with_trace<G>(
         ))
     } else {
         drop(tape);
-        let hlist = stores.take_page_node_range(source);
+        let hlist = stores
+            .page_node_list(hlist)
+            .expect("hyphenated paragraph belongs to the live page arena")
+            .nodes()
+            .iter()
+            .cloned()
+            .collect();
         let (sequence, missing_hyphens) = super::hyphenation::hyphenated_hlist_sequence_with_fuel(
             stores,
             diagnostic_effects,

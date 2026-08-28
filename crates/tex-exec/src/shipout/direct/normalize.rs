@@ -203,7 +203,7 @@ fn normalize_list<G>(
     } = context;
     check_depth(depth)?;
     let (active_indices, permutation) = match list {
-        tex_state::ShipoutListId::Page(id) => normalization_work(
+        tex_state::ShipoutListId::Page(id) => normalization_work_cursor(
             stores
                 .page_node_list(id)
                 .expect("shipout root belongs to the live page arena")
@@ -216,7 +216,7 @@ fn normalize_list<G>(
                 .expect("shipout scratch root belongs to the active transaction"),
             box_lr,
         ),
-        tex_state::ShipoutListId::Durable(id) => normalization_work(
+        tex_state::ShipoutListId::Durable(id) => normalization_work_cursor(
             stores
                 .node_list(id)
                 .expect("shipout root belongs to the live durable generation")
@@ -242,6 +242,31 @@ fn normalize_list<G>(
         )?;
     }
     Ok(())
+}
+
+fn normalization_work_cursor(
+    nodes: tex_state::node_arena::NodeCursor<'_>,
+    box_lr: tex_state::node::BoxLr,
+) -> (SmallVec<[usize; 32]>, Option<Vec<usize>>) {
+    let permutation = direction_permutation_for_cursor(nodes, box_lr);
+    let mut active_indices = SmallVec::<[usize; 32]>::new();
+    if let Some(order) = permutation.as_deref() {
+        active_indices.extend(order.iter().copied().filter(|&index| {
+            node_requires_normalization(
+                nodes
+                    .owned_node(index)
+                    .expect("direction permutation index is in bounds"),
+            )
+        }));
+    } else {
+        active_indices.extend(
+            nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| node_requires_normalization(node).then_some(index)),
+        );
+    }
+    (active_indices, permutation)
 }
 
 fn normalization_work<List: Copy, Glue: Copy, Tokens>(
@@ -310,7 +335,7 @@ fn normalize_index<G>(
                 .page_node_list(id)
                 .expect("shipout root belongs to the live page arena")
                 .nodes()
-                .get(index)
+                .owned_node(index)
                 .expect("normalization index belongs to the frozen list");
             classify_page_node(node, list, index, suppress_deferred_streams, in_hlist)
         }
@@ -327,7 +352,7 @@ fn normalize_index<G>(
                 .node_list(id)
                 .expect("shipout root belongs to the live durable generation")
                 .nodes()
-                .get(index)
+                .owned_node(index)
                 .expect("normalization index belongs to the frozen list");
             classify_durable_node(node, list, index, suppress_deferred_streams, in_hlist)
         }
@@ -1351,8 +1376,47 @@ pub(super) fn direction_permutation_for_box<List: Copy, Glue: Copy, Tokens>(
     direction_permutation(nodes)
 }
 
+fn direction_permutation_for_cursor(
+    nodes: tex_state::node_arena::NodeCursor<'_>,
+    box_lr: tex_state::node::BoxLr,
+) -> Option<Vec<usize>> {
+    if box_lr == tex_state::node::BoxLr::Reversed {
+        return None;
+    }
+    direction_permutation_from(
+        nodes.len(),
+        nodes.iter().enumerate().map(|(index, node)| {
+            (
+                index,
+                match node {
+                    Node::Direction(direction) => Some(*direction),
+                    _ => None,
+                },
+            )
+        }),
+    )
+}
+
 fn direction_permutation<List: Copy, Glue: Copy, Tokens>(
     nodes: &[Node<List, Glue, Tokens>],
+) -> Option<Vec<usize>> {
+    direction_permutation_from(
+        nodes.len(),
+        nodes.iter().enumerate().map(|(index, node)| {
+            (
+                index,
+                match NodeRef::from(node) {
+                    NodeRef::Direction(direction) => Some(direction),
+                    _ => None,
+                },
+            )
+        }),
+    )
+}
+
+fn direction_permutation_from(
+    len: usize,
+    nodes: impl IntoIterator<Item = (usize, Option<Direction>)>,
 ) -> Option<Vec<usize>> {
     struct Segment {
         begin: Direction,
@@ -1380,43 +1444,48 @@ fn direction_permutation<List: Copy, Glue: Copy, Tokens>(
         }
     }
 
-    if !nodes.iter().any(|node| matches!(node, Node::Direction(_))) {
-        return None;
-    }
-    let mut reordered = Vec::with_capacity(nodes.len());
+    let mut saw_direction = false;
+    let mut reordered = Vec::with_capacity(len);
     let mut stack = Vec::<Segment>::new();
-    for (index, node) in nodes.iter().map(NodeRef::from).enumerate() {
-        match node {
-            NodeRef::Direction(
-                begin @ (Direction::BeginM | Direction::BeginL | Direction::BeginR),
-            ) => stack.push(Segment {
-                begin,
-                chunks: Vec::new(),
-            }),
-            NodeRef::Direction(Direction::EndL)
+    for (index, direction) in nodes {
+        let Some(direction) = direction else {
+            append(&mut reordered, &mut stack, index);
+            continue;
+        };
+        saw_direction = true;
+        match direction {
+            begin @ (Direction::BeginM | Direction::BeginL | Direction::BeginR) => {
+                stack.push(Segment {
+                    begin,
+                    chunks: Vec::new(),
+                })
+            }
+            Direction::EndL
                 if stack
                     .last()
                     .is_some_and(|segment| segment.begin == Direction::BeginL) =>
             {
                 finish(&mut reordered, &mut stack);
             }
-            NodeRef::Direction(Direction::EndR)
+            Direction::EndR
                 if stack
                     .last()
                     .is_some_and(|segment| segment.begin == Direction::BeginR) =>
             {
                 finish(&mut reordered, &mut stack);
             }
-            NodeRef::Direction(Direction::EndM)
+            Direction::EndM
                 if stack
                     .last()
                     .is_some_and(|segment| segment.begin == Direction::BeginM) =>
             {
                 finish(&mut reordered, &mut stack);
             }
-            NodeRef::Direction(_) => {}
-            _ => append(&mut reordered, &mut stack, index),
+            _ => {}
         }
+    }
+    if !saw_direction {
+        return None;
     }
     while !stack.is_empty() {
         finish(&mut reordered, &mut stack);

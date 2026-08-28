@@ -14,7 +14,7 @@ use super::{ResolvedWidths, unset_axis_size};
 
 pub(super) fn resolve_widths<G>(
     state: &AlignState,
-    rows: &[Node],
+    rows: tex_state::node_arena::NodeCursor<'_>,
     stores: &CommandContext<'_, G>,
 ) -> Result<ResolvedWidths, ExecError> {
     let requirements = collect_width_requirements(state.kind(), rows, stores)?;
@@ -46,11 +46,11 @@ fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::
 
 fn collect_width_requirements<G>(
     kind: AlignmentKind,
-    rows: &[Node],
+    rows: tex_state::node_arena::NodeCursor<'_>,
     stores: &CommandContext<'_, G>,
 ) -> Result<Vec<AlignmentWidthRequirement>, ExecError> {
     let mut requirements = Vec::new();
-    for node in rows {
+    for node in rows.iter() {
         let Node::Unset(row) = node else {
             continue;
         };
@@ -60,7 +60,7 @@ fn collect_width_requirements<G>(
             .expect("alignment row belongs to the live page arena")
             .iter()
         {
-            let tex_state::node_arena::NodeRef::Unset(cell) = child else {
+            let Node::Unset(cell) = child else {
                 continue;
             };
             let span = usize::from(cell.span_count) + 1;

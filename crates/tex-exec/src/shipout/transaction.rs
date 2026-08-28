@@ -74,7 +74,7 @@ pub fn retry_unavailable_stream_open<G>(
 #[allow(clippy::too_many_arguments)] // Shipout is the explicit join of transaction capabilities and page policy.
 pub(crate) fn shipout_node<G>(
     source: direct::ShipoutRoot<G>,
-    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+    region: Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
@@ -334,7 +334,7 @@ pub(crate) fn shipout_node<G>(
 /// Drops the complete execution-scoped page suffix at its terminal boundary.
 fn release_published_page<G>(
     stores: &mut Universe<G>,
-    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+    region: Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
 ) {
     if let Some(region) = region {
         stores
@@ -351,7 +351,7 @@ fn release_published_page<G>(
 /// complete page arena is disposed.
 fn retain_failed_page<G>(
     stores: &Universe<G>,
-    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+    region: Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
 ) {
     if let Some(region) = region {
         stores
@@ -395,7 +395,7 @@ fn report_huge_page_deleted_box<G>(
 #[allow(clippy::too_many_arguments)] // Staging retains the same explicit capabilities at the replay boundary.
 pub(crate) fn stage_page<G>(
     source: direct::ShipoutRoot<G>,
-    region: Option<tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>>,
+    region: Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,

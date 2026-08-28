@@ -7,7 +7,7 @@ use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_arena::NodeArenaError;
 use crate::token::{Token, TokenWord};
-use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind};
+use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind, StateError};
 use std::path::PathBuf;
 use tex_arith::{GlueSetRatio, Scaled};
 use tex_fonts::{FontMetrics, LoadedFont};
@@ -217,7 +217,7 @@ fn maintained_runtime_roots_change_at_each_owner_mutation_barrier() {
 }
 
 #[test]
-fn rejected_checkpoint_loan_returns_exact_private_suffix_coordinates_for_retry() {
+fn rejected_checkpoint_loan_invalidates_candidate_coordinates_before_retry() {
     with_universe(budget(), |universe| {
         for index in 0..16 {
             universe.register_primitive_meaning(&format!("primitive{index}"), Meaning::Relax);
@@ -254,10 +254,18 @@ fn rejected_checkpoint_loan_returns_exact_private_suffix_coordinates_for_retry()
         let mut retry = universe
             .fork_runtime_checkpoint(&checkpoint)
             .expect("reloan returned checkpoint bank");
+        let retry_node = retry.publish_page_nodes(&[Node::Penalty(91)]);
+        assert_ne!(
+            retry_node, first_node,
+            "released chunks advance their generation before retry"
+        );
+        assert!(retry.page_node_list(first_node).is_err());
         assert_eq!(
-            retry.publish_page_nodes(&[Node::Penalty(91)]),
-            first_node,
-            "page-arena coordinates restart from the exact private suffix mark"
+            retry
+                .page_node_list(retry_node)
+                .expect("retry coordinate is live")
+                .owned_node(0),
+            Some(&Node::Penalty(91))
         );
         assert_eq!(
             retry
@@ -964,7 +972,7 @@ fn retained_state_checkpoint_restores_dense_roots_before_arena_suffixes() {
 }
 
 #[test]
-fn rootless_runtime_checkpoint_truncates_to_monotonic_page_bound_and_partial_restores_repeat() {
+fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_cleanly() {
     with_universe(budget(), |universe| {
         let retained = universe.publish_page_nodes(&[Node::Penalty(3)]);
         universe
@@ -999,18 +1007,24 @@ fn rootless_runtime_checkpoint_truncates_to_monotonic_page_bound_and_partial_res
         let rootless = universe.runtime_checkpoint().expect("rootless checkpoint");
         assert_eq!(
             universe.page_node_rows(),
-            1,
-            "a rootless capture releases only the suffix above the retained generation bound"
+            3,
+            "without a per-root registry, accepted whole chunks remain available to sibling marks"
         );
+        assert!(universe.page_node_list(discarded_a).is_ok());
+        assert!(universe.page_node_list(discarded_b).is_ok());
+
+        for checkpoint in [&partial, &rootless, &partial, &rootless] {
+            let mut candidate = universe
+                .fork_runtime_checkpoint(checkpoint)
+                .expect("either sibling mark can seed a candidate");
+            universe.reject_checkpoint_candidate(&mut candidate);
+        }
+        universe
+            .restore_runtime_checkpoint_with_roots(&partial, || {})
+            .expect("accepted restore prunes the superseded suffix");
+        assert!(universe.page_node_list(retained).is_ok());
         assert!(universe.page_node_list(discarded_a).is_err());
         assert!(universe.page_node_list(discarded_b).is_err());
-
-        for checkpoint in [&partial, &rootless, &partial, &rootless, &partial] {
-            universe
-                .restore_runtime_checkpoint_with_roots(checkpoint, || {})
-                .expect("both sibling restore orders remain valid");
-        }
-        assert!(universe.page_node_list(retained).is_ok());
         assert_eq!(
             universe
                 .command_context()
@@ -1110,8 +1124,16 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
     with_universe(budget(), |universe| {
         let before_page = universe.page_node_cursor();
         let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let boundary = universe
+            .page_nodes
+            .seal_boundary()
+            .expect("sealed page tail");
+        let page = universe
+            .page_nodes
+            .checkpoint_mark(boundary)
+            .expect("page checkpoint");
         let malformed = universe
-            .state_checkpoint_at(universe.page_node_cursor())
+            .state_checkpoint_at(page)
             .expect("future page cursor");
         universe
             .assign_count(0, 41, AssignmentScope::Global)
@@ -1122,7 +1144,7 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
 
         assert_eq!(
             universe.restore_state_checkpoint(&malformed),
-            Err(UniverseError::NodeArena(NodeArenaError::CursorBeyondEnd))
+            Err(UniverseError::State(StateError::InvalidCursor))
         );
         assert_eq!(
             universe
@@ -1659,10 +1681,7 @@ fn page_node_transform_counts_new_payload_and_never_copies_source_nodes() {
         let mut context = universe.command_context().expect("command admission");
         let left = context.publish_page_node_range(vec![Node::Penalty(1), Node::Penalty(2)]);
         let right = context.publish_page_node_range(vec![Node::Penalty(3), Node::Penalty(4)]);
-        let source = context.compose_page_node_sequences(&[
-            crate::node_arena::ArenaNodeSequenceId::Direct(left),
-            crate::node_arena::ArenaNodeSequenceId::Direct(right),
-        ]);
+        let source = context.compose_page_node_sequences(&[left, right]);
         let mut scratch = crate::node_arena::PageNodeTransformScratch::default();
         context.begin_page_node_transform(&mut scratch);
         context.retain_page_node_source_range(&mut scratch, source, 0..1);

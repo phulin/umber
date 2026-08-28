@@ -11,6 +11,7 @@ use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenLi
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{AssignmentScope, CodeTableKind, DenseStateCursor, StateError};
 use crate::font::{AcceptedFontStoreTail, FontStore, FontStoreMark};
+use crate::fork_arena::{CheckpointMark, OperationMark, PageMaterialLane};
 use crate::generation::{GenerationBrand, GenerationCursor, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
 use crate::hyphenation::HyphenationCheckpoint;
@@ -22,10 +23,7 @@ use crate::interner::{
 use crate::journal::{JournalCursor, StateOperation};
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
-use crate::node_arena::{
-    AcceptedNodeArenaTail, DurableListId, NodeArenaCursor, NodeArenaError, NodeArenaRegion,
-    NodeList, PageLifetime, PageListId, PageNodeArena,
-};
+use crate::node_arena::{DurableListId, NodeArenaError, PageListId, PageNodeArena};
 use crate::page::{AcceptedPageTail, PageBuilderState, PageCheckpointMark};
 use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
@@ -140,7 +138,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
             .universe
             .page_node_list(list)
             .expect("boundary page root belongs to the live arena");
-        self.nodes(nodes.nodes());
+        self.nodes_iter(nodes.iter());
     }
 
     fn node(&mut self, node: &Node) {
@@ -150,7 +148,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
                 .universe
                 .page_node_list(*child)
                 .expect("semantic child belongs to the live page arena");
-            self.nodes(child.nodes());
+            self.nodes_iter(child.iter());
         });
         let mut value = node.clone();
         value.visit_node_lists_mut(|child| *child = PageListId::empty());
@@ -177,8 +175,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
 /// Aggregate rollback roots retained while one shipout is speculative.
 struct ShipoutRollback<G> {
     state: StateOperation<G>,
-    durable: NodeArenaCursor<PageLifetime>,
-    page_nodes: NodeArenaCursor<PageLifetime>,
+    page_nodes: OperationMark<PageMaterialLane>,
     page: PageCheckpointMark,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
@@ -204,7 +201,6 @@ struct CheckpointStateCandidate<G> {
     mark: StateCheckpointMark<G>,
     generation: GenerationCursor,
     core: AcceptedStateCoreTail<G>,
-    page_nodes: AcceptedNodeArenaTail<PageLifetime>,
     page: AcceptedPageTail,
     source_mark: SourceMapMark,
     sources: AcceptedSourceMapTail,
@@ -213,8 +209,6 @@ struct CheckpointStateCandidate<G> {
     world_mark: WorldSnapshot,
     world: AcceptedWorldTail,
     dependencies: AcceptedDependencyTail,
-    accepted_retained_page_bound: NodeArenaCursor<PageLifetime>,
-    accepted_durable_page_bound: NodeArenaCursor<PageLifetime>,
 }
 
 /// Coarse generation owner plus every runtime root needed by an aggregate
@@ -225,8 +219,6 @@ struct CheckpointStateCandidate<G> {
 pub struct RuntimeCheckpoint<G> {
     state: StateCheckpoint<G>,
     generation: GenerationCursor,
-    retained_page_bound: NodeArenaCursor<PageLifetime>,
-    durable_page_bound: NodeArenaCursor<PageLifetime>,
     font_roots_valid: bool,
     page: PageCheckpointMark,
     pdf: crate::pdf::PdfStateSnapshot<G>,
@@ -385,8 +377,6 @@ impl<G> Clone for RuntimeCheckpoint<G> {
         Self {
             state: self.state.clone(),
             generation: self.generation,
-            retained_page_bound: self.retained_page_bound,
-            durable_page_bound: self.durable_page_bound,
             font_roots_valid: self.font_roots_valid,
             page: self.page,
             pdf: self.pdf.clone(),
@@ -542,14 +532,8 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
                 .restore_state(rollback.state)
                 .expect("validated shipout rollback remains restorable");
             self.universe
-                .core
-                .as_mut()
-                .expect("shipout rollback has a live generation")
-                .truncate_durable_nodes(rollback.durable)
-                .expect("shipout durable cursor remains valid");
-            self.universe
                 .page_nodes
-                .truncate(rollback.page_nodes)
+                .restore_operation(rollback.page_nodes)
                 .expect("shipout page cursor remains valid");
         }
         self.universe.shipout_scratch.reset(
@@ -654,12 +638,8 @@ pub enum NodePromotionError {
 }
 
 /// Fixed-size tex-state portion of a retained aggregate checkpoint.
-pub type StateCheckpointMark<G, Input = DenseStateCursor> = BoundedStateMark<
-    JournalCursor<G>,
-    NodeArenaCursor<PageLifetime>,
-    NodeArenaCursor<PageLifetime>,
-    Input,
->;
+pub type StateCheckpointMark<G, Input = DenseStateCursor> =
+    BoundedStateMark<JournalCursor<G>, (), CheckpointMark<PageMaterialLane>, Input>;
 
 /// Coarse generation owner plus bounded state cursors.
 pub type StateCheckpoint<G, Input = DenseStateCursor> =
@@ -718,8 +698,6 @@ pub struct Universe<G> {
     pub(crate) interner: Option<InternerLease>,
     pub(crate) core: Option<StateCore<G>>,
     pub(crate) page_nodes: PageNodeArena,
-    retained_page_bound: NodeArenaCursor<PageLifetime>,
-    durable_page_bound: NodeArenaCursor<PageLifetime>,
     checkpoint_candidate: Option<CheckpointStateCandidate<G>>,
     shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
@@ -759,7 +737,7 @@ impl<G> Universe<G> {
             && core.state().validate_checkpoint_cursor(*mark.input())
             && core.validate_durable_node_cursor(*mark.durable()).is_ok()
             && core.validates_generation_cursor(checkpoint.generation)
-            && self.page_nodes.validate_cursor(*mark.page()).is_ok()
+            && self.page_nodes.can_restore_checkpoint(*mark.page())
     }
 
     fn activate_checkpoint_state(
@@ -772,9 +750,6 @@ impl<G> Universe<G> {
         core.state_mut().restore_checkpoint_cursor(*mark.input());
         core.restore_durable_node_cursor(*mark.durable())?;
         core.restore_generation_cursor(checkpoint.generation);
-        self.page_nodes.restore_checkpoint_cursor(*mark.page())?;
-        self.retained_page_bound = checkpoint.retained_page_bound;
-        self.durable_page_bound = checkpoint.durable_page_bound;
         Ok(())
     }
 
@@ -891,7 +866,9 @@ impl<G> Universe<G> {
                 *mark.durable(),
                 checkpoint.generation,
             )?;
-        let page_node_tail = self.page_nodes.begin_checkpoint_candidate(*mark.page())?;
+        self.page_nodes
+            .begin_checkpoint_candidate(*mark.page())
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         let page_tail = self.page.begin_checkpoint_candidate(checkpoint.page);
         let world_tail = self.world.begin_checkpoint_candidate(&checkpoint.world);
         let dependency_tail = self
@@ -916,13 +893,10 @@ impl<G> Universe<G> {
             interner: None,
             core: Some(core),
             page_nodes,
-            retained_page_bound: checkpoint.retained_page_bound,
-            durable_page_bound: checkpoint.durable_page_bound,
             checkpoint_candidate: Some(CheckpointStateCandidate {
                 mark: *mark,
                 generation: checkpoint.generation,
                 core: core_tail,
-                page_nodes: page_node_tail,
                 page: page_tail,
                 source_mark: checkpoint.sources,
                 sources: source_tail,
@@ -931,8 +905,6 @@ impl<G> Universe<G> {
                 world_mark: checkpoint.world.clone(),
                 world: world_tail,
                 dependencies: dependency_tail,
-                accepted_retained_page_bound: self.retained_page_bound,
-                accepted_durable_page_bound: self.durable_page_bound,
             }),
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
@@ -979,9 +951,13 @@ impl<G> Universe<G> {
         candidate
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
+        let page_boundary = candidate
+            .page_nodes
+            .seal_boundary()
+            .expect("checkpoint settlement seals page material");
         candidate
             .page_nodes
-            .reject_checkpoint_candidate(*mark.page(), transaction.page_nodes)
+            .reject_checkpoint_candidate(page_boundary)
             .expect("validated candidate page nodes can undo and redo");
         let mut core = candidate
             .core
@@ -1001,8 +977,6 @@ impl<G> Universe<G> {
         self.fonts = std::mem::take(&mut candidate.fonts);
         self.world = std::mem::take(&mut candidate.world);
         self.dependencies = std::mem::take(&mut candidate.dependencies);
-        self.retained_page_bound = transaction.accepted_retained_page_bound;
-        self.durable_page_bound = transaction.accepted_durable_page_bound;
         self.pdf.return_rejected(&mut candidate.pdf);
         candidate.page.reject_checkpoint_candidate(transaction.page);
         self.page = std::mem::take(&mut candidate.page);
@@ -1018,8 +992,13 @@ impl<G> Universe<G> {
             .as_mut()
             .expect("the current lineage owns the direct state core")
             .accept_checkpoint_candidate(transaction.core);
+        let page_boundary = self
+            .page_nodes
+            .seal_boundary()
+            .expect("checkpoint settlement seals page material");
         self.page_nodes
-            .accept_checkpoint_candidate(transaction.page_nodes);
+            .accept_checkpoint_candidate(page_boundary)
+            .expect("validated candidate page nodes can promote");
         self.world.accept_checkpoint_candidate(transaction.world);
         self.dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
@@ -1178,16 +1157,12 @@ impl<G> Universe<G> {
             .state()
             .install_font_runtime(crate::font::NULL_FONT, prepared)
             .expect("null-font runtime row is first");
-        let page_nodes = PageNodeArena::with_memory_accounting(core.memory_accounting());
-        let retained_page_bound = page_nodes.cursor();
-        let durable_page_bound = retained_page_bound;
+        let page_nodes = PageNodeArena::new();
         let command_generation_owner = core.generation_owner();
         Self {
             interner: Some(interner),
             core: Some(core),
             page_nodes,
-            retained_page_bound,
-            durable_page_bound,
             checkpoint_candidate: None,
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
@@ -1997,52 +1972,10 @@ impl<G> Universe<G> {
         root: DurableListId<G>,
     ) -> Result<PageListId, NodeArenaError> {
         let page_root = root.rebrand();
-        if self.page_nodes.contains(page_root) {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_node_logical_alias();
-            return Ok(page_root);
-        }
-        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
-        let (core, page_nodes) = (&self.core, &mut self.page_nodes);
-        let admitted = core.as_ref().ok_or(NodeArenaError::InvalidList)?.admit();
-        let words = admitted.copied_node_closure_tex_memory_words(
-            root,
-            etex_node_sizes,
-            &mut self.dynamic_memory_scratch,
-        )?;
-        let current_dynamic = admitted
-            .current_dynamic_memory_words(etex_node_sizes)?
-            .saturating_add(self.page.dynamic_memory_words(etex_node_sizes));
-        let copied = admitted.materialize_loaded_node_into_page(
-            root,
-            page_nodes,
-            &mut self.dynamic_memory_scratch,
-        )?;
-        self.engine_usage
-            .observe_node_copy(words.0, current_dynamic, words.1);
-        Ok(copied)
-    }
-
-    /// Publishes one complete page-lifetime node list.
-    #[must_use]
-    pub fn publish_page_nodes(&mut self, nodes: &[Node]) -> PageListId {
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_node_checkpoint_sidecar(nodes.len());
-        let words = tex_memory_words(nodes, self.engine_usage.uses_etex_node_sizes());
-        for node in nodes {
-            node.visit_fonts(|font| {
-                assert!(
-                    self.fonts.contains(font),
-                    "published page node retains a live Universe font"
-                );
-            });
-        }
-        let list = self
-            .page_nodes
-            .publish(nodes.to_vec())
-            .expect("page construction contains only live page-arena children");
-        self.engine_usage.observe_transient_memory(words.0, words.1);
-        list
+        self.page_nodes
+            .contains(page_root)
+            .then_some(page_root)
+            .ok_or(NodeArenaError::InvalidList)
     }
 
     /// Publishes a page-lifetime node list by moving the caller's buffer.
@@ -2058,18 +1991,25 @@ impl<G> Universe<G> {
         }
         let list = self
             .page_nodes
-            .publish(nodes)
+            .publish_owned(nodes)
             .expect("page construction contains only live page-arena children");
         self.engine_usage.observe_transient_memory(words.0, words.1);
         list
+    }
+
+    #[cfg(test)]
+    pub(crate) fn publish_page_nodes(&mut self, nodes: &[Node]) -> PageListId {
+        self.publish_page_nodes_owned(nodes.to_vec())
     }
 
     /// Resolves one list through this episode's page arena.
     pub fn page_node_list(
         &self,
         id: PageListId,
-    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
-        self.page_nodes.get(id)
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .node_cursor(id)
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     /// Opens one final shipout-scratch row for direct construction.
@@ -2110,33 +2050,35 @@ impl<G> Universe<G> {
     /// restore every canonical mode, alignment, insertion, and page-builder
     /// root before calling [`Self::truncate_page_nodes`].
     #[must_use]
-    pub fn page_node_cursor(&self) -> NodeArenaCursor<PageLifetime> {
-        self.page_nodes.cursor()
+    pub fn page_node_cursor(&self) -> OperationMark<PageMaterialLane> {
+        self.page_nodes.operation_mark()
     }
 
     /// Opens one nested page-storage suffix owned by a structural box or
     /// shipout operation.
     #[must_use]
-    pub fn begin_page_node_region(&self) -> NodeArenaRegion<PageLifetime> {
-        self.page_nodes.begin_region()
+    pub fn begin_page_node_region(&self) -> OperationMark<PageMaterialLane> {
+        self.page_nodes.operation_mark()
     }
 
     /// Consumes and releases a complete page-storage suffix after every
     /// survivor has crossed into durable storage or detached output.
     pub fn release_page_node_region(
         &mut self,
-        region: NodeArenaRegion<PageLifetime>,
+        region: OperationMark<PageMaterialLane>,
     ) -> Result<(), NodeArenaError> {
-        self.page_nodes.release_region(region)
+        self.page_nodes
+            .restore_operation(region)
+            .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Transfers a failed nested suffix back to the enclosing page owner when
     /// an outer rollback can restore roots into it.
     pub fn retain_page_node_region(
         &self,
-        region: NodeArenaRegion<PageLifetime>,
+        _region: OperationMark<PageMaterialLane>,
     ) -> Result<(), NodeArenaError> {
-        self.page_nodes.retain_region(region)
+        Ok(())
     }
 
     /// Truncates a rejected page-arena suffix after canonical roots restore.
@@ -2145,17 +2087,17 @@ impl<G> Universe<G> {
     /// root restoration comes first, suffix truncation second.
     pub fn truncate_page_nodes(
         &mut self,
-        cursor: NodeArenaCursor<PageLifetime>,
+        cursor: OperationMark<PageMaterialLane>,
     ) -> Result<(), NodeArenaError> {
-        self.page_nodes.truncate(cursor)?;
-        self.durable_page_bound = cursor;
-        Ok(())
+        self.page_nodes
+            .restore_operation(cursor)
+            .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
     /// Releases storage reachable only from a completed page after its
     /// handle-free output has been validated and the canonical root removed.
-    pub fn release_completed_page(&mut self, root: PageListId) -> Result<(), NodeArenaError> {
-        self.page_nodes.release_closure(root)
+    pub fn release_completed_page(&mut self, _root: PageListId) -> Result<(), NodeArenaError> {
+        Ok(())
     }
 
     pub fn assign_meaning(
@@ -2248,7 +2190,6 @@ impl<G> Universe<G> {
     ) -> Result<(), NodePromotionError> {
         let durable = value.map(|root| root.rebrand());
         if durable.is_some() {
-            self.durable_page_bound = self.page_nodes.cursor();
             #[cfg(feature = "profiling")]
             crate::measurement::record_node_coordinate_transfer();
         }
@@ -2290,7 +2231,6 @@ impl<G> Universe<G> {
     /// Promotes and replaces a box while retaining its current eq level.
     pub fn replace_page_box(&mut self, index: u16, value: PageListId) {
         let durable = value.rebrand();
-        self.durable_page_bound = self.page_nodes.cursor();
         #[cfg(feature = "profiling")]
         crate::measurement::record_node_coordinate_transfer();
         self.live_state_mut()
@@ -2347,33 +2287,20 @@ impl<G> Universe<G> {
     pub fn node_list(
         &self,
         id: DurableListId<G>,
-    ) -> Result<NodeList<'_, PageLifetime>, UniverseError> {
-        let page = id.rebrand();
-        if self.page_nodes.contains(page) {
-            return Ok(self.page_nodes.get(page)?);
-        }
-        Ok(self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .admit()
-            .node_list(id)?)
+    ) -> Result<crate::node_arena::NodeCursor<'_>, UniverseError> {
+        self.page_nodes
+            .node_cursor(id.rebrand())
+            .map_err(|_| UniverseError::NodeArena(NodeArenaError::InvalidList))
     }
 
     /// Resolves a child coordinate borrowed from a durable root.
     pub fn durable_child_node_list(
         &self,
         id: PageListId,
-    ) -> Result<NodeList<'_, PageLifetime>, UniverseError> {
-        if self.page_nodes.contains(id) {
-            return Ok(self.page_nodes.get(id)?);
-        }
-        Ok(self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .admit()
-            .node_list(id.rebrand())?)
+    ) -> Result<crate::node_arena::NodeCursor<'_>, UniverseError> {
+        self.page_nodes
+            .node_cursor(id)
+            .map_err(|_| UniverseError::NodeArena(NodeArenaError::InvalidList))
     }
 
     /// Resolves a generation-owned token payload for borrow-only shipout
@@ -2442,15 +2369,20 @@ impl<G> Universe<G> {
     /// with no page-handle carrier records only the generation's conservative
     /// retained page bound; incidental rootless allocation is not history.
     pub fn state_checkpoint(&mut self) -> Result<StateCheckpoint<G>, UniverseError> {
+        let boundary = self
+            .page_nodes
+            .seal_boundary()
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         let page = self
             .page_nodes
-            .later_cursor(self.retained_page_bound, self.durable_page_bound)?;
+            .checkpoint_mark(boundary)
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         self.state_checkpoint_at(page)
     }
 
     fn state_checkpoint_at(
         &mut self,
-        page: NodeArenaCursor<PageLifetime>,
+        page: CheckpointMark<PageMaterialLane>,
     ) -> Result<StateCheckpoint<G>, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
         let owner = core.generation_owner();
@@ -2505,10 +2437,7 @@ impl<G> Universe<G> {
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
         #[cfg(feature = "profiling")]
         self.live_state_mut()?.record_journal_checkpoint();
-        let carries_page_roots = external_page_roots || self.page.retains_page_node_handles();
-        if carries_page_roots {
-            self.retained_page_bound = self.page_nodes.cursor();
-        } else {
+        if !(external_page_roots || self.page.retains_page_node_handles()) {
             self.release_unretained_page_suffix()?;
         }
         let live_state = self.state_checkpoint()?;
@@ -2541,7 +2470,8 @@ impl<G> Universe<G> {
             && live_core.durable_font_roots_are_live(*live_mark.durable(), font_survives)?
             && self
                 .page_nodes
-                .font_roots_are_live(*live_mark.page(), font_survives)?;
+                .font_roots_are_live(*live_mark.page(), font_survives)
+                .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         let mark = BoundedStateMark::new(
             *live_mark.journal(),
             *live_mark.durable(),
@@ -2612,8 +2542,6 @@ impl<G> Universe<G> {
         let checkpoint = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(owner, mark),
             generation,
-            retained_page_bound: self.retained_page_bound,
-            durable_page_bound: self.durable_page_bound,
             font_roots_valid,
             page,
             pdf,
@@ -2637,10 +2565,8 @@ impl<G> Universe<G> {
     /// Releases only rootless page rows above the generation's monotonic
     /// retained checkpoint prefix.
     pub fn release_unretained_page_suffix(&mut self) -> Result<(), UniverseError> {
-        let bound = self
-            .page_nodes
-            .later_cursor(self.retained_page_bound, self.durable_page_bound)?;
-        self.page_nodes.truncate(bound)?;
+        // Root liveness is not yet tracked at chunk-envelope granularity.
+        // Retain conservatively until generation retirement.
         Ok(())
     }
 
@@ -2722,6 +2648,9 @@ impl<G> Universe<G> {
         self.prepared_mag = checkpoint.prepared_mag;
         self.engine_usage = checkpoint.engine_usage.clone();
         transfer_external_roots();
+        self.page_nodes
+            .restore_checkpoint(*checkpoint.state.mark().page())
+            .expect("runtime restore prevalidated the page-material checkpoint");
         self.fonts.truncate_to(checkpoint.fonts);
         self.sources.truncate_to(checkpoint.sources);
         Ok(())
@@ -2734,12 +2663,7 @@ impl<G> Universe<G> {
             state: self
                 .begin_state_operation()
                 .expect("live shipout generation has an operation journal"),
-            durable: self
-                .core
-                .as_ref()
-                .expect("live shipout generation")
-                .durable_node_cursor(),
-            page_nodes: self.page_nodes.cursor(),
+            page_nodes: self.page_nodes.operation_mark(),
             page: self.page.checkpoint_mark(),
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
@@ -2853,7 +2777,6 @@ impl<G> Universe<G> {
             dependencies: &mut self.dependencies,
             fonts: &mut self.fonts,
             page_nodes: &mut self.page_nodes,
-            durable_page_bound: &mut self.durable_page_bound,
             shipout_scratch: &mut self.shipout_scratch,
             page: &mut self.page,
             pdf: &mut self.pdf,
@@ -3061,7 +2984,9 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         core.validate_durable_node_cursor(*mark.durable())?;
-        self.page_nodes.validate_cursor(*mark.page())?;
+        if !self.page_nodes.can_restore_checkpoint(*mark.page()) {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
         Ok(())
     }
 
@@ -3094,9 +3019,8 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
         core.truncate_durable_nodes(*mark.durable())
             .expect("restore plan prevalidated durable-node suffix");
         self.page_nodes
-            .truncate(*mark.page())
-            .expect("restore plan prevalidated page-node suffix");
-        self.durable_page_bound = *mark.page();
+            .restore_checkpoint(*mark.page())
+            .expect("restore plan prevalidated page-material settlement");
     }
 
     fn release_replaced_owners(&mut self) {

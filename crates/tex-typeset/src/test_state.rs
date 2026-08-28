@@ -246,19 +246,16 @@ impl TestState {
 
 impl TypesetState for TestState {
     fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
-        tex_state::node_arena::NodeCursor::compact(
-            self.pages
-                .get(list)
-                .expect("live test page coordinate")
-                .nodes(),
-        )
+        self.pages
+            .node_cursor(list)
+            .expect("live test page coordinate")
     }
 
     fn page_node_sequence(
         &self,
         sequence: tex_state::node_arena::PageNodeSequenceId,
-    ) -> Option<tex_state::node_arena::ArenaNodeSequence<'_, PageLifetime>> {
-        self.pages.get_sequence(sequence).ok()
+    ) -> Option<tex_state::node_arena::NodeCursor<'_>> {
+        self.pages.node_cursor(sequence).ok()
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {

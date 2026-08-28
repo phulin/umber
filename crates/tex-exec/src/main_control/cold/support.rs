@@ -70,20 +70,28 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
     let Some(root) = stores.copy_box_to_page(index) else {
         return;
     };
-    let mut nodes = stores
+    let nodes = stores
         .page_node_list(root)
         .expect("copied box belongs to the admitted page arena")
-        .nodes()
-        .to_vec();
-    let Some(Node::HList(node) | Node::VList(node)) = nodes.first_mut() else {
+        .nodes();
+    let Some(source) = nodes.owned_node(0) else {
         return;
+    };
+    let (mut node, horizontal) = match source {
+        Node::HList(node) => (node.clone(), true),
+        Node::VList(node) => (node.clone(), false),
+        _ => return,
     };
     match dimension {
         tex_state::BoxDimension::Width => node.width = value,
         tex_state::BoxDimension::Height => node.height = value,
         tex_state::BoxDimension::Depth => node.depth = value,
     }
-    let replacement = stores.publish_page_nodes(nodes);
+    let replacement = stores.publish_page_nodes(vec![if horizontal {
+        Node::HList(node)
+    } else {
+        Node::VList(node)
+    }]);
     stores
         .replace_page_box(index, replacement)
         .expect("mutated box closure fits durable storage");
@@ -538,7 +546,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     construction: ScannedBoxConstruction,
     target: Option<PendingSetBox>,
     shipout_region: Option<
-        tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>,
+        tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
     >,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
@@ -765,7 +773,7 @@ pub(in crate::main_control) enum BoxContext {
     /// box register", `eq_define`/`geq_define` by `\setbox`/`\global\setbox`.
     SetBox(PendingSetBox),
     /// `box_context=ship_out_flag`: §1075's `ship_out(cur_box)`.
-    ShipOut(tex_state::node_arena::NodeArenaRegion<tex_state::node_arena::PageLifetime>),
+    ShipOut(tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>),
 }
 
 pub(in crate::main_control) fn read_box_register<G>(
@@ -986,7 +994,7 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             command.diagnostic_effects,
             command.fuel,
         )?;
-        modes.current_list_mutation().push(node);
+        modes.current_list_mutation().push(stores, node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
         // the rule: it must inherit 1000, not sentence spacing from text
@@ -1050,7 +1058,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         Some((character, origin, metrics))
     });
     let Some((character, base_origin, base_metrics)) = base else {
-        modes.current_list_mutation().push(accent_node);
+        modes.current_list_mutation().push(stores, accent_node);
         modes.current_list_mutation().set_space_factor(1000);
         return Ok(ReplayStep::Continue);
     };
@@ -1065,12 +1073,15 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         accent_x_height,
         accent_slant,
     );
-    modes.current_list_mutation().push(Node::Kern {
-        amount: delta,
-        kind: KernKind::Accent,
-    });
+    modes.current_list_mutation().push(
+        stores,
+        Node::Kern {
+            amount: delta,
+            kind: KernKind::Accent,
+        },
+    );
     if base_metrics.height == accent_x_height {
-        modes.current_list_mutation().push(accent_node);
+        modes.current_list_mutation().push(stores, accent_node);
     } else {
         let children = stores.publish_page_nodes(vec![accent_node]);
         let diagnostic_context =
@@ -1086,17 +1097,25 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
-        modes.current_list_mutation().push(Node::HList(boxed));
+        modes
+            .current_list_mutation()
+            .push(stores, Node::HList(boxed));
     }
-    modes.current_list_mutation().push(Node::Kern {
-        amount: Scaled::from_raw(-accent_metrics.width.raw() - delta.raw()),
-        kind: KernKind::Accent,
-    });
-    modes.current_list_mutation().push(Node::Char {
-        font: base_font,
-        ch: char::from(character),
-        origin: base_origin,
-    });
+    modes.current_list_mutation().push(
+        stores,
+        Node::Kern {
+            amount: Scaled::from_raw(-accent_metrics.width.raw() - delta.raw()),
+            kind: KernKind::Accent,
+        },
+    );
+    modes.current_list_mutation().push(
+        stores,
+        Node::Char {
+            font: base_font,
+            ch: char::from(character),
+            origin: base_origin,
+        },
+    );
     modes.current_list_mutation().set_space_factor(1000);
     Ok(ReplayStep::Continue)
 }
@@ -1279,7 +1298,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         command.diagnostic_effects,
         command.fuel,
     )?;
-    let content = stores.publish_page_nodes(level.list_mutation().take_nodes());
+    let content = level.list_mutation().take_nodes();
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)

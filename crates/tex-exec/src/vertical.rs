@@ -16,7 +16,7 @@ pub(crate) fn append_node_to_current_list<G>(
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         append_node_to_vertical_list(nest, stores, node)
     } else {
-        nest.current_list_mutation().push(node);
+        nest.current_list_mutation().push(stores, node);
         Ok(())
     }
 }
@@ -98,7 +98,7 @@ pub(crate) fn append_vertical_contribution<G>(
     if is_outer_vertical(nest) {
         stores.append_page_contribution(node);
     } else {
-        nest.current_list_mutation().push(node);
+        nest.current_list_mutation().push(stores, node);
     }
 }
 

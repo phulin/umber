@@ -52,7 +52,7 @@ pub(crate) fn select_pending_page_output<G>(
         .expect("output token parameter is admitted")
         .is_none_or(|output| stores.token_list(output).is_empty());
     if output_is_empty {
-        prepend_output_heldover(stores, Vec::new(), true);
+        prepend_output_heldover(stores, tex_state::node_arena::PageListId::empty(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
@@ -65,7 +65,7 @@ pub(crate) fn select_pending_page_output<G>(
             dead_cycles,
             diagnostic_context.output_context.clone(),
         )?;
-        prepend_output_heldover(stores, Vec::new(), true);
+        prepend_output_heldover(stores, tex_state::node_arena::PageListId::empty(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
@@ -79,7 +79,7 @@ pub(crate) fn select_pending_page_output<G>(
 pub(crate) fn resume_page_builder_after_output<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    output_nodes: Vec<Node>,
+    output_nodes: tex_state::node_arena::PageListId,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.copy_box_to_page(255) {
@@ -120,7 +120,9 @@ pub(crate) fn prepare_box255<G>(
     let split_index = fire_up.best_break().index();
     let page_max_depth = stores.page_max_depth();
     let (page_nodes, mut after_break) = stores.take_current_page_prefix(split_index);
-    let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break, fire_up);
+    let (output_penalty, rewritten_after_break) =
+        output_penalty_and_rewrite_break(stores, after_break, fire_up);
+    after_break = rewritten_after_break;
     stores
         .assign_int_param(
             IntParam::OUTPUT_PENALTY,
@@ -136,15 +138,14 @@ pub(crate) fn prepare_box255<G>(
         diagnostic_context,
         page_nodes,
     )?;
-    update_page_marks_at_fire_up(stores, &distributed.page_nodes);
+    update_page_marks_at_fire_up(stores, distributed.page_nodes);
 
-    let page_list = stores.publish_page_nodes(distributed.page_nodes);
     let packed = vpack(
         stores,
         diagnostic_effects,
         geometry,
         diagnostic_context,
-        page_list,
+        distributed.page_nodes,
         PackSpec::Exactly(fire_up.best_size()),
         VpackParams {
             vbadness: INF_BAD,
@@ -157,9 +158,7 @@ pub(crate) fn prepare_box255<G>(
         .assign_page_box_global(255, box255)
         .expect("output box stays in admitted page storage");
     stores.start_page_after_output();
-    for node in distributed.heldover {
-        stores.push_current_page_node(node);
-    }
+    stores.push_current_page_list(distributed.heldover);
     stores.set_page_integer(
         PageInteger::InsertPenalties,
         i32::try_from(distributed.heldover_count).map_err(|_| ExecError::ArithmeticOverflow)?,
@@ -167,13 +166,24 @@ pub(crate) fn prepare_box255<G>(
     Ok(())
 }
 
-fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_nodes: &[Node]) {
+fn update_page_marks_at_fire_up<G>(
+    stores: &mut CommandContext<'_, G>,
+    page_nodes: tex_state::node_arena::PageListId,
+) {
     let mut classes = stores.page_mark_classes().collect::<BTreeSet<_>>();
     classes.insert(0);
-    for node in page_nodes {
-        if let Node::Mark { class, .. } = node {
-            classes.insert(*class);
-        }
+    let marks = stores
+        .page_node_list(page_nodes)
+        .expect("fire-up page belongs to the live arena")
+        .nodes()
+        .iter()
+        .filter_map(|node| match node {
+            Node::Mark { class, tokens } => Some((*class, tokens.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (class, _) in &marks {
+        classes.insert(*class);
     }
 
     for class in classes {
@@ -199,13 +209,8 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
 
         let mut first = None;
         let mut bot = None;
-        for node in page_nodes {
-            if let Node::Mark {
-                class: node_class,
-                tokens,
-            } = node
-                && *node_class == class
-            {
+        for (node_class, tokens) in &marks {
+            if *node_class == class {
                 if first.is_none() {
                     first = Some(tokens.clone());
                 }
@@ -233,13 +238,13 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
 }
 
 struct DistributedInsertions {
-    page_nodes: Vec<Node>,
-    heldover: Vec<Node>,
+    page_nodes: tex_state::node_arena::PageListId,
+    heldover: tex_state::node_arena::PageListId,
     heldover_count: usize,
 }
 
 struct InsertionQueue {
-    nodes: Vec<Node>,
+    nodes: tex_state::node_arena::PageListId,
     best_ins_index: usize,
     status: PageInsertionStatus,
     accepting: bool,
@@ -260,12 +265,12 @@ fn distribute_insertions<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
-    page_nodes: Vec<Node>,
+    page_nodes: tex_state::node_arena::PageListId,
 ) -> Result<DistributedInsertions, ExecError> {
     if stores.int_param(IntParam::HOLDING_INSERTS) > 0 {
         return Ok(DistributedInsertions {
             page_nodes,
-            heldover: Vec::new(),
+            heldover: tex_state::node_arena::PageListId::empty(),
             heldover_count: 0,
         });
     }
@@ -293,38 +298,41 @@ fn distribute_insertions<G>(
 
     let mut retained = Vec::new();
     let mut heldover = Vec::new();
+    let mut slices = Vec::new();
     let mut heldover_count = 0usize;
-    for (index, node) in page_nodes.into_iter().enumerate() {
-        match node {
-            Node::Ins {
+    for index in 0..page_nodes.len() {
+        let insertion = match stores
+            .page_node_list(page_nodes)
+            .expect("fire-up page belongs to the live arena")
+            .nodes()
+            .owned_node(index)
+        {
+            Some(Node::Ins {
                 class,
                 size,
                 split_top_skip,
                 split_max_depth,
                 floating_penalty,
                 content,
-            } => {
-                let mut wait = Some(Node::Ins {
-                    class,
-                    size,
-                    split_top_skip,
-                    split_max_depth,
-                    floating_penalty,
-                    content,
-                });
+            }) => Some((
+                *class,
+                *size,
+                *split_top_skip,
+                *split_max_depth,
+                *floating_penalty,
+                *content,
+            )),
+            _ => None,
+        };
+        match insertion {
+            Some((class, size, split_top_skip, split_max_depth, floating_penalty, content)) => {
+                let mut wait = true;
                 if let Some(queue) = queues.get_mut(&class)
                     && queue.accepting
                 {
-                    wait = None;
+                    wait = false;
                     let start = queue.nodes.len();
-                    queue.nodes.extend(
-                        stores
-                            .page_node_list(content)
-                            .expect("insertion content belongs to the live page arena")
-                            .nodes()
-                            .iter()
-                            .cloned(),
-                    );
+                    queue.nodes = stores.compose_page_node_sequences(&[queue.nodes, content]);
                     if queue.best_ins_index == index {
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
@@ -341,33 +349,40 @@ fn distribute_insertions<G>(
                                 floating_penalty,
                             },
                         )? {
-                            heldover.push(remainder);
+                            heldover.push(stores.publish_page_nodes(vec![remainder]));
                             heldover_count += 1;
                         }
-                        let boxed_nodes = std::mem::take(&mut queue.nodes);
                         package_insertion_box(
                             stores,
                             diagnostic_effects,
                             geometry,
                             diagnostic_context,
                             class,
-                            boxed_nodes,
+                            queue.nodes,
                         );
                         queue.accepting = false;
                     }
                 }
-                if let Some(node) = wait {
-                    heldover.push(node);
+                if wait {
+                    heldover.push(stores.slice_page_node_sequence(
+                        page_nodes,
+                        index..index + 1,
+                        &mut slices,
+                    ));
                     heldover_count += 1;
                 }
             }
-            node => retained.push(node),
+            None => retained.push(stores.slice_page_node_sequence(
+                page_nodes,
+                index..index + 1,
+                &mut slices,
+            )),
         }
     }
 
     Ok(DistributedInsertions {
-        page_nodes: retained,
-        heldover,
+        page_nodes: stores.compose_page_node_sequences(&retained),
+        heldover: stores.compose_page_node_sequences(&heldover),
         heldover_count,
     })
 }
@@ -377,7 +392,7 @@ fn insertion_box_nodes<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &ExecutionDiagnosticContext,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
     // TeX82 §1018 calls §993's `ensure_vbox` again here because an output
     // routine or assignment can replace the class register after page setup.
     let Some(list) = crate::page_builder::ensure_insertion_vbox(
@@ -387,7 +402,7 @@ fn insertion_box_nodes<G>(
         diagnostic_context,
     )?
     else {
-        return Ok(Vec::new());
+        return Ok(tex_state::node_arena::PageListId::empty());
     };
     let Some(node) = stores
         .page_node_list(list)
@@ -395,16 +410,12 @@ fn insertion_box_nodes<G>(
         .nodes()
         .first()
     else {
-        return Ok(Vec::new());
+        return Ok(tex_state::node_arena::PageListId::empty());
     };
     match node {
-        Node::VList(box_node) => Ok(stores
-            .page_node_list(box_node.children)
-            .expect("insertion box children belong to the live page arena")
-            .nodes()
-            .to_vec()),
+        Node::VList(box_node) => Ok(box_node.children),
         Node::HList(_) => unreachable!("ensure_insertion_vbox rejected the hbox"),
-        _ => Ok(Vec::new()),
+        _ => Ok(tex_state::node_arena::PageListId::empty()),
     }
 }
 
@@ -432,12 +443,15 @@ fn split_insertion_remainder<G>(
         .checked_add(broken_at)
         .ok_or(ExecError::ArithmeticOverflow)?
         .min(queue.nodes.len());
-    let remainder = queue.nodes.split_off(split_at);
-    let pruned = prune_page_top(stores, remainder, context.split_top_skip);
+    let mut slices = Vec::new();
+    let remainder =
+        stores.slice_page_node_sequence(queue.nodes, split_at..queue.nodes.len(), &mut slices);
+    queue.nodes = stores.slice_page_node_sequence(queue.nodes, 0..split_at, &mut slices);
+    let pruned = crate::splitting::prune_page_top_list(stores, remainder, context.split_top_skip);
     if pruned.is_empty() {
         return Ok(None);
     }
-    let content = stores.publish_page_nodes(pruned);
+    let content = pruned;
     let size = natural_vlist_size(
         stores,
         diagnostic_effects,
@@ -461,15 +475,14 @@ fn package_insertion_box<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
     class: u16,
-    nodes: Vec<Node>,
+    nodes: tex_state::node_arena::PageListId,
 ) {
-    let list = stores.publish_page_nodes(nodes);
     let packed = vpack_natural(
         stores,
         diagnostic_effects,
         geometry,
         diagnostic_context,
-        list,
+        nodes,
     );
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores
@@ -479,7 +492,7 @@ fn package_insertion_box<G>(
 
 pub(crate) fn prepend_output_heldover<G>(
     stores: &mut CommandContext<'_, G>,
-    output_nodes: Vec<Node>,
+    output_nodes: tex_state::node_arena::PageListId,
     discard_rewritten_break: bool,
 ) {
     let (mut heldover, _) = stores.take_current_page_prefix(stores.current_page_len());
@@ -494,20 +507,27 @@ pub(crate) fn prepend_output_heldover<G>(
     // §1026's ordinary builder resumption.
     if discard_rewritten_break {
         let heldover_is_rewritten_break = heldover.len() == 1
-            && matches!(heldover.first(), Some(Node::Penalty(value)) if *value == INF_PENALTY)
+            && matches!(
+                stores
+                    .page_node_list(heldover)
+                    .expect("heldover list belongs to the live page arena")
+                    .nodes()
+                    .first(),
+                Some(Node::Penalty(value)) if *value == INF_PENALTY
+            )
             && stores.page_contributions().is_empty();
         let contribution_is_rewritten_break = heldover.is_empty()
             && stores.page_contributions().len() == 1
             && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY);
         if heldover_is_rewritten_break {
-            heldover.clear();
+            heldover = tex_state::node_arena::PageListId::empty();
         } else if contribution_is_rewritten_break {
             if let Some(carrier) = stores.pop_page_contribution_front() {
                 stores.discard_page_node(carrier);
             }
         }
     }
-    heldover.extend(output_nodes);
+    heldover = stores.compose_page_node_sequences(&[heldover, output_nodes]);
     stores.start_page_after_output();
     stores.set_page_integer(PageInteger::InsertPenalties, 0);
     stores.prepend_page_contributions(heldover);
@@ -515,13 +535,26 @@ pub(crate) fn prepend_output_heldover<G>(
 
 fn output_penalty_and_rewrite_break<G>(
     stores: &mut CommandContext<'_, G>,
-    after_break: &mut Vec<Node>,
+    after_break: tex_state::node_arena::PageListId,
     fire_up: PageFireUp,
-) -> i32 {
-    if let Some(Node::Penalty(value)) = after_break.first_mut() {
-        let penalty = *value;
-        *value = INF_PENALTY;
-        return penalty;
+) -> (i32, tex_state::node_arena::PageListId) {
+    let first_penalty = match stores
+        .page_node_list(after_break)
+        .expect("page-break suffix belongs to the live arena")
+        .nodes()
+        .first()
+    {
+        Some(Node::Penalty(value)) => Some(*value),
+        _ => None,
+    };
+    if let Some(penalty) = first_penalty {
+        let replacement = stores.publish_page_nodes(vec![Node::Penalty(INF_PENALTY)]);
+        let mut slices = Vec::new();
+        let tail = stores.slice_page_node_sequence(after_break, 1..after_break.len(), &mut slices);
+        return (
+            penalty,
+            stores.compose_page_node_sequences(&[replacement, tail]),
+        );
     }
 
     if fire_up.trigger() == fire_up.best_break()
@@ -530,11 +563,14 @@ fn output_penalty_and_rewrite_break<G>(
         if let Some(carrier) = stores.pop_page_contribution_front() {
             stores.discard_page_node(carrier);
         }
-        after_break.push(Node::Penalty(INF_PENALTY));
-        return penalty;
+        let replacement = stores.publish_page_nodes(vec![Node::Penalty(INF_PENALTY)]);
+        return (
+            penalty,
+            stores.compose_page_node_sequences(&[after_break, replacement]),
+        );
     }
 
-    INF_PENALTY
+    (INF_PENALTY, after_break)
 }
 
 /// TeX.web §1024's `<Explain that too many dead cycles have occurred...>`.

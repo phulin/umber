@@ -28,10 +28,7 @@ const HYPHEN_CONTEXT: usize = 11;
 #[derive(Clone, Copy)]
 struct ListProjection {
     id: u64,
-    node_len: usize,
-    physical_node_len: usize,
-    page_node_root_count: usize,
-    semantic_identity: tex_state::node_sequence::SemanticSequenceIdentity,
+    root: tex_state::node_arena::PageListId,
     list_semantic_identity_root: u64,
     component_roots: super::ModeComponentRoots,
     inverse_positions: [usize; FIELD_COUNT],
@@ -41,10 +38,7 @@ impl ListProjection {
     fn capture(id: u64, list: &ModeList) -> Self {
         Self {
             id,
-            node_len: list.nodes().len(),
-            physical_node_len: list.physical_nodes().len(),
-            page_node_root_count: list.sequence.page_node_root_count(),
-            semantic_identity: list.sequence.semantic_identity(),
+            root: list.nodes,
             list_semantic_identity_root: list.semantic_identity_root,
             component_roots: list.component_roots,
             inverse_positions: [UNRECORDED; FIELD_COUNT],
@@ -121,12 +115,6 @@ struct AcceptedFrame {
     frame: Option<Frame>,
     projections: Vec<ListProjection>,
     inverses: Vec<Inverse>,
-    node_tails: Vec<(
-        u64,
-        tex_state::node_sequence::NodeSequenceAcceptedTail,
-        u64,
-        super::ModeComponentRoots,
-    )>,
 }
 
 pub(super) struct AcceptedModeTail {
@@ -138,9 +126,9 @@ pub(super) struct AcceptedModeTail {
     reason = "rollback values stay move-only and inline; boxing a popped mode level would add a per-operation heap owner"
 )]
 enum Inverse {
-    Nodes {
+    ListRoot {
         level_id: u64,
-        old: tex_state::node_sequence::NodeSequence,
+        old: tex_state::node_arena::PageListId,
     },
     #[cfg(test)]
     AlignState {
@@ -207,8 +195,8 @@ impl Inverse {
     /// same operation therefore performs accepted rewind and rejection redo.
     fn swap(&mut self, storage: &mut ModeNestStorage) {
         match self {
-            Self::Nodes { level_id, old } => {
-                std::mem::swap(&mut storage.level_by_id_mut(*level_id).list.sequence, old);
+            Self::ListRoot { level_id, old } => {
+                std::mem::swap(&mut storage.level_by_id_mut(*level_id).list.nodes, old);
             }
             #[cfg(test)]
             Self::AlignState { level_id, old } => {
@@ -464,12 +452,12 @@ impl ListJournal<'_> {
     pub(super) const fn needs_nodes(&self) -> bool {
         self.inverse_positions[NODES] == UNRECORDED
     }
-    pub(super) fn record_nodes(&mut self, old: &tex_state::node_sequence::NodeSequence) {
+    pub(super) fn record_nodes(&mut self, old: tex_state::node_arena::PageListId) {
         if self.inverse_positions[NODES] == UNRECORDED {
             self.inverse_positions[NODES] = self.inverses.len();
-            self.inverses.push(Inverse::Nodes {
+            self.inverses.push(Inverse::ListRoot {
                 level_id: self.level_id,
-                old: old.clone(),
+                old,
             });
         }
     }
@@ -728,26 +716,16 @@ impl ModeNestStorage {
             } else {
                 self.journal.projections.drain(projection_start..).collect()
             };
-            let mut node_tails = Vec::with_capacity(projections.len());
             for projection in &projections {
                 let level = self.level_by_id_mut(projection.id);
-                let accepted_list_root = level.list.semantic_identity_root;
-                let accepted_components = level.list.component_roots;
-                let tail = level.list.sequence.split_accepted_tail(
-                    projection.node_len,
-                    projection.physical_node_len,
-                    projection.page_node_root_count,
-                    projection.semantic_identity,
-                );
+                level.list.nodes = projection.root;
                 level.list.semantic_identity_root = projection.list_semantic_identity_root;
                 level.list.component_roots = projection.component_roots;
-                node_tails.push((projection.id, tail, accepted_list_root, accepted_components));
             }
             accepted.frames.push(AcceptedFrame {
                 frame,
                 projections,
                 inverses,
-                node_tails,
             });
             if is_selected {
                 break;
@@ -784,12 +762,6 @@ impl ModeNestStorage {
         }
         self.rollback_journal(candidate)?;
         for mut accepted_frame in accepted.frames.drain(..).rev() {
-            for (level_id, tail, list_root, components) in accepted_frame.node_tails.drain(..) {
-                let level = self.level_by_id_mut(level_id);
-                level.list.sequence.restore_accepted_tail(tail);
-                level.list.semantic_identity_root = list_root;
-                level.list.component_roots = components;
-            }
             for inverse in &mut accepted_frame.inverses {
                 inverse.swap(self);
             }
@@ -922,12 +894,7 @@ impl ModeNestStorage {
         for index in frame.projection_start..self.journal.projections.len() {
             let projection = self.journal.projections[index];
             let level = self.level_by_id_mut(projection.id);
-            level.list.sequence.restore_checkpoint_lengths(
-                projection.node_len,
-                projection.physical_node_len,
-                projection.page_node_root_count,
-                projection.semantic_identity,
-            );
+            level.list.nodes = projection.root;
             level.list.semantic_identity_root = projection.list_semantic_identity_root;
             level.list.component_roots = projection.component_roots;
         }

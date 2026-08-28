@@ -97,12 +97,10 @@ pub(crate) fn execute_scanned_saved_vertical_discards<G>(
         _ => unreachable!("caller restricts saved vertical-discard primitives"),
     };
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
-    for node in nodes {
-        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-            append_vertical_contribution(nest, stores, node);
-        } else {
-            nest.current_list_mutation().push(node);
-        }
+    if is_outer_vertical(nest) {
+        stores.append_page_contributions(nodes);
+    } else {
+        nest.current_list_mutation().append_list(stores, nodes);
     }
     Ok(())
 }
@@ -121,7 +119,8 @@ pub(crate) fn execute_delete_last<G>(
         return Ok(());
     }
     let current_list = nest.current_list();
-    let Some(tail) = crate::effective_tail::EffectiveTail::find(current_list.nodes().iter()) else {
+    let Some(tail) = crate::effective_tail::EffectiveTail::find(current_list.nodes(stores).iter())
+    else {
         return Ok(());
     };
     let matches_target = matches!(
@@ -133,7 +132,9 @@ pub(crate) fn execute_delete_last<G>(
     let range = tail.removal_range();
     drop(current_list);
     if matches_target {
-        let _ = nest.current_list_mutation().remove_node_range(range);
+        let _ = nest
+            .current_list_mutation()
+            .remove_node_range(stores, range);
     }
     Ok(())
 }
@@ -248,7 +249,10 @@ pub(crate) fn append_box_node_to_current_list<G>(
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             extract_box_migrations(stores, &mut node)
         } else {
-            (Vec::new(), Vec::new())
+            (
+                tex_state::node_arena::PageListId::empty(),
+                tex_state::node_arena::PageListId::empty(),
+            )
         };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let nucleus = stores.publish_page_nodes(vec![node]);
@@ -259,13 +263,9 @@ pub(crate) fn append_box_node_to_current_list<G>(
     } else {
         node
     };
-    for node in pre_migrated {
-        append_vertical_contribution(nest, stores, node);
-    }
+    append_migration_list(nest, stores, pre_migrated);
     append_node_to_current_list(nest, stores, diagnostic_effects, node, fuel)?;
-    for node in migrated {
-        append_vertical_contribution(nest, stores, node);
-    }
+    append_migration_list(nest, stores, migrated);
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
@@ -278,21 +278,37 @@ pub(crate) fn append_box_node_to_current_list<G>(
 fn extract_box_migrations<G>(
     stores: &mut CommandContext<'_, G>,
     node: &mut Node,
-) -> (Vec<Node>, Vec<Node>) {
+) -> (
+    tex_state::node_arena::PageListId,
+    tex_state::node_arena::PageListId,
+) {
     let Node::HList(boxed) = node else {
-        return (Vec::new(), Vec::new());
+        return (
+            tex_state::node_arena::PageListId::empty(),
+            tex_state::node_arena::PageListId::empty(),
+        );
     };
-    let children = stores
-        .page_node_list(boxed.children)
-        .expect("hbox children belong to the live page arena")
-        .nodes()
-        .to_vec();
+    let children = boxed.children;
     let (retained, pre_migrated, migrated) = split_hpack_migrations(stores, children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
-        let retained = stores.publish_page_nodes(retained);
         boxed.children = retained;
     }
     (pre_migrated, migrated)
+}
+
+fn append_migration_list<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    nodes: tex_state::node_arena::PageListId,
+) {
+    if nodes.is_empty() {
+        return;
+    }
+    if is_outer_vertical(nest) {
+        stores.append_page_contributions(nodes);
+    } else {
+        nest.current_list_mutation().append_list(stores, nodes);
+    }
 }
 
 /// Performs TeX82 §647's `adjust_tail` split for one horizontal list.
@@ -305,34 +321,47 @@ fn extract_box_migrations<G>(
 /// `\hbox` contribution to a vertical list, §796's alignment column -- performs
 /// exactly this split, and differs only in where the migrated material lands.
 pub(crate) fn split_hpack_migrations<G>(
-    stores: &CommandContext<'_, G>,
-    nodes: Vec<Node>,
-) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
-    let mut retained = Vec::with_capacity(nodes.len());
-    let mut pre_migrated = Vec::new();
-    let mut migrated = Vec::new();
-    for node in nodes {
-        match node {
-            node @ (Node::Mark { .. } | Node::Ins { .. }) => migrated.push(node),
-            Node::Adjust(adjust) => {
-                let target = if adjust.pre {
-                    &mut pre_migrated
-                } else {
-                    &mut migrated
-                };
-                target.extend(
-                    stores
-                        .page_node_list(adjust.content)
-                        .expect("adjustment content belongs to the live page arena")
-                        .nodes()
-                        .iter()
-                        .cloned(),
-                );
-            }
-            node => retained.push(node),
+    stores: &mut CommandContext<'_, G>,
+    nodes: tex_state::node_arena::PageListId,
+) -> (
+    tex_state::node_arena::PageListId,
+    tex_state::node_arena::PageListId,
+    tex_state::node_arena::PageListId,
+) {
+    let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    let mut pre_migrated = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    let mut migrated = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut retained);
+    stores.open_page_active_list(&mut pre_migrated);
+    stores.open_page_active_list(&mut migrated);
+    for index in 0..nodes.len() {
+        let disposition = match stores
+            .page_node_list(nodes)
+            .expect("hpack source belongs to the live page arena")
+            .nodes()
+            .owned_node(index)
+            .expect("hpack source index remains in range")
+        {
+            Node::Mark { .. } | Node::Ins { .. } => (2, None),
+            Node::Adjust(adjust) => (usize::from(!adjust.pre) + 1, Some(adjust.content)),
+            _ => (0, None),
+        };
+        let target = match disposition.0 {
+            0 => &mut retained,
+            1 => &mut pre_migrated,
+            _ => &mut migrated,
+        };
+        if let Some(content) = disposition.1 {
+            stores.append_page_active_list(target, content);
+        } else {
+            stores.append_page_active_list_range(target, nodes, index..index + 1);
         }
     }
-    (retained, pre_migrated, migrated)
+    (
+        stores.finalize_page_active_list(&mut retained),
+        stores.finalize_page_active_list(&mut pre_migrated),
+        stores.finalize_page_active_list(&mut migrated),
+    )
 }
 
 fn append_unboxed<G>(
@@ -350,29 +379,33 @@ fn append_unboxed<G>(
     // containing packed line. Copying the box preserves them, but either
     // unboxing primitive removes them while splicing the remaining children;
     // the frozen source list itself must remain immutable for `\unhcopy`.
-    for node in stores
-        .page_node_list(children)
-        .expect("unboxed children belong to the live page arena")
-        .nodes()
-        .to_vec()
-        .into_iter()
-        .filter(|node| {
-            !matches!(
-                node,
-                Node::MarginKern { .. }
-                    | Node::Kern {
-                        kind: KernKind::LeftMargin | KernKind::RightMargin,
-                        ..
-                    }
-            )
-        })
-        .collect::<Vec<_>>()
-    {
-        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-            append_vertical_contribution(nest, stores, node);
-        } else {
-            nest.current_list_mutation().push(node);
+    let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut retained);
+    for index in 0..children.len() {
+        let remove = stores
+            .page_node_list(children)
+            .expect("unboxed children belong to the live page arena")
+            .nodes()
+            .get(index)
+            .is_some_and(|node| {
+                matches!(
+                    node,
+                    tex_state::node_arena::NodeRef::MarginKern { .. }
+                        | tex_state::node_arena::NodeRef::Kern {
+                            kind: KernKind::LeftMargin | KernKind::RightMargin,
+                            ..
+                        }
+                )
+            });
+        if !remove {
+            stores.append_page_active_list_range(&mut retained, children, index..index + 1);
         }
+    }
+    let retained = stores.finalize_page_active_list(&mut retained);
+    if is_outer_vertical(nest) {
+        stores.append_page_contributions(retained);
+    } else {
+        nest.current_list_mutation().append_list(stores, retained);
     }
     Ok(())
 }

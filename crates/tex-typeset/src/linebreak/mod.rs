@@ -1,9 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::{
-    ArenaNodeSequence, NodeCursor, PageLifetime, PageListId, PageNodeSequenceId,
-};
+use tex_state::node_arena::{NodeCursor, PageListId, PageNodeSequenceId};
 use tex_state::node_sequence::DirectHighCellLineages;
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
@@ -205,7 +203,7 @@ pub struct ParagraphTape<'a> {
 enum ParagraphSource<'a> {
     Owned(NodeSequence),
     BorrowedMirrored(&'a [Node]),
-    BorrowedArena(ArenaNodeSequence<'a, PageLifetime>),
+    BorrowedArena(NodeCursor<'a>),
     ArenaId {
         semantic: PageNodeSequenceId,
         physical: PageNodeSequenceId,
@@ -320,7 +318,7 @@ impl ParagraphTape<'static> {
                     .iter(),
             )
         };
-        let nodes = NodeCursor::arena(view);
+        let nodes = view;
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
         let break_sites = analyzer
             .by_ref()
@@ -396,10 +394,10 @@ impl<'a> ParagraphTape<'a> {
     #[must_use]
     pub fn analyze_arena<S: TypesetState>(
         state: &S,
-        sequence: ArenaNodeSequence<'a, PageLifetime>,
+        sequence: NodeCursor<'a>,
         params: &LineBreakParams,
     ) -> Self {
-        let nodes = NodeCursor::arena(sequence);
+        let nodes = sequence;
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
         let break_sites = analyzer
             .by_ref()
@@ -430,12 +428,10 @@ impl<'a> ParagraphTape<'a> {
         match &self.source {
             ParagraphSource::Owned(sequence) => NodeCursor::owned(sequence.semantic()),
             ParagraphSource::BorrowedMirrored(nodes) => NodeCursor::owned(nodes),
-            ParagraphSource::BorrowedArena(sequence) => NodeCursor::arena(*sequence),
-            ParagraphSource::ArenaId { semantic, .. } => NodeCursor::arena(
-                state
-                    .page_node_sequence(*semantic)
-                    .expect("paragraph sequence remains live while its tape is consumed"),
-            ),
+            ParagraphSource::BorrowedArena(sequence) => *sequence,
+            ParagraphSource::ArenaId { semantic, .. } => state
+                .page_node_sequence(*semantic)
+                .expect("paragraph sequence remains live while its tape is consumed"),
         }
     }
 
@@ -732,7 +728,7 @@ use widths::{Widths, add_node_width_source, line_badness, line_widths_nodes, lin
 /// final-line expansion independently and permits unlike font settings.
 pub fn validate_paragraph_expansion<S: TypesetState>(
     state: &S,
-    nodes: &[Node],
+    nodes: NodeCursor<'_>,
 ) -> Result<Option<(i32, i32)>, crate::expansion::FontExpansionError> {
     let mut paragraph = crate::expansion::ParagraphExpansion::default();
     observe_expansion_fonts(state, nodes, &mut paragraph)?;
@@ -741,10 +737,10 @@ pub fn validate_paragraph_expansion<S: TypesetState>(
 
 fn observe_expansion_fonts<S: TypesetState>(
     state: &S,
-    nodes: &[Node],
+    nodes: NodeCursor<'_>,
     paragraph: &mut crate::expansion::ParagraphExpansion,
 ) -> Result<(), crate::expansion::FontExpansionError> {
-    for node in nodes {
+    for node in nodes.iter() {
         match node {
             Node::Char { font, .. } | Node::Lig { font, .. } => {
                 if let Some(spec) = state.font_expansion_spec(*font) {
@@ -756,7 +752,7 @@ fn observe_expansion_fonts<S: TypesetState>(
             } => {
                 for list in [pre, post, replace] {
                     let owned = state.page_nodes(*list).iter().cloned().collect::<Vec<_>>();
-                    observe_expansion_fonts(state, &owned, paragraph)?;
+                    observe_expansion_fonts(state, NodeCursor::owned(&owned), paragraph)?;
                 }
             }
             _ => {}

@@ -34,14 +34,10 @@ pub struct LineMaterializer<'a> {
 enum ChannelNodes<'a> {
     Owned(std::vec::IntoIter<Node>),
     Borrowed(core::slice::Iter<'a, Node>),
-    Arena(
-        core::iter::Peekable<
-            tex_state::node_arena::ArenaNodeSequenceIter<'a, tex_state::node_arena::PageLifetime>,
-        >,
-    ),
+    Arena(core::iter::Peekable<tex_state::node_arena::NodeCursorIter<'a>>),
     ArenaId {
         sequence: tex_state::node_arena::PageNodeSequenceId,
-        cursor: tex_state::node_arena::PageNodeSequenceCursor,
+        cursor: usize,
         remaining: usize,
     },
 }
@@ -143,12 +139,12 @@ impl<'a> LineMaterializer<'a> {
                     (
                         ChannelNodes::ArenaId {
                             sequence: semantic,
-                            cursor: semantic.cursor(),
+                            cursor: 0,
                             remaining: semantic_len,
                         },
                         ChannelNodes::ArenaId {
                             sequence: physical,
-                            cursor: physical.cursor(),
+                            cursor: 0,
                             remaining: physical_len,
                         },
                         semantic_high_cell_lineages,
@@ -311,9 +307,10 @@ impl ChannelNodes<'_> {
                 let node = state
                     .page_node_sequence(*sequence)
                     .expect("paragraph sequence remains live during materialization")
-                    .next_at(cursor)
+                    .owned_node(*cursor)
                     .expect("arena-id cursor remains in bounds")
                     .clone();
+                *cursor += 1;
                 *remaining -= 1;
                 Some(node)
             }
@@ -331,11 +328,10 @@ impl ChannelNodes<'_> {
                 remaining,
             } => (*remaining != 0)
                 .then(|| {
-                    let mut probe = *cursor;
                     state
                         .page_node_sequence(*sequence)
                         .expect("paragraph sequence remains live during materialization")
-                        .next_at(&mut probe)
+                        .owned_node(*cursor)
                 })
                 .flatten(),
         }

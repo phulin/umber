@@ -54,13 +54,15 @@ pub(crate) fn take_last_box<G>(
             if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
                 return Ok(None);
             }
-            let mut removed = stores.remove_page_contribution_range(tail.removal_range());
-            Ok(reset_removed_box_shift(&mut removed))
+            let removed = stores.remove_page_contribution_range(tail.removal_range());
+            let result = reset_removed_box_shift(stores.page_carrier_node(&removed));
+            stores.discard_page_node(removed);
+            Ok(result)
         }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
             let current_list = nest.current_list();
             let Some(tail) =
-                crate::effective_tail::EffectiveTail::find(current_list.nodes().iter())
+                crate::effective_tail::EffectiveTail::find(current_list.nodes(stores).iter())
             else {
                 return Ok(None);
             };
@@ -69,23 +71,29 @@ pub(crate) fn take_last_box<G>(
             }
             let range = tail.removal_range();
             drop(current_list);
-            let mut removed = nest.current_list_mutation().remove_node_range(range);
-            Ok(reset_removed_box_shift(&mut removed))
+            let removed = nest
+                .current_list_mutation()
+                .remove_node_range(stores, range);
+            let node = stores
+                .page_node_list(removed)
+                .expect("removed last-box range belongs to the live page arena")
+                .nodes()
+                .first()
+                .expect("effective-tail removal contains its box node");
+            Ok(reset_removed_box_shift(node))
         }
     }
 }
 
-fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
-    let node = removed
-        .iter_mut()
-        .find(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
-    match node {
+fn reset_removed_box_shift(node: &Node) -> Option<Node> {
+    let mut node = node.clone();
+    match &mut node {
         Node::HList(box_node) | Node::VList(box_node) => {
             box_node.shift = tex_state::scaled::Scaled::from_raw(0);
+            Some(node)
         }
-        _ => unreachable!("node was selected as a box"),
+        _ => None,
     }
-    Some(node.clone())
 }
 
 fn report_cannot_take_last_box<G>(
@@ -126,18 +134,13 @@ pub(crate) fn hpack_with_overfull_rule<G>(
                 matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
             })
     {
-        let mut nodes = stores
-            .page_node_list(packed.node.children)
-            .expect("packed box belongs to the live page arena")
-            .nodes()
-            .to_vec();
-        nodes.push(Node::Rule {
+        let overfull_rule = stores.publish_page_nodes(vec![Node::Rule {
             width: Some(params.overfull_rule),
             height: None,
             depth: None,
-        });
-        let children = stores.publish_page_nodes(nodes);
-        packed.node.children = children;
+        }]);
+        packed.node.children = stores
+            .compose_page_node_sequences(&[packed.node.children, overfull_rule]);
     }
     // TeX82 §§115/162 stores a discretionary's replacement as the
     // physical nodes immediately following the disc node. Umber keeps that
@@ -159,38 +162,36 @@ fn physical_discretionary_projection<G>(
     let nodes = stores
         .page_node_list(children)
         .expect("packed box belongs to the live page arena")
-        .nodes()
-        .to_vec();
-    if !nodes.iter().any(|node| {
-        matches!(
-            node,
+        .nodes();
+    let replacements = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| match node {
             Node::Disc {
+                replace,
                 physical_replace_count: 1..,
                 ..
-            }
-        )
-    }) {
+            } => Some((index, *replace)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if replacements.is_empty() {
         return None;
     }
-    let mut physical = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        let replace = match &node {
-            Node::Disc { replace, .. } => Some(
-                stores
-                    .page_node_list(*replace)
-                    .expect("discretionary replacement belongs to the live page arena")
-                    .nodes()
-                    .to_vec(),
-            ),
-            _ => None,
-        };
-        physical.push(node);
-        if let Some(replace) = replace {
-            physical.extend(replace);
-        }
+    let source_len = nodes.len();
+    drop(nodes);
+    let mut slices = Vec::new();
+    let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
+    let mut start = 0;
+    for (index, replace) in replacements {
+        pieces.push(stores.slice_page_node_sequence(children, start..index + 1, &mut slices));
+        pieces.push(replace);
+        start = index + 1;
     }
-    let physical = stores.publish_page_nodes(physical);
-    Some(physical)
+    if start < source_len {
+        pieces.push(stores.slice_page_node_sequence(children, start..source_len, &mut slices));
+    }
+    Some(stores.compose_page_node_sequences(&pieces))
 }
 
 #[allow(clippy::too_many_arguments)] // Packing exposes independent TeX parameters and diagnostic capabilities.
