@@ -1128,6 +1128,25 @@ impl<G> CommandState<G> {
             .expect("profiling fixture begins outside filename scanning");
     }
 
+    /// Rewrites one rollback-coupled scalar repeatedly inside one checkpoint
+    /// interval, exercising dense first-touch coalescing without semantic I/O.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_repeated_timeline_mutations(&mut self, mutations: usize) {
+        for _ in 0..mutations {
+            self.timeline.record_name_in_progress(self.name_in_progress);
+            self.name_in_progress = !self.name_in_progress;
+        }
+    }
+
+    /// Returns structural packed-journal evidence for standalone gates.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub fn profile_timeline_counters(&self) -> crate::CommandTimelineCounters {
+        self.timeline.packed_journal_counters()
+    }
+
     /// Reads the scalar used by the standalone rollback/fork isolation gate.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]

@@ -444,6 +444,57 @@ fn named_checkpoint_capture_and_warmed_mutation_clone_no_roots() {
 }
 
 #[test]
+fn repeated_same_scalar_writes_coalesce_to_first_old_and_final_live_value() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let snapshot = command.snapshot(universe).expect("checkpoint captures");
+        let before = command.timeline.packed_journal_counters();
+
+        for _ in 0..1_024 {
+            command
+                .timeline
+                .record_name_in_progress(command.name_in_progress);
+            command.name_in_progress = !command.name_in_progress;
+        }
+        let after = command.timeline.packed_journal_counters();
+        assert_eq!(after.records - before.records, 1);
+        assert_eq!(after.coalesced_writes - before.coalesced_writes, 1_023);
+        assert_eq!(after.descriptor_publications, 0);
+        assert!(!command.name_in_progress());
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("first old value restores");
+        assert!(!command.name_in_progress());
+    });
+}
+
+#[test]
+fn ordered_diagnostic_pushes_remain_noncoalescible_and_restore_in_order() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let checkpoint = command
+            .publish_summary(universe)
+            .expect("quiescent checkpoint publishes");
+        let before = command.timeline.packed_journal_counters();
+        for diagnostic in [11, 22, 33] {
+            command.timeline.record_expansion_diagnostic_push();
+            command.expansion.pending_diagnostics.push(diagnostic);
+        }
+        let after = command.timeline.packed_journal_counters();
+        assert_eq!(after.records - before.records, 3);
+        assert_eq!(after.ordered_events - before.ordered_events, 3);
+
+        let mut candidate =
+            crate::CommandState::fork_summary(command, &checkpoint, universe, universe)
+                .expect("diagnostic suffix forks");
+        assert!(candidate.expansion.pending_diagnostics.is_empty());
+        candidate.reject_checkpoint_candidate();
+        assert_eq!(candidate.expansion.pending_diagnostics, [11, 22, 33]);
+    });
+}
+
+#[test]
 fn surviving_summary_restarts_identically_after_a_newer_summary_is_dropped() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

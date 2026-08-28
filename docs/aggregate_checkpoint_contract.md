@@ -426,6 +426,15 @@ owner mark. No identity placeholder, checkpoint census, or compensating scan
 is needed when `.2.13` removes `StateCore::checkpoint_copy` and the current
 World/source/font accepted-block fork path.
 
+The command component now follows the same rule. Checkpoint frames retain their
+stable `ForkArena` range identities, but scalar mutations append fixed-size
+undo/redo records directly to reusable linked chunks and publish no per-write
+list descriptor. Interval-local dense first-touch bits reduce repeated writes
+to first-old/final-new; ordered diagnostic pushes remain one record per event,
+and the large owned pending-filename slot has a separate fixed-chunk lane.
+Rollback visits current records backward, rejection redoes the detached prior
+suffix forward, and acceptance returns obsolete chunks to the same owner pool.
+
 ## Promotion thresholds
 
 Later ownership-family children must retain this baseline and meet these final

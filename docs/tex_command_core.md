@@ -3136,21 +3136,40 @@ copies only those scalar coordinates; it does not clone `CommandStateRoots` or
 any accumulated command payload. Generation-owned input, parameter, condition,
 group, aftergroup, and alignment stacks retain physical append rows behind
 logical tops. Replacing a rollback-reachable row records a compact old element,
-while root scalars use compact generation-local undo entries. A logical pop
-therefore leaves its payload reachable until the named mark is rejected or
+while root scalars use a descriptor-free packed bidirectional journal. Its
+fixed-size records append into reusable coarse pages, and each checkpoint adds
+only scalar journal marks. Dense first-touch bits coalesce writes to the same
+root cell within one checkpoint interval: the record retains the first old
+value, the live root retains the final new value, reverse rollback swaps the
+old value into place, and forward redo swaps the final value back. A logical
+pop therefore leaves its payload reachable until the named mark is rejected or
 sealed.
+
+Only state cells whose intermediate values cannot escape the checkpoint
+transaction are coalesced: filename-scan activity, pending after-assignment,
+expansion accounting, alignment brace depth, input/source identity counters,
+retained file-line state, end-of-input state, and the pending resource-open
+slot. The owned resource-open value uses a separate fixed-chunk lane so its
+large filename carrier cannot inflate every scalar record. Ordered diagnostic
+pushes are deliberately non-coalescible; every push remains one packed record
+so reverse rollback and forward redo preserve vector order. Command
+observations, effects, input-stack transitions, replay completions, and other
+externally ordered events remain in their authoritative ledgers or logical
+stacks and never enter scalar coalescing.
 
 The live root remains the sole mutable borrower before and after publication.
 Cloning a retained value copies the fixed mark tuple and coarse generation
 capability; it never aliases the timeline. Candidate handoff moves the sole
 `CommandState` out of `MainControl` and parks it in the retained generation.
-Fork selects its sealed timeline mark, rewinds later accepted cells in place,
-detaches those chunks, and moves that same physical owner into the sole current
-command machine. Rejection rewinds the current suffix and redoes the detached
-accepted suffix before reattaching it. Acceptance drops the detached chunks
-without rebranding the unchanged prefix. No first-write COW, deferred aggregate
-clone, root registry, compactor, per-entry heap owner, or additional lineage
-participates.
+Fork selects its sealed frame and journal marks, rewinds later accepted records
+in place, detaches their linked fixed chunks, and moves that same physical owner
+into the sole current command machine. Rejection rewinds the current suffix and
+redoes the detached accepted suffix forward before reattaching it. Acceptance
+returns the detached chunks to the journal's reuse pool without rebranding the
+unchanged prefix. `ForkArena` remains the owner of checkpoint frames that need
+stable range identity; scalar history publishes no arena list descriptor. No
+first-write COW, deferred aggregate clone, root registry, compactor, per-entry
+heap owner, or additional lineage participates.
 Restore validates the complete aggregate before replaying undo and truncating
 the unpublished logical suffix, following the owner-before-roots-before-
 truncation ordering in `runtime_storage_lifetimes.md`.

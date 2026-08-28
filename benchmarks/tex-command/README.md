@@ -92,5 +92,8 @@ cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
 source and stored-token units. It enforces identical zero allocation calls and
 requested bytes for warmed capture, checkpoint clone, same-generation restore,
 the first scalar mutation after capture, command-only candidate fork, and the
-first mutation after fork. It also rejects a candidate mutation and forks the
-same accepted mark again to prove exact rollback and lineage isolation.
+first mutation after fork. It additionally performs 8,192 writes to one hot
+scalar in a single interval and requires one packed record, 8,191 coalesced
+writes, zero scalar-list descriptor publications, at most 32 record bytes, and
+zero warmed heap allocation. It also rejects a candidate mutation and forks
+the same accepted mark again to prove exact rollback and lineage isolation.

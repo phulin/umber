@@ -78,6 +78,7 @@ pub use primitives::{
 };
 mod processor;
 mod profile;
+mod scalar_journal;
 mod scan_toks;
 mod scanners;
 mod snapshot;
@@ -165,7 +166,7 @@ pub use scanners::{
 };
 pub use snapshot::{
     CommandGenerationOwner, CommandRestoreError, CommandStateSnapshot, CommandSummary,
-    CommandSummaryError, PreparedCommandRestore, TransientCommandSnapshot,
+    CommandSummaryError, CommandTimelineCounters, PreparedCommandRestore, TransientCommandSnapshot,
 };
 pub use state::{
     CommandGroupError, CommandGroupExit, CommandReplayDelivery, CommandReplayEpisode,

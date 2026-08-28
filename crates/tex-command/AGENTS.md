@@ -68,6 +68,9 @@ collector (see `src/conditionals.rs`).
   parameter, condition, group, aftergroup, and alignment rows survive a logical
   pop while a checkpoint can reach them; fixed marks retain logical tops and
   compact element-undo positions, and restore discards only the current suffix.
+- `src/scalar_journal.rs` and `src/scalar_journal/tests.rs`: reusable fixed-chunk
+  bidirectional command-root journal, scalar marks, two-lineage suffix
+  settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   the executor borrows the one caller-owned value through preflight and
   scanning, and moves it only into an actual retry or another semantic owner;

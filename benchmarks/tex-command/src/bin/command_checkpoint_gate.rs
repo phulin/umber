@@ -23,6 +23,7 @@ struct GateCounts {
     first_mutation: Counts,
     fork: Counts,
     fork_first_mutation: Counts,
+    repeated_scalar_mutations: Counts,
 }
 
 fn main() {
@@ -39,17 +40,22 @@ fn main() {
         ("first_mutation", shallow.first_mutation),
         ("fork", shallow.fork),
         ("fork_first_mutation", shallow.fork_first_mutation),
+        (
+            "repeated_scalar_mutations",
+            shallow.repeated_scalar_mutations,
+        ),
     ] {
         assert_eq!(counts, Counts::ZERO, "{name} must remain allocation-free");
     }
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} repeated_scalar_mutations={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
         shallow.first_mutation,
         shallow.fork,
         shallow.fork_first_mutation,
+        shallow.repeated_scalar_mutations,
     );
 }
 
@@ -121,6 +127,20 @@ fn run_fixture(units: usize) -> GateCounts {
         command
             .restore_summary(&summary, universe)
             .expect("mutation cleanup restores");
+        let journal_before = command.profile_timeline_counters();
+        let (_, repeated_scalar_mutations) =
+            measure(|| command.profile_repeated_timeline_mutations(8_192));
+        let journal_after = command.profile_timeline_counters();
+        assert_eq!(journal_after.records - journal_before.records, 1);
+        assert_eq!(
+            journal_after.coalesced_writes - journal_before.coalesced_writes,
+            8_191
+        );
+        assert_eq!(journal_after.descriptor_publications, 0);
+        assert!(journal_after.record_bytes - journal_before.record_bytes <= 32);
+        command
+            .restore_summary(&summary, universe)
+            .expect("coalescing cleanup restores");
         drop(command);
 
         let (_, fork) = measure(|| {
@@ -146,6 +166,7 @@ fn run_fixture(units: usize) -> GateCounts {
             first_mutation,
             fork,
             fork_first_mutation,
+            repeated_scalar_mutations,
         }
     })
     .expect("checkpoint gate universe")

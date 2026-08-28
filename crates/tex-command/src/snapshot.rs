@@ -16,6 +16,7 @@ use tex_state::{GenerationOwner, Universe};
 use crate::attempt::AttemptMark;
 use crate::processor::ScannerStatus;
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
+use crate::scalar_journal::{PackedJournal, PackedJournalMark};
 use crate::state::{CommandState, CommandStateRoots};
 
 static NEXT_COMMAND_TIMELINE_OWNER: AtomicU64 = AtomicU64::new(1);
@@ -60,25 +61,27 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
 
 /// Sole physical command-history owner for one admitted generation.
 ///
-/// Checkpoint frames and scalar undo records share one typed chunk lane.
-/// Retained snapshots carry only a sealed lane mark and a one-cell frame
-/// coordinate; no snapshot aliases this mutable owner.
+/// Checkpoint frames retain stable range identities in `ForkArena`; scalar
+/// undo lives separately in descriptor-free fixed chunks. Retained snapshots
+/// carry only scalar marks and a one-cell frame coordinate; no snapshot aliases
+/// either mutable owner.
 pub(crate) struct CommandTimeline<G> {
     owner: u64,
     next_serial: u32,
-    pool: ChunkPool<CommandTimelineCell<G>>,
-    arena: ForkArena<CommandTimelineCell<G>, CommandTimelineLane>,
+    pool: ChunkPool<CommandTimelineFrame>,
+    arena: ForkArena<CommandTimelineFrame, CommandTimelineLane>,
+    scalars: PackedJournal<CommandRootUndo<G>, 128>,
+    pending_input: PackedJournal<PendingInputUndo, 8>,
+    touched_scalars: u16,
+    pending_input_touched: bool,
+    coalesced_writes: u64,
+    ordered_events: u64,
     frames: usize,
     head: Option<CheckpointMark<CommandTimelineLane>>,
     fork: Option<CommandTimelineFork>,
 }
 
 enum CommandTimelineLane {}
-
-enum CommandTimelineCell<G> {
-    Frame(CommandTimelineFrame),
-    RootUndo(CommandRootUndo<G>),
-}
 
 #[derive(Clone, Copy, Debug)]
 struct CommandTimelineFrame {
@@ -91,11 +94,12 @@ struct CommandTimelineFrame {
 struct CommandTimelineMark {
     frame: ArenaListId<CommandTimelineLane>,
     boundary: CheckpointMark<CommandTimelineLane>,
+    scalars: PackedJournalMark,
+    pending_input: PackedJournalMark,
     frames: usize,
 }
 
 struct CommandTimelineFork {
-    selected: CommandTimelineMark,
     prior_head: Option<CheckpointMark<CommandTimelineLane>>,
     prior_frames: usize,
 }
@@ -109,8 +113,29 @@ enum CommandRootUndo<G> {
     NextSourceIdentity(u64),
     RetainedFileLineNumber(i32),
     ForceEof(bool),
-    PendingInputOpen(Option<crate::ScannedFileName>),
     ExpansionDiagnosticPush(Option<u64>),
+}
+
+const _: () = assert!(std::mem::size_of::<CommandRootUndo<()>>() <= 32);
+
+struct PendingInputUndo(Option<crate::ScannedFileName>);
+
+#[repr(u8)]
+enum CommandScalarSlot {
+    NameInProgress,
+    Afterassignment,
+    CumulativeExpansions,
+    AlignState,
+    NextInputLevelIdentity,
+    NextSourceIdentity,
+    RetainedFileLineNumber,
+    ForceEof,
+}
+
+impl CommandScalarSlot {
+    const fn bit(self) -> u16 {
+        1 << self as u8
+    }
 }
 
 impl<G> CommandRootUndo<G> {
@@ -132,9 +157,6 @@ impl<G> CommandRootUndo<G> {
                 std::mem::swap(value, &mut roots.input.retained_file_line_number);
             }
             Self::ForceEof(value) => std::mem::swap(value, &mut roots.input.force_eof),
-            Self::PendingInputOpen(value) => {
-                std::mem::swap(value, &mut roots.pending_input_open);
-            }
             Self::ExpansionDiagnosticPush(value) => match value.take() {
                 Some(diagnostic) => roots.expansion.pending_diagnostics.push(diagnostic),
                 None => {
@@ -152,6 +174,12 @@ impl<G> Default for CommandTimeline<G> {
             owner: NEXT_COMMAND_TIMELINE_OWNER.fetch_add(1, Ordering::Relaxed),
             pool: ChunkPool::default(),
             arena: ForkArena::new(),
+            scalars: PackedJournal::default(),
+            pending_input: PackedJournal::default(),
+            touched_scalars: 0,
+            pending_input_touched: false,
+            coalesced_writes: 0,
+            ordered_events: 0,
             frames: 0,
             head: None,
             fork: None,
@@ -167,7 +195,10 @@ impl<G> fmt::Debug for CommandTimeline<G> {
 
 impl<G> CommandTimeline<G> {
     fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>().saturating_add(self.pool.allocated_heap_bytes())
+        std::mem::size_of::<Self>()
+            .saturating_add(self.pool.allocated_heap_bytes())
+            .saturating_add(self.scalars.retained_bytes())
+            .saturating_add(self.pending_input.retained_bytes())
     }
 
     #[cfg(test)]
@@ -183,6 +214,23 @@ impl<G> CommandTimeline<G> {
     #[cfg(test)]
     fn source_cells_copied(&self) -> u64 {
         self.arena.counters().source_nodes_copied
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    fn packed_journal_counters(&self) -> CommandTimelineCounters {
+        let scalar = self.scalars.counters();
+        let pending = self.pending_input.counters();
+        CommandTimelineCounters {
+            records: scalar.records.saturating_add(pending.records),
+            record_bytes: scalar.record_bytes.saturating_add(pending.record_bytes),
+            descriptor_publications: 0,
+            coalesced_writes: self.coalesced_writes,
+            ordered_events: self.ordered_events,
+            chunks_acquired: scalar
+                .chunks_acquired
+                .saturating_add(pending.chunks_acquired),
+            chunks_reused: scalar.chunks_reused.saturating_add(pending.chunks_reused),
+        }
     }
 
     fn retain(
@@ -209,16 +257,21 @@ impl<G> CommandTimeline<G> {
             .ok_or(CommandSummaryError::TimelineCapacity)?;
         self.next_serial = serial;
         let cursor = CommandSnapshotCursor::new(serial, arenas, stacks);
+        self.scalars.warm_first_page();
+        let scalars = self.scalars.mark();
+        let pending_input = self.pending_input.mark();
+        self.touched_scalars = 0;
+        self.pending_input_touched = false;
         let mut builder = self
             .arena
             .begin_builder(&mut self.pool)
             .map_err(|_| CommandSummaryError::TimelineCapacity)?;
         builder
-            .push(CommandTimelineCell::Frame(CommandTimelineFrame {
+            .push(CommandTimelineFrame {
                 serial,
                 cursor,
                 attempt,
-            }))
+            })
             .map_err(|_| CommandSummaryError::TimelineCapacity)?;
         let frame = builder
             .seal()
@@ -238,6 +291,8 @@ impl<G> CommandTimeline<G> {
             CommandTimelineMark {
                 frame,
                 boundary,
+                scalars,
+                pending_input,
                 frames: self.frames,
             },
         ))
@@ -252,10 +307,12 @@ impl<G> CommandTimeline<G> {
             return None;
         }
         let view = self.arena.list(&self.pool, mark.frame).ok()?;
-        let CommandTimelineCell::Frame(frame) = view.get(0)? else {
-            return None;
-        };
-        (view.len() == 1 && frame.serial == cursor.command_journal() && frame.cursor == cursor)
+        let frame = view.get(0)?;
+        (view.len() == 1
+            && self.scalars.validates(mark.scalars)
+            && self.pending_input.validates(mark.pending_input)
+            && frame.serial == cursor.command_journal()
+            && frame.cursor == cursor)
             .then_some(frame.attempt)
     }
 
@@ -263,60 +320,93 @@ impl<G> CommandTimeline<G> {
         self.frames != 0
     }
 
-    fn append_root_undo(&mut self, undo: CommandRootUndo<G>) {
+    fn record_scalar(&mut self, slot: CommandScalarSlot, undo: CommandRootUndo<G>) {
         if !self.has_live_frame() {
             return;
         }
-        let mut builder = self
-            .arena
-            .begin_builder(&mut self.pool)
-            .expect("command timeline owns the sole journal builder");
-        builder
-            .push(CommandTimelineCell::RootUndo(undo))
-            .expect("one command undo record fits its chunk");
-        let _ = builder
-            .seal()
-            .expect("command undo record seals without materialization");
+        let bit = slot.bit();
+        if self.touched_scalars & bit != 0 {
+            self.coalesced_writes = self.coalesced_writes.saturating_add(1);
+            return;
+        }
+        self.touched_scalars |= bit;
+        self.scalars.append(undo);
     }
 
     pub(crate) fn record_name_in_progress(&mut self, old: bool) {
-        self.append_root_undo(CommandRootUndo::NameInProgress(old));
+        self.record_scalar(
+            CommandScalarSlot::NameInProgress,
+            CommandRootUndo::NameInProgress(old),
+        );
     }
 
     pub(crate) fn record_afterassignment(&mut self, old: Option<crate::state::CommandPayload<G>>) {
-        self.append_root_undo(CommandRootUndo::Afterassignment(old));
+        self.record_scalar(
+            CommandScalarSlot::Afterassignment,
+            CommandRootUndo::Afterassignment(old),
+        );
     }
 
     pub(crate) fn record_cumulative_expansions(&mut self, old: u64) {
-        self.append_root_undo(CommandRootUndo::CumulativeExpansions(old));
+        self.record_scalar(
+            CommandScalarSlot::CumulativeExpansions,
+            CommandRootUndo::CumulativeExpansions(old),
+        );
     }
 
     pub(crate) fn record_align_state(&mut self, old: i32) {
-        self.append_root_undo(CommandRootUndo::AlignState(old));
+        self.record_scalar(
+            CommandScalarSlot::AlignState,
+            CommandRootUndo::AlignState(old),
+        );
     }
 
     pub(crate) fn record_next_input_level_identity(&mut self, old: u64) {
-        self.append_root_undo(CommandRootUndo::NextInputLevelIdentity(old));
+        self.record_scalar(
+            CommandScalarSlot::NextInputLevelIdentity,
+            CommandRootUndo::NextInputLevelIdentity(old),
+        );
     }
 
     pub(crate) fn record_next_source_identity(&mut self, old: u64) {
-        self.append_root_undo(CommandRootUndo::NextSourceIdentity(old));
+        self.record_scalar(
+            CommandScalarSlot::NextSourceIdentity,
+            CommandRootUndo::NextSourceIdentity(old),
+        );
     }
 
     pub(crate) fn record_retained_file_line_number(&mut self, old: i32) {
-        self.append_root_undo(CommandRootUndo::RetainedFileLineNumber(old));
+        self.record_scalar(
+            CommandScalarSlot::RetainedFileLineNumber,
+            CommandRootUndo::RetainedFileLineNumber(old),
+        );
     }
 
     pub(crate) fn record_force_eof(&mut self, old: bool) {
-        self.append_root_undo(CommandRootUndo::ForceEof(old));
+        self.record_scalar(CommandScalarSlot::ForceEof, CommandRootUndo::ForceEof(old));
     }
 
     pub(crate) fn record_pending_input_open(&mut self, old: Option<crate::ScannedFileName>) {
-        self.append_root_undo(CommandRootUndo::PendingInputOpen(old));
+        if !self.has_live_frame() {
+            return;
+        }
+        if self.pending_input_touched {
+            self.coalesced_writes = self.coalesced_writes.saturating_add(1);
+            return;
+        }
+        self.pending_input_touched = true;
+        self.pending_input.append(PendingInputUndo(old));
     }
 
     pub(crate) fn record_expansion_diagnostic_push(&mut self) {
-        self.append_root_undo(CommandRootUndo::ExpansionDiagnosticPush(None));
+        if self.has_live_frame() {
+            // Ordered diagnostic pushes are the deliberately non-coalescible
+            // class: every payload must survive reverse rollback and forward
+            // redo in its original vector order.
+            self.scalars
+                .append(CommandRootUndo::ExpansionDiagnosticPush(None));
+            self.ordered_events = self.ordered_events.saturating_add(1);
+        }
     }
 
     fn restore_roots(
@@ -324,26 +414,32 @@ impl<G> CommandTimeline<G> {
         mark: CommandTimelineMark,
         roots: &mut CommandStateRoots<G>,
     ) -> bool {
-        if !self.arena.can_begin_checkpoint_candidate(mark.boundary) {
+        if !self.arena.can_begin_checkpoint_candidate(mark.boundary)
+            || !self.scalars.validates(mark.scalars)
+            || !self.pending_input.validates(mark.pending_input)
+        {
             return false;
         }
-        self.arena
-            .visit_accepted_checkpoint_suffix_mut_reverse(&mut self.pool, mark.boundary, |cell| {
-                if let CommandTimelineCell::RootUndo(inverse) = cell {
-                    inverse.swap(roots);
-                }
-            })
-            .expect("prevalidated command suffix restores in place");
+        self.scalars
+            .restore(mark.scalars, |inverse| inverse.swap(roots));
+        self.pending_input.restore(mark.pending_input, |inverse| {
+            std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
+        });
         self.arena
             .restore_accepted_checkpoint(&mut self.pool, mark.boundary)
             .expect("prevalidated command boundary restores atomically");
         self.frames = mark.frames;
         self.head = Some(mark.boundary);
+        self.touched_scalars = 0;
+        self.pending_input_touched = false;
         true
     }
 
     fn can_begin_checkpoint_candidate(&self, mark: CommandTimelineMark) -> bool {
-        self.fork.is_none() && self.arena.can_begin_checkpoint_candidate(mark.boundary)
+        self.fork.is_none()
+            && self.arena.can_begin_checkpoint_candidate(mark.boundary)
+            && self.scalars.validates(mark.scalars)
+            && self.pending_input.validates(mark.pending_input)
     }
 
     fn begin_checkpoint_candidate(
@@ -355,23 +451,23 @@ impl<G> CommandTimeline<G> {
             self.can_begin_checkpoint_candidate(mark),
             "command candidate cursor was prevalidated"
         );
-        self.arena
-            .visit_accepted_checkpoint_suffix_mut_reverse(&mut self.pool, mark.boundary, |cell| {
-                if let CommandTimelineCell::RootUndo(inverse) = cell {
-                    inverse.swap(roots);
-                }
-            })
-            .expect("prevalidated command suffix rewinds in place");
+        self.scalars
+            .begin_checkpoint_candidate(mark.scalars, |inverse| inverse.swap(roots));
+        self.pending_input
+            .begin_checkpoint_candidate(mark.pending_input, |inverse| {
+                std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
+            });
         self.arena
             .begin_checkpoint_candidate(mark.boundary)
             .expect("prevalidated command mark begins the sole fork");
         self.fork = Some(CommandTimelineFork {
-            selected: mark,
             prior_head: self.head,
             prior_frames: self.frames,
         });
         self.head = Some(mark.boundary);
         self.frames = mark.frames;
+        self.touched_scalars = 0;
+        self.pending_input_touched = false;
     }
 
     fn reject_checkpoint_candidate(&mut self, roots: &mut CommandStateRoots<G>) {
@@ -383,29 +479,18 @@ impl<G> CommandTimeline<G> {
             .arena
             .seal_boundary(&mut self.pool)
             .expect("command rejection seals its current suffix");
-        self.arena
-            .visit_current_checkpoint_suffix_mut_reverse(
-                &mut self.pool,
-                fork.selected.boundary,
-                |cell| {
-                    if let CommandTimelineCell::RootUndo(inverse) = cell {
-                        inverse.swap(roots);
-                    }
-                },
-            )
-            .expect("command rejection rewinds its current suffix");
-        self.arena
-            .visit_detached_checkpoint_suffix_mut(&mut self.pool, |cell| {
-                if let CommandTimelineCell::RootUndo(inverse) = cell {
-                    inverse.swap(roots);
-                }
-            })
-            .expect("command rejection redoes its detached accepted suffix");
+        self.scalars
+            .reject_checkpoint_candidate(|inverse| inverse.swap(roots));
+        self.pending_input.reject_checkpoint_candidate(|inverse| {
+            std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
+        });
         self.arena
             .reject_checkpoint_candidate(&mut self.pool, boundary)
             .expect("command rejection reattaches its prior chunks");
         self.head = fork.prior_head;
         self.frames = fork.prior_frames;
+        self.touched_scalars = 0;
+        self.pending_input_touched = false;
     }
 
     fn accept_checkpoint_candidate(&mut self) {
@@ -417,10 +502,27 @@ impl<G> CommandTimeline<G> {
             .arena
             .seal_boundary(&mut self.pool)
             .expect("command acceptance seals its current suffix");
+        self.scalars.accept_checkpoint_candidate();
+        self.pending_input.accept_checkpoint_candidate();
         self.arena
             .accept_checkpoint_candidate(&mut self.pool, boundary)
             .expect("command acceptance drops its detached prior chunks");
+        self.touched_scalars = 0;
+        self.pending_input_touched = false;
     }
+}
+
+/// Structural evidence for the packed root journal.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct CommandTimelineCounters {
+    pub records: u64,
+    pub record_bytes: u64,
+    pub descriptor_publications: u64,
+    pub coalesced_writes: u64,
+    pub ordered_events: u64,
+    pub chunks_acquired: u64,
+    pub chunks_reused: u64,
 }
 
 /// Coarse generation plus stable physical-timeline identity retained by one
