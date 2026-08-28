@@ -1059,10 +1059,16 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
         let mut candidate = universe
             .fork_runtime_checkpoint(&first)
             .expect("older page mark forks");
-        assert_eq!(candidate.page.contribution(&candidate.page_nodes).len(), 1);
-        candidate
-            .page
-            .push_contribution(&mut candidate.page_nodes, Node::Penalty(3));
+        assert_eq!(
+            candidate
+                .page_region
+                .builder()
+                .contribution(candidate.page_region.nodes())
+                .len(),
+            1
+        );
+        let (nodes, page) = candidate.page_region.parts_mut();
+        page.push_contribution(nodes, Node::Penalty(3));
         universe.reject_checkpoint_candidate(&mut candidate);
 
         assert_eq!(
@@ -1131,11 +1137,13 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
         let before_page = universe.page_node_cursor();
         let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
         let boundary = universe
-            .page_nodes
+            .page_region
+            .nodes_mut()
             .seal_boundary()
             .expect("sealed page tail");
         let page = universe
-            .page_nodes
+            .page_region
+            .nodes()
             .checkpoint_mark(boundary)
             .expect("page checkpoint");
         let malformed = universe

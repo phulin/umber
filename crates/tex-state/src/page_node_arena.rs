@@ -321,6 +321,13 @@ impl PageMaterialArena {
         self.region.pub_arena.counters()
     }
 
+    /// Returns the generation-checked identity of the exclusive region which
+    /// owns every coordinate admitted by this arena.
+    #[must_use]
+    pub(crate) const fn region_id(&self) -> crate::node_region::NodeRegionId {
+        self.region.id()
+    }
+
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.region.pub_arena.live_payload_values(&self.pool.chunks)

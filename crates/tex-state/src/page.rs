@@ -3,9 +3,11 @@
 #[cfg(test)]
 mod state_hash;
 
+use crate::fork_arena::{CheckpointMark, ForkArenaError, PageMaterialLane};
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
+use crate::node_region::NodeRegionId;
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::scaled::Scaled;
 use ahash::RandomState;
@@ -454,7 +456,6 @@ pub type PageContributionIter<'a> = NodeCursorIter<'a>;
 pub(crate) type PageCurrentIter<'a> = NodeCursorIter<'a>;
 
 /// Snapshot-owned state for TeX.web's page builder.
-#[derive(Clone)]
 pub(crate) struct PageBuilderState {
     contribution: PageListId,
     current_page: PageListId,
@@ -538,13 +539,11 @@ struct PagePayloadRoots {
     mark_end: usize,
 }
 
-#[derive(Clone)]
 struct PageCheckpointFrame {
     id: u64,
     cursor: usize,
 }
 
-#[derive(Clone)]
 struct PageCheckpointJournal {
     timeline: u64,
     next_frame: u64,
@@ -574,7 +573,6 @@ pub(crate) struct AcceptedPageTail {
     mark_lane_after: Vec<MarkLaneRecord>,
 }
 
-#[derive(Clone)]
 enum PageInverse {
     Noop,
     Scalars(PageScalars),
@@ -624,6 +622,256 @@ struct PageSemanticRoots {
     split_discards: SemanticSequenceIdentity,
     insertions: u64,
     marks: u64,
+}
+
+/// Owner-relative handle for one retained page checkpoint row.
+///
+/// The key intentionally carries no raw list or arena coordinate.  Those
+/// remain private rows under the matching [`PageRegion`] owner.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PageRegionCheckpointKey {
+    region: NodeRegionId,
+    boundary: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PageRegionCheckpoint {
+    key: PageRegionCheckpointKey,
+    nodes: CheckpointMark<PageMaterialLane>,
+    builder: PageCheckpointMark,
+}
+
+/// Scalar observations of explicit page-region lifecycle transitions.
+///
+/// These counters never participate in liveness decisions.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PageRegionCounters {
+    pub(crate) page_regions_started: u64,
+    pub(crate) page_regions_retained: u64,
+    pub(crate) page_regions_dropped: u64,
+    pub(crate) page_region_forks: u64,
+    pub(crate) later_page_regions_detached: u64,
+    pub(crate) held_over_nodes_copied: u64,
+    pub(crate) held_over_envelopes_moved: u64,
+    pub(crate) cross_region_node_reference_rejections: u64,
+}
+
+/// Exclusive owner for one page-building period.
+///
+/// Page node payload/descriptors, all four live PageBuilder roots and scalar
+/// state, its reversible journal, and every retained row for the period move
+/// together in this aggregate.  Raw page roots are therefore never sibling
+/// owners in `Universe`.
+pub(crate) struct PageRegion {
+    nodes: PageNodeArena,
+    builder: PageBuilderState,
+    checkpoints: Vec<PageRegionCheckpoint>,
+    next_boundary: u64,
+    counters: PageRegionCounters,
+}
+
+pub(crate) struct AcceptedPageRegionTail {
+    builder: AcceptedPageTail,
+    selected_boundary: u64,
+    later_rows: Vec<PageRegionCheckpoint>,
+}
+
+impl Default for PageRegion {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PageRegion {
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self {
+            nodes: PageNodeArena::new(),
+            builder: PageBuilderState::default(),
+            checkpoints: Vec::with_capacity(64),
+            next_boundary: 1,
+            counters: PageRegionCounters {
+                page_regions_started: 1,
+                ..PageRegionCounters::default()
+            },
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn id(&self) -> NodeRegionId {
+        self.nodes.region_id()
+    }
+
+    #[must_use]
+    pub(crate) const fn nodes(&self) -> &PageNodeArena {
+        &self.nodes
+    }
+
+    #[must_use]
+    pub(crate) const fn nodes_mut(&mut self) -> &mut PageNodeArena {
+        &mut self.nodes
+    }
+
+    #[must_use]
+    pub(crate) const fn builder(&self) -> &PageBuilderState {
+        &self.builder
+    }
+
+    #[must_use]
+    pub(crate) const fn builder_mut(&mut self) -> &mut PageBuilderState {
+        &mut self.builder
+    }
+
+    pub(crate) fn parts_mut(&mut self) -> (&mut PageNodeArena, &mut PageBuilderState) {
+        (&mut self.nodes, &mut self.builder)
+    }
+
+    pub(crate) fn seal_checkpoint(&mut self) -> Result<PageRegionCheckpointKey, ForkArenaError> {
+        let boundary = self.nodes.seal_boundary()?;
+        let nodes = self.nodes.checkpoint_mark(boundary)?;
+        let builder = self.builder.checkpoint_mark();
+        let key = PageRegionCheckpointKey {
+            region: self.id(),
+            boundary: self.next_boundary,
+        };
+        self.next_boundary = self
+            .next_boundary
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        self.checkpoints.push(PageRegionCheckpoint {
+            key,
+            nodes,
+            builder,
+        });
+        Ok(key)
+    }
+
+    fn checkpoint(&self, key: PageRegionCheckpointKey) -> Option<PageRegionCheckpoint> {
+        (key.region == self.id())
+            .then(|| {
+                self.checkpoints
+                    .iter()
+                    .find(|checkpoint| checkpoint.key == key)
+                    .copied()
+            })
+            .flatten()
+    }
+
+    #[must_use]
+    pub(crate) fn validates_checkpoint(&self, key: PageRegionCheckpointKey) -> bool {
+        self.checkpoint(key).is_some_and(|checkpoint| {
+            self.nodes.can_restore_checkpoint(checkpoint.nodes)
+                && self.builder.validates_checkpoint_mark(checkpoint.builder)
+        })
+    }
+
+    pub(crate) fn arena_checkpoint(
+        &self,
+        key: PageRegionCheckpointKey,
+    ) -> Option<CheckpointMark<PageMaterialLane>> {
+        self.checkpoint(key).map(|checkpoint| checkpoint.nodes)
+    }
+
+    pub(crate) fn checkpoint_identity_root(
+        &self,
+        key: PageRegionCheckpointKey,
+    ) -> Option<Option<u64>> {
+        self.checkpoint(key)
+            .map(|checkpoint| checkpoint.builder.reachable_state_identity_root())
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        key: PageRegionCheckpointKey,
+    ) -> Result<AcceptedPageRegionTail, ForkArenaError> {
+        let checkpoint = self
+            .checkpoint(key)
+            .filter(|checkpoint| {
+                self.nodes.can_restore_checkpoint(checkpoint.nodes)
+                    && self.builder.validates_checkpoint_mark(checkpoint.builder)
+            })
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        let selected = self
+            .checkpoints
+            .iter()
+            .position(|row| row.key == key)
+            .expect("validated page-region checkpoint row remains present");
+        let builder = self.builder.begin_checkpoint_candidate(checkpoint.builder);
+        self.nodes
+            .begin_checkpoint_candidate(checkpoint.nodes)
+            .expect("complete page-region preflight makes arena fork infallible");
+        let later_rows = self.checkpoints.split_off(selected.saturating_add(1));
+        self.counters.page_region_forks = self.counters.page_region_forks.saturating_add(1);
+        Ok(AcceptedPageRegionTail {
+            builder,
+            selected_boundary: key.boundary,
+            later_rows,
+        })
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        mut tail: AcceptedPageRegionTail,
+    ) -> Result<(), ForkArenaError> {
+        let boundary = self.nodes.seal_boundary()?;
+        self.builder
+            .prepare_checkpoint_candidate_rejection(&tail.builder);
+        self.nodes.reject_checkpoint_candidate(boundary)?;
+        self.builder
+            .finish_checkpoint_candidate_rejection(tail.builder);
+        let selected = self
+            .checkpoints
+            .iter()
+            .position(|row| row.key.boundary == tail.selected_boundary)
+            .expect("selected page-region row remains in the unchanged prefix");
+        self.checkpoints.truncate(selected.saturating_add(1));
+        self.checkpoints.append(&mut tail.later_rows);
+        Ok(())
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(
+        &mut self,
+        tail: AcceptedPageRegionTail,
+    ) -> Result<(), ForkArenaError> {
+        let boundary = self.nodes.seal_boundary()?;
+        debug_assert!(
+            self.checkpoints
+                .iter()
+                .any(|row| row.key.boundary == tail.selected_boundary)
+        );
+        self.builder
+            .prepare_checkpoint_candidate_acceptance(tail.builder);
+        self.nodes.accept_checkpoint_candidate(boundary)
+    }
+
+    pub(crate) fn restore_checkpoint(
+        &mut self,
+        key: PageRegionCheckpointKey,
+    ) -> Result<(), ForkArenaError> {
+        let checkpoint = self
+            .checkpoint(key)
+            .filter(|checkpoint| {
+                self.nodes.can_restore_checkpoint(checkpoint.nodes)
+                    && self.builder.validates_checkpoint_mark(checkpoint.builder)
+            })
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        self.builder.restore_checkpoint_mark(checkpoint.builder);
+        self.nodes.restore_checkpoint(checkpoint.nodes)
+    }
+
+    #[must_use]
+    pub(crate) const fn counters(&self) -> PageRegionCounters {
+        self.counters
+    }
+
+    #[must_use]
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.builder.retained_bytes().saturating_add(
+            self.checkpoints
+                .capacity()
+                .saturating_mul(core::mem::size_of::<PageRegionCheckpoint>()),
+        )
+    }
 }
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,

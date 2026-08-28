@@ -1,5 +1,5 @@
 use super::state_hash::PageHashCache;
-use super::{PageBuilderState, PageInsertion};
+use super::{PageBuilderState, PageInsertion, PageRegion};
 use crate::node::{KernKind, Node, NodeTokenList};
 use crate::page::PageMark;
 use crate::page_node_arena::{PageListId, PageMaterialArena};
@@ -534,5 +534,169 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
     assert_eq!(
         page.checkpoint_mark().reachable_state_identity_root(),
         Some(committed_candidate),
+    );
+}
+
+#[test]
+fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
+    let mut region = PageRegion::new();
+    let region_id = region.id();
+    {
+        let (nodes, page) = region.parts_mut();
+        page.push_contribution(nodes, kern(1));
+    }
+    let first_root = region.builder().contribution;
+    let first_address = region
+        .nodes()
+        .list(first_root)
+        .expect("first contribution")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("first contribution address");
+    let before = region.nodes().counters();
+
+    let mut keys = Vec::new();
+    for value in 2..=64 {
+        keys.push(region.seal_checkpoint().expect("sealed page checkpoint"));
+        let (nodes, page) = region.parts_mut();
+        page.push_contribution(nodes, kern(value));
+    }
+
+    assert!(keys.iter().all(|key| key.region == region_id));
+    assert_eq!(region.checkpoints.len(), keys.len());
+    assert_eq!(region.nodes().counters().source_nodes_copied, 0);
+    assert_eq!(
+        region.nodes().counters().new_semantic_nodes,
+        before.new_semantic_nodes + 63
+    );
+    assert_eq!(
+        region
+            .nodes()
+            .list(first_root)
+            .expect("unchanged prefix remains live")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(first_address),
+        "checkpoint publication never relocates the unchanged prefix"
+    );
+}
+
+#[test]
+fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
+    let mut region = PageRegion::new();
+    {
+        let (nodes, page) = region.parts_mut();
+        page.push_contribution(nodes, kern(1));
+        page.push_current_page(nodes, kern(2));
+        page.push_page_discard(nodes, kern(3));
+        set_split_discards(page, nodes, [kern(4)]);
+    }
+    let selected = region.seal_checkpoint().expect("selected checkpoint");
+    let prefix = region.builder().contribution;
+    let prefix_address = region
+        .nodes()
+        .list(prefix)
+        .expect("selected prefix")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("selected prefix address");
+    {
+        let (nodes, page) = region.parts_mut();
+        page.push_contribution(nodes, kern(10));
+        page.push_current_page(nodes, kern(20));
+        page.push_page_discard(nodes, kern(30));
+        set_split_discards(page, nodes, [kern(40)]);
+    }
+    let superseded = region
+        .seal_checkpoint()
+        .expect("accepted suffix checkpoint");
+    let accepted = [
+        region.builder().contribution(region.nodes()).to_vec(),
+        region
+            .builder()
+            .current_page(region.nodes())
+            .cloned()
+            .collect(),
+        list_nodes(region.nodes(), region.builder().page_discards),
+        list_nodes(region.nodes(), region.builder().split_discards),
+    ];
+
+    let rejected = region
+        .begin_checkpoint_candidate(selected)
+        .expect("fork selected page row");
+    {
+        let (nodes, page) = region.parts_mut();
+        page.push_contribution(nodes, kern(11));
+        page.push_current_page(nodes, kern(21));
+        page.push_page_discard(nodes, kern(31));
+        set_split_discards(page, nodes, [kern(41)]);
+    }
+    region
+        .reject_checkpoint_candidate(rejected)
+        .expect("atomic page rejection");
+    assert_eq!(
+        region.builder().contribution(region.nodes()).to_vec(),
+        accepted[0]
+    );
+    assert_eq!(
+        region
+            .builder()
+            .current_page(region.nodes())
+            .cloned()
+            .collect::<Vec<_>>(),
+        accepted[1]
+    );
+    assert_eq!(
+        list_nodes(region.nodes(), region.builder().page_discards),
+        accepted[2]
+    );
+    assert_eq!(
+        list_nodes(region.nodes(), region.builder().split_discards),
+        accepted[3]
+    );
+    assert!(region.validates_checkpoint(superseded));
+
+    let accepted_tail = region
+        .begin_checkpoint_candidate(selected)
+        .expect("refork selected page row");
+    {
+        let (nodes, page) = region.parts_mut();
+        page.push_contribution(nodes, kern(12));
+        page.push_current_page(nodes, kern(22));
+        page.push_page_discard(nodes, kern(32));
+        set_split_discards(page, nodes, [kern(42)]);
+    }
+    let candidate = region.seal_checkpoint().expect("candidate checkpoint");
+    region
+        .accept_checkpoint_candidate(accepted_tail)
+        .expect("atomic page acceptance");
+
+    assert!(!region.validates_checkpoint(superseded));
+    let candidate_row = region
+        .checkpoint(candidate)
+        .expect("candidate row retained");
+    assert!(
+        region.nodes().validates_checkpoint(candidate_row.nodes),
+        "candidate arena mark remains accepted"
+    );
+    assert!(
+        region
+            .builder()
+            .validates_checkpoint_mark(candidate_row.builder),
+        "candidate builder mark remains accepted"
+    );
+    assert_eq!(region.nodes().counters().source_nodes_copied, 0);
+    assert_eq!(
+        region
+            .nodes()
+            .list(prefix)
+            .expect("unchanged prefix survives acceptance")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(prefix_address)
+    );
+    assert_eq!(
+        region.builder().contribution(region.nodes()).to_vec(),
+        [kern(1), kern(12)]
     );
 }

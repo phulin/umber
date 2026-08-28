@@ -321,8 +321,12 @@ impl DetachedFormatImage {
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
         let admitted = core.admit();
-        let mut node_lists =
-            FormatNodeCollector::new(admitted, &universe.page_nodes, &mut token_lists, &mut glue);
+        let mut node_lists = FormatNodeCollector::new(
+            admitted,
+            universe.page_region.nodes(),
+            &mut token_lists,
+            &mut glue,
+        );
         let pdf = universe
             .pdf
             .capture_format_bytes(
@@ -1207,7 +1211,7 @@ impl<G> Universe<G> {
         if depth != 0 {
             return Err(FormatError::OpenGroups(depth));
         }
-        if !self.page.is_format_empty() {
+        if !self.page_region.builder().is_format_empty() {
             return Err(FormatError::NonEmptyPage);
         }
         Ok(())
@@ -1414,7 +1418,8 @@ impl<G> Universe<G> {
                     .collect::<Result<Vec<_>, FormatError>>()?
             };
             let id = self
-                .page_nodes
+                .page_region
+                .nodes_mut()
                 .publish_owned(nodes)
                 .map_err(|_| FormatError::AllocationFailed)?;
             installed.push(id.rebrand());
