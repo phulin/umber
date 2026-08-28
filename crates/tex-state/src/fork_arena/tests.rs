@@ -1,4 +1,4 @@
-use super::{ActiveListBuilder, ArenaListId, ChunkPool, ForkArena, ForkArenaError};
+use super::{ActiveListBuilder, ChunkPool, ForkArena, ForkArenaError};
 use crate::node::Node;
 use crate::node_arena::NodeCursor;
 
@@ -74,6 +74,46 @@ fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
         vec![3, 4]
     );
     assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn one_range_list_uses_the_same_canonical_descriptor_handle() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let direct = list(&mut arena, &mut pool, [1, 2]);
+    let mark = arena.operation_mark(&pool);
+
+    assert_eq!(direct.count, 1);
+    assert_eq!(direct.len(), 2);
+    assert_eq!(mark.descriptor_chunks, 1);
+    assert_eq!(
+        arena
+            .list(&pool, direct)
+            .expect("direct descriptor")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+}
+
+#[test]
+fn arena_rejects_a_different_physical_pool_after_binding() {
+    let mut first_pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut other_pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let published = list(&mut arena, &mut first_pool, [1, 2]);
+
+    assert_eq!(
+        arena
+            .list(&other_pool, published)
+            .expect_err("foreign pool"),
+        ForkArenaError::InvalidChunk
+    );
+    assert!(matches!(
+        arena.begin_builder(&mut other_pool),
+        Err(ForkArenaError::InvalidChunk)
+    ));
 }
 
 #[test]
@@ -190,7 +230,7 @@ fn canonical_range_sequence_has_indexed_and_sequential_parity() {
     let composite = arena
         .compose_lists(&mut pool, &[left, right], &mut scratch)
         .expect("range sequence");
-    assert!(matches!(composite, ArenaListId::Sequence { .. }));
+    assert_eq!(composite.count, 2);
     {
         let view = arena.list(&pool, composite).expect("sequence view");
         assert_eq!(view.len(), 5);

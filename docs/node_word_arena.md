@@ -13,6 +13,12 @@ exclusive mutable pool borrow. A TeX lifetime transition promotes whole sealed
 chunks and rebrands their coordinates; it does not copy, relocate, or rewrite
 surviving payload.
 
+Every nonempty list, including a one-range list, publishes its range entries
+in descriptor chunks and is named by the same fixed 24-byte descriptor handle.
+The page-semantic wrapper adds one niche-packed maintained identity scalar and
+is capped at 32 bytes, preserving the recursive-node and dense-journal width
+budgets.
+
 `ArenaListView` is a copy-only direct borrow of both the coordinate lane and
 the physical pool. Its returned node references carry the pool borrow rather
 than the temporary view borrow. The existing `NodeCursor` therefore retains

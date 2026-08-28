@@ -8,7 +8,7 @@
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use std::ops::Range;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(test)]
 #[path = "fork_arena/tests.rs"]
@@ -17,8 +17,8 @@ mod tests;
 const DEFAULT_CHUNK_BYTES: usize = 4 * 1024;
 const CHUNKS_PER_PAGE: usize = 16;
 
-static NEXT_POOL_OWNER: AtomicU64 = AtomicU64::new(1);
-static NEXT_ARENA_OWNER: AtomicU64 = AtomicU64::new(1);
+static NEXT_POOL_OWNER: AtomicU32 = AtomicU32::new(1);
+static NEXT_ARENA_OWNER: AtomicU32 = AtomicU32::new(1);
 
 /// Canonical page-material lane used by execution and borrowed typesetting.
 pub enum PageMaterialLane {}
@@ -26,7 +26,6 @@ pub enum PageMaterialLane {}
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[doc(hidden)]
 pub struct RawChunkKey {
-    pool: u64,
     slot: u32,
     generation: u32,
 }
@@ -34,7 +33,7 @@ pub struct RawChunkKey {
 #[derive(Clone, Copy, Debug)]
 struct ChunkMeta {
     generation: u32,
-    arena: u64,
+    arena: u32,
     used: u32,
     live: bool,
     sealed: bool,
@@ -50,18 +49,11 @@ struct ChunkPage<T> {
 /// the pool allocates one page for many chunks, so no chunk owns a heap
 /// allocation and existing payload never moves.
 struct ChunkStorage<T> {
-    owner: u64,
     chunk_bytes: usize,
     slots_per_chunk: usize,
     pages: Vec<ChunkPage<T>>,
     chunks: Vec<ChunkMeta>,
     free: Vec<u32>,
-}
-
-impl<T> Default for ChunkStorage<T> {
-    fn default() -> Self {
-        Self::with_chunk_bytes(DEFAULT_CHUNK_BYTES)
-    }
 }
 
 impl<T> ChunkStorage<T> {
@@ -73,7 +65,6 @@ impl<T> ChunkStorage<T> {
         let slot_bytes = std::mem::size_of::<Option<T>>().max(1);
         let slots_per_chunk = (chunk_bytes / slot_bytes).max(1);
         Self {
-            owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
             chunk_bytes,
             slots_per_chunk,
             pages: Vec::new(),
@@ -122,7 +113,7 @@ impl<T> ChunkStorage<T> {
         Ok(())
     }
 
-    fn allocate(&mut self, arena: u64) -> Result<RawChunkKey, ForkArenaError> {
+    fn allocate(&mut self, arena: u32) -> Result<RawChunkKey, ForkArenaError> {
         if self.free.is_empty() {
             self.add_page()?;
         }
@@ -136,22 +127,17 @@ impl<T> ChunkStorage<T> {
         meta.sealed = false;
         meta.arena = arena;
         Ok(RawChunkKey {
-            pool: self.owner,
             slot,
             generation: meta.generation,
         })
     }
 
-    fn validate(&self, key: RawChunkKey, arena: u64) -> Result<&ChunkMeta, ForkArenaError> {
+    fn validate(&self, key: RawChunkKey, arena: u32) -> Result<&ChunkMeta, ForkArenaError> {
         let meta = self
             .chunks
             .get(key.slot as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if key.pool != self.owner
-            || key.generation != meta.generation
-            || !meta.live
-            || meta.arena != arena
-        {
+        if key.generation != meta.generation || !meta.live || meta.arena != arena {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(meta)
@@ -160,18 +146,13 @@ impl<T> ChunkStorage<T> {
     fn validate_mut(
         &mut self,
         key: RawChunkKey,
-        arena: u64,
+        arena: u32,
     ) -> Result<&mut ChunkMeta, ForkArenaError> {
-        let owner = self.owner;
         let meta = self
             .chunks
             .get_mut(key.slot as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if key.pool != owner
-            || key.generation != meta.generation
-            || !meta.live
-            || meta.arena != arena
-        {
+        if key.generation != meta.generation || !meta.live || meta.arena != arena {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(meta)
@@ -195,7 +176,7 @@ impl<T> ChunkStorage<T> {
         Ok((page, index))
     }
 
-    fn append(&mut self, key: RawChunkKey, arena: u64, value: T) -> Result<u32, ForkArenaError> {
+    fn append(&mut self, key: RawChunkKey, arena: u32, value: T) -> Result<u32, ForkArenaError> {
         let used = {
             let meta = self.validate(key, arena)?;
             if meta.sealed || meta.used as usize == self.slots_per_chunk {
@@ -210,7 +191,7 @@ impl<T> ChunkStorage<T> {
         Ok(used)
     }
 
-    fn get(&self, key: RawChunkKey, arena: u64, offset: u32) -> Option<&T> {
+    fn get(&self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&T> {
         let meta = self.validate(key, arena).ok()?;
         if offset >= meta.used {
             return None;
@@ -219,22 +200,22 @@ impl<T> ChunkStorage<T> {
         self.pages[page].slots[index].as_ref()
     }
 
-    fn used(&self, key: RawChunkKey, arena: u64) -> Result<u32, ForkArenaError> {
+    fn used(&self, key: RawChunkKey, arena: u32) -> Result<u32, ForkArenaError> {
         Ok(self.validate(key, arena)?.used)
     }
 
-    fn is_sealed(&self, key: RawChunkKey, arena: u64) -> Result<bool, ForkArenaError> {
+    fn is_sealed(&self, key: RawChunkKey, arena: u32) -> Result<bool, ForkArenaError> {
         Ok(self.validate(key, arena)?.sealed)
     }
 
-    fn seal(&mut self, key: RawChunkKey, arena: u64) -> Result<usize, ForkArenaError> {
+    fn seal(&mut self, key: RawChunkKey, arena: u32) -> Result<usize, ForkArenaError> {
         let capacity = self.slots_per_chunk;
         let meta = self.validate_mut(key, arena)?;
         meta.sealed = true;
         Ok(capacity.saturating_sub(meta.used as usize))
     }
 
-    fn truncate(&mut self, key: RawChunkKey, arena: u64, used: u32) -> Result<(), ForkArenaError> {
+    fn truncate(&mut self, key: RawChunkKey, arena: u32, used: u32) -> Result<(), ForkArenaError> {
         let old_used = self.validate(key, arena)?.used;
         if used > old_used {
             return Err(ForkArenaError::InvalidOperationMark);
@@ -255,7 +236,7 @@ impl<T> ChunkStorage<T> {
         Ok(())
     }
 
-    fn release(&mut self, key: RawChunkKey, arena: u64) -> Result<usize, ForkArenaError> {
+    fn release(&mut self, key: RawChunkKey, arena: u32) -> Result<usize, ForkArenaError> {
         let used = self.validate(key, arena)?.used;
         for offset in 0..used {
             let (page, index) = self.slot_index(key, offset as usize)?;
@@ -277,8 +258,8 @@ impl<T> ChunkStorage<T> {
     fn transfer(
         &mut self,
         key: RawChunkKey,
-        source: u64,
-        destination: u64,
+        source: u32,
+        destination: u32,
     ) -> Result<(), ForkArenaError> {
         let meta = self.validate_mut(key, source)?;
         if !meta.sealed {
@@ -308,6 +289,7 @@ struct RangeEntry {
 /// seal, transfer, rollback, and prune requires `&mut ChunkPool`, making the
 /// physical mutation gate explicit and exclusive.
 pub struct ChunkPool<T> {
+    owner: u32,
     payload: ChunkStorage<T>,
     descriptors: ChunkStorage<RangeEntry>,
 }
@@ -322,6 +304,7 @@ impl<T> ChunkPool<T> {
     #[must_use]
     pub fn with_chunk_bytes(chunk_bytes: usize) -> Self {
         Self {
+            owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
             payload: ChunkStorage::with_chunk_bytes(chunk_bytes),
             descriptors: ChunkStorage::with_chunk_bytes(chunk_bytes),
         }
@@ -345,7 +328,7 @@ impl<T> ChunkPool<T> {
 
 /// A generation-checked chunk coordinate branded for one semantic lane.
 pub struct ChunkId<Lane> {
-    arena: u64,
+    arena: u32,
     raw: RawChunkKey,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
@@ -370,7 +353,7 @@ impl<Lane> Eq for ChunkId<Lane> {}
 
 /// One contiguous span across successive chunks of an arena lane.
 pub struct ArenaRange<Lane> {
-    arena: u64,
+    arena: u32,
     first: Option<ChunkId<Lane>>,
     start: u32,
     len: u32,
@@ -400,7 +383,7 @@ impl<Lane> PartialEq for ArenaRange<Lane> {
 impl<Lane> Eq for ArenaRange<Lane> {}
 
 impl<Lane> ArenaRange<Lane> {
-    const fn empty(arena: u64) -> Self {
+    const fn empty(arena: u32) -> Self {
         Self {
             arena,
             first: None,
@@ -420,18 +403,18 @@ impl<Lane> ArenaRange<Lane> {
     }
 }
 
-/// The sole list coordinate: either one range or one flat arena-owned range
-/// sequence. Sequence entries never name another list.
-pub enum ArenaListId<Lane> {
-    Range(ArenaRange<Lane>),
-    Sequence {
-        arena: u64,
-        first: RawChunkKey,
-        start: u32,
-        count: u32,
-        len: u32,
-        _lane: PhantomData<fn(Lane) -> Lane>,
-    },
+/// Fixed coordinate of one canonical arena-owned nonrecursive list record.
+///
+/// Every nonempty list, including a single direct range, publishes one or
+/// more consecutive `RangeEntry` records. The coordinate therefore stays
+/// compact while the arena record remains the sole list topology.
+pub struct ArenaListId<Lane> {
+    arena: u32,
+    first: RawChunkKey,
+    start: u32,
+    count: u32,
+    len: u32,
+    _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
 impl<Lane> Clone for ArenaListId<Lane> {
@@ -449,62 +432,22 @@ impl<Lane> core::fmt::Debug for ArenaListId<Lane> {
 }
 impl<Lane> PartialEq for ArenaListId<Lane> {
     fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
-            (Self::Range(left), Self::Range(right)) => left == right,
-            (
-                Self::Sequence {
-                    arena: la,
-                    first: lf,
-                    start: ls,
-                    count: lc,
-                    len: ll,
-                    ..
-                },
-                Self::Sequence {
-                    arena: ra,
-                    first: rf,
-                    start: rs,
-                    count: rc,
-                    len: rl,
-                    ..
-                },
-            ) => la == ra && lf == rf && ls == rs && lc == rc && ll == rl,
-            _ => false,
-        }
+        self.arena == other.arena
+            && self.first == other.first
+            && self.start == other.start
+            && self.count == other.count
+            && self.len == other.len
     }
 }
 impl<Lane> Eq for ArenaListId<Lane> {}
 
 impl<Lane> Hash for ArenaListId<Lane> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match *self {
-            Self::Range(range) => {
-                0_u8.hash(state);
-                range.arena.hash(state);
-                range.first.is_some().hash(state);
-                if let Some(first) = range.first {
-                    first.arena.hash(state);
-                    first.raw.hash(state);
-                }
-                range.start.hash(state);
-                range.len.hash(state);
-            }
-            Self::Sequence {
-                arena,
-                first,
-                start,
-                count,
-                len,
-                ..
-            } => {
-                1_u8.hash(state);
-                arena.hash(state);
-                first.hash(state);
-                start.hash(state);
-                count.hash(state);
-                len.hash(state);
-            }
-        }
+        self.arena.hash(state);
+        self.first.hash(state);
+        self.start.hash(state);
+        self.count.hash(state);
+        self.len.hash(state);
     }
 }
 
@@ -512,22 +455,42 @@ impl<Lane> ArenaListId<Lane> {
     /// Returns the owner-independent canonical empty-list coordinate.
     #[must_use]
     pub const fn empty() -> Self {
-        Self::Range(ArenaRange::empty(0))
+        Self {
+            arena: 0,
+            first: RawChunkKey {
+                slot: 0,
+                generation: 0,
+            },
+            start: 0,
+            count: 0,
+            len: 0,
+            _lane: PhantomData,
+        }
     }
 
     #[must_use]
     pub const fn len(self) -> usize {
-        match self {
-            Self::Range(range) => range.len(),
-            Self::Sequence { len, .. } => len as usize,
-        }
+        self.len as usize
     }
 
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.len() == 0
     }
+
+    const fn from_record(arena: u32, first: RawChunkKey, start: u32, count: u32, len: u32) -> Self {
+        Self {
+            arena,
+            first,
+            start,
+            count,
+            len,
+            _lane: PhantomData,
+        }
+    }
 }
+
+const _: () = assert!(core::mem::size_of::<ArenaListId<PageMaterialLane>>() <= 24);
 
 #[derive(Default)]
 struct ChunkSet {
@@ -547,7 +510,7 @@ enum ForkOwnership {
 /// Partial local rollback point. It cannot be converted into a retained
 /// checkpoint mark.
 pub struct OperationMark<Lane> {
-    arena: u64,
+    arena: u32,
     payload_chunks: u32,
     payload_tail_used: u32,
     descriptor_chunks: u32,
@@ -577,7 +540,7 @@ impl<Lane> core::fmt::Debug for OperationMark<Lane> {
 
 /// Consuming proof that every builder has retired and both tails are sealed.
 pub struct SealedBoundary<Lane> {
-    arena: u64,
+    arena: u32,
     payload_chunks: u32,
     descriptor_chunks: u32,
     payload_tail: Option<RawChunkKey>,
@@ -587,7 +550,7 @@ pub struct SealedBoundary<Lane> {
 
 /// Opaque whole-chunk retained checkpoint coordinate.
 pub struct CheckpointMark<Lane> {
-    arena: u64,
+    arena: u32,
     payload_chunks: u32,
     descriptor_chunks: u32,
     payload_tail: Option<RawChunkKey>,
@@ -612,7 +575,7 @@ impl<Lane> core::fmt::Debug for CheckpointMark<Lane> {
 
 /// Exclusive whole-chunk suffix available for semantic-lane promotion.
 pub struct SealedBatch<Lane> {
-    arena: u64,
+    arena: u32,
     serial: u64,
     payload_start: u32,
     payload_end: u32,
@@ -622,7 +585,7 @@ pub struct SealedBatch<Lane> {
 }
 
 pub struct BatchMark<Lane> {
-    arena: u64,
+    arena: u32,
     payload_start: u32,
     descriptor_start: u32,
     _lane: PhantomData<fn(Lane) -> Lane>,
@@ -678,7 +641,7 @@ enum ActiveListBuilderState<Lane> {
 }
 
 struct OpenActiveList<Lane> {
-    arena: u64,
+    arena: u32,
     operation: OperationMark<Lane>,
     pending: Option<ArenaRange<Lane>>,
     pending_extendable: bool,
@@ -730,7 +693,8 @@ impl<T, Lane> ActiveListBuilder<T, Lane> {
 
 /// One typed arena lane containing coordinates and lifecycle metadata only.
 pub struct ForkArena<T, Lane> {
-    owner: u64,
+    owner: u32,
+    pool_owner: Option<u32>,
     ownership: ForkOwnership,
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
@@ -761,6 +725,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub fn new() -> Self {
         Self {
             owner: NEXT_ARENA_OWNER.fetch_add(1, Ordering::Relaxed),
+            pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             active_builder: false,
             pending_batch: None,
@@ -777,6 +742,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub fn empty_lane<Destination>(&self) -> ForkArena<T, Destination> {
         ForkArena {
             owner: NEXT_ARENA_OWNER.fetch_add(1, Ordering::Relaxed),
+            pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             active_builder: false,
             pending_batch: None,
@@ -791,6 +757,25 @@ impl<T, Lane> ForkArena<T, Lane> {
     #[must_use]
     pub const fn counters(&self) -> ForkArenaCounters {
         self.counters
+    }
+
+    fn bind_pool(&mut self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+        match self.pool_owner {
+            Some(owner) if owner != pool.owner => Err(ForkArenaError::InvalidChunk),
+            Some(_) => Ok(()),
+            None => {
+                self.pool_owner = Some(pool.owner);
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_pool(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+        if self.pool_owner.is_none_or(|owner| owner == pool.owner) {
+            Ok(())
+        } else {
+            Err(ForkArenaError::InvalidChunk)
+        }
     }
 
     #[must_use]
@@ -906,6 +891,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         descriptor: bool,
     ) -> Result<RawChunkKey, ForkArenaError> {
+        self.bind_pool(pool)?;
         let key = if descriptor {
             pool.descriptors.allocate(self.owner)?
         } else {
@@ -1011,6 +997,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         mark: OperationMark<Lane>,
     ) -> Result<(), ForkArenaError> {
+        self.bind_pool(pool)?;
         if self.active_builder || self.pending_batch.is_some() || mark.arena != self.owner {
             return Err(ForkArenaError::InvalidOperationMark);
         }
@@ -1086,6 +1073,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &'a mut self,
         pool: &'a mut ChunkPool<T>,
     ) -> Result<ForkArenaBuilder<'a, T, Lane>, ForkArenaError> {
+        self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
@@ -1112,6 +1100,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
     ) -> Result<(), ForkArenaError> {
+        self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
@@ -1259,34 +1248,26 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<(), ForkArenaError> {
         self.active_list_open_mut(builder)?;
         self.validate_list(pool, list)?;
-        match list {
-            ArenaListId::Range(range) => self.append_active_range(pool, builder, range),
-            ArenaListId::Sequence {
-                first,
-                start,
-                count,
-                ..
-            } => {
-                for index in 0..count {
-                    let raw = self.descriptor_entry(pool, first, start, index)?.range;
-                    self.append_active_range(
-                        pool,
-                        builder,
-                        ArenaRange {
-                            arena: self.owner,
-                            first: Some(ChunkId {
-                                arena: self.owner,
-                                raw: raw.first,
-                                _lane: PhantomData,
-                            }),
-                            start: raw.start,
-                            len: raw.len,
-                        },
-                    )?;
-                }
-                Ok(())
-            }
+        for index in 0..list.count {
+            let raw = self
+                .descriptor_entry(pool, list.first, list.start, index)?
+                .range;
+            self.append_active_range(
+                pool,
+                builder,
+                ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
+                        arena: self.owner,
+                        raw: raw.first,
+                        _lane: PhantomData,
+                    }),
+                    start: raw.start,
+                    len: raw.len,
+                },
+            )?;
         }
+        Ok(())
     }
 
     /// Finalizes the active list into the canonical direct-range or flat
@@ -1300,23 +1281,17 @@ impl<T, Lane> ForkArena<T, Lane> {
             let open = self.active_list_open_mut(builder)?;
             (open.descriptor_count, open.pending, open.len)
         };
-        let list = if descriptor_count == 0 {
-            ArenaListId::Range(pending.unwrap_or_else(|| ArenaRange::empty(self.owner)))
-        } else {
-            self.flush_active_list_pending(pool, builder)?;
-            let open = self.active_list_open_mut(builder)?;
-            let (first, start) = open
-                .descriptor_first
-                .ok_or(ForkArenaError::InvalidActiveListBuilder)?;
-            ArenaListId::Sequence {
-                arena: self.owner,
-                first,
-                start,
-                count: open.descriptor_count,
-                len,
-                _lane: PhantomData,
-            }
-        };
+        if descriptor_count == 0 && pending.is_none() {
+            self.active_builder = false;
+            builder.state = ActiveListBuilderState::Sealed(ArenaListId::empty());
+            return Ok(());
+        }
+        self.flush_active_list_pending(pool, builder)?;
+        let open = self.active_list_open_mut(builder)?;
+        let (first, start) = open
+            .descriptor_first
+            .ok_or(ForkArenaError::InvalidActiveListBuilder)?;
+        let list = ArenaListId::from_record(self.owner, first, start, open.descriptor_count, len);
         self.validate_list(pool, list)?;
         self.active_builder = false;
         builder.state = ActiveListBuilderState::Sealed(list);
@@ -1358,6 +1333,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
     ) -> Result<SealedBoundary<Lane>, ForkArenaError> {
+        self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
@@ -1504,6 +1480,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         boundary: SealedBoundary<Lane>,
     ) -> Result<(), ForkArenaError> {
+        self.bind_pool(pool)?;
         self.validate_settlement_boundary(&boundary)?;
         let ForkOwnership::Forked {
             mut prefix,
@@ -1537,6 +1514,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         boundary: SealedBoundary<Lane>,
     ) -> Result<(), ForkArenaError> {
+        self.bind_pool(pool)?;
         self.validate_settlement_boundary(&boundary)?;
         let ForkOwnership::Forked {
             mut prefix,
@@ -1655,6 +1633,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         destination: &mut ForkArena<T, Destination>,
         batch: SealedBatch<Lane>,
     ) -> Result<Vec<ArenaListId<Destination>>, ForkArenaError> {
+        self.bind_pool(pool)?;
+        destination.bind_pool(pool)?;
         if batch.arena != self.owner {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -1787,37 +1767,24 @@ impl<T, Lane> ForkArena<T, Lane> {
         descriptor_start: usize,
     ) -> Result<(), ForkArenaError> {
         self.validate_list(pool, list)?;
-        match list {
-            ArenaListId::Range(range) => {
-                if let Some(first) = range.first
-                    && self
-                        .resolved_position(false, first.raw)
-                        .is_none_or(|position| position < payload_start)
-                {
-                    return Err(ForkArenaError::InvalidRegion);
-                }
-            }
-            ArenaListId::Sequence {
-                first,
-                start,
-                count,
-                ..
-            } => {
-                if self
-                    .resolved_position(true, first)
-                    .is_none_or(|position| position < descriptor_start)
-                {
-                    return Err(ForkArenaError::InvalidRegion);
-                }
-                for index in 0..count {
-                    let range = self.descriptor_entry(pool, first, start, index)?.range;
-                    if self
-                        .resolved_position(false, range.first)
-                        .is_none_or(|position| position < payload_start)
-                    {
-                        return Err(ForkArenaError::InvalidRegion);
-                    }
-                }
+        if list.is_empty() {
+            return Ok(());
+        }
+        if self
+            .resolved_position(true, list.first)
+            .is_none_or(|position| position < descriptor_start)
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        for index in 0..list.count {
+            let range = self
+                .descriptor_entry(pool, list.first, list.start, index)?
+                .range;
+            if self
+                .resolved_position(false, range.first)
+                .is_none_or(|position| position < payload_start)
+            {
+                return Err(ForkArenaError::InvalidRegion);
             }
         }
         Ok(())
@@ -1832,11 +1799,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         scratch.clear();
         for list in lists.iter().copied() {
             self.validate_list(pool, list)?;
-            match list {
-                ArenaListId::Range(range) if !range.is_empty() => scratch.push(range),
-                ArenaListId::Range(_) => {}
-                ArenaListId::Sequence { .. } => self.append_list_ranges(pool, list, scratch)?,
-            }
+            self.append_list_ranges(pool, list, scratch)?;
         }
         self.compose_ranges(pool, scratch)
     }
@@ -1867,45 +1830,33 @@ impl<T, Lane> ForkArena<T, Lane> {
         if selected.is_empty() {
             return Ok(self.empty_list());
         }
-        match list {
-            ArenaListId::Range(range) => {
-                scratch.push(self.slice_range(pool, range, selected.start, selected.len())?);
+        let mut prior_end = 0_usize;
+        for index in 0..list.count {
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let entry_end = entry.cumulative_end as usize;
+            let overlap_start = selected.start.max(prior_end);
+            let overlap_end = selected.end.min(entry_end);
+            if overlap_start < overlap_end {
+                let range = ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
+                        arena: self.owner,
+                        raw: entry.range.first,
+                        _lane: PhantomData,
+                    }),
+                    start: entry.range.start,
+                    len: entry.range.len,
+                };
+                scratch.push(self.slice_range(
+                    pool,
+                    range,
+                    overlap_start - prior_end,
+                    overlap_end - overlap_start,
+                )?);
             }
-            ArenaListId::Sequence {
-                first,
-                start,
-                count,
-                ..
-            } => {
-                let mut prior_end = 0_usize;
-                for index in 0..count {
-                    let entry = self.descriptor_entry(pool, first, start, index)?;
-                    let entry_end = entry.cumulative_end as usize;
-                    let overlap_start = selected.start.max(prior_end);
-                    let overlap_end = selected.end.min(entry_end);
-                    if overlap_start < overlap_end {
-                        let range = ArenaRange {
-                            arena: self.owner,
-                            first: Some(ChunkId {
-                                arena: self.owner,
-                                raw: entry.range.first,
-                                _lane: PhantomData,
-                            }),
-                            start: entry.range.start,
-                            len: entry.range.len,
-                        };
-                        scratch.push(self.slice_range(
-                            pool,
-                            range,
-                            overlap_start - prior_end,
-                            overlap_end - overlap_start,
-                        )?);
-                    }
-                    prior_end = entry_end;
-                    if prior_end >= selected.end {
-                        break;
-                    }
-                }
+            prior_end = entry_end;
+            if prior_end >= selected.end {
+                break;
             }
         }
         self.compose_ranges(pool, scratch)
@@ -1918,9 +1869,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
         if scratch.is_empty() {
             return Ok(self.empty_list());
-        }
-        if scratch.len() == 1 {
-            return Ok(ArenaListId::Range(scratch[0]));
         }
         let mut cumulative = 0_u32;
         let mut first = None;
@@ -1946,14 +1894,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                 start = offset;
             }
         }
-        Ok(ArenaListId::Sequence {
-            arena: self.owner,
-            first: first.expect("nonempty range sequence has a first descriptor"),
+        Ok(ArenaListId::from_record(
+            self.owner,
+            first.expect("nonempty range sequence has a first descriptor"),
             start,
-            count: scratch.len() as u32,
-            len: cumulative,
-            _lane: PhantomData,
-        })
+            u32::try_from(scratch.len()).map_err(|_| ForkArenaError::CapacityOverflow)?,
+            cumulative,
+        ))
     }
 
     fn slice_range(
@@ -2008,31 +1955,25 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<(), ForkArenaError> {
-        match list {
-            ArenaListId::Range(range) => self.validate_range(pool, range),
-            ArenaListId::Sequence {
-                arena,
-                first,
-                start,
-                count,
-                len,
-                ..
-            } => {
-                if arena != self.owner {
-                    return Err(ForkArenaError::ForeignArena);
-                }
-                let mut cumulative_end = 0;
-                for index in 0..count {
-                    let entry = self.descriptor_entry(pool, first, start, index)?;
-                    cumulative_end = entry.cumulative_end;
-                    self.validate_raw_range(pool, entry.range)?;
-                }
-                if cumulative_end != len {
-                    return Err(ForkArenaError::InvalidRange);
-                }
-                Ok(())
-            }
+        self.validate_pool(pool)?;
+        if list.is_empty() {
+            return (list == ArenaListId::empty())
+                .then_some(())
+                .ok_or(ForkArenaError::InvalidRange);
         }
+        if list.arena != self.owner || list.count == 0 {
+            return Err(ForkArenaError::ForeignArena);
+        }
+        let mut cumulative_end = 0;
+        for index in 0..list.count {
+            let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            cumulative_end = entry.cumulative_end;
+            self.validate_raw_range(pool, entry.range)?;
+        }
+        if cumulative_end != list.len {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        Ok(())
     }
 
     fn validate_range(
@@ -2125,32 +2066,20 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         scratch: &mut Vec<ArenaRange<Lane>>,
     ) -> Result<(), ForkArenaError> {
-        match list {
-            ArenaListId::Range(range) => {
-                if !range.is_empty() {
-                    scratch.push(range);
-                }
-            }
-            ArenaListId::Sequence {
-                first,
-                start,
-                count,
-                ..
-            } => {
-                for index in 0..count {
-                    let raw = self.descriptor_entry(pool, first, start, index)?.range;
-                    scratch.push(ArenaRange {
-                        arena: self.owner,
-                        first: Some(ChunkId {
-                            arena: self.owner,
-                            raw: raw.first,
-                            _lane: PhantomData,
-                        }),
-                        start: raw.start,
-                        len: raw.len,
-                    });
-                }
-            }
+        for index in 0..list.count {
+            let raw = self
+                .descriptor_entry(pool, list.first, list.start, index)?
+                .range;
+            scratch.push(ArenaRange {
+                arena: self.owner,
+                first: Some(ChunkId {
+                    arena: self.owner,
+                    raw: raw.first,
+                    _lane: PhantomData,
+                }),
+                start: raw.start,
+                len: raw.len,
+            });
         }
         Ok(())
     }
@@ -2158,33 +2087,12 @@ impl<T, Lane> ForkArena<T, Lane> {
 
 fn rebrand_list<Source, Destination>(
     list: ArenaListId<Source>,
-    arena: u64,
+    arena: u32,
 ) -> ArenaListId<Destination> {
-    match list {
-        ArenaListId::Range(range) => ArenaListId::Range(ArenaRange {
-            arena,
-            first: range.first.map(|first| ChunkId {
-                arena,
-                raw: first.raw,
-                _lane: PhantomData,
-            }),
-            start: range.start,
-            len: range.len,
-        }),
-        ArenaListId::Sequence {
-            first,
-            start,
-            count,
-            len,
-            ..
-        } => ArenaListId::Sequence {
-            arena,
-            first,
-            start,
-            count,
-            len,
-            _lane: PhantomData,
-        },
+    if list.is_empty() {
+        ArenaListId::empty()
+    } else {
+        ArenaListId::from_record(arena, list.first, list.start, list.count, list.len)
     }
 }
 
@@ -2224,9 +2132,15 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
             },
             None => ArenaRange::empty(self.arena.owner),
         };
+        let list = if range.is_empty() {
+            ArenaListId::empty()
+        } else {
+            self.arena
+                .compose_ranges(self.pool, core::slice::from_ref(&range))?
+        };
         self.arena.active_builder = false;
         self.finished = true;
-        Ok(ArenaListId::Range(range))
+        Ok(list)
     }
 
     pub fn discard(mut self) -> Result<(), ForkArenaError> {
@@ -2291,46 +2205,35 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         if index >= self.len() {
             return None;
         }
-        let (range, local) = match self.list {
-            ArenaListId::Range(range) => (range, index),
-            ArenaListId::Sequence {
-                first,
-                start,
-                count,
-                ..
-            } => {
-                let mut low = 0_u32;
-                let mut high = count;
-                while low < high {
-                    let middle = low + (high - low) / 2;
-                    let entry = self.descriptor_at(first, start, middle)?;
-                    if index < entry.cumulative_end as usize {
-                        high = middle;
-                    } else {
-                        low = middle + 1;
-                    }
-                }
-                let entry = self.descriptor_at(first, start, low)?;
-                let prior = if low == 0 {
-                    0
-                } else {
-                    self.descriptor_at(first, start, low - 1)?.cumulative_end as usize
-                };
-                (
-                    ArenaRange {
-                        arena: self.arena.owner,
-                        first: Some(ChunkId {
-                            arena: self.arena.owner,
-                            raw: entry.range.first,
-                            _lane: PhantomData,
-                        }),
-                        start: entry.range.start,
-                        len: entry.range.len,
-                    },
-                    index - prior,
-                )
+        let mut low = 0_u32;
+        let mut high = self.list.count;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let entry = self.descriptor_at(self.list.first, self.list.start, middle)?;
+            if index < entry.cumulative_end as usize {
+                high = middle;
+            } else {
+                low = middle + 1;
             }
+        }
+        let entry = self.descriptor_at(self.list.first, self.list.start, low)?;
+        let prior = if low == 0 {
+            0
+        } else {
+            self.descriptor_at(self.list.first, self.list.start, low - 1)?
+                .cumulative_end as usize
         };
+        let range = ArenaRange {
+            arena: self.arena.owner,
+            first: Some(ChunkId {
+                arena: self.arena.owner,
+                raw: entry.range.first,
+                _lane: PhantomData,
+            }),
+            start: entry.range.start,
+            len: entry.range.len,
+        };
+        let local = index - prior;
         self.range_get(range, local)
     }
 

@@ -1,4 +1,4 @@
-use super::{PageListId, PageMaterialArena};
+use super::{PageListId, PageMaterialActiveListBuilder, PageMaterialArena};
 use crate::node::Node;
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -32,6 +32,75 @@ fn disabled_demand_performs_no_semantic_hash_work() {
     assert_eq!(list.semantic_identity(), None);
     assert_eq!(arena.counters().source_nodes_copied, 0);
     assert_eq!(arena.counters().new_semantic_nodes, 3);
+}
+
+#[test]
+fn active_list_preserves_disabled_demand_and_appends_ranges_without_copying() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let source = arena.publish_owned(penalties(&[10, 20])).expect("source");
+    let source_address = arena
+        .list(source)
+        .expect("live source")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("source node");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .append_to_active_list(&mut builder, source)
+        .expect("append source coordinates");
+    arena
+        .push_active_list(&mut builder, Node::Penalty(30))
+        .expect("append new semantic node");
+    let composed = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize builder");
+
+    assert_eq!(resolved(&arena, composed), penalties(&[10, 20, 30]));
+    assert_eq!(composed.semantic_identity(), None);
+    assert_eq!(arena.semantic_hash_work(), 0);
+    assert_eq!(arena.counters().new_semantic_nodes, 3);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(
+        arena
+            .list(composed)
+            .expect("live composed list")
+            .get(0)
+            .map(std::ptr::from_ref)
+            .expect("composed source node"),
+        source_address
+    );
+}
+
+#[test]
+fn active_list_concatenates_maintained_semantic_identity() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    arena.enable_semantic_identity();
+    let source_nodes = penalties(&[1, 2]);
+    let source = arena
+        .publish_owned(source_nodes.clone())
+        .expect("source list");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .append_to_active_list(&mut builder, source)
+        .expect("append source identity");
+    arena
+        .push_active_list(&mut builder, Node::Penalty(3))
+        .expect("append new node identity");
+    let result = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize builder");
+    let expected_nodes = penalties(&[1, 2, 3]);
+
+    assert_eq!(
+        result.semantic_identity(),
+        Some(identity(&expected_nodes).raw())
+    );
+    assert_eq!(arena.semantic_hash_work(), 3);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 
 #[test]
