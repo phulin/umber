@@ -1698,9 +1698,14 @@ independent and retains the exact ID after the source level retires.
 
 Physical refill distinguishes LF, CR, CRLF, and a missing final terminator.
 The refill owner computes lower-source buffer occupancy once, loads and firms
-the physical line, registers any replacement backing, journals an actual TeX
-line-number change, and retries the singular top transition. Tokenization
-returns `NeedLine` instead of receiving a backing registry on every token.
+the physical line, registers its physical and any replacement backing,
+journals an actual TeX line-number change, and retries the singular top
+transition. A source which reaches exhaustion commits any still-pending
+descriptors at the cold retirement seam before observation and pop. Failed
+diagnostic registration remains retryable at the next physical acquisition or
+while the exhausted level is live, and a successful registration is never
+repeated. Tokenization returns `NeedLine` instead of inspecting registration
+state on every token.
 A final terminator does not manufacture another empty line. Normalization
 removes trailing byte `0x20` values, captures the current profile-valid
 `endlinechar`, and delivers that synthetic character at the zero-width anchor

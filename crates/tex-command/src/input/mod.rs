@@ -25,6 +25,8 @@ pub use levels::{
     MixedPackedCursorReceipt,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
+#[cfg(test)]
+pub(crate) use stack::source_registration_counters;
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
     InputRetirement, InputRetirementAction, InputRetirementError, InputRetirementReason,

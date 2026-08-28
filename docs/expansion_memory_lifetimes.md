@@ -500,10 +500,14 @@ Source and token-list delivery share one `CommandState` input-top transition,
 which admits and advances the exact top row once. A source tokenizer step with
 no loaded line returns `NeedLine`; the separate physical-line transition alone
 walks lower source lines for buffer accounting, loads and firms the line,
-registers its backing, and journals a changed retained line number. The
-retained scalar is the O(1) authority for `\inputlineno`: source push and pop,
-physical acquisition, read/terminal entry, and the `\scantokens` EOF sentinel
-update it, while ordinary tokens and token-list nesting do not.
+registers its backing, and journals a changed retained line number. A source
+which exhausts registers any pending descriptor at the cold retirement seam
+before observation and pop; an exhausted non-final replacement line remains
+owned through the next physical-acquisition retry. Ordinary warmed token
+transitions perform no registration check or call. The retained scalar is the
+O(1) authority for `\inputlineno`: source push and pop, physical acquisition,
+read/terminal entry, and the `\scantokens` EOF sentinel update it, while
+ordinary tokens and token-list nesting do not.
 
 Resolution returns a borrow of the same caller-owned command slot.
 Outer validity, alignment classification, and optional observation use that

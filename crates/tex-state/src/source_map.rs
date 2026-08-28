@@ -577,9 +577,10 @@ impl SourceMap {
 
     /// Registers one source whose caller does not retain a line index.
     ///
-    /// Ordinary token delivery calls this on every source token. Check the
-    /// direct source slot before constructing the cold registration payload so
-    /// a warm hit performs no `Arc` allocation or retain/release operation.
+    /// Command input calls this only at physical acquisition or the cold
+    /// source-retirement seam. The caller's committed bit prevents duplicate
+    /// successful registration; the lookup here preserves idempotence at the
+    /// aggregate boundary itself.
     pub(crate) fn register_without_line_starts(
         &mut self,
         source: SourceId,

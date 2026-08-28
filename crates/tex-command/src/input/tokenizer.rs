@@ -541,7 +541,10 @@ impl SourceCursor {
                     // must still be able to pseudoprint the exhausted line.
                     return SourceStep::End;
                 }
-                self.finish_line();
+                // Keep the exhausted line and any replacement backing alive
+                // through the cold `NeedLine` acquisition seam. That owner
+                // retries a failed provenance registration before releasing
+                // the old line and loading the next one.
                 return SourceStep::NeedLine;
             };
             let scalar_range = self.spelling_scalar_range(character);

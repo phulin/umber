@@ -1865,6 +1865,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<SourceExhaustionStatus, CommandError> {
+        self.command
+            .register_exhausted_source_backings(self.state, identity)
+            .map_err(|()| CommandError::input_invariant())?;
         if let Some(level) = self.command.begin_pending_every_eof(self.state, identity) {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Push,

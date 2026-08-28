@@ -25,6 +25,42 @@ pub(crate) enum InputTopTransition {
     Empty,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SourceRegistrationCounters {
+    pub(crate) checks: u64,
+    pub(crate) calls: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE_REGISTRATION_COUNTERS: std::cell::Cell<SourceRegistrationCounters> =
+        const { std::cell::Cell::new(SourceRegistrationCounters { checks: 0, calls: 0 }) };
+}
+
+#[cfg(test)]
+pub(crate) fn source_registration_counters() -> SourceRegistrationCounters {
+    SOURCE_REGISTRATION_COUNTERS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn record_source_registration_check() {
+    SOURCE_REGISTRATION_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.checks += 1;
+        slot.set(counters);
+    });
+}
+
+#[cfg(test)]
+fn record_source_registration_call() {
+    SOURCE_REGISTRATION_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.calls += 1;
+        slot.set(counters);
+    });
+}
+
 /// One committed input-lifecycle transition.
 ///
 /// `trace` explains the replay that ended but does not select `action`.
@@ -235,7 +271,6 @@ impl<G> CommandState<G> {
                 InputLevel::Source(source) => {
                     let identity = source.identity();
                     let position = source.cursor.next_physical_offset;
-                    register_source_backings(state, &mut source.cursor);
                     if state.tracked_region_is_active() {
                         super::observe_immutable_source(state, source);
                     }
@@ -368,7 +403,7 @@ impl<G> CommandState<G> {
         pending_acquired_line: bool,
     ) -> Result<Option<super::PhysicalLine>, ()> {
         if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
-            register_source_backings(state, &mut source.cursor);
+            register_pending_source_backings(state, &mut source.cursor);
             if state.tracked_region_is_active() {
                 super::observe_immutable_source(state, source);
             }
@@ -386,7 +421,7 @@ impl<G> CommandState<G> {
             )?
         };
         if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
-            register_source_backings(state, &mut source.cursor);
+            register_pending_source_backings(state, &mut source.cursor);
             if state.tracked_region_is_active() {
                 super::observe_immutable_source(state, source);
             }
@@ -432,6 +467,12 @@ impl<G> CommandState<G> {
             if pending_acquired_line {
                 source.cursor.pending_acquired_line = true;
             }
+            // A non-final exhausted line remains installed until this cold
+            // acquisition seam so a failed replacement-backing registration
+            // receives one retry before its sole cursor owner is released.
+            if source.cursor.line.is_some() {
+                source.cursor.finish_line();
+            }
             let mut lines = super::LineBackingRegistry {
                 profile,
                 next_identity: &mut input.next_source_identity,
@@ -468,6 +509,28 @@ impl<G> CommandState<G> {
         }
         self.set_retained_file_line_number(retained_line);
         Ok(Some(physical))
+    }
+
+    /// Commits provenance for an exhausted source before any observer can see
+    /// its retirement and before the owning input row is popped.
+    ///
+    /// This cold seam covers sources which never reached production physical
+    /// acquisition, including forced EOF. Registration failures remain
+    /// diagnostic-only and retry on a later exhaustion transition while the
+    /// source is still live.
+    pub(crate) fn register_exhausted_source_backings(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        identity: InputLevelId,
+    ) -> Result<(), ()> {
+        let Some(InputLevel::Source(source)) = self.input.levels.last_mut() else {
+            return Err(());
+        };
+        if source.identity() != identity {
+            return Err(());
+        }
+        register_pending_source_backings(state, &mut source.cursor);
+        Ok(())
     }
 
     pub(crate) fn set_retained_file_line_number(&mut self, line: i32) {
@@ -1093,24 +1156,35 @@ fn source_level_is_framed<G>(source: &super::SourceLevel<G>) -> bool {
 /// not change TeX delivery. The cursor bit records the aggregate commit rather
 /// than the attempt: a failed registration remains retryable, while the warm
 /// path neither clones a descriptor nor allocates.
-fn register_source_backings<G>(
+fn register_pending_source_backings<G>(
     state: &mut tex_state::CommandContext<'_, G>,
     cursor: &mut super::SourceCursor,
 ) {
-    if !cursor.backing_registered
-        && state
+    #[cfg(test)]
+    record_source_registration_check();
+    if !cursor.backing_registered {
+        #[cfg(test)]
+        record_source_registration_call();
+        if state
             .register_source(cursor.backing.id, cursor.backing.source_descriptor())
             .is_ok()
-    {
-        cursor.backing_registered = true;
+        {
+            cursor.backing_registered = true;
+        }
     }
+    #[cfg(test)]
+    record_source_registration_check();
     if !cursor.line_backing_registered
         && let Some(backing) = cursor.line_backing.as_ref()
-        && state
+    {
+        #[cfg(test)]
+        record_source_registration_call();
+        if state
             .register_source(backing.id, backing.source_descriptor())
             .is_ok()
-    {
-        cursor.line_backing_registered = true;
+        {
+            cursor.line_backing_registered = true;
+        }
     }
 }
 

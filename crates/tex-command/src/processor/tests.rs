@@ -417,6 +417,7 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
                 )),
             )
             .expect("conflicting source id seed");
+        let before = crate::input::source_registration_counters();
         {
             let mut processor = crate::test_harness::processor(
                 &mut command,
@@ -438,10 +439,173 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
                 }
             );
         }
+        let after_acquisition = crate::input::source_registration_counters();
+        assert_eq!(after_acquisition.calls - before.calls, 2);
         let Some(InputLevel::Source(source)) = command.input.levels.last() else {
             panic!("source remains live after its first token");
         };
         assert!(!source.cursor.backing_registered);
+
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            assert!(
+                processor
+                    .get_next()
+                    .expect("source retirement retries registration")
+                    .is_none()
+            );
+        }
+        let after_retirement = crate::input::source_registration_counters();
+        assert_eq!(after_retirement.calls - after_acquisition.calls, 1);
+    });
+}
+
+#[test]
+fn warmed_source_token_transition_performs_no_registration_checks_or_calls() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"ab"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let before_acquisition = crate::input::source_registration_counters();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("first source delivery")
+                .expect("first source token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }
+        );
+        let after_acquisition = crate::input::source_registration_counters();
+        assert_eq!(after_acquisition.calls - before_acquisition.calls, 1);
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("warmed source delivery")
+                .expect("second source token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            }
+        );
+        let after_warmed_token = crate::input::source_registration_counters();
+        assert_eq!(after_warmed_token, after_acquisition);
+
+        while processor.get_next().expect("source retirement").is_some() {}
+        let after_retirement = crate::input::source_registration_counters();
+        assert_eq!(after_retirement.calls, after_acquisition.calls);
+        assert!(after_retirement.checks > after_warmed_token.checks);
+    });
+}
+
+#[test]
+fn failed_replacement_registration_retries_at_next_physical_acquisition() {
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+        universe
+            .world_mut()
+            .push_memory_terminal_line("ab")
+            .expect("terminal replacement");
+        universe
+            .assign_int_param(
+                tex_state::env::banks::IntParam::PAUSING,
+                1,
+                tex_state::env::AssignmentScope::Global,
+            )
+            .expect("enable pausing");
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"physical\nz"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        context
+            .register_source(
+                tex_state::SourceId::new(1),
+                tex_state::source_map::SourceDescriptor::generated(std::sync::Arc::from(
+                    &b"conflict"[..],
+                )),
+            )
+            .expect("replacement source id conflict");
+        let before = crate::input::source_registration_counters();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        for expected in ['a', 'b'] {
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("replacement delivery")
+                    .expect("replacement token")
+                    .spelling()
+                    .semantic_token(),
+                Token::Char {
+                    ch: expected,
+                    cat: Catcode::Letter,
+                }
+            );
+        }
+        let after_replacement = crate::input::source_registration_counters();
+        assert_eq!(after_replacement.calls - before.calls, 2);
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("next physical line")
+                .expect("next physical token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'z',
+                cat: Catcode::Letter,
+            }
+        );
+        let after_next_line = crate::input::source_registration_counters();
+        assert_eq!(after_next_line.calls - after_replacement.calls, 1);
     });
 }
 

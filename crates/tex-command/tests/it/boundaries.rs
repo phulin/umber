@@ -101,6 +101,21 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         1,
         "source and stored input must share one destination-directed top transition"
     );
+    let input_top_transition = input_stack
+        .split("fn transition_input_top_into(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Acquires, firms, registers").next())
+        .expect("locate warmed input-top transition");
+    for forbidden in [
+        "register_source",
+        "backing_registered",
+        "line_backing_registered",
+    ] {
+        assert!(
+            !input_top_transition.contains(forbidden),
+            "warmed input-top transition must not inspect or call source registration through {forbidden}"
+        );
+    }
     assert!(input_stack.contains("CharacterMode::EightBitExact"));
     assert!(input_stack.contains("CharacterMode::UnicodeExtended"));
     assert!(
