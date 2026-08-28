@@ -1126,15 +1126,17 @@ fn initialize_candidate_runtime<G: 'static>(
     control.attach_pure_memo_capability(universe);
     control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
-    if !rooted {
-        _ledger.commit_job_start(
-            &mut control,
-            universe,
-            &mut LiveHistorySink {
-                state: &mut history,
-                retained: checkpoints,
-            },
-        )?;
+    if !rooted_restart {
+        if !rooted {
+            _ledger.commit_job_start(
+                &mut control,
+                universe,
+                &mut LiveHistorySink {
+                    state: &mut history,
+                    retained: checkpoints,
+                },
+            )?;
+        }
         start_candidate_job(universe, &mut control, options)?;
     }
     Ok(CandidateRuntime {
