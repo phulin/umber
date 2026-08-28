@@ -317,10 +317,7 @@ impl PageMaterialArena {
     /// Stored whole-range and whole-chunk summaries combined for identity.
     #[must_use]
     pub const fn semantic_summary_work(&self) -> u64 {
-        self.region
-            .pub_arena
-            .counters()
-            .identity_summaries_combined
+        self.region.pub_arena.counters().identity_summaries_combined
     }
 
     #[must_use]
@@ -423,20 +420,18 @@ impl PageMaterialArena {
                 item_identity,
             );
             if result.is_ok() {
-                self.region
-                    .pub_arena
-                    .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                self.region.pub_arena.record_identity_work(
+                    crate::fork_arena::SequenceSummaryWork {
                         hashed_values: 1,
                         ..crate::fork_arena::SequenceSummaryWork::default()
-                    });
+                    },
+                );
             }
             result
         } else {
-            self.region.pub_arena.push_active_list(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                node,
-            )
+            self.region
+                .pub_arena
+                .push_active_list(&mut self.pool.chunks, &mut builder.inner, node)
         }
     }
 
