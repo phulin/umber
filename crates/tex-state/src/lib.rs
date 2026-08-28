@@ -90,6 +90,7 @@ pub mod node_arena;
 pub mod node_sequence;
 pub mod packed_input;
 pub mod page;
+pub mod page_node_arena;
 mod pdf;
 #[cfg(all(feature = "profiling", feature = "testing"))]
 pub use pdf::{

@@ -5,6 +5,7 @@
 //! on sealed whole-chunk boundaries; operation marks may additionally name a
 //! partially used tail.
 
+use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -468,6 +469,39 @@ impl<Lane> PartialEq for ArenaListId<Lane> {
     }
 }
 impl<Lane> Eq for ArenaListId<Lane> {}
+
+impl<Lane> Hash for ArenaListId<Lane> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match *self {
+            Self::Range(range) => {
+                0_u8.hash(state);
+                range.arena.hash(state);
+                range.first.is_some().hash(state);
+                if let Some(first) = range.first {
+                    first.arena.hash(state);
+                    first.raw.hash(state);
+                }
+                range.start.hash(state);
+                range.len.hash(state);
+            }
+            Self::Sequence {
+                arena,
+                first,
+                start,
+                count,
+                len,
+                ..
+            } => {
+                1_u8.hash(state);
+                arena.hash(state);
+                first.hash(state);
+                start.hash(state);
+                count.hash(state);
+                len.hash(state);
+            }
+        }
+    }
+}
 
 impl<Lane> ArenaListId<Lane> {
     #[must_use]
