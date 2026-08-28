@@ -228,6 +228,12 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
         )
         .expect("the complete width, prototype, and setting pipeline succeeds");
 
+        let finished = stores
+            .page_node_list(finished)
+            .expect("finished alignment belongs to the page arena")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
         let [Node::HList(row)] = finished.as_slice() else {
             panic!("fin_align must convert the unset row to an hlist");
         };

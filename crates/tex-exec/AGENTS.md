@@ -91,7 +91,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   `ExecutionDiagnosticContext`; focused tests pin routing and context rendering.
   `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may
   catch it.
-- `src/align/`: source-free alignment completion, packaging, and width resolution.
+- `src/align/`: source-free alignment completion, packaging, and width
+  resolution over borrowed page-arena cursors. Setting retains unchanged
+  source ranges and appends only replacement nodes through detached active
+  builders; no production alignment path owns a `Vec<Node>`.
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.
 - `src/math/display/prototype.rs`: e-TeX saved display-line prototype and
   directed `app_display` list replacement.

@@ -101,16 +101,25 @@ does not authorize a smaller hidden arena.
 | Pure memo and render caches                                                                           | Session/executor cache owner; `PureMemoRuntime` and editor render-map cache enforce entry/byte budgets                                                                                | Reusable and evictable, not semantic nesting                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Eviction, explicit clear, or session drop                                                                                                                                                     | Yes / yes only as handle-free validated results                                                       | Bounded heap retention is allowed; cache identity cannot provide runtime liveness                                                                                                                                                                                                                                                                   |
 | Format image and format construction                                                                  | `DetachedFormatImage` transiently owns bytes plus decoded handle-free rows; admission consumes it into a fresh destination generation                                                 | Complete validation precedes admission; construction then drains decoded rows in canonical dependency order                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Encoded bytes drop before destination construction; each decoded payload drops or moves when its final column is installed; runtime rows end with the generation                              | N/A / yes, via handle-free schema                                                                     | Cold decode allocation and DTO-local relocation are allowed. Admission does not retain duplicate decoded/live payloads. Live ids, chunks, and generation owners are forbidden on the wire                                                                                                                                                           |
 
-`PageNodeArena` node payload and logical sequencing have distinct
-generation-owned append streams. Immutable payload segments own each `Node`
-once. A direct logical sequence names one segment range; a mixed sequence names
-one range of flat `NodePiece` descriptors, and every descriptor names a payload
-range directly. Reusing a composite copies descriptors only. Candidate
-rollback truncates both streams. Indexed borrowed views binary-search
-cumulative piece endpoints, while execution retains a scalar sequential piece
-cursor across short-lived reborrows. `ParagraphTape` and `LineMaterializer`
-carry only the coordinate and compact analysis/lineage scratch; they never own
-or materialize the source node lane.
+`PageMaterialArena` owns one `ChunkPool<Node>` and one coordinate-only
+`ForkArena`. Fixed payload chunks own each `Node` once. An `ArenaList` is the
+sole list topology: it names one source range or one arena-owned nonrecursive
+range record with cumulative endpoints. Detached active builders append
+genuinely new nodes or retain immutable source ranges; neither operation
+materializes source payload. Candidate rollback truncates payload and
+descriptor chunks through the same arena mark. Indexed borrowed views resolve
+the canonical ranges directly. `ParagraphTape`, alignment setting, and
+`LineMaterializer` carry only list roots and compact scalar/index scratch; they
+never own or materialize the source node lane.
+
+Alignment rows and cells are transient candidate material and cannot occur at
+an eligible retained boundary. Cell packaging moves the completed mode-list
+root into the unset child, row packaging moves that child root into the
+alignment list, and final width setting replaces unset nodes through detached
+active builders while retaining unchanged `\noalign`, interline-glue, and
+tabskip ranges at their original addresses. Display and ordinary handoff move
+the finished `PageListId`; lifecycle diagnostics retain row/cell counts, not a
+parallel root or node container.
 
 ### Process and session state
 

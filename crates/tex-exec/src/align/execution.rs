@@ -1,9 +1,7 @@
 //! Source-free canonical alignment completion and list contribution.
 
 use tex_state::CommandContext;
-use tex_state::node::Node;
 
-use crate::vertical::append_vertical_contribution;
 use crate::{Mode, ModeNest};
 
 pub(crate) struct FinishedAlignment {

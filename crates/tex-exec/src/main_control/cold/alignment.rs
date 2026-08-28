@@ -313,7 +313,8 @@ pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
                 leader: None,
             },
         );
-        active.captured_rows.push(Vec::new());
+        active.captured_row_count = active.captured_row_count.saturating_add(1);
+        active.captured_cell_count = 0;
         active.row_open = true;
     }
     if active.cell_open {
@@ -368,20 +369,23 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         );
         let (retained, pre_migrated, migrated) =
             crate::box_runtime::split_hpack_migrations(stores, material);
-        let migrations = stores.compose_page_node_sequences(&[pre_migrated, migrated]);
-        active.row_migrations =
-            stores.compose_page_node_sequences(&[active.row_migrations, migrations]);
+        let mut migration_builder =
+            tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut migration_builder);
+        stores.append_page_active_list(&mut migration_builder, active.row_migrations);
+        stores.append_page_active_list(&mut migration_builder, pre_migrated);
+        stores.append_page_active_list(&mut migration_builder, migrated);
+        active.row_migrations = stores.finalize_page_active_list(&mut migration_builder);
         retained
     } else {
         cell.list_mutation().take_nodes()
     };
-    active
-        .captured_rows
-        .last_mut()
-        .ok_or(ExecError::MissingToken {
+    if active.captured_row_count == 0 {
+        return Err(ExecError::MissingToken {
             context: "active replay alignment row",
-        })?
-        .push(material);
+        });
+    }
+    active.captured_cell_count = active.captured_cell_count.saturating_add(1);
     let cell = crate::align::packaging::make_unset_node(
         stores,
         diagnostic_effects,
@@ -534,7 +538,7 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
 }
 
 pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
-    active: &ActiveReplayAlignment<G>,
+    active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -543,9 +547,8 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     let rows = alignment.list_mutation().take_nodes();
-    let columns = active
-        .columns
-        .iter()
+    let columns = std::mem::take(&mut active.columns)
+        .into_iter()
         .map(|templates| AlignColumn {
             u_template: stores.node_token_list(
                 templates
@@ -560,7 +563,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
         active.kind,
         active.packing,
         columns,
-        active.tabskips.clone(),
+        std::mem::take(&mut active.tabskips),
         active.default_tabskip,
         active.repeat_start,
     );
@@ -581,7 +584,6 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
         geometry,
         diagnostic_context,
     )?;
-    let finished = stores.publish_page_nodes(finished);
     let aux_prev_depth = alignment.list().prev_depth();
     let aux_space_factor = matches!(
         alignment.mode(),

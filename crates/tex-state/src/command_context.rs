@@ -3272,6 +3272,15 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes.semantic_identity_enabled()
     }
 
+    /// Reports canonical page-material lifecycle work for focused ownership
+    /// and allocation gates. A retained source range changes only list
+    /// descriptors, so `source_nodes_copied` remains an independently visible
+    /// zero while genuinely new semantic output advances its own counter.
+    #[must_use]
+    pub fn page_node_arena_counters(&self) -> crate::fork_arena::ForkArenaCounters {
+        self.page_nodes.counters()
+    }
+
     /// Starts a descriptor-only transform in caller-owned reusable scratch.
     pub fn begin_page_node_transform(
         &self,

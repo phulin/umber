@@ -7,6 +7,15 @@ fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
+fn resolved_nodes<G>(stores: &CommandContext<'_, G>, list: PageListId) -> Vec<Node> {
+    stores
+        .page_node_list(list)
+        .expect("test list belongs to the page arena")
+        .iter()
+        .cloned()
+        .collect()
+}
+
 fn box_node(width: i32, height: i32, empty: PageListId) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: sp(width),
@@ -94,6 +103,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             &diagnostic_context,
         )
         .expect("running horizontal rules resolve");
+        let horizontal = resolved_nodes(&stores, horizontal);
         assert!(matches!(
             horizontal.as_slice(),
             [
@@ -133,6 +143,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             &diagnostic_context,
         )
         .expect("running vertical rules resolve");
+        let vertical = resolved_nodes(&stores, vertical);
         assert!(matches!(
             vertical.as_slice(),
             [Node::Rule {
@@ -171,6 +182,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             &diagnostic_context,
         )
         .expect("display running rules resolve");
+        let shifted = resolved_nodes(&stores, shifted);
         let [Node::HList(wrapper)] = shifted.as_slice() else {
             panic!("a display alignment rule must be wrapped in a shifted hbox");
         };
@@ -263,6 +275,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             &diagnostic_context,
         )
         .expect("spanned row sets");
+        let set = resolved_nodes(&stores, set);
         let [Node::HList(row)] = set.as_slice() else {
             panic!("unset row must become one hlist");
         };
@@ -352,6 +365,33 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             row,
             marker.clone(),
         ]);
+        let source_rows = stores
+            .page_node_list(rows)
+            .expect("alignment source belongs to the page arena");
+        let first_marker_address = std::ptr::from_ref(
+            source_rows
+                .owned_node(0)
+                .expect("first retained marker exists"),
+        );
+        let last_marker_address = std::ptr::from_ref(
+            source_rows
+                .owned_node(3)
+                .expect("last retained marker exists"),
+        );
+        let source_children = stores
+            .page_node_list(children)
+            .expect("row source children belong to the page arena");
+        let leading_tabskip_address = std::ptr::from_ref(
+            source_children
+                .owned_node(0)
+                .expect("leading retained tabskip exists"),
+        );
+        let trailing_tabskip_address = std::ptr::from_ref(
+            source_children
+                .owned_node(2)
+                .expect("trailing retained tabskip exists"),
+        );
+        let counters_before = stores.page_node_arena_counters();
         let set = set_alignment_nodes(
             AlignmentKind::HAlign,
             rows,
@@ -370,6 +410,52 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             &diagnostic_context,
         )
         .expect("final traversal succeeds");
+        let counters_after = stores.page_node_arena_counters();
+        assert!(
+            counters_after.new_semantic_nodes > counters_before.new_semantic_nodes,
+            "the setting pass must publish genuinely new set rows/rules"
+        );
+        assert_eq!(
+            counters_after.source_nodes_copied, counters_before.source_nodes_copied,
+            "retained alignment ranges must not copy source payload"
+        );
+        let set_view = stores
+            .page_node_list(set)
+            .expect("set alignment belongs to the page arena");
+        assert_eq!(
+            std::ptr::from_ref(set_view.owned_node(0).expect("first marker retained")),
+            first_marker_address
+        );
+        assert_eq!(
+            std::ptr::from_ref(set_view.owned_node(3).expect("last marker retained")),
+            last_marker_address
+        );
+        let Node::HList(set_row) = set_view
+            .owned_node(2)
+            .expect("unset row is replaced in place logically")
+        else {
+            panic!("unset row must become an hlist");
+        };
+        let set_children = stores
+            .page_node_list(set_row.children)
+            .expect("set row children belong to the page arena");
+        assert_eq!(
+            std::ptr::from_ref(
+                set_children
+                    .owned_node(0)
+                    .expect("leading tabskip retained"),
+            ),
+            leading_tabskip_address
+        );
+        assert_eq!(
+            std::ptr::from_ref(
+                set_children
+                    .owned_node(2)
+                    .expect("trailing tabskip retained"),
+            ),
+            trailing_tabskip_address
+        );
+        let set = resolved_nodes(&stores, set);
         assert!(
             matches!(set.as_slice(), [Node::Penalty(731), Node::Rule { width: Some(width), .. }, Node::HList(_), Node::Penalty(731)] if *width == sp(9))
         );

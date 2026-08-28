@@ -6,6 +6,7 @@ mod tests;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetNode};
 use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageMaterialActiveListBuilder;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::ExecError;
@@ -39,7 +40,7 @@ pub(super) fn set_alignment_nodes<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<PageListId, ExecError> {
     let config = SetConfig {
         kind,
         resolved,
@@ -47,25 +48,34 @@ pub(super) fn set_alignment_nodes<G>(
         empty,
         offset,
     };
-    let mut out = Vec::with_capacity(rows.len());
+    let mut out = PageListId::empty();
+    let mut retained_start = 0;
     for index in 0..rows.len() {
-        let node = stores
+        let action = match stores
             .page_node_list(rows)
             .expect("alignment rows belong to the live page arena")
-            .nodes()
             .owned_node(index)
             .expect("alignment row index remains in range")
-            .clone();
-        match node {
-            Node::Unset(row) => {
-                let set = set_row(&config, &row, stores)?;
-                out.push(set);
-            }
+        {
+            Node::Unset(row) => RowAction::Unset(*row),
             Node::Rule {
                 width,
                 height,
                 depth,
-            } => out.push(set_running_rule(
+            } => RowAction::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            _ => RowAction::Retain,
+        };
+        let replacement = match action {
+            RowAction::Unset(row) => Some(set_row(&config, &row, stores)?),
+            RowAction::Rule {
+                width,
+                height,
+                depth,
+            } => Some(set_running_rule(
                 &config,
                 width,
                 height,
@@ -75,10 +85,44 @@ pub(super) fn set_alignment_nodes<G>(
                 geometry,
                 diagnostic_context,
             )),
-            _ => out.push(node),
-        }
+            RowAction::Retain => None,
+        };
+        let Some(replacement) = replacement else {
+            continue;
+        };
+        let mut builder = PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut builder);
+        stores.append_page_active_list(&mut builder, out);
+        stores.append_page_active_list_range(&mut builder, rows, retained_start..index);
+        stores.push_page_active_list(&mut builder, replacement);
+        out = stores.finalize_page_active_list(&mut builder);
+        retained_start = index + 1;
+    }
+    if retained_start < rows.len() {
+        let mut builder = PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut builder);
+        stores.append_page_active_list(&mut builder, out);
+        stores.append_page_active_list_range(&mut builder, rows, retained_start..rows.len());
+        out = stores.finalize_page_active_list(&mut builder);
     }
     Ok(out)
+}
+
+enum RowAction {
+    Retain,
+    Unset(UnsetNode<PageListId>),
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
+}
+
+fn single_node_list<G>(stores: &mut CommandContext<'_, G>, node: Node) -> PageListId {
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    stores.open_page_active_list(&mut builder);
+    stores.push_page_active_list(&mut builder, node);
+    stores.finalize_page_active_list(&mut builder)
 }
 
 /// TeX82 §806, `<Make the running dimensions in rule q extend to the
@@ -91,6 +135,7 @@ pub(super) fn set_alignment_nodes<G>(
 /// indent one by wrapping it in a box. §807 shifts rows by the same `o`, and
 /// leaving the rule unwrapped left it starting at the margin while every row
 /// beside it was indented (`umber2-jnfg`).
+#[allow(clippy::too_many_arguments)] // Running-rule packing keeps its output services explicit.
 fn set_running_rule<G>(
     config: &SetConfig<'_>,
     width: Option<Scaled>,
@@ -113,7 +158,7 @@ fn set_running_rule<G>(
     if config.offset.raw() == 0 {
         return rule;
     }
-    let list = stores.publish_page_nodes(vec![rule]);
+    let list = single_node_list(stores, rule);
     let mut packed = crate::packing_params::hpack(
         stores,
         diagnostic_effects,
@@ -169,47 +214,58 @@ fn set_row_children<G>(
     row: &UnsetNode,
     stores: &mut CommandContext<'_, G>,
 ) -> Result<PageListId, ExecError> {
-    let children = stores
-        .page_node_list(row.children)
-        .expect("alignment row belongs to the live page arena")
-        .nodes();
-    let mut replacements = Vec::new();
+    let source_len = row.children.len();
+    let mut result = PageListId::empty();
+    let mut retained_start = 0;
     let mut column = 0usize;
-    for (index, child) in children.iter().enumerate() {
-        if let Node::Unset(cell) = child {
-            let span = usize::from(cell.span_count) + 1;
-            let mut output = Vec::with_capacity(span.saturating_mul(2).saturating_sub(1));
-            output.push(set_cell(config, row, cell, column, span, stores)?);
-            for offset in 1..span {
-                let spanned_column = column + offset;
-                output.push(tabskip_node(config.resolved.tabskips[spanned_column]));
-                output.push(empty_column_box(
+    for index in 0..source_len {
+        let cell = match stores
+            .page_node_list(row.children)
+            .expect("alignment row belongs to the live page arena")
+            .owned_node(index)
+            .expect("alignment child index remains in range")
+        {
+            Node::Unset(cell) => *cell,
+            _ => continue,
+        };
+        let span = usize::from(cell.span_count) + 1;
+        let set = set_cell(config, row, &cell, column, span, stores)?;
+        let mut builder = PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut builder);
+        stores.append_page_active_list(&mut builder, result);
+        stores.append_page_active_list_range(&mut builder, row.children, retained_start..index);
+        stores.push_page_active_list(&mut builder, set);
+        for offset in 1..span {
+            let spanned_column = column + offset;
+            stores.push_page_active_list(
+                &mut builder,
+                tabskip_node(config.resolved.tabskips[spanned_column]),
+            );
+            stores.push_page_active_list(
+                &mut builder,
+                empty_column_box(
                     config.kind,
                     config.resolved.columns[spanned_column],
                     config.empty,
-                ));
-            }
-            column += span;
-            replacements.push((index, output));
+                ),
+            );
         }
+        result = stores.finalize_page_active_list(&mut builder);
+        column += span;
+        retained_start = index + 1;
     }
-    let source_len = children.len();
-    drop(children);
-
-    let mut slices = Vec::new();
-    let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
-    let mut start = 0;
-    for (index, output) in replacements {
-        if start < index {
-            pieces.push(stores.slice_page_node_sequence(row.children, start..index, &mut slices));
-        }
-        pieces.push(stores.publish_page_nodes(output));
-        start = index + 1;
+    if retained_start < source_len {
+        let mut builder = PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut builder);
+        stores.append_page_active_list(&mut builder, result);
+        stores.append_page_active_list_range(
+            &mut builder,
+            row.children,
+            retained_start..source_len,
+        );
+        result = stores.finalize_page_active_list(&mut builder);
     }
-    if start < source_len {
-        pieces.push(stores.slice_page_node_sequence(row.children, start..source_len, &mut slices));
-    }
-    Ok(stores.compose_page_node_sequences(&pieces))
+    Ok(result)
 }
 
 fn set_cell<G>(

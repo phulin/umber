@@ -12,6 +12,7 @@ use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
 };
 use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageMaterialActiveListBuilder;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{HpackParams, PackSpec};
 
@@ -33,7 +34,7 @@ pub(crate) fn finish_alignment<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<PageListId, ExecError> {
     let resolved = resolution::resolve_widths(
         state,
         stores
@@ -64,7 +65,7 @@ pub(crate) fn finish_alignment<G>(
         geometry,
         diagnostic_context,
     )?;
-    debug::debug_assert_no_unset_nodes(stores, &finished);
+    debug::debug_assert_no_unset_nodes(stores, finished);
     Ok(finished)
 }
 
@@ -88,8 +89,7 @@ fn pack_prototype<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Prototype {
-    let nodes = prototype_nodes(state.kind(), resolved, empty);
-    let list = stores.publish_page_nodes(nodes);
+    let list = prototype_nodes(state.kind(), resolved, empty, stores);
     let spec = pack_spec(state.pack_spec());
     let box_node = match state.kind() {
         AlignmentKind::HAlign => {
@@ -120,24 +120,20 @@ fn pack_prototype<G>(
     Prototype { box_node }
 }
 
-fn prototype_nodes(
+fn prototype_nodes<G>(
     kind: AlignmentKind,
     resolved: &ResolvedWidths,
     empty: &PageListId,
-) -> Vec<Node> {
-    let capacity = resolved
-        .columns
-        .len()
-        .checked_mul(2)
-        .and_then(|len| len.checked_add(1))
-        .expect("alignment node capacity fits usize");
-    let mut nodes = Vec::with_capacity(capacity);
-    nodes.push(tabskip_node(resolved.tabskips[0]));
+    stores: &mut CommandContext<'_, G>,
+) -> PageListId {
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    stores.open_page_active_list(&mut builder);
+    stores.push_page_active_list(&mut builder, tabskip_node(resolved.tabskips[0]));
     for (column, width) in resolved.columns.iter().copied().enumerate() {
-        nodes.push(prototype_column(kind, width, *empty));
-        nodes.push(tabskip_node(resolved.tabskips[column + 1]));
+        stores.push_page_active_list(&mut builder, prototype_column(kind, width, *empty));
+        stores.push_page_active_list(&mut builder, tabskip_node(resolved.tabskips[column + 1]));
     }
-    nodes
+    stores.finalize_page_active_list(&mut builder)
 }
 
 fn hpack_params<G>(stores: &CommandContext<'_, G>) -> HpackParams {

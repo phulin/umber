@@ -375,6 +375,13 @@ sealing; finalization produces only the canonical range/list coordinate, while
 rollback truncates its operation suffix. The builder has distinct vacant,
 open, and sealed states and has no conversion to `CheckpointMark`.
 
+Alignment construction is deliberately candidate-only under this rule. Active
+cells and rows move page-material list roots through packaging, width setting
+borrows `NodeCursor` views, and append-only replacements retain unchanged
+source ranges while appending only genuinely new set boxes and running rules.
+The final ordinary or display handoff moves the same typed root. No alignment
+root, node buffer, or clone fallback participates in checkpoint publication.
+
 The primitive registry remains immutable after initialization. Pruning drops
 whole unreachable journal and arena chunks once no sibling mark names them;
 it does not scan the engine, register roots, compact coordinates, or perform

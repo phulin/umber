@@ -67,7 +67,7 @@ fn collect_width_requirements<G>(
             requirements.push(AlignmentWidthRequirement {
                 first_column: column,
                 span,
-                width: unset_axis_size(kind, &cell)?,
+                width: unset_axis_size(kind, cell)?,
             });
             column += span;
         }

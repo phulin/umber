@@ -571,9 +571,12 @@ struct ActiveReplayAlignment<G> {
     align_peek_pending: bool,
     align_peek_after_noalign: bool,
     noalign_open: bool,
-    /// Frozen cell material retained for lifecycle diagnostics. The actual
-    /// row records live on the alignment level, exactly as TeX82 §775 does.
-    captured_rows: Vec<Vec<tex_state::node_arena::PageListId>>,
+    /// Scalar lifecycle evidence for the rows and cells whose material has
+    /// already moved into the alignment level. The page arena is the sole
+    /// owner of that material; diagnostics must not retain a second root
+    /// topology beside TeX82 §775's alignment list.
+    captured_row_count: usize,
+    captured_cell_count: usize,
     tabskips: Vec<tex_state::glue::GlueSpec>,
     default_tabskip: tex_state::glue::GlueSpec,
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,

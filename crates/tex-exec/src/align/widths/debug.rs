@@ -2,16 +2,21 @@ use tex_state::CommandContext;
 #[cfg(debug_assertions)]
 use tex_state::math::MathField;
 use tex_state::node::Node;
+use tex_state::node_arena::PageListId;
 
 #[cfg(debug_assertions)]
-pub(super) fn debug_assert_no_unset_nodes<G>(stores: &CommandContext<'_, G>, nodes: &[Node]) {
-    for node in nodes {
+pub(super) fn debug_assert_no_unset_nodes<G>(stores: &CommandContext<'_, G>, nodes: PageListId) {
+    for node in stores
+        .page_node_list(nodes)
+        .expect("finished alignment belongs to the live page arena")
+        .iter()
+    {
         debug_assert_no_unset_node(stores, node);
     }
 }
 
 #[cfg(not(debug_assertions))]
-pub(super) fn debug_assert_no_unset_nodes<G>(_stores: &CommandContext<'_, G>, _nodes: &[Node]) {}
+pub(super) fn debug_assert_no_unset_nodes<G>(_stores: &CommandContext<'_, G>, _nodes: PageListId) {}
 
 #[cfg(debug_assertions)]
 fn debug_assert_no_unset_node<G>(stores: &CommandContext<'_, G>, node: &Node) {
