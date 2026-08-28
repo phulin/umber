@@ -3176,6 +3176,14 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Publishes one complete page-lifetime list inside this admitted episode.
     pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
+        self.publish_page_node_range(nodes).list()
+    }
+
+    /// Publishes one immutable payload segment inside this admitted episode.
+    pub fn publish_page_node_range(
+        &mut self,
+        nodes: Vec<crate::node::Node>,
+    ) -> crate::node_arena::PageNodeRange {
         let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
         let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
             let node_words = node.tex_memory_words(etex_node_sizes);
@@ -3187,12 +3195,34 @@ impl<'a, G> CommandContext<'a, G> {
         for node in &nodes {
             self.assert_live_node_font_roots(node);
         }
-        let list = self
+        let range = self
             .page_nodes
-            .publish(nodes)
+            .publish_range(nodes)
             .expect("page construction contains only live page-arena children");
         self.engine_usage.observe_transient_memory(words.0, words.1);
-        list
+        range
+    }
+
+    /// Flattens direct/composite descriptors into this generation's compact
+    /// piece stream without copying node payload.
+    pub fn compose_page_node_sequences(
+        &mut self,
+        inputs: &[crate::node_arena::PageNodeSequenceId],
+    ) -> crate::node_arena::PageNodeSequenceId {
+        self.page_nodes
+            .compose_sequences(inputs)
+            .expect("page sequence inputs belong to the live page arena")
+    }
+
+    /// Returns a whole payload segment to operation-local ownership without
+    /// cloning it. Partial or shared-row extraction is deliberately rejected.
+    pub fn take_page_node_range(
+        &mut self,
+        range: crate::node_arena::PageNodeRange,
+    ) -> Vec<crate::node::Node> {
+        self.page_nodes
+            .take_range_nodes(range)
+            .expect("page range is one live whole payload segment")
     }
 
     /// Opens one nested structural suffix in the live page arena.
@@ -3224,6 +3254,16 @@ impl<'a, G> CommandContext<'a, G> {
         list: PageListId,
     ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
         self.page_nodes.get(list)
+    }
+
+    pub fn page_node_sequence(
+        &self,
+        sequence: crate::node_arena::PageNodeSequenceId,
+    ) -> Result<
+        crate::node_arena::ArenaNodeSequence<'_, PageLifetime>,
+        crate::node_arena::NodeArenaError,
+    > {
+        self.page_nodes.get_sequence(sequence)
     }
 
     /// Resolves shipout-only derived nodes while the aggregate transaction is

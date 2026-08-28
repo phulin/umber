@@ -9,7 +9,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::MathFontSize;
 use tex_state::node::Node;
-use tex_state::node_arena::PageListId;
+use tex_state::node_arena::{PageListId, PageNodeSequenceId};
 use tex_state::scaled::Scaled;
 use tex_typeset::TypesetState;
 use tex_typeset::expansion::FontExpansionSpec;
@@ -31,6 +31,14 @@ impl<G> TypesetState for TypesetContext<'_, '_, G> {
         self.state
             .page_nodes(list)
             .expect("typesetting list belongs to the admitted page arena")
+    }
+
+    fn page_node_sequence(
+        &self,
+        sequence: PageNodeSequenceId,
+    ) -> Option<tex_state::node_arena::ArenaNodeSequence<'_, tex_state::node_arena::PageLifetime>>
+    {
+        self.state.page_node_sequence(sequence).ok()
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {

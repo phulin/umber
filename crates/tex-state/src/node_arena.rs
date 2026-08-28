@@ -429,6 +429,19 @@ impl<L> ArenaNodeSequenceId<L> {
     pub const fn is_empty(self) -> bool {
         self.len() == 0
     }
+
+    /// Creates a compact sequential cursor for repeated short-lived arena
+    /// borrows. Composite traversal retains its current piece instead of
+    /// binary-searching cumulative endpoints for every node.
+    #[must_use]
+    pub const fn cursor(self) -> ArenaNodeSequenceCursor<L> {
+        ArenaNodeSequenceCursor {
+            sequence: self,
+            position: 0,
+            piece: 0,
+            prior_end: 0,
+        }
+    }
 }
 
 impl<L> Clone for ArenaNodeSequenceId<L> {
@@ -482,6 +495,32 @@ impl<L> Eq for ArenaNodeSequenceId<L> {}
 
 /// Page-arena logical node sequence coordinate.
 pub type PageNodeSequenceId = ArenaNodeSequenceId<PageLifetime>;
+
+pub struct ArenaNodeSequenceCursor<L> {
+    sequence: ArenaNodeSequenceId<L>,
+    position: u32,
+    piece: u32,
+    prior_end: u32,
+}
+
+impl<L> Clone for ArenaNodeSequenceCursor<L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<L> Copy for ArenaNodeSequenceCursor<L> {}
+
+impl<L> core::fmt::Debug for ArenaNodeSequenceCursor<L> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ArenaNodeSequenceCursor")
+            .field("position", &self.position)
+            .finish_non_exhaustive()
+    }
+}
+
+pub type PageNodeSequenceCursor = ArenaNodeSequenceCursor<PageLifetime>;
 
 /// Owner-checked suffix watermark for one node arena.
 pub struct NodeArenaCursor<L> {
@@ -2249,6 +2288,43 @@ impl<'a, L, Glue, Tokens> ArenaNodeSequence<'a, L, Glue, Tokens> {
             within_piece: 0,
             remaining: self.len(),
         }
+    }
+
+    /// Advances a persistent compact cursor through this borrowed view.
+    ///
+    /// This is useful when the owner must be reborrowed between execution
+    /// steps: the cursor retains only scalar piece/index state, while every
+    /// payload dereference still happens through the current arena view.
+    pub fn next_at(
+        &self,
+        cursor: &mut ArenaNodeSequenceCursor<L>,
+    ) -> Option<&'a Node<NodeListId<L>, Glue, Tokens>> {
+        assert_eq!(cursor.sequence, self.sequence);
+        if cursor.position as usize >= self.len() {
+            return None;
+        }
+        let node = match self.sequence {
+            ArenaNodeSequenceId::Direct(range) => self
+                .arena
+                .get_range(range)
+                .expect("validated direct sequence remains live")
+                .get(cursor.position as usize),
+            ArenaNodeSequenceId::Composite { start, end, .. } => {
+                let pieces = &self.arena.pieces[start as usize..end as usize];
+                while pieces[cursor.piece as usize].cumulative_end <= cursor.position {
+                    cursor.prior_end = pieces[cursor.piece as usize].cumulative_end;
+                    cursor.piece += 1;
+                }
+                let range = pieces[cursor.piece as usize].range;
+                self.arena
+                    .get_range(range)
+                    .expect("validated composite piece remains live")
+                    .get((cursor.position - cursor.prior_end) as usize)
+            }
+        }
+        .expect("sequence cursor remains in bounds");
+        cursor.position += 1;
+        Some(node)
     }
 }
 

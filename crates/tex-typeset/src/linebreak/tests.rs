@@ -3118,8 +3118,8 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
         &parameters,
     );
 
-    assert_eq!(tape.materialization.len(), tape.nodes().len());
-    assert!(tape.break_sites.len() <= tape.nodes().len() + 1);
+    assert_eq!(tape.materialization.len(), tape.nodes(&universe).len());
+    assert!(tape.break_sites.len() <= tape.nodes(&universe).len() + 1);
     assert_eq!(std::mem::size_of::<MaterializationAction>(), 1);
 }
 
@@ -3360,6 +3360,81 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
             .collect::<Vec<_>>(),
         source_addresses,
         "analysis and materialization retain the original arena payload"
+    );
+}
+
+#[test]
+fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
+    use tex_state::node_arena::ArenaNodeSequenceId;
+
+    let mut universe = TestState::new();
+    let empty = universe.publish_page_nodes(&[]);
+    let left = universe.publish_page_node_range(vec![rule(8)]);
+    let right = universe.publish_page_node_range(vec![
+        Node::Glue {
+            spec: GlueSpec {
+                width: sp(2),
+                stretch: sp(10),
+                ..GlueSpec::ZERO
+            },
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(9),
+        Node::Penalty(EJECT_PENALTY),
+    ]);
+    let sequence = universe.compose_page_node_sequences(&[
+        ArenaNodeSequenceId::Direct(left),
+        ArenaNodeSequenceId::Direct(right),
+    ]);
+    let line_params = params(12);
+    let tape = ParagraphTape::analyze_arena_id(&universe, sequence, &line_params);
+    let plan = break_hyphenated_tape(&universe, &tape, &line_params);
+
+    // The tape owns only a coordinate and compact analysis scratch. The page
+    // arena can keep appending between analysis and materialization.
+    let _unrelated = universe.publish_page_node_range(vec![Node::Penalty(77)]);
+    let mut materializer = LineMaterializer::new(
+        tape,
+        plan.breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: GlueSpec::ZERO,
+            right_skip: GlueSpec::ZERO,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            shape: LineShape::natural(sp(12)),
+        },
+    );
+    let lines = std::iter::from_fn(|| materializer.materialize_next(&universe, Vec::new()))
+        .collect::<Vec<_>>();
+    assert!(!lines.is_empty());
+    assert_eq!(
+        universe
+            .page_node_sequence(sequence)
+            .expect("coordinate source remains live")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [
+            rule(8),
+            Node::Glue {
+                spec: GlueSpec {
+                    width: sp(2),
+                    stretch: sp(10),
+                    ..GlueSpec::ZERO
+                },
+                kind: GlueKind::Normal,
+                leader: None,
+            },
+            rule(9),
+            Node::Penalty(EJECT_PENALTY),
+        ]
     );
 }
 

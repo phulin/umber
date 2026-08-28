@@ -91,6 +91,24 @@ impl TestState {
             .expect("test nodes contain only fixture-owned children")
     }
 
+    pub(crate) fn publish_page_node_range(
+        &mut self,
+        nodes: Vec<Node>,
+    ) -> tex_state::node_arena::PageNodeRange {
+        self.pages
+            .publish_range(nodes)
+            .expect("test nodes contain only fixture-owned children")
+    }
+
+    pub(crate) fn compose_page_node_sequences(
+        &mut self,
+        inputs: &[tex_state::node_arena::PageNodeSequenceId],
+    ) -> tex_state::node_arena::PageNodeSequenceId {
+        self.pages
+            .compose_sequences(inputs)
+            .expect("test sequences belong to fixture page arena")
+    }
+
     pub(crate) fn page_node_list(
         &self,
         list: PageListId,
@@ -232,6 +250,13 @@ impl TypesetState for TestState {
             .get(list)
             .expect("live test page coordinate")
             .nodes()
+    }
+
+    fn page_node_sequence(
+        &self,
+        sequence: tex_state::node_arena::PageNodeSequenceId,
+    ) -> Option<tex_state::node_arena::ArenaNodeSequence<'_, PageLifetime>> {
+        self.pages.get_sequence(sequence).ok()
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {

@@ -34,6 +34,13 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
     fn page_nodes(&self, list: tex_state::node_arena::PageListId) -> &[tex_state::node::Node];
+    fn page_node_sequence(
+        &self,
+        _sequence: tex_state::node_arena::PageNodeSequenceId,
+    ) -> Option<tex_state::node_arena::ArenaNodeSequence<'_, tex_state::node_arena::PageLifetime>>
+    {
+        None
+    }
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
     fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
         self.font_char_metrics(font, u8::try_from(ch as u32).ok()?)

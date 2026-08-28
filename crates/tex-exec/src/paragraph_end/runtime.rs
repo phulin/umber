@@ -112,7 +112,7 @@ pub(crate) fn break_current_paragraph<G>(
         report_line_break_trace(
             stores,
             diagnostic_effects,
-            decisions.tape.nodes(),
+            &decisions.tape,
             &trace,
             &missing_hyphens,
         );
@@ -515,9 +515,10 @@ fn break_hlist_with_trace<G>(
     if line_params.pretolerance < 0 {
         stores.close_hyphenation_patterns();
     }
-    let tape = ParagraphTape::analyze(
+    let source = stores.publish_page_node_range(hlist);
+    let tape = ParagraphTape::analyze_arena_id(
         &crate::typeset_context::TypesetContext::new(stores),
-        tex_state::node_sequence::NodeSequence::mirrored(hlist),
+        tex_state::node_arena::ArenaNodeSequenceId::Direct(source),
         &line_params,
     );
     let (first, trace) = if tracing {
@@ -539,7 +540,8 @@ fn break_hlist_with_trace<G>(
             Vec::new(),
         ))
     } else {
-        let hlist = tape.into_semantic_nodes();
+        drop(tape);
+        let hlist = stores.take_page_node_range(source);
         let (sequence, missing_hyphens) = super::hyphenation::hyphenated_hlist_sequence_with_fuel(
             stores,
             diagnostic_effects,
@@ -584,7 +586,7 @@ fn break_hlist_with_trace<G>(
 fn report_line_break_trace<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    tape: &ParagraphTape<'_>,
     trace: &[LineBreakTrace],
     missing_hyphens: &[super::hyphenation::MissingHyphenDiagnostic],
 ) {
@@ -602,27 +604,31 @@ fn report_line_break_trace<G>(
     } else {
         Vec::new()
     };
-    let mut short_display = crate::pack_report::ShortDisplayRenderer::new();
-    let rendered_trace = trace
-        .iter()
-        .map(|event| match event {
-            LineBreakTrace::Pass(_) => {
-                short_display.reset();
-                (None, None)
-            }
-            LineBreakTrace::Feasible {
-                display,
-                display_suffix,
-                ..
-            } if !display.is_empty() => (
-                Some(short_display.render_node_range(stores, nodes, display.clone())),
-                display_suffix
-                    .as_ref()
-                    .map(|suffix| short_display.render_line_break_trace_suffix(stores, *suffix)),
-            ),
-            _ => (None, None),
-        })
-        .collect::<Vec<_>>();
+    let rendered_trace = {
+        let typeset = crate::typeset_context::TypesetContext::new(stores);
+        let nodes = tape.nodes(&typeset);
+        let mut short_display = crate::pack_report::ShortDisplayRenderer::new();
+        trace
+            .iter()
+            .map(|event| match event {
+                LineBreakTrace::Pass(_) => {
+                    short_display.reset();
+                    (None, None)
+                }
+                LineBreakTrace::Feasible {
+                    display,
+                    display_suffix,
+                    ..
+                } if !display.is_empty() => (
+                    Some(short_display.render_node_range(stores, nodes, display.clone())),
+                    display_suffix.as_ref().map(|suffix| {
+                        short_display.render_line_break_trace_suffix(stores, *suffix)
+                    }),
+                ),
+                _ => (None, None),
+            })
+            .collect::<Vec<_>>()
+    };
     let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     let mut next_warning = 0;
     for (event, (rendered_display, rendered_suffix)) in trace.iter().zip(rendered_trace) {

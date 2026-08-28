@@ -1,7 +1,10 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::{ArenaNodeSequence, NodeCursor, PageLifetime, PageListId};
+use tex_state::node_arena::{
+    ArenaNodeSequence, NodeCursor, PageLifetime, PageListId, PageNodeSequenceId,
+};
+use tex_state::node_sequence::DirectHighCellLineages;
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
 
@@ -203,6 +206,10 @@ enum ParagraphSource<'a> {
     Owned(NodeSequence),
     BorrowedMirrored(&'a [Node]),
     BorrowedArena(ArenaNodeSequence<'a, PageLifetime>),
+    ArenaId {
+        sequence: PageNodeSequenceId,
+        high_cell_lineages: Vec<DirectHighCellLineages>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -255,6 +262,49 @@ impl ParagraphTape<'static> {
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::Owned(sequence),
+            break_sites,
+            materialization,
+            par_fill_override: None,
+        }
+    }
+
+    /// Analyzes an arena coordinate through short-lived borrowed views. The
+    /// resulting tape stores only the compact coordinate and scalar/index
+    /// scratch, so it does not keep the execution context borrowed.
+    #[must_use]
+    pub fn analyze_arena_id<S: TypesetState>(
+        state: &S,
+        sequence: PageNodeSequenceId,
+        params: &LineBreakParams,
+    ) -> Self {
+        let view = state
+            .page_node_sequence(sequence)
+            .expect("paragraph sequence belongs to the typesetting page arena");
+        let high_cell_lineages =
+            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(view.iter());
+        let nodes = NodeCursor::arena(view);
+        let mut analyzer = LegalBreakpoints::new(state, nodes, params);
+        let break_sites = analyzer
+            .by_ref()
+            .map(|site| {
+                let display_end = trace_display_end(state, nodes, site);
+                BreakSite {
+                    breakpoint: site,
+                    trace: TraceSpan {
+                        display_end,
+                        next_start: trace_display_next_start(state, nodes, site, display_end),
+                        display_suffix: trace_display_suffix(nodes, site),
+                        breakpoint: trace_breakpoint(nodes, site),
+                    },
+                }
+            })
+            .collect();
+        let materialization = analyzer.materialization;
+        Self {
+            source: ParagraphSource::ArenaId {
+                sequence,
+                high_cell_lineages,
+            },
             break_sites,
             materialization,
             par_fill_override: None,
@@ -335,11 +385,16 @@ impl<'a> ParagraphTape<'a> {
     }
 
     #[must_use]
-    pub fn nodes(&self) -> NodeCursor<'_> {
+    pub fn nodes<'state, S: TypesetState>(&'state self, state: &'state S) -> NodeCursor<'state> {
         match &self.source {
             ParagraphSource::Owned(sequence) => NodeCursor::owned(sequence.semantic()),
             ParagraphSource::BorrowedMirrored(nodes) => NodeCursor::owned(nodes),
             ParagraphSource::BorrowedArena(sequence) => NodeCursor::arena(*sequence),
+            ParagraphSource::ArenaId { sequence, .. } => NodeCursor::arena(
+                state
+                    .page_node_sequence(*sequence)
+                    .expect("paragraph sequence remains live while its tape is consumed"),
+            ),
         }
     }
 
@@ -348,11 +403,17 @@ impl<'a> ParagraphTape<'a> {
     }
 
     #[must_use]
-    pub fn into_semantic_nodes(self) -> Vec<Node> {
+    pub fn into_semantic_nodes<S: TypesetState>(self, state: &S) -> Vec<Node> {
         match self.source {
             ParagraphSource::Owned(sequence) => sequence.into_semantic(),
             ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
             ParagraphSource::BorrowedArena(sequence) => sequence.iter().cloned().collect(),
+            ParagraphSource::ArenaId { sequence, .. } => state
+                .page_node_sequence(sequence)
+                .expect("paragraph sequence remains live while its tape is consumed")
+                .iter()
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -768,7 +829,7 @@ fn run_pass<S: TypesetState>(
         owner: BreakMemoryOwner::Active(0),
         words: 3,
     });
-    let nodes = tape.nodes();
+    let nodes = tape.nodes(state);
     let canonical_trace_admission = trace.is_some();
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));

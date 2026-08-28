@@ -39,6 +39,11 @@ enum ChannelNodes<'a> {
             tex_state::node_arena::ArenaNodeSequenceIter<'a, tex_state::node_arena::PageLifetime>,
         >,
     ),
+    ArenaId {
+        sequence: tex_state::node_arena::PageNodeSequenceId,
+        cursor: tex_state::node_arena::PageNodeSequenceCursor,
+        remaining: usize,
+    },
 }
 
 struct ChannelCursor<'a> {
@@ -109,6 +114,28 @@ impl<'a> LineMaterializer<'a> {
                         ChannelNodes::Arena(sequence.iter().peekable()),
                         ChannelNodes::Arena(sequence.iter().peekable()),
                         semantic_lineages,
+                        physical_lineages,
+                        breaks.clone(),
+                    )
+                }
+                super::ParagraphSource::ArenaId {
+                    sequence,
+                    high_cell_lineages,
+                } => {
+                    let len = sequence.len();
+                    let physical_lineages = high_cell_lineages.clone();
+                    (
+                        ChannelNodes::ArenaId {
+                            sequence,
+                            cursor: sequence.cursor(),
+                            remaining: len,
+                        },
+                        ChannelNodes::ArenaId {
+                            sequence,
+                            cursor: sequence.cursor(),
+                            remaining: len,
+                        },
+                        high_cell_lineages,
                         physical_lineages,
                         breaks.clone(),
                     )
@@ -248,22 +275,53 @@ impl ChannelNodes<'_> {
             Self::Owned(nodes) => nodes.len(),
             Self::Borrowed(nodes) => nodes.len(),
             Self::Arena(nodes) => nodes.len(),
+            Self::ArenaId { remaining, .. } => *remaining,
         }
     }
 
-    fn next_owned(&mut self) -> Option<Node> {
+    fn next_owned<S: TypesetState>(&mut self, state: &S) -> Option<Node> {
         match self {
             Self::Owned(nodes) => nodes.next(),
             Self::Borrowed(nodes) => nodes.next().cloned(),
             Self::Arena(nodes) => nodes.next().cloned(),
+            Self::ArenaId {
+                sequence,
+                cursor,
+                remaining,
+            } => {
+                if *remaining == 0 {
+                    return None;
+                }
+                let node = state
+                    .page_node_sequence(*sequence)
+                    .expect("paragraph sequence remains live during materialization")
+                    .next_at(cursor)
+                    .expect("arena-id cursor remains in bounds")
+                    .clone();
+                *remaining -= 1;
+                Some(node)
+            }
         }
     }
 
-    fn first(&mut self) -> Option<&Node> {
+    fn first<'state, S: TypesetState>(&'state mut self, state: &'state S) -> Option<&'state Node> {
         match self {
             Self::Owned(nodes) => nodes.as_slice().first(),
             Self::Borrowed(nodes) => nodes.as_slice().first(),
             Self::Arena(nodes) => nodes.peek().copied(),
+            Self::ArenaId {
+                sequence,
+                cursor,
+                remaining,
+            } => (*remaining != 0)
+                .then(|| {
+                    let mut probe = *cursor;
+                    state
+                        .page_node_sequence(*sequence)
+                        .expect("paragraph sequence remains live during materialization")
+                        .next_at(&mut probe)
+                })
+                .flatten(),
         }
     }
 }
@@ -336,8 +394,8 @@ fn materialize_channel<S: TypesetState>(
         kind: GlueKind::RightSkip,
         leader: None,
     });
-    while cursor.nodes.first().is_some_and(is_discardable) {
-        let _ = cursor.nodes.next_owned();
+    while cursor.nodes.first(state).is_some_and(is_discardable) {
+        let _ = cursor.nodes.next_owned(state);
         let _ = cursor.high_cell_lineages.next();
         cursor.position += 1;
     }
@@ -410,7 +468,7 @@ fn push_owned_line_segment<S: TypesetState>(
     while *position < end {
         let absolute = *position;
         let mut node = nodes
-            .next_owned()
+            .next_owned(state)
             .expect("paragraph break position is in bounds");
         if let (
             Some(spec),
