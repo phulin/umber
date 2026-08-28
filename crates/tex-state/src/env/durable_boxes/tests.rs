@@ -138,6 +138,68 @@ fn operation_rollback_moves_the_original_owner_back_without_copying() {
 }
 
 #[test]
+fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let original = owner(&mut arena, 33);
+    let original_address = arena
+        .durable_list(&original)
+        .expect("original durable list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("original payload address");
+    state
+        .assign(
+            &mut arena,
+            8,
+            Some(original),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("original assignment");
+    let operation = state.begin_operation();
+    let before = arena.durable_transition_counters();
+
+    let page = state
+        .take_to_page(&mut arena, 8)
+        .expect("transfer loan")
+        .expect("occupied register");
+    assert!(state.metadata(8).is_none());
+    assert_eq!(
+        arena
+            .list(page)
+            .expect("loaned page list")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(original_address)
+    );
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .history_preservation_nodes_copied,
+        before.history_preservation_nodes_copied
+    );
+
+    state.rollback_operation(&mut arena, operation);
+    let restored = state.value(8).expect("rollback restores durable owner");
+    assert_eq!(
+        arena
+            .durable_list(restored)
+            .expect("restored durable list")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(original_address)
+    );
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .history_preservation_nodes_copied,
+        before.history_preservation_nodes_copied
+    );
+    state.retire_all(&mut arena);
+}
+
+#[test]
 fn operation_rollback_restores_the_maintained_semantic_root() {
     page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();

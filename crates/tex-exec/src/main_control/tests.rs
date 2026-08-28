@@ -264,6 +264,19 @@ fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 2);
+        let lifecycle = stores.page_region_counters();
+        assert_eq!(
+            lifecycle.page_to_durable_nodes_copied, 0,
+            "ordinary setbox construction transfers its closure"
+        );
+        assert_eq!(
+            lifecycle.history_preservation_nodes_copied, 0,
+            "a live command operation uses a rollbackable transfer loan"
+        );
+        assert!(
+            lifecycle.tex_copy_nodes_copied > 0,
+            "explicit TeX copy remains the one deep-copy seam"
+        );
         let alias = stores
             .copy_box_to_page(1)
             .expect("overwriting box 0 preserves the copied durable alias");

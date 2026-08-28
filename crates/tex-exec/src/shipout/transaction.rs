@@ -349,13 +349,14 @@ fn release_published_page<G>(
 /// Retaining the rows is therefore required until that command commits or its
 /// complete page arena is disposed.
 fn retain_failed_page<G>(
-    stores: &mut Universe<G>,
+    _stores: &mut Universe<G>,
     region: Option<tex_state::node_region::PageClosureBuildMark>,
 ) {
     if let Some(region) = region {
-        let _compatibility_receipt = stores
-            .finish_compatibility_page_node_region(region)
-            .expect("failed shipout returns its valid suffix to the enclosing operation");
+        // The enclosing command operation already owns the rollback cursor
+        // for these rows. Consuming the narrower construction capability
+        // leaves that aggregate owner authoritative until commit or rollback.
+        drop(region);
     }
 }
 

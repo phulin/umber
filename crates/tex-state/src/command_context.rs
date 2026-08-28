@@ -1209,6 +1209,40 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
+    /// Publishes an ordinary box/form construction as a durable owner.
+    ///
+    /// The construction mark proves that a self-contained suffix may be
+    /// detached and rebranded without changing node addresses. An
+    /// interleaved prefix child takes the one explicit structural-copy
+    /// fallback in [`PageMaterialArena`].
+    pub fn assign_built_page_box(
+        &mut self,
+        index: u16,
+        value: Option<PageListId>,
+        build: crate::node_region::PageClosureBuildMark,
+        scope: AssignmentScope,
+    ) -> Result<(), crate::NodePromotionError> {
+        let durable = match value {
+            Some(root) => Some(
+                self.page_nodes
+                    .finish_built_page_root_to_durable(build, root)
+                    .map_err(|_| {
+                        crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed)
+                    })?,
+            ),
+            None => {
+                self.page_nodes
+                    .cancel_closure_build(build)
+                    .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
+                None
+            }
+        };
+        let current_level = self.admitted.state_ref().current_level();
+        self.durable_boxes
+            .assign(&mut self.page_nodes, index, durable, scope, current_level)
+            .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
+    }
+
     pub fn assign_page_box_global(
         &mut self,
         index: u16,
@@ -3316,19 +3350,6 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<(), NodeArenaError> {
         self.page_nodes
             .cancel_closure_build(region)
-            .map_err(|_| NodeArenaError::ForeignCursor)
-    }
-
-    /// Consumes a completed region whose rows now have a durable box owner.
-    pub fn finish_compatibility_page_node_region(
-        &mut self,
-        region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
-    ) -> Result<
-        crate::node_region::CompatibilityClosureBuildReceipt<crate::node_region::PageRole>,
-        NodeArenaError,
-    > {
-        self.page_nodes
-            .compatibility_closure_build_receipt(region)
             .map_err(|_| NodeArenaError::ForeignCursor)
     }
 

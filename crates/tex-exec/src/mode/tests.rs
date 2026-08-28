@@ -1118,14 +1118,15 @@ fn page_region_succession_preflight_succeeds_after_mode_roots_are_consumed() {
             let mut context = universe.command_context().expect("live generation");
             nest.current_list_mutation().push(&mut context, kern(37));
             let held_over = nest.current_list_mutation().take_nodes();
+            context.prepend_page_contributions(held_over);
             let receipt = nest
                 .preflight_page_region_succession(&context)
                 .expect("consumed mode roots no longer block succession");
-            (held_over, receipt)
+            receipt
         };
 
         universe
-            .prepare_page_region_after_output(held_over.1, held_over.0)
+            .prepare_page_region_after_output(held_over)
             .expect("mode-list/page-region combined preflight");
         universe.cancel_page_region_after_output();
     });

@@ -84,6 +84,12 @@ pub struct DurableBoxCursor {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DurableBoxOperation {
     position: usize,
+    loan_position: usize,
+}
+
+struct DurableBoxTransferLoan {
+    mutation_position: usize,
+    loan: crate::page_node_arena::DurableTransferLoan,
 }
 
 pub(crate) struct AcceptedDurableBoxTail {
@@ -122,6 +128,7 @@ pub(crate) struct DurableBoxState {
     next_group_id: u64,
     semantic_identity: Option<crate::state_hash::SemanticMapIdentity>,
     operation_entries: Vec<DurableMutation>,
+    transfer_loans: Vec<DurableBoxTransferLoan>,
     active_operations: Vec<usize>,
 }
 
@@ -238,6 +245,7 @@ impl DurableBoxState {
             next_group_id: 0,
             semantic_identity: None,
             operation_entries: Vec::new(),
+            transfer_loans: Vec::new(),
             active_operations: Vec::new(),
         }
     }
@@ -502,7 +510,6 @@ impl DurableBoxState {
 
     fn can_take_unique(&self, index: u16) -> bool {
         self.checkpoint_stamps.get(&index).copied() == Some(self.checkpoint_epoch)
-            && self.active_operations.is_empty()
             && self
                 .groups
                 .last()
@@ -529,6 +536,24 @@ impl DurableBoxState {
             return Ok(None);
         };
         if self.can_take_unique(index) {
+            if !self.active_operations.is_empty() {
+                let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
+                let (root, loan) = arena.loan_durable_to_page(owner).map_err(|(_, owner)| {
+                    self.cell_mut(index).value = Some(owner);
+                    BankError::AllocationFailed
+                })?;
+                let mutation_position = self.operation_entries.len();
+                self.operation_entries.push(DurableMutation {
+                    index,
+                    alternate: None,
+                    alternate_level: level,
+                });
+                self.transfer_loans.push(DurableBoxTransferLoan {
+                    mutation_position,
+                    loan,
+                });
+                return Ok(Some(root));
+            }
             return arena
                 .move_durable_to_page(owner)
                 .map(Some)
@@ -713,6 +738,7 @@ impl DurableBoxState {
     pub(crate) fn begin_operation(&mut self) -> DurableBoxOperation {
         let operation = DurableBoxOperation {
             position: self.operation_entries.len(),
+            loan_position: self.transfer_loans.len(),
         };
         self.active_operations.push(operation.position);
         operation
@@ -725,6 +751,9 @@ impl DurableBoxState {
     ) {
         assert_eq!(self.active_operations.pop(), Some(operation.position));
         if self.active_operations.is_empty() {
+            for loan in self.transfer_loans.drain(..) {
+                arena.commit_durable_transfer_loan(loan.loan);
+            }
             for mutation in self.operation_entries.drain(..) {
                 Self::retire_value(arena, mutation.alternate);
             }
@@ -737,6 +766,18 @@ impl DurableBoxState {
         operation: DurableBoxOperation,
     ) {
         assert_eq!(self.active_operations.last(), Some(&operation.position));
+        let loans = self.transfer_loans.split_off(operation.loan_position);
+        for loan in loans.into_iter().rev() {
+            let owner = arena
+                .rollback_durable_transfer_loan(loan.loan)
+                .expect("rollbackable durable transfer returns its exact owner");
+            let mutation = self
+                .operation_entries
+                .get_mut(loan.mutation_position)
+                .expect("durable transfer loan names its operation mutation");
+            debug_assert!(mutation.alternate.is_none());
+            mutation.alternate = Some(owner);
+        }
         let mut suffix = self.operation_entries.split_off(operation.position);
         for mutation in suffix.iter_mut().rev() {
             self.swap_mutation(mutation);

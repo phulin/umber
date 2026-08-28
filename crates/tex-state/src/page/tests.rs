@@ -2,7 +2,7 @@ use super::state_hash::PageHashCache;
 use super::{PageBuilderState, PageInsertion, PageRegion, PageRegionHistory};
 use crate::node::{KernKind, Node, NodeTokenList};
 use crate::node_region::NodePool;
-use crate::page::PageMark;
+use crate::page::{PageInteger, PageMark};
 use crate::page_node_arena::{PageListId, PageMaterialArena, PageMaterialRegion};
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
@@ -958,4 +958,85 @@ fn prepared_successor_does_not_drop_current_owner_before_shipout_commit() {
             .collect::<Vec<_>>(),
         [kern(31), kern(32)]
     );
+}
+
+#[test]
+fn production_succession_transfers_complete_page_builder_owner() {
+    let mut history = PageRegionHistory::default();
+    let old_region = history.current().id();
+    let contribution = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
+    let current_page = publish_nodes(&mut history.nodes_mut(), [kern(3)]);
+    let split_discards = publish_nodes(&mut history.nodes_mut(), [kern(5), kern(6)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, contribution);
+        builder.push_current_page_list(&mut nodes, current_page);
+        builder.push_page_discard(&mut nodes, kern(4));
+        builder.set_split_discards(&nodes, split_discards);
+        builder.set_integer(PageInteger::DeadCycles, 7);
+        builder.set_mark_class(
+            PageMark::Bot,
+            0,
+            tokens(&[Token::param(1), Token::param(2)]),
+        );
+    }
+
+    history
+        .prepare_production_shipout()
+        .expect("complete page owner preflights");
+    assert_eq!(history.current().id(), old_region);
+    history
+        .commit_prepared_shipout()
+        .expect("production succession commits");
+
+    assert!(!history.pool.validates_id(old_region));
+    let roots = history.builder().payload_roots();
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(1), kern(2)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.current_page),
+        [kern(3)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.page_discards),
+        [kern(4)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.split_discards),
+        [kern(5), kern(6)]
+    );
+    let builder = history.builder();
+    assert_eq!(builder.integer(PageInteger::DeadCycles), 7);
+    assert_eq!(
+        builder.mark_class_value(PageMark::Bot, 0),
+        Some(&tokens(&[Token::param(1), Token::param(2)]))
+    );
+    assert_eq!(history.current().counters().page_regions_started, 2);
+}
+
+#[test]
+fn production_uncheckpointed_pages_reuse_pool_at_a_fixed_high_water() {
+    let mut history = PageRegionHistory::default();
+    let mut warmed_pages = None;
+    for page in 0..256 {
+        let _shipped = publish_nodes(&mut history.nodes_mut(), (0..128).map(kern));
+        history
+            .prepare_production_shipout()
+            .expect("rootless production page preflights");
+        history
+            .commit_prepared_shipout()
+            .expect("rootless production page commits");
+        if page == 31 {
+            warmed_pages = Some(history.pool.chunks.page_count());
+        }
+    }
+    assert_eq!(
+        history.pool.chunks.page_count(),
+        warmed_pages.expect("warm high water sampled"),
+        "uncheckpointed page payload reuses fixed pool pages"
+    );
+    assert_eq!(history.current().counters().page_regions_started, 257);
+    assert_eq!(history.current().counters().page_regions_dropped, 256);
 }

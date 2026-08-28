@@ -656,8 +656,11 @@ pub(crate) fn trace_box_write<G>(
     let old = stores.copy_box_to_page(index);
     let name = escaped(stores, &format!("box{index}"));
     let old_text = stores.box_assignment_trace_text(old);
-    write(stores);
+    // A construction write may move the exact page closure into durable
+    // ownership. Render its diagnostic while the owner-relative page handle
+    // is still admitted instead of requiring a hidden post-transfer copy.
     let new_text = stores.box_assignment_trace_text(new.cloned());
+    write(stores);
     let changed = old.as_ref() != new;
     if global {
         if tracing_before {

@@ -2122,21 +2122,6 @@ impl<G> Universe<G> {
             .map_err(|_| NodeArenaError::ForeignCursor)
     }
 
-    /// Transfers a failed nested suffix back to the enclosing page owner when
-    /// an outer rollback can restore roots into it.
-    pub fn finish_compatibility_page_node_region(
-        &mut self,
-        region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
-    ) -> Result<
-        crate::node_region::CompatibilityClosureBuildReceipt<crate::node_region::PageRole>,
-        NodeArenaError,
-    > {
-        self.page_region
-            .nodes_mut()
-            .compatibility_closure_build_receipt(region)
-            .map_err(|_| NodeArenaError::ForeignCursor)
-    }
-
     /// Truncates a rejected page-arena suffix after canonical roots restore.
     ///
     /// This ordering is part of the command-attempt integration contract:
@@ -2871,35 +2856,39 @@ impl<G> Universe<G> {
         }))
     }
 
-    /// Prepares §1012's page-owner transition using the exact insertion
-    /// holdover root already selected by the page-break traversal.
+    /// Prepares §1012's page-owner transition from the complete page owner.
     ///
-    /// Production installation remains blocked until durable box and form
-    /// closures transfer their page coordinates into owners independent of the
-    /// old region. The move-only `modes` receipt proves executor mode lists no
-    /// longer retain that owner; callers must not replace either transfer with
-    /// a root scan.
+    /// Durable box and form closures already own independent regions. The
+    /// move-only `modes` receipt proves executor mode lists no longer retain
+    /// the old page owner; PageRegionHistory then transfers its complete live
+    /// root set without asking the executor to enumerate raw coordinates.
     pub fn prepare_page_region_after_output(
         &mut self,
         modes: crate::page::ModeListRegionPreflight,
-        held_over: PageListId,
     ) -> Result<(), UniverseError> {
         if modes.region != self.page_region.current().id() {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         self.page_region
-            .prepare_shipout(held_over)
+            .prepare_production_shipout()
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
 
-    pub fn commit_page_region_after_output(&mut self) -> Result<PageListId, UniverseError> {
+    pub fn commit_page_region_after_output(&mut self) -> Result<(), UniverseError> {
         self.page_region
             .commit_prepared_shipout()
+            .map(drop)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
 
     pub fn cancel_page_region_after_output(&mut self) {
         self.page_region.cancel_prepared_shipout();
+    }
+
+    /// Demand-free ownership-transition counters for lifecycle gates.
+    #[must_use]
+    pub fn page_region_counters(&self) -> crate::page::PageRegionCounters {
+        self.page_region.current().counters()
     }
 
     /// Selects every capacity owned by the executable process profile.

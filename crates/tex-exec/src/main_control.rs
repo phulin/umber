@@ -364,6 +364,10 @@ pub struct MainControl<G> {
     prepared_dvi_pages: PreparedDviPages,
     immediate_prints: Vec<ImmediatePrint>,
     prepared_shipout: Option<PreparedShipout>,
+    /// A detached page has committed, but a live mode still owns page-region
+    /// coordinates. Succession waits until that mode closure is consumed into
+    /// PageBuilder state; it never copies or scans the mode payload.
+    page_region_succession_pending: bool,
     /// Named safe boundaries committed by the last direct operation. The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
@@ -2001,6 +2005,7 @@ impl<G> Default for MainControl<G> {
             prepared_dvi_pages: PreparedDviPages::default(),
             immediate_prints: Vec::new(),
             prepared_shipout: None,
+            page_region_succession_pending: false,
             completed_boundaries: Vec::new(),
             completed_checkpoint_eligibilities: Vec::new(),
             job_start_eligibility: Some(crate::checkpoint::CheckpointEligibility::job_start()),
@@ -2024,15 +2029,12 @@ impl<G> Default for MainControl<G> {
 }
 
 impl<G> MainControl<G> {
-    /// Combined executor/state seam for the eventual production page-region
-    /// cutover. Mode ownership is preflighted first and its move-only receipt
-    /// is consumed by `Universe`; durable box/form ownership remains the only
-    /// reason this seam is not installed in the shipout tail yet.
-    #[allow(dead_code)]
+    /// Preflights the executor half of production page succession. The state
+    /// half consumes the move-only receipt and carries its complete PageBuilder
+    /// owner; no raw page root crosses this aggregate boundary.
     pub(crate) fn prepare_page_region_succession(
         &self,
         stores: &mut Universe<G>,
-        held_over: tex_state::node_arena::PageListId,
     ) -> Result<(), tex_state::UniverseError> {
         let modes = {
             let context = stores.command_context()?;
@@ -2042,7 +2044,19 @@ impl<G> MainControl<G> {
                     tex_state::StateError::InvalidCursor,
                 ))?
         };
-        stores.prepare_page_region_after_output(modes, held_over)
+        stores.prepare_page_region_after_output(modes)
+    }
+
+    fn finish_pending_page_region_succession(&mut self, stores: &mut Universe<G>) {
+        if !self.page_region_succession_pending || self.modes.retains_page_node_handles() {
+            return;
+        }
+        self.prepare_page_region_succession(stores)
+            .expect("rootless mode lists admit the current page region");
+        stores
+            .commit_page_region_after_output()
+            .expect("prepared page succession commits");
+        self.page_region_succession_pending = false;
     }
 
     pub(crate) fn from_checkpoint_fork(command: CommandState<G>, modes: ModeNest) -> Self {
@@ -2161,6 +2175,7 @@ impl<G> MainControl<G> {
             && self.operation_receipt_start.is_none()
             && self.suspended_operation_observation.is_none()
             && self.prepared_shipout.is_none()
+            && !self.page_region_succession_pending
             && self.immediate_prints.is_empty()
             && self.pending_named_boundaries.is_empty()
             && self.pending_resource_site.is_none()
@@ -2512,6 +2527,7 @@ impl<G> MainControl<G> {
             || self.operation_receipt_start.is_some()
             || self.suspended_operation_observation.is_some()
             || self.prepared_shipout.is_some()
+            || self.page_region_succession_pending
             || !self.prepared_dvi_pages.is_empty()
             || !self.immediate_prints.is_empty()
             || self.pending_resource_site.is_some()
@@ -6069,6 +6085,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
+        self.finish_pending_page_region_succession(stores);
         while !self.boxes.output_routine_active {
             let mut context = stores.command_context().expect("live generation");
             let selected = {
@@ -6119,6 +6136,13 @@ impl<G> MainControl<G> {
                         output_routine_active: self.boxes.output_routine_active,
                     };
                     let publication = shipout_replay_box(page, stores, &mut command)?;
+                    // Detached output no longer owns runtime nodes. Establish
+                    // the complete next-page owner before allowing the old
+                    // region to retire; the outer vertical mode is rootless
+                    // throughout the default output path.
+                    drop(command);
+                    self.page_region_succession_pending = true;
+                    self.finish_pending_page_region_succession(stores);
                     if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
@@ -9086,6 +9110,7 @@ impl<G> MainControl<G> {
             let context = stores.command_context().expect("live generation");
             applied_effect_observation(&scanned, &context)
         };
+        let output_routine_was_active = self.boxes.output_routine_active;
         let mut command = CommandMachine {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
@@ -9270,6 +9295,17 @@ impl<G> MainControl<G> {
                     .release_page_node_region(region)
                     .expect("aborted shipout command releases its nested page region");
             }
+        }
+        let completed_output_routine =
+            output_routine_was_active && !self.boxes.output_routine_active;
+        drop(command);
+        if result.is_ok() && completed_output_routine {
+            // §1026 has consumed the output mode list and established the
+            // complete held-over contribution closure. Rotate only now, after
+            // any user `\shipout` has detached its output and after box255 has
+            // either been consumed or diagnosed and cleared.
+            self.page_region_succession_pending = true;
+            self.finish_pending_page_region_succession(stores);
         }
         if result.is_ok()
             && !redundant_glue

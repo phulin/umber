@@ -874,14 +874,11 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         |stores| {
             let (global, boxed) = (target.global, boxed);
             stores
-                .assign_page_box(target.index, boxed, assignment_scope(global))
-                .expect("box assignment promotes admitted page nodes")
+                .assign_built_page_box(target.index, boxed, region, assignment_scope(global))
+                .expect("box assignment transfers its admitted construction")
         },
     );
     command.retain_assignment_receipt(receipt);
-    let _compatibility_receipt = stores
-        .finish_compatibility_page_node_region(region)
-        .expect("published setbox retains its complete page suffix");
 }
 
 /// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already

@@ -14,8 +14,9 @@ use crate::fork_arena::{
 };
 use crate::node::Node;
 use crate::node_region::{
-    ClosureBuildMark, CompatibilityClosureBuildReceipt, DurableRole, NodePool, NodeRegion,
-    OwnedNodeClosure, PageRole, copy_closure_into, copy_region_root_into, transfer_closure_into,
+    ClosureBuildMark, DurableRole, NodePool, NodeRegion, OwnedNodeClosure, PageRole,
+    StructuralCopyReason, copy_closure_into, copy_region_root_into, structural_copy_fallback,
+    transfer_closure_into, transfer_sealed_closure_into,
 };
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
@@ -204,6 +205,14 @@ pub struct PageMaterialRegion {
 /// Move-only durable node closure owned by an eqtb or PDF carrier.
 pub(crate) type DurableNodeClosure = OwnedNodeClosure<DurableRole>;
 
+/// Rollback authority for a unique durable closure temporarily moved into
+/// page ownership by one active command operation.
+pub(crate) struct DurableTransferLoan {
+    build: ClosureBuildMark<PageRole>,
+    root: PageListId,
+    settled: OperationMark<PageMaterialLane>,
+}
+
 /// Demand-free observations of explicit durable lifetime transitions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DurableTransitionCounters {
@@ -240,6 +249,14 @@ impl PageMaterialRegion {
 
     pub(crate) const fn region_id(&self) -> crate::node_region::NodeRegionId {
         self.region.id()
+    }
+
+    pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
+        self.durable_transitions
+    }
+
+    pub(crate) fn inherit_durable_transition_counters_from(&mut self, source: &Self) {
+        self.durable_transitions = source.durable_transitions;
     }
 
     pub(crate) fn retire(self, pool: &mut NodePool) -> Result<(), ForkArenaError> {
@@ -429,6 +446,114 @@ impl<'a> PageMaterialArena<'a> {
         Ok(closure)
     }
 
+    /// Seals the suffix opened before ordinary box/form construction and
+    /// moves its envelopes into a fresh durable owner. Addresses stay stable;
+    /// the only traversal is the bounded child-coordinate rebrand scan.
+    ///
+    /// If a nested child predates the build mark, the suffix is not
+    /// self-contained. That explicit structural case copies exactly the
+    /// selected recursive closure, then rolls the construction suffix back.
+    pub(crate) fn finish_built_page_root_to_durable(
+        &mut self,
+        mark: ClosureBuildMark<PageRole>,
+        root: PageListId,
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
+        let source_root = self.region.root(self.pool, root)?;
+        let receipt = self.region.consumed_closure_roots_receipt(&mark)?;
+        let sealed = match self
+            .region
+            .seal_closure(self.pool, mark, source_root, receipt)
+        {
+            Ok(sealed) => sealed,
+            Err(failure) => {
+                let (error, mark) = failure.into_parts();
+                if error != ForkArenaError::InvalidRegion {
+                    self.region.cancel_closure_build(self.pool, mark)?;
+                    return Err(error);
+                }
+                let mut durable = self.pool.start_region::<DurableRole>()?;
+                let before = durable.counters().source_nodes_copied;
+                let copied = match structural_copy_fallback(
+                    self.pool,
+                    self.region,
+                    source_root,
+                    &mut durable,
+                    StructuralCopyReason::InterleavedPrefixChild,
+                ) {
+                    Ok(copied) => copied,
+                    Err(error) => {
+                        assert!(
+                            self.pool.retire_region(durable).is_ok(),
+                            "failed structural destination remains quiescent"
+                        );
+                        self.region.cancel_closure_build(self.pool, mark)?;
+                        return Err(error);
+                    }
+                };
+                self.region.cancel_closure_build(self.pool, mark)?;
+                let copied_nodes = durable
+                    .counters()
+                    .source_nodes_copied
+                    .saturating_sub(before);
+                let owner =
+                    durable
+                        .into_closure(self.pool, copied)
+                        .map_err(|(error, region)| {
+                            assert!(
+                                self.pool.retire_region(region).is_ok(),
+                                "validated structural destination retires"
+                            );
+                            error
+                        })?;
+                self.durable_transitions.page_to_durable_nodes_copied = self
+                    .durable_transitions
+                    .page_to_durable_nodes_copied
+                    .saturating_add(copied_nodes);
+                self.durable_transitions.node_closure_scan_nodes = self
+                    .durable_transitions
+                    .node_closure_scan_nodes
+                    .saturating_add(copied_nodes);
+                return Ok(owner);
+            }
+        };
+
+        let mut durable = self.pool.start_region::<DurableRole>()?;
+        let before = self.pool.closure_transition_counters().rebrand_scan_nodes;
+        let durable_root =
+            match transfer_sealed_closure_into(self.pool, self.region, sealed, &mut durable) {
+                Ok(root) => root,
+                Err(failure) => {
+                    let (error, sealed) = failure.into_parts();
+                    self.region
+                        .rollback_closure(self.pool, sealed)
+                        .map_err(|failure| failure.into_parts().0)?;
+                    assert!(
+                        self.pool.retire_region(durable).is_ok(),
+                        "failed transfer destination remains quiescent"
+                    );
+                    return Err(error);
+                }
+            };
+        let scanned = self
+            .pool
+            .closure_transition_counters()
+            .rebrand_scan_nodes
+            .saturating_sub(before);
+        self.durable_transitions.node_closure_scan_nodes = self
+            .durable_transitions
+            .node_closure_scan_nodes
+            .saturating_add(scanned);
+        durable
+            .into_closure(self.pool, durable_root)
+            .map_err(|(error, region)| {
+                assert!(
+                    self.pool.retire_region(region).is_ok(),
+                    "validated durable destination retires"
+                );
+                error
+            })
+    }
+
     /// Consumes a unique durable owner and transfers its exact addresses into
     /// the current page region.
     #[allow(clippy::result_large_err)] // Failed transfer must return the move-only durable owner.
@@ -439,6 +564,57 @@ impl<'a> PageMaterialArena<'a> {
         transfer_closure_into(self.pool, closure, self.region)
             .map(|root| root.list())
             .map_err(|failure| (failure.error, failure.closure))
+    }
+
+    /// Moves a unique durable owner into the page region while retaining the
+    /// exact suffix authority needed to reverse the move on operation
+    /// rollback. No history-preservation copy is made merely because the
+    /// command operation is live.
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn loan_durable_to_page(
+        &mut self,
+        closure: DurableNodeClosure,
+    ) -> Result<(PageListId, DurableTransferLoan), (ForkArenaError, DurableNodeClosure)> {
+        let build = match self.region.begin_closure_build(self.pool) {
+            Ok(build) => build,
+            Err(error) => return Err((error, closure)),
+        };
+        let root = match transfer_closure_into(self.pool, closure, self.region) {
+            Ok(root) => root.list(),
+            Err(failure) => {
+                self.region
+                    .cancel_closure_build(self.pool, build)
+                    .expect("empty failed transfer suffix rolls back");
+                return Err((failure.error, failure.closure));
+            }
+        };
+        let settled = self.region.pub_arena.operation_mark(&self.pool.chunks);
+        Ok((
+            root,
+            DurableTransferLoan {
+                build,
+                root,
+                settled,
+            },
+        ))
+    }
+
+    pub(crate) fn commit_durable_transfer_loan(&mut self, loan: DurableTransferLoan) {
+        // The page carrier may already have nested the root, shipped it, or
+        // rotated the complete page region before the command commit barrier.
+        // Committing consumes rollback authority; it does not need a second
+        // liveness scan or representation.
+        drop(loan);
+    }
+
+    pub(crate) fn rollback_durable_transfer_loan(
+        &mut self,
+        loan: DurableTransferLoan,
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
+        self.region
+            .pub_arena
+            .restore_operation(&mut self.pool.chunks, loan.settled)?;
+        self.finish_built_page_root_to_durable(loan.build, loan.root)
     }
 
     /// Implements TeX's explicit recursive copy while retaining the source
@@ -823,13 +999,6 @@ impl<'a> PageMaterialArena<'a> {
         mark: ClosureBuildMark<PageRole>,
     ) -> Result<(), ForkArenaError> {
         self.region.cancel_closure_build(self.pool, mark)
-    }
-
-    pub fn compatibility_closure_build_receipt(
-        &self,
-        mark: ClosureBuildMark<PageRole>,
-    ) -> Result<CompatibilityClosureBuildReceipt<PageRole>, ForkArenaError> {
-        self.region.compatibility_closure_build_receipt(mark)
     }
 
     pub fn seal_boundary(&mut self) -> Result<SealedBoundary<PageMaterialLane>, ForkArenaError> {

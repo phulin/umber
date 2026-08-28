@@ -272,20 +272,6 @@ impl<Role> NodeRegion<Role> {
             .restore_operation(&mut pool.chunks, mark.rollback)
     }
 
-    pub(crate) fn compatibility_closure_build_receipt(
-        &self,
-        mark: ClosureBuildMark<Role>,
-    ) -> Result<CompatibilityClosureBuildReceipt<Role>, ForkArenaError> {
-        if mark.region != self.id {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        Ok(CompatibilityClosureBuildReceipt {
-            region: mark.region,
-            serial: mark.serial,
-            _role: PhantomData,
-        })
-    }
-
     /// Converts the caller's owner-local root audit into the receipt consumed
     /// by closure sealing. Production callers may invoke this only after the
     /// PageBuilder, ModeList, operation journal, and checkpoint owner have
@@ -472,26 +458,6 @@ impl<Role> core::fmt::Debug for ClosureBuildMark<Role> {
 
 /// Page-owned closure boundary used by execution-facing construction APIs.
 pub type PageClosureBuildMark = ClosureBuildMark<PageRole>;
-
-/// Explicit receipt for a legacy owner which intentionally keeps a completed
-/// closure in the page region instead of sealing/transferring it.
-pub struct CompatibilityClosureBuildReceipt<Role> {
-    region: NodeRegionId,
-    serial: u64,
-    _role: PhantomData<fn(Role) -> Role>,
-}
-
-impl<Role> CompatibilityClosureBuildReceipt<Role> {
-    #[must_use]
-    pub const fn region_id(&self) -> NodeRegionId {
-        self.region
-    }
-
-    #[must_use]
-    pub const fn build_serial(&self) -> u64 {
-        self.serial
-    }
-}
 
 /// Consumed proof that no owner-local root outside the closure names its
 /// suffix. It is intentionally neither clonable nor constructible from raw
