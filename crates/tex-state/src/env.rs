@@ -2142,86 +2142,6 @@ impl<G> DenseState<G> {
         Ok(())
     }
 
-    /// Validates the font coordinates that would be reachable after restoring
-    /// `cursor`, without mutating a bank or truncating any immutable store.
-    pub(crate) fn restored_font_roots_are_live(
-        &self,
-        cursor: JournalCursor<G>,
-        mut is_live: impl FnMut(FontId) -> bool,
-    ) -> Result<bool, StateError> {
-        self.validate_restore(cursor)?;
-
-        // The retained journal prefix remains capable of restoring saved
-        // values after this checkpoint. Its font coordinates are roots too,
-        // even when they are not the current value of their bank cell.
-        let mut group_fonts_are_live = true;
-        self.journal().visit_group_mutations(|mutation| {
-            if font_root(&mutation.before).is_some_and(|font| !is_live(font)) {
-                group_fonts_are_live = false;
-            }
-        });
-        if !group_fonts_are_live {
-            return Ok(false);
-        }
-        let mut checkpoint_fonts_are_live = true;
-        self.journal().visit_checkpoint_prefix(cursor, |delta| {
-            if font_root(&delta.alternate).is_some_and(|font| !is_live(font)) {
-                checkpoint_fonts_are_live = false;
-            }
-        });
-        if !checkpoint_fonts_are_live {
-            return Ok(false);
-        }
-
-        // The first mutation of a cell after the cursor contains the value at
-        // the restore boundary. Record `None` as well, so a scalar meaning at
-        // the boundary shadows a current font meaning in the same cell.
-        let mut restored = Vec::<(StateCell, Option<FontId>)>::new();
-        self.journal().visit_checkpoint_suffix(cursor, |entry| {
-            if !matches!(
-                entry.cell,
-                StateCell::Meaning(_) | StateCell::CurrentFont | StateCell::MathFamilyFont(_)
-            ) || restored.iter().any(|(cell, _)| *cell == entry.cell)
-            {
-                return;
-            }
-            restored.push((entry.cell, font_root(&entry.alternate)));
-        });
-
-        if restored
-            .iter()
-            .filter_map(|(_, font)| *font)
-            .any(|font| !is_live(font))
-        {
-            return Ok(false);
-        }
-        for (index, meaning) in self.meanings.values().enumerate() {
-            let cell = StateCell::Meaning(u32::try_from(index).expect("meaning bank fits u32"));
-            if !restored.iter().any(|(candidate, _)| *candidate == cell)
-                && let Some(font) = meaning.font()
-                && !is_live(font)
-            {
-                return Ok(false);
-            }
-        }
-        if !restored
-            .iter()
-            .any(|(cell, _)| *cell == StateCell::CurrentFont)
-            && !is_live(self.current_font.value)
-        {
-            return Ok(false);
-        }
-        for (index, font) in self.math_family_fonts.values().enumerate() {
-            let cell = StateCell::MathFamilyFont(
-                u8::try_from(index).expect("math-family font bank fits u8"),
-            );
-            if !restored.iter().any(|(candidate, _)| *candidate == cell) && !is_live(font) {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
     fn code_bank(&self, kind: CodeTableKind) -> &PagedDenseBank<i64> {
         match kind {
             CodeTableKind::Catcode => &self.catcodes,
@@ -2508,19 +2428,6 @@ fn word_matches<G>(cell: StateCell, word: &StateWord<G>) -> bool {
             | (StateCell::FontRuntime(_), StateWord::Integer(_))
             | (StateCell::FontRuntime(_), StateWord::Dimension(_))
     )
-}
-
-fn font_root<G>(word: &StateWord<G>) -> Option<FontId> {
-    match word {
-        StateWord::Meaning(meaning) => meaning.font(),
-        StateWord::Font(font) => Some(*font),
-        StateWord::Integer(_)
-        | StateWord::Dimension(_)
-        | StateWord::TokenList(_)
-        | StateWord::Glue(_)
-        | StateWord::NodeList(_)
-        | StateWord::Code(_) => None,
-    }
 }
 
 fn catcode_default(code: u32) -> i64 {

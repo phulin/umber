@@ -1281,29 +1281,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         }
     }
 
-    /// Validates every font coordinate retained in the cursor's immutable
-    /// prefix before a rollback can discard a font-store suffix.
-    pub(crate) fn font_roots_are_live(
-        &self,
-        cursor: NodeArenaCursor<L>,
-        mut is_live: impl FnMut(crate::ids::FontId) -> bool,
-    ) -> Result<bool, NodeArenaError> {
-        self.validate_cursor(cursor)?;
-        for index in 0..cursor.rows as usize {
-            let Some(allocation) = self.allocation(index) else {
-                continue;
-            };
-            for node in allocation.nodes.iter() {
-                let mut live = true;
-                node.visit_fonts(|font| live &= is_live(font));
-                if !live {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
-    }
-
     /// Truncates a rejected suffix after callers restore every canonical root.
     pub fn truncate(&mut self, cursor: NodeArenaCursor<L>) -> Result<(), NodeArenaError> {
         self.validate_cursor(cursor)?;

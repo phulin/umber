@@ -1104,19 +1104,6 @@ impl<G> SaveJournal<G> {
         self.active_groups.iter().map(|group| group.frame)
     }
 
-    pub(crate) fn visit_group_mutations(&self, mut visit: impl FnMut(&Mutation<G>)) {
-        for group in self
-            .active_groups
-            .iter()
-            .chain(&self.retained_groups)
-            .chain(&self.pending_operation_groups)
-        {
-            for mutation in &group.entries {
-                visit(mutation);
-            }
-        }
-    }
-
     pub(crate) fn validate_operation(&self, operation: &StateOperation<G>) {
         assert_eq!(
             operation.owner, self.owner,

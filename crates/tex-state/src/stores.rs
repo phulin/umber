@@ -158,14 +158,6 @@ impl<G> StateCore<G> {
         Ok(())
     }
 
-    pub(crate) fn durable_font_roots_are_live(
-        &self,
-        _cursor: (),
-        _is_live: impl FnMut(crate::ids::FontId) -> bool,
-    ) -> Result<bool, NodeArenaError> {
-        Ok(true)
-    }
-
     pub(crate) fn truncate_durable_nodes(&mut self, _cursor: ()) -> Result<(), NodeArenaError> {
         Ok(())
     }

@@ -3964,28 +3964,6 @@ impl<G> PdfState<G> {
             }
     }
 
-    pub(crate) fn snapshot_font_roots_are_live(
-        &self,
-        snapshot: &PdfStateSnapshot<G>,
-        mut is_live: impl FnMut(FontId) -> bool,
-    ) -> bool {
-        let cursor = &snapshot.cursor;
-        self.font_operations
-            .iter()
-            .take(cursor.font_operation_count)
-            .all(|operation| match operation {
-                PdfFontOperation::Attribute { font, .. }
-                | PdfFontOperation::IncludeChars { font, .. }
-                | PdfFontOperation::NoBuiltinToUnicode { font } => is_live(*font),
-                PdfFontOperation::Map(_) | PdfFontOperation::GlyphToUnicode(_) => true,
-            })
-            && self
-                .font_resources
-                .iter()
-                .take(cursor.font_resource_count)
-                .all(|record| is_live(record.font))
-    }
-
     pub(crate) fn rollback(&mut self, snapshot: PdfStateSnapshot<G>) {
         let general_root = snapshot.general_root;
         let color_root = snapshot.color_root;

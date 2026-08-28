@@ -1,4 +1,4 @@
-//! Stateful font handles and rollback storage.
+//! Coarse immutable font contexts plus rollback-coupled logical font state.
 
 use crate::identity::{AcceptedIdentityTail, IdentityAllocator, IdentityMark};
 use crate::ids::FontId;
@@ -164,12 +164,10 @@ pub(crate) struct FontStoreMark {
 }
 
 impl FontStoreMark {
-    pub(crate) fn checkpoint_retained_bytes(self) -> usize {
+    fn checkpoint_metadata_bytes(self) -> usize {
         std::mem::size_of::<Self>()
-            .saturating_add((self.len as usize).saturating_mul(std::mem::size_of::<LoadedFont>()))
             .saturating_add(
-                self.non_parameter_font_info_words
-                    .saturating_mul(std::mem::size_of::<Scaled>()),
+                (self.len as usize).saturating_mul(std::mem::size_of::<FontPayloadId>()),
             )
             .saturating_add(
                 (self.identifier_writes_len as usize)
@@ -203,10 +201,71 @@ struct FontHashFragmentKey {
     construction: FontConstruction,
 }
 
+const FONT_PAYLOAD_CHUNK_CAPACITY: usize = 32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FontPayloadId {
+    chunk: u32,
+    offset: u8,
+}
+
+/// Coarse physical-generation owner for immutable validated font contexts.
+///
+/// Chunks never grow after reaching their fixed capacity, so every published
+/// `LoadedFont` keeps one address until the whole physical generation retires.
+/// Fork-only test/profiling paths share chunks as coarse owners; appending to a
+/// shared final chunk starts a new chunk instead of copying font payloads.
+#[derive(Clone, Debug, Default)]
+struct FontPayloadArena {
+    chunks: Vec<Arc<Vec<LoadedFont>>>,
+    len: usize,
+}
+
+impl FontPayloadArena {
+    fn push(&mut self, font: LoadedFont) -> FontPayloadId {
+        let append_to_last = self.chunks.last().is_some_and(|chunk| {
+            chunk.len() < FONT_PAYLOAD_CHUNK_CAPACITY && Arc::strong_count(chunk) == 1
+        });
+        if !append_to_last {
+            self.chunks
+                .push(Arc::new(Vec::with_capacity(FONT_PAYLOAD_CHUNK_CAPACITY)));
+        }
+        let chunk_index = self.chunks.len() - 1;
+        let chunk = Arc::get_mut(&mut self.chunks[chunk_index])
+            .expect("appendable font payload chunk has one coarse owner");
+        let offset = chunk.len();
+        chunk.push(font);
+        self.len += 1;
+        FontPayloadId {
+            chunk: u32::try_from(chunk_index).expect("font payload chunk index fits u32"),
+            offset: u8::try_from(offset).expect("font payload chunk offset fits u8"),
+        }
+    }
+
+    fn get(&self, id: FontPayloadId) -> Option<&LoadedFont> {
+        self.chunks.get(id.chunk as usize)?.get(id.offset as usize)
+    }
+
+    fn retained_payload_bytes(&self) -> usize {
+        self.chunks
+            .iter()
+            .flat_map(|chunk| chunk.iter())
+            .map(|font| {
+                std::mem::size_of::<LoadedFont>()
+                    .saturating_add(font.name().len())
+                    .saturating_add(
+                        font.font_info_words()
+                            .saturating_mul(std::mem::size_of::<Scaled>()),
+                    )
+            })
+            .sum()
+    }
+}
+
 #[derive(Debug)]
 struct AcceptedFontBlock {
     parent: Option<Arc<Self>>,
-    fonts: Arc<Vec<LoadedFont>>,
+    font_payloads: Arc<Vec<FontPayloadId>>,
     identifiers: Arc<Vec<Option<SymbolId>>>,
     identifier_writes: Arc<Vec<IdentifierWrite>>,
     identifier_writes_len: usize,
@@ -243,12 +302,13 @@ impl AcceptedFontBlock {
         self.total_len - self.len
     }
 
-    fn font(&self, index: usize) -> Option<&LoadedFont> {
+    fn font_payload(&self, index: usize) -> Option<FontPayloadId> {
         if index < self.base() {
-            return self.parent.as_ref()?.font(index);
+            return self.parent.as_ref()?.font_payload(index);
         }
-        self.fonts
+        self.font_payloads
             .get(index - self.base())
+            .copied()
             .filter(|_| index < self.total_len)
     }
 
@@ -331,7 +391,8 @@ impl AcceptedFontBlock {
 #[derive(Debug)]
 pub(crate) struct FontStore {
     accepted: Option<Arc<AcceptedFontBlock>>,
-    fonts: Arc<Vec<LoadedFont>>,
+    payloads: FontPayloadArena,
+    font_payloads: Arc<Vec<FontPayloadId>>,
     /// TeX82's immutable `font_info` words other than mutable parameters.
     ///
     /// The parameter bank owns the current parameter extent, including
@@ -360,7 +421,7 @@ pub(crate) struct FontStore {
 }
 
 pub(crate) struct AcceptedFontStoreTail {
-    fonts: Vec<LoadedFont>,
+    font_payloads: Vec<FontPayloadId>,
     identifiers: Vec<Option<SymbolId>>,
     identifier_writes: Vec<IdentifierWrite>,
     expansion_specs: Vec<Option<FontExpansion>>,
@@ -376,7 +437,8 @@ impl Clone for FontStore {
     fn clone(&self) -> Self {
         Self {
             accepted: self.accepted.clone(),
-            fonts: Arc::clone(&self.fonts),
+            payloads: self.payloads.clone(),
+            font_payloads: Arc::clone(&self.font_payloads),
             non_parameter_font_info_words: self.non_parameter_font_info_words,
             identifiers: Arc::clone(&self.identifiers),
             identifier_overrides: self.identifier_overrides.clone(),
@@ -449,9 +511,12 @@ impl FontStore {
         let hash_fragment_key = FontHashFragmentKey::from(&null);
         let hash_fragment = font_hash_fragment(&null);
         let complete_hash_fragment = complete_font_hash_fragment(hash_fragment, None);
+        let mut payloads = FontPayloadArena::default();
+        let null_payload = payloads.push(null);
         Self {
             accepted: None,
-            fonts: Arc::new(vec![null]),
+            payloads,
+            font_payloads: Arc::new(vec![null_payload]),
             non_parameter_font_info_words: 0,
             identifiers: Arc::new(vec![None]),
             identifier_overrides: BTreeMap::new(),
@@ -633,7 +698,8 @@ impl FontStore {
             return Err("frozen font count is outside bank capacity");
         }
         let identities = IdentityAllocator::from_frozen_len(1, count);
-        let mut fonts = Vec::with_capacity(rows.len());
+        let mut payloads = FontPayloadArena::default();
+        let mut font_payloads = Vec::with_capacity(rows.len());
         let mut identifiers = Vec::with_capacity(rows.len());
         let mut expansion_specs = Vec::with_capacity(rows.len());
         let mut by_key = BTreeMap::new();
@@ -693,14 +759,15 @@ impl FontStore {
                     return Err("duplicate frozen loaded-font key");
                 }
             }
-            fonts.push(font);
+            font_payloads.push(payloads.push(font));
             identifiers.push(identifier);
             expansion_specs.push(expansion);
             font_hash_fragments.push(hash_fragments[fragment]);
         }
         Ok(Self {
             accepted: None,
-            fonts: Arc::new(fonts),
+            payloads,
+            font_payloads: Arc::new(font_payloads),
             non_parameter_font_info_words,
             identifiers: Arc::new(identifiers),
             identifier_overrides: BTreeMap::new(),
@@ -764,7 +831,8 @@ impl FontStore {
             font.font_info_words()
                 .saturating_sub(font.parameters().len()),
         );
-        Arc::make_mut(&mut self.fonts).push(font);
+        let payload = self.payloads.push(font);
+        Arc::make_mut(&mut self.font_payloads).push(payload);
         Arc::make_mut(&mut self.identifiers).push(None);
         Arc::make_mut(&mut self.expansion_specs).push(None);
         Arc::make_mut(&mut self.font_hash_fragments).push(hash_fragment);
@@ -855,16 +923,17 @@ impl FontStore {
             self.contains(id),
             "font id is not live in this Universe timeline"
         );
-        if let Some(index) = self.local_index(id) {
-            return self
-                .fonts
-                .get(index)
-                .expect("font id is not live in this Universe timeline");
+        let payload = if let Some(index) = self.local_index(id) {
+            self.font_payloads.get(index).copied()
+        } else {
+            self.accepted
+                .as_ref()
+                .and_then(|block| block.font_payload(id.raw() as usize))
         }
-        self.accepted
-            .as_ref()
-            .and_then(|block| block.font(id.raw() as usize))
-            .expect("font id is not live in this Universe timeline")
+        .expect("font id is not live in this Universe timeline");
+        self.payloads
+            .get(payload)
+            .expect("live font coordinate belongs to the physical generation")
     }
 
     pub(crate) fn artifact_recipe(&self, id: FontId) -> FontArtifactRecipe {
@@ -1020,7 +1089,7 @@ impl FontStore {
 
     #[must_use]
     pub(crate) fn len(&self) -> usize {
-        self.accepted_len().saturating_add(self.fonts.len())
+        self.accepted_len().saturating_add(self.font_payloads.len())
     }
 
     /// Returns TeX82 §549's first-unused `font_info` coordinate.
@@ -1071,10 +1140,10 @@ impl FontStore {
             && self.identities.validate_rollback(mark.identities).is_ok()
     }
 
-    /// Returns whether an exact font identity survives rollback to `mark`.
-    #[must_use]
-    pub(crate) fn contains_at(&self, mark: FontStoreMark, id: FontId) -> bool {
-        id.raw() < mark.len && self.contains(id)
+    pub(crate) fn checkpoint_retained_bytes(&self, mark: FontStoreMark) -> usize {
+        debug_assert!(self.validates(mark));
+        mark.checkpoint_metadata_bytes()
+            .saturating_add(self.payloads.retained_payload_bytes())
     }
 
     pub(crate) fn truncate_to(&mut self, mark: FontStoreMark) {
@@ -1134,7 +1203,7 @@ impl FontStore {
         Arc::make_mut(&mut self.expansion_writes).truncate(expansion_mark);
         self.non_parameter_font_info_words = mark.non_parameter_font_info_words;
         let local_len = mark.len as usize - accepted_len;
-        Arc::make_mut(&mut self.fonts).truncate(local_len);
+        Arc::make_mut(&mut self.font_payloads).truncate(local_len);
         Arc::make_mut(&mut self.identifiers).truncate(local_len);
         Arc::make_mut(&mut self.expansion_specs).truncate(local_len);
         Arc::make_mut(&mut self.font_hash_fragments).truncate(local_len);
@@ -1150,7 +1219,7 @@ impl FontStore {
         assert!(self.validates(mark));
         let accepted_len = self.accepted_len();
         let local_len = mark.len as usize - accepted_len;
-        let fonts = Arc::make_mut(&mut self.fonts).split_off(local_len);
+        let font_payloads = Arc::make_mut(&mut self.font_payloads).split_off(local_len);
         let identifiers = Arc::make_mut(&mut self.identifiers).split_off(local_len);
         let expansion_specs = Arc::make_mut(&mut self.expansion_specs).split_off(local_len);
         let font_hash_fragments = Arc::make_mut(&mut self.font_hash_fragments).split_off(local_len);
@@ -1228,7 +1297,7 @@ impl FontStore {
             mark.non_parameter_font_info_words,
         );
         AcceptedFontStoreTail {
-            fonts,
+            font_payloads,
             identifiers,
             identifier_writes,
             expansion_specs,
@@ -1248,7 +1317,7 @@ impl FontStore {
     ) {
         self.truncate_to(mark);
         self.identities.reject_checkpoint_candidate(tail.identities);
-        Arc::make_mut(&mut self.fonts).append(&mut tail.fonts);
+        Arc::make_mut(&mut self.font_payloads).append(&mut tail.font_payloads);
         Arc::make_mut(&mut self.identifiers).append(&mut tail.identifiers);
         Arc::make_mut(&mut self.expansion_specs).append(&mut tail.expansion_specs);
         Arc::make_mut(&mut self.font_hash_fragments).append(&mut tail.font_hash_fragments);
@@ -1293,7 +1362,7 @@ impl FontStore {
         } else {
             Some(Arc::new(AcceptedFontBlock {
                 parent: self.accepted.clone(),
-                fonts: Arc::clone(&self.fonts),
+                font_payloads: Arc::clone(&self.font_payloads),
                 identifiers: Arc::clone(&self.identifiers),
                 identifier_writes: Arc::clone(&self.identifier_writes),
                 identifier_writes_len,
@@ -1315,7 +1384,8 @@ impl FontStore {
             .expect("font-store fork mark is an ancestor");
         Self {
             accepted,
-            fonts: Arc::new(Vec::new()),
+            payloads: self.payloads.clone(),
+            font_payloads: Arc::new(Vec::new()),
             non_parameter_font_info_words: mark.non_parameter_font_info_words,
             identifiers: Arc::new(Vec::new()),
             identifier_overrides: BTreeMap::new(),
@@ -1366,18 +1436,7 @@ impl FontStore {
 
     #[cfg(feature = "profiling")]
     pub(crate) fn retained_payload_bytes(&self) -> usize {
-        (0..self.len())
-            .filter_map(|raw| self.id_at(raw as u32))
-            .map(|id| {
-                let font = self.get(id);
-                std::mem::size_of::<LoadedFont>()
-                    .saturating_add(font.name().len())
-                    .saturating_add(
-                        font.font_info_words()
-                            .saturating_mul(std::mem::size_of::<Scaled>()),
-                    )
-            })
-            .sum()
+        self.payloads.retained_payload_bytes()
     }
 
     #[cfg(test)]
@@ -1596,6 +1655,31 @@ mod tests {
 
         let clone = store.clone();
         assert_eq!(clone.testing_hash_fragment_counts(), (2, 2, 2));
+    }
+
+    #[test]
+    fn immutable_font_payloads_keep_their_address_until_generation_retirement() {
+        let mut store = FontStore::new();
+        let mark = store.watermark();
+        let font = store.intern(test_font()).expect("test font fits");
+        let payload = store.font_payloads[font.raw() as usize];
+        let address = std::ptr::from_ref(store.payloads.get(payload).expect("font payload"));
+
+        store.truncate_to(mark);
+        assert_eq!(
+            std::ptr::from_ref(store.payloads.get(payload).expect("generation payload")),
+            address,
+            "logical rollback does not move or retire immutable font context"
+        );
+        assert!(!store.contains(font), "the rolled-back logical id is stale");
+
+        let replacement = store.intern(test_font()).expect("replacement font fits");
+        assert_ne!(replacement, font, "rollback identity prevents ABA reuse");
+        assert_eq!(
+            std::ptr::from_ref(store.payloads.get(payload).expect("generation payload")),
+            address,
+            "later publication leaves the retired logical row's context stable"
+        );
     }
 
     #[test]

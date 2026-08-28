@@ -490,12 +490,19 @@ World checkpoints now own only scalar effect/input/artifact positions, fixed
 stream and clock state, and undo-journal marks. Effect rows, aligned
 publication sidecars, input records/content, and reduced dependency facts live
 in coarse immutable accepted blocks; a candidate appends into private suffixes
-and private counter/dependency journals. Source registrations and loaded font
-recipes use the same accepted-block/private-suffix split. Font identifier and
-expansion mutations are candidate overlays with exact reverse journals. Dense
-source/font/input identities share run-compressed accepted metadata and mint a
-fresh candidate run, so neither payload count nor retained-boundary count is a
-fork-time copy. Provisional page-output receipts cannot cross a quiescent
+and private counter/dependency journals. Source registrations use that same
+accepted-block/private-suffix split. Loaded and generated immutable font
+contexts instead live in fixed-capacity coarse chunks owned by the physical
+generation. A logical font row holds only its chunk coordinate; rollback
+truncates that coordinate and its mutable dense runtime row while leaving the
+context address stable until whole-generation retirement. Font identifier and
+expansion mutations are candidate overlays with exact reverse journals. Every
+font-bearing meaning, node, and PDF record validates at publication, so
+checkpoint capture and same-generation restore copy fixed font cursors without
+scanning those roots. Dense source/font/input identities share run-compressed
+accepted metadata and mint a fresh candidate run, so neither payload count nor
+retained-boundary count is a fork-time copy. Provisional page-output receipts
+cannot cross a quiescent
 checkpoint; committed artifact bytes have already crossed exactly once to the
 durable artifact ledger. Numbered write streams do not retain a redundant
 partial-line mirror because TeX never consults it for wrapping or any later

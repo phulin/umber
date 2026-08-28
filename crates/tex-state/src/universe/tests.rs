@@ -1166,57 +1166,6 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
 }
 
 #[test]
-fn runtime_checkpoint_validates_before_mutation() {
-    with_universe(budget(), |universe| {
-        let retained = universe.publish_page_nodes(&[Node::Penalty(7)]);
-        universe
-            .command_context()
-            .expect("context")
-            .append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
-                width: Scaled::from_raw(0),
-                height: Scaled::from_raw(0),
-                depth: Scaled::from_raw(0),
-                shift: Scaled::from_raw(0),
-                box_lr: BoxLr::Normal,
-                glue_set: GlueSetRatio::ZERO,
-                glue_sign: Sign::Normal,
-                glue_order: crate::glue::Order::Normal,
-                children: retained,
-            })));
-        let earlier = universe.runtime_checkpoint().expect("earlier checkpoint");
-        universe
-            .assign_count(0, 17, AssignmentScope::Global)
-            .expect("intermediate count");
-        let mut checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
-        universe
-            .restore_runtime_checkpoint_with_roots(&earlier, || {})
-            .expect("discard later checkpoint coordinates");
-        checkpoint.font_roots_valid = false;
-        universe
-            .assign_count(0, 41, AssignmentScope::Global)
-            .expect("candidate count");
-
-        assert!(
-            universe
-                .restore_runtime_checkpoint_with_roots(&checkpoint, || {
-                    panic!("external roots must not transfer after failed validation")
-                })
-                .is_err()
-        );
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("context")
-                .count(0)
-                .expect("count"),
-            41,
-            "runtime validation failure must leave dense state unchanged"
-        );
-    })
-    .expect("universe allocation");
-}
-
-#[test]
 fn runtime_checkpoint_transfers_external_roots_before_suffix_truncation() {
     with_universe(budget(), |universe| {
         let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
@@ -1318,33 +1267,126 @@ fn runtime_checkpoint_preserves_exact_font_roots_across_every_state_owner() {
 }
 
 #[test]
-fn stale_font_root_rejects_runtime_restore_before_dense_mutation() {
-    with_universe(budget(), |universe| {
+fn checkpoint_capture_and_restore_do_not_scan_font_bearing_roots() {
+    let large_budget = InternerBudget::new(512, 512, 65_536).expect("large font fixture budget");
+    with_universe(large_budget, |universe| {
+        let mut fonts = Vec::new();
+        for index in 0..24 {
+            let name = format!("checkpointfont{index:03}");
+            let selector = universe.intern(&name).expect("font selector");
+            let font = universe
+                .command_context()
+                .expect("context")
+                .intern_font(test_font(&name));
+            {
+                let mut context = universe.command_context().expect("context");
+                context
+                    .assign_resolved_meaning(
+                        selector.symbol(),
+                        ResolvedMeaning::Static(Meaning::Font(font)),
+                        AssignmentScope::Global,
+                    )
+                    .expect("font meaning");
+                context.set_pdf_font_attribute(font, name.into_bytes());
+            }
+            fonts.push(font);
+        }
+
+        let first = fonts[0];
+        let source_identity = universe.fonts.get(first).source_identity();
+        let font_address = std::ptr::from_ref(universe.fonts.get(first));
+        let mut children = universe.publish_page_nodes(&[Node::Char {
+            font: first,
+            ch: 'A',
+            origin: crate::token::OriginId::UNKNOWN,
+        }]);
+        for depth in 0..24 {
+            children = universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(depth),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children,
+            }))]);
+        }
         universe
-            .live_state_mut()
-            .expect("live state")
-            .assign_current_font(crate::ids::FontId::testing_new(91), AssignmentScope::Global)
-            .expect("construct malformed checkpoint fixture");
-        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+            .command_context()
+            .expect("context")
+            .append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children,
+            })));
+
+        let checkpoint = universe.runtime_checkpoint().expect("font-rich checkpoint");
+        assert_eq!(
+            universe.runtime_checkpoint_font_scan_counters(),
+            crate::RuntimeCheckpointFontScanCounters::default()
+        );
+        let stale = universe
+            .command_context()
+            .expect("context")
+            .intern_font(test_font("discarded-font"));
         universe
-            .assign_count(0, 41, AssignmentScope::Global)
-            .expect("candidate count");
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("same-generation restore");
 
         assert_eq!(
-            universe.restore_runtime_checkpoint_with_roots(&checkpoint, || {
-                panic!("external roots must not transfer after font preflight rejection")
-            }),
-            Err(UniverseError::State(crate::StateError::InvalidCursor))
+            universe.runtime_checkpoint_font_scan_counters(),
+            crate::RuntimeCheckpointFontScanCounters::default()
         );
+        assert_eq!(std::ptr::from_ref(universe.fonts.get(first)), font_address);
+        assert!(!universe.fonts.contains(stale));
         assert_eq!(
             universe
                 .command_context()
                 .expect("context")
-                .count(0)
-                .expect("count"),
-            41,
-            "font-root rejection precedes dense-state mutation"
+                .font_id_for_source_identity(source_identity),
+            Some(first),
+            "generated-source lookup remains available from the retained prefix"
         );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn stale_font_root_is_rejected_at_the_publication_seam() {
+    with_universe(budget(), |universe| {
+        let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
+        let stale = universe
+            .command_context()
+            .expect("context")
+            .intern_font(test_font("stale-font"));
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("discard font suffix");
+        let selector = universe.intern("stale").expect("selector");
+
+        assert_eq!(
+            universe.assign_current_font(stale, AssignmentScope::Global),
+            Err(UniverseError::State(StateError::ForeignSession))
+        );
+        assert_eq!(
+            universe.assign_meaning(
+                selector,
+                MeaningWord::from_static(Meaning::Font(stale)),
+                AssignmentScope::Global,
+            ),
+            Err(UniverseError::State(StateError::ForeignSession))
+        );
+        universe
+            .runtime_checkpoint()
+            .expect("rejected stale roots never enter a checkpoint");
     })
     .expect("universe allocation");
 }

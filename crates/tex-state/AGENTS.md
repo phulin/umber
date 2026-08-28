@@ -74,9 +74,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   sidecars are never serialized.
 - `src/etex_tracing.rs` and `src/etex_tracing/tests.rs`: e-TeX 2.6's `\tracinggroups` group-enter/leave transcript trace, printed through the shared `\tracing*` diagnostic channel; `\tracingassigns`'s value rendering lives in `tex-exec` instead, against the primitives declared here, and `\tracingifs` renders directly in `tex-command` through the same channel.
 - `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
-- `src/font.rs`: Stateful loaded-font store, font handles, null font,
-  missing-character records, rollback marks, and handle-free artifact-facing
-  recipes whose generated sources are named by semantic identity.
+- `src/font.rs`: Generation-owned fixed-capacity immutable font-context chunks,
+  rollback-coupled logical font handles, null font, missing-character records,
+  fixed checkpoint marks, and handle-free artifact-facing recipes whose
+  generated sources are named by semantic identity. Publication validates font
+  roots once; checkpoint capture and restore never scan meaning, node, or PDF
+  prefixes for liveness.
 - `src/fork_arena.rs` and `src/fork_arena/tests.rs`: Safe caller-owned
   fixed-byte-chunk coarse page pools, coordinate-only typed semantic-lane
   arenas, move-only detached active-list builders with explicit pool mutation,

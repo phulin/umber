@@ -620,20 +620,6 @@ impl PageMaterialArena {
             .restore_accepted_checkpoint(&mut self.pool.chunks, mark)
     }
 
-    pub fn font_roots_are_live(
-        &self,
-        mark: CheckpointMark<PageMaterialLane>,
-        mut is_live: impl FnMut(crate::ids::FontId) -> bool,
-    ) -> Result<bool, ForkArenaError> {
-        let mut all_live = true;
-        self.region
-            .pub_arena
-            .visit_checkpoint_values(&self.pool.chunks, mark, |node| {
-                node.visit_fonts(|font| all_live &= is_live(font));
-            })?;
-        Ok(all_live)
-    }
-
     pub fn reject_checkpoint_candidate(
         &mut self,
         boundary: SealedBoundary<PageMaterialLane>,

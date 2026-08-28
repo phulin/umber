@@ -219,7 +219,6 @@ struct CheckpointStateCandidate<G> {
 pub struct RuntimeCheckpoint<G> {
     state: StateCheckpoint<G>,
     generation: GenerationCursor,
-    font_roots_valid: bool,
     page: PageCheckpointMark,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
@@ -306,6 +305,18 @@ pub struct RuntimeCheckpointRetention {
     source_font: usize,
 }
 
+/// Whole-root font work performed by ordinary runtime checkpoint operations.
+///
+/// These counters are intentionally zero-only. Font-bearing meanings, nodes,
+/// and PDF records validate their coordinates at publication, before the
+/// monotonic font watermark can be captured. Capture and restore therefore
+/// validate fixed owner/cursor marks and never revisit those payloads.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeCheckpointFontScanCounters {
+    pub capture_root_visits: u64,
+    pub restore_root_visits: u64,
+}
+
 impl RuntimeCheckpointRetention {
     #[must_use]
     pub const fn core_owner(self) -> crate::CheckpointOwnerId {
@@ -377,7 +388,6 @@ impl<G> Clone for RuntimeCheckpoint<G> {
         Self {
             state: self.state.clone(),
             generation: self.generation,
-            font_roots_valid: self.font_roots_valid,
             page: self.page,
             pdf: self.pdf.clone(),
             world: self.world.clone(),
@@ -723,6 +733,7 @@ pub struct Universe<G> {
     /// Borrow-only capability for the execution-owned cache service.
     pure_memo_capability: std::sync::Weak<std::sync::Mutex<crate::PureMemoRuntime>>,
     restore_owner: Option<GenerationOwner<G>>,
+    checkpoint_font_scan_counters: RuntimeCheckpointFontScanCounters,
 }
 
 impl<G> Universe<G> {
@@ -731,8 +742,7 @@ impl<G> Universe<G> {
         let Some(core) = self.core.as_ref() else {
             return false;
         };
-        checkpoint.font_roots_valid
-            && core.owns_generation(checkpoint.state.owner())
+        core.owns_generation(checkpoint.state.owner())
             && core.state().validate_restore(*mark.journal()).is_ok()
             && core.state().validate_checkpoint_cursor(*mark.input())
             && core.validate_durable_node_cursor(*mark.durable()).is_ok()
@@ -932,6 +942,7 @@ impl<G> Universe<G> {
             pure_memo_config: self.pure_memo_config,
             pure_memo_capability: self.pure_memo_capability.clone(),
             restore_owner: None,
+            checkpoint_font_scan_counters: self.checkpoint_font_scan_counters,
         };
         Ok(fork)
     }
@@ -1196,7 +1207,14 @@ impl<G> Universe<G> {
             pure_memo_config: None,
             pure_memo_capability: std::sync::Weak::new(),
             restore_owner: None,
+            checkpoint_font_scan_counters: RuntimeCheckpointFontScanCounters::default(),
         }
+    }
+
+    /// Reports the structural zero-scan checkpoint contract for fonts.
+    #[must_use]
+    pub const fn runtime_checkpoint_font_scan_counters(&self) -> RuntimeCheckpointFontScanCounters {
+        self.checkpoint_font_scan_counters
     }
 
     /// Observes one TeX82 §259 lookup outside every group and rollback cursor,
@@ -2454,7 +2472,6 @@ impl<G> Universe<G> {
         let live_state = self.state_checkpoint()?;
         let live_mark = *live_state.mark();
         let font_mark = self.fonts.watermark();
-        let font_survives = |font| self.fonts.contains_at(font_mark, font);
         let live_core = self.core.as_ref().ok_or(UniverseError::Retired)?;
         let core_retained_bytes = live_core
             .checkpoint_retained_bytes()
@@ -2470,19 +2487,6 @@ impl<G> Universe<G> {
                     .len()
                     .saturating_mul(std::mem::size_of::<MeaningWord<G>>()),
             );
-        let font_roots_valid = self
-            .primitive_registry
-            .meanings
-            .iter()
-            .all(|meaning| meaning.font().is_none_or(font_survives))
-            && live_core
-                .state()
-                .restored_font_roots_are_live(*live_mark.journal(), font_survives)?
-            && live_core.durable_font_roots_are_live(*live_mark.durable(), font_survives)?
-            && self
-                .page_nodes
-                .font_roots_are_live(*live_mark.page(), font_survives)
-                .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         let mark = BoundedStateMark::new(
             *live_mark.journal(),
             *live_mark.durable(),
@@ -2509,7 +2513,7 @@ impl<G> Universe<G> {
             dependency: self.dependencies.checkpoint_retained_bytes(),
             source_font: source_mark
                 .checkpoint_retained_bytes()
-                .saturating_add(font_mark.checkpoint_retained_bytes()),
+                .saturating_add(self.fonts.checkpoint_retained_bytes(font_mark)),
         };
         let pdf = self.pdf.snapshot();
         let page = self.page.checkpoint_mark();
@@ -2553,7 +2557,6 @@ impl<G> Universe<G> {
         let checkpoint = RuntimeCheckpoint {
             state: GenerationCheckpoint::new(owner, mark),
             generation,
-            font_roots_valid,
             page,
             pdf,
             world: self.world.snapshot(),
@@ -2595,17 +2598,6 @@ impl<G> Universe<G> {
         Ok(true)
     }
 
-    /// Returns whether `font` is an exact immutable-row coordinate retained
-    /// by this runtime checkpoint's font-store prefix.
-    #[must_use]
-    pub fn runtime_checkpoint_retains_font(
-        &self,
-        checkpoint: &RuntimeCheckpoint<G>,
-        font: crate::ids::FontId,
-    ) -> bool {
-        self.fonts.validates(checkpoint.fonts) && self.fonts.contains_at(checkpoint.fonts, font)
-    }
-
     /// Validates and restores a complete runtime checkpoint while allowing
     /// the executor to transfer command and mode roots before any state,
     /// source, or font arena suffix is truncated.
@@ -2635,14 +2627,6 @@ impl<G> Universe<G> {
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        let font_survives = |font| self.fonts.contains_at(checkpoint.fonts, font);
-        if !self
-            .pdf
-            .snapshot_font_roots_are_live(&checkpoint.pdf, font_survives)
-        {
-            return Err(UniverseError::State(StateError::InvalidCursor));
-        }
-
         self.activate_checkpoint_state(checkpoint)?;
         self.page.restore_checkpoint_mark(checkpoint.page);
         if !generation_fork {
