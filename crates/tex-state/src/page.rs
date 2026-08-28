@@ -7,8 +7,7 @@ use crate::fork_arena::{CheckpointMark, ForkArenaError, PageMaterialLane};
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
-use crate::node_region::NodePool;
-use crate::node_region::NodeRegionId;
+use crate::node_region::{NodePool, NodeRegionId, PageClosureBuildMark};
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::page_node_arena::{PageMaterialRegion, PageMaterialView};
 use crate::scaled::Scaled;
@@ -500,6 +499,10 @@ pub(crate) struct PageBuilderState {
     identity_enabled: bool,
     semantic_roots: PageSemanticRoots,
     checkpoint_journal: PageCheckpointJournal,
+    /// Suffix opened after box255 packaging. Production succession consumes
+    /// it to move a self-contained next-page closure or to select the one
+    /// explicit interleaved-prefix copy fallback.
+    output_successor_build: Option<PageClosureBuildMark>,
 }
 
 /// One node detached from a page lane together with its coarse journal move
@@ -880,6 +883,19 @@ impl PageRegionHistory {
         })
     }
 
+    pub(crate) fn validates_node_checkpoint(
+        &self,
+        key: PageRegionCheckpointKey,
+        mark: CheckpointMark<PageMaterialLane>,
+    ) -> bool {
+        self.region(key).is_some_and(|region| {
+            region.checkpoint(key).is_some_and(|checkpoint| {
+                checkpoint.nodes == mark
+                    && PageMaterialView::new(&self.pool, &region.nodes).can_restore_checkpoint(mark)
+            })
+        })
+    }
+
     pub(crate) fn arena_checkpoint(
         &self,
         key: PageRegionCheckpointKey,
@@ -1031,6 +1047,18 @@ impl PageRegionHistory {
                 .prepare_production_successor(&mut self.pool)?,
         );
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_output_successor_build(&mut self) {
+        let current = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region");
+        let mark = PageNodeArena::new(&mut self.pool, &mut current.nodes)
+            .begin_closure_build()
+            .expect("test output successor boundary");
+        current.builder.arm_output_successor_build(mark);
     }
 
     pub(crate) fn cancel_prepared_shipout(&mut self) {
@@ -1285,7 +1313,10 @@ impl PageRegion {
             tex_copy_nodes_copied: durable.tex_copy_nodes_copied,
             history_preservation_nodes_copied: durable.history_preservation_nodes_copied,
             nested_closure_nodes_copied: durable.nested_closure_nodes_copied,
-            node_closure_scan_nodes: durable.node_closure_scan_nodes,
+            node_closure_scan_nodes: self
+                .counters
+                .node_closure_scan_nodes
+                .saturating_add(durable.node_closure_scan_nodes),
             ..self.counters
         }
     }
@@ -1366,6 +1397,7 @@ impl PageRegion {
         &mut self,
         pool: &mut NodePool,
     ) -> Result<PreparedPageRegionSuccessor, ForkArenaError> {
+        let build = self.builder.take_output_successor_build();
         let roots = self.builder.payload_roots();
         for root in [
             roots.contribution,
@@ -1388,6 +1420,52 @@ impl PageRegion {
             .inherit_durable_transition_counters_from(&self.nodes);
         if PageMaterialView::new(pool, &self.nodes).semantic_identity_enabled() {
             PageNodeArena::new(pool, &mut current.nodes).enable_semantic_identity();
+        }
+
+        let mut fallback_build = None;
+        if let Some(build) = build {
+            let one_self_contained_root = !roots.contribution.is_empty()
+                && roots.current_page.is_empty()
+                && roots.page_discards.is_empty()
+                && roots.split_discards.is_empty();
+            if one_self_contained_root {
+                match PageMaterialRegion::move_built_closure_between(
+                    pool,
+                    &mut current.nodes,
+                    &mut self.nodes,
+                    build,
+                    roots.contribution,
+                ) {
+                    Ok((contribution, scanned)) => {
+                        let roots = PagePayloadRoots {
+                            contribution,
+                            current_page: PageListId::empty(),
+                            page_discards: PageListId::empty(),
+                            split_discards: PageListId::empty(),
+                            insertion_end: 0,
+                            mark_end: 0,
+                        };
+                        current.builder = self.builder.successor_with_roots(roots);
+                        current.counters = self.counters;
+                        current.counters.page_regions_started =
+                            current.counters.page_regions_started.saturating_add(1);
+                        current.counters.held_over_envelopes_moved =
+                            current.counters.held_over_envelopes_moved.saturating_add(1);
+                        current.counters.node_closure_scan_nodes = current
+                            .counters
+                            .node_closure_scan_nodes
+                            .saturating_add(scanned);
+                        return Ok(PreparedPageRegionSuccessor {
+                            current,
+                            held_over: None,
+                        });
+                    }
+                    Err((_error, Some(build))) => fallback_build = Some(build),
+                    Err((_error, None)) => {}
+                }
+            } else {
+                fallback_build = Some(build);
+            }
         }
         let copied = (|| {
             let contribution = PageMaterialRegion::copy_closure_between(
@@ -1433,12 +1511,22 @@ impl PageRegion {
         let (roots, copied) = match copied {
             Ok(copied) => copied,
             Err(error) => {
+                if let Some(build) = fallback_build {
+                    self.nodes
+                        .cancel_closure_build(pool, build)
+                        .expect("failed fallback releases its successor suffix");
+                }
                 current
                     .retire(pool)
                     .expect("failed production successor remains quiescent");
                 return Err(error);
             }
         };
+        if let Some(build) = fallback_build {
+            self.nodes
+                .cancel_closure_build(pool, build)
+                .expect("copied fallback releases its old successor suffix");
+        }
         current.builder = self.builder.successor_with_roots(roots);
         current.counters = self.counters;
         current.counters.page_regions_started =
@@ -1628,11 +1716,23 @@ impl Default for PageBuilderState {
                 accepted_rewind_transitions: 0,
                 accepted_redo_transitions: 0,
             },
+            output_successor_build: None,
         }
     }
 }
 
 impl PageBuilderState {
+    pub(crate) fn arm_output_successor_build(&mut self, mark: PageClosureBuildMark) {
+        assert!(
+            self.output_successor_build.replace(mark).is_none(),
+            "one page output owns one successor build suffix"
+        );
+    }
+
+    fn take_output_successor_build(&mut self) -> Option<PageClosureBuildMark> {
+        self.output_successor_build.take()
+    }
+
     fn payload_roots(&self) -> PagePayloadRoots {
         PagePayloadRoots {
             contribution: self.contribution,
@@ -1649,11 +1749,13 @@ impl PageBuilderState {
     /// owner; only canonical current values and rebranded roots enter the new
     /// region, so per-page history cannot accumulate across succession.
     fn successor_with_roots(&self, roots: PagePayloadRoots) -> Self {
-        let mut successor = Self::default();
-        successor.contribution = roots.contribution;
-        successor.current_page = roots.current_page;
-        successor.page_discards = roots.page_discards;
-        successor.split_discards = roots.split_discards;
+        let mut successor = Self {
+            contribution: roots.contribution,
+            current_page: roots.current_page,
+            page_discards: roots.page_discards,
+            split_discards: roots.split_discards,
+            ..Self::default()
+        };
         successor.restore_scalars(self.scalar_snapshot());
         successor.insertions = self.insertions.clone();
         successor.insertion_positions = self.insertion_positions.clone();

@@ -356,7 +356,7 @@ fn retain_failed_page<G>(
         // The enclosing command operation already owns the rollback cursor
         // for these rows. Consuming the narrower construction capability
         // leaves that aggregate owner authoritative until commit or rollback.
-        drop(region);
+        let _region = region;
     }
 }
 

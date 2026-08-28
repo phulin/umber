@@ -213,6 +213,9 @@ pub(crate) struct DurableTransferLoan {
     settled: OperationMark<PageMaterialLane>,
 }
 
+type BuiltClosureMoveResult =
+    Result<(PageListId, u64), (ForkArenaError, Option<ClosureBuildMark<PageRole>>)>;
+
 /// Demand-free observations of explicit durable lifetime transitions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DurableTransitionCounters {
@@ -289,6 +292,64 @@ impl PageMaterialRegion {
             .source_nodes_copied
             .saturating_sub(before) as usize;
         Ok((copied.page_list(), count))
+    }
+
+    /// Transfers one self-contained construction suffix between page owners.
+    /// A seal rejection returns the still-live build authority so the caller
+    /// can roll it back before selecting an exact structural-copy fallback.
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn move_built_closure_between(
+        pool: &mut NodePool,
+        destination: &mut Self,
+        source: &mut Self,
+        mark: ClosureBuildMark<PageRole>,
+        root: PageListId,
+    ) -> BuiltClosureMoveResult {
+        let source_root = match source.region.root(pool, root) {
+            Ok(root) => root,
+            Err(error) => return Err((error, Some(mark))),
+        };
+        let receipt = match source.region.consumed_closure_roots_receipt(&mark) {
+            Ok(receipt) => receipt,
+            Err(error) => return Err((error, Some(mark))),
+        };
+        let sealed = source
+            .region
+            .seal_closure(pool, mark, source_root, receipt)
+            .map_err(|failure| {
+                let (error, mark) = failure.into_parts();
+                (error, Some(mark))
+            })?;
+        let before = pool.closure_transition_counters().rebrand_scan_nodes;
+        match transfer_sealed_closure_into(
+            pool,
+            &mut source.region,
+            sealed,
+            &mut destination.region,
+        ) {
+            Ok(root) => Ok((
+                root.page_list(),
+                pool.closure_transition_counters()
+                    .rebrand_scan_nodes
+                    .saturating_sub(before),
+            )),
+            Err(failure) => {
+                let (error, sealed) = failure.into_parts();
+                assert!(
+                    source.region.rollback_closure(pool, sealed).is_ok(),
+                    "failed page transfer returns its exact suffix"
+                );
+                Err((error, None))
+            }
+        }
+    }
+
+    pub(crate) fn cancel_closure_build(
+        &mut self,
+        pool: &mut NodePool,
+        mark: ClosureBuildMark<PageRole>,
+    ) -> Result<(), ForkArenaError> {
+        self.region.cancel_closure_build(pool, mark)
     }
 }
 
@@ -599,12 +660,11 @@ impl<'a> PageMaterialArena<'a> {
         ))
     }
 
-    pub(crate) fn commit_durable_transfer_loan(&mut self, loan: DurableTransferLoan) {
+    pub(crate) fn commit_durable_transfer_loan(&mut self, _loan: DurableTransferLoan) {
         // The page carrier may already have nested the root, shipped it, or
         // rotated the complete page region before the command commit barrier.
         // Committing consumes rollback authority; it does not need a second
         // liveness scan or representation.
-        drop(loan);
     }
 
     pub(crate) fn rollback_durable_transfer_loan(

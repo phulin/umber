@@ -494,7 +494,7 @@ fn prefix_child_rejects_without_mutation_and_fallback_is_counted() {
         Err(failure) => failure,
     };
     assert_eq!(failure.error, ForkArenaError::InvalidRegion);
-    drop(failure.mark);
+    let _mark = failure.mark;
     assert_eq!(source.counters(), before);
     assert!(source.list(&pool, child).is_ok());
     assert!(source.list(&pool, root).is_ok());
@@ -542,7 +542,7 @@ fn foreign_root_receipt_rejects_without_detaching_suffix() {
         Err(failure) => failure,
     };
     assert_eq!(failure.error, ForkArenaError::InvalidRegion);
-    drop(failure.mark);
+    let _mark = failure.mark;
     assert_eq!(source.counters(), before);
     assert!(source.list(&pool, local).is_ok());
 }

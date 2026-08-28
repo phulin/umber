@@ -340,6 +340,34 @@ impl DurableBoxState {
         })
     }
 
+    fn transferred_value_identity(owner: &DurableNodeClosure) -> u64 {
+        owner
+            .root()
+            .list()
+            .semantic_identity()
+            .expect("identity demand precedes durable box transfer")
+    }
+
+    fn record_unique_take(&mut self, index: u16, owner: &DurableNodeClosure) {
+        if let Some(identity) = &mut self.semantic_identity {
+            identity.replace(
+                u64::from(index),
+                Some(Self::transferred_value_identity(owner)),
+                None,
+            );
+        }
+    }
+
+    fn record_failed_unique_take(&mut self, index: u16, owner: &DurableNodeClosure) {
+        if let Some(identity) = &mut self.semantic_identity {
+            identity.replace(
+                u64::from(index),
+                None,
+                Some(Self::transferred_value_identity(owner)),
+            );
+        }
+    }
+
     fn swap_mutation(&mut self, mutation: &mut DurableMutation) {
         let identities = self.semantic_identity.is_some().then(|| {
             (
@@ -536,9 +564,11 @@ impl DurableBoxState {
             return Ok(None);
         };
         if self.can_take_unique(index) {
+            self.record_unique_take(index, &owner);
             if !self.active_operations.is_empty() {
                 let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
                 let (root, loan) = arena.loan_durable_to_page(owner).map_err(|(_, owner)| {
+                    self.record_failed_unique_take(index, &owner);
                     self.cell_mut(index).value = Some(owner);
                     BankError::AllocationFailed
                 })?;
@@ -558,6 +588,7 @@ impl DurableBoxState {
                 .move_durable_to_page(owner)
                 .map(Some)
                 .map_err(|(_, owner)| {
+                    self.record_failed_unique_take(index, &owner);
                     self.cell_mut(index).value = Some(owner);
                     BankError::AllocationFailed
                 });

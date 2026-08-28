@@ -621,9 +621,16 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
             let identity = stores
                 .reserve_pdf_form()
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            let list = stores
-                .take_box_to_page(box_register)
-                .ok_or(ExecError::PdfXFormVoidBox)?;
+            let form_build = stores.begin_page_node_region();
+            let list = match stores.take_box_to_page(box_register) {
+                Some(list) => list,
+                None => {
+                    stores
+                        .release_page_node_region(form_build)
+                        .expect("void PDF form source releases its empty suffix");
+                    return Err(ExecError::PdfXFormVoidBox);
+                }
+            };
             let dimensions = match stores
                 .page_node_list(list)
                 .expect("form source belongs to the live page arena")
@@ -633,12 +640,17 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
                 Some(Node::HList(node) | Node::VList(node)) => {
                     (node.width, node.height, node.depth)
                 }
-                _ => return Err(ExecError::PdfXFormVoidBox),
+                _ => {
+                    stores
+                        .release_page_node_region(form_build)
+                        .expect("invalid PDF form source releases its suffix");
+                    return Err(ExecError::PdfXFormVoidBox);
+                }
             };
             let form = stores
-                .initialize_pdf_form(
+                .initialize_built_pdf_form(
                     identity,
-                    list,
+                    (list, form_build),
                     dimensions,
                     attr.map(|text| text.tokens),
                     resources.map(|text| text.tokens),

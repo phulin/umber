@@ -763,8 +763,7 @@ impl<G> Universe<G> {
             && core.validates_generation_cursor(checkpoint.generation)
             && self
                 .page_region
-                .nodes()
-                .can_restore_checkpoint(*mark.page())
+                .validates_node_checkpoint(checkpoint.page, *mark.page())
     }
 
     fn activate_checkpoint_state(

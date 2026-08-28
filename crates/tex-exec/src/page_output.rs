@@ -166,6 +166,10 @@ pub(crate) fn prepare_box255<G>(
         PageInteger::InsertPenalties,
         i32::try_from(distributed.heldover_count).map_err(|_| ExecError::ArithmeticOverflow)?,
     );
+    // Every later node belongs to the next-page/output closure. Succession
+    // moves that suffix when it is self-contained and otherwise performs the
+    // exact interleaved-prefix copy during its existing root traversal.
+    stores.arm_page_region_successor();
     Ok(())
 }
 

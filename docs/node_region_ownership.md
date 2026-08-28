@@ -40,6 +40,32 @@ typed lane is an operation result, not a page-liveness batch. It may remain
 move-only. It must not acquire dependencies, reference counts, checkpoint
 leases, or independent long-term ownership.
 
+## Production cutover
+
+As of 2026-08-28, ordinary execution uses these owners rather than retaining
+the design as an unwired substrate:
+
+- default and user-output completion wait until box255, detached output, and
+  every live mode-list coordinate have settled, then rotate the complete
+  four-root `PageBuilderState` owner;
+- a suffix opened after box255 packaging moves the next-page contribution
+  envelope when every nested child is suffix-local; an interleaved prefix
+  child takes one exact recursive-copy fallback during the same bounded root
+  traversal;
+- an uncheckpointed old page region retires immediately, while a region with
+  retained paragraph boundaries stays in the contiguous history interval;
+- ordinary `\setbox` construction seals and rebrands its suffix into the box
+  owner without relocating payload; `\box`/`\unhbox` use a rollbackable
+  command-operation transfer loan, and `\copy`/`\unhcopy` remain the explicit
+  recursive-copy operations; and
+- PDF form creation consumes the same move-only construction envelope after
+  taking its source box, so a unique source does not make a page-to-form copy.
+
+The former `CompatibilityClosureBuildReceipt` retain seam is deleted. Lifecycle
+counters distinguish envelope movement, bounded rebrand scans, TeX copies,
+history-preservation copies, structural page-to-durable copies, held-over
+fallback copies, region starts/retention/drops, and cross-region rejection.
+
 ## TeX82 ownership baseline
 
 TeX82 implements its own fixed-address heap inside the global `mem` array.

@@ -2866,6 +2866,53 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    /// Initializes a PDF form by consuming the exact suffix opened before
+    /// the source box left its durable register. A unique register therefore
+    /// moves durable -> page -> form ownership without copying or relocating
+    /// node payload; retained history pays only its already-counted copy.
+    pub fn initialize_built_pdf_form(
+        &mut self,
+        identity: (u32, u32),
+        source: (PageListId, crate::node_region::PageClosureBuildMark),
+        dimensions: (Scaled, Scaled, Scaled),
+        attr: Option<TokenListId<G>>,
+        resources: Option<TokenListId<G>>,
+        immediate: bool,
+    ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
+        let (box_list, build) = source;
+        let semantic_id = page_list_semantic_id(
+            &self.page_nodes,
+            self.fonts,
+            self.admitted.state_ref(),
+            box_list,
+        );
+        let owner = self
+            .page_nodes
+            .finish_built_page_root_to_durable(build, box_list)
+            .map_err(|_| crate::PdfObjectCapacityError)?;
+        let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
+        let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
+        let record = self.pdf.initialize_form(
+            identity,
+            semantic_id,
+            dimensions,
+            (attr, resources),
+            immediate,
+        );
+        match record {
+            Ok(record) => {
+                self.durable_forms.insert(record.object(), owner);
+                Ok(record)
+            }
+            Err(error) => {
+                self.page_nodes
+                    .retire_durable(owner)
+                    .expect("rejected PDF form owner remains live");
+                Err(error)
+            }
+        }
+    }
+
     pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
         self.durable_forms
             .copy_to_page(&mut self.page_nodes, object)
@@ -3746,6 +3793,15 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn start_page_after_output(&mut self) {
         self.page.start_page_after_output(&self.page_nodes);
+    }
+
+    /// Opens the production next-page closure after box255 has settled.
+    pub fn arm_page_region_successor(&mut self) {
+        let mark = self
+            .page_nodes
+            .begin_closure_build()
+            .expect("page output successor boundary is available");
+        self.page.arm_output_successor_build(mark);
     }
 
     pub fn start_new_page(&mut self) {

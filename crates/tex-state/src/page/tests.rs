@@ -1040,3 +1040,82 @@ fn production_uncheckpointed_pages_reuse_pool_at_a_fixed_high_water() {
     assert_eq!(history.current().counters().page_regions_started, 257);
     assert_eq!(history.current().counters().page_regions_dropped, 256);
 }
+
+#[test]
+fn production_heldover_moves_a_self_contained_successor_envelope() {
+    let mut history = PageRegionHistory::default();
+    let _shipped_prefix = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
+    history.arm_output_successor_build();
+    let heldover = publish_nodes(&mut history.nodes_mut(), [kern(7), kern(8)]);
+    let heldover_address = history
+        .nodes_mut()
+        .list(heldover)
+        .expect("heldover list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("heldover address");
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, heldover);
+    }
+
+    history
+        .prepare_production_shipout()
+        .expect("self-contained heldover preflights");
+    history
+        .commit_prepared_shipout()
+        .expect("self-contained heldover commits");
+
+    let contribution = history.builder().payload_roots().contribution;
+    assert_eq!(
+        history
+            .nodes_mut()
+            .list(contribution)
+            .expect("moved heldover")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(heldover_address)
+    );
+    let counters = history.current().counters();
+    assert_eq!(counters.held_over_envelopes_moved, 1);
+    assert_eq!(counters.held_over_nodes_copied, 0);
+}
+
+#[test]
+fn production_heldover_copies_only_the_interleaved_prefix_closure() {
+    let mut history = PageRegionHistory::default();
+    let heldover = publish_nodes(&mut history.nodes_mut(), [kern(9), kern(10)]);
+    let old_address = history
+        .nodes_mut()
+        .list(heldover)
+        .expect("prefix heldover list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("prefix heldover address");
+    history.arm_output_successor_build();
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, heldover);
+    }
+
+    history
+        .prepare_production_shipout()
+        .expect("interleaved heldover selects copy fallback");
+    history
+        .commit_prepared_shipout()
+        .expect("interleaved heldover commits");
+
+    let contribution = history.builder().payload_roots().contribution;
+    assert_ne!(
+        history
+            .nodes_mut()
+            .list(contribution)
+            .expect("copied heldover")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(old_address)
+    );
+    let counters = history.current().counters();
+    assert_eq!(counters.held_over_envelopes_moved, 0);
+    assert_eq!(counters.held_over_nodes_copied, 2);
+}

@@ -9618,11 +9618,22 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
+        let before_form = create_stores.page_region_counters();
         assert_eq!(
             create
                 .step(create_stores)
                 .expect("PDF retry preserves all form options and the register"),
             MainControlStep::Continue
+        );
+        let after_form = create_stores.page_region_counters();
+        assert_eq!(
+            after_form.page_to_durable_nodes_copied, before_form.page_to_durable_nodes_copied,
+            "a direct PDF form move does not copy page payload"
+        );
+        assert_eq!(
+            after_form.history_preservation_nodes_copied,
+            before_form.history_preservation_nodes_copied,
+            "the live command operation uses a transfer loan"
         );
         assert!(create_stores.copy_box_to_page(7).is_none());
         let form = admitted!(create_stores, |context| context.pdf_form(1))
