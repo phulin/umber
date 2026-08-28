@@ -2266,7 +2266,8 @@ impl<G> Universe<G> {
     /// Promotes and replaces a box while retaining its current eq level.
     pub fn replace_page_box(&mut self, index: u16, value: PageListId) {
         let durable = self
-            .page_nodes
+            .page_region
+            .nodes_mut()
             .copy_page_root_to_durable(value)
             .expect("live page box copy must succeed");
         self.durable_boxes

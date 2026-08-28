@@ -6470,7 +6470,7 @@ impl<G> MainControl<G> {
                 }
             }
             MathRequest::Fraction(fraction) => {
-                if !start_fraction(self.modes.current_list_mutation(), fraction) {
+                if !start_fraction(self.modes.current_list_mutation(), stores, fraction) {
                     let context = self
                         .command
                         .output_open_context(&stores.command_context().expect("live generation"));
@@ -9997,8 +9997,9 @@ fn apply_limits<G>(
     .unwrap_or(false)
 }
 
-fn start_fraction(
+fn start_fraction<G>(
     mut list: crate::mode::ModeListMutation<'_>,
+    stores: &mut Universe<G>,
     fraction: tex_command::ScannedMathFraction,
 ) -> bool {
     if list.incomplete_fraction().is_some() {
