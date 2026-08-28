@@ -690,6 +690,14 @@ provide position. Dropping or pruning the checkpoint releases those owners
 immediately. Slot reuse never revalidates an old key, relocates a surviving
 checkpoint, or compacts live coordinates.
 
+Page candidate settlement orders semantic roots ahead of physical chunk
+ownership. Selection prevalidates both owners, rewinds the four PageBuilder
+roots while all accepted chunks remain attached, and only then detaches the
+accepted suffix. Rejection first undoes and drops every current root, releases
+current chunks and reattaches accepted chunks, then redoes the accepted roots.
+Acceptance drops accepted root inverses before pruning the detached accepted
+chunks. No fallible step may begin after this prevalidated root transition.
+
 Restore is atomic and follows this order:
 
 1. Validate the checkpoint/session identity, generation ancestry, all journal

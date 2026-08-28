@@ -866,10 +866,14 @@ impl<G> Universe<G> {
                 *mark.durable(),
                 checkpoint.generation,
             )?;
+        // PageBuilder roots must select the checkpoint prefix while every
+        // accepted page-material chunk is still attached. The arena selection
+        // was prevalidated above, so detachment is infallible after this root
+        // rewind.
+        let page_tail = self.page.begin_checkpoint_candidate(checkpoint.page);
         self.page_nodes
             .begin_checkpoint_candidate(*mark.page())
-            .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
-        let page_tail = self.page.begin_checkpoint_candidate(checkpoint.page);
+            .expect("prevalidated page-material checkpoint can detach");
         let world_tail = self.world.begin_checkpoint_candidate(&checkpoint.world);
         let dependency_tail = self
             .dependencies
@@ -939,6 +943,20 @@ impl<G> Universe<G> {
             return;
         };
         let mark = transaction.mark;
+        let page_boundary = candidate
+            .page_nodes
+            .seal_boundary()
+            .expect("checkpoint settlement seals page material before root mutation");
+        candidate
+            .page
+            .prepare_checkpoint_candidate_rejection(&transaction.page);
+        candidate
+            .page_nodes
+            .reject_checkpoint_candidate(page_boundary)
+            .expect("prevalidated candidate page nodes can release current and reattach prior");
+        candidate
+            .page
+            .finish_checkpoint_candidate_rejection(transaction.page);
         candidate
             .fonts
             .reject_checkpoint_candidate(transaction.font_mark, transaction.fonts);
@@ -951,14 +969,6 @@ impl<G> Universe<G> {
         candidate
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
-        let page_boundary = candidate
-            .page_nodes
-            .seal_boundary()
-            .expect("checkpoint settlement seals page material");
-        candidate
-            .page_nodes
-            .reject_checkpoint_candidate(page_boundary)
-            .expect("validated candidate page nodes can undo and redo");
         let mut core = candidate
             .core
             .take()
@@ -978,7 +988,6 @@ impl<G> Universe<G> {
         self.world = std::mem::take(&mut candidate.world);
         self.dependencies = std::mem::take(&mut candidate.dependencies);
         self.pdf.return_rejected(&mut candidate.pdf);
-        candidate.page.reject_checkpoint_candidate(transaction.page);
         self.page = std::mem::take(&mut candidate.page);
         self.page_lent_to_candidate = false;
     }
@@ -988,17 +997,19 @@ impl<G> Universe<G> {
             .checkpoint_candidate
             .take()
             .expect("the current lineage owns one rooted state transaction");
+        let page_boundary = self
+            .page_nodes
+            .seal_boundary()
+            .expect("checkpoint settlement seals page material before root mutation");
+        self.page
+            .prepare_checkpoint_candidate_acceptance(transaction.page);
+        self.page_nodes
+            .accept_checkpoint_candidate(page_boundary)
+            .expect("prevalidated candidate page nodes can prune prior and promote current");
         self.core
             .as_mut()
             .expect("the current lineage owns the direct state core")
             .accept_checkpoint_candidate(transaction.core);
-        let page_boundary = self
-            .page_nodes
-            .seal_boundary()
-            .expect("checkpoint settlement seals page material");
-        self.page_nodes
-            .accept_checkpoint_candidate(page_boundary)
-            .expect("validated candidate page nodes can promote");
         self.world.accept_checkpoint_candidate(transaction.world);
         self.dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
@@ -1006,7 +1017,6 @@ impl<G> Universe<G> {
             .accept_checkpoint_candidate(transaction.sources);
         self.fonts.accept_checkpoint_candidate(transaction.fonts);
         self.pdf.commit_candidate();
-        self.page.accept_checkpoint_candidate(transaction.page);
     }
 
     #[doc(hidden)]

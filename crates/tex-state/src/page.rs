@@ -568,6 +568,8 @@ pub(crate) struct AcceptedPageTail {
     future_frames: Vec<PageCheckpointFrame>,
     origin_scalars: PageScalars,
     origin_semantic_roots: PageSemanticRoots,
+    insertion_root: usize,
+    mark_root: usize,
     insertion_lane_after: Vec<InsertionLaneRecord>,
     mark_lane_after: Vec<MarkLaneRecord>,
 }
@@ -866,6 +868,11 @@ impl PageBuilderState {
             && mark.cursor <= self.checkpoint_journal.inverses.len()
             && mark.frame != 0
             && mark.frame < self.checkpoint_journal.next_frame
+            && self
+                .checkpoint_journal
+                .frames
+                .iter()
+                .any(|frame| frame.id == mark.frame && frame.cursor == mark.cursor)
     }
 
     pub(crate) fn restore_checkpoint_mark(&mut self, mark: PageCheckpointMark) {
@@ -939,17 +946,33 @@ impl PageBuilderState {
             future_frames,
             origin_scalars,
             origin_semantic_roots,
+            insertion_root: mark.roots.insertion_end,
+            mark_root: mark.roots.mark_end,
             insertion_lane_after,
             mark_lane_after,
         }
     }
 
-    pub(crate) fn reject_checkpoint_candidate(&mut self, mut tail: AcceptedPageTail) {
+    /// Rewinds candidate roots and drops every current-lineage inverse before
+    /// the page-material arena releases candidate chunks.
+    pub(crate) fn prepare_checkpoint_candidate_rejection(&mut self, tail: &AcceptedPageTail) {
         while self.checkpoint_journal.applied > 0 {
             self.checkpoint_journal.applied -= 1;
             self.toggle_page_inverse(self.checkpoint_journal.applied);
         }
         self.checkpoint_journal.candidate_root_frame = None;
+        self.checkpoint_journal.inverses.clear();
+        self.checkpoint_journal.frames.clear();
+        self.insertion_lane.truncate(tail.insertion_root);
+        self.mark_lane.truncate(tail.mark_root);
+    }
+
+    /// Reattaches the accepted journal and redoes its roots only after the
+    /// page-material arena has reattached the detached accepted chunks.
+    pub(crate) fn finish_checkpoint_candidate_rejection(&mut self, mut tail: AcceptedPageTail) {
+        debug_assert!(self.checkpoint_journal.inverses.is_empty());
+        debug_assert!(self.checkpoint_journal.frames.is_empty());
+        debug_assert_eq!(self.checkpoint_journal.applied, 0);
         self.insertion_lane.append(&mut tail.insertion_lane_after);
         self.mark_lane.append(&mut tail.mark_lane_after);
         self.rebuild_canonical_lane_values();
@@ -983,7 +1006,9 @@ impl PageBuilderState {
         self.semantic_roots = tail.origin_semantic_roots;
     }
 
-    pub(crate) fn accept_checkpoint_candidate(&mut self, _tail: AcceptedPageTail) {
+    /// Drops every accepted-suffix root before the page-material arena prunes
+    /// the detached accepted chunks.
+    pub(crate) fn prepare_checkpoint_candidate_acceptance(&mut self, tail: AcceptedPageTail) {
         let root = self
             .checkpoint_journal
             .candidate_root_frame
@@ -992,6 +1017,7 @@ impl PageBuilderState {
         self.checkpoint_journal
             .frames
             .retain(|frame| frame.id != root);
+        drop(tail);
     }
 
     fn rebuild_canonical_lane_values(&mut self) {
