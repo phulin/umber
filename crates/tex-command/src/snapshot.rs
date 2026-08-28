@@ -533,6 +533,46 @@ pub struct CommandTimelineCounters {
     pub displaced_reuses: u64,
 }
 
+/// Command-owner evidence produced when aggregate checkpoint history releases
+/// one summary.
+///
+/// The protected `JobStart` summary remains a head-relative exact root. Until
+/// that root is materialized independently, releasing a later interior summary
+/// cannot remove command journal or logical-stack chunks without invalidating
+/// the protected cursor. The receipt makes that zero-release fact explicit
+/// while reporting the authoritative physical frame occupancy for the
+/// aggregate release transaction.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct CommandCheckpointReleaseReceipt {
+    timeline_frames_live: usize,
+    timeline_frame_capacity: usize,
+    command_journal_chunks_released: usize,
+    logical_stack_chunks_released: usize,
+}
+
+impl CommandCheckpointReleaseReceipt {
+    #[must_use]
+    pub const fn timeline_frames_live(self) -> usize {
+        self.timeline_frames_live
+    }
+
+    #[must_use]
+    pub const fn timeline_frame_capacity(self) -> usize {
+        self.timeline_frame_capacity
+    }
+
+    #[must_use]
+    pub const fn command_journal_chunks_released(self) -> usize {
+        self.command_journal_chunks_released
+    }
+
+    #[must_use]
+    pub const fn logical_stack_chunks_released(self) -> usize {
+        self.logical_stack_chunks_released
+    }
+}
+
 /// Coarse generation plus stable physical-timeline identity retained by one
 /// command snapshot or summary.
 ///
@@ -1707,6 +1747,39 @@ impl<G> CommandState<G> {
     ) -> Result<(), CommandRestoreError> {
         let restore = self.prepare_summary_restore(summary, universe)?;
         self.apply_prepared_restore(restore)
+    }
+
+    /// Validates one aggregate checkpoint-history release against this sole
+    /// physical command owner and reports its exact storage effect.
+    ///
+    /// `oldest_nonprotected` is also validated when present so a stale or
+    /// foreign aggregate low-water cannot be published. The protected
+    /// head-relative `JobStart` root currently prevents command-prefix
+    /// reclamation, so this hook deliberately releases zero journal/stack
+    /// chunks. Unobserved stack reuse is reclaimed independently at operation
+    /// time by [`crate::timeline::LogicalStack`]'s first-touch interval rule.
+    #[doc(hidden)]
+    pub fn release_checkpoint_summary(
+        &mut self,
+        released: &CommandSummary<G>,
+        oldest_nonprotected: Option<&CommandSummary<G>>,
+    ) -> Result<CommandCheckpointReleaseReceipt, CommandRestoreError> {
+        if released.generation().timeline_owner != self.timeline.owner
+            || oldest_nonprotected
+                .is_some_and(|oldest| oldest.generation().timeline_owner != self.timeline.owner)
+        {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        self.resolve_restore(released.generation(), released.cursor())?;
+        if let Some(oldest) = oldest_nonprotected {
+            self.resolve_restore(oldest.generation(), oldest.cursor())?;
+        }
+        Ok(CommandCheckpointReleaseReceipt {
+            timeline_frames_live: self.timeline.frames,
+            timeline_frame_capacity: self.timeline.pool.chunk_capacity(),
+            command_journal_chunks_released: 0,
+            logical_stack_chunks_released: 0,
+        })
     }
 
     /// Validates an exact operation snapshot without changing live command

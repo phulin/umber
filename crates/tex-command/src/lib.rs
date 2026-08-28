@@ -165,8 +165,9 @@ pub use scanners::{
     StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{
-    CommandGenerationOwner, CommandRestoreError, CommandStateSnapshot, CommandSummary,
-    CommandSummaryError, CommandTimelineCounters, PreparedCommandRestore, TransientCommandSnapshot,
+    CommandCheckpointReleaseReceipt, CommandGenerationOwner, CommandRestoreError,
+    CommandStateSnapshot, CommandSummary, CommandSummaryError, CommandTimelineCounters,
+    PreparedCommandRestore, TransientCommandSnapshot,
 };
 pub use state::{
     CommandGroupError, CommandGroupExit, CommandReplayDelivery, CommandReplayEpisode,

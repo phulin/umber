@@ -420,6 +420,40 @@ fn dropping_a_summary_never_mutates_its_physical_timeline() {
 }
 
 #[test]
+fn checkpoint_release_validates_owners_and_reports_protected_zero_reclamation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let protected = command
+            .publish_summary(universe)
+            .expect("protected summary publishes");
+        let released = command
+            .publish_summary(universe)
+            .expect("interior summary publishes");
+        let receipt = command
+            .release_checkpoint_summary(&released, Some(&released))
+            .expect("same-owner release validates");
+
+        assert_eq!(receipt.timeline_frames_live(), 2);
+        assert!(receipt.timeline_frame_capacity() >= receipt.timeline_frames_live());
+        assert_eq!(receipt.command_journal_chunks_released(), 0);
+        assert_eq!(receipt.logical_stack_chunks_released(), 0);
+
+        let mut foreign = crate::CommandState::default();
+        let foreign_summary = foreign
+            .publish_summary(universe)
+            .expect("foreign summary publishes");
+        assert!(matches!(
+            command.release_checkpoint_summary(&foreign_summary, None),
+            Err(CommandRestoreError::ForeignGeneration)
+        ));
+
+        command
+            .restore_summary(&protected, universe)
+            .expect("protected root remains exact after release observation");
+    });
+}
+
+#[test]
 fn named_checkpoint_capture_and_warmed_mutation_clone_no_roots() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
