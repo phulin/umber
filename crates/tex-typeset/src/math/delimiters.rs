@@ -103,6 +103,7 @@ pub(crate) fn var_delimiter(
             glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
             glue_sign: tex_state::node::Sign::Normal,
             glue_order: tex_state::glue::Order::Normal,
+            source: None,
         }
     } else if ctx
         .state
@@ -335,6 +336,7 @@ fn extensible_box(
         glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
         glue_sign: tex_state::node::Sign::Normal,
         glue_order: tex_state::glue::Order::Normal,
+        source: None,
     };
 
     if let Some(code) = recipe.bottom {

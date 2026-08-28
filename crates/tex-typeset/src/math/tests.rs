@@ -168,7 +168,7 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     );
     assert_eq!(
         math_layout_digest(&web_layouts),
-        "e74b6b2375a23f554af76280674fe981db7fa4aab3891e77ed2b8e17d4cf0f20"
+        "9ab29e15ea328336eaccae9c5cf5ac98eeece9daae857c45697ffdde4e1198c8"
     );
 }
 
@@ -410,7 +410,7 @@ fn math_layout_projection(layouts: &[MathLayout]) -> String {
                     span(layout, boxed.list, out);
                 }
                 MathNode::Sequence(child) => span(layout, *child, out),
-                MathNode::NativeSource { list, index } => {
+                MathNode::NativeSource { list, index, .. } => {
                     write!(out, "o{list:?}/{index};").expect("write native source")
                 }
             }
@@ -1239,7 +1239,7 @@ fn rebox_restores_clean_character_italic_kern_before_infinite_glue() {
     let retained = add(metrics.width, metrics.italic_correction);
     let target = add(retained, sc(7));
     let (layout, boxed) =
-        rebox::test_rebox_clean_character(&universe, &params, character.clone(), retained, target);
+        rebox::test_rebox_clean_character(&universe, &params, character, retained, target);
     assert!(matches!(
         list_nodes(&layout, boxed.list).as_slice(),
         [

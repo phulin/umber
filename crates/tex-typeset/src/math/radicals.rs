@@ -100,6 +100,7 @@ fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &Mat
             glue_set: boxed.glue_set,
             glue_sign: boxed.glue_sign,
             glue_order: boxed.glue_order,
+            source: None,
         };
     }
     clean_box(ctx, nucleus, ctx.style)
@@ -110,7 +111,7 @@ fn unwrap_single_vlist(ctx: &Context<'_, impl MathTypesetState>, boxed: MathBox)
         && boxed.shift.raw() == 0
         && let Some(MathNode::VList(inner)) = ctx.layout.single_node(boxed.list)
     {
-        return inner.clone();
+        return *inner;
     }
     boxed
 }
@@ -250,7 +251,7 @@ pub(super) fn make_math_accent(
     });
     let mut accent_box = selected_variant
         .as_ref()
-        .map(|(boxed, _)| boxed.clone())
+        .map(|(boxed, _)| *boxed)
         .unwrap_or_else(|| char_box(ctx, accent_fetched, accent.origin));
     accent_box.shift = match (selected_variant, base_attachment, accent_attachment) {
         (None, Some(base), Some(accent)) => sub(base, accent),

@@ -12,9 +12,9 @@ use tex_state::scaled::Scaled;
 
 use super::{
     BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathNode,
-    MathPackObservation, MathParams, MathTypesetState, NativeNodeTransaction, SpacingKind, Style,
-    StyleFamily, add, boxed_node, delimiters, fractions, left_right_delimiter_target, operators,
-    radicals, scripts, spacing,
+    MathPackObservation, MathParams, MathTypesetState, NativeBoxSource, NativeNodeEvidence,
+    NativeNodeTransaction, SpacingKind, Style, StyleFamily, add, boxed_node, delimiters, fractions,
+    left_right_delimiter_target, operators, radicals, scripts, spacing,
 };
 
 #[cfg(test)]
@@ -297,6 +297,12 @@ fn first_pass<S: MathTypesetState>(
         {
             operators::make_ord(ctx, view, index);
         }
+        if let Some(children) = match view.node(ctx.state, index) {
+            Some(Node::HList(boxed) | Node::VList(boxed)) => Some(boxed.children),
+            _ => None,
+        } {
+            source_box_payload(ctx, children);
+        }
         let state = ctx.state;
         match view
             .node(state, index)
@@ -324,36 +330,44 @@ fn first_pass<S: MathTypesetState>(
                 {
                     index += 1;
                 }
-                let (spec, kind) = if matches!(kind, tex_state::node::GlueKind::MuSkip) {
+                if matches!(kind, tex_state::node::GlueKind::MuSkip) {
                     // TeX82 §732 converts both parts of an unconditional
                     // math-glue node: `math_glue` rewrites its specification
                     // and `subtype(q):=normal` records that the result is now
                     // ordinary glue. Named math spacing and leader subtypes do
                     // not enter this branch.
-                    (spacing::math_glue(*spec, ctx.mu), GlueKind::Normal)
+                    out.push(WorkItem::Node(MathNode::Glue {
+                        spec: spacing::math_glue(*spec, ctx.mu),
+                        kind: GlueKind::Normal,
+                        leader: *leader,
+                    }));
                 } else {
-                    (*spec, *kind)
-                };
-                out.push(WorkItem::Node(MathNode::Glue {
-                    spec,
-                    kind,
-                    leader: *leader,
-                }));
+                    out.push(WorkItem::Node(match view.source(index) {
+                        Some(source) => native_source(source, NativeNodeEvidence::Glue(*spec)),
+                        None => MathNode::Glue {
+                            spec: *spec,
+                            kind: *kind,
+                            leader: *leader,
+                        },
+                    }));
+                }
             }
             Node::Kern { amount, kind } => {
                 // AppG rule 2
-                out.push(WorkItem::Node(MathNode::Kern {
-                    amount: if matches!(kind, KernKind::Mu) {
-                        spacing::math_kern(*amount, ctx.mu)
-                    } else {
-                        *amount
-                    },
-                    kind: if matches!(kind, KernKind::Mu) {
-                        KernKind::Explicit
-                    } else {
-                        *kind
-                    },
-                }));
+                if matches!(kind, KernKind::Mu) {
+                    out.push(WorkItem::Node(MathNode::Kern {
+                        amount: spacing::math_kern(*amount, ctx.mu),
+                        kind: KernKind::Explicit,
+                    }));
+                } else {
+                    out.push(WorkItem::Node(match view.source(index) {
+                        Some(source) => native_source(source, NativeNodeEvidence::Kern(*amount)),
+                        None => MathNode::Kern {
+                            amount: *amount,
+                            kind: *kind,
+                        },
+                    }));
+                }
             }
             Node::MathNoad(noad)
                 if matches!(
@@ -946,7 +960,16 @@ fn second_pass<S: MathTypesetState>(
 }
 
 fn work_item_is_penalty(item: &WorkItem) -> bool {
-    matches!(item, WorkItem::Node(MathNode::Penalty(_)))
+    matches!(
+        item,
+        WorkItem::Node(
+            MathNode::Penalty(_)
+                | MathNode::NativeSource {
+                    evidence: NativeNodeEvidence::Penalty(_),
+                    ..
+                }
+        )
+    )
 }
 
 fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {
@@ -1008,9 +1031,7 @@ pub(crate) fn clean_box(
 
 fn clean_hlist(ctx: &mut Context<'_, impl MathTypesetState>, list: FrozenHList) -> MathBox {
     let mut boxed = match ctx.layout.single_node(list) {
-        Some(MathNode::HList(boxed) | MathNode::VList(boxed)) if boxed.shift.raw() == 0 => {
-            boxed.clone()
-        }
+        Some(MathNode::HList(boxed) | MathNode::VList(boxed)) if boxed.shift.raw() == 0 => *boxed,
         _ => ctx.layout.hpack(list),
     };
     // TeX82 §720's "Simplify a trivial box" physically unlinks the kern in
@@ -1082,6 +1103,7 @@ pub(crate) fn char_box(
         glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
         glue_sign: tex_state::node::Sign::Normal,
         glue_order: tex_state::glue::Order::Normal,
+        source: None,
     }
 }
 
@@ -1231,38 +1253,61 @@ pub(crate) fn source_node(
     match node {
         Node::Char { font, ch, origin } => {
             let code = u8::try_from(u32::from(*ch)).ok();
-            if let Some(metrics) =
-                code.and_then(|code| state.classic_math_char_metrics(*font, code))
-            {
-                MathNode::Char {
+            let metrics = code.and_then(|code| state.classic_math_char_metrics(*font, code));
+            match (source, metrics) {
+                (Some(source), Some(metrics)) => {
+                    native_source(source, NativeNodeEvidence::Character(metrics))
+                }
+                (Some(source), None) => native_source(source, NativeNodeEvidence::Inert),
+                (None, Some(metrics)) => MathNode::Char {
                     font: *font,
                     ch: *ch,
                     glyph_id: None,
                     metrics,
                     origin: *origin,
+                },
+                (None, None) => {
+                    panic!("coordinate-free math character must have classic metrics")
                 }
-            } else {
-                native_source(source)
             }
         }
-        Node::Kern { amount, kind } => MathNode::Kern {
-            amount: *amount,
-            kind: *kind,
+        Node::Kern { amount, kind } => match source {
+            Some(source) => native_source(source, NativeNodeEvidence::Kern(*amount)),
+            None => MathNode::Kern {
+                amount: *amount,
+                kind: *kind,
+            },
         },
-        Node::Penalty(penalty) => MathNode::Penalty(*penalty),
+        Node::Penalty(value) => match source {
+            Some(source) => native_source(source, NativeNodeEvidence::Penalty(*value)),
+            None => MathNode::Penalty(*value),
+        },
         Node::Rule {
             width,
             height,
             depth,
-        } => MathNode::Rule {
-            width: *width,
-            height: *height,
-            depth: *depth,
+        } => match source {
+            Some(source) => native_source(
+                source,
+                NativeNodeEvidence::Rule {
+                    width: *width,
+                    height: *height,
+                    depth: *depth,
+                },
+            ),
+            None => MathNode::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
         },
-        Node::Glue { spec, kind, leader } => MathNode::Glue {
-            spec: *spec,
-            kind: *kind,
-            leader: *leader,
+        Node::Glue { spec, kind, leader } => match source {
+            Some(source) => native_source(source, NativeNodeEvidence::Glue(*spec)),
+            None => MathNode::Glue {
+                spec: *spec,
+                kind: *kind,
+                leader: *leader,
+            },
         },
         node @ (Node::HList(_) | Node::VList(_)) => {
             let horizontal = matches!(node, Node::HList(_));
@@ -1288,6 +1333,11 @@ pub(crate) fn source_node(
                 glue_set: box_node.glue_set,
                 glue_sign: box_node.glue_sign,
                 glue_order: box_node.glue_order,
+                source: source.map(|(source_list, index)| NativeBoxSource {
+                    list: source_list,
+                    index: u32::try_from(index).expect("math source index fits u32"),
+                    payload: list,
+                }),
             };
             if horizontal {
                 MathNode::HList(boxed)
@@ -1295,15 +1345,18 @@ pub(crate) fn source_node(
                 MathNode::VList(boxed)
             }
         }
-        _ => native_source(source),
+        _ => native_source(
+            source.expect("generated math work contains only canonical draft node kinds"),
+            NativeNodeEvidence::Inert,
+        ),
     }
 }
 
-fn native_source(source: Option<(PageListId, usize)>) -> MathNode {
-    let (list, index) = source.expect("opaque native math nodes retain a source coordinate");
+fn native_source((list, index): (PageListId, usize), evidence: NativeNodeEvidence) -> MathNode {
     MathNode::NativeSource {
         list,
         index: u32::try_from(index).expect("math source index fits u32"),
+        evidence,
     }
 }
 

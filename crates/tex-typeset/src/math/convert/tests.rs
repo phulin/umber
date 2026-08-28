@@ -367,6 +367,10 @@ fn explicit_penalty_suppresses_preceding_bin_penalty() {
         .into_iter()
         .filter_map(|node| match node {
             MathNode::Penalty(value) => Some(*value),
+            MathNode::NativeSource {
+                evidence: NativeNodeEvidence::Penalty(value),
+                ..
+            } => Some(*value),
             _ => None,
         })
         .collect::<Vec<_>>();

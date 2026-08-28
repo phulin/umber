@@ -13,7 +13,7 @@ pub(super) fn rebox(
     // TeX82 §715 changes the width field directly for an empty box.
     if slack.raw() != 0 && !boxed.list.is_empty() {
         let mut payload = if matches!(boxed.axis, BoxAxis::Vertical) {
-            let list = ctx.layout.hlist([MathNode::VList(boxed.clone())]);
+            let list = ctx.layout.hlist([MathNode::VList(*boxed)]);
             // TeX82 §715 naturally hpacks every nonempty vertical source
             // whose width changes, including a zero-width source.
             let natural = ctx.layout.hpack(list);
@@ -29,7 +29,7 @@ pub(super) fn rebox(
         // kern before adding the two `ss_glue` nodes. The packed width, not
         // the surviving list width, owns the correction at this boundary.
         if let Some(character @ MathNode::Char { metrics, .. }) =
-            ctx.layout.single_node(payload).cloned()
+            ctx.layout.single_node(payload).copied()
         {
             let correction = sub(boxed.width, metrics.width);
             if correction.raw() != 0 {
@@ -55,7 +55,7 @@ pub(super) fn rebox(
         };
         boxed.list = ctx
             .layout
-            .hlist([ss_glue.clone(), MathNode::Sequence(payload), ss_glue]);
+            .hlist([ss_glue, MathNode::Sequence(payload), ss_glue]);
         boxed.axis = BoxAxis::Horizontal;
         boxed.glue_set = GlueSetRatio::from_scaled_ratio(
             Scaled::from_raw(slack.raw().abs()),

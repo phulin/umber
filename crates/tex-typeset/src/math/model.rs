@@ -157,11 +157,10 @@ impl FrozenHList {
 
 /// An entry in the detached math transaction.
 ///
-/// Ordinary leaves use the canonical [`Node`] vocabulary.  Only selected
-/// OpenType glyphs (which retain a glyph id and selected metrics until output
-/// grows a glyph-aware native node) and direct glue (which remains a copied
-/// value) are math-specific drafts.
-#[derive(Clone, Debug, PartialEq)]
+/// Unchanged native leaves retain their page-arena coordinate plus only the
+/// evidence needed by the pure Appendix G kernel. Generated and rewritten
+/// values use the corresponding math-specific draft variant.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MathNode {
     Char {
         font: FontId,
@@ -192,6 +191,8 @@ pub enum MathNode {
     NativeSource {
         list: PageListId,
         index: u32,
+        #[doc(hidden)]
+        evidence: NativeNodeEvidence,
     },
     /// Transparent concatenation of an already-built earlier span.
     #[doc(hidden)]
@@ -202,7 +203,7 @@ pub enum MathNode {
 pub type MathGlueKind = GlueKind;
 
 /// Owned box node whose children are stored in the surrounding layout arena.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MathBox {
     pub width: Scaled,
     pub height: Scaled,
@@ -215,6 +216,33 @@ pub struct MathBox {
     pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
+    #[doc(hidden)]
+    pub source: Option<NativeBoxSource>,
+}
+
+/// Pure-kernel evidence retained beside an unchanged page-arena coordinate.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NativeNodeEvidence {
+    Character(CharMetrics),
+    Kern(Scaled),
+    Glue(GlueSpec),
+    Penalty(i32),
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
+    Inert,
+}
+
+/// Provenance of a source box that Appendix G may reuse without mutation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeBoxSource {
+    pub list: PageListId,
+    pub index: u32,
+    pub payload: FrozenHList,
 }
 
 /// Box orientation.
@@ -346,6 +374,7 @@ impl NativeNodeTransaction {
             glue_set: GlueSetRatio::from_raw(0),
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
+            source: None,
         };
         // TeX82 §651's `hpack` has one canonical return seam. Appendix G
         // reaches it for every structural clean/sub-mlist box, not only for
@@ -369,6 +398,7 @@ impl NativeNodeTransaction {
             glue_set: GlueSetRatio::from_raw(0),
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
+            source: None,
         }
     }
 
@@ -386,6 +416,7 @@ impl NativeNodeTransaction {
             glue_set: GlueSetRatio::from_raw(0),
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
+            source: None,
         };
         // TeX82 §668's vertical package is complete and observable here,
         // independently of how Appendix G later consumes its box.
@@ -429,9 +460,7 @@ impl NativeNodeTransaction {
         let mut logical = Vec::with_capacity(2);
         self.collect_nodes_bounded(list, &mut logical, 3);
         match logical.as_slice() {
-            [character @ MathNode::Char { .. }, MathNode::Kern { .. }] => {
-                Some((*character).clone())
-            }
+            [character @ MathNode::Char { .. }, MathNode::Kern { .. }] => Some(**character),
             _ => None,
         }
     }
@@ -549,11 +578,42 @@ impl NativeNodeTransaction {
                         MetricOverflow::APPENDIX_G,
                     );
                 }
-                MathNode::NativeSource { .. } => {
+                MathNode::NativeSource { evidence, .. } => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
+                    match evidence {
+                        NativeNodeEvidence::Character(metrics) => meas.observe_horizontal(
+                            MetricEvent::Glyph {
+                                width: metrics.width,
+                                height: metrics.height,
+                                depth: metrics.depth,
+                            },
+                            MetricOverflow::APPENDIX_G,
+                        ),
+                        NativeNodeEvidence::Kern(amount) => meas.observe_horizontal(
+                            MetricEvent::Kern(*amount),
+                            MetricOverflow::APPENDIX_G,
+                        ),
+                        NativeNodeEvidence::Glue(spec) => meas.observe_horizontal(
+                            MetricEvent::Glue(*spec),
+                            MetricOverflow::APPENDIX_G,
+                        ),
+                        NativeNodeEvidence::Rule {
+                            width,
+                            height,
+                            depth,
+                        } => meas.observe_horizontal(
+                            MetricEvent::Rule {
+                                width: width.unwrap_or(Scaled::from_raw(0)),
+                                height: height.unwrap_or(Scaled::from_raw(0)),
+                                depth: depth.unwrap_or(Scaled::from_raw(0)),
+                            },
+                            MetricOverflow::APPENDIX_G,
+                        ),
+                        NativeNodeEvidence::Penalty(_) | NativeNodeEvidence::Inert => {}
+                    }
                 }
             }
         }
@@ -600,7 +660,28 @@ impl NativeNodeTransaction {
                         MetricOverflow::APPENDIX_G,
                     );
                 }
-                MathNode::NativeSource { .. } => {}
+                MathNode::NativeSource { evidence, .. } => match evidence {
+                    NativeNodeEvidence::Kern(amount) => meas
+                        .observe_vertical(MetricEvent::Kern(*amount), MetricOverflow::APPENDIX_G),
+                    NativeNodeEvidence::Glue(spec) => {
+                        meas.observe_vertical(MetricEvent::Glue(*spec), MetricOverflow::APPENDIX_G)
+                    }
+                    NativeNodeEvidence::Rule {
+                        width,
+                        height,
+                        depth,
+                    } => meas.observe_vertical(
+                        MetricEvent::Rule {
+                            width: width.unwrap_or(Scaled::from_raw(0)),
+                            height: height.unwrap_or(Scaled::from_raw(0)),
+                            depth: depth.unwrap_or(Scaled::from_raw(0)),
+                        },
+                        MetricOverflow::APPENDIX_G,
+                    ),
+                    NativeNodeEvidence::Character(_)
+                    | NativeNodeEvidence::Penalty(_)
+                    | NativeNodeEvidence::Inert => {}
+                },
                 MathNode::Penalty(_) | MathNode::Char { .. } => {}
             }
         }
@@ -621,7 +702,14 @@ pub(crate) fn boxed_node(boxed: MathBox) -> MathNode {
 }
 
 pub(crate) fn node_is_char(node: &MathNode) -> bool {
-    matches!(node, MathNode::Char { .. })
+    matches!(
+        node,
+        MathNode::Char { .. }
+            | MathNode::NativeSource {
+                evidence: NativeNodeEvidence::Character(_),
+                ..
+            }
+    )
 }
 
 #[derive(Clone, Copy, Debug)]

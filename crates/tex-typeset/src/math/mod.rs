@@ -38,7 +38,7 @@ pub use delimiters::left_right_delimiter_target;
 pub(crate) use delimiters::test_var_delimiter;
 pub use model::{
     BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathNode,
-    MathPackObservation,
+    MathPackObservation, NativeBoxSource, NativeNodeEvidence,
 };
 pub(crate) use model::{NativeNodeTransaction, boxed_node, node_is_char};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};

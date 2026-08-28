@@ -219,6 +219,16 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                     self.stores.append_page_active_list(&mut target, child);
                 }
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
+                    let vertical = matches!(node, MathNode::VList(_));
+                    if self.unchanged_native_box(boxed, vertical).is_some() {
+                        let source = boxed.source.expect("unchanged source box has provenance");
+                        self.stores.append_page_active_list_range(
+                            &mut target,
+                            source.list,
+                            source.index as usize..source.index as usize + 1,
+                        );
+                        continue;
+                    }
                     let result = self.stores.finalize_page_active_list(&mut target);
                     let children = self.lower_span(boxed.list, layout);
                     let boxed_node = lower_math_box(boxed, children);
@@ -226,7 +236,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                     self.stores.append_page_active_list(&mut target, result);
                     self.stores.push_page_active_list(
                         &mut target,
-                        if matches!(node, MathNode::VList(_)) {
+                        if vertical {
                             Node::VList(boxed_node)
                         } else {
                             Node::HList(boxed_node)
@@ -283,7 +293,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                         depth: *depth,
                     },
                 ),
-                MathNode::NativeSource { list, index } => {
+                MathNode::NativeSource { list, index, .. } => {
                     self.stores.append_page_active_list_range(
                         &mut target,
                         *list,
@@ -358,10 +368,23 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                             target,
                         }),
                         MathNode::HList(boxed) | MathNode::VList(boxed) => {
+                            let vertical = matches!(node, MathNode::VList(_));
+                            if let Some(source_box) = self.unchanged_native_box(boxed, vertical) {
+                                let source_node = if vertical {
+                                    Node::VList(source_box)
+                                } else {
+                                    Node::HList(source_box)
+                                };
+                                self.stores.push_shipout_scratch_node(
+                                    target,
+                                    source_node.map_lists(tex_state::ShipoutListId::Page),
+                                );
+                                continue;
+                            }
                             let children = self.stores.begin_shipout_scratch_list();
                             tasks.push(Task::FinishBox {
-                                boxed: boxed.clone(),
-                                vertical: matches!(node, MathNode::VList(_)),
+                                boxed: *boxed,
+                                vertical,
                                 target,
                                 children,
                             });
@@ -415,7 +438,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 depth: *depth,
                             },
                         ),
-                        MathNode::NativeSource { list, index } => {
+                        MathNode::NativeSource { list, index, .. } => {
                             let node = self
                                 .stores
                                 .page_node_list(*list)
@@ -430,6 +453,32 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                 }
             }
         }
+    }
+
+    fn unchanged_native_box(&self, boxed: &MathBox, vertical: bool) -> Option<BoxNode> {
+        boxed.source.and_then(|source| {
+            if source.payload != boxed.list {
+                return None;
+            }
+            let node = self
+                .stores
+                .page_node_list(source.list)
+                .ok()
+                .and_then(|nodes| nodes.owned_node(source.index as usize))?;
+            match node {
+                Node::HList(source_box)
+                    if !vertical && lower_math_box(boxed, source_box.children) == *source_box =>
+                {
+                    Some(*source_box)
+                }
+                Node::VList(source_box)
+                    if vertical && lower_math_box(boxed, source_box.children) == *source_box =>
+                {
+                    Some(*source_box)
+                }
+                _ => None,
+            }
+        })
     }
 
     fn take_root_nodes(&mut self) -> PageListId {
