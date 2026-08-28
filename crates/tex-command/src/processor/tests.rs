@@ -4,7 +4,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::input::InputLevel;
 use crate::{
     AlignmentIdentity, CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation,
-    CommandObserver, CommandState, DeliveryStatus,
+    CommandObserver, CommandState, DeliveryStatus, InputReason, InputTransition,
 };
 
 #[derive(Default)]
@@ -269,6 +269,179 @@ fn direct_source_command_captures_its_physical_line_before_retirement() {
                 break;
             }
         }
+    });
+}
+
+#[test]
+fn empty_direct_source_registers_provenance_before_observed_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(
+                crate::SourceRegistration::new(crate::RegisteredSourceKind::Generated, &b""[..])
+                    .with_name("empty-root.tex"),
+            )
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let mut context = universe.command_context().expect("command context");
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            )
+            .with_observer(&mut observer);
+            assert!(
+                processor
+                    .get_next()
+                    .expect("empty source retirement")
+                    .is_none()
+            );
+        }
+
+        let origin = context.source_range_origin(source, 0, 0);
+        assert_ne!(origin, OriginId::UNKNOWN);
+        let recipe = context
+            .detach_artifact_source_recipe(origin)
+            .expect("retired empty source remains registered for provenance");
+        assert_eq!(recipe.logical_path, "empty-root.tex");
+        assert_eq!((recipe.start, recipe.end), (0, 0));
+        assert!(observer.observations.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Retire
+                        && record.reason == InputReason::Source
+                        && record.source == Some(source)
+            )
+        }));
+    });
+}
+
+#[test]
+fn forced_eof_before_production_acquisition_registers_source_before_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(
+                crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    &b"unread"[..],
+                )
+                .with_name("forced-eof.tex"),
+            )
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let Some(InputLevel::Source(active)) = command.input.levels.last_mut() else {
+            panic!("source is active");
+        };
+        let line = active
+            .cursor
+            .load_next_line(13)
+            .expect("line is acquired outside production delivery");
+        line.byte_cursor = line.retained_end;
+        line.endline_delivered = true;
+        assert!(command.end_current_source_after_current_line());
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let mut context = universe.command_context().expect("command context");
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            )
+            .with_observer(&mut observer);
+            assert!(
+                processor
+                    .get_next()
+                    .expect("forced source retirement")
+                    .is_none()
+            );
+        }
+
+        let origin = context.source_range_origin(source, 0, 6);
+        let recipe = context
+            .detach_artifact_source_recipe(origin)
+            .expect("forced-EOF source is registered before retirement");
+        assert_eq!(recipe.logical_path, "forced-eof.tex");
+        assert_eq!((recipe.start, recipe.end), (0, 6));
+        assert!(observer.observations.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Retire
+                        && record.reason == InputReason::Source
+                        && record.source == Some(source)
+            )
+        }));
+    });
+}
+
+#[test]
+fn failed_source_map_registration_does_not_mark_cursor_registered() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"x"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        context
+            .register_source(
+                source,
+                tex_state::source_map::SourceDescriptor::generated(std::sync::Arc::from(
+                    &b"conflict"[..],
+                )),
+            )
+            .expect("conflicting source id seed");
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("delivery tolerates diagnostic registration failure")
+                    .expect("source token")
+                    .spelling()
+                    .semantic_token(),
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                }
+            );
+        }
+        let Some(InputLevel::Source(source)) = command.input.levels.last() else {
+            panic!("source remains live after its first token");
+        };
+        assert!(!source.cursor.backing_registered);
     });
 }
 

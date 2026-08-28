@@ -25,14 +25,6 @@ pub(crate) enum InputTopTransition {
     Empty,
 }
 
-type SourceMapRegistration = (tex_state::SourceId, tex_state::source_map::SourceDescriptor);
-
-pub(crate) struct AcquiredInputLine {
-    pub(crate) physical: super::PhysicalLine,
-    source_registration: Option<SourceMapRegistration>,
-    replacement_registration: Option<SourceMapRegistration>,
-}
-
 /// One committed input-lifecycle transition.
 ///
 /// `trace` explains the replay that ended but does not select `action`.
@@ -243,6 +235,7 @@ impl<G> CommandState<G> {
                 InputLevel::Source(source) => {
                     let identity = source.identity();
                     let position = source.cursor.next_physical_offset;
+                    register_source_backings(state, &mut source.cursor);
                     if state.tracked_region_is_active() {
                         super::observe_immutable_source(state, source);
                     }
@@ -374,12 +367,13 @@ impl<G> CommandState<G> {
         firm: bool,
         pending_acquired_line: bool,
     ) -> Result<Option<super::PhysicalLine>, ()> {
-        if state.tracked_region_is_active()
-            && let Some(InputLevel::Source(source)) = self.input.levels.last()
-        {
-            super::observe_immutable_source(state, source);
+        if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
+            register_source_backings(state, &mut source.cursor);
+            if state.tracked_region_is_active() {
+                super::observe_immutable_source(state, source);
+            }
         }
-        let acquired = {
+        let physical = {
             let mut queries = LiveSourceQueries {
                 state,
                 create_control_sequences,
@@ -391,21 +385,13 @@ impl<G> CommandState<G> {
                 &mut queries,
             )?
         };
-        let Some(acquired) = acquired else {
-            return Ok(None);
-        };
-        if let Some((source, descriptor)) = acquired.source_registration {
-            let _ = state.register_source(source, descriptor);
+        if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
+            register_source_backings(state, &mut source.cursor);
+            if state.tracked_region_is_active() {
+                super::observe_immutable_source(state, source);
+            }
         }
-        if let Some((source, descriptor)) = acquired.replacement_registration {
-            let _ = state.register_source(source, descriptor);
-        }
-        if state.tracked_region_is_active()
-            && let Some(InputLevel::Source(source)) = self.input.levels.last()
-        {
-            super::observe_immutable_source(state, source);
-        }
-        Ok(Some(acquired.physical))
+        Ok(physical)
     }
 
     pub(crate) fn acquire_input_top_line_with_queries(
@@ -414,7 +400,7 @@ impl<G> CommandState<G> {
         firm: bool,
         pending_acquired_line: bool,
         queries: &mut dyn crate::SourceStepQueries,
-    ) -> Result<Option<AcquiredInputLine>, ()> {
+    ) -> Result<Option<super::PhysicalLine>, ()> {
         let occupied_below_active =
             self.input
                 .levels
@@ -435,7 +421,7 @@ impl<G> CommandState<G> {
             .saturating_add(occupied_below_active);
         let profile = self.profile();
         let old_next_source_identity = self.input.next_source_identity;
-        let (physical, retained_line, source_registration, replacement_registration) = {
+        let (physical, retained_line) = {
             let usage = &mut self.stack_usage;
             let input = &mut self.roots.input;
             let Some(InputLevel::Source(source)) = input.levels.last_mut() else {
@@ -446,13 +432,6 @@ impl<G> CommandState<G> {
             if pending_acquired_line {
                 source.cursor.pending_acquired_line = true;
             }
-            let source_registration = (!source.cursor.backing_registered).then(|| {
-                source.cursor.backing_registered = true;
-                (
-                    source.cursor.backing.id,
-                    source.cursor.backing.source_descriptor(),
-                )
-            });
             let mut lines = super::LineBackingRegistry {
                 profile,
                 next_identity: &mut input.next_source_identity,
@@ -471,14 +450,6 @@ impl<G> CommandState<G> {
                     .firm_up_the_line(endlinechar, queries, &mut lines);
                 lines.record_line_usage(&source.cursor);
             }
-            let replacement_registration = if source.cursor.line_backing_registered {
-                None
-            } else {
-                source.cursor.line_backing.as_ref().map(|backing| {
-                    source.cursor.line_backing_registered = true;
-                    (backing.id, backing.source_descriptor())
-                })
-            };
             let retained_line = match name_class {
                 SourceNameClass::File | SourceNameClass::Scantokens(_) => source
                     .cursor
@@ -489,23 +460,14 @@ impl<G> CommandState<G> {
                 SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
             };
             debug_assert_eq!(source.identity(), identity);
-            (
-                physical,
-                retained_line,
-                source_registration,
-                replacement_registration,
-            )
+            (physical, retained_line)
         };
         if self.input.next_source_identity != old_next_source_identity {
             self.timeline
                 .record_next_source_identity(old_next_source_identity);
         }
         self.set_retained_file_line_number(retained_line);
-        Ok(Some(AcquiredInputLine {
-            physical,
-            source_registration,
-            replacement_registration,
-        }))
+        Ok(Some(physical))
     }
 
     pub(crate) fn set_retained_file_line_number(&mut self, line: i32) {
@@ -1122,6 +1084,33 @@ fn source_level_is_framed<G>(source: &super::SourceLevel<G>) -> bool {
         SourceNameClass::Terminal
         | SourceNameClass::ReadStream(_)
         | SourceNameClass::Scantokens(_) => false,
+    }
+}
+
+/// Registers every immutable backing currently owned by one source cursor.
+///
+/// Source-map provenance is diagnostic state, so registration failure does
+/// not change TeX delivery. The cursor bit records the aggregate commit rather
+/// than the attempt: a failed registration remains retryable, while the warm
+/// path neither clones a descriptor nor allocates.
+fn register_source_backings<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
+    cursor: &mut super::SourceCursor,
+) {
+    if !cursor.backing_registered
+        && state
+            .register_source(cursor.backing.id, cursor.backing.source_descriptor())
+            .is_ok()
+    {
+        cursor.backing_registered = true;
+    }
+    if !cursor.line_backing_registered
+        && let Some(backing) = cursor.line_backing.as_ref()
+        && state
+            .register_source(backing.id, backing.source_descriptor())
+            .is_ok()
+    {
+        cursor.line_backing_registered = true;
     }
 }
 

@@ -2739,7 +2739,6 @@ impl<G> CommandState<G> {
         self.acquire_input_top_line_with_queries(endlinechar, firm, false, queries)
             .ok()
             .flatten()
-            .map(|acquired| acquired.physical)
     }
 
     /// Returns the immutable profile selected when this job was created.
