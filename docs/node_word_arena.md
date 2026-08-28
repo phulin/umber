@@ -70,16 +70,16 @@ are:
 
 - `ScratchListId` for unfinished shaping, transforms, packing probes, and
   speculative operation material;
-- `PageListId` for generation-owned open modes, alignments, insertions,
-  page-builder material, and the physical rows later retained by boxes; and
-- `DurableListId<G>` for a generation-branded coordinate view retained by box
-  registers, PDF forms, or revision checkpoints.
+- `PageListId` for generation-owned open modes, alignments, insertions, and
+  page-builder material. Durable closures use owner-relative `PageListId`
+  coordinates only while borrowed through their move-only region owner.
 
 Shipout-derived nodes use a separate `ShipoutScratchListId`, not another
-`NodeListId<L>` alias. During output only, `ShipoutListId<G>` is the tagged
-borrow projection over `PageListId`, `DurableListId<G>`, and
-`ShipoutScratchListId`. No semantic/checkpoint carrier accepts either shipout
-type, so scratch escape is a Rust type error rather than a runtime convention.
+`NodeListId<L>` alias. During output only, `ShipoutListId` is the tagged borrow
+projection over `PageListId` and `ShipoutScratchListId`. Scratch rows contain
+only scratch child coordinates. No semantic/checkpoint carrier accepts either
+shipout type, so scratch escape is a Rust type error rather than a runtime
+convention.
 
 A coordinate is a borrowed capability under one matching move-only
 `NodeRegion`. It contains no `Arc`, `Weak`, root slot, registry key, reference
@@ -166,23 +166,27 @@ not callable from ordinary box, page, math, alignment, or token transitions.
 ## Boxes and generation ownership
 
 The dense box-register bank stores a move-only durable owner-plus-root carrier,
-not a naked `DurableListId<G>`. TeX assignment moves the old carrier into the
+not a naked coordinate. TeX assignment moves the old carrier into the
 save journal before installing its replacement. Group restoration moves it
 back; a superseding global assignment drops it in TeX order. Retained
 checkpoint history likewise owns the exact older carrier it can restore.
 
-Moving a durable box into page or mode state transfers or merges its exclusive
-self-contained region when unique. TeX `\copy` creates an independent node
+Moving a durable box into page state transfers its exclusive self-contained
+region when unique. Page construction still publishes a compatibility page
+closure, so assignment to a durable register currently performs one explicit,
+counted `page_to_durable` copy; whole-envelope transfer is the remaining seam
+once page construction produces an independently consumable closure. TeX
+`\copy` creates an independent node
 closure but continues to share the selected immutable token-list and glue
 values, matching TeX82. Neither operation adds per-list or per-node ownership.
 
 ## Shipout boundary
 
-A completed explicit shipout operand is a page `Node` plus its move-only page
-region; default output is the immutable durable box-255 root after the register
-is cleared. PDF forms are durable roots as well. All three are wrapped in a
-typed `ShipoutRoot<G>` and traversed in place. Child coordinates remain in the
-same source arena. Shipout never promotes or rehomes their graphs.
+A completed explicit shipout operand is a page `Node` plus its page closure.
+Default output consumes box 255 into page storage, using one bounded historical
+copy only when a retained checkpoint prevents the exact move. PDF form
+traversal likewise copies its immutable durable closure into page material.
+Shipout traversal then borrows only page or self-contained scratch rows.
 
 Output-only math nodes are appended directly to final stable rows in the one
 reusable `ShipoutScratchArena<G>`. No temporary node vector is drained into

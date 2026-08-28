@@ -188,18 +188,17 @@ preparation installs the pinned INITEX defaults; ordinary grouping, rollback,
 semantic hashing, and format serialization apply without a PDF-specific side
 store.
 
-Box slots additionally retain the group depth that owns their visible value.
-Each nonvoid slot contains an `Option<DurableListId<G>>` into the admitted
-slot's durable node arena. The external reachability store and its move-only
-slot lease, not the packed word or individual box cell, are the current
-lifetime authority. Box undo records journal the old
-and new coordinates with their exact TeX levels.
+Box slots live beside the copyable dense metadata as move-only durable
+owner-plus-root carriers. Their reversible journal moves owners through group,
+operation, and checkpoint lanes; cheap restoration receipts expose only copied
+metadata. The durable region owner, not a packed word or raw coordinate, is the
+lifetime authority.
 Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
 owner depth even when executed inside a nested box-construction group: the
 void or remainder value crosses inner boundaries, then the prior value is
 restored only when its owning group ends. Journal records therefore carry a box
 restore depth independently of whether an ordinary assignment was global; a
-refiled record carries its owned box root across intervening group exits.
+refiled record carries its owned closure across intervening group exits.
 
 ## 5. Meaning, sparse tier: the code tables
 

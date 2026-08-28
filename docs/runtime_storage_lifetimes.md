@@ -595,15 +595,16 @@ literals and identifiers, and alignment templates. The node adds no word copy,
 content hash, owner search, `Arc`, or `Weak`; final drop of either semantic
 carrier releases the shared allocation exactly once.
 
-Shipout receives a typed `ShipoutRoot<G>` and traverses page or durable rows in
-place. Explicit operands are borrowed from page storage; box 255 and PDF forms
-are borrowed from immutable durable storage. `ShipoutListId<G>` can additionally
-name the scratch lane during traversal, but `ShipoutScratchListId` is a distinct
-private-construction coordinate which no page state, mode, journal, format,
-memo, checkpoint, or artifact field accepts. Deferred writes and PDF navigation
-payloads likewise retain typed source coordinates through suspension and are
-streamed into expansion or their final detached/durable destination. No source
-node closure or token payload is copied into another live arena for shipout.
+Shipout receives a typed page root. Box 255 is consumed or history-preserved
+into page storage before traversal, and PDF forms are explicitly copied from
+their immutable durable owner into page material. `ShipoutListId` can name page
+or scratch rows during traversal, but every stored `ShipoutScratchNode` child is
+a `ShipoutScratchListId`; page coordinates are borrowed only while recursively
+materializing that self-contained scratch closure. No page state, mode,
+journal, format, memo, checkpoint, or artifact field accepts the scratch
+coordinate. Deferred writes and PDF navigation payloads retain branded source
+coordinates through suspension and are streamed into expansion or their final
+detached/durable destination.
 
 Successful publication lowers directly to a handle-free page plan and artifact.
 Failure restores scalar roots and journal cursors, then resets the complete

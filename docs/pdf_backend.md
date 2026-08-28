@@ -126,12 +126,12 @@ image, form, and graphics-state resources are referenced rather than copied.
 Future primitive issues may add object kinds without adding a second PDF
 state store.
 
-A staged form record stores a `DurableListId<G>` in the admitted generation's
-node arena after consuming its box register. The coarse generation owner keeps
-that closure admissible across PDF snapshots and rollback; the form adds no
-per-list owner. Direct form traversal copies the closure into bounded
-page-lifetime scratch, emits detached positioned/form artifacts, and truncates
-that scratch on both success and failure. Neither finalization input nor the
+A staged form record stores copyable PDF metadata only. A separate move-only
+durable form carrier owns its self-contained node closure and moves or retires
+with PDF candidate/checkpoint settlement. Direct form traversal explicitly
+copies the retained closure into bounded page-lifetime material, emits detached
+positioned/form artifacts, and truncates that material on both success and
+failure. Neither finalization input nor the
 validated `tex-out` PDF graph retains a runtime node coordinate, arena key,
 generation owner, or engine borrow.
 
