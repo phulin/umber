@@ -212,7 +212,8 @@ struct DenseState<G> {
 
 struct SaveJournal<G> {
     active_groups: Vec<GroupSegment<G>>,
-    checkpoint_deltas: Vec<CheckpointDelta<G>>,
+    checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
+    checkpoint_lane: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
     checkpoint_epochs: HashMap<StateCell, u64>,
     operation_undo: Vec<UndoEntry<G>>,
 }
@@ -220,14 +221,17 @@ struct SaveJournal<G> {
 struct JournalCursor {
     group_segment: u64,
     group_entry: u32,
-    checkpoint_delta: u32,
+    checkpoint_mark: CheckpointMark<DenseJournalLane>,
 }
 ```
 
 Dense state remains directly mutated and directly read. There is no state
 overlay, threshold densification, compaction pass, forwarding coordinate,
 per-entry owner, or checkpoint bank clone. Restoration walks retained deltas
-backward and writes their packed prior words into the dense banks. Whole group
+backward and swaps their packed alternate words into the dense banks. Edit
+start detaches the accepted chunk suffix, candidate writes append privately,
+rejection swaps the candidate backward and accepted suffix forward, and
+acceptance prunes the detached suffix. Whole group
 segments are moved between active, checkpoint-retained, operation-pending, and
 reusable-buffer owners without scanning, copying, relocating, or repacking
 their live entries.

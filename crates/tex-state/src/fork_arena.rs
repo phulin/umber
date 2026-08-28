@@ -605,6 +605,16 @@ impl<Lane> Clone for CheckpointMark<Lane> {
     }
 }
 impl<Lane> Copy for CheckpointMark<Lane> {}
+impl<Lane> PartialEq for CheckpointMark<Lane> {
+    fn eq(&self, other: &Self) -> bool {
+        self.arena == other.arena
+            && self.payload_chunks == other.payload_chunks
+            && self.descriptor_chunks == other.descriptor_chunks
+            && self.payload_tail == other.payload_tail
+            && self.descriptor_tail == other.descriptor_tail
+    }
+}
+impl<Lane> Eq for CheckpointMark<Lane> {}
 impl<Lane> core::fmt::Debug for CheckpointMark<Lane> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CheckpointMark")
@@ -1630,6 +1640,36 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.live_payload_len(),
             &mut visit,
         )
+    }
+
+    /// Visits the current candidate suffix after `mark` without touching the
+    /// detached accepted suffix.
+    #[doc(hidden)]
+    pub fn visit_current_checkpoint_suffix(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+        mut visit: impl FnMut(&T),
+    ) -> Result<(), ForkArenaError> {
+        if !matches!(self.ownership, ForkOwnership::Forked { .. })
+            || !self.validates_checkpoint(mark)
+        {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        for position in mark.payload_chunks as usize..self.live_payload_len() {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidCheckpoint)?;
+            let used = pool.payload.used(key, self.owner)?;
+            for offset in 0..used {
+                visit(
+                    pool.payload
+                        .get(key, self.owner, offset)
+                        .ok_or(ForkArenaError::InvalidChunk)?,
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Mutates the detached accepted suffix in sequence order. This permits a

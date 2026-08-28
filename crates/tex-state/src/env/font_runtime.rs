@@ -376,6 +376,52 @@ impl FontRuntimeBank {
         Ok(())
     }
 
+    pub(crate) fn swap_integer(
+        &mut self,
+        cell: FontRuntimeCell,
+        value: &mut i32,
+        level: &mut u32,
+    ) -> Result<(), BankError> {
+        let target = match cell {
+            FontRuntimeCell::ParameterCount(font) => &mut self.row_mut(font)?.parameter_count,
+            FontRuntimeCell::HyphenChar(font) => &mut self.row_mut(font)?.hyphen_char,
+            FontRuntimeCell::SkewChar(font) => &mut self.row_mut(font)?.skew_char,
+            FontRuntimeCell::PdfCode { table, font, code } => self.row_mut(font)?.pdf_codes
+                [usize::from(table)]
+            .as_mut()
+            .and_then(|values| values.get_mut(usize::from(code)))
+            .ok_or(BankError::IndexOutOfBounds)?,
+            FontRuntimeCell::LigaturesDisabled(font) => &mut self.row_mut(font)?.ligatures_disabled,
+            FontRuntimeCell::Dimen { .. } => return Err(BankError::IndexOutOfBounds),
+        };
+        std::mem::swap(value, &mut target.value);
+        std::mem::swap(level, &mut target.level);
+        Ok(())
+    }
+
+    pub(crate) fn swap_dimension(
+        &mut self,
+        cell: FontRuntimeCell,
+        value: &mut Scaled,
+        level: &mut u32,
+    ) -> Result<(), BankError> {
+        let FontRuntimeCell::Dimen { font, number } = cell else {
+            return Err(BankError::IndexOutOfBounds);
+        };
+        let index = number
+            .checked_sub(1)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or(BankError::IndexOutOfBounds)?;
+        let target = self
+            .row_mut(font)?
+            .parameters
+            .get_mut(index)
+            .ok_or(BankError::IndexOutOfBounds)?;
+        std::mem::swap(value, &mut target.value);
+        std::mem::swap(level, &mut target.level);
+        Ok(())
+    }
+
     pub(crate) fn allocated_pages(&self) -> usize {
         self.rows
             .iter()

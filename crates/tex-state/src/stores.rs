@@ -216,7 +216,7 @@ impl<G> StateCore<G> {
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedStateCoreTail<G>) {
-        drop(tail.dense);
+        self.state.accept_checkpoint_candidate(tail.dense);
         drop(tail.generation);
     }
 

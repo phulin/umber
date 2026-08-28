@@ -80,22 +80,22 @@ fn borrowed_meaning_row_acquires_one_owner_only_when_resolved() {
                 AssignmentScope::Global,
             )
             .expect("assign macro");
-        assert_eq!(definition.semantic_owner_count(), 3);
+        assert_eq!(definition.semantic_owner_count(), 2);
 
         let word = state.meaning_word(selector.symbol()).expect("borrow row");
         assert_eq!(
             definition.semantic_owner_count(),
-            3,
+            2,
             "borrowing the dense row must not acquire the macro owner"
         );
         let resolved = word.resolve();
         assert_eq!(
             definition.semantic_owner_count(),
-            4,
+            3,
             "resolving into the owned delivery acquires exactly one owner"
         );
         drop(resolved);
-        assert_eq!(definition.semantic_owner_count(), 3);
+        assert_eq!(definition.semantic_owner_count(), 2);
     });
 }
 
@@ -128,8 +128,8 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token list");
-        assert_eq!(definition.semantic_owner_count(), 3);
-        assert_eq!(tokens.semantic_owner_count(), 3);
+        assert_eq!(definition.semantic_owner_count(), 2);
+        assert_eq!(tokens.semantic_owner_count(), 2);
 
         state.restore(before).expect("rollback");
         assert_eq!(definition.semantic_owner_count(), 1);
@@ -186,6 +186,60 @@ fn checkpoint_values_rewind_and_redo_without_consuming_the_accepted_delta() {
 
     state.restore(checkpoint).expect("the delta remained live");
     assert_eq!(state.count(0).expect("restored count"), 1);
+}
+
+#[test]
+fn root_checkpoint_suffixes_accept_and_reject_without_copying_metadata_values() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base assignment");
+    let early = state.journal_cursor();
+    state
+        .assign_count(0, 2, AssignmentScope::Global)
+        .expect("accepted assignment");
+    let discarded_sibling = state.journal_cursor();
+    let dense = state.checkpoint_cursor();
+
+    let accepted = state
+        .begin_checkpoint_candidate(early, dense)
+        .expect("first candidate");
+    state
+        .assign_count(0, 10, AssignmentScope::Global)
+        .expect("first candidate assignment");
+    state.accept_checkpoint_candidate(accepted);
+    assert_eq!(state.count(0).expect("accepted count"), 10);
+    assert!(state.validate_restore(early).is_ok());
+    assert!(state.validate_restore(discarded_sibling).is_err());
+
+    let surviving_sibling = state.journal_cursor();
+    state
+        .assign_count(0, 11, AssignmentScope::Global)
+        .expect("later accepted assignment");
+    let accepted = state
+        .begin_checkpoint_candidate(early, dense)
+        .expect("rejected candidate");
+    assert_eq!(state.count(0).expect("rewound count"), 1);
+    state
+        .assign_count(0, 20, AssignmentScope::Global)
+        .expect("rejected assignment");
+    state
+        .reject_checkpoint_candidate(early, dense, accepted)
+        .expect("reject candidate");
+    assert_eq!(state.count(0).expect("restored count"), 11);
+    assert!(state.validate_restore(surviving_sibling).is_ok());
+
+    let accepted = state
+        .begin_checkpoint_candidate(early, dense)
+        .expect("replacement candidate");
+    state
+        .assign_count(0, 30, AssignmentScope::Global)
+        .expect("replacement assignment");
+    state.accept_checkpoint_candidate(accepted);
+    assert_eq!(state.count(0).expect("replacement count"), 30);
+    assert!(state.validate_restore(early).is_ok());
+    assert!(state.validate_restore(surviving_sibling).is_err());
+    assert_eq!(state.journal().checkpoint_counters().source_nodes_copied, 0);
 }
 
 #[test]
@@ -305,12 +359,16 @@ fn ordered_journal_carries_each_exact_prior_word_and_only_the_tex_save() {
         .assign_count(0, 5, AssignmentScope::Local)
         .expect("second local");
 
-    let JournalEntry::Mutation(first) = state.journal.entry(1) else {
+    let JournalEntry::Mutation(first) = state.journal().entry(1) else {
         panic!("expected first local mutation");
     };
     assert_eq!(first.before, super::StateWord::Integer(3));
     assert_eq!(first.saved_at(), Some(2));
-    assert_eq!(state.journal.len(), 2, "only the real TeX save is retained");
+    assert_eq!(
+        state.journal().len(),
+        2,
+        "only the real TeX save is retained"
+    );
 }
 
 #[test]
@@ -497,7 +555,7 @@ fn journal_cursor_restores_group_exit_and_assignment_exactly() {
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(5));
     assert_ne!(
-        state.journal.retained_len(),
+        state.journal().retained_len(),
         0,
         "the live checkpoint pins this group"
     );
@@ -514,9 +572,9 @@ fn closed_group_saves_pop_when_no_checkpoint_or_operation_pins_them() {
     state
         .assign_count(0, 9, AssignmentScope::Local)
         .expect("local");
-    assert_ne!(state.journal.retained_len(), 0);
+    assert_ne!(state.journal().retained_len(), 0);
     state.end_group(GroupKind::Simple).expect("end");
-    assert_eq!(state.journal.group_save_len(), 0);
+    assert_eq!(state.journal().group_save_len(), 0);
     assert_eq!(state.count(0).expect("read"), 0);
 }
 
@@ -530,9 +588,9 @@ fn operation_started_inside_group_temporarily_pins_then_releases_group_saves() {
     let operation = state.begin_state_operation();
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.group_depth(), 0);
-    assert_ne!(state.journal.group_save_len(), 0);
+    assert_ne!(state.journal().group_save_len(), 0);
     state.commit_state_operation(operation);
-    assert_eq!(state.journal.group_save_len(), 0);
+    assert_eq!(state.journal().group_save_len(), 0);
 }
 
 #[test]

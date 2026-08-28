@@ -582,6 +582,13 @@ impl<T: Clone> DenseBank<T> {
     }
 
     #[inline(always)]
+    pub(crate) fn get_mut(&mut self, index: u32) -> Result<&mut BankCell<T>, BankError> {
+        self.cells
+            .get_mut(index as usize)
+            .ok_or(BankError::IndexOutOfBounds)
+    }
+
+    #[inline(always)]
     pub(crate) fn write(&mut self, index: u32, cell: BankCell<T>) -> Result<(), BankError> {
         *self
             .cells
@@ -657,6 +664,15 @@ impl<T: Clone> PagedDenseBank<T> {
         Ok(())
     }
 
+    #[inline(always)]
+    pub(crate) fn get_mut(&mut self, index: u32) -> Result<&mut BankCell<T>, BankError> {
+        let (page, offset) = self.location(index)?;
+        self.pages[page]
+            .as_mut()
+            .map(|values| &mut values[offset])
+            .ok_or(BankError::IndexOutOfBounds)
+    }
+
     #[must_use]
     pub(crate) fn allocated_pages(&self) -> usize {
         self.pages.iter().filter(|page| page.is_some()).count()
@@ -716,6 +732,15 @@ impl<T: Clone> RegisterBank<T> {
             Ok(())
         } else {
             self.overflow.write(u32::from(index), cell)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_mut(&mut self, index: u16) -> Result<&mut BankCell<T>, BankError> {
+        if usize::from(index) < DENSE_REGISTER_COUNT {
+            Ok(&mut self.dense[index as usize])
+        } else {
+            self.overflow.get_mut(u32::from(index))
         }
     }
 

@@ -296,14 +296,16 @@ arena coordinates. It never owns a `StateCore`, `DenseState`, or
 `PageNodeArena` bank. Multiple sibling marks may name the same lineage without
 creating more mutable authorities.
 
-Each dense journal record stores its cell coordinate and old/new durable value
-once. Rewinding the accepted suffix applies old values in reverse while
-retaining the records; rejection applies their new values forward after the
-candidate journal has been undone. Acceptance drops the superseded accepted
-suffix and promotes the candidate journal. Stack and arena journals use the
-same bidirectional rule with reversible logical coordinates. Durable values
-and node payloads are not copied into checkpoints or reconstructed by replaying
-page prefixes.
+Each dense journal record stores its cell coordinate and one durable alternate
+value. Rewinding the accepted suffix swaps old values into the banks in reverse,
+leaving the accepted forward values in the same detached records. Rejection
+first swaps candidate records backward and then swaps those detached accepted
+records forward. Acceptance drops the superseded accepted suffix and promotes
+the candidate journal. The checkpoint-delta lane is a typed `ForkArena` over
+one caller-owned coarse `ChunkPool`; capture seals a fixed whole-chunk mark and
+copies no delta value. Stack and arena journals use the same bidirectional rule
+with reversible logical coordinates. Durable values and node payloads are not
+copied into checkpoints or reconstructed by replaying page prefixes.
 
 The replacement page-node owner uses one caller-owned `ChunkPool<Node>` plus
 typed coordinate-only `ForkArena` lanes. Payload is append-once in fixed-byte

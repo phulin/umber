@@ -3,15 +3,16 @@
 //! The journal stores values, never owners. Generation-scoped coordinates are
 //! copied in typed words and remain valid because the enclosing generation is
 //! the coarse lifetime owner. Dense state stays directly readable: group exits
-//! pop the TeX save stack, named checkpoints retain one first-before value per
-//! written cell and interval, and fine-grained rollback reuses an attempt-local
-//! lane which is cleared at every commit.
+//! pop the TeX save stack, named checkpoints retain one reversible alternate
+//! value per written cell and interval in a forked chunk lane, and fine-grained
+//! rollback reuses an attempt-local lane which is cleared at every commit.
 
 use core::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::env::group::GroupFrame;
 use crate::env::{StateCell, StateWord};
+use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, OperationMark};
 
 #[path = "journal/cell.rs"]
 mod cell;
@@ -28,7 +29,8 @@ pub struct JournalCursor<G> {
     owner: u64,
     group_id: u64,
     group_entry_position: u32,
-    checkpoint_position: u32,
+    checkpoint: CheckpointMark<DenseJournalLane>,
+    checkpoint_entries: u32,
     group_depth: u32,
     save_stack: SaveStackProjection,
     _brand: PhantomData<fn(&G) -> &G>,
@@ -53,7 +55,7 @@ impl<G> PartialEq for JournalCursor<G> {
         self.owner == other.owner
             && self.group_id == other.group_id
             && self.group_entry_position == other.group_entry_position
-            && self.checkpoint_position == other.checkpoint_position
+            && self.checkpoint_entries == other.checkpoint_entries
             && self.group_depth == other.group_depth
             && self.save_stack == other.save_stack
     }
@@ -66,7 +68,8 @@ impl<G> JournalCursor<G> {
         owner: u64,
         group_id: u64,
         group_entry_position: u32,
-        checkpoint_position: u32,
+        checkpoint: CheckpointMark<DenseJournalLane>,
+        checkpoint_entries: u32,
         group_depth: u32,
         save_stack: SaveStackProjection,
     ) -> Self {
@@ -74,7 +77,8 @@ impl<G> JournalCursor<G> {
             owner,
             group_id,
             group_entry_position,
-            checkpoint_position,
+            checkpoint,
+            checkpoint_entries,
             group_depth,
             save_stack,
             _brand: PhantomData,
@@ -89,8 +93,12 @@ impl<G> JournalCursor<G> {
         self.group_entry_position
     }
 
-    pub(super) const fn checkpoint_position(self) -> u32 {
-        self.checkpoint_position
+    const fn checkpoint_mark(self) -> CheckpointMark<DenseJournalLane> {
+        self.checkpoint
+    }
+
+    pub(super) const fn checkpoint_entries(self) -> u32 {
+        self.checkpoint_entries
     }
 
     pub(super) const fn group_depth(self) -> u32 {
@@ -105,7 +113,8 @@ pub struct StateOperation<G> {
     group_id: u64,
     group_entry_position: u32,
     group_depth: u32,
-    checkpoint_position: u32,
+    checkpoint: OperationMark<DenseJournalLane>,
+    checkpoint_entries: u32,
     operation_position: u32,
     pending_group_position: u32,
     _brand: PhantomData<fn(&G) -> &G>,
@@ -189,59 +198,42 @@ struct GroupSegment<G> {
     checkpoint_pinned: bool,
 }
 
-impl<G> Clone for GroupSegment<G> {
-    fn clone(&self) -> Self {
-        let mut entries = Vec::with_capacity(self.entries.len().saturating_add(1));
-        entries.extend(self.entries.iter().cloned());
-        Self {
-            id: self.id,
-            parent: self.parent,
-            frame: self.frame,
-            entries,
-            checkpoint_pinned: self.checkpoint_pinned,
-        }
-    }
-}
+enum DenseJournalLane {}
 
-/// One compact bidirectional value retained for a checkpoint interval.
+/// One compact reversible value retained for a checkpoint interval.
 pub(crate) struct CheckpointDelta<G> {
     pub(crate) cell: StateCell,
-    pub(crate) before: StateWord<G>,
-    pub(crate) before_level: u32,
-    pub(crate) after: StateWord<G>,
-    pub(crate) after_level: u32,
+    pub(crate) alternate: StateWord<G>,
+    pub(crate) alternate_level: u32,
 }
 
 /// Accepted journal material temporarily detached while one rooted candidate
 /// owns the live dense state. Entries move into this token; they are neither
 /// cloned into a checkpoint nor discarded before accept/reject resolves.
 pub(crate) struct AcceptedJournalTail<G> {
-    checkpoint_entries: Vec<CheckpointDelta<G>>,
-    checkpoint_stamps: std::collections::HashMap<StateCell, (u64, usize)>,
-    checkpoint_epoch: u64,
-    next_group_id: u64,
-    accepted_active_ids: Vec<u64>,
-    accepted_retained_ids: Vec<u64>,
-    other_groups: Vec<GroupSegment<G>>,
-    innermost_suffix: Vec<Mutation<G>>,
-    save_stack: SaveStackProjection,
+    prior_checkpoint_entries: usize,
+    groups: AcceptedGroupTail<G>,
+}
+
+enum AcceptedGroupTail<G> {
+    Root {
+        accepted_retained_groups: usize,
+        next_group_id: u64,
+        save_stack: SaveStackProjection,
+    },
+    Arbitrary {
+        next_group_id: u64,
+        accepted_active_ids: Vec<u64>,
+        accepted_retained_ids: Vec<u64>,
+        other_groups: Vec<GroupSegment<G>>,
+        innermost_suffix: Vec<Mutation<G>>,
+        save_stack: SaveStackProjection,
+    },
 }
 
 impl<G> AcceptedJournalTail<G> {
-    pub(crate) fn deltas(&self) -> &[CheckpointDelta<G>] {
-        &self.checkpoint_entries
-    }
-}
-
-impl<G> Clone for CheckpointDelta<G> {
-    fn clone(&self) -> Self {
-        Self {
-            cell: self.cell,
-            before: self.before.clone(),
-            before_level: self.before_level,
-            after: self.after.clone(),
-            after_level: self.after_level,
-        }
+    pub(crate) fn is_root_candidate(&self) -> bool {
+        matches!(self.groups, AcceptedGroupTail::Root { .. })
     }
 }
 
@@ -315,9 +307,12 @@ pub(crate) struct SaveJournal<G> {
     pending_operation_groups: Vec<GroupSegment<G>>,
     spare_group_entries: Vec<Vec<Mutation<G>>>,
     next_group_id: u64,
-    checkpoint_entries: Vec<CheckpointDelta<G>>,
+    checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
+    checkpoint_arena: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
+    checkpoint_entries: usize,
     checkpoint_stamps: std::collections::HashMap<StateCell, (u64, usize)>,
     checkpoint_epoch: u64,
+    checkpoint_fork: bool,
     operation_entries: Vec<JournalEntry<G>>,
     active_operations: Vec<u64>,
     next_operation: u64,
@@ -351,34 +346,6 @@ struct SaveJournalProfile {
     maximum_checkpoint_group_depth: usize,
 }
 
-impl<G> Clone for SaveJournal<G> {
-    fn clone(&self) -> Self {
-        let mut checkpoint_entries =
-            Vec::with_capacity(self.checkpoint_entries.len().saturating_add(64));
-        checkpoint_entries.extend(self.checkpoint_entries.iter().cloned());
-        let mut checkpoint_stamps = self.checkpoint_stamps.clone();
-        checkpoint_stamps.reserve(64);
-        Self {
-            owner: self.owner,
-            active_groups: self.active_groups.clone(),
-            active_group_entries: self.active_group_entries,
-            retained_groups: self.retained_groups.clone(),
-            pending_operation_groups: Vec::new(),
-            spare_group_entries: Vec::new(),
-            next_group_id: self.next_group_id,
-            checkpoint_entries,
-            checkpoint_stamps,
-            checkpoint_epoch: self.checkpoint_epoch,
-            operation_entries: Vec::new(),
-            active_operations: Vec::new(),
-            next_operation: self.next_operation,
-            save_stack: self.save_stack,
-            #[cfg(feature = "profiling")]
-            profile: self.profile.clone(),
-        }
-    }
-}
-
 impl<G> SaveJournal<G> {
     #[must_use]
     pub(crate) fn new() -> Self {
@@ -395,9 +362,12 @@ impl<G> SaveJournal<G> {
             pending_operation_groups: Vec::new(),
             spare_group_entries: Vec::new(),
             next_group_id: 0,
-            checkpoint_entries: Vec::new(),
+            checkpoint_pool: ChunkPool::default(),
+            checkpoint_arena: ForkArena::new(),
+            checkpoint_entries: 0,
             checkpoint_stamps: std::collections::HashMap::new(),
             checkpoint_epoch: 1,
+            checkpoint_fork: false,
             operation_entries: Vec::new(),
             active_operations: Vec::new(),
             next_operation: 0,
@@ -423,8 +393,11 @@ impl<G> SaveJournal<G> {
             self.owner,
             group_id,
             group_entry_position,
-            u32::try_from(self.checkpoint_entries.len())
-                .expect("checkpoint journal exceeds u32 entries"),
+            self.checkpoint_arena
+                .seal_boundary(&mut self.checkpoint_pool)
+                .and_then(|boundary| self.checkpoint_arena.checkpoint_mark(boundary))
+                .expect("dense checkpoint journal seals its sole active tail"),
+            u32::try_from(self.checkpoint_entries).expect("checkpoint journal exceeds u32 entries"),
             group_depth,
             self.save_stack,
         );
@@ -450,7 +423,8 @@ impl<G> SaveJournal<G> {
             group_id,
             group_entry_position,
             group_depth: u32::try_from(self.active_groups.len()).expect("group depth fits u32"),
-            checkpoint_position: u32::try_from(self.checkpoint_entries.len())
+            checkpoint: self.checkpoint_arena.operation_mark(&self.checkpoint_pool),
+            checkpoint_entries: u32::try_from(self.checkpoint_entries)
                 .expect("checkpoint journal exceeds u32 entries"),
             operation_position: u32::try_from(self.operation_entries.len())
                 .expect("operation journal exceeds u32 entries"),
@@ -477,43 +451,39 @@ impl<G> SaveJournal<G> {
         }
     }
 
-    pub(crate) fn record_mutation(
-        &mut self,
-        mutation: Mutation<G>,
-        after: StateWord<G>,
-        after_level: u32,
-    ) {
+    pub(crate) fn record_mutation(&mut self, mutation: Mutation<G>) {
         #[cfg(feature = "profiling")]
         self.record_profile_mutation(&mutation);
         let cell = mutation.cell();
         let stamped = self.checkpoint_stamps.get(&cell).copied();
         if stamped.map(|(epoch, _)| epoch) != Some(self.checkpoint_epoch) {
-            let index = self.checkpoint_entries.len();
+            let index = self.checkpoint_entries;
             self.checkpoint_stamps
                 .insert(cell, (self.checkpoint_epoch, index));
             #[cfg(feature = "profiling")]
             self.record_profile_growth(
-                self.checkpoint_entries.len(),
-                self.checkpoint_entries.capacity(),
+                self.checkpoint_entries,
+                self.checkpoint_pool.chunk_capacity(),
                 core::mem::size_of::<CheckpointDelta<G>>(),
             );
-            self.checkpoint_entries.push(CheckpointDelta {
-                cell,
-                before: mutation.before.clone(),
-                before_level: mutation.before_level,
-                after,
-                after_level,
-            });
-        } else {
-            let index = stamped
-                .expect("the current checkpoint epoch has an index")
-                .1;
-            let delta = self
+            let mut builder = self
+                .checkpoint_arena
+                .begin_builder(&mut self.checkpoint_pool)
+                .expect("dense journal owns the sole active builder");
+            builder
+                .push(CheckpointDelta {
+                    cell,
+                    alternate: mutation.before.clone(),
+                    alternate_level: mutation.before_level,
+                })
+                .expect("one dense journal cell fits its coarse chunk");
+            let _ = builder
+                .seal()
+                .expect("dense journal cell seals without materialization");
+            self.checkpoint_entries = self
                 .checkpoint_entries
-                .get_mut(index)
-                .expect("checkpoint stamp names its live journal entry");
-            delta.after = after;
-            delta.after_level = after_level;
+                .checked_add(1)
+                .expect("checkpoint journal exceeds usize entries");
         }
         if mutation.saved_at().is_some() {
             let position = u32::try_from(self.len().saturating_add(1))
@@ -639,23 +609,24 @@ impl<G> SaveJournal<G> {
     #[must_use]
     pub(crate) fn retained_len(&self) -> usize {
         self.group_save_len()
-            .saturating_add(self.checkpoint_entries.len())
+            .saturating_add(self.checkpoint_entries)
             .saturating_add(self.operation_entries.len())
     }
 
     #[must_use]
     pub(crate) fn retained_bytes(&self) -> usize {
         self.group_capacity_bytes()
-            .saturating_add(
-                self.checkpoint_entries
-                    .capacity()
-                    .saturating_mul(core::mem::size_of::<CheckpointDelta<G>>()),
-            )
+            .saturating_add(self.checkpoint_pool.allocated_heap_bytes())
             .saturating_add(
                 self.operation_entries
                     .capacity()
                     .saturating_mul(core::mem::size_of::<JournalEntry<G>>()),
             )
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn checkpoint_counters(&self) -> crate::fork_arena::ForkArenaCounters {
+        self.checkpoint_arena.counters()
     }
 
     #[must_use]
@@ -674,8 +645,72 @@ impl<G> SaveJournal<G> {
         panic!("group save entry index out of bounds");
     }
 
-    pub(crate) fn checkpoint_suffix(&self, cursor: JournalCursor<G>) -> &[CheckpointDelta<G>] {
-        &self.checkpoint_entries[cursor.checkpoint_position() as usize..]
+    pub(crate) fn visit_checkpoint_prefix(
+        &self,
+        cursor: JournalCursor<G>,
+        visit: impl FnMut(&CheckpointDelta<G>),
+    ) {
+        self.checkpoint_arena
+            .visit_checkpoint_values(&self.checkpoint_pool, cursor.checkpoint_mark(), visit)
+            .expect("validated dense checkpoint prefix remains live");
+    }
+
+    pub(crate) fn visit_checkpoint_suffix(
+        &self,
+        cursor: JournalCursor<G>,
+        visit: impl FnMut(&CheckpointDelta<G>),
+    ) {
+        if self.checkpoint_fork {
+            self.checkpoint_arena
+                .visit_current_checkpoint_suffix(
+                    &self.checkpoint_pool,
+                    cursor.checkpoint_mark(),
+                    visit,
+                )
+                .expect("validated dense candidate suffix remains live");
+        } else {
+            self.checkpoint_arena
+                .visit_accepted_checkpoint_suffix(
+                    &self.checkpoint_pool,
+                    cursor.checkpoint_mark(),
+                    visit,
+                )
+                .expect("validated dense checkpoint suffix remains live");
+        }
+    }
+
+    pub(crate) fn visit_checkpoint_suffix_mut_reverse(
+        &mut self,
+        cursor: JournalCursor<G>,
+        visit: impl FnMut(&mut CheckpointDelta<G>),
+    ) {
+        self.checkpoint_arena
+            .visit_accepted_checkpoint_suffix_mut_reverse(
+                &mut self.checkpoint_pool,
+                cursor.checkpoint_mark(),
+                visit,
+            )
+            .expect("validated dense checkpoint suffix rewinds in place");
+    }
+
+    pub(crate) fn visit_current_suffix_mut_reverse(
+        &mut self,
+        cursor: JournalCursor<G>,
+        visit: impl FnMut(&mut CheckpointDelta<G>),
+    ) {
+        self.checkpoint_arena
+            .visit_current_checkpoint_suffix_mut_reverse(
+                &mut self.checkpoint_pool,
+                cursor.checkpoint_mark(),
+                visit,
+            )
+            .expect("dense candidate suffix undoes in place");
+    }
+
+    pub(crate) fn visit_detached_suffix_mut(&mut self, visit: impl FnMut(&mut CheckpointDelta<G>)) {
+        self.checkpoint_arena
+            .visit_detached_checkpoint_suffix_mut(&mut self.checkpoint_pool, visit)
+            .expect("dense accepted suffix redoes in place");
     }
 
     /// Moves the accepted suffix out of the live lane and opens an empty
@@ -688,109 +723,162 @@ impl<G> SaveJournal<G> {
         assert!(self.active_operations.is_empty());
         assert!(self.pending_operation_groups.is_empty());
 
-        let checkpoint_entries = self
-            .checkpoint_entries
-            .split_off(cursor.checkpoint_position() as usize);
-        let checkpoint_stamps = std::mem::take(&mut self.checkpoint_stamps);
-        let checkpoint_epoch = self.checkpoint_epoch;
+        assert!(!self.checkpoint_fork);
+        let prior_checkpoint_entries = self.checkpoint_entries;
+        self.checkpoint_arena
+            .begin_checkpoint_candidate(cursor.checkpoint_mark())
+            .expect("validated dense checkpoint begins its sole fork");
+        self.checkpoint_entries = cursor.checkpoint_entries() as usize;
+        self.checkpoint_fork = true;
         self.advance_checkpoint_epoch();
 
-        let accepted_active_ids = self.active_groups.iter().map(|group| group.id).collect();
-        let accepted_retained_ids = self.retained_groups.iter().map(|group| group.id).collect();
-        let mut groups = std::mem::take(&mut self.active_groups);
-        groups.append(&mut self.retained_groups);
-        let mut target_ids = Vec::with_capacity(cursor.group_depth() as usize);
-        let mut id = cursor.group_id();
-        while id != 0 {
-            target_ids.push(id);
-            id = groups
-                .iter()
-                .find(|group| group.id == id)
-                .expect("validated group cursor retains its ancestry")
-                .parent;
-        }
-        target_ids.reverse();
-        for id in target_ids {
-            let index = groups
-                .iter()
-                .position(|group| group.id == id)
-                .expect("validated target group remains in the accepted pool");
-            self.active_groups.push(groups.swap_remove(index));
-        }
-        let innermost_suffix = self
-            .active_groups
-            .last_mut()
-            .map_or_else(Vec::new, |group| {
-                group
-                    .entries
-                    .split_off(cursor.group_entry_position() as usize)
-            });
-        self.active_group_entries = self
-            .active_groups
-            .iter()
-            .map(|group| group.entries.len().saturating_add(1))
-            .sum();
         let save_stack = self.save_stack;
         self.save_stack = cursor.save_stack;
-
+        let groups = if cursor.group_depth() == 0 && self.active_groups.is_empty() {
+            AcceptedGroupTail::Root {
+                accepted_retained_groups: self.retained_groups.len(),
+                next_group_id: self.next_group_id,
+                save_stack,
+            }
+        } else {
+            let accepted_active_ids = self.active_groups.iter().map(|group| group.id).collect();
+            let accepted_retained_ids = self.retained_groups.iter().map(|group| group.id).collect();
+            let mut groups = std::mem::take(&mut self.active_groups);
+            groups.append(&mut self.retained_groups);
+            let mut target_ids = Vec::with_capacity(cursor.group_depth() as usize);
+            let mut id = cursor.group_id();
+            while id != 0 {
+                target_ids.push(id);
+                id = groups
+                    .iter()
+                    .find(|group| group.id == id)
+                    .expect("validated group cursor retains its ancestry")
+                    .parent;
+            }
+            target_ids.reverse();
+            for id in target_ids {
+                let index = groups
+                    .iter()
+                    .position(|group| group.id == id)
+                    .expect("validated target group remains in the accepted pool");
+                self.active_groups.push(groups.swap_remove(index));
+            }
+            let innermost_suffix = self
+                .active_groups
+                .last_mut()
+                .map_or_else(Vec::new, |group| {
+                    group
+                        .entries
+                        .split_off(cursor.group_entry_position() as usize)
+                });
+            self.active_group_entries = self
+                .active_groups
+                .iter()
+                .map(|group| group.entries.len().saturating_add(1))
+                .sum();
+            AcceptedGroupTail::Arbitrary {
+                next_group_id: self.next_group_id,
+                accepted_active_ids,
+                accepted_retained_ids,
+                other_groups: groups,
+                innermost_suffix,
+                save_stack,
+            }
+        };
         AcceptedJournalTail {
-            checkpoint_entries,
-            checkpoint_stamps,
-            checkpoint_epoch,
-            next_group_id: self.next_group_id,
-            accepted_active_ids,
-            accepted_retained_ids,
-            other_groups: groups,
-            innermost_suffix,
-            save_stack,
+            prior_checkpoint_entries,
+            groups,
         }
     }
 
     /// Restores the accepted group/journal topology after the candidate lane
     /// has already been destructively returned to its empty root.
-    pub(crate) fn reject_checkpoint_candidate(&mut self, mut tail: AcceptedJournalTail<G>) {
+    pub(crate) fn reject_checkpoint_candidate(&mut self, tail: AcceptedJournalTail<G>) {
         debug_assert!(self.active_operations.is_empty());
-        let mut groups = std::mem::take(&mut self.active_groups);
-        groups.append(&mut self.retained_groups);
-        groups.append(&mut tail.other_groups);
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| group.id == tail.accepted_active_ids.last().copied().unwrap_or(0))
-        {
-            group.entries.append(&mut tail.innermost_suffix);
+        match tail.groups {
+            AcceptedGroupTail::Root {
+                accepted_retained_groups,
+                next_group_id,
+                save_stack,
+            } => {
+                while let Some(group) = self.active_groups.pop() {
+                    self.recycle_segment(group);
+                }
+                while self.retained_groups.len() > accepted_retained_groups {
+                    let group = self
+                        .retained_groups
+                        .pop()
+                        .expect("candidate retained group");
+                    self.recycle_segment(group);
+                }
+                self.active_group_entries = 0;
+                self.next_group_id = next_group_id;
+                self.save_stack = save_stack;
+            }
+            AcceptedGroupTail::Arbitrary {
+                next_group_id,
+                accepted_active_ids,
+                accepted_retained_ids,
+                mut other_groups,
+                mut innermost_suffix,
+                save_stack,
+            } => {
+                let mut groups = std::mem::take(&mut self.active_groups);
+                groups.append(&mut self.retained_groups);
+                groups.append(&mut other_groups);
+                if let Some(group) = groups
+                    .iter_mut()
+                    .find(|group| group.id == accepted_active_ids.last().copied().unwrap_or(0))
+                {
+                    group.entries.append(&mut innermost_suffix);
+                }
+                let mut take_group = |id| {
+                    let index = groups
+                        .iter()
+                        .position(|group| group.id == id)
+                        .expect("accepted group id survives candidate rollback");
+                    groups.swap_remove(index)
+                };
+                self.active_groups = accepted_active_ids
+                    .into_iter()
+                    .map(&mut take_group)
+                    .collect();
+                self.retained_groups = accepted_retained_ids
+                    .into_iter()
+                    .map(&mut take_group)
+                    .collect();
+                self.active_group_entries = self
+                    .active_groups
+                    .iter()
+                    .map(|group| group.entries.len().saturating_add(1))
+                    .sum();
+                self.next_group_id = next_group_id;
+                self.save_stack = save_stack;
+            }
         }
-
-        let mut take_group = |id| {
-            let index = groups
-                .iter()
-                .position(|group| group.id == id)
-                .expect("accepted group id survives candidate rollback");
-            groups.swap_remove(index)
-        };
-        self.active_groups = tail
-            .accepted_active_ids
-            .into_iter()
-            .map(&mut take_group)
-            .collect();
-        self.retained_groups = tail
-            .accepted_retained_ids
-            .into_iter()
-            .map(&mut take_group)
-            .collect();
-        self.active_group_entries = self
-            .active_groups
-            .iter()
-            .map(|group| group.entries.len().saturating_add(1))
-            .sum();
-        self.next_group_id = tail.next_group_id;
-        self.save_stack = tail.save_stack;
-        self.checkpoint_entries.append(&mut tail.checkpoint_entries);
-        self.checkpoint_stamps = tail.checkpoint_stamps;
-        self.checkpoint_epoch = tail.checkpoint_epoch;
+        self.checkpoint_entries = tail.prior_checkpoint_entries;
+        let boundary = self
+            .checkpoint_arena
+            .seal_boundary(&mut self.checkpoint_pool)
+            .expect("dense rejection seals its current suffix");
+        self.checkpoint_arena
+            .reject_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
+            .expect("dense rejection reattaches its prior suffix");
+        self.checkpoint_fork = false;
+        self.advance_checkpoint_epoch();
     }
 
-    pub(crate) fn checkpoint_prefix(&self, cursor: JournalCursor<G>) -> &[CheckpointDelta<G>] {
-        &self.checkpoint_entries[..cursor.checkpoint_position() as usize]
+    pub(crate) fn accept_checkpoint_candidate(&mut self) {
+        assert!(self.checkpoint_fork);
+        let boundary = self
+            .checkpoint_arena
+            .seal_boundary(&mut self.checkpoint_pool)
+            .expect("dense acceptance seals its current suffix");
+        self.checkpoint_arena
+            .accept_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
+            .expect("dense acceptance drops its detached prior suffix");
+        self.checkpoint_fork = false;
+        self.advance_checkpoint_epoch();
     }
 
     pub(crate) fn operation_suffix(&self, operation: &StateOperation<G>) -> &[JournalEntry<G>] {
@@ -816,8 +904,10 @@ impl<G> SaveJournal<G> {
             cursor.owner, self.owner,
             "journal cursor belongs to another state"
         );
-        self.checkpoint_entries
-            .truncate(cursor.checkpoint_position() as usize);
+        self.checkpoint_arena
+            .restore_accepted_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
+            .expect("validated dense checkpoint suffix truncates atomically");
+        self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.advance_checkpoint_epoch();
         self.save_stack = cursor.save_stack;
     }
@@ -867,27 +957,38 @@ impl<G> SaveJournal<G> {
                 .entries
                 .truncate(operation.group_entry_position as usize);
         }
+        for entry in &self.operation_entries[operation.operation_position as usize..] {
+            let JournalEntry::Mutation(mutation) = entry else {
+                continue;
+            };
+            if self
+                .checkpoint_stamps
+                .get(&mutation.cell())
+                .is_some_and(|(epoch, position)| {
+                    *epoch == self.checkpoint_epoch
+                        && *position >= operation.checkpoint_entries as usize
+                })
+            {
+                self.checkpoint_stamps.remove(&mutation.cell());
+            }
+        }
         self.operation_entries
             .truncate(operation.operation_position as usize);
         self.active_operations.pop();
-        for delta in &self.checkpoint_entries[operation.checkpoint_position as usize..] {
-            if self
-                .checkpoint_stamps
-                .get(&delta.cell)
-                .is_some_and(|(epoch, _)| *epoch == self.checkpoint_epoch)
-            {
-                self.checkpoint_stamps.remove(&delta.cell);
-            }
-        }
-        self.checkpoint_entries
-            .truncate(operation.checkpoint_position as usize);
+        self.checkpoint_arena
+            .restore_operation(&mut self.checkpoint_pool, operation.checkpoint)
+            .expect("state operation restores its dense journal suffix");
+        self.checkpoint_entries = operation.checkpoint_entries as usize;
         self.rebuild_save_stack_projection();
     }
 
     #[must_use]
     pub(crate) fn validate_cursor(&self, cursor: JournalCursor<G>) -> bool {
         if cursor.owner != self.owner
-            || cursor.checkpoint_position() as usize > self.checkpoint_entries.len()
+            || cursor.checkpoint_entries() as usize > self.checkpoint_entries
+            || !self
+                .checkpoint_arena
+                .validates_checkpoint(cursor.checkpoint_mark())
         {
             return false;
         }
@@ -999,6 +1100,10 @@ impl<G> SaveJournal<G> {
         RestoredGroups::Replace(self.active_groups.iter().map(|group| group.frame).collect())
     }
 
+    pub(crate) fn active_group_frames(&self) -> impl Iterator<Item = GroupFrame> + '_ {
+        self.active_groups.iter().map(|group| group.frame)
+    }
+
     pub(crate) fn visit_group_mutations(&self, mut visit: impl FnMut(&Mutation<G>)) {
         for group in self
             .active_groups
@@ -1010,10 +1115,6 @@ impl<G> SaveJournal<G> {
                 visit(mutation);
             }
         }
-    }
-
-    pub(crate) fn active_group_frames(&self) -> impl Iterator<Item = GroupFrame> + '_ {
-        self.active_groups.iter().map(|group| group.frame)
     }
 
     pub(crate) fn validate_operation(&self, operation: &StateOperation<G>) {
@@ -1217,7 +1318,7 @@ impl<G> Drop for SaveJournal<G> {
             entries: u64::try_from(self.retained_len()).unwrap_or(u64::MAX),
             capacity: u64::try_from(
                 self.group_mutation_capacity()
-                    .saturating_add(self.checkpoint_entries.capacity())
+                    .saturating_add(self.checkpoint_pool.chunk_capacity())
                     .saturating_add(self.operation_entries.capacity()),
             )
             .unwrap_or(u64::MAX),
@@ -1229,8 +1330,8 @@ impl<G> Drop for SaveJournal<G> {
             group_capacity: u64::try_from(self.group_mutation_capacity()).unwrap_or(u64::MAX),
             group_entry_size: u64::try_from(core::mem::size_of::<Mutation<G>>())
                 .unwrap_or(u64::MAX),
-            checkpoint_entries: u64::try_from(self.checkpoint_entries.len()).unwrap_or(u64::MAX),
-            checkpoint_capacity: u64::try_from(self.checkpoint_entries.capacity())
+            checkpoint_entries: u64::try_from(self.checkpoint_entries).unwrap_or(u64::MAX),
+            checkpoint_capacity: u64::try_from(self.checkpoint_pool.chunk_capacity())
                 .unwrap_or(u64::MAX),
             checkpoint_entry_size: u64::try_from(core::mem::size_of::<CheckpointDelta<G>>())
                 .unwrap_or(u64::MAX),
