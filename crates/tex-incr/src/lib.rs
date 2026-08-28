@@ -1212,6 +1212,7 @@ fn initialize_candidate_runtime<G: 'static>(
     ))
 }
 
+#[allow(clippy::too_many_arguments)] // Candidate execution keeps each mutable subsystem owner explicit.
 fn execute_plan<G>(
     universe: &mut Universe<G>,
     ledger: &mut OutputLedger,

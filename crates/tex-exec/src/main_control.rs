@@ -10047,7 +10047,7 @@ fn finish_math_list<G>(
             )
         });
         let numerator_len = numerator_nodes.len();
-        drop(numerator_nodes);
+        let _ = numerator_nodes;
         let mut slices = Vec::new();
         let (prefix, numerator) = if let Some(boundary) = boundary {
             (

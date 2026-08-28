@@ -11,9 +11,10 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
     ArenaListView, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane,
-    RegionValue,
+    RegionValue, SequenceSummaryWork,
 };
 use crate::node::Node;
+use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 use crate::page_node_arena::PageListId;
 
 #[cfg(test)]
@@ -147,6 +148,7 @@ impl NodePool {
 
     /// Explicitly retires a region because its chunk keys must be returned to
     /// this separately borrowed pool.
+    #[allow(clippy::result_large_err)] // Failure must return the exclusive move-only owner.
     pub(crate) fn retire_region<Role>(
         &mut self,
         mut region: NodeRegion<Role>,
@@ -187,6 +189,7 @@ impl<Role> NodeRegion<Role> {
         self.id
     }
 
+    #[cfg(test)]
     pub(crate) fn publish_owned(
         &mut self,
         pool: &mut NodePool,
@@ -233,6 +236,7 @@ impl<Role> NodeRegion<Role> {
         })
     }
 
+    #[allow(clippy::result_large_err)] // Validation failure must return the exclusive region owner.
     pub(crate) fn into_closure(
         self,
         pool: &NodePool,
@@ -381,10 +385,6 @@ impl<Role> OwnedNodeClosure<Role> {
     pub(crate) const fn root(&self) -> RegionRoot<Role> {
         self.root
     }
-
-    pub(crate) const fn counters(&self) -> ForkArenaCounters {
-        self.region.counters()
-    }
 }
 
 /// Failed move which returns the still-exclusive source owner unchanged.
@@ -395,6 +395,7 @@ pub(crate) struct ClosureTransferError<Role> {
 
 /// Moves a whole self-contained closure envelope and rebrands every nested
 /// child coordinate without moving any node address.
+#[allow(clippy::result_large_err)] // Transfer failure must return the exclusive closure owner.
 pub(crate) fn transfer_closure_into<Source, Destination>(
     pool: &mut NodePool,
     mut closure: OwnedNodeClosure<Source>,
@@ -447,6 +448,7 @@ pub(crate) fn copy_closure_into<Source, Destination>(
     pool: &mut NodePool,
     source: &OwnedNodeClosure<Source>,
     destination: &mut NodeRegion<Destination>,
+    semantic_identity_enabled: bool,
 ) -> Result<RegionRoot<Destination>, ForkArenaError> {
     pool.validate_region(&source.region)?;
     pool.validate_region(destination)?;
@@ -458,6 +460,7 @@ pub(crate) fn copy_closure_into<Source, Destination>(
         &mut destination.pub_arena,
         source.root.list,
         &mut stack,
+        semantic_identity_enabled,
     );
     let (list, count) = match copied {
         Ok(copied) => copied,
@@ -470,6 +473,14 @@ pub(crate) fn copy_closure_into<Source, Destination>(
         }
     };
     destination.pub_arena.record_source_nodes_copied(count);
+    if semantic_identity_enabled {
+        destination
+            .pub_arena
+            .record_identity_work(SequenceSummaryWork {
+                hashed_values: count as u64,
+                ..SequenceSummaryWork::default()
+            });
+    }
     Ok(RegionRoot {
         region: destination.id,
         list,
@@ -487,6 +498,7 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     source: &NodeRegion<Source>,
     root: RegionRoot<Source>,
     destination: &mut NodeRegion<Destination>,
+    semantic_identity_enabled: bool,
 ) -> Result<RegionRoot<Destination>, ForkArenaError> {
     pool.validate_region(source)?;
     pool.validate_region(destination)?;
@@ -500,6 +512,7 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
         &mut destination.pub_arena,
         root.list,
         &mut Vec::new(),
+        semantic_identity_enabled,
     );
     let (list, count) = match copied {
         Ok(copied) => copied,
@@ -512,6 +525,14 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
         }
     };
     destination.pub_arena.record_source_nodes_copied(count);
+    if semantic_identity_enabled {
+        destination
+            .pub_arena
+            .record_identity_work(SequenceSummaryWork {
+                hashed_values: count as u64,
+                ..SequenceSummaryWork::default()
+            });
+    }
     Ok(RegionRoot {
         region: destination.id,
         list,
@@ -525,6 +546,7 @@ fn copy_list_recursive<Source, Destination>(
     destination: &mut ForkArena<RegionNode, PageMaterialLane>,
     list: PageListId,
     stack: &mut Vec<PageListId>,
+    semantic_identity_enabled: bool,
 ) -> Result<(PageListId, usize), ForkArenaError> {
     let _roles = PhantomData::<fn(Source) -> Destination>;
     if list.is_empty() {
@@ -553,6 +575,7 @@ fn copy_list_recursive<Source, Destination>(
                 destination,
                 *child,
                 stack,
+                semantic_identity_enabled,
             ) {
                 Ok((copied, count)) => {
                     *child = copied;
@@ -569,11 +592,18 @@ fn copy_list_recursive<Source, Destination>(
     }
     stack.pop();
     let mut builder = destination.begin_builder(pool)?;
+    let mut identity = semantic_identity_enabled.then(SemanticSequenceIdentity::empty);
     for node in copied_nodes {
-        builder.push(node)?;
+        if let Some(sequence_identity) = &mut identity {
+            let node_identity = semantic_node_identity(&node);
+            sequence_identity.push_back(node_identity);
+            builder.push_summarized(node, node_identity)?;
+        } else {
+            builder.push(node)?;
+        }
     }
     let coordinate = builder.seal()?;
-    Ok((list.with_coordinate(coordinate), copied_count))
+    Ok((PageListId::from_parts(coordinate, identity), copied_count))
 }
 
 impl RegionValue<PageMaterialLane> for RegionNode {

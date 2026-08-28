@@ -117,7 +117,7 @@ fn recover_frozen_texxet_directions<G>(
     let source_len = nodes.len();
     let missing = expected.len();
     let extra = extra_indices.len();
-    drop(nodes);
+    let _ = nodes;
     if missing == 0 && extra == 0 {
         return (list, None);
     }

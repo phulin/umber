@@ -521,10 +521,10 @@ pub(crate) fn prepend_output_heldover<G>(
             && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY);
         if heldover_is_rewritten_break {
             heldover = tex_state::node_arena::PageListId::empty();
-        } else if contribution_is_rewritten_break {
-            if let Some(carrier) = stores.pop_page_contribution_front() {
-                stores.discard_page_node(carrier);
-            }
+        } else if contribution_is_rewritten_break
+            && let Some(carrier) = stores.pop_page_contribution_front()
+        {
+            stores.discard_page_node(carrier);
         }
     }
     heldover = stores.compose_page_node_sequences(&[heldover, output_nodes]);

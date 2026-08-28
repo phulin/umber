@@ -70,7 +70,7 @@ pub(crate) fn take_last_box<G>(
                 return Ok(None);
             }
             let range = tail.removal_range();
-            drop(current_list);
+            let _ = current_list;
             let removed = nest
                 .current_list_mutation()
                 .remove_node_range(stores, range);
@@ -397,7 +397,7 @@ fn physical_discretionary_projection<G>(
         return None;
     }
     let source_len = nodes.len();
-    drop(nodes);
+    let _ = nodes;
     let mut slices = Vec::new();
     let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
     let mut start = 0;

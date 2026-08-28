@@ -610,6 +610,7 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
         }
     }
 
+    #[allow(dead_code)] // Used only by the retained legacy NodeArena memory census.
     pub(crate) fn visit_diagnostic_node_lists(&self, mut visit: impl FnMut(&List, u32)) {
         match self {
             Self::HList(node) | Self::VList(node) => {

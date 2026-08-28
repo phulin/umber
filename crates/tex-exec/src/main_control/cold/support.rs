@@ -78,8 +78,8 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
         return;
     };
     let (mut node, horizontal) = match source {
-        Node::HList(node) => (node.clone(), true),
-        Node::VList(node) => (node.clone(), false),
+        Node::HList(node) => (*node, true),
+        Node::VList(node) => (*node, false),
         _ => return,
     };
     match dimension {

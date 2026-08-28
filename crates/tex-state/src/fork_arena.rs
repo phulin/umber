@@ -695,6 +695,8 @@ pub struct SealedBatch<Lane> {
 /// Failed transfer which returns the still-exclusive sealed suffix token.
 pub(crate) struct BatchTransferError<Lane> {
     pub(crate) error: ForkArenaError,
+    #[cfg_attr(not(test), allow(dead_code))]
+    // Test-only recovery proves failed batches remain move-only.
     pub(crate) batch: SealedBatch<Lane>,
 }
 
@@ -810,7 +812,6 @@ impl<T, Lane> Default for ActiveListBuilder<T, Lane> {
 }
 
 impl<T, Lane> ActiveListBuilder<T, Lane> {
-    #[must_use]
     pub const fn vacant() -> Self {
         Self {
             state: ActiveListBuilderState::Vacant,
@@ -2287,6 +2288,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn cancel_batch(&mut self, batch: SealedBatch<Lane>) -> Result<(), ForkArenaError> {
         if batch.arena != self.owner
             || self.pending_batch

@@ -1166,6 +1166,7 @@ impl PageRegion {
         }
     }
 
+    #[allow(clippy::result_large_err)] // Failed succession must return the exclusive page region.
     pub fn finish_shipout(
         mut self,
         held_over: PageListId,
@@ -1313,7 +1314,7 @@ impl PageBuilderState {
         }
         assert!(
             self.contribution.is_empty()
-                && self.current_page.len() == 0
+                && self.current_page.is_empty()
                 && self.page_discards.is_empty()
                 && self.split_discards.is_empty()
                 && self.insertions.is_empty()
@@ -1892,14 +1893,6 @@ impl PageBuilderState {
             || !self.split_discards.is_empty()
     }
 
-    pub(crate) fn dynamic_memory_words(&self, etex_node_sizes: bool) -> usize {
-        if etex_node_sizes {
-            self.etex_dynamic_words
-        } else {
-            self.tex82_dynamic_words
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn memo_parts(&self, arena: &PageNodeArena) -> (Vec<Node>, PageMemoState) {
         let mut nodes = Vec::with_capacity(
@@ -2130,7 +2123,7 @@ impl PageBuilderState {
 
     pub(crate) fn is_format_empty(&self) -> bool {
         self.contribution.is_empty()
-            && self.current_page.len() == 0
+            && self.current_page.is_empty()
             && self.page_goal == Scaled::from_raw(0)
             && self.page_total == Scaled::from_raw(0)
             && self.page_stretch == Scaled::from_raw(0)
@@ -2483,7 +2476,7 @@ impl PageBuilderState {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
-        drop(current);
+        let _ = current;
         if !self.checkpoint_journal.frames.is_empty() {
             let current_page = std::mem::take(&mut self.current_page);
             let insertions = std::mem::take(&mut self.insertions);
@@ -2621,7 +2614,7 @@ impl PageBuilderState {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
-        drop(removed_view);
+        let _ = removed_view;
         self.release_dynamic_word_totals(words);
         self.page_node_root_count = self
             .page_node_root_count
@@ -2709,7 +2702,7 @@ impl PageBuilderState {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
-        drop(view);
+        let _ = view;
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.contribution = arena
@@ -2983,7 +2976,7 @@ impl PageBuilderState {
             .iter()
             .filter(|node| node_retains_page_handle(node))
             .count();
-        drop(current);
+        let _ = current;
         self.current_page = PageListId::empty();
         self.release_dynamic_word_totals(words);
         self.page_node_root_count = self
@@ -3008,6 +3001,7 @@ impl PageBuilderState {
             .expect("page root accounting overflow");
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     fn release_dynamic_node(&mut self, node: &Node) {
         self.tex82_dynamic_words = self
             .tex82_dynamic_words
@@ -3020,32 +3014,6 @@ impl PageBuilderState {
         self.page_node_root_count = self
             .page_node_root_count
             .checked_sub(usize::from(node_retains_page_handle(node)))
-            .expect("released more page roots than were live");
-    }
-
-    fn allocate_dynamic_nodes(&mut self, nodes: &[Node]) {
-        self.allocate_dynamic_word_totals(dynamic_words(nodes.iter()));
-        self.page_node_root_count = self
-            .page_node_root_count
-            .checked_add(
-                nodes
-                    .iter()
-                    .filter(|node| node_retains_page_handle(node))
-                    .count(),
-            )
-            .expect("page root accounting overflow");
-    }
-
-    fn release_dynamic_nodes(&mut self, nodes: &[Node]) {
-        self.release_dynamic_word_totals(dynamic_words(nodes.iter()));
-        self.page_node_root_count = self
-            .page_node_root_count
-            .checked_sub(
-                nodes
-                    .iter()
-                    .filter(|node| node_retains_page_handle(node))
-                    .count(),
-            )
             .expect("released more page roots than were live");
     }
 

@@ -57,7 +57,7 @@ pub(crate) fn prune_page_top_list<G>(
         retained.push(start..nodes.len());
     }
     let source_len = nodes.len();
-    drop(nodes);
+    let _ = nodes;
 
     let mut slices = Vec::new();
     let mut pieces = Vec::with_capacity(retained.len() + 2);

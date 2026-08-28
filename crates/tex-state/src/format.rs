@@ -332,11 +332,8 @@ impl DetachedFormatImage {
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        let mut node_lists = FormatNodeCollector::new(
-            universe.page_region.nodes(),
-            &mut token_lists,
-            &mut glue,
-        );
+        let mut node_lists =
+            FormatNodeCollector::new(universe.page_region.nodes(), &mut token_lists, &mut glue);
         let pdf = universe
             .pdf
             .capture_format_bytes(

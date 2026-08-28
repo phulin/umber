@@ -268,7 +268,8 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
         .expect("source closure");
     let mut destination = pool.start_region::<PageRole>().expect("destination");
 
-    let copied = copy_closure_into(&mut pool, &closure, &mut destination).expect("recursive copy");
+    let copied =
+        copy_closure_into(&mut pool, &closure, &mut destination, false).expect("recursive copy");
     let copied_root = destination.list(&pool, copied).expect("copied root");
     let Node::Disc { pre, .. } = copied_root.get(0).expect("disc node") else {
         panic!("copied root lost discretionary shape");

@@ -659,6 +659,7 @@ impl<G> SaveJournal<G> {
         panic!("group save entry index out of bounds");
     }
 
+    #[cfg(test)]
     pub(crate) fn visit_checkpoint_prefix(
         &self,
         cursor: JournalCursor<G>,

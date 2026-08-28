@@ -404,7 +404,7 @@ fn split_page_insertion<G>(
                 _ => 0,
             })
     });
-    drop(content_nodes);
+    let _ = content_nodes;
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
         trace_insertion_split(
             stores,
@@ -616,7 +616,7 @@ fn normalize_insert_content_shrink<G>(
         replacements.push((index, finite, *kind, *leader));
     }
     let content_len = content_nodes.len();
-    drop(content_nodes);
+    let _ = content_nodes;
     if replacements.is_empty() {
         return Ok(None);
     }

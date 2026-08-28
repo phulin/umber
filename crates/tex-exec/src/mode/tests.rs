@@ -37,7 +37,7 @@ fn list_nodes<G>(list: &super::ModeList, context: &tex_state::CommandContext<'_,
 
 fn nest_nodes<G>(nest: &ModeNest, context: &tex_state::CommandContext<'_, G>) -> Vec<Node> {
     let list = nest.current_list();
-    list_nodes(&list, context)
+    list_nodes(list, context)
 }
 
 #[cfg(feature = "profiling")]

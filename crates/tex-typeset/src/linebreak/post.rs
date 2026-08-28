@@ -356,6 +356,7 @@ impl ChannelNodes<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // One channel carries independent decision and output lanes.
 fn materialize_channel<S: TypesetState>(
     state: &S,
     cursor: &mut ChannelCursor<'_>,
@@ -476,6 +477,7 @@ pub fn post_line_break_owned<S: TypesetState>(
     lines
 }
 
+#[allow(clippy::too_many_arguments)] // Segment transfer keeps source cursors and output lanes explicit.
 fn push_owned_line_segment<S: TypesetState>(
     state: &S,
     source: (

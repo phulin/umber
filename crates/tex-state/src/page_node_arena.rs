@@ -35,7 +35,6 @@ impl Default for PageMaterialActiveListBuilder {
 }
 
 impl PageMaterialActiveListBuilder {
-    #[must_use]
     pub const fn vacant() -> Self {
         Self {
             inner: ActiveListBuilder::vacant(),
@@ -280,6 +279,7 @@ impl PageMaterialArena {
         self.region.id()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
         self.durable_transitions
@@ -349,8 +349,13 @@ impl PageMaterialArena {
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         let source = self.region.root(&self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
-        let copied = match copy_region_root_into(&mut self.pool, &self.region, source, &mut durable)
-        {
+        let copied = match copy_region_root_into(
+            &mut self.pool,
+            &self.region,
+            source,
+            &mut durable,
+            self.semantic_identity_enabled,
+        ) {
             Ok(root) => root,
             Err(error) => {
                 assert!(
@@ -383,6 +388,7 @@ impl PageMaterialArena {
 
     /// Consumes a unique durable owner and transfers its exact addresses into
     /// the current page region.
+    #[allow(clippy::result_large_err)] // Failed transfer must return the move-only durable owner.
     pub(crate) fn move_durable_to_page(
         &mut self,
         closure: DurableNodeClosure,
@@ -399,7 +405,12 @@ impl PageMaterialArena {
         closure: &DurableNodeClosure,
     ) -> Result<PageListId, ForkArenaError> {
         let before = self.region.counters().source_nodes_copied;
-        let root = copy_closure_into(&mut self.pool, closure, &mut self.region)?;
+        let root = copy_closure_into(
+            &mut self.pool,
+            closure,
+            &mut self.region,
+            self.semantic_identity_enabled,
+        )?;
         let copied = self
             .region
             .counters()
@@ -421,7 +432,12 @@ impl PageMaterialArena {
         closure: &DurableNodeClosure,
     ) -> Result<PageListId, ForkArenaError> {
         let before = self.region.counters().source_nodes_copied;
-        let root = copy_closure_into(&mut self.pool, closure, &mut self.region)?;
+        let root = copy_closure_into(
+            &mut self.pool,
+            closure,
+            &mut self.region,
+            self.semantic_identity_enabled,
+        )?;
         let copied = self
             .region
             .counters()
@@ -445,7 +461,12 @@ impl PageMaterialArena {
         closure: &DurableNodeClosure,
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         let mut destination = self.pool.start_region::<DurableRole>()?;
-        let copied = match copy_closure_into(&mut self.pool, closure, &mut destination) {
+        let copied = match copy_closure_into(
+            &mut self.pool,
+            closure,
+            &mut destination,
+            self.semantic_identity_enabled,
+        ) {
             Ok(root) => root,
             Err(error) => {
                 assert!(

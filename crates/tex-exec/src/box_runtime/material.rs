@@ -130,7 +130,7 @@ pub(crate) fn execute_delete_last<G>(
             | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
     );
     let range = tail.removal_range();
-    drop(current_list);
+    let _ = current_list;
     if matches_target {
         let _ = nest
             .current_list_mutation()

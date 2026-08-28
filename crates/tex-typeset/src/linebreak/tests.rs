@@ -3307,7 +3307,7 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
         .expect("paragraph resolves");
     let source_addresses = arena_view
         .iter()
-        .map(|node| core::ptr::from_ref(node))
+        .map(core::ptr::from_ref)
         .collect::<Vec<_>>();
     let line_params = params(18);
     let slice_tape = ParagraphTape::analyze_borrowed(&universe, &source, &line_params);
@@ -3348,7 +3348,7 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
             .page_node_sequence(sequence)
             .expect("source remains live")
             .iter()
-            .map(|node| core::ptr::from_ref(node))
+            .map(core::ptr::from_ref)
             .collect::<Vec<_>>(),
         source_addresses,
         "analysis and materialization retain the original arena payload"

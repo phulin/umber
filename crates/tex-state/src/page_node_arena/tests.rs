@@ -512,6 +512,38 @@ fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
 }
 
 #[test]
+fn durable_lifetime_copies_preserve_enabled_semantic_identity() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    arena.enable_semantic_identity();
+    let leaf = arena.publish_owned([Node::Penalty(45)]).expect("page leaf");
+    let root = arena.publish_owned([boxed(leaf)]).expect("page box");
+    let root_identity = root.semantic_identity();
+    let durable = arena
+        .copy_page_root_to_durable(root)
+        .expect("durable owner");
+    assert_eq!(durable.root().list().semantic_identity(), root_identity);
+
+    let copied = arena
+        .copy_history_preserved_to_page(&durable)
+        .expect("history-preserving copy");
+    assert_eq!(copied.semantic_identity(), root_identity);
+    let Node::HList(box_node) = arena
+        .list(copied)
+        .expect("copied root")
+        .get(0)
+        .cloned()
+        .expect("copied box")
+    else {
+        panic!("copied root lost box shape");
+    };
+    assert_eq!(
+        box_node.children.semantic_identity(),
+        leaf.semantic_identity()
+    );
+    arena.retire_durable(durable).expect("retire source owner");
+}
+
+#[test]
 fn historical_durable_owner_copy_is_move_only_and_independent() {
     let mut arena = PageMaterialArena::with_chunk_bytes(64);
     let root = arena.publish_owned([Node::Penalty(47)]).expect("page root");

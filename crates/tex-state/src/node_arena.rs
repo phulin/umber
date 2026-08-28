@@ -5,6 +5,8 @@
 //! only while borrowing that arena. Lifetime transitions rebrand coordinates
 //! while the generation-owned row stays in place.
 
+#![allow(dead_code)] // Retained compatibility substrate; production owners use NodeRegion/PageRegion.
+
 use ahash::RandomState;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -346,11 +348,11 @@ impl<L> NodeRanges<L> {
             .len
             .checked_sub(1)
             .map(|index| &mut self.regions[usize::from(index)])
+            && last.list == range.list
+            && last.end == range.start
         {
-            if last.list == range.list && last.end == range.start {
-                last.end = range.end;
-                return Ok(());
-            }
+            last.end = range.end;
+            return Ok(());
         }
         let index = usize::from(self.len);
         if index == MAX_NODE_RANGE_REGIONS {

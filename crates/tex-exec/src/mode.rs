@@ -2236,14 +2236,6 @@ impl ModeNest {
         semantic_fingerprint_levels(&self.storage.levels, universe)
     }
 
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
-        self.storage
-            .identity_enabled
-            .then(|| mode_nest_semantic_identity(&self.storage.levels))
-    }
-
     /// Enables semantic-root maintenance for one convergence session.
     #[doc(hidden)]
     pub fn enable_reachable_state_identity(&mut self) {

@@ -907,14 +907,12 @@ fn emit_index<G>(
         ShipoutListId::Page(list) => emit_node_ref::<G, PagePayload>(
             stores,
             overlay,
-            NodeRef::from(
-                stores
-                    .page_node_list(list)
-                    .expect("shipout list belongs to the live page arena")
-                    .nodes()
-                    .get(index)
-                    .expect("emission index belongs to the frozen list"),
-            ),
+            stores
+                .page_node_list(list)
+                .expect("shipout list belongs to the live page arena")
+                .nodes()
+                .get(index)
+                .expect("emission index belongs to the frozen list"),
             output,
             dvi,
             emission,

@@ -1674,9 +1674,11 @@ impl<G> DenseState<G> {
                 .expect("validated accepted dense value swaps in place");
         });
         let journal_tail = journal.begin_checkpoint_candidate(cursor);
-        let accepted_groups = (!journal_tail.is_root_candidate())
-            .then(|| std::mem::take(&mut self.groups))
-            .unwrap_or_default();
+        let accepted_groups = if journal_tail.is_root_candidate() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.groups)
+        };
         let accepted_next_group_lineage = self.next_group_lineage;
         if !journal_tail.is_root_candidate() {
             self.groups = journal.active_group_frames().collect::<Vec<GroupFrame>>();

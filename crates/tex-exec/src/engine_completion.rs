@@ -79,6 +79,7 @@ impl DetachedEngineCompletion {
     /// Captures the terminal page projection directly from borrowed canonical
     /// output-ledger rows. The only page vector created is the final detached
     /// completion; no accumulated `PreparedDviPage` prefix is materialized.
+    #[allow(clippy::too_many_arguments)] // Terminal detachment joins independent output-owner roots.
     pub(crate) fn capture_borrowed_pages(
         effect_base: u64,
         effects: Vec<EffectRecord>,
