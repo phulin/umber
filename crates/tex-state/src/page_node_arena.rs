@@ -390,11 +390,11 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         root: PageListId,
     ) -> Result<DurableNodeClosure, ForkArenaError> {
-        let source = self.region.root(&self.pool, root)?;
+        let source = self.region.root(self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
         let copied = match copy_region_root_into(
-            &mut self.pool,
-            &self.region,
+            self.pool,
+            self.region,
             source,
             &mut durable,
             *self.semantic_identity_enabled,
@@ -410,7 +410,7 @@ impl<'a> PageMaterialArena<'a> {
         };
         let copied_nodes = durable.counters().source_nodes_copied;
         let closure = durable
-            .into_closure(&self.pool, copied)
+            .into_closure(self.pool, copied)
             .map_err(|(error, region)| {
                 assert!(
                     self.pool.retire_region(region).is_ok(),
@@ -436,7 +436,7 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         closure: DurableNodeClosure,
     ) -> Result<PageListId, (ForkArenaError, DurableNodeClosure)> {
-        transfer_closure_into(&mut self.pool, closure, &mut self.region)
+        transfer_closure_into(self.pool, closure, self.region)
             .map(|root| root.list())
             .map_err(|failure| (failure.error, failure.closure))
     }
@@ -449,9 +449,9 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<PageListId, ForkArenaError> {
         let before = self.region.counters().source_nodes_copied;
         let root = copy_closure_into(
-            &mut self.pool,
+            self.pool,
             closure,
-            &mut self.region,
+            self.region,
             *self.semantic_identity_enabled,
         )?;
         let copied = self
@@ -476,9 +476,9 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<PageListId, ForkArenaError> {
         let before = self.region.counters().source_nodes_copied;
         let root = copy_closure_into(
-            &mut self.pool,
+            self.pool,
             closure,
-            &mut self.region,
+            self.region,
             *self.semantic_identity_enabled,
         )?;
         let copied = self
@@ -505,7 +505,7 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         let mut destination = self.pool.start_region::<DurableRole>()?;
         let copied = match copy_closure_into(
-            &mut self.pool,
+            self.pool,
             closure,
             &mut destination,
             *self.semantic_identity_enabled,
@@ -521,7 +521,7 @@ impl<'a> PageMaterialArena<'a> {
         };
         let copied_nodes = destination.counters().source_nodes_copied;
         let closure = destination
-            .into_closure(&self.pool, copied)
+            .into_closure(self.pool, copied)
             .map_err(|(error, region)| {
                 assert!(
                     self.pool.retire_region(region).is_ok(),
@@ -545,7 +545,7 @@ impl<'a> PageMaterialArena<'a> {
         &'b self,
         closure: &'b DurableNodeClosure,
     ) -> Result<crate::node_region::RegionList<'b, DurableRole>, ForkArenaError> {
-        closure.list(&self.pool)
+        closure.list(self.pool)
     }
 
     pub(crate) fn durable_child_list<'b>(
@@ -553,7 +553,7 @@ impl<'a> PageMaterialArena<'a> {
         closure: &'b DurableNodeClosure,
         child: PageListId,
     ) -> Result<crate::node_region::RegionList<'b, DurableRole>, ForkArenaError> {
-        closure.child_list(&self.pool, child)
+        closure.child_list(self.pool, child)
     }
 
     /// Drops one exact durable owner and returns its envelopes to the pool.
@@ -578,8 +578,7 @@ impl<'a> PageMaterialArena<'a> {
         self.region
             .pub_arena
             .open_active_list(&self.pool.chunks, &mut builder.inner)?;
-        builder.identity =
-            (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
+        builder.identity = (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
         Ok(())
     }
 

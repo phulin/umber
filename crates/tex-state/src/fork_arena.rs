@@ -695,6 +695,7 @@ pub struct SealedBatch<Lane> {
 /// A prevalidated whole-chunk suffix temporarily loaned out of its source
 /// arena. The chunk payload remains owned by the source arena until the loan
 /// is either returned or committed into a destination arena.
+#[allow(dead_code)] // Used by the implemented closure-transfer stage before its production carrier cutover.
 pub(crate) struct DetachedBatch<Lane> {
     arena: u32,
     serial: u64,
@@ -707,6 +708,7 @@ pub(crate) struct DetachedBatch<Lane> {
 }
 
 /// Failed detached-suffix settlement returns the move-only loan unchanged.
+#[allow(dead_code)] // Used by the implemented closure-transfer stage before its production carrier cutover.
 pub(crate) struct DetachedBatchTransferError<Lane> {
     pub(crate) error: ForkArenaError,
     pub(crate) batch: DetachedBatch<Lane>,
@@ -2319,6 +2321,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// Mutation-free closure preflight for a build suffix whose final tails
     /// have not yet been sealed. This lets semantic rejection preserve even
     /// lifecycle counters and sealed-capacity state.
+    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn preflight_batch_closure(
         &self,
         pool: &ChunkPool<T>,
@@ -2370,6 +2373,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn cancel_batch(&mut self, batch: SealedBatch<Lane>) -> Result<(), ForkArenaError> {
         if batch.arena != self.owner
             || self.pending_batch
@@ -2390,6 +2394,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// Detaches a prevalidated self-contained suffix without copying payload
     /// or changing chunk ownership. The returned loan is the only authority
     /// which may reattach or transfer those envelopes.
+    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn detach_batch(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -2428,6 +2433,7 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     /// Returns a transient transfer loan to its exact source suffix without
     /// copying or changing any payload address.
+    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn reattach_batch(
         &mut self,
         pool: &ChunkPool<T>,
@@ -2480,6 +2486,7 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     /// Commits a detached suffix into another arena. All fallible destination
     /// checks precede payload rebranding or chunk-owner mutation.
+    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn promote_detached_batch_into<Destination>(
         &mut self,
         pool: &mut ChunkPool<T>,

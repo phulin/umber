@@ -25,6 +25,9 @@ const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 /// The typed result of TeX82 §1016 packing, before either the default
 /// routine or command-owned `\\output` replay begins.
 #[derive(Debug)]
+// The default variant carries a move-only page-region construction mark. Boxing
+// it would add one allocation to every ordinary page completion.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SelectedPageOutput {
     Default(crate::main_control::PreparedShipout),
     UserRoutine,

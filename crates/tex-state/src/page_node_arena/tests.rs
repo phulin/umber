@@ -92,8 +92,12 @@ fn parent_nodes_reject_foreign_region_children_without_partial_publication() {
 
 #[test]
 fn disabled_demand_keeps_range_and_composition_identity_work_at_zero() {
-    let mut arena =
-        PageMaterialArena::with_chunk_bytes(std::mem::size_of::<Option<PageMaterialNode>>() * 8);
+    page_arena!(
+        arena,
+        pool,
+        region,
+        std::mem::size_of::<Option<PageMaterialNode>>() * 8
+    );
     let whole = arena
         .publish_owned(penalties(&(0..128).collect::<Vec<_>>()))
         .expect("publish");
@@ -273,8 +277,11 @@ fn identity_is_preserved_across_build_split_and_compose() {
 #[test]
 fn long_middle_subrange_hashes_only_two_bounded_chunk_edges() {
     const CHUNK_VALUES: usize = 8;
-    let mut arena = PageMaterialArena::with_chunk_bytes(
-        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES,
+    page_arena!(
+        arena,
+        pool,
+        region,
+        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES
     );
     arena.enable_semantic_identity();
     let nodes = penalties(&(0..1024).collect::<Vec<_>>());
@@ -332,8 +339,11 @@ fn long_middle_subrange_hashes_only_two_bounded_chunk_edges() {
 #[test]
 fn multi_range_slice_identity_is_independent_of_descriptor_boundaries() {
     const CHUNK_VALUES: usize = 8;
-    let mut arena = PageMaterialArena::with_chunk_bytes(
-        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES,
+    page_arena!(
+        arena,
+        pool,
+        region,
+        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES
     );
     arena.enable_semantic_identity();
     let nodes = penalties(&(0..1024).collect::<Vec<_>>());
@@ -366,8 +376,12 @@ fn multi_range_slice_identity_is_independent_of_descriptor_boundaries() {
 
 #[test]
 fn partial_operation_restore_restores_payload_chunk_summary() {
-    let mut arena =
-        PageMaterialArena::with_chunk_bytes(std::mem::size_of::<Option<PageMaterialNode>>() * 8);
+    page_arena!(
+        arena,
+        pool,
+        region,
+        std::mem::size_of::<Option<PageMaterialNode>>() * 8
+    );
     arena.enable_semantic_identity();
     let retained_nodes = penalties(&[1, 2, 3]);
     let retained = arena
@@ -445,7 +459,7 @@ fn accepted_identity_survives_reject_accept_and_prune() {
 
 #[test]
 fn unique_durable_move_preserves_recursive_addresses_without_copying() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let leaf = arena.publish_owned([Node::Penalty(41)]).expect("page leaf");
     let root = arena.publish_owned([boxed(leaf)]).expect("page box");
     let durable = arena
@@ -494,7 +508,7 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
 
 #[test]
 fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let leaf = arena.publish_owned([Node::Penalty(43)]).expect("page leaf");
     let root = arena.publish_owned([boxed(leaf)]).expect("page box");
     let durable = arena
@@ -522,7 +536,7 @@ fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
 
 #[test]
 fn durable_lifetime_copies_preserve_enabled_semantic_identity() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();
     let leaf = arena.publish_owned([Node::Penalty(45)]).expect("page leaf");
     let root = arena.publish_owned([boxed(leaf)]).expect("page box");
@@ -554,7 +568,7 @@ fn durable_lifetime_copies_preserve_enabled_semantic_identity() {
 
 #[test]
 fn historical_durable_owner_copy_is_move_only_and_independent() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let root = arena.publish_owned([Node::Penalty(47)]).expect("page root");
     let original = arena
         .copy_page_root_to_durable(root)

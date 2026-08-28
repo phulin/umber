@@ -1,5 +1,15 @@
 use super::*;
 use crate::node::Node;
+use crate::node_region::NodePool;
+use crate::page_node_arena::PageMaterialRegion;
+
+macro_rules! page_arena {
+    ($arena:ident, $pool:ident, $state:ident, $bytes:expr) => {
+        let mut $pool = NodePool::with_chunk_bytes($bytes);
+        let mut $state = PageMaterialRegion::new(&mut $pool);
+        let mut $arena = PageMaterialArena::new(&mut $pool, &mut $state);
+    };
+}
 
 fn owner(arena: &mut PageMaterialArena, penalty: i32) -> DurableNodeClosure {
     let root = arena
@@ -16,7 +26,7 @@ fn current_region(state: &DurableBoxState, index: u16) -> Option<NodeRegionId> {
 
 #[test]
 fn overwrite_without_retained_history_retires_the_old_owner() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let first = owner(&mut arena, 11);
     let first_id = first.region_id();
@@ -48,7 +58,7 @@ fn overwrite_without_retained_history_retires_the_old_owner() {
 
 #[test]
 fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let accepted = owner(&mut arena, 17);
     let accepted_id = accepted.region_id();
@@ -99,7 +109,7 @@ fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
 
 #[test]
 fn operation_rollback_moves_the_original_owner_back_without_copying() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let original = owner(&mut arena, 29);
     let original_id = original.region_id();
@@ -129,7 +139,7 @@ fn operation_rollback_moves_the_original_owner_back_without_copying() {
 
 #[test]
 fn operation_rollback_restores_the_maintained_semantic_root() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();
     let mut state = DurableBoxState::new();
     assert!(state.enable_semantic_identity());
@@ -159,7 +169,7 @@ fn operation_rollback_restores_the_maintained_semantic_root() {
 
 #[test]
 fn local_group_restore_moves_the_saved_owner_back() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let original = owner(&mut arena, 37);
     let original_id = original.region_id();
@@ -193,7 +203,7 @@ fn local_group_restore_moves_the_saved_owner_back() {
 
 #[test]
 fn checkpoint_accept_drops_the_superseded_owner_only_once() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let old = owner(&mut arena, 43);
     let old_id = old.region_id();
@@ -242,7 +252,7 @@ fn checkpoint_accept_drops_the_superseded_owner_only_once() {
 
 #[test]
 fn checkpoint_restore_reopens_group_and_restores_exact_live_owner() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let outer = owner(&mut arena, 59);
     state
@@ -280,7 +290,7 @@ fn checkpoint_restore_reopens_group_and_restores_exact_live_owner() {
 
 #[test]
 fn candidate_reject_redoes_accepted_group_exit_with_exact_owner() {
-    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let outer = owner(&mut arena, 67);
     let outer_id = outer.region_id();

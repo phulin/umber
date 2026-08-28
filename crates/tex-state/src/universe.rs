@@ -1044,11 +1044,10 @@ impl<G> Universe<G> {
             .as_mut()
             .expect("the current lineage owns the direct state core")
             .accept_checkpoint_candidate(transaction.core);
-        self.durable_boxes
-            .accept_checkpoint_candidate(
-                &mut self.page_region.nodes_mut(),
-                transaction.durable_boxes,
-            );
+        self.durable_boxes.accept_checkpoint_candidate(
+            &mut self.page_region.nodes_mut(),
+            transaction.durable_boxes,
+        );
         self.durable_forms
             .accept_candidate(&mut self.page_region.nodes_mut());
         self.world.accept_checkpoint_candidate(transaction.world);
