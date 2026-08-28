@@ -700,3 +700,117 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
         [kern(1), kern(12)]
     );
 }
+
+#[test]
+fn held_over_material_is_self_contained_in_next_page_region() {
+    let mut old = PageRegion::new();
+    let shipped = old
+        .nodes_mut()
+        .publish_owned((0..128).map(kern))
+        .expect("shipped prefix");
+    let child = old
+        .nodes_mut()
+        .publish_owned([kern(201), kern(202)])
+        .expect("held-over child");
+    let held_over = old
+        .nodes_mut()
+        .publish_owned([Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: child,
+            post: PageListId::empty(),
+            replace: PageListId::empty(),
+            physical_replace_count: 0,
+        }])
+        .expect("held-over root");
+    let old_id = old.id();
+
+    let succession = old
+        .finish_shipout(held_over)
+        .map_err(|(error, _)| error)
+        .expect("page succession");
+    assert_ne!(succession.current.id(), old_id);
+    assert!(succession.retained_prior.is_none());
+    assert_eq!(succession.current.counters().page_regions_started, 2);
+    assert_eq!(succession.current.counters().page_regions_dropped, 1);
+    assert_eq!(succession.current.counters().held_over_nodes_copied, 3);
+    assert_eq!(
+        succession.current.nodes().counters().source_nodes_copied,
+        3,
+        "only the recursively selected held-over closure is a semantic copy"
+    );
+    assert_eq!(
+        succession.current.nodes().counters().new_semantic_nodes,
+        3,
+        "the 128-node shipped prefix is never copied"
+    );
+    assert!(!succession.current.nodes().contains(shipped));
+    assert!(!succession.current.nodes().contains(held_over));
+    let copied_root = succession
+        .current
+        .nodes()
+        .list(succession.held_over)
+        .expect("held-over root belongs to next region");
+    let Node::Disc { pre, .. } = copied_root.get(0).expect("copied discretionary") else {
+        panic!("held-over root shape changed");
+    };
+    assert_eq!(
+        succession
+            .current
+            .nodes()
+            .list(*pre)
+            .expect("nested child is region-local")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [kern(201), kern(202)]
+    );
+}
+
+#[test]
+fn checkpoint_retains_old_page_region_until_last_row_is_pruned() {
+    let mut old = PageRegion::new();
+    let held_over = old
+        .nodes_mut()
+        .publish_owned([kern(7)])
+        .expect("held-over node");
+    {
+        let (nodes, page) = old.parts_mut();
+        page.push_current_page(nodes, kern(8));
+    }
+    let checkpoint = old.seal_checkpoint().expect("old-page checkpoint");
+    let old_id = old.id();
+
+    let mut succession = old
+        .finish_shipout(held_over)
+        .map_err(|(error, _)| error)
+        .expect("page succession");
+    let retained = succession
+        .retained_prior
+        .as_ref()
+        .expect("checkpoint history owns the old page region");
+    assert_eq!(retained.id(), old_id);
+    assert!(retained.validates_checkpoint(checkpoint));
+    assert_eq!(succession.current.counters().page_regions_retained, 1);
+
+    assert!(succession.prune_retained_checkpoint(checkpoint));
+    assert!(succession.retained_prior.is_none());
+    assert_eq!(succession.current.counters().page_regions_dropped, 1);
+}
+
+#[test]
+fn foreign_held_over_root_is_rejected_without_consuming_page_owner() {
+    let old = PageRegion::new();
+    let mut foreign = PageRegion::new();
+    let root = foreign
+        .nodes_mut()
+        .publish_owned([kern(9)])
+        .expect("foreign root");
+
+    let (error, old) = match old.finish_shipout(root) {
+        Ok(_) => panic!("foreign held-over root must reject"),
+        Err(failure) => failure,
+    };
+    assert_eq!(error, crate::fork_arena::ForkArenaError::InvalidRegion);
+    assert_eq!(old.counters().cross_region_node_reference_rejections, 1);
+    assert_eq!(old.counters().page_regions_dropped, 0);
+}

@@ -629,7 +629,7 @@ struct PageSemanticRoots {
 /// The key intentionally carries no raw list or arena coordinate.  Those
 /// remain private rows under the matching [`PageRegion`] owner.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct PageRegionCheckpointKey {
+pub struct PageRegionCheckpointKey {
     region: NodeRegionId,
     boundary: u64,
 }
@@ -645,15 +645,23 @@ struct PageRegionCheckpoint {
 ///
 /// These counters never participate in liveness decisions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct PageRegionCounters {
-    pub(crate) page_regions_started: u64,
-    pub(crate) page_regions_retained: u64,
-    pub(crate) page_regions_dropped: u64,
-    pub(crate) page_region_forks: u64,
-    pub(crate) later_page_regions_detached: u64,
-    pub(crate) held_over_nodes_copied: u64,
-    pub(crate) held_over_envelopes_moved: u64,
-    pub(crate) cross_region_node_reference_rejections: u64,
+pub struct PageRegionCounters {
+    /// Page-building regions opened.
+    pub page_regions_started: u64,
+    /// Old page regions moved into checkpoint history.
+    pub page_regions_retained: u64,
+    /// Old page regions dropped after output or final pruning.
+    pub page_regions_dropped: u64,
+    /// Exact edit forks opened in a selected page region.
+    pub page_region_forks: u64,
+    /// Later accepted page regions detached wholesale at edit start.
+    pub later_page_regions_detached: u64,
+    /// Nodes copied during explicit held-over evacuation.
+    pub held_over_nodes_copied: u64,
+    /// Independently transferable held-over envelopes moved without copying.
+    pub held_over_envelopes_moved: u64,
+    /// Foreign node roots rejected at a region boundary.
+    pub cross_region_node_reference_rejections: u64,
 }
 
 /// Exclusive owner for one page-building period.
@@ -662,7 +670,7 @@ pub(crate) struct PageRegionCounters {
 /// state, its reversible journal, and every retained row for the period move
 /// together in this aggregate.  Raw page roots are therefore never sibling
 /// owners in `Universe`.
-pub(crate) struct PageRegion {
+pub struct PageRegion {
     nodes: PageNodeArena,
     builder: PageBuilderState,
     checkpoints: Vec<PageRegionCheckpoint>,
@@ -674,6 +682,13 @@ pub(crate) struct AcceptedPageRegionTail {
     builder: AcceptedPageTail,
     selected_boundary: u64,
     later_rows: Vec<PageRegionCheckpoint>,
+}
+
+/// Result of completing one page lifetime and opening its successor.
+pub struct PageRegionSuccession {
+    current: PageRegion,
+    retained_prior: Option<PageRegion>,
+    held_over: PageListId,
 }
 
 impl Default for PageRegion {
@@ -860,7 +875,7 @@ impl PageRegion {
     }
 
     #[must_use]
-    pub(crate) const fn counters(&self) -> PageRegionCounters {
+    pub const fn counters(&self) -> PageRegionCounters {
         self.counters
     }
 
@@ -871,6 +886,100 @@ impl PageRegion {
                 .capacity()
                 .saturating_mul(core::mem::size_of::<PageRegionCheckpoint>()),
         )
+    }
+
+    /// Ends this page-building period and establishes the next one.
+    ///
+    /// The caller supplies the exact held-over closure selected by the
+    /// page-break traversal.  Only that closure is recursively copied into
+    /// the new region; unrelated shipped and historical material is never
+    /// visited.  An old region with retained rows moves into history as one
+    /// owner, while an uncheckpointed old region drops wholesale.
+    pub fn finish_shipout(
+        mut self,
+        held_over: PageListId,
+    ) -> Result<PageRegionSuccession, (ForkArenaError, Self)> {
+        if !self.nodes.contains(held_over) {
+            self.counters.cross_region_node_reference_rejections = self
+                .counters
+                .cross_region_node_reference_rejections
+                .saturating_add(1);
+            return Err((ForkArenaError::InvalidRegion, self));
+        }
+        let mut current = PageRegion::new();
+        if self.nodes.semantic_identity_enabled() {
+            current.nodes.enable_semantic_identity();
+        }
+        let (held_over, copied) = match current.nodes.copy_closure_from(&self.nodes, held_over) {
+            Ok(copied) => copied,
+            Err(error) => return Err((error, self)),
+        };
+        current.counters = self.counters;
+        current.counters.page_regions_started =
+            current.counters.page_regions_started.saturating_add(1);
+        current.counters.held_over_nodes_copied = current
+            .counters
+            .held_over_nodes_copied
+            .saturating_add(copied as u64);
+        if !held_over.is_empty() {
+            current
+                .builder
+                .append_contributions(&mut current.nodes, held_over);
+        }
+        let retained_prior = if self.checkpoints.is_empty() {
+            current.counters.page_regions_dropped =
+                current.counters.page_regions_dropped.saturating_add(1);
+            None
+        } else {
+            self.counters.page_regions_retained =
+                self.counters.page_regions_retained.saturating_add(1);
+            current.counters.page_regions_retained =
+                current.counters.page_regions_retained.saturating_add(1);
+            Some(self)
+        };
+        Ok(PageRegionSuccession {
+            current,
+            retained_prior,
+            held_over,
+        })
+    }
+}
+
+impl PageRegionSuccession {
+    /// The newly current page region.
+    #[must_use]
+    pub const fn current(&self) -> &PageRegion {
+        &self.current
+    }
+
+    /// The prior page owner while at least one retained row still names it.
+    #[must_use]
+    pub const fn retained_prior(&self) -> Option<&PageRegion> {
+        self.retained_prior.as_ref()
+    }
+
+    /// Owner-relative root of the evacuated closure in the new region.
+    #[must_use]
+    pub const fn held_over(&self) -> PageListId {
+        self.held_over
+    }
+
+    /// Removes one retained boundary and drops its old page owner when the
+    /// contiguous interval becomes empty.
+    pub fn prune_retained_checkpoint(&mut self, key: PageRegionCheckpointKey) -> bool {
+        let Some(prior) = &mut self.retained_prior else {
+            return false;
+        };
+        let Some(position) = prior.checkpoints.iter().position(|row| row.key == key) else {
+            return false;
+        };
+        prior.checkpoints.remove(position);
+        if prior.checkpoints.is_empty() {
+            self.retained_prior = None;
+            self.current.counters.page_regions_dropped =
+                self.current.counters.page_regions_dropped.saturating_add(1);
+        }
+        true
     }
 }
 

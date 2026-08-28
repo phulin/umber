@@ -7,6 +7,7 @@
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
     ArenaListView, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane,
@@ -21,6 +22,8 @@ mod tests;
 
 type RegionNode = Node<PageListId>;
 
+static NEXT_NODE_POOL_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Node ownership used by page construction and retained page history.
 pub enum PageRole {}
 
@@ -30,6 +33,7 @@ pub enum DurableRole {}
 /// Generation-checked identity of one recyclable node-region slot.
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct NodeRegionId {
+    pool: u64,
     slot: u32,
     generation: u32,
 }
@@ -52,6 +56,7 @@ struct RegionSlot {
 /// Pool capacity is charged once here. Regions own only their chunk envelopes
 /// and canonical descriptors.
 pub struct NodePool {
+    id: u64,
     pub(crate) chunks: ChunkPool<RegionNode>,
     regions: Vec<RegionSlot>,
     free_regions: Vec<u32>,
@@ -72,6 +77,7 @@ impl NodePool {
     #[must_use]
     pub(crate) fn with_chunk_bytes(chunk_bytes: usize) -> Self {
         Self {
+            id: NEXT_NODE_POOL_ID.fetch_add(1, Ordering::Relaxed),
             chunks: ChunkPool::with_chunk_bytes(chunk_bytes),
             regions: Vec::new(),
             free_regions: Vec::new(),
@@ -103,13 +109,20 @@ impl NodePool {
             (slot, 1)
         };
         Ok(NodeRegion {
-            id: NodeRegionId { slot, generation },
+            id: NodeRegionId {
+                pool: self.id,
+                slot,
+                generation,
+            },
             pub_arena: arena,
             _role: PhantomData,
         })
     }
 
     fn validate_region<Role>(&self, region: &NodeRegion<Role>) -> Result<(), ForkArenaError> {
+        if region.id.pool != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
         let entry = self
             .regions
             .get(region.id.slot as usize)
@@ -125,9 +138,11 @@ impl NodePool {
 
     #[cfg(test)]
     fn validates_id(&self, id: NodeRegionId) -> bool {
-        self.regions
-            .get(id.slot as usize)
-            .is_some_and(|entry| entry.live && entry.generation == id.generation)
+        id.pool == self.id
+            && self
+                .regions
+                .get(id.slot as usize)
+                .is_some_and(|entry| entry.live && entry.generation == id.generation)
     }
 
     /// Explicitly retires a region because its chunk keys must be returned to

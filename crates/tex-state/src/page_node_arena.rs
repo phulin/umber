@@ -646,6 +646,79 @@ impl PageMaterialArena {
             .pub_arena
             .accept_checkpoint_candidate(&mut self.pool.chunks, boundary)
     }
+
+    /// Recursively copies one exact closure from another page region.
+    ///
+    /// This is the shared semantic-copy primitive for explicit lifetime
+    /// transitions.  Ordinary appends continue to use `publish_owned`; this
+    /// path additionally records the exact source-node copy count and rewrites
+    /// every child coordinate into the destination region.
+    pub(crate) fn copy_closure_from(
+        &mut self,
+        source: &Self,
+        root: PageListId,
+    ) -> Result<(PageListId, usize), ForkArenaError> {
+        if self.region.id() == source.region.id()
+            || self.semantic_identity_enabled != source.semantic_identity_enabled
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let operation = self.operation_mark();
+        let result = copy_closure_between_page_arenas(self, source, root, &mut Vec::new());
+        match result {
+            Ok((copied, count)) => {
+                self.region.pub_arena.record_source_nodes_copied(count);
+                Ok((copied, count))
+            }
+            Err(error) => {
+                self.restore_operation(operation)
+                    .expect("semantic-copy rollback mark remains valid");
+                Err(error)
+            }
+        }
+    }
+}
+
+fn copy_closure_between_page_arenas(
+    destination: &mut PageMaterialArena,
+    source: &PageMaterialArena,
+    root: PageListId,
+    stack: &mut Vec<PageListId>,
+) -> Result<(PageListId, usize), ForkArenaError> {
+    if root.is_empty() {
+        return Ok((PageListId::empty(), 0));
+    }
+    if stack.contains(&root) {
+        return Err(ForkArenaError::InvalidRegion);
+    }
+    let nodes = source.list(root)?.iter().cloned().collect::<Vec<_>>();
+    stack.push(root);
+    let mut copied = Vec::with_capacity(nodes.len());
+    let mut count = nodes.len();
+    for mut node in nodes {
+        let mut child_result = Ok(());
+        node.visit_node_lists_mut(|child| {
+            if child_result.is_err() {
+                return;
+            }
+            match copy_closure_between_page_arenas(destination, source, *child, stack) {
+                Ok((copied, copied_count)) => {
+                    *child = copied;
+                    count = count.saturating_add(copied_count);
+                }
+                Err(error) => child_result = Err(error),
+            }
+        });
+        if let Err(error) = child_result {
+            stack.pop();
+            return Err(error);
+        }
+        copied.push(node);
+    }
+    stack.pop();
+    destination
+        .publish_owned(copied)
+        .map(|copied| (copied, count))
 }
 
 #[cfg(test)]

@@ -190,11 +190,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   roots and borrows, atomic nested-coordinate transfer/rebranding, and explicit
   recursive closure copy; production page and durable carrier cutovers remain
   separate migration stages.
-- `src/page.rs`: Page-lifetime builder state with directly owned contribution,
-  current-page, discard, insertion, and mark buffers; active insertion classes
-  and sparse mark classes retain canonical iteration order beside dense direct
-  lookup indexes, plus demand-enabled authoritative component roots restored by
-  the existing marks. The aggregate Universe owns immutable page-list publication and rollback cursors.
+- `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
+  the four PageBuilder roots, scalar state, reversible journal, and private
+  owner-relative checkpoint rows; active insertion classes and sparse mark
+  classes retain canonical iteration order beside dense direct lookup indexes.
+  Exact edit settlement and shipout succession keep roots and payload suffixes
+  atomic, and held-over evacuation uses the explicit semantic-copy boundary.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, allocation-free scalar checkpoint marks,
@@ -224,7 +225,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Runtime
   page-material facade pairing the canonical coarse-arena coordinate with its
   demand-maintained semantic identity scalar, including zero-hash disabled
-  execution and identity-preserving split/compose/fork settlement tests. Its
+  execution, identity-preserving split/compose/fork settlement, and exact
+  recursive cross-region semantic copy used only by lifetime transitions. Its
   payload is explicitly `Node<PageListId>` so the replacement topology cannot
   retain child coordinates from the superseded row arena during migration.
 - `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
