@@ -345,6 +345,18 @@ impl PageMaterialArena {
         Ok(PageListId::from_parts(coordinate, identity))
     }
 
+    /// Test-only negative control for the source-copy counter. Production
+    /// transforms have no copy-published entry point and append ranges instead.
+    #[cfg(test)]
+    pub(crate) fn publish_source_copy(
+        &mut self,
+        source: PageListId,
+    ) -> Result<PageListId, ForkArenaError> {
+        let nodes = self.list(source)?.iter().cloned().collect::<Vec<_>>();
+        self.arena.record_source_nodes_copied(nodes.len());
+        self.publish_owned(nodes)
+    }
+
     pub fn open_active_list(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,

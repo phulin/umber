@@ -213,6 +213,20 @@ enum ParagraphSource<'a> {
     },
 }
 
+/// Move-only production description of an arena-backed paragraph.
+///
+/// Node payload remains in the page-material arena. The vectors contain only
+/// breakpoint and allocator scalar evidence assembled by the line breaker.
+pub struct ArenaParagraphMaterialization {
+    pub semantic: PageNodeSequenceId,
+    pub diagnostic: Option<PageNodeSequenceId>,
+    pub diagnostic_boundaries: Option<Vec<usize>>,
+    pub semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
+    pub diagnostic_high_cell_lineages: Option<Vec<DirectHighCellLineages>>,
+    pub actions: Vec<MaterializationAction>,
+    pub par_fill_override: Option<GlueSpec>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct BreakSite {
     breakpoint: Breakpoint,
@@ -228,7 +242,7 @@ struct TraceSpan {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MaterializationAction {
+pub enum MaterializationAction {
     Copy,
     Discretionary,
     BreakDiscardable,
@@ -437,6 +451,41 @@ impl<'a> ParagraphTape<'a> {
 
     pub fn replace_last_par_fill(&mut self, spec: GlueSpec) {
         self.par_fill_override = Some(spec);
+    }
+
+    /// Consumes the production arena-backed tape without materializing either
+    /// node channel. Pure slice and owned adapters deliberately remain separate.
+    #[must_use]
+    pub fn into_arena_materialization(self) -> Option<ArenaParagraphMaterialization> {
+        let Self {
+            source,
+            materialization,
+            par_fill_override,
+            ..
+        } = self;
+        let ParagraphSource::ArenaId {
+            semantic,
+            physical,
+            physical_boundaries,
+            semantic_high_cell_lineages,
+            physical_high_cell_lineages,
+        } = source
+        else {
+            return None;
+        };
+        let has_diagnostic_projection = semantic != physical || physical_boundaries.is_some();
+        Some(ArenaParagraphMaterialization {
+            semantic,
+            diagnostic: has_diagnostic_projection.then_some(physical),
+            diagnostic_boundaries: has_diagnostic_projection
+                .then_some(physical_boundaries)
+                .flatten(),
+            semantic_high_cell_lineages,
+            diagnostic_high_cell_lineages: has_diagnostic_projection
+                .then_some(physical_high_cell_lineages),
+            actions: materialization,
+            par_fill_override,
+        })
     }
 
     #[must_use]
@@ -718,9 +767,11 @@ pub fn break_hyphenated_tape_traced<S: TypesetState>(
 mod post;
 mod widths;
 
-pub use post::{LineMaterializer, post_line_break, post_line_break_owned};
+pub use post::{LineMaterializer, line_penalty_after, post_line_break, post_line_break_owned};
 
-use widths::{Widths, add_node_width_source, line_badness, line_widths_nodes, line_widths_view};
+#[cfg(test)]
+use widths::line_widths_nodes;
+use widths::{Widths, add_node_width_source, line_badness, line_widths_cursor, line_widths_view};
 
 /// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
 ///
@@ -767,7 +818,17 @@ fn observe_expansion_fonts<S: TypesetState>(
 /// generated fonts before performing ordinary final hpack.
 #[must_use]
 pub fn plan_line_expansion<S: TypesetState>(state: &S, nodes: &[Node], target: Scaled) -> i32 {
-    let widths = line_widths_nodes(state, nodes);
+    plan_line_expansion_cursor(state, NodeCursor::owned(nodes), target)
+}
+
+/// Arena-backed form of [`plan_line_expansion`].
+#[must_use]
+pub fn plan_line_expansion_cursor<S: TypesetState>(
+    state: &S,
+    nodes: NodeCursor<'_>,
+    target: Scaled,
+) -> i32 {
+    let widths = line_widths_cursor(state, nodes, 0, nodes.len(), true);
     let shortfall = WideScaled::from_scaled(target)
         .checked_sub(widths.natural)
         .expect("line shortfall fits the wide scaled domain")

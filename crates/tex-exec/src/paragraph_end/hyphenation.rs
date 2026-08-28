@@ -170,7 +170,14 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
         &physical_post_overrides,
         fuel,
     )?;
-    let semantic = crate::box_runtime::hmode::reshape_open_type_runs_list(stores, semantic);
+    let mut shaping_chars = Vec::new();
+    let mut shaping_scratch = crate::box_runtime::hmode::OpenTypeShapingScratch::default();
+    let semantic = crate::box_runtime::hmode::reshape_open_type_runs_list(
+        stores,
+        semantic,
+        &mut shaping_chars,
+        &mut shaping_scratch,
+    );
     let physical_boundaries = compacted_physical_boundaries(stores, semantic, physical.len());
     Ok(HyphenatedHlist {
         semantic,

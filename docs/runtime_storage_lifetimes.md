@@ -539,6 +539,20 @@ per-node or per-list reference count. Retained runtime checkpoints name sealed
 chunk and descriptor boundaries. Post-fork publication opens only the current
 suffix, and forking copies no node or token payload.
 
+Paragraph post-line materialization is the range-preserving case where its
+input is already immutable page material. The production tape consumes one
+`PageListId` plus scalar break actions and reborrows it through `NodeCursor`.
+Each completed line is one canonical page-material list assembled by a
+detached active builder: unchanged paragraph and discretionary-branch spans
+remain source ranges, while skips, direction repair, changed discretionary
+records, shaping/PDF replacements, and overfull rules are appended exactly
+once. A distinct TeX-physical source is retained only as an optional detached
+diagnostic projection; an ordinary paragraph creates no second list. Lineage
+and boundary evidence are scalar scratch, never `Vec<Node>` payload. The
+page-material counters distinguish actual appends from published-source copies,
+and address-stability tests exercise both the zero-copy route and a nonzero
+negative control.
+
 The page builder publishes four independent page-material roots for its
 contribution list, current page, page discards, and split discards. The
 aggregate checkpoint records those roots directly; it never composes them into

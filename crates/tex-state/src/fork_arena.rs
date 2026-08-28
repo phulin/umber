@@ -850,7 +850,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.counters.source_nodes_copied = self
             .counters
             .source_nodes_copied
-            .saturating_add(count as u64);
+            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
     }
 
     fn bind_pool(&mut self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {

@@ -4,9 +4,9 @@ use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::node::Node;
 use tex_state::node_arena::PageListId;
-use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
+use tex_typeset::{PackDiagnostic, PackSpec};
 
-use crate::packing_params::{hpack_params, recover_texxet_directions};
+use crate::packing_params::hpack_params;
 use crate::{ExecError, Mode, ModeNest};
 
 use super::hmode::flush_pending_hchars;
@@ -155,6 +155,224 @@ pub(crate) fn hpack_with_overfull_rule<G>(
     packed.node
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hpack_page_list_with_diagnostics<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
+    context: &crate::pack_report::ExecutionDiagnosticContext,
+    children: PageListId,
+    diagnostic_children: Option<PageListId>,
+    direction_scratch: &mut Vec<tex_state::node::Direction>,
+    allocator_high_cell_overlap: u32,
+    spec: PackSpec,
+) -> tex_state::node::BoxNode {
+    let params = hpack_params(stores);
+    let (children, lr_problems) =
+        recover_texxet_directions_list(stores, children, direction_scratch);
+    let (mut diagnostic_children, _) = diagnostic_children
+        .map(|nodes| recover_texxet_directions_list(stores, nodes, direction_scratch))
+        .unzip();
+    let mut packed =
+        crate::packing_params::hpack_prepared_unreported(stores, geometry, children, spec, params);
+    if !packed.node.children.is_empty()
+        && params.overfull_rule.raw() > 0
+        && packed.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
+        })
+    {
+        let mut generated = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+        stores.open_page_active_list(&mut generated);
+        stores.push_page_active_list(
+            &mut generated,
+            Node::Rule {
+                width: Some(params.overfull_rule),
+                height: None,
+                depth: None,
+            },
+        );
+        let generated = stores.finalize_page_active_list(&mut generated);
+        let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+        stores.open_page_active_list(&mut output);
+        stores.append_page_active_list(&mut output, packed.node.children);
+        stores.append_page_active_list(&mut output, generated);
+        packed.node.children = stores.finalize_page_active_list(&mut output);
+        if let Some(physical) = diagnostic_children {
+            let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+            stores.open_page_active_list(&mut output);
+            stores.append_page_active_list(&mut output, physical);
+            stores.append_page_active_list(&mut output, generated);
+            diagnostic_children = Some(stores.finalize_page_active_list(&mut output));
+        }
+    }
+    let short_diagnostic_children = diagnostic_children
+        .map(|physical| project_short_diagnostic_discs_list(stores, physical, children));
+    let diagnostic_list_layout = if short_diagnostic_children.is_some() {
+        crate::pack_report::DiagnosticListLayout::DetachedProjection
+    } else {
+        crate::pack_report::DiagnosticListLayout::FrozenList
+    };
+    packed.node.allocator_high_cell_overlap = if diagnostic_children.is_some() {
+        allocator_high_cell_overlap
+    } else {
+        0
+    };
+    packed.node.diagnostic_children = diagnostic_children;
+    stores.set_last_badness(packed.badness);
+    let diagnostic_box = tex_state::node::BoxNode {
+        children: short_diagnostic_children.unwrap_or(packed.node.children),
+        ..packed.node
+    };
+    crate::pack_report::report_pack_diagnostics(
+        stores,
+        diagnostic_effects,
+        context,
+        crate::pack_report::PackedDirection::Horizontal,
+        &packed.diagnostics,
+        &Node::HList(diagnostic_box),
+        diagnostic_list_layout,
+    );
+    if let Some((missing, extra)) = lr_problems {
+        crate::pack_report::report_lr_problems(
+            stores,
+            diagnostic_effects,
+            context,
+            missing,
+            extra,
+            &Node::HList(diagnostic_box),
+            diagnostic_list_layout,
+        );
+    }
+    packed.node
+}
+
+fn recover_texxet_directions_list<G>(
+    stores: &mut CommandContext<'_, G>,
+    source: PageListId,
+    expected: &mut Vec<tex_state::node::Direction>,
+) -> (PageListId, Option<(usize, usize)>) {
+    if stores.int_param(tex_state::env::banks::IntParam::TEX_XET_STATE) <= 0 {
+        return (source, None);
+    }
+    expected.clear();
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let mut extra = 0usize;
+    for index in 0..source.len() {
+        let direction = stores
+            .page_node_list(source)
+            .expect("direction source belongs to the live page arena")
+            .nodes()
+            .owned_node(index)
+            .and_then(|node| match node {
+                Node::Direction(direction) => Some(*direction),
+                _ => None,
+            });
+        let replacement = direction.and_then(|direction| {
+            let closes = match direction {
+                tex_state::node::Direction::BeginM => Some(tex_state::node::Direction::EndM),
+                tex_state::node::Direction::BeginL => Some(tex_state::node::Direction::EndL),
+                tex_state::node::Direction::BeginR => Some(tex_state::node::Direction::EndR),
+                tex_state::node::Direction::EndM
+                | tex_state::node::Direction::EndL
+                | tex_state::node::Direction::EndR => None,
+            };
+            if let Some(closes) = closes {
+                expected.push(closes);
+                None
+            } else if expected.last() == Some(&direction) {
+                let _ = expected.pop();
+                None
+            } else {
+                extra += 1;
+                Some(Node::Kern {
+                    amount: tex_state::scaled::Scaled::from_raw(0),
+                    kind: tex_state::node::KernKind::Explicit,
+                })
+            }
+        });
+        if let Some(replacement) = replacement {
+            stores.push_page_active_list(&mut output, replacement);
+        } else {
+            stores.append_page_active_list_range(&mut output, source, index..index + 1);
+        }
+    }
+    let missing = expected.len();
+    for index in (0..expected.len()).rev() {
+        stores.push_page_active_list(&mut output, Node::Direction(expected[index]));
+    }
+    (
+        stores.finalize_page_active_list(&mut output),
+        (missing != 0 || extra != 0).then_some((missing, extra)),
+    )
+}
+
+fn project_short_diagnostic_discs_list<G>(
+    stores: &mut CommandContext<'_, G>,
+    physical: PageListId,
+    semantic: PageListId,
+) -> PageListId {
+    let mut semantic_index = 0;
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    for physical_index in 0..physical.len() {
+        let physical_disc = stores
+            .page_node_list(physical)
+            .expect("physical diagnostic list remains live")
+            .nodes()
+            .owned_node(physical_index)
+            .and_then(|node| match node {
+                Node::Disc {
+                    kind,
+                    pre,
+                    post,
+                    replace,
+                    physical_replace_count,
+                } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+                _ => None,
+            });
+        let Some((kind, physical_pre, physical_post, replace, physical_replace_count)) =
+            physical_disc
+        else {
+            stores.append_page_active_list_range(
+                &mut output,
+                physical,
+                physical_index..physical_index + 1,
+            );
+            continue;
+        };
+        let mut semantic_pre_post = None;
+        while semantic_index < semantic.len() {
+            let candidate = stores
+                .page_node_list(semantic)
+                .expect("semantic diagnostic list remains live")
+                .nodes()
+                .owned_node(semantic_index)
+                .and_then(|node| match node {
+                    Node::Disc { pre, post, .. } => Some((*pre, *post)),
+                    _ => None,
+                });
+            semantic_index += 1;
+            if candidate.is_some() {
+                semantic_pre_post = candidate;
+                break;
+            }
+        }
+        let (pre, post) = semantic_pre_post.unwrap_or((physical_pre, physical_post));
+        stores.push_page_active_list(
+            &mut output,
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            },
+        );
+    }
+    stores.finalize_page_active_list(&mut output)
+}
+
 fn physical_discretionary_projection<G>(
     stores: &mut CommandContext<'_, G>,
     children: tex_state::node_arena::PageListId,
@@ -192,135 +410,6 @@ fn physical_discretionary_projection<G>(
         pieces.push(stores.slice_page_node_sequence(children, start..source_len, &mut slices));
     }
     Some(stores.compose_page_node_sequences(&pieces))
-}
-
-#[allow(clippy::too_many_arguments)] // Packing exposes independent TeX parameters and diagnostic capabilities.
-pub(crate) fn hpack_owned_with_overfull_rule<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    geometry: &mut dyn crate::geometry::PackGeometrySink,
-    context: &crate::pack_report::ExecutionDiagnosticContext,
-    nodes: &mut Vec<Node>,
-    mut diagnostic_nodes: Option<&mut Vec<Node>>,
-    allocator_high_cell_overlap: u32,
-    spec: PackSpec,
-) -> tex_state::node::BoxNode {
-    let params = hpack_params(stores);
-    let lr_problems = recover_texxet_directions(stores, nodes);
-    if let Some(diagnostic_nodes) = diagnostic_nodes.as_deref_mut() {
-        let _ = recover_texxet_directions(stores, diagnostic_nodes);
-    }
-    let plan = plan_hpack_nodes(
-        &crate::typeset_context::TypesetContext::new(stores),
-        nodes,
-        spec,
-        params,
-    );
-    if !nodes.is_empty()
-        && params.overfull_rule.raw() > 0
-        && plan
-            .diagnostics
-            .iter()
-            .any(|diagnostic| {
-                matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
-            })
-    {
-        nodes.push(Node::Rule {
-            width: Some(params.overfull_rule),
-            height: None,
-            depth: None,
-        });
-        if let Some(diagnostic_nodes) = diagnostic_nodes.as_deref_mut() {
-            diagnostic_nodes.push(Node::Rule {
-                width: Some(params.overfull_rule),
-                height: None,
-                depth: None,
-            });
-        }
-    }
-    let short_diagnostic_nodes = diagnostic_nodes
-        .as_deref()
-        .map(|physical| project_short_diagnostic_discs(physical, nodes));
-    let diagnostic_list_layout = if short_diagnostic_nodes.is_some() {
-        crate::pack_report::DiagnosticListLayout::DetachedProjection
-    } else {
-        crate::pack_report::DiagnosticListLayout::FrozenList
-    };
-    let children = stores.publish_page_nodes(std::mem::take(nodes));
-    let mut packed = plan.finish(children);
-    packed.node.allocator_high_cell_overlap = if diagnostic_nodes.is_some() {
-        allocator_high_cell_overlap
-    } else {
-        0
-    };
-    stores.set_last_badness(packed.badness);
-    geometry.committed_hpack(packed.node.width, packed.node.height, packed.node.depth);
-    let diagnostic_box = if let Some(nodes) = diagnostic_nodes {
-        let diagnostic_children = stores.publish_page_nodes(std::mem::take(nodes));
-        let children = stores.publish_page_nodes(
-            short_diagnostic_nodes
-                .as_deref()
-                .expect("physical diagnostics have a short-display projection")
-                .to_vec(),
-        );
-        packed.node.diagnostic_children = Some(diagnostic_children);
-        tex_state::node::BoxNode {
-            children,
-            ..packed.node
-        }
-    } else {
-        packed.node
-    };
-    crate::pack_report::report_pack_diagnostics(
-        stores,
-        diagnostic_effects,
-        context,
-        crate::pack_report::PackedDirection::Horizontal,
-        &packed.diagnostics,
-        &Node::HList(diagnostic_box),
-        diagnostic_list_layout,
-    );
-    if let Some((missing, extra)) = lr_problems {
-        crate::pack_report::report_lr_problems(
-            stores,
-            diagnostic_effects,
-            context,
-            missing,
-            extra,
-            &Node::HList(diagnostic_box),
-            diagnostic_list_layout,
-        );
-    }
-    packed.node
-}
-
-pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node]) -> Vec<Node> {
-    let mut semantic_discs = semantic.iter().filter_map(|node| match node {
-        Node::Disc { pre, post, .. } => Some((*pre, *post)),
-        _ => None,
-    });
-    physical
-        .iter()
-        .map(|node| match node {
-            Node::Disc {
-                kind,
-                pre,
-                post,
-                replace,
-                physical_replace_count,
-            } => {
-                let (pre, post) = semantic_discs.next().unwrap_or((*pre, *post));
-                Node::Disc {
-                    kind: *kind,
-                    pre,
-                    post,
-                    replace: *replace,
-                    physical_replace_count: *physical_replace_count,
-                }
-            }
-            _ => node.clone(),
-        })
-        .collect()
 }
 
 pub(crate) fn first_box_node<G>(

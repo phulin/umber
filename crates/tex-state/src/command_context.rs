@@ -3141,6 +3141,13 @@ impl<'a, G> CommandContext<'a, G> {
         self.publish_page_node_range(nodes).list()
     }
 
+    /// Returns allocation/copy accounting for the canonical page-material
+    /// arena owned by this admitted execution episode.
+    #[must_use]
+    pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
+        self.page_nodes.counters()
+    }
+
     pub fn open_page_active_list(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,

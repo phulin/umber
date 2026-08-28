@@ -31,7 +31,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   including e-TeX's assignment-free forced-online diagnostic scope,
   PDF traversal/form/color operations, output-stream normalization,
   definitions, token/glue allocation, and dependency-aware mutations without
-  per-read owner admission.
+  per-read owner admission. Page-material allocation/copy counters remain
+  observable through this boundary so retained-range zero-copy gates are not
+  inferred from a separate arena owner.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.

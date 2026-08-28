@@ -10,7 +10,7 @@ mod packaging;
 mod vsplit;
 
 pub(crate) use packaging::{
-    first_box_node, hpack_owned_with_overfull_rule, hpack_with_overfull_rule, take_last_box,
+    first_box_node, hpack_page_list_with_diagnostics, hpack_with_overfull_rule, take_last_box,
 };
 pub(crate) use vsplit::split_vbox_register;
 

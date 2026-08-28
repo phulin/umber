@@ -82,14 +82,6 @@ pub(crate) fn append_node_to_vertical_list<G>(
     Ok(())
 }
 
-pub(crate) fn append_migrated_contribution<G>(
-    nest: &mut ModeNest,
-    stores: &mut CommandContext<'_, G>,
-    node: Node,
-) {
-    append_vertical_contribution(nest, stores, node);
-}
-
 pub(crate) fn append_vertical_contribution<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,

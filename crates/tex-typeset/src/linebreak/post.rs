@@ -35,6 +35,7 @@ enum ChannelNodes<'a> {
     Owned(std::vec::IntoIter<Node>),
     Borrowed(core::slice::Iter<'a, Node>),
     Arena(core::iter::Peekable<tex_state::node_arena::NodeCursorIter<'a>>),
+    #[cfg(test)]
     ArenaId {
         sequence: tex_state::node_arena::PageNodeSequenceId,
         cursor: usize,
@@ -121,36 +122,50 @@ impl<'a> LineMaterializer<'a> {
                     semantic_high_cell_lineages,
                     physical_high_cell_lineages,
                 } => {
-                    let semantic_len = semantic.len();
-                    let physical_len = physical.len();
-                    let physical_breaks = if let Some(boundaries) = physical_boundaries {
-                        breaks
-                            .iter()
-                            .map(|decision| BreakDecision {
-                                position: *boundaries
-                                    .get(decision.position)
-                                    .expect("break position is a semantic boundary"),
-                                ..*decision
-                            })
-                            .collect()
-                    } else {
-                        breaks.clone()
-                    };
-                    (
-                        ChannelNodes::ArenaId {
-                            sequence: semantic,
-                            cursor: 0,
-                            remaining: semantic_len,
-                        },
-                        ChannelNodes::ArenaId {
-                            sequence: physical,
-                            cursor: 0,
-                            remaining: physical_len,
-                        },
-                        semantic_high_cell_lineages,
-                        physical_high_cell_lineages,
-                        physical_breaks,
-                    )
+                    #[cfg(not(test))]
+                    {
+                        let _ = (
+                            semantic,
+                            physical,
+                            physical_boundaries,
+                            semantic_high_cell_lineages,
+                            physical_high_cell_lineages,
+                        );
+                        panic!("production arena tapes must use the retained-range post-line sink");
+                    }
+                    #[cfg(test)]
+                    {
+                        let semantic_len = semantic.len();
+                        let physical_len = physical.len();
+                        let physical_breaks = if let Some(boundaries) = physical_boundaries {
+                            breaks
+                                .iter()
+                                .map(|decision| BreakDecision {
+                                    position: *boundaries
+                                        .get(decision.position)
+                                        .expect("break position is a semantic boundary"),
+                                    ..*decision
+                                })
+                                .collect()
+                        } else {
+                            breaks.clone()
+                        };
+                        (
+                            ChannelNodes::ArenaId {
+                                sequence: semantic,
+                                cursor: 0,
+                                remaining: semantic_len,
+                            },
+                            ChannelNodes::ArenaId {
+                                sequence: physical,
+                                cursor: 0,
+                                remaining: physical_len,
+                            },
+                            semantic_high_cell_lineages,
+                            physical_high_cell_lineages,
+                            physical_breaks,
+                        )
+                    }
                 }
             };
         Self {
@@ -287,15 +302,17 @@ impl ChannelNodes<'_> {
             Self::Owned(nodes) => nodes.len(),
             Self::Borrowed(nodes) => nodes.len(),
             Self::Arena(nodes) => nodes.len(),
+            #[cfg(test)]
             Self::ArenaId { remaining, .. } => *remaining,
         }
     }
 
-    fn next_owned<S: TypesetState>(&mut self, state: &S) -> Option<Node> {
+    fn next_owned<S: TypesetState>(&mut self, _state: &S) -> Option<Node> {
         match self {
             Self::Owned(nodes) => nodes.next(),
             Self::Borrowed(nodes) => nodes.next().cloned(),
             Self::Arena(nodes) => nodes.next().cloned(),
+            #[cfg(test)]
             Self::ArenaId {
                 sequence,
                 cursor,
@@ -304,7 +321,7 @@ impl ChannelNodes<'_> {
                 if *remaining == 0 {
                     return None;
                 }
-                let node = state
+                let node = _state
                     .page_node_sequence(*sequence)
                     .expect("paragraph sequence remains live during materialization")
                     .owned_node(*cursor)
@@ -317,18 +334,19 @@ impl ChannelNodes<'_> {
         }
     }
 
-    fn first<'state, S: TypesetState>(&'state mut self, state: &'state S) -> Option<&'state Node> {
+    fn first<'state, S: TypesetState>(&'state mut self, _state: &'state S) -> Option<&'state Node> {
         match self {
             Self::Owned(nodes) => nodes.as_slice().first(),
             Self::Borrowed(nodes) => nodes.as_slice().first(),
             Self::Arena(nodes) => nodes.peek().copied(),
+            #[cfg(test)]
             Self::ArenaId {
                 sequence,
                 cursor,
                 remaining,
             } => (*remaining != 0)
                 .then(|| {
-                    state
+                    _state
                         .page_node_sequence(*sequence)
                         .expect("paragraph sequence remains live during materialization")
                         .owned_node(*cursor)
@@ -592,7 +610,7 @@ fn frozen_high_cell_lineages<S: TypesetState>(
         .collect()
 }
 
-pub(super) fn line_penalty_after(
+pub fn line_penalty_after(
     line_no: usize,
     breaks: &[BreakDecision],
     hyphenated: bool,

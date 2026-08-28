@@ -34,8 +34,12 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/linebreak/mod.rs`: line-breaking API, line-shape types, pass orchestration,
   breakpoint search, and demerit scoring. Active routes keep a compact stable
   break-site index and reuse the immutable tape's successor position and width
-  metrics; do not duplicate those large metrics in every route.
-- `src/linebreak/post.rs`: post-line-break list surgery for broken lines, skips, migrated disc material, and penalties.
+  metrics; production hands its arena coordinate, scalar materialization
+  actions, and optional diagnostic projection to the executor's retained-range
+  sink rather than materializing nodes.
+- `src/linebreak/post.rs`: pure slice/owned post-line-break adapters for broken
+  lines, skips, migrated discretionary material, and penalties. Production
+  arena tapes must not use their owned-node channel.
 - `src/linebreak/tests.rs`: unit tests for line dimensions, break selection, hyphenation hooks, penalties, and post-break output.
 - `src/linebreak/widths.rs`: line width accumulation, prefix width tables, glue stretch/shrink accounting, and line badness.
 - `tests/production_traits.rs`: public-boundary smoke tests proving packing,

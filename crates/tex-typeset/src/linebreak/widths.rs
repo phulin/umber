@@ -122,7 +122,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
     )
 }
 
-fn line_widths_cursor<S: TypesetState>(
+pub(super) fn line_widths_cursor<S: TypesetState>(
     state: &S,
     nodes: NodeCursor<'_>,
     start: usize,
@@ -160,6 +160,7 @@ fn line_widths_cursor<S: TypesetState>(
     widths
 }
 
+#[cfg(test)]
 pub(super) fn line_widths_nodes<S: TypesetState>(state: &S, nodes: &[Node]) -> Widths {
     let mut widths = Widths::zero();
     for index in 0..nodes.len() {
@@ -168,6 +169,7 @@ pub(super) fn line_widths_nodes<S: TypesetState>(state: &S, nodes: &[Node]) -> W
     widths
 }
 
+#[cfg(test)]
 pub(super) fn add_node_width<S: TypesetState>(
     widths: &mut Widths,
     state: &S,

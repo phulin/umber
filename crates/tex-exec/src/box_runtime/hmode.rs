@@ -560,63 +560,10 @@ pub(crate) fn shape_open_type_chars<G>(
     chars: &[crate::mode::PendingHChar],
     break_positions: &[usize],
 ) -> Vec<Node> {
-    use std::collections::BTreeMap;
-
-    let Some(first) = chars.first() else {
-        return Vec::new();
-    };
-    let mut text = String::new();
-    let mut byte_starts = Vec::with_capacity(chars.len());
-    for entry in chars {
-        byte_starts.push(text.len());
-        if let Some(mapped) = stores.font_mapped_text(first.font, entry.ch) {
-            text.push_str(mapped);
-        } else {
-            text.push(entry.ch);
-        }
-    }
-    let break_bytes = break_positions
-        .iter()
-        .filter_map(|&position| byte_starts.get(position).copied())
-        .collect::<Vec<_>>();
-    let shaped = stores
-        .shape_font_run(
-            first.font,
-            tex_fonts::ShapingRequest::with_breaks(&text, &break_bytes),
-        )
-        .expect("OpenType run font");
-    let mut cluster_advances = BTreeMap::<usize, i64>::new();
-    for glyph in shaped.glyphs {
-        let cluster_byte = glyph.cluster as usize;
-        let source_index = byte_starts
-            .partition_point(|&start| start <= cluster_byte)
-            .saturating_sub(1);
-        *cluster_advances.entry(source_index).or_default() += i64::from(glyph.x_advance.raw());
-    }
-    let cluster_starts = cluster_advances.keys().copied().collect::<Vec<_>>();
-    let mut adjustments = vec![Scaled::from_raw(0); chars.len()];
-    for (cluster_index, &start) in cluster_starts.iter().enumerate() {
-        let end = cluster_starts
-            .get(cluster_index + 1)
-            .copied()
-            .unwrap_or(chars.len());
-        if start >= end {
-            continue;
-        }
-        let nominal = chars[start..end].iter().fold(0_i64, |sum, entry| {
-            sum + i64::from(
-                stores
-                    .font_character_metrics(entry.font, entry.ch)
-                    .map_or(0, |metrics| metrics.width.raw()),
-            )
-        });
-        let shaped = cluster_advances[&start];
-        adjustments[end - 1] = Scaled::from_raw(
-            i32::try_from(shaped - nominal).expect("shaped cluster adjustment fits Scaled"),
-        );
-    }
+    let mut scratch = OpenTypeShapingScratch::default();
+    let adjustments = plan_open_type_adjustments(stores, chars, break_positions, &mut scratch);
     let mut nodes = Vec::with_capacity(chars.len() * 2);
-    for (entry, adjustment) in chars.iter().zip(adjustments) {
+    for (entry, adjustment) in chars.iter().zip(adjustments.iter().copied()) {
         nodes.push(Node::Char {
             font: entry.font,
             ch: entry.ch,
@@ -632,64 +579,93 @@ pub(crate) fn shape_open_type_chars<G>(
     nodes
 }
 
-/// Replaces provisional OpenType shaping adjustments in a materialized list.
-///
-/// Every call shapes caller-delimited runs independently. Paragraph code uses
-/// this after break selection, which restores ligatures on each unsplit side
-/// while preventing a glyph cluster from crossing the chosen line boundary.
-pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &mut Vec<Node>) {
-    let mut index = 0;
-    while index < nodes.len() {
-        let Node::Char { font, ch, origin } = &nodes[index] else {
-            index += 1;
-            continue;
-        };
-        if !is_ltr_shaping_font(stores, *font)
-            || !is_supported_script(tex_fonts::character_script(*ch))
-        {
-            index += 1;
-            continue;
+#[derive(Default)]
+pub(crate) struct OpenTypeShapingScratch {
+    text: String,
+    byte_starts: Vec<usize>,
+    break_bytes: Vec<usize>,
+    cluster_advances: Vec<(usize, i64)>,
+    adjustments: Vec<Scaled>,
+}
+
+fn plan_open_type_adjustments<'scratch, G>(
+    stores: &CommandContext<'_, G>,
+    chars: &[crate::mode::PendingHChar],
+    break_positions: &[usize],
+    scratch: &'scratch mut OpenTypeShapingScratch,
+) -> &'scratch [Scaled] {
+    scratch.text.clear();
+    scratch.byte_starts.clear();
+    scratch.break_bytes.clear();
+    scratch.cluster_advances.clear();
+    scratch.adjustments.clear();
+    let Some(first) = chars.first() else {
+        return &scratch.adjustments;
+    };
+    scratch.byte_starts.reserve(chars.len());
+    for entry in chars {
+        scratch.byte_starts.push(scratch.text.len());
+        if let Some(mapped) = stores.font_mapped_text(first.font, entry.ch) {
+            scratch.text.push_str(mapped);
+        } else {
+            scratch.text.push(entry.ch);
         }
-        let mut chars = vec![crate::mode::PendingHChar {
-            font: *font,
-            ch: *ch,
-            origin: *origin,
-        }];
-        let mut script = tex_fonts::character_script(*ch);
-        let start = index;
-        index += 1;
-        while index < nodes.len() {
-            match &nodes[index] {
-                Node::Kern {
-                    kind: KernKind::Font,
-                    ..
-                } => index += 1,
-                Node::Char {
-                    font: next_font,
-                    ch: next_ch,
-                    origin: next_origin,
-                } if next_font == font
-                    && scripts_compatible(script, tex_fonts::character_script(*next_ch)) =>
-                {
-                    let next_script = tex_fonts::character_script(*next_ch);
-                    if is_strong_script(next_script) {
-                        script = next_script;
-                    }
-                    chars.push(crate::mode::PendingHChar {
-                        font: *font,
-                        ch: *next_ch,
-                        origin: *next_origin,
-                    });
-                    index += 1;
-                }
-                _ => break,
-            }
-        }
-        let shaped = shape_open_type_chars(stores, &chars, &[]);
-        let shaped_len = shaped.len();
-        nodes.splice(start..index, shaped);
-        index = start + shaped_len;
     }
+    scratch.break_bytes.extend(
+        break_positions
+            .iter()
+            .filter_map(|&position| scratch.byte_starts.get(position).copied()),
+    );
+    let shaped = stores
+        .shape_font_run(
+            first.font,
+            tex_fonts::ShapingRequest::with_breaks(&scratch.text, &scratch.break_bytes),
+        )
+        .expect("OpenType run font");
+    for glyph in shaped.glyphs {
+        let cluster_byte = glyph.cluster as usize;
+        let source_index = scratch
+            .byte_starts
+            .partition_point(|&start| start <= cluster_byte)
+            .saturating_sub(1);
+        scratch
+            .cluster_advances
+            .push((source_index, i64::from(glyph.x_advance.raw())));
+    }
+    scratch
+        .cluster_advances
+        .sort_unstable_by_key(|entry| entry.0);
+    scratch.adjustments.resize(chars.len(), Scaled::from_raw(0));
+    let mut cluster = 0usize;
+    while cluster < scratch.cluster_advances.len() {
+        let start = scratch.cluster_advances[cluster].0;
+        let mut shaped = 0_i64;
+        let mut next = cluster;
+        while next < scratch.cluster_advances.len() && scratch.cluster_advances[next].0 == start {
+            shaped += scratch.cluster_advances[next].1;
+            next += 1;
+        }
+        let end = scratch
+            .cluster_advances
+            .get(next)
+            .map_or(chars.len(), |entry| entry.0);
+        if start >= end {
+            cluster = next;
+            continue;
+        }
+        let nominal = chars[start..end].iter().fold(0_i64, |sum, entry| {
+            sum + i64::from(
+                stores
+                    .font_character_metrics(entry.font, entry.ch)
+                    .map_or(0, |metrics| metrics.width.raw()),
+            )
+        });
+        scratch.adjustments[end - 1] = Scaled::from_raw(
+            i32::try_from(shaped - nominal).expect("shaped cluster adjustment fits Scaled"),
+        );
+        cluster = next;
+    }
+    &scratch.adjustments
 }
 
 /// Replaces provisional OpenType adjustments while retaining every unchanged
@@ -697,7 +673,24 @@ pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &
 pub(crate) fn reshape_open_type_runs_list<G>(
     stores: &mut CommandContext<'_, G>,
     source: tex_state::node_arena::PageListId,
+    chars: &mut Vec<crate::mode::PendingHChar>,
+    shaping: &mut OpenTypeShapingScratch,
 ) -> tex_state::node_arena::PageListId {
+    let has_shaping_run = stores
+        .page_nodes(source)
+        .expect("OpenType source belongs to the live page arena")
+        .iter()
+        .any(|node| {
+            matches!(
+                node,
+                Node::Char { font, ch, .. }
+                    if is_ltr_shaping_font(stores, *font)
+                        && is_supported_script(tex_fonts::character_script(*ch))
+            )
+        });
+    if !has_shaping_run {
+        return source;
+    }
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
     let mut index = 0;
@@ -722,7 +715,8 @@ pub(crate) fn reshape_open_type_runs_list<G>(
             index += 1;
             continue;
         }
-        let mut chars = vec![crate::mode::PendingHChar { font, ch, origin }];
+        chars.clear();
+        chars.push(crate::mode::PendingHChar { font, ch, origin });
         let mut script = tex_fonts::character_script(ch);
         index += 1;
         while index < source.len() {
@@ -756,8 +750,25 @@ pub(crate) fn reshape_open_type_runs_list<G>(
                 _ => break,
             }
         }
-        for node in shape_open_type_chars(stores, &chars, &[]) {
-            stores.push_page_active_list(&mut output, node);
+        let adjustments = plan_open_type_adjustments(stores, chars, &[], shaping);
+        for (entry, adjustment) in chars.iter().zip(adjustments.iter().copied()) {
+            stores.push_page_active_list(
+                &mut output,
+                Node::Char {
+                    font: entry.font,
+                    ch: entry.ch,
+                    origin: entry.origin,
+                },
+            );
+            if adjustment.raw() != 0 {
+                stores.push_page_active_list(
+                    &mut output,
+                    Node::Kern {
+                        amount: adjustment,
+                        kind: KernKind::Font,
+                    },
+                );
+            }
         }
     }
     stores.finalize_page_active_list(&mut output)

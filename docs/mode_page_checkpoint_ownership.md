@@ -69,6 +69,18 @@ view over test slices and canonical arena lists. A coordinate-based
 `ParagraphTape` stores only the list coordinate plus scalar/index scratch and
 reborrows payload for each execution step.
 
+Production post-line breaking consumes that coordinate into a detached
+page-material active builder. It appends unchanged source ranges and frozen
+discretionary subranges, generates only nodes whose semantics actually change,
+and publishes the completed line once. Semantic and TeX-physical `Vec<Node>`
+channels are test-adapter concerns, not runtime ownership. Only a genuinely
+distinct hyphenation diagnostic source can create an optional detached
+diagnostic projection; an ordinary line has one list topology. Reusable
+direction and lineage vectors contain scalar evidence only. `new_semantic_nodes`
+therefore measures generated line nodes, while `source_nodes_copied` remains
+zero after paragraph publication and is backed by an explicit nonzero negative
+control plus source-address retention tests.
+
 Rooted settlement has three aggregate phases. Acceptance commits destination
 page/layout ranges, releases source-side move bookkeeping, and only then closes
 the transaction. Rejection first detaches candidate destination ranges and

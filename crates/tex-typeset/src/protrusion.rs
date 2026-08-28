@@ -90,6 +90,129 @@ pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
     }
 }
 
+/// Coordinate-only insertion plan for an arena-backed finalized line.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MarginKernPlan {
+    pub left: Option<(usize, Node)>,
+    pub right: Option<(usize, Node)>,
+}
+
+/// Plans margin-kern insertion without materializing the source list.
+#[must_use]
+pub fn plan_margin_kerns(state: &impl TypesetState, nodes: NodeCursor<'_>) -> MarginKernPlan {
+    let right = edge_glyph_cursor(state, nodes, 0, nodes.len(), Edge::Right);
+    let right = right
+        .filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0)
+        .map(|glyph| {
+            let amount = glyph_width(state, glyph, Edge::Right);
+            (
+                right_margin_position_cursor(nodes),
+                Node::MarginKern {
+                    amount: amount
+                        .checked_neg()
+                        .expect("a legal protrusion can be negated"),
+                    side: MarginKernSide::Right,
+                    font: glyph.font,
+                    ch: glyph.code,
+                },
+            )
+        });
+    let left = edge_glyph_cursor(state, nodes, 0, nodes.len(), Edge::Left);
+    let left = left
+        .filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0)
+        .map(|glyph| {
+            let amount = glyph_width(state, glyph, Edge::Left);
+            let at = edge_position_cursor(state, nodes, Edge::Left)
+                .unwrap_or_else(|| leading_left_skip_end_cursor(nodes));
+            (
+                at,
+                Node::MarginKern {
+                    amount: amount
+                        .checked_neg()
+                        .expect("a legal protrusion can be negated"),
+                    side: MarginKernSide::Left,
+                    font: glyph.font,
+                    ch: glyph.code,
+                },
+            )
+        });
+    MarginKernPlan { left, right }
+}
+
+fn edge_position_cursor(
+    state: &impl TypesetState,
+    nodes: NodeCursor<'_>,
+    edge: Edge,
+) -> Option<usize> {
+    match edge {
+        Edge::Left => (0..nodes.len())
+            .find_map(
+                |index| match search_node(state, nodes.owned_node(index)?, edge) {
+                    Search::Glyph(_) => Some(Some(index)),
+                    Search::Skip => None,
+                    Search::Block => Some(None),
+                },
+            )
+            .flatten(),
+        Edge::Right => (0..nodes.len())
+            .rev()
+            .find_map(
+                |index| match search_node(state, nodes.owned_node(index)?, edge) {
+                    Search::Glyph(_) => Some(Some(index)),
+                    Search::Skip => None,
+                    Search::Block => Some(None),
+                },
+            )
+            .flatten(),
+    }
+}
+
+fn leading_left_skip_end_cursor(nodes: NodeCursor<'_>) -> usize {
+    (0..nodes.len())
+        .take_while(|index| {
+            matches!(
+                nodes.owned_node(*index),
+                Some(
+                    Node::Glue {
+                        kind: GlueKind::LeftSkip,
+                        ..
+                    } | Node::Direction(_)
+                )
+            )
+        })
+        .count()
+}
+
+fn right_margin_position_cursor(nodes: NodeCursor<'_>) -> usize {
+    let Some(mut index) = (0..nodes.len()).rev().find(|index| {
+        matches!(
+            nodes.owned_node(*index),
+            Some(
+                Node::Glue {
+                    kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
+                    ..
+                } | Node::Direction(_)
+            )
+        )
+    }) else {
+        return nodes.len();
+    };
+    while index > 0
+        && matches!(
+            nodes.owned_node(index - 1),
+            Some(
+                Node::Glue {
+                    kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
+                    ..
+                } | Node::Direction(_)
+            )
+        )
+    {
+        index -= 1;
+    }
+    index
+}
+
 fn edge_position(state: &impl TypesetState, nodes: &[Node], edge: Edge) -> Option<usize> {
     match edge {
         Edge::Left => nodes

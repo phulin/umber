@@ -74,6 +74,63 @@ fn active_list_preserves_disabled_demand_and_appends_ranges_without_copying() {
 }
 
 #[test]
+fn source_copy_counter_has_a_real_negative_control() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let source = arena.publish_owned(penalties(&[4, 5])).expect("source");
+    let copied = arena
+        .publish_source_copy(source)
+        .expect("explicit compatibility copy");
+
+    assert_eq!(resolved(&arena, copied), penalties(&[4, 5]));
+    assert_eq!(arena.counters().source_nodes_copied, 2);
+    assert_eq!(arena.counters().new_semantic_nodes, 4);
+}
+
+#[test]
+fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(32);
+    let source = arena
+        .publish_owned(penalties(&[10, 20, 30]))
+        .expect("source");
+    let selected_addresses = [1, 2].map(|index| {
+        arena
+            .list(source)
+            .expect("live source")
+            .get(index)
+            .map(std::ptr::from_ref)
+            .expect("selected source node")
+    });
+    let mut line = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut line).expect("open line");
+    arena
+        .push_active_list(&mut line, Node::Penalty(1))
+        .expect("generated left edge");
+    arena
+        .append_range_to_active_list(&mut line, source, 1..3)
+        .expect("borrowed line interior");
+    arena
+        .push_active_list(&mut line, Node::Penalty(2))
+        .expect("generated right edge");
+    let line = arena
+        .finalize_active_list(&mut line)
+        .expect("finalize line");
+
+    assert_eq!(resolved(&arena, line), penalties(&[1, 20, 30, 2]));
+    let line_view = arena.list(line).expect("live line");
+    assert_eq!(
+        [1, 2].map(|index| {
+            line_view
+                .get(index)
+                .map(std::ptr::from_ref)
+                .expect("borrowed line node")
+        }),
+        selected_addresses
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(arena.counters().new_semantic_nodes, 5);
+}
+
+#[test]
 fn active_list_concatenates_maintained_semantic_identity() {
     let mut arena = PageMaterialArena::with_chunk_bytes(32);
     arena.enable_semantic_identity();

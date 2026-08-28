@@ -60,6 +60,18 @@ pub(crate) fn hpack_unreported<G>(
     params: HpackParams,
 ) -> (PackedBox, Option<(usize, usize)>) {
     let (list, lr_problems) = recover_frozen_texxet_directions(stores, list);
+    let packed = hpack_prepared_unreported(stores, geometry, list, spec, params);
+    (packed, lr_problems)
+}
+
+/// Packs a horizontal list whose TeXXeT direction repair has already run.
+pub(crate) fn hpack_prepared_unreported<G>(
+    stores: &mut CommandContext<'_, G>,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
+    list: PageListId,
+    spec: PackSpec,
+    params: HpackParams,
+) -> PackedBox {
     let packed = tex_typeset::hpack(
         &crate::typeset_context::TypesetContext::new(stores),
         list,
@@ -68,7 +80,7 @@ pub(crate) fn hpack_unreported<G>(
     );
     stores.set_last_badness(packed.badness);
     geometry.committed_hpack(packed.node.width, packed.node.height, packed.node.depth);
-    (packed, lr_problems)
+    packed
 }
 
 fn recover_frozen_texxet_directions<G>(
@@ -164,42 +176,6 @@ pub(crate) fn report_hpack<G>(
             DiagnosticListLayout::FrozenList,
         );
     }
-}
-
-pub(crate) fn recover_texxet_directions<G>(
-    stores: &CommandContext<'_, G>,
-    nodes: &mut Vec<Node>,
-) -> Option<(usize, usize)> {
-    if stores.int_param(IntParam::TEX_XET_STATE) <= 0 {
-        return None;
-    }
-    let mut expected = Vec::new();
-    let mut extra = 0usize;
-    for node in nodes.iter_mut() {
-        let Node::Direction(direction) = node else {
-            continue;
-        };
-        let closes = match direction {
-            Direction::BeginM => Some(Direction::EndM),
-            Direction::BeginL => Some(Direction::EndL),
-            Direction::BeginR => Some(Direction::EndR),
-            Direction::EndM | Direction::EndL | Direction::EndR => None,
-        };
-        if let Some(closes) = closes {
-            expected.push(closes);
-        } else if expected.last() == Some(direction) {
-            let _ = expected.pop();
-        } else {
-            *node = Node::Kern {
-                amount: Scaled::from_raw(0),
-                kind: KernKind::Explicit,
-            };
-            extra += 1;
-        }
-    }
-    let missing = expected.len();
-    nodes.extend(expected.into_iter().rev().map(Node::Direction));
-    (missing != 0 || extra != 0).then_some((missing, extra))
 }
 
 pub(crate) fn vpack<G>(
