@@ -2499,6 +2499,27 @@ impl<G> MainControl<G> {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn capture_checkpoint(
+        &mut self,
+        boundary: crate::EngineBoundary,
+        stores: &mut Universe<G>,
+        budget_counters: crate::ExecutionBudgetCounters,
+    ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
+        let eligibility = match boundary {
+            crate::EngineBoundary::JobStart => {
+                crate::checkpoint::CheckpointEligibility::job_start()
+            }
+            crate::EngineBoundary::OuterParagraphEnd => {
+                crate::checkpoint::CheckpointEligibility::outer_paragraph_end()
+            }
+            crate::EngineBoundary::ShipoutComplete => {
+                panic!("shipout completion does not publish checkpoint eligibility")
+            }
+        };
+        self.capture_checkpoint_with_identity_demand(eligibility, stores, budget_counters, false)
+    }
+
     /// Selects maintained convergence identity before an incremental session
     /// begins ordinary execution.
     #[doc(hidden)]

@@ -9,8 +9,8 @@ use tex_state::token::{Catcode, Token, TokenWord};
 use tex_state::{ReachabilityStore, World};
 
 use super::{
-    CheckpointOwnerFamily, CheckpointRestoreError, EngineBoundary, EngineCheckpoint,
-    ReachableStateRoots,
+    CheckpointEligibility, CheckpointOwnerFamily, CheckpointRestoreError, EngineBoundary,
+    EngineCheckpoint, ReachableStateRoots,
 };
 use crate::{
     AdmittedEngineGeneration, AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec,
@@ -140,7 +140,7 @@ fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
         crate::mode::reset_semantic_fingerprint_calls_for_test();
 
         let ordinary = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::JobStart,
+            CheckpointEligibility::job_start(),
             &mut command,
             &mut modes,
             universe,
@@ -151,7 +151,7 @@ fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
         assert_eq!(crate::mode::semantic_fingerprint_calls_for_test(), 0);
 
         let requested = EngineCheckpoint::capture_checkpoint_with_identity_demand(
-            EngineBoundary::OuterParagraphEnd,
+            CheckpointEligibility::outer_paragraph_end(),
             &mut command,
             &mut modes,
             universe,
@@ -222,7 +222,7 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
         let mut command = CommandState::default();
         let mut modes = ModeNest::new();
         let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::JobStart,
+            CheckpointEligibility::job_start(),
             &mut command,
             &mut modes,
             universe,
@@ -258,7 +258,7 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
         );
 
         let later = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::OuterParagraphEnd,
+            CheckpointEligibility::outer_paragraph_end(),
             &mut command,
             &mut modes,
             universe,
@@ -342,7 +342,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
                 None,
             ));
         let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::JobStart,
+            CheckpointEligibility::job_start(),
             &mut command,
             &mut modes,
             universe,
@@ -427,7 +427,7 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
             .assign_count(0, 10, AssignmentScope::Global)
             .expect("baseline count");
         let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::JobStart,
+            CheckpointEligibility::job_start(),
             &mut CommandState::default(),
             &mut ModeNest::new(),
             universe,
@@ -471,7 +471,7 @@ fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
             .assign_count(0, 10, AssignmentScope::Global)
             .expect("baseline count");
         let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::JobStart,
+            CheckpointEligibility::job_start(),
             &mut CommandState::new(CommandProfile::TEX82),
             &mut ModeNest::new(),
             universe,
@@ -511,7 +511,7 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
         modes.push(Mode::Horizontal).expect("horizontal mode");
         modes.push(Mode::Math).expect("math mode");
         let checkpoint = EngineCheckpoint::capture_checkpoint(
-            EngineBoundary::OuterParagraphEnd,
+            CheckpointEligibility::outer_paragraph_end(),
             &mut command,
             &mut modes,
             universe,

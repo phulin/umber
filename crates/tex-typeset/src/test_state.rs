@@ -13,7 +13,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::{MATH_FAMILY_COUNT, MathFontSize};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeArenaError, NodeList, PageLifetime, PageListId, PageNodeArena};
+use tex_state::node_arena::{NodeArenaError, NodeCursor, PageListId, PageNodeArena};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -87,7 +87,7 @@ impl TestState {
 
     pub(crate) fn publish_page_nodes(&mut self, nodes: &[Node]) -> PageListId {
         self.pages
-            .publish(nodes.to_vec())
+            .publish_owned(nodes.to_vec())
             .expect("test nodes contain only fixture-owned children")
     }
 
@@ -112,8 +112,10 @@ impl TestState {
     pub(crate) fn page_node_list(
         &self,
         list: PageListId,
-    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
-        self.pages.get(list)
+    ) -> Result<NodeCursor<'_>, NodeArenaError> {
+        self.pages
+            .node_cursor(list)
+            .map_err(|_| NodeArenaError::InvalidList)
     }
 
     pub(crate) fn intern_font(&mut self, font: LoadedFont) -> FontId {
@@ -214,8 +216,14 @@ impl TestState {
 
     pub(crate) fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         let source = self.box_registers[usize::from(index)]?;
-        let nodes = self.pages.get(source).ok()?.nodes().to_vec();
-        self.pages.publish(nodes).ok()
+        let nodes = self
+            .pages
+            .node_cursor(source)
+            .ok()?
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        self.pages.publish_owned(nodes).ok()
     }
 
     fn font(&self, id: FontId) -> &TestFont {

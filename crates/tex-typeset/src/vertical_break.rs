@@ -287,7 +287,8 @@ mod tests {
         let mut universe = TestState::new();
         let nodes = vec![hbox(&mut universe, 10, 3), Node::Penalty(EJECT_PENALTY)];
 
-        let split = vert_break(&universe, &nodes, sp(100), sp(2)).expect("vertical break");
+        let split = vert_break(&universe, NodeCursor::owned(&nodes), sp(100), sp(2))
+            .expect("vertical break");
 
         assert_eq!(split.break_index, Some(1));
         assert_eq!(split.best_height_plus_depth, sp(13));
@@ -314,7 +315,8 @@ mod tests {
             hbox(&mut universe, 40, 0),
         ];
 
-        let split = vert_break(&universe, &nodes, sp(12), sp(10)).expect("vertical break");
+        let split = vert_break(&universe, NodeCursor::owned(&nodes), sp(12), sp(10))
+            .expect("vertical break");
 
         assert_eq!(split.break_index, Some(1));
         assert_eq!(split.best_height_plus_depth, sp(10));
@@ -325,7 +327,8 @@ mod tests {
         let mut universe = TestState::new();
         let nodes = vec![hbox(&mut universe, 7, 5)];
 
-        let split = vert_break(&universe, &nodes, sp(100), sp(2)).expect("vertical break");
+        let split = vert_break(&universe, NodeCursor::owned(&nodes), sp(100), sp(2))
+            .expect("vertical break");
 
         assert_eq!(split.break_index, None);
         assert_eq!(split.best_height_plus_depth, sp(12));
@@ -356,7 +359,8 @@ mod tests {
             hbox(&mut universe, 10, 0),
         ];
 
-        let split = vert_break(&universe, &nodes, sp(10), sp(10)).expect("vertical break");
+        let split = vert_break(&universe, NodeCursor::owned(&nodes), sp(10), sp(10))
+            .expect("vertical break");
 
         assert_eq!(split.break_index, Some(1));
     }
@@ -382,7 +386,8 @@ mod tests {
             Node::Penalty(0),
         ];
 
-        let split = vert_break(&universe, &nodes, sp(12), sp(10)).expect("vertical break");
+        let split = vert_break(&universe, NodeCursor::owned(&nodes), sp(12), sp(10))
+            .expect("vertical break");
 
         assert_eq!(split.infinite_shrink_glue, vec![1]);
     }

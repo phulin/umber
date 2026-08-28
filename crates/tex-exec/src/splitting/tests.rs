@@ -31,34 +31,36 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
             glue_order: Order::Normal,
             children,
         }));
-        let (pruned, discarded) = prune_page_top_with_discards(
-            &mut stores,
-            vec![
-                Node::Penalty(5),
-                Node::Kern {
-                    amount: sp(1),
-                    kind: KernKind::Explicit,
-                },
-                Node::Glue {
-                    spec: discarded_glue,
-                    kind: GlueKind::Normal,
-                    leader: None,
-                },
-                box_node,
-            ],
-            top,
-        );
+        let source = stores.publish_page_nodes(vec![
+            Node::Penalty(5),
+            Node::Kern {
+                amount: sp(1),
+                kind: KernKind::Explicit,
+            },
+            Node::Glue {
+                spec: discarded_glue,
+                kind: GlueKind::Normal,
+                leader: None,
+            },
+            box_node,
+        ]);
+        let (pruned, discarded) = prune_page_top_list_with_discards(&mut stores, source, top);
+        let discarded = stores.page_nodes(discarded).expect("discard root");
         assert_eq!(discarded.len(), 3);
+        let pruned = stores.page_nodes(pruned).expect("retained root");
         let Node::Glue {
-            ref spec,
+            spec,
             kind: GlueKind::SplitTopSkip,
             ..
-        } = pruned[0]
+        } = pruned.owned_node(0).expect("split top skip")
         else {
             panic!("split top skip")
         };
         assert_eq!(spec.width, sp(6));
-        assert!(matches!(pruned[1], Node::HList(_)));
+        assert!(matches!(
+            pruned.owned_node(1).expect("retained box"),
+            Node::HList(_)
+        ));
     });
 }
 
@@ -85,24 +87,31 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
             children: tex_state::node_arena::PageListId::empty(),
         }));
 
-        let (pruned, discarded) = prune_page_top_with_discards(
-            &mut stores,
-            vec![
-                Node::Whatsit(tex_state::node::Whatsit::PdfSnapY { glue: snap_glue }),
-                Node::Whatsit(tex_state::node::Whatsit::PdfSnapRefPoint),
-                box_node.clone(),
-            ],
-            top,
-        );
+        let source = stores.publish_page_nodes(vec![
+            Node::Whatsit(tex_state::node::Whatsit::PdfSnapY { glue: snap_glue }),
+            Node::Whatsit(tex_state::node::Whatsit::PdfSnapRefPoint),
+            box_node.clone(),
+        ]);
+        let (pruned, discarded) = prune_page_top_list_with_discards(&mut stores, source, top);
 
         assert_eq!(
-            discarded,
+            stores
+                .page_nodes(discarded)
+                .expect("discard root")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             [Node::Whatsit(tex_state::node::Whatsit::PdfSnapY {
                 glue: snap_glue
             })]
         );
         assert_eq!(
-            pruned,
+            stores
+                .page_nodes(pruned)
+                .expect("retained root")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             [
                 Node::Whatsit(tex_state::node::Whatsit::PdfSnapRefPoint),
                 Node::Glue {

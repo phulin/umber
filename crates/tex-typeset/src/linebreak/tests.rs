@@ -3281,8 +3281,6 @@ fn borrowed_paragraph_tape_materializes_from_immutable_source_and_overlays_par_f
 
 #[test]
 fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
-    use tex_state::node_arena::{ArenaNodeSequenceId, NodeArena, PageLifetime};
-
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let source = vec![
@@ -3299,20 +3297,14 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
         rule(13),
         Node::Penalty(EJECT_PENALTY),
     ];
-    let mut arena = NodeArena::<PageLifetime>::new();
     let pieces = source
         .chunks(1)
-        .map(|chunk| {
-            arena
-                .publish_range(chunk.to_vec())
-                .map(ArenaNodeSequenceId::Direct)
-                .expect("paragraph piece publishes")
-        })
+        .map(|chunk| universe.publish_page_node_range(chunk.to_vec()))
         .collect::<Vec<_>>();
-    let sequence = arena
-        .compose_sequences(&pieces)
-        .expect("paragraph pieces compose");
-    let arena_view = arena.get_sequence(sequence).expect("paragraph resolves");
+    let sequence = universe.compose_page_node_sequences(&pieces);
+    let arena_view = universe
+        .page_node_sequence(sequence)
+        .expect("paragraph resolves");
     let source_addresses = arena_view
         .iter()
         .map(|node| core::ptr::from_ref(node))
@@ -3352,8 +3344,8 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
         }
     }
     assert_eq!(
-        arena
-            .get_sequence(sequence)
+        universe
+            .page_node_sequence(sequence)
             .expect("source remains live")
             .iter()
             .map(|node| core::ptr::from_ref(node))
@@ -3365,8 +3357,6 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
 
 #[test]
 fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
-    use tex_state::node_arena::ArenaNodeSequenceId;
-
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let left = universe.publish_page_node_range(vec![rule(8)]);
@@ -3383,10 +3373,7 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
         rule(9),
         Node::Penalty(EJECT_PENALTY),
     ]);
-    let sequence = universe.compose_page_node_sequences(&[
-        ArenaNodeSequenceId::Direct(left),
-        ArenaNodeSequenceId::Direct(right),
-    ]);
+    let sequence = universe.compose_page_node_sequences(&[left, right]);
     let line_params = params(12);
     let tape = ParagraphTape::analyze_arena_id(&universe, sequence, &line_params);
     let plan = break_hyphenated_tape(&universe, &tape, &line_params);
@@ -3440,8 +3427,6 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
 
 #[test]
 fn coordinate_paragraph_tape_keeps_distinct_physical_channel_in_arena() {
-    use tex_state::node_arena::ArenaNodeSequenceId;
-
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let semantic = universe.publish_page_node_range(vec![Node::Penalty(1), Node::Penalty(3)]);
@@ -3452,8 +3437,8 @@ fn coordinate_paragraph_tape_keeps_distinct_physical_channel_in_arena() {
     ]);
     let tape = ParagraphTape::analyze_arena_projection_ids(
         &universe,
-        ArenaNodeSequenceId::Direct(semantic),
-        ArenaNodeSequenceId::Direct(physical),
+        semantic,
+        physical,
         Some(vec![0, 2, 3]),
         &params(100),
     );

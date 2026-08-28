@@ -165,8 +165,9 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
             .page_node_list(id)
             .expect("test list belongs to the page arena")
             .nodes();
-        let fast = measure_hlist(&universe, NodeCursor::compact(view));
-        let scalar = scalar_hlist(&universe, view);
+        let fast = measure_hlist(&universe, view);
+        let owned = view.iter().cloned().collect::<Vec<_>>();
+        let scalar = scalar_hlist(&universe, &owned);
         let params = HpackParams {
             hbadness: case % 10_001,
             hfuzz: sp(case),

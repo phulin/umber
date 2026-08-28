@@ -74,8 +74,9 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
         stores
             .page_node_list(root)
             .expect("math choice arm belongs to the page arena")
-            .nodes()
-            .to_vec()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
     };
     assert_eq!(values(choice.display), [Node::Penalty(1)]);
     assert_eq!(values(choice.text), [Node::Penalty(2)]);

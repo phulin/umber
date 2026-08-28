@@ -28,13 +28,13 @@ impl KernelState {
     }
 
     fn publish(&mut self, nodes: Vec<Node>) -> PageListId {
-        self.pages.publish(nodes).expect("valid page list")
+        self.pages.publish_owned(nodes).expect("valid page list")
     }
 }
 
 impl TypesetState for KernelState {
     fn page_nodes(&self, list: PageListId) -> NodeCursor<'_> {
-        NodeCursor::compact(self.pages.get(list).expect("live page coordinate").nodes())
+        self.pages.node_cursor(list).expect("live page coordinate")
     }
 
     fn font_char_metrics(&self, _font: FontId, code: u8) -> Option<CharMetrics> {

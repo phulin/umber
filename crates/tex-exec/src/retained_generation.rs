@@ -1068,7 +1068,7 @@ mod tests {
                     .assign_count(0, 10, AssignmentScope::Global)
                     .expect("baseline count");
                 crate::EngineCheckpoint::capture_checkpoint(
-                    crate::EngineBoundary::JobStart,
+                    crate::checkpoint::CheckpointEligibility::job_start(),
                     &mut command,
                     &mut modes,
                     universe,
@@ -1083,7 +1083,7 @@ mod tests {
                     .assign_count(0, 20, AssignmentScope::Global)
                     .expect("later count");
                 crate::EngineCheckpoint::capture_checkpoint(
-                    crate::EngineBoundary::ShipoutComplete,
+                    crate::checkpoint::CheckpointEligibility::outer_paragraph_end(),
                     &mut command,
                     &mut modes,
                     universe,

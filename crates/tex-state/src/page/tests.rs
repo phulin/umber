@@ -32,6 +32,15 @@ fn publish_nodes(
     arena.publish_owned(nodes).expect("publish test page nodes")
 }
 
+fn set_split_discards(
+    page: &mut PageBuilderState,
+    arena: &mut PageMaterialArena,
+    nodes: impl IntoIterator<Item = Node>,
+) {
+    let root = publish_nodes(arena, nodes);
+    page.set_split_discards(arena, root);
+}
+
 fn list_nodes(arena: &PageMaterialArena, root: PageListId) -> Vec<Node> {
     arena
         .node_cursor(root)
@@ -180,7 +189,7 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
     page.push_contribution(&mut arena, kern(1));
     page.push_current_page(&mut arena, kern(2));
     page.push_page_discard(&mut arena, kern(3));
-    page.set_split_discards(publish_nodes(&mut arena, [kern(4)]));
+    set_split_discards(&mut page, &mut arena, [kern(4)]);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(5)));
     page.set_mark_class(
         super::PageMark::Bot,
@@ -198,7 +207,7 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
     }
     page.push_current_page(&mut arena, kern(12));
     page.push_page_discard(&mut arena, kern(13));
-    page.set_split_discards(publish_nodes(&mut arena, [kern(14), kern(15)]));
+    set_split_discards(&mut page, &mut arena, [kern(14), kern(15)]);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(16)));
     page.upsert_page_insertion(PageInsertion::new(8, Scaled::from_raw(17)));
     page.clear_mark_class(super::PageMark::Bot, 7);
@@ -225,7 +234,7 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     page.push_contribution(&mut arena, kern(-1));
     page.push_current_page(&mut arena, kern(-2));
     page.push_page_discard(&mut arena, kern(-3));
-    page.set_split_discards(publish_nodes(&mut arena, [kern(-4)]));
+    set_split_discards(&mut page, &mut arena, [kern(-4)]);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-5)));
     page.set_mark_class(PageMark::Bot, 7, rooted_mark.clone());
     let checkpoint = page.checkpoint_mark();
@@ -266,11 +275,12 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     assert_eq!(carrier_node(&arena, &carrier), kern(-1));
     page.discard_carrier(carrier);
     assert_eq!(page.pop_current_page(&mut arena), Some(kern(-2)));
-    page.clear_page_discards();
-    page.clear_split_discards();
+    page.clear_page_discards(&arena);
+    page.clear_split_discards(&arena);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(99)));
     page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(8)]));
-    page.reject_checkpoint_candidate(tail);
+    page.prepare_checkpoint_candidate_rejection(&tail);
+    page.finish_checkpoint_candidate_rejection(tail);
 
     assert_eq!(hash_page(&page, &arena), accepted_hash);
     assert_eq!(page.contribution(&arena).len(), 4_097);
@@ -283,7 +293,7 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
     page.push_contribution(&mut arena, kern(-1));
     page.push_current_page(&mut arena, kern(-2));
     page.push_page_discard(&mut arena, kern(-3));
-    page.set_split_discards(publish_nodes(&mut arena, [kern(-4)]));
+    set_split_discards(&mut page, &mut arena, [kern(-4)]);
     let checkpoint = page.checkpoint_mark();
     for index in 0..4_096 {
         page.push_contribution(&mut arena, kern(index));
@@ -299,8 +309,8 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
     assert_eq!(carrier_node(&arena, &carrier), kern(-1));
     page.discard_carrier(carrier);
     assert_eq!(page.pop_current_page(&mut arena), Some(kern(-2)));
-    page.clear_page_discards();
-    page.clear_split_discards();
+    page.clear_page_discards(&arena);
+    page.clear_split_discards(&arena);
     page.rollback_transaction(shipout);
 
     assert_eq!(page.contribution(&arena).to_vec(), [kern(-1)]);
@@ -308,11 +318,12 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
         page.current_page(&arena).cloned().collect::<Vec<_>>(),
         [kern(-2)]
     );
-    let page_discards = page.take_page_discards();
-    let split_discards = page.take_split_discards();
+    let page_discards = page.take_page_discards(&arena);
+    let split_discards = page.take_split_discards(&arena);
     assert_eq!(list_nodes(&arena, page_discards), [kern(-3)]);
     assert_eq!(list_nodes(&arena, split_discards), [kern(-4)]);
-    page.reject_checkpoint_candidate(tail);
+    page.prepare_checkpoint_candidate_rejection(&tail);
+    page.finish_checkpoint_candidate_rejection(tail);
     assert_eq!(page.contribution(&arena).len(), 4_097);
 }
 
@@ -323,7 +334,7 @@ fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
     source.push_contribution(&mut arena, kern(1));
     source.push_current_page(&mut arena, kern(2));
     source.push_page_discard(&mut arena, kern(3));
-    source.set_split_discards(publish_nodes(&mut arena, [kern(4)]));
+    set_split_discards(&mut source, &mut arena, [kern(4)]);
 
     let (nodes, state) = source.memo_parts(&arena);
     let mut restored = PageBuilderState::default();
@@ -378,7 +389,7 @@ fn maintained_page_identity_covers_mutation_matrix_and_restore() {
     page.push_contribution(&mut arena, kern(2));
     page.push_current_page(&mut arena, kern(3));
     page.push_page_discard(&mut arena, kern(4));
-    page.set_split_discards(publish_nodes(&mut arena, [kern(5)]));
+    set_split_discards(&mut page, &mut arena, [kern(5)]);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(6)));
     page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(7)]));
     let rooted = page.checkpoint_mark();
@@ -389,8 +400,8 @@ fn maintained_page_identity_covers_mutation_matrix_and_restore() {
 
     page.prepend_contribution(&mut arena, kern(8));
     page.push_current_page(&mut arena, kern(9));
-    page.clear_page_discards();
-    page.clear_split_discards();
+    page.clear_page_discards(&arena);
+    page.clear_split_discards(&arena);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(10)));
     page.clear_mark_class(PageMark::Bot, 7);
     assert_ne!(
@@ -459,7 +470,8 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
         .reachable_state_identity_root()
         .expect("rejected candidate root");
     assert_ne!(rejected_candidate, accepted_future);
-    page.reject_checkpoint_candidate(rejected_tail);
+    page.prepare_checkpoint_candidate_rejection(&rejected_tail);
+    page.finish_checkpoint_candidate_rejection(rejected_tail);
     let after_reject = page.accepted_replay_work();
     assert_eq!(after_reject[0], after_reject[1]);
     assert_eq!(after_reject[2..], [1, 1]);
@@ -475,7 +487,7 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
         .checkpoint_mark()
         .reachable_state_identity_root()
         .expect("committed candidate root");
-    page.accept_checkpoint_candidate(accepted_tail);
+    page.prepare_checkpoint_candidate_acceptance(accepted_tail);
     let after_accept = page.accepted_replay_work();
     assert_eq!(after_accept[2], before_accept[2]);
     assert_eq!(after_accept[3], before_accept[3]);

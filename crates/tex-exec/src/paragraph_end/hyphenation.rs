@@ -1084,10 +1084,11 @@ mod tests {
     }
 
     fn candidate<G>(
-        stores: &CommandContext<'_, G>,
+        stores: &mut CommandContext<'_, G>,
         nodes: &[Node],
     ) -> Option<HyphenationCandidate> {
-        find_hyphenation_candidate(stores, nodes, 0, (0, 1, 1))
+        let source = stores.publish_page_nodes(nodes.to_vec());
+        find_hyphenation_candidate(stores, source, 0, (0, 1, 1))
     }
 
     fn second_font<G>(stores: &mut CommandContext<'_, G>) -> tex_state::ids::FontId {
@@ -1187,7 +1188,7 @@ mod tests {
                 Node::Penalty(0),
             ];
 
-            let found = candidate(&stores, &nodes).expect("four letters meet the 2+2 minima");
+            let found = candidate(&mut stores, &nodes).expect("four letters meet the 2+2 minima");
             assert_eq!((found.language, found.left, found.right), (7, 2, 2));
             assert_eq!((found.word_start, found.end), (3, 7));
             assert!(found.word.iter().all(|letter| letter.font == font));
@@ -1206,7 +1207,7 @@ mod tests {
                 left_hyphen_min: 3,
                 right_hyphen_min: 2,
             });
-            assert!(candidate(&stores, &too_short).is_none());
+            assert!(candidate(&mut stores, &too_short).is_none());
         });
     }
 
@@ -1250,17 +1251,30 @@ mod tests {
             ];
             let mut fuel = tex_command::CommandFuelLedger::new(1_000).expect("bounded fuel");
 
-            let (visited, diagnostics) = hyphenated_hlist_sequence_with_fuel(
+            let source = stores.publish_page_nodes(nodes.clone());
+            let visited = hyphenated_hlist_with_fuel(
                 &mut stores,
                 &mut diagnostic_effects,
-                nodes.clone(),
+                source,
                 fuel.fuel_mut(),
             )
             .expect("base-whatsit visit succeeds");
 
-            assert_eq!(visited.semantic(), nodes);
-            assert_eq!(visited.physical(), nodes);
-            assert!(diagnostics.is_empty());
+            let semantic = stores
+                .page_nodes(visited.semantic)
+                .expect("semantic root")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            let physical = stores
+                .page_nodes(visited.physical)
+                .expect("physical root")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(semantic, nodes);
+            assert_eq!(physical, nodes);
+            assert!(visited.missing_hyphens.is_empty());
             let mut physical_post_overrides = Vec::new();
             let mut missing_hyphens = Vec::new();
             let mut projection = HyphenationProjection {
@@ -1270,7 +1284,7 @@ mod tests {
             let (_, final_context) = hyphenated_hlist_with_projections(
                 &mut stores,
                 &mut diagnostic_effects,
-                nodes.clone(),
+                source,
                 fuel.fuel_mut(),
                 &mut projection,
             )
@@ -1320,13 +1334,13 @@ mod tests {
             ];
 
             assert!(
-                candidate(&stores, &nodes).is_none(),
+                candidate(&mut stores, &nodes).is_none(),
                 "uppercase starts need uchyph"
             );
             stores
                 .assign_int_param(IntParam::UC_HYPH, 1, tex_state::AssignmentScope::Global)
                 .expect("parameter");
-            let found = candidate(&stores, &nodes).expect("enabled uppercase candidate");
+            let found = candidate(&mut stores, &nodes).expect("enabled uppercase candidate");
             assert_eq!((found.word_start, found.end), (0, 3));
             assert!(found.word.iter().all(|letter| letter.font == font));
             assert_eq!(
@@ -1355,11 +1369,11 @@ mod tests {
                 .expect("parameter");
 
             let sixty_three = vec![character(font, 'a'); 63];
-            let found = candidate(&stores, &sixty_three).expect("63-letter candidate");
+            let found = candidate(&mut stores, &sixty_three).expect("63-letter candidate");
             assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
 
             let sixty_four = vec![character(font, 'a'); 64];
-            let found = candidate(&stores, &sixty_four).expect("63-letter prefix at c64");
+            let found = candidate(&mut stores, &sixty_four).expect("63-letter prefix at c64");
             assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
         });
     }

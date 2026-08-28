@@ -9,7 +9,8 @@ fn tex82_vert_break_cost_depth_and_tie_matrix() {
         hbox(&mut universe, 4, 0),
         Node::Penalty(EJECT_PENALTY),
     ];
-    let split = vert_break(&universe, &nodes, sp(10), sp(2)).expect("vertical break");
+    let split =
+        vert_break(&universe, NodeCursor::owned(&nodes), sp(10), sp(2)).expect("vertical break");
     assert_eq!(split.break_index, Some(1));
     assert_eq!(split.best_height_plus_depth, sp(14));
 
@@ -18,7 +19,7 @@ fn tex82_vert_break_cost_depth_and_tie_matrix() {
         Node::Penalty(0),
         Node::Penalty(0),
     ];
-    let split = vert_break(&universe, &tied, sp(10), sp(0)).expect("tie break");
+    let split = vert_break(&universe, NodeCursor::owned(&tied), sp(10), sp(0)).expect("tie break");
     assert_eq!(
         split.break_index, None,
         "the artificial forced end wins for a whole fitting list"
@@ -41,7 +42,8 @@ fn vertical_break_ignores_perpendicular_box_overflow() {
         children,
     }))];
 
-    let split = vert_break(&universe, &nodes, sp(0), sp(0)).expect("vertical break");
+    let split =
+        vert_break(&universe, NodeCursor::owned(&nodes), sp(0), sp(0)).expect("vertical break");
 
     assert_eq!(split.best_height_plus_depth, sp(0));
 }
@@ -59,7 +61,7 @@ fn vertical_break_preserves_height_then_depth_addition_order() {
 
     let split = vert_break(
         &universe,
-        &nodes,
+        NodeCursor::owned(&nodes),
         Scaled::from_raw(i32::MAX),
         Scaled::from_raw(i32::MAX),
     )
