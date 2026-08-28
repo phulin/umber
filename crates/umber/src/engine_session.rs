@@ -1080,6 +1080,33 @@ impl<'a, G> EngineSession<'a, G> {
         if self.loaded_job_framing {
             self.control.finish_job(self.stores, dvi_output, None);
         }
+        // Root-body cursors are absolute positions in World's complete effect
+        // journal.  Project them before terminal detachment: the detached
+        // completion deliberately contains only materialized records, so its
+        // compact indices cannot be used as absolute World positions.
+        let world_effect_records = self.stores.world().effect_records();
+        let effect_start = self.effect_cursor.min(world_effect_records.len());
+        let effects = world_effect_records[effect_start..].to_vec();
+        let effect_end = world_effect_records.len();
+        let terminal_text = if self.project_root_body_terminal_text {
+            let effect_end = self.stores.world().effect_pos().raw();
+            let effect_base = effect_end.saturating_sub(world_effect_records.len() as u64);
+            let index = |position: tex_state::EffectPos| {
+                usize::try_from(position.raw().saturating_sub(effect_base))
+                    .unwrap_or(usize::MAX)
+                    .min(world_effect_records.len())
+            };
+            let terminal_start = index(self.terminal_text_cursor);
+            let terminal_end = index(
+                self.control
+                    .job_body_effect_end()
+                    .unwrap_or_else(|| self.stores.world().effect_pos()),
+            )
+            .max(terminal_start);
+            crate::terminal_text_from_effects(&world_effect_records[terminal_start..terminal_end])
+        } else {
+            crate::terminal_text_from_effects(world_effect_records)
+        };
         let completion = self
             .output_ledger
             .close_revision(
@@ -1089,30 +1116,8 @@ impl<'a, G> EngineSession<'a, G> {
                 tex_exec::EngineCompletionDemand::without_pdf(),
             )
             .map_err(SessionError::EngineCompletion)?;
-        let effect_records = completion.effects();
-        let effect_start = self.effect_cursor.min(effect_records.len());
-        let terminal_text = if self.project_root_body_terminal_text {
-            let effect_end = self.stores.world().effect_pos().raw();
-            let effect_base = effect_end.saturating_sub(effect_records.len() as u64);
-            let index = |position: tex_state::EffectPos| {
-                usize::try_from(position.raw().saturating_sub(effect_base))
-                    .unwrap_or(usize::MAX)
-                    .min(effect_records.len())
-            };
-            let terminal_start = index(self.terminal_text_cursor);
-            let terminal_end = index(
-                self.control
-                    .job_body_effect_end()
-                    .unwrap_or_else(|| self.stores.world().effect_pos()),
-            )
-            .max(terminal_start);
-            crate::terminal_text_from_effects(&effect_records[terminal_start..terminal_end])
-        } else {
-            crate::terminal_text_from_effects(effect_records)
-        };
         let artifact_start = self.artifact_cursor.min(completion.pages().len());
-        let effect_end = effect_records.len();
-        let (effects, _, pages, _) = completion.into_parts();
+        let (_materialized_effects, _, pages, _) = completion.into_parts();
         let mut artifacts = Vec::with_capacity(pages.len().saturating_sub(artifact_start));
         let mut dvi_pages = Vec::with_capacity(prepared_page_count);
         let mut committed_artifacts = Vec::with_capacity(artifacts.capacity());
@@ -1124,7 +1129,6 @@ impl<'a, G> EngineSession<'a, G> {
             }
             committed_artifacts.push(artifact);
         }
-        let effects = effects.into_iter().skip(effect_start).collect();
         self.artifact_cursor = artifact_start.saturating_add(committed_artifacts.len());
         self.effect_cursor = effect_end;
         if let Some(position) = self.terminal_input_cursor.take() {
@@ -1331,7 +1335,7 @@ mod tests {
                     .iter()
                     .map(tex_exec::EngineCheckpoint::boundary)
                     .collect::<Vec<_>>(),
-                [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete]
+                [EngineBoundary::JobStart]
             );
             let telemetry = session.episode_telemetry();
             assert_eq!(
@@ -2139,8 +2143,7 @@ mod tests {
                     .iter()
                     .map(tex_exec::EngineCheckpoint::boundary)
                     .collect::<Vec<_>>();
-                assert!(boundaries.contains(&EngineBoundary::JobStart));
-                assert!(boundaries.contains(&EngineBoundary::ShipoutComplete));
+                assert_eq!(boundaries, [EngineBoundary::JobStart]);
             },
         );
     }

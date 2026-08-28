@@ -555,15 +555,17 @@ impl<'store> RetainedEngineGeneration<'store> {
             RetainedEngineAttachmentKey,
             crate::ExecutionBudgetCounters,
             RetainedBoundaryEvidence,
+            RetainedCheckpointKey,
+            crate::CheckpointRetention,
         ),
         RetainedEngineForkError,
     > {
         let selected = self
             .with_admitted(SelectBoundary { selected })
             .map_err(RetainedEngineForkError::Access)?;
-        let (key, evidence) = selected.map_err(RetainedEngineForkError::Access)?;
+        let (key, evidence, retention) = selected.map_err(RetainedEngineForkError::Access)?;
         let (generation, runtime, counters) = self.fork_checkpoint(&key)?;
-        Ok((generation, runtime, counters, evidence))
+        Ok((generation, runtime, counters, evidence, key, retention))
     }
 
     #[must_use]
@@ -707,8 +709,7 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
     ) -> Self::Output {
         match self {
             Self::Accept => {
-                let candidate =
-                    candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                let candidate = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
                 let ledger = candidate
                     .ledger
                     .as_mut()
@@ -743,8 +744,7 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
                         .ok_or(RetainedStateAccessError::StaleAttachment)?
                         .into_rejected_checkpoint_command_with_state(candidate.universe())
                 };
-                let candidate =
-                    candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                let candidate = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
                 let ledger = candidate
                     .ledger
                     .as_mut()
@@ -881,16 +881,30 @@ impl RetainedEngineOperation for BoundaryLaneCheckpointCount {
 }
 
 impl RetainedEngineOperation for SelectBoundary {
-    type Output =
-        Result<(RetainedCheckpointKey, RetainedBoundaryEvidence), RetainedEngineAccessError>;
+    type Output = Result<
+        (
+            RetainedCheckpointKey,
+            RetainedBoundaryEvidence,
+            crate::CheckpointRetention,
+        ),
+        RetainedEngineAccessError,
+    >;
 
     fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        admitted
+        let (key, evidence) = admitted
             .sidecars
             .boundaries
             .as_ref()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?
-            .select(self.selected)
+            .select(self.selected)?;
+        let retention = admitted
+            .sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .get(&key)?
+            .retention();
+        Ok((key, evidence, retention))
     }
 }
 

@@ -425,6 +425,12 @@ struct CandidatePlan {
     revision_setup_latency: Duration,
 }
 
+struct InheritedBoundary {
+    key: tex_exec::RetainedCheckpointKey,
+    evidence: tex_exec::RetainedBoundaryEvidence,
+    retention: tex_exec::CheckpointRetention,
+}
+
 struct CandidateCompletion {
     completion: DetachedEngineCompletion,
     history: Vec<BoundaryRecord>,
@@ -480,6 +486,7 @@ pub struct RevisionCandidate<'store> {
     advance_calls: u64,
     cumulative_fuel: u64,
     generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
+    inherited_boundary: Option<InheritedBoundary>,
     checkpoint_control_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     candidate_lease: Option<CandidateLease>,
@@ -673,7 +680,7 @@ enum PlanExecution {
 }
 
 struct CandidateRun<'a, 'store> {
-    candidate: &'a RevisionCandidate<'store>,
+    candidate: &'a mut RevisionCandidate<'store>,
     host: &'a mut dyn ResourceHost,
     cancellation: &'a Cancellation,
     failed_attempt_fuel: &'a mut u64,
@@ -907,6 +914,33 @@ impl LiveHistoryState {
         }
     }
 
+    fn inherit_boundary(&mut self, inherited: InheritedBoundary) {
+        let evidence = inherited.evidence;
+        let boundary = evidence.boundary();
+        let position = evidence.position();
+        let ordinal = evidence.ordinal();
+        debug_assert!(self.records.is_empty());
+        self.records.push(BoundaryRecord {
+            revision: self.revision,
+            key: BoundaryKey {
+                position,
+                boundary,
+                ordinal,
+            },
+            effect_prefix: evidence.effect_prefix(),
+            artifact_prefix: evidence.artifact_prefix(),
+            reachable_state_identity: evidence.reachable_state_identity(),
+        });
+        self.occurrences
+            .insert((position, boundary), ordinal.saturating_add(1));
+        self.observe_shared_owners(inherited.retention);
+        self.checkpoint_metadata_bytes = self
+            .checkpoint_metadata_bytes
+            .max(inherited.retention.checkpoint_metadata_bytes());
+        self.checkpoint_keys.push(Some(inherited.key));
+        self.checkpoint_retentions.push(Some(inherited.retention));
+    }
+
     fn retained_restart_root_count(&self) -> usize {
         self.checkpoint_keys.iter().flatten().count()
     }
@@ -1102,7 +1136,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
 
 fn initialize_candidate_runtime<G: 'static>(
     admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
-    candidate: &RevisionCandidate<'_>,
+    candidate: &mut RevisionCandidate<'_>,
     restored: Option<MainControl<G>>,
 ) -> Result<(CandidateRuntime, MainControl<G>), SessionError> {
     let rooted_restart = restored.is_some()
@@ -1110,7 +1144,7 @@ fn initialize_candidate_runtime<G: 'static>(
             .plan
             .restart_boundary
             .is_some_and(|key| key.boundary != EngineBoundary::JobStart);
-    let (universe, _ledger, checkpoints) = admitted.parts();
+    let (universe, _ledger, mut checkpoints) = admitted.parts();
     let rooted = restored.is_some();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if !rooted_restart {
@@ -1150,6 +1184,11 @@ fn initialize_candidate_runtime<G: 'static>(
     control.attach_pure_memo_capability(universe);
     control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
+    if let Some(inherited) = candidate.inherited_boundary.take() {
+        debug_assert!(rooted);
+        history.inherit_boundary(inherited);
+        history.enforce_publication_budget(&mut checkpoints);
+    }
     if !rooted_restart {
         if !rooted {
             _ledger.commit_job_start(
@@ -2130,24 +2169,35 @@ impl<'store> Session<'store> {
         mut plan: CandidatePlan,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
         let candidate_lease = self.candidate_lease.claim()?;
-        let (generation, checkpoint_control_key) =
-            if let Some(prior) = self.prior_generation.as_mut() {
-                let selected = plan
-                    .restart_boundary
-                    .map(|key| (key.position, key.boundary, key.ordinal));
-                let (generation, runtime, _budget_counters, selected) = prior
-                    .generation
-                    .fork_boundary(selected)
-                    .map_err(SessionError::RetainedEngineFork)?;
-                plan.restart_boundary = Some(BoundaryKey {
-                    position: selected.position(),
-                    boundary: selected.boundary(),
-                    ordinal: selected.ordinal(),
-                });
-                (Some(generation), Some(runtime))
-            } else {
-                (None, None)
+        let (generation, checkpoint_control_key, inherited_boundary) = if let Some(prior) =
+            self.prior_generation.as_mut()
+        {
+            let selected = plan
+                .restart_boundary
+                .map(|key| (key.position, key.boundary, key.ordinal));
+            let (generation, runtime, _budget_counters, selected, selected_key, retention) = prior
+                .generation
+                .fork_boundary(selected)
+                .map_err(SessionError::RetainedEngineFork)?;
+            let selected_boundary = BoundaryKey {
+                position: selected.position(),
+                boundary: selected.boundary(),
+                ordinal: selected.ordinal(),
             };
+            let inherited_boundary = (!self
+                .history
+                .iter()
+                .any(|record| record.key == selected_boundary))
+            .then_some(InheritedBoundary {
+                key: selected_key,
+                evidence: selected,
+                retention,
+            });
+            plan.restart_boundary = Some(selected_boundary);
+            (Some(generation), Some(runtime), inherited_boundary)
+        } else {
+            (None, None, None)
+        };
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
             reachability_store: self.reachability_store.clone(),
@@ -2174,6 +2224,7 @@ impl<'store> Session<'store> {
             advance_calls: 0,
             cumulative_fuel: 0,
             generation,
+            inherited_boundary,
             checkpoint_control_key,
             runtime_key: None,
             candidate_lease: Some(candidate_lease),

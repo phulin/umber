@@ -993,13 +993,13 @@ fn generated_probe_missing_to_present_restarts_from_job_start_and_matches_cold()
             .reexecuted_bytes,
         next.len()
     );
-    assert!(
-        incremental
-            .reuse_metrics()
-            .expect("replacement metrics")
-            .restart_boundary
-            .is_none()
-    );
+    let restart = incremental
+        .reuse_metrics()
+        .expect("replacement metrics")
+        .restart_boundary
+        .expect("generated-input change selects the retained startup root");
+    assert_eq!(restart.position, 0);
+    assert_eq!(restart.boundary, tex_exec::EngineBoundary::JobStart);
 
     let mut cold = session(&next);
     cold.add_user_file("state.aux", generated)
@@ -1065,13 +1065,13 @@ fn changed_required_generated_input_retries_one_job_start_candidate_and_matches_
             .reexecuted_bytes,
         next.len()
     );
-    assert!(
-        incremental
-            .reuse_metrics()
-            .expect("replacement metrics")
-            .restart_boundary
-            .is_none()
-    );
+    let restart = incremental
+        .reuse_metrics()
+        .expect("replacement metrics")
+        .restart_boundary
+        .expect("required-input change selects the retained startup root");
+    assert_eq!(restart.position, 0);
+    assert_eq!(restart.boundary, tex_exec::EngineBoundary::JobStart);
 
     let mut cold = session(&next);
     cold.add_user_file("state.aux", generated)
@@ -1206,12 +1206,18 @@ fn resumed_job_start_fallback_publishes_root_stage_and_revision_together() {
         next.as_bytes()
     );
     assert_eq!(session.accepted_output.as_ref(), Some(&output));
+    let history = session
+        .incremental
+        .as_ref()
+        .expect("incremental session")
+        .history();
+    assert_eq!(history[0].revision(), RevisionId::new(1));
+    assert_eq!(
+        history[0].key().boundary,
+        tex_exec::EngineBoundary::JobStart
+    );
     assert!(
-        session
-            .incremental
-            .as_ref()
-            .expect("incremental session")
-            .history()
+        history[1..]
             .iter()
             .all(|record| record.revision() == RevisionId::new(2))
     );
@@ -1347,13 +1353,13 @@ fn generated_probe_present_to_missing_restarts_from_job_start_and_matches_cold()
             .reexecuted_bytes,
         next.len()
     );
-    assert!(
-        incremental
-            .reuse_metrics()
-            .expect("replacement metrics")
-            .restart_boundary
-            .is_none()
-    );
+    let restart = incremental
+        .reuse_metrics()
+        .expect("replacement metrics")
+        .restart_boundary
+        .expect("missing generated input selects the retained startup root");
+    assert_eq!(restart.position, 0);
+    assert_eq!(restart.boundary, tex_exec::EngineBoundary::JobStart);
 
     let mut cold = session(&next);
     let response = answer_single_file(cold.compile_attempt(), None);
@@ -1399,10 +1405,11 @@ fn unchanged_consumed_input_and_changed_unconsumed_output_use_cold_recompute() {
         reuse.execution_path,
         tex_incr::RevisionExecutionPath::SlowEdit
     );
-    assert!(
-        reuse.restart_boundary.is_none(),
-        "phase 6 deliberately cold-recomputes across generation boundaries: {reuse:?}"
-    );
+    let restart = reuse
+        .restart_boundary
+        .expect("slow edit forks the retained startup checkpoint");
+    assert_eq!(restart.position, 0);
+    assert_eq!(restart.boundary, tex_exec::EngineBoundary::JobStart);
 }
 
 #[test]
