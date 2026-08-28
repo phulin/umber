@@ -353,7 +353,9 @@ impl PageMaterialArena {
         source: PageListId,
     ) -> Result<PageListId, ForkArenaError> {
         let nodes = self.list(source)?.iter().cloned().collect::<Vec<_>>();
-        self.arena.record_source_nodes_copied(nodes.len());
+        self.region
+            .pub_arena
+            .record_source_nodes_copied(nodes.len());
         self.publish_owned(nodes)
     }
 
