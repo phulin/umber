@@ -204,6 +204,35 @@ impl ReachabilityStore {
         Ok(operation(generation))
     }
 
+    pub(crate) fn with_candidate_pair_mut<R>(
+        &self,
+        candidate_key: ReachabilityGenerationKey,
+        operation: impl FnOnce(&mut PhysicalStateGeneration, &mut PhysicalStateGeneration) -> R,
+    ) -> Result<R, ReachabilityStoreError> {
+        let mut storage = self.storage.borrow_mut();
+        let transaction = storage
+            .candidate_transaction
+            .filter(|transaction| {
+                transaction.candidate == candidate_key
+                    && transaction.phase == CandidateTransactionPhase::CandidateLive
+            })
+            .ok_or(ReachabilityStoreError::CandidateTransactionMismatch)?;
+        let [source, candidate] = two_slots_mut(
+            &mut storage.slots,
+            transaction.source.slot,
+            transaction.candidate.slot,
+        );
+        let source = source
+            .generation
+            .as_mut()
+            .ok_or(ReachabilityStoreError::StaleGeneration)?;
+        let candidate = candidate
+            .generation
+            .as_mut()
+            .ok_or(ReachabilityStoreError::StaleGeneration)?;
+        Ok(operation(source, candidate))
+    }
+
     pub(crate) fn take_generation(
         &self,
         key: ReachabilityGenerationKey,

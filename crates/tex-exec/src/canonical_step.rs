@@ -1,13 +1,12 @@
-use std::cell::RefCell;
 use std::fmt;
-use std::rc::Rc;
 
 use tex_command::{CommandObserver, CommandSummaryError, FontResource, PdfImageResource};
 use tex_state::Universe;
+use tex_state::fork_arena::{CheckpointMark, ChunkPool, ForkArena};
 
 use crate::{
-    Cancellation, CheckpointSink, EngineBoundary, ExecError, ExecutionBudgetCounters, MainControl,
-    MainControlStep, ResourceFulfillment, ResourceNeed, SemanticEpisodeBarrier, StepResult,
+    Cancellation, CheckpointSink, ExecError, ExecutionBudgetCounters, MainControl, MainControlStep,
+    ResourceFulfillment, ResourceNeed, SemanticEpisodeBarrier, StepResult,
     canonical_font_resource_path,
 };
 
@@ -65,24 +64,22 @@ impl TerminalRevisionReceipt {
 /// capture, exact resource registration, authoritative absence, and the
 /// monotonic suspension serial.
 pub struct OutputLedger {
-    storage: Rc<RefCell<OutputLedgerStorage>>,
-    accepted_tail: Option<Vec<crate::PreparedDviPage>>,
-    accepted_root: usize,
+    pool: ChunkPool<crate::PreparedDviPage>,
+    pages: ForkArena<crate::PreparedDviPage, OutputLane>,
+    prepared_page_count: usize,
+    accepted_head_count: Option<usize>,
     job_start_committed: bool,
     suspension_serial: u64,
     terminal_step: Option<MainControlStep>,
     terminal_closed: bool,
 }
 
-#[derive(Debug, Default)]
-struct OutputLedgerStorage {
-    prepared_dvi_pages: Vec<crate::PreparedDviPage>,
-}
+pub(crate) enum OutputLane {}
 
 /// Fixed rooted coordinate into the one accepted output lineage.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct OutputLedgerCheckpoint {
-    storage: Rc<RefCell<OutputLedgerStorage>>,
+    mark: CheckpointMark<OutputLane>,
     prepared_page_count: usize,
 }
 
@@ -96,12 +93,8 @@ impl fmt::Debug for OutputLedger {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("OutputLedger")
-            .field(
-                "prepared_dvi_pages",
-                &self.storage.borrow().prepared_dvi_pages.len(),
-            )
-            .field("accepted_root", &self.accepted_root)
-            .field("candidate", &self.accepted_tail.is_some())
+            .field("prepared_dvi_pages", &self.prepared_page_count)
+            .field("candidate", &self.accepted_head_count.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -110,9 +103,10 @@ impl OutputLedger {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            storage: Rc::new(RefCell::new(OutputLedgerStorage::default())),
-            accepted_tail: None,
-            accepted_root: 0,
+            pool: ChunkPool::default(),
+            pages: ForkArena::new(),
+            prepared_page_count: 0,
+            accepted_head_count: None,
             job_start_committed: false,
             suspension_serial: 0,
             terminal_step: None,
@@ -120,56 +114,94 @@ impl OutputLedger {
         }
     }
 
-    /// Creates a ledger resumed from an already retained `JobStart` record.
-    #[must_use]
-    pub(crate) fn resume(checkpoint: &OutputLedgerCheckpoint) -> Self {
-        let mut storage = checkpoint.storage.borrow_mut();
-        assert!(
-            checkpoint.prepared_page_count <= storage.prepared_dvi_pages.len(),
-            "output checkpoint lies beyond the accepted ledger"
-        );
-        let accepted_tail = storage
-            .prepared_dvi_pages
-            .split_off(checkpoint.prepared_page_count);
-        drop(storage);
-        Self {
-            storage: Rc::clone(&checkpoint.storage),
-            accepted_tail: Some(accepted_tail),
-            accepted_root: checkpoint.prepared_page_count,
-            job_start_committed: true,
-            suspension_serial: 0,
-            terminal_step: None,
-            terminal_closed: false,
-        }
+    pub(crate) fn can_resume(&self, checkpoint: OutputLedgerCheckpoint) -> bool {
+        self.accepted_head_count.is_none()
+            && checkpoint.prepared_page_count <= self.prepared_page_count
+            && self.pages.can_begin_checkpoint_candidate(checkpoint.mark)
     }
 
-    pub(crate) fn checkpoint(&self) -> OutputLedgerCheckpoint {
+    /// Rewinds this sole output owner to a retained whole-chunk boundary.
+    pub(crate) fn resume(
+        &mut self,
+        checkpoint: OutputLedgerCheckpoint,
+    ) -> Result<(), tex_state::fork_arena::ForkArenaError> {
+        if !self.can_resume(checkpoint) {
+            return Err(tex_state::fork_arena::ForkArenaError::InvalidCheckpoint);
+        }
+        let accepted_head_count = self.prepared_page_count;
+        self.pages.begin_checkpoint_candidate(checkpoint.mark)?;
+        self.accepted_head_count = Some(accepted_head_count);
+        self.prepared_page_count = checkpoint.prepared_page_count;
+        self.job_start_committed = true;
+        self.suspension_serial = 0;
+        self.terminal_step = None;
+        self.terminal_closed = false;
+        Ok(())
+    }
+
+    pub(crate) fn checkpoint(&mut self) -> OutputLedgerCheckpoint {
+        let boundary = self
+            .pages
+            .seal_boundary(&mut self.pool)
+            .expect("output checkpoint retires every page builder");
+        let mark = self
+            .pages
+            .checkpoint_mark(boundary)
+            .expect("output checkpoint names the just-sealed boundary");
         OutputLedgerCheckpoint {
-            storage: Rc::clone(&self.storage),
-            prepared_page_count: self.storage.borrow().prepared_dvi_pages.len(),
+            mark,
+            prepared_page_count: self.prepared_page_count,
         }
     }
 
     #[doc(hidden)]
     pub fn accept_checkpoint_candidate(&mut self) {
-        let _ = self.accepted_tail.take();
+        if self.accepted_head_count.take().is_none() {
+            return;
+        }
+        let boundary = self
+            .pages
+            .seal_boundary(&mut self.pool)
+            .expect("accepted output has no live page builder");
+        self.pages
+            .accept_checkpoint_candidate(&mut self.pool, boundary)
+            .expect("accepted output settles its sole current lineage");
     }
 
     #[doc(hidden)]
     pub fn reject_checkpoint_candidate(&mut self) {
-        let Some(mut accepted) = self.accepted_tail.take() else {
+        let Some(accepted_head_count) = self.accepted_head_count.take() else {
             return;
         };
-        let mut storage = self.storage.borrow_mut();
-        storage.prepared_dvi_pages.truncate(self.accepted_root);
-        storage.prepared_dvi_pages.append(&mut accepted);
+        let boundary = self
+            .pages
+            .seal_boundary(&mut self.pool)
+            .expect("rejected output has no live page builder");
+        self.pages
+            .reject_checkpoint_candidate(&mut self.pool, boundary)
+            .expect("rejected output reattaches its sole prior lineage");
+        self.prepared_page_count = accepted_head_count;
     }
 
     fn collect_prepared_pages<G>(&mut self, control: &mut MainControl<G>) {
-        self.storage
-            .borrow_mut()
-            .prepared_dvi_pages
-            .append(&mut control.take_prepared_dvi_pages());
+        let prepared = control.take_prepared_dvi_pages();
+        if prepared.is_empty() {
+            return;
+        }
+        let added = prepared.len();
+        let mut builder = self
+            .pages
+            .begin_builder(&mut self.pool)
+            .expect("output collection owns the sole page builder");
+        for page in prepared {
+            builder
+                .push(page)
+                .expect("prepared output page fits the fixed-chunk arena");
+        }
+        let _ = builder
+            .seal()
+            .expect("prepared output page batch seals canonically");
+        self.prepared_page_count = self.prepared_page_count.saturating_add(added);
     }
 
     #[must_use]
@@ -238,12 +270,18 @@ impl OutputLedger {
             return Err(crate::EngineCompletionError::MaterializedEffectBase);
         }
         let (effects, stream_open_contexts) = world.detached_effect_records();
-        let completion = crate::DetachedEngineCompletion::capture(
+        let output_checkpoint = self.checkpoint();
+        let completion = crate::DetachedEngineCompletion::capture_borrowed_pages(
             effects,
             stream_open_contexts,
             world.committed_artifacts().to_vec(),
             world.artifact_publications(),
-            self.storage.borrow().prepared_dvi_pages.clone(),
+            self.prepared_page_count,
+            |visit| {
+                self.pages
+                    .visit_checkpoint_values(&self.pool, output_checkpoint.mark, visit)
+                    .expect("terminal output visits its sealed accepted/current lineage");
+            },
             pdf,
         )?;
         self.terminal_closed = true;
@@ -411,7 +449,7 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         self.control
             .publish_terminal_named_boundaries(self.universe)
             .map_err(CanonicalStepFailure::Execution)?;
-        let boundaries = self.control.take_completed_boundaries();
+        let _boundaries = self.control.take_completed_boundaries();
         let eligibilities = self.control.take_checkpoint_eligibilities();
         self.ledger
             .publish(self.control, self.universe, sink, eligibilities)

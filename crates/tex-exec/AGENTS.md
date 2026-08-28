@@ -40,7 +40,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   prepared field from the caller's direct operation frame; `alignment.rs`,
   `pdf.rs`, and `support.rs` isolate the corresponding complex families without
   introducing another executor.
-- `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
+- `src/canonical_step.rs`: shared bounded-step result protocol and the direct
+  caller-owned fixed-chunk output ledger for coordinate-only checkpoint
+  publication, exact prior/current settlement, resource fulfillment,
+  suspension accounting, cancellation, and borrowed terminal page capture.
 - `src/engine_completion.rs`: handle-free terminal engine capture, aligned
   page/PDF projection, and non-clone effects-before-artifacts publication with
   exact suffix retry.
@@ -118,7 +121,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/retained_generation.rs`: Non-generic move-only external-store slot
   lease, universally generic admitted engine episodes, one singular typed
   same-thread suspension seam for non-atomic semantic owners, reusable
-  checkpoint slots, and private owner-relative keys.
+  checkpoint slots, private owner-relative keys, and exact transfer of the sole
+  output pool between the accepted/current sidecars.
 - `src/typeset_context.rs`: crate-private pure-kernel trait adapter over one
   already-admitted `CommandContext`; it owns no state, owner, or arena root.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,

@@ -403,7 +403,7 @@ pub struct EngineCheckpoint<G> {
     pub(crate) runtime: RuntimeCheckpoint<G>,
     pub(crate) command: CommandSummary<G>,
     pub(crate) modes: ModeCheckpoint,
-    output: crate::canonical_step::OutputLedgerCheckpoint,
+    output: Option<crate::canonical_step::OutputLedgerCheckpoint>,
     reachable_state_identity: Option<ReachableStateIdentity>,
     retention: CheckpointRetention,
     pub(crate) root_anchor: usize,
@@ -439,7 +439,16 @@ impl<G> EngineCheckpoint<G> {
     pub(crate) fn fork_state(
         &self,
         source: &mut Universe<G>,
-    ) -> Result<(Universe<G>, MainControl<G>, crate::OutputLedger), CheckpointRestoreError> {
+        output: &mut crate::OutputLedger,
+    ) -> Result<(Universe<G>, MainControl<G>), CheckpointRestoreError> {
+        let output_checkpoint = self.output.ok_or(CheckpointRestoreError::Output(
+            tex_state::fork_arena::ForkArenaError::InvalidCheckpoint,
+        ))?;
+        if !output.can_resume(output_checkpoint) {
+            return Err(CheckpointRestoreError::Output(
+                tex_state::fork_arena::ForkArenaError::InvalidCheckpoint,
+            ));
+        }
         let mut destination = source
             .fork_runtime_checkpoint(&self.runtime)
             .map_err(CheckpointRestoreError::Runtime)?;
@@ -461,11 +470,12 @@ impl<G> EngineCheckpoint<G> {
                 return Err(CheckpointRestoreError::Mode(error));
             }
         };
-        let output = crate::OutputLedger::resume(&self.output);
+        output
+            .resume(output_checkpoint)
+            .map_err(CheckpointRestoreError::Output)?;
         Ok((
             destination,
             MainControl::from_checkpoint_fork(command, modes),
-            output,
         ))
     }
 
@@ -478,7 +488,13 @@ impl<G> EngineCheckpoint<G> {
         &self,
         source: &mut Universe<G>,
     ) -> Result<(Universe<G>, MainControl<G>, crate::OutputLedger), CheckpointRestoreError> {
-        self.fork_state(source)
+        let mut output = crate::OutputLedger::new();
+        let mut checkpoint = self.clone();
+        if !checkpoint.has_output_ledger() {
+            checkpoint.set_output_ledger(output.checkpoint());
+        }
+        let (universe, control) = checkpoint.fork_state(source, &mut output)?;
+        Ok((universe, control, output))
     }
 
     /// Exercises only the mode/page owner fork, first mutation, and rejection
@@ -591,7 +607,6 @@ impl<G> EngineCheckpoint<G> {
             .and_then(|anchor| usize::try_from(anchor).ok())
             .unwrap_or(0);
         let modes = nest.checkpoint();
-        let output = crate::OutputLedger::new().checkpoint();
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();
@@ -611,7 +626,7 @@ impl<G> EngineCheckpoint<G> {
             runtime,
             command,
             modes,
-            output,
+            output: None,
             reachable_state_identity,
             retention,
             root_anchor,
@@ -625,7 +640,11 @@ impl<G> EngineCheckpoint<G> {
         &mut self,
         output: crate::canonical_step::OutputLedgerCheckpoint,
     ) {
-        self.output = output;
+        self.output = Some(output);
+    }
+
+    pub(crate) fn has_output_ledger(&self) -> bool {
+        self.output.is_some()
     }
 
     #[must_use]
@@ -770,6 +789,7 @@ pub enum CheckpointRestoreError {
     AttemptSuspended,
     Command(CommandRestoreError),
     Mode(ExecError),
+    Output(tex_state::fork_arena::ForkArenaError),
     Runtime(UniverseError),
 }
 
@@ -781,6 +801,7 @@ impl fmt::Display for CheckpointRestoreError {
             }
             Self::Command(error) => write!(formatter, "could not restore command roots: {error}"),
             Self::Mode(error) => write!(formatter, "could not restore mode roots: {error}"),
+            Self::Output(error) => write!(formatter, "could not restore output roots: {error:?}"),
             Self::Runtime(error) => {
                 write!(formatter, "could not restore runtime roots: {error:?}")
             }

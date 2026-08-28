@@ -39,6 +39,19 @@ pub trait RetainedStateForkOperation {
     ) -> Result<RetainedStateForkBuild<G, Self::Output>, Self::Error>;
 }
 
+/// One typed sidecar settlement while the accepted/current pair remains under
+/// the exclusive aggregate candidate transaction.
+#[doc(hidden)]
+pub trait RetainedStateCandidateOperation {
+    type Output;
+
+    fn run<G: 'static>(
+        self,
+        source: RetainedStateAdmission<'_, G>,
+        candidate: RetainedStateAdmission<'_, G>,
+    ) -> Self::Output;
+}
+
 /// Fully prepared destination aggregate awaiting physical-slot publication.
 #[doc(hidden)]
 pub struct RetainedStateForkBuild<G, T> {
@@ -79,6 +92,17 @@ pub struct RetainedStateAdmission<'a, G> {
 impl<G: 'static> RetainedStateAdmission<'_, G> {
     pub fn universe(&mut self) -> &mut Universe<G> {
         self.universe
+    }
+
+    /// Borrows the one typed aggregate without exporting an owner-relative
+    /// key. Only aggregate pair settlement uses this seam.
+    #[doc(hidden)]
+    pub fn sole_attachment_mut<T: 'static>(&mut self) -> Result<&mut T, RetainedStateAccessError> {
+        self.attachment
+            .as_deref_mut()
+            .ok_or(RetainedStateAccessError::StaleAttachment)?
+            .downcast_mut::<T>()
+            .ok_or(RetainedStateAccessError::AttachmentTypeMismatch)
     }
 
     /// Stores one generation-typed engine sidecar under the same owner.
@@ -421,6 +445,32 @@ impl<'store> RetainedStateGeneration<'store> {
             .key
             .expect("a live retained generation has a store slot");
         self.store.generation_is_candidate(key)
+    }
+
+    /// Runs one typed sidecar operation against the exclusive accepted/current
+    /// pair before Universe settlement exposes either slot independently.
+    #[doc(hidden)]
+    pub fn with_candidate_source<O: RetainedStateCandidateOperation>(
+        &mut self,
+        operation: O,
+    ) -> Result<O::Output, RetainedStateAccessError> {
+        let key = self.key.expect("a current generation has a store slot");
+        self.store
+            .with_candidate_pair_mut(key, |source, candidate| {
+                operation.run(
+                    RetainedStateAdmission {
+                        incarnation: source.incarnation,
+                        universe: &mut source.universe,
+                        attachment: &mut source.attachment,
+                    },
+                    RetainedStateAdmission {
+                        incarnation: candidate.incarnation,
+                        universe: &mut candidate.universe,
+                        attachment: &mut candidate.attachment,
+                    },
+                )
+            })
+            .map_err(|_| RetainedStateAccessError::ForeignGeneration)
     }
 
     #[doc(hidden)]

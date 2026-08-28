@@ -727,9 +727,10 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
             }
         };
         let execution = {
-            let (universe, checkpoints) = admitted.parts();
+            let (universe, ledger, checkpoints) = admitted.parts();
             execute_plan(
                 universe,
+                ledger,
                 checkpoints,
                 &mut runtime,
                 self.candidate,
@@ -760,17 +761,14 @@ struct SettleCandidateRuntime {
 
 struct PreparedCandidateRuntime {
     control: tex_exec::PreparedCheckpointControl,
-    ledger: OutputLedger,
 }
 
 impl PreparedCandidateRuntime {
-    fn accept(mut self) {
-        self.ledger.accept_checkpoint_candidate();
+    fn accept(self) {
         self.control.accept();
     }
 
-    fn reject(mut self) {
-        self.ledger.reject_checkpoint_candidate();
+    fn reject(self) {
         self.control.reject();
     }
 }
@@ -785,7 +783,6 @@ impl tex_exec::RetainedEngineOperation for SettleCandidateRuntime {
         let runtime = admitted.take_attachment::<CandidateRuntime<G>>(self.key)?;
         Ok(PreparedCandidateRuntime {
             control: runtime.control.prepare_checkpoint_candidate(),
-            ledger: runtime.ledger,
         })
     }
 }
@@ -838,7 +835,6 @@ impl tex_exec::RetainedEngineOperation for PublishInitialFormatCheckpoint {
 
 struct CandidateRuntime<G> {
     control: MainControl<G>,
-    ledger: OutputLedger,
     history: LiveHistoryState,
     delivered_commands: usize,
     answered_needs: Vec<ResourceNeed>,
@@ -1086,7 +1082,7 @@ fn initialize_candidate_runtime<G: 'static>(
             .plan
             .restart_boundary
             .is_some_and(|key| key.boundary != EngineBoundary::JobStart);
-    let (universe, checkpoints) = admitted.parts();
+    let (universe, _ledger, checkpoints) = admitted.parts();
     let rooted = restored.is_some();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if !rooted_restart {
@@ -1119,9 +1115,9 @@ fn initialize_candidate_runtime<G: 'static>(
         root_framing: candidate.root_framing,
         root_framing_name: candidate.root_framing_name.as_deref(),
     };
-    let (restored_control, mut ledger) = match restored {
-        Some(restored) => (Some(restored.control), restored.ledger),
-        None => (None, OutputLedger::new()),
+    let restored_control = match restored {
+        Some(restored) => Some(restored.control),
+        None => None,
     };
     let mut control = candidate_control(universe, &options, restored_control)?;
     control
@@ -1131,7 +1127,7 @@ fn initialize_candidate_runtime<G: 'static>(
     control.enable_reachable_state_identity(universe);
     let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
     if !rooted {
-        ledger.commit_job_start(
+        _ledger.commit_job_start(
             &mut control,
             universe,
             &mut LiveHistorySink {
@@ -1143,7 +1139,6 @@ fn initialize_candidate_runtime<G: 'static>(
     }
     Ok(CandidateRuntime {
         control,
-        ledger,
         history,
         delivered_commands: 0,
         answered_needs: Vec::new(),
@@ -1152,6 +1147,7 @@ fn initialize_candidate_runtime<G: 'static>(
 
 fn execute_plan<G>(
     universe: &mut Universe<G>,
+    ledger: &mut OutputLedger,
     checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
     runtime: &mut CandidateRuntime<G>,
     candidate: &RevisionCandidate<'_>,
@@ -1161,7 +1157,6 @@ fn execute_plan<G>(
 ) -> Result<PlanExecution, SessionError> {
     let CandidateRuntime {
         control,
-        ledger,
         history,
         delivered_commands,
         answered_needs,

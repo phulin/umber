@@ -6,10 +6,10 @@ use std::sync::{Arc, Weak};
 
 use tex_state::{
     DetachedFormatImage, FormatError, ReachabilityStore, RetainedAttachmentKey,
-    RetainedStateAccessError, RetainedStateAdmission, RetainedStateForkBuild,
-    RetainedStateForkError, RetainedStateForkOperation, RetainedStateGeneration,
-    RetainedStateOperation, RetainedStateRetirement, SessionEpochError, Universe, UniverseError,
-    World,
+    RetainedStateAccessError, RetainedStateAdmission, RetainedStateCandidateOperation,
+    RetainedStateForkBuild, RetainedStateForkError, RetainedStateForkOperation,
+    RetainedStateGeneration, RetainedStateOperation, RetainedStateRetirement, SessionEpochError,
+    Universe, UniverseError, World,
 };
 
 use crate::EngineCheckpoint;
@@ -37,9 +37,19 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     }
 
     /// Splits the aggregate state and checkpoint store for an executor loop.
-    pub fn parts(&mut self) -> (&mut Universe<G>, RetainedCheckpointStore<'_, G>) {
+    pub fn parts(
+        &mut self,
+    ) -> (
+        &mut Universe<G>,
+        &mut crate::OutputLedger,
+        RetainedCheckpointStore<'_, G>,
+    ) {
         (
             self.universe,
+            self.sidecars
+                .ledger
+                .as_mut()
+                .expect("the admitted generation owns its output ledger"),
             RetainedCheckpointStore {
                 generation: self.generation,
                 checkpoints: &mut self.sidecars.checkpoints,
@@ -48,6 +58,16 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     }
 
     pub fn retain_checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) -> RetainedCheckpointKey {
+        let mut checkpoint = checkpoint;
+        if !checkpoint.has_output_ledger() {
+            let output = self
+                .sidecars
+                .ledger
+                .as_mut()
+                .expect("the admitted generation owns its output ledger")
+                .checkpoint();
+            checkpoint.set_output_ledger(output);
+        }
         self.sidecars
             .checkpoints
             .retain(self.generation, checkpoint)
@@ -223,7 +243,7 @@ impl From<RetainedStateAccessError> for RetainedEngineAccessError {
 /// generation-typed sidecars below that same store owner.
 pub struct RetainedEngineGeneration<'store> {
     generation: u64,
-    state: RetainedStateGeneration<'store>,
+    state: Option<RetainedStateGeneration<'store>>,
     sidecars: RetainedAttachmentKey,
     liveness: Arc<()>,
 }
@@ -232,7 +252,6 @@ pub struct RetainedEngineGeneration<'store> {
 #[doc(hidden)]
 pub struct RestoredCheckpointRuntime<G> {
     pub control: crate::MainControl<G>,
-    pub ledger: crate::OutputLedger,
 }
 
 /// Weak coarse-owner witness used by lifecycle tests and host diagnostics.
@@ -251,7 +270,13 @@ impl core::fmt::Debug for RetainedEngineGeneration<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("RetainedEngineGeneration")
-            .field("checkpoints", &self.state.attachment_count())
+            .field(
+                "checkpoints",
+                &self
+                    .state
+                    .as_ref()
+                    .map_or(0, RetainedStateGeneration::attachment_count),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -268,7 +293,7 @@ impl<'store> RetainedEngineGeneration<'store> {
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,
-            state,
+            state: Some(state),
             sidecars,
             liveness: Arc::new(()),
         })
@@ -293,7 +318,7 @@ impl<'store> RetainedEngineGeneration<'store> {
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,
-            state,
+            state: Some(state),
             sidecars,
             liveness: Arc::new(()),
         })
@@ -303,10 +328,11 @@ impl<'store> RetainedEngineGeneration<'store> {
         &mut self,
         operation: O,
     ) -> Result<O::Output, RetainedEngineAccessError> {
-        if self.state.has_candidate_transaction() {
+        let state = self.state.as_mut().expect("a live generation owns state");
+        if state.has_candidate_transaction() {
             return Err(RetainedEngineAccessError::CandidateTransactionActive);
         }
-        self.state.with_admitted(EngineOperationAdapter {
+        state.with_admitted(EngineOperationAdapter {
             generation: self.generation,
             sidecars: &self.sidecars,
             operation,
@@ -327,13 +353,14 @@ impl<'store> RetainedEngineGeneration<'store> {
         ),
         RetainedEngineForkError,
     > {
-        if self.state.has_candidate_transaction() {
+        let state = self.state.as_mut().expect("a live generation owns state");
+        if state.has_candidate_transaction() {
             return Err(RetainedEngineForkError::Access(
                 RetainedEngineAccessError::CandidateTransactionActive,
             ));
         }
         let generation = next_generation();
-        let result = self.state.try_fork_owned(ForkCheckpoint {
+        let result = state.try_fork_owned(ForkCheckpoint {
             generation,
             source_generation: self.generation,
             sidecars: &self.sidecars,
@@ -352,7 +379,7 @@ impl<'store> RetainedEngineGeneration<'store> {
         Ok((
             Self {
                 generation,
-                state,
+                state: Some(state),
                 sidecars,
                 liveness: Arc::new(()),
             },
@@ -369,33 +396,67 @@ impl<'store> RetainedEngineGeneration<'store> {
     /// Whether two generations reside in the same external session store.
     #[must_use]
     pub fn same_store(&self, other: &Self) -> bool {
-        self.state.same_store(&other.state)
+        self.state
+            .as_ref()
+            .expect("a live generation owns state")
+            .same_store(other.state.as_ref().expect("a live generation owns state"))
     }
 
     /// Explicitly settles the accepted/current owner transaction before the
     /// prior generation retires. No individual component may commit itself.
     #[doc(hidden)]
     pub fn prepare_candidate_accept(&mut self, candidate: &mut Self) {
-        self.state.prepare_candidate_accept(&mut candidate.state);
+        candidate
+            .state
+            .as_mut()
+            .expect("a live candidate owns state")
+            .with_candidate_source(SettleOutputLedger::Accept)
+            .expect("the accepted/current pair settles one output owner")
+            .expect("the accepted/current sidecars own the output ledger");
+        self.state
+            .as_mut()
+            .expect("an accepted generation owns state")
+            .prepare_candidate_accept(
+                candidate
+                    .state
+                    .as_mut()
+                    .expect("a live candidate owns state"),
+            );
     }
 
     #[doc(hidden)]
     pub fn finish_candidate_accept(&mut self, candidate: &mut Self) {
-        self.state.finish_candidate_accept(&mut candidate.state);
+        self.state
+            .as_mut()
+            .expect("an accepted generation owns state")
+            .finish_candidate_accept(
+                candidate
+                    .state
+                    .as_mut()
+                    .expect("a live candidate owns state"),
+            );
     }
 
     /// Explicitly rejects every current owner before releasing the current
     /// physical slot. `Drop` remains only an unwind safety net.
     #[doc(hidden)]
     pub fn prepare_candidate_reject(&mut self) {
-        if self.state.is_candidate_transaction_destination() {
-            self.state.prepare_candidate_reject();
+        let state = self.state.as_mut().expect("a live candidate owns state");
+        if state.is_candidate_transaction_destination() {
+            state
+                .with_candidate_source(SettleOutputLedger::Reject)
+                .expect("the rejected current pair returns one output owner")
+                .expect("the accepted/current sidecars own the output ledger");
+            state.prepare_candidate_reject();
         }
     }
 
     #[doc(hidden)]
-    pub fn finish_candidate_reject(self) {
-        self.state.finish_candidate_reject();
+    pub fn finish_candidate_reject(mut self) {
+        self.state
+            .take()
+            .expect("a live candidate owns state")
+            .finish_candidate_reject();
     }
 
     /// Mutation-free terminal preflight. Every retained root is statically
@@ -417,10 +478,63 @@ impl<'store> RetainedEngineGeneration<'store> {
         self.with_admitted(PruneCheckpoints { retained })?
     }
 
-    pub fn retire(self) -> Result<RetainedEngineRetirement, UniverseError> {
+    pub fn retire(mut self) -> Result<RetainedEngineRetirement, UniverseError> {
         Ok(RetainedEngineRetirement {
-            state: self.state.retire()?,
+            state: self
+                .state
+                .take()
+                .expect("a live generation owns state")
+                .retire()?,
         })
+    }
+}
+
+impl Drop for RetainedEngineGeneration<'_> {
+    fn drop(&mut self) {
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+        if !state.is_candidate_transaction_destination() {
+            return;
+        }
+        let settled = state
+            .with_candidate_source(SettleOutputLedger::Reject)
+            .and_then(|result| result);
+        if settled.is_ok() {
+            state.prepare_candidate_reject();
+        }
+    }
+}
+
+enum SettleOutputLedger {
+    Accept,
+    Reject,
+}
+
+impl RetainedStateCandidateOperation for SettleOutputLedger {
+    type Output = Result<(), RetainedStateAccessError>;
+
+    fn run<G: 'static>(
+        self,
+        mut source: RetainedStateAdmission<'_, G>,
+        mut candidate: RetainedStateAdmission<'_, G>,
+    ) -> Self::Output {
+        let source = source.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+        let candidate = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+        let ledger = candidate
+            .ledger
+            .as_mut()
+            .ok_or(RetainedStateAccessError::StaleAttachment)?;
+        match self {
+            Self::Accept => {
+                ledger.accept_checkpoint_candidate();
+            }
+            Self::Reject => {
+                ledger.reject_checkpoint_candidate();
+                source.ledger = candidate.ledger.take();
+            }
+        }
+        Ok(())
     }
 }
 
@@ -457,15 +571,24 @@ impl RetainedStateForkOperation for ForkCheckpoint<'_> {
             .get(self.source_generation, self.checkpoint)
             .map_err(RetainedEngineForkError::Access)?;
         let budget_counters = checkpoint.budget_counters();
-        let (universe, control, ledger) = checkpoint
-            .fork_state(universe)
-            .map_err(RetainedEngineForkError::Restore)?;
+        let mut ledger = sidecars
+            .ledger
+            .take()
+            .expect("the accepted generation owns its output ledger");
+        let (universe, control) = match checkpoint.fork_state(universe, &mut ledger) {
+            Ok(restored) => restored,
+            Err(error) => {
+                sidecars.ledger = Some(ledger);
+                return Err(RetainedEngineForkError::Restore(error));
+            }
+        };
         Ok(RetainedStateForkBuild::new(
             universe,
             Box::new(EngineGenerationSidecars::<G> {
                 generation: self.generation,
                 checkpoints: RetainedCheckpointSlots::default(),
-                attachment: Some(Box::new(RestoredCheckpointRuntime { control, ledger })),
+                ledger: Some(ledger),
+                attachment: Some(Box::new(RestoredCheckpointRuntime { control })),
             }),
             budget_counters,
         ))
@@ -665,6 +788,7 @@ impl<G> RetainedCheckpointSlots<G> {
 struct EngineGenerationSidecars<G> {
     generation: u64,
     checkpoints: RetainedCheckpointSlots<G>,
+    ledger: Option<crate::OutputLedger>,
     attachment: Option<Box<dyn Any>>,
 }
 
@@ -679,6 +803,7 @@ impl RetainedStateOperation for InitializeSidecars {
         admitted.attach(EngineGenerationSidecars::<G> {
             generation: self.generation,
             checkpoints: RetainedCheckpointSlots::default(),
+            ledger: Some(crate::OutputLedger::new()),
             attachment: None,
         })
     }
@@ -819,10 +944,7 @@ mod tests {
         type Output = (i32, RetainedCheckpointKey);
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let RestoredCheckpointRuntime {
-                mut control,
-                mut ledger,
-            } = admitted
+            let RestoredCheckpointRuntime { mut control } = admitted
                 .take_attachment::<RestoredCheckpointRuntime<G>>(self.runtime)
                 .expect("fork owns restored main control");
             let before = admitted
@@ -844,10 +966,8 @@ mod tests {
                 .expect("candidate checkpoint");
             if self.accept_modes {
                 control.accept_checkpoint_candidate();
-                ledger.accept_checkpoint_candidate();
             } else {
                 control.reject_checkpoint_candidate();
-                ledger.reject_checkpoint_candidate();
             }
             (before, admitted.retain_checkpoint(checkpoint))
         }
@@ -901,10 +1021,7 @@ mod tests {
         type Output = RetainedEngineAttachmentKey;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let RestoredCheckpointRuntime {
-                mut control,
-                ledger,
-            } = admitted
+            let RestoredCheckpointRuntime { mut control } = admitted
                 .take_attachment::<RestoredCheckpointRuntime<G>>(self.0)
                 .expect("fork runtime");
             let step = control
@@ -915,7 +1032,7 @@ mod tests {
                 crate::StepResult::Suspended(crate::ResourceNeed::Input { ref name, .. })
                     if name == "child.tex"
             ));
-            admitted.attach(RestoredCheckpointRuntime { control, ledger })
+            admitted.attach(RestoredCheckpointRuntime { control })
         }
     }
 
@@ -925,10 +1042,7 @@ mod tests {
         type Output = crate::StepResult;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let RestoredCheckpointRuntime {
-                mut control,
-                mut ledger,
-            } = admitted
+            let RestoredCheckpointRuntime { mut control } = admitted
                 .take_attachment::<RestoredCheckpointRuntime<G>>(self.0)
                 .expect("suspended runtime");
             control.capabilities_mut().register_input(
@@ -943,7 +1057,6 @@ mod tests {
                     .advance_episode(admitted.universe())
                     .expect("resource retry");
                 if step == crate::StepResult::Progress(crate::MainControlStep::End) {
-                    ledger.accept_checkpoint_candidate();
                     return step;
                 }
             }
@@ -1007,7 +1120,7 @@ mod tests {
                 .checkpoints
                 .get(admitted.generation, self.0)?;
             let generation = admitted.generation;
-            let (universe, mut checkpoints) = admitted.parts();
+            let (universe, _ledger, mut checkpoints) = admitted.parts();
             let mut control = crate::MainControl::tex82_initex(universe);
             let capture = |control: &mut crate::MainControl<G>, universe: &mut Universe<G>| {
                 control

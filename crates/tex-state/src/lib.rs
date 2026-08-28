@@ -161,8 +161,9 @@ pub use resource::{
 };
 pub use retained_generation::{
     RetainedAttachmentKey, RetainedStateAccessError, RetainedStateAdmission,
-    RetainedStateForkBuild, RetainedStateForkError, RetainedStateForkOperation,
-    RetainedStateGeneration, RetainedStateOperation, RetainedStateRetirement,
+    RetainedStateCandidateOperation, RetainedStateForkBuild, RetainedStateForkError,
+    RetainedStateForkOperation, RetainedStateGeneration, RetainedStateOperation,
+    RetainedStateRetirement,
 };
 pub use session_epoch::{SessionEpochError, SessionInternerEpoch};
 

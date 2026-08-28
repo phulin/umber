@@ -65,10 +65,7 @@ impl RetainedEngineOperation for InspectAndRejectModeFork {
     type Output = Vec<i32>;
 
     fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        let RestoredCheckpointRuntime {
-            mut control,
-            mut ledger,
-        } = admitted
+        let RestoredCheckpointRuntime { mut control } = admitted
             .take_attachment::<RestoredCheckpointRuntime<G>>(self.runtime)
             .expect("fork owns restored runtime");
         if let Some(penalty) = self.append_penalty {
@@ -97,7 +94,6 @@ impl RetainedEngineOperation for InspectAndRejectModeFork {
                 .collect()
         };
         control.reject_checkpoint_candidate();
-        ledger.reject_checkpoint_candidate();
         penalties
     }
 }

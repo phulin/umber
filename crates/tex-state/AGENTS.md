@@ -237,11 +237,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
   store with same-thread non-atomic ownership, fixed inline prior/current
   physical-generation slots, and
   allocation-free slot reuse across accepted, rejected, and suspended
-  candidates.
+  candidates, including one typed exclusive pair-admission seam for aggregate
+  sidecar settlement before either slot becomes independently live.
 - `src/retained_generation.rs`: Opaque move-only physical-revision slot lease,
   lifetime binding to its external store, universally generic admission
-  operations, and owner-relative engine-sidecar keys that prevent runtime
-  coordinates from escaping the external session store.
+  operations, typed accepted/current sidecar settlement, and owner-relative
+  engine-sidecar keys that prevent runtime coordinates from escaping the
+  external session store.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.

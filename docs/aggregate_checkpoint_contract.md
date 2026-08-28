@@ -291,6 +291,17 @@ prefix-plus-current. Pruning releases only explicitly unreferenced whole
 chunks; absent a coarse liveness proof, storage remains conservatively retained
 until generation retirement.
 
+Prepared output pages follow the same coarse ownership rule in the executor.
+One retained-generation sidecar owns a `ChunkPool<PreparedDviPage>` and an
+`OutputLane` arena directly. A checkpoint stores only the sealed whole-chunk
+mark and page count. Fork moves that sole authority to current after detaching
+the selected accepted suffix; rejection returns the settled authority to
+prior, while acceptance keeps it in current and drops the superseded suffix.
+Candidate drop uses the same rejection settlement. Terminal capture walks the
+borrowed canonical rows directly into the final detached page vector, without
+an `Rc`/`Arc` owner, mutable accepted tail, parent spine, replay, `split_off`,
+or intermediate prepared-page vector.
+
 Long-lived construction uses a move-only `ActiveListBuilder` containing only
 the arena owner, its partial operation coordinate, one pending range, and
 descriptor-tail scalars. It holds no pool/arena borrow, pointer, or shared

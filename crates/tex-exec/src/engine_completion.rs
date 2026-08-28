@@ -70,48 +70,68 @@ pub struct DetachedEngineCompletion {
 }
 
 impl DetachedEngineCompletion {
-    pub(crate) fn capture(
+    /// Captures the terminal page projection directly from borrowed canonical
+    /// output-ledger rows. The only page vector created is the final detached
+    /// completion; no accumulated `PreparedDviPage` prefix is materialized.
+    pub(crate) fn capture_borrowed_pages(
         effects: Vec<EffectRecord>,
         stream_open_contexts: Vec<Option<String>>,
         artifacts: Vec<CommittedArtifact>,
         artifact_publications: &[tex_state::ArtifactPublicationRecord],
-        dvi_pages: Vec<PreparedDviPage>,
+        prepared_page_count: usize,
+        visit_prepared: impl FnOnce(&mut dyn FnMut(&PreparedDviPage)),
         pdf: Option<DetachedPdfCompletion>,
     ) -> Result<Self, EngineCompletionError> {
         validate_stream_open_contexts(&effects, &stream_open_contexts)?;
         if artifacts.len() != artifact_publications.len() {
             return Err(EngineCompletionError::ArtifactPublicationCount);
         }
-        if !dvi_pages.is_empty() && dvi_pages.len() != artifacts.len() {
+        if prepared_page_count != 0 && prepared_page_count != artifacts.len() {
             return Err(EngineCompletionError::DviPageCount);
         }
         for (index, artifact) in artifacts.iter().enumerate() {
             validate_artifact(index, artifact, &effects)?;
         }
-        for (prepared, (artifact, publication)) in dvi_pages
-            .iter()
-            .zip(artifacts.iter().zip(artifact_publications))
-        {
+
+        let mut pages = artifacts
+            .into_iter()
+            .map(|artifact| DetachedPreparedPage {
+                artifact,
+                dvi: None,
+            })
+            .collect::<Vec<_>>();
+        let mut prepared_index = 0_usize;
+        let mut validation = Ok(());
+        visit_prepared(&mut |prepared| {
+            if validation.is_err() {
+                return;
+            }
+            let Some((page, publication)) = pages
+                .get_mut(prepared_index)
+                .zip(artifact_publications.get(prepared_index))
+            else {
+                validation = Err(EngineCompletionError::DviPageCount);
+                return;
+            };
             if prepared.publication != *publication {
-                return Err(EngineCompletionError::DviPublicationMismatch);
+                validation = Err(EngineCompletionError::DviPublicationMismatch);
+                return;
             }
-            if prepared.hash != artifact.hash() {
-                return Err(EngineCompletionError::DviArtifactMismatch);
+            if prepared.hash != page.artifact.hash() {
+                validation = Err(EngineCompletionError::DviArtifactMismatch);
+                return;
             }
+            page.dvi = Some(prepared.plan.clone());
+            prepared_index += 1;
+        });
+        validation?;
+        if prepared_index != prepared_page_count {
+            return Err(EngineCompletionError::DviPageCount);
         }
         if let Some(pdf) = &pdf {
-            validate_pdf(pdf, &artifacts)?;
+            let artifacts = pages.iter().map(DetachedPreparedPage::artifact);
+            validate_pdf(pdf, artifacts)?;
         }
-        let dvi = if dvi_pages.is_empty() {
-            vec![None; artifacts.len()]
-        } else {
-            dvi_pages.into_iter().map(|page| Some(page.plan)).collect()
-        };
-        let pages = artifacts
-            .into_iter()
-            .zip(dvi)
-            .map(|(artifact, dvi)| DetachedPreparedPage { artifact, dvi })
-            .collect();
         Ok(Self {
             effects,
             stream_open_contexts,
@@ -533,7 +553,7 @@ fn validate_prepared(
     }
     if let Some(pdf) = pdf {
         let artifacts: Vec<_> = pages.iter().map(|page| page.artifact.clone()).collect();
-        validate_pdf(pdf, &artifacts).map_err(publication_validation_error)?;
+        validate_pdf(pdf, artifacts.iter()).map_err(publication_validation_error)?;
     }
     Ok(())
 }
@@ -575,9 +595,9 @@ fn validate_artifact(
     Ok(())
 }
 
-fn validate_pdf(
+fn validate_pdf<'a>(
     pdf: &DetachedPdfCompletion,
-    artifacts: &[CommittedArtifact],
+    artifacts: impl ExactSizeIterator<Item = &'a CommittedArtifact>,
 ) -> Result<(), EngineCompletionError> {
     if !pdf.pages().is_empty() {
         if pdf.pages().len() != artifacts.len() {
