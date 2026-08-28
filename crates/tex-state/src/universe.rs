@@ -767,16 +767,16 @@ impl<G> Universe<G> {
         let before = self.page.checkpoint_replay_work();
         let mut page = std::mem::take(&mut self.page);
         page.begin_checkpoint_fork(checkpoint.page);
-        page.push_contribution(crate::node::Node::Penalty(19));
-        let contribution = if let Some(carrier) = page.pop_contribution_front() {
+        page.push_contribution(&mut self.page_nodes, crate::node::Node::Penalty(19));
+        let contribution = if let Some(carrier) = page.pop_contribution_front(&mut self.page_nodes) {
             page.discard_carrier(carrier);
             1
         } else {
             0
         };
-        let current = u64::from(page.pop_current_page().is_some());
-        page.clear_page_discards();
-        page.clear_split_discards();
+        let current = u64::from(page.pop_current_page(&mut self.page_nodes).is_some());
+        page.clear_page_discards(&self.page_nodes);
+        page.clear_split_discards(&self.page_nodes);
         page.upsert_page_insertion(crate::page::PageInsertion::new(
             7,
             crate::scaled::Scaled::from_raw(29),

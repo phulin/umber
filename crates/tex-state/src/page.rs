@@ -6,7 +6,7 @@ mod state_hash;
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
-use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
+use crate::node_sequence::SemanticSequenceIdentity;
 use crate::scaled::Scaled;
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -572,26 +572,6 @@ pub(crate) struct AcceptedPageTail {
     mark_lane_after: Vec<MarkLaneRecord>,
 }
 
-#[derive(Clone, Default)]
-struct PagePayload {
-    contribution: PageListId,
-    current_page: PageListId,
-    page_discards: PageListId,
-    split_discards: PageListId,
-    insertions: Vec<PageInsertion>,
-    insertion_positions: Vec<Option<u16>>,
-    top_mark: Option<NodeTokenList>,
-    first_mark: Option<NodeTokenList>,
-    bot_mark: Option<NodeTokenList>,
-    split_first_mark: Option<NodeTokenList>,
-    split_bot_mark: Option<NodeTokenList>,
-    mark_classes: Vec<(u16, MarkClassState)>,
-    mark_class_positions: Vec<Option<u16>>,
-    insertion_lane: Vec<InsertionLaneRecord>,
-    mark_lane: Vec<MarkLaneRecord>,
-    semantic_roots: PageSemanticRoots,
-}
-
 #[derive(Clone)]
 enum PageInverse {
     Noop,
@@ -1099,46 +1079,6 @@ impl PageBuilderState {
         }
     }
 
-    fn take_payload(&mut self) -> PagePayload {
-        PagePayload {
-            contribution: std::mem::take(&mut self.contribution),
-            current_page: std::mem::take(&mut self.current_page),
-            page_discards: std::mem::take(&mut self.page_discards),
-            split_discards: std::mem::take(&mut self.split_discards),
-            insertions: std::mem::take(&mut self.insertions),
-            insertion_positions: std::mem::take(&mut self.insertion_positions),
-            top_mark: self.top_mark.take(),
-            first_mark: self.first_mark.take(),
-            bot_mark: self.bot_mark.take(),
-            split_first_mark: self.split_first_mark.take(),
-            split_bot_mark: self.split_bot_mark.take(),
-            mark_classes: std::mem::take(&mut self.mark_classes),
-            mark_class_positions: std::mem::take(&mut self.mark_class_positions),
-            insertion_lane: std::mem::take(&mut self.insertion_lane),
-            mark_lane: std::mem::take(&mut self.mark_lane),
-            semantic_roots: std::mem::take(&mut self.semantic_roots),
-        }
-    }
-
-    fn install_payload(&mut self, payload: PagePayload) {
-        self.contribution = payload.contribution;
-        self.current_page = payload.current_page;
-        self.page_discards = payload.page_discards;
-        self.split_discards = payload.split_discards;
-        self.insertions = payload.insertions;
-        self.insertion_positions = payload.insertion_positions;
-        self.top_mark = payload.top_mark;
-        self.first_mark = payload.first_mark;
-        self.bot_mark = payload.bot_mark;
-        self.split_first_mark = payload.split_first_mark;
-        self.split_bot_mark = payload.split_bot_mark;
-        self.mark_classes = payload.mark_classes;
-        self.mark_class_positions = payload.mark_class_positions;
-        self.insertion_lane = payload.insertion_lane;
-        self.mark_lane = payload.mark_lane;
-        self.semantic_roots = payload.semantic_roots;
-    }
-
     fn record_scalars(&mut self) {
         if !self.checkpoint_journal.frames.is_empty() {
             let old = self.scalar_snapshot();
@@ -1324,6 +1264,10 @@ impl PageBuilderState {
     /// demand merely because the arena cursor has advanced.
     pub(crate) fn retains_page_node_handles(&self) -> bool {
         self.page_node_root_count != 0
+            || !self.contribution.is_empty()
+            || !self.current_page.is_empty()
+            || !self.page_discards.is_empty()
+            || !self.split_discards.is_empty()
     }
 
     pub(crate) fn dynamic_memory_words(&self, etex_node_sizes: bool) -> usize {
@@ -2198,40 +2142,45 @@ impl PageBuilderState {
         self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
 
-    pub(crate) fn take_page_discards(&mut self) -> PageListId {
+    pub(crate) fn take_page_discards(&mut self, arena: &PageNodeArena) -> PageListId {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         let nodes = std::mem::take(&mut self.page_discards);
+        self.release_list_dynamic_usage(arena, nodes);
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
         nodes
     }
 
-    pub(crate) fn clear_page_discards(&mut self) {
+    pub(crate) fn clear_page_discards(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
+        self.release_list_dynamic_usage(arena, self.page_discards);
         self.page_discards = PageListId::empty();
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
     }
 
-    pub(crate) fn set_split_discards(&mut self, nodes: PageListId) {
+    pub(crate) fn set_split_discards(&mut self, arena: &PageNodeArena, nodes: PageListId) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
+        self.release_list_dynamic_usage(arena, self.split_discards);
+        self.allocate_list_dynamic_usage(arena, nodes);
         self.semantic_roots.split_discards = list_identity(nodes);
-        let old = std::mem::replace(&mut self.split_discards, nodes);
-        let _ = old;
+        self.split_discards = nodes;
     }
 
-    pub(crate) fn take_split_discards(&mut self) -> PageListId {
+    pub(crate) fn take_split_discards(&mut self, arena: &PageNodeArena) -> PageListId {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         let nodes = std::mem::take(&mut self.split_discards);
+        self.release_list_dynamic_usage(arena, nodes);
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
         nodes
     }
 
-    pub(crate) fn clear_split_discards(&mut self) {
+    pub(crate) fn clear_split_discards(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
+        self.release_list_dynamic_usage(arena, self.split_discards);
         self.split_discards = PageListId::empty();
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
     }
@@ -2484,6 +2433,36 @@ impl PageBuilderState {
             .etex_dynamic_words
             .checked_add(words.1)
             .expect("page dynamic-memory accounting overflow");
+    }
+
+    fn allocate_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListId) {
+        let view = arena
+            .list(list)
+            .expect("page list belongs to the live arena");
+        self.allocate_dynamic_word_totals(dynamic_words(view.iter()));
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_add(
+                view.iter()
+                    .filter(|node| node_retains_page_handle(node))
+                    .count(),
+            )
+            .expect("page root accounting overflow");
+    }
+
+    fn release_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListId) {
+        let view = arena
+            .list(list)
+            .expect("page list belongs to the live arena");
+        self.release_dynamic_word_totals(dynamic_words(view.iter()));
+        self.page_node_root_count = self
+            .page_node_root_count
+            .checked_sub(
+                view.iter()
+                    .filter(|node| node_retains_page_handle(node))
+                    .count(),
+            )
+            .expect("released more page roots than were live");
     }
 
     fn release_dynamic_word_totals(&mut self, words: (usize, usize)) {

@@ -10,14 +10,6 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::ExecError;
 
-pub(crate) fn prune_page_top<G>(
-    stores: &mut CommandContext<'_, G>,
-    nodes: Vec<Node>,
-    split_top_skip: GlueSpec,
-) -> Vec<Node> {
-    prune_page_top_with_discards(stores, nodes, split_top_skip).0
-}
-
 pub(crate) fn prune_page_top_list<G>(
     stores: &mut CommandContext<'_, G>,
     source: PageListId,
@@ -138,47 +130,6 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
         stores.finalize_page_active_list(&mut retained),
         stores.finalize_page_active_list(&mut discarded),
     )
-}
-
-pub(crate) fn prune_page_top_with_discards<G>(
-    _stores: &mut CommandContext<'_, G>,
-    nodes: Vec<Node>,
-    split_top_skip: GlueSpec,
-) -> (Vec<Node>, Vec<Node>) {
-    let mut out = Vec::new();
-    let mut discarded = Vec::new();
-    let mut inserted_top_skip = false;
-    for node in nodes {
-        match &node {
-            Node::HList(_) | Node::VList(_) | Node::Rule { .. } if !inserted_top_skip => {
-                let top_skip = split_top_skip;
-                let adjusted = GlueSpec {
-                    width: top_skip
-                        .width
-                        .checked_sub(vertical_height(&node))
-                        .filter(|width| width.raw() > 0)
-                        .unwrap_or_else(|| Scaled::from_raw(0)),
-                    stretch: top_skip.stretch,
-                    stretch_order: top_skip.stretch_order,
-                    shrink: top_skip.shrink,
-                    shrink_order: top_skip.shrink_order,
-                };
-                let spec = adjusted;
-                out.push(Node::Glue {
-                    spec,
-                    kind: GlueKind::SplitTopSkip,
-                    leader: None,
-                });
-                out.push(node);
-                inserted_top_skip = true;
-            }
-            _ if !inserted_top_skip && is_page_top_discardable(&node) => {
-                discarded.push(node);
-            }
-            _ => out.push(node),
-        }
-    }
-    (out, discarded)
 }
 
 /// TeX82 §969's discardable page-top material plus pdfTeX §1378's snap node.

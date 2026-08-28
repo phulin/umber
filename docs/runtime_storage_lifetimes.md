@@ -535,6 +535,13 @@ per-node or per-list reference count. Retained runtime checkpoints name sealed
 chunk and descriptor boundaries. Post-fork publication opens only the current
 suffix, and forking copies no node or token payload.
 
+The page builder publishes four independent page-material roots for its
+contribution list, current page, page discards, and split discards. The
+aggregate checkpoint records those roots directly; it never composes them into
+a synthetic list. Restart publication is admitted only with one quiescent,
+empty outer vertical mode, so the mode checkpoint retains scalar continuation
+state but no active builder or transient mode-material root.
+
 Node token fields share the existing non-atomic stored-token payload for a
 true semantic alias. This applies to marks, deferred writes and specials, PDF
 literals and identifiers, and alignment templates. The node adds no word copy,

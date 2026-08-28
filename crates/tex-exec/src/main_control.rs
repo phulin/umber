@@ -9662,18 +9662,6 @@ fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
 /// and `right_noad` sort at or above the upper bound.  e-TeX's `\middle`
 /// (etex.ch's `middle_noad`) is a `right_noad` carrying a distinguishing
 /// `subtype`, so the same bound excludes it without a separate test.
-fn scripts_allowed(node: &Node) -> bool {
-    match node {
-        Node::MathNoad(noad) => !matches!(
-            noad.kind,
-            NoadKind::LeftDelimiter { .. }
-                | NoadKind::RightDelimiter { .. }
-                | NoadKind::MiddleDelimiter { .. }
-        ),
-        _ => false,
-    }
-}
-
 pub(crate) fn script_field_mut(noad: &mut MathNoad, kind: MathScriptKind) -> &mut MathField {
     match kind {
         MathScriptKind::Superscript => &mut noad.superscript,

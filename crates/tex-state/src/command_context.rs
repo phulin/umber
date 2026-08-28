@@ -3884,23 +3884,23 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn take_page_discards(&mut self) -> PageListId {
-        self.page.take_page_discards()
+        self.page.take_page_discards(self.page_nodes)
     }
 
     pub fn clear_page_discards(&mut self) {
-        self.page.clear_page_discards();
+        self.page.clear_page_discards(self.page_nodes);
     }
 
     pub fn set_split_discards(&mut self, nodes: PageListId) {
-        self.page.set_split_discards(nodes);
+        self.page.set_split_discards(self.page_nodes, nodes);
     }
 
     pub fn take_split_discards(&mut self) -> PageListId {
-        self.page.take_split_discards()
+        self.page.take_split_discards(self.page_nodes)
     }
 
     pub fn clear_split_discards(&mut self) {
-        self.page.clear_split_discards();
+        self.page.clear_split_discards(self.page_nodes);
     }
 
     #[must_use]

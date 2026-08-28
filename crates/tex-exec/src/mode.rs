@@ -1935,24 +1935,7 @@ impl ModeCheckpoint {
     }
 
     pub(crate) fn retains_page_node_handles(&self) -> bool {
-        let storage = self.owner.borrow();
-        storage.levels.iter().any(|level| {
-            let list = &level.list;
-            !list.nodes.is_empty()
-                || list
-                    .incomplete_fraction
-                    .as_ref()
-                    .is_some_and(|fraction| !fraction.numerator.is_empty())
-                || list
-                    .display_interrupt
-                    .as_ref()
-                    .and_then(|interrupt| interrupt.prototype.as_ref())
-                    .is_some_and(|prototype| !prototype.children.is_empty())
-                || list
-                    .display_eq_no
-                    .as_ref()
-                    .is_some_and(|eqno| !eqno.display.is_empty())
-        })
+        false
     }
 
     pub(crate) fn summary(&self) -> ModeNestSummary {
@@ -2130,6 +2113,15 @@ impl ModeNest {
     }
 
     pub(crate) fn checkpoint(&mut self) -> ModeCheckpoint {
+        {
+            let storage = self.storage.borrow();
+            assert!(
+                storage.levels.len() == 1
+                    && storage.levels[0].mode == Mode::Vertical
+                    && storage.levels[0].list.is_checkpoint_rootless(),
+                "restart checkpoint requires one quiescent empty outer vertical mode"
+            );
+        }
         let reachable_state_identity_root = {
             let storage = self.storage.borrow();
             storage

@@ -17,7 +17,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 use crate::ExecError;
 use crate::pack_report::ExecutionDiagnosticContext;
 use crate::packing_params::vpack;
-use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
+use crate::splitting::{natural_vlist_size, vpack_natural};
 
 /// TeX.web's `-1073741824` end-job penalty from `its_all_over`.
 const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
