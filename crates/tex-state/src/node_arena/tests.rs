@@ -372,6 +372,59 @@ fn flat_composite_sequence_preserves_arbitrarily_many_unchanged_and_new_runs() {
 }
 
 #[test]
+fn sequence_slices_reuse_payload_and_only_flatten_overlapping_descriptors() {
+    let mut arena = NodeArena::<PageLifetime>::new();
+    let left = arena
+        .publish_range(vec![Node::Penalty(1), Node::Penalty(2)])
+        .expect("left run publishes");
+    let middle = arena
+        .publish_range(vec![Node::Penalty(3), Node::Penalty(4)])
+        .expect("middle run publishes");
+    let right = arena
+        .publish_range(vec![Node::Penalty(5), Node::Penalty(6)])
+        .expect("right run publishes");
+    let sequence = arena
+        .compose_sequences(&[
+            super::ArenaNodeSequenceId::Direct(left),
+            super::ArenaNodeSequenceId::Direct(middle),
+            super::ArenaNodeSequenceId::Direct(right),
+        ])
+        .expect("source sequence composes");
+    let rows_before = arena.rows.len();
+    let mut scratch = Vec::with_capacity(3);
+    let sliced = arena
+        .slice_sequence(sequence, 1..5, &mut scratch)
+        .expect("cross-piece slice composes");
+
+    assert_eq!(
+        arena.rows.len(),
+        rows_before,
+        "slicing publishes no payload"
+    );
+    assert!(scratch.is_empty(), "caller scratch returns reusable");
+    assert_eq!(
+        arena
+            .get_sequence(sliced)
+            .expect("slice resolves")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [
+            Node::Penalty(2),
+            Node::Penalty(3),
+            Node::Penalty(4),
+            Node::Penalty(5),
+        ]
+    );
+
+    let direct = arena
+        .slice_sequence(sequence, 2..4, &mut scratch)
+        .expect("one-piece slice stays direct");
+    assert!(matches!(direct, super::ArenaNodeSequenceId::Direct(_)));
+    assert_eq!(arena.rows.len(), rows_before);
+}
+
+#[test]
 fn composite_piece_stream_rewinds_and_redoes_at_the_arena_cursor() {
     let mut arena = NodeArena::<PageLifetime>::new();
     let left = arena

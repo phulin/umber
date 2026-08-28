@@ -1603,6 +1603,90 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
         })
     }
 
+    /// Returns one immutable logical subrange without copying node payload.
+    ///
+    /// Direct inputs remain a direct range. Composite inputs flatten only the
+    /// overlapping piece descriptors into the arena's append-only piece
+    /// stream. `scratch` is caller-owned and reusable; it contains no node
+    /// payload and is cleared before returning.
+    pub fn slice_sequence(
+        &mut self,
+        sequence: ArenaNodeSequenceId<L>,
+        range: core::ops::Range<usize>,
+        scratch: &mut Vec<ArenaNodeSequenceId<L>>,
+    ) -> Result<ArenaNodeSequenceId<L>, NodeArenaError> {
+        self.validate_sequence(sequence)?;
+        if range.start > range.end || range.end > sequence.len() {
+            return Err(NodeArenaError::InvalidList);
+        }
+        scratch.clear();
+        if range.is_empty() {
+            return Ok(ArenaNodeSequenceId::empty());
+        }
+        match sequence {
+            ArenaNodeSequenceId::Direct(source) => {
+                let start = source
+                    .start
+                    .checked_add(
+                        u32::try_from(range.start).map_err(|_| NodeArenaError::CapacityOverflow)?,
+                    )
+                    .ok_or(NodeArenaError::CapacityOverflow)?;
+                let end = source
+                    .start
+                    .checked_add(
+                        u32::try_from(range.end).map_err(|_| NodeArenaError::CapacityOverflow)?,
+                    )
+                    .ok_or(NodeArenaError::CapacityOverflow)?;
+                Ok(ArenaNodeSequenceId::Direct(NodeRangeId {
+                    list: source.list,
+                    start,
+                    end,
+                }))
+            }
+            ArenaNodeSequenceId::Composite { start, end, .. } => {
+                let mut prior_end = 0_usize;
+                for index in start as usize..end as usize {
+                    let piece = self.pieces[index];
+                    let piece_end = piece.cumulative_end as usize;
+                    let overlap_start = range.start.max(prior_end);
+                    let overlap_end = range.end.min(piece_end);
+                    if overlap_start < overlap_end {
+                        let local_start = overlap_start - prior_end;
+                        let local_end = overlap_end - prior_end;
+                        let start = piece
+                            .range
+                            .start
+                            .checked_add(
+                                u32::try_from(local_start)
+                                    .map_err(|_| NodeArenaError::CapacityOverflow)?,
+                            )
+                            .ok_or(NodeArenaError::CapacityOverflow)?;
+                        let end = piece
+                            .range
+                            .start
+                            .checked_add(
+                                u32::try_from(local_end)
+                                    .map_err(|_| NodeArenaError::CapacityOverflow)?,
+                            )
+                            .ok_or(NodeArenaError::CapacityOverflow)?;
+                        scratch.push(ArenaNodeSequenceId::Direct(NodeRangeId {
+                            list: piece.range.list,
+                            start,
+                            end,
+                        }));
+                    }
+                    prior_end = piece_end;
+                    if prior_end >= range.end {
+                        break;
+                    }
+                }
+                let result = self.compose_sequences(scratch);
+                scratch.clear();
+                result
+            }
+        }
+    }
+
     /// Borrows one direct or flat-composite logical sequence.
     pub fn get_sequence(
         &self,

@@ -3214,6 +3214,18 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page sequence inputs belong to the live page arena")
     }
 
+    /// Borrows an immutable logical subrange by publishing descriptors only.
+    pub fn slice_page_node_sequence(
+        &mut self,
+        sequence: crate::node_arena::PageNodeSequenceId,
+        range: core::ops::Range<usize>,
+        scratch: &mut Vec<crate::node_arena::PageNodeSequenceId>,
+    ) -> crate::node_arena::PageNodeSequenceId {
+        self.page_nodes
+            .slice_sequence(sequence, range, scratch)
+            .expect("page sequence range belongs to the live page arena")
+    }
+
     /// Returns a whole payload segment to operation-local ownership without
     /// cloning it. Partial or shared-row extraction is deliberately rejected.
     pub fn take_page_node_range(
