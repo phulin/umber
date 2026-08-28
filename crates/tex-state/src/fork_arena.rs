@@ -699,8 +699,8 @@ pub struct ForkArena<T, Lane> {
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
-    payload_resolver: Vec<(RawChunkKey, usize)>,
-    descriptor_resolver: Vec<(RawChunkKey, usize)>,
+    payload_resolver: Vec<Option<(u32, usize)>>,
+    descriptor_resolver: Vec<Option<(u32, usize)>>,
     counters: ForkArenaCounters,
     _types: PhantomData<(T, Lane)>,
 }
@@ -854,24 +854,30 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    fn rebuild_resolvers(&mut self) {
-        self.payload_resolver.clear();
-        self.descriptor_resolver.clear();
-        for index in 0..self.live_payload_len() {
-            self.payload_resolver.push((
-                self.live_key_at(false, index).expect("live payload key"),
-                index,
-            ));
+    fn index_chunk(&mut self, descriptor: bool, key: RawChunkKey, position: usize) {
+        let resolver = if descriptor {
+            &mut self.descriptor_resolver
+        } else {
+            &mut self.payload_resolver
+        };
+        let slot = key.slot as usize;
+        if resolver.len() <= slot {
+            resolver.resize(slot + 1, None);
         }
-        for index in 0..self.live_descriptor_len() {
-            self.descriptor_resolver.push((
-                self.live_key_at(true, index).expect("live descriptor key"),
-                index,
-            ));
+        resolver[slot] = Some((key.generation, position));
+    }
+
+    fn unindex_chunk(&mut self, descriptor: bool, key: RawChunkKey) {
+        let resolver = if descriptor {
+            &mut self.descriptor_resolver
+        } else {
+            &mut self.payload_resolver
+        };
+        if let Some(entry) = resolver.get_mut(key.slot as usize)
+            && entry.is_some_and(|(generation, _)| generation == key.generation)
+        {
+            *entry = None;
         }
-        self.payload_resolver.sort_unstable_by_key(|entry| entry.0);
-        self.descriptor_resolver
-            .sort_unstable_by_key(|entry| entry.0);
     }
 
     fn resolved_position(&self, descriptor: bool, key: RawChunkKey) -> Option<usize> {
@@ -881,9 +887,11 @@ impl<T, Lane> ForkArena<T, Lane> {
             &self.payload_resolver
         };
         resolver
-            .binary_search_by_key(&key, |entry| entry.0)
-            .ok()
-            .map(|index| resolver[index].1)
+            .get(key.slot as usize)
+            .copied()
+            .flatten()
+            .filter(|(generation, _)| *generation == key.generation)
+            .map(|(_, position)| position)
     }
 
     fn allocate_chunk(
@@ -903,7 +911,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         } else {
             chunks.payload.push(key);
         }
-        self.rebuild_resolvers();
+        let position = if descriptor {
+            self.live_descriptor_len() - 1
+        } else {
+            self.live_payload_len() - 1
+        };
+        self.index_chunk(descriptor, key, position);
         Ok(key)
     }
 
@@ -1013,7 +1026,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             mark.descriptor_chunks as usize,
             mark.descriptor_tail_used,
         )?;
-        self.rebuild_resolvers();
         Ok(())
     }
 
@@ -1047,6 +1059,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 };
                 lane.pop().ok_or(ForkArenaError::InvalidOperationMark)?
             };
+            self.unindex_chunk(descriptor, key);
             if descriptor {
                 pool.descriptors.release(key, self.owner)?;
             } else {
@@ -1531,12 +1544,17 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .descriptors
                 .split_off(mark.descriptor_chunks as usize),
         };
+        for key in &detached_prior.payload {
+            self.unindex_chunk(false, *key);
+        }
+        for key in &detached_prior.descriptors {
+            self.unindex_chunk(true, *key);
+        }
         self.ownership = ForkOwnership::Forked {
             prefix: accepted,
             detached_prior,
             current: ChunkSet::default(),
         };
-        self.rebuild_resolvers();
         Ok(())
     }
 
@@ -1587,10 +1605,17 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.counters.accepted_chunks_reattached.saturating_add(
                 (detached_prior.payload.len() + detached_prior.descriptors.len()) as u64,
             );
+        let payload_start = prefix.payload.len();
+        let descriptor_start = prefix.descriptors.len();
+        for (offset, key) in detached_prior.payload.iter().copied().enumerate() {
+            self.index_chunk(false, key, payload_start + offset);
+        }
+        for (offset, key) in detached_prior.descriptors.iter().copied().enumerate() {
+            self.index_chunk(true, key, descriptor_start + offset);
+        }
         prefix.payload.extend(detached_prior.payload);
         prefix.descriptors.extend(detached_prior.descriptors);
         self.ownership = ForkOwnership::Accepted(prefix);
-        self.rebuild_resolvers();
         Ok(())
     }
 
@@ -1620,7 +1645,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         prefix.payload.extend(current.payload);
         prefix.descriptors.extend(current.descriptors);
         self.ownership = ForkOwnership::Accepted(prefix);
-        self.rebuild_resolvers();
         Ok(())
     }
 
@@ -1648,9 +1672,11 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<usize, ForkArenaError> {
         let count = set.payload.len() + set.descriptors.len();
         for key in set.payload {
+            self.unindex_chunk(false, key);
             pool.payload.release(key, self.owner)?;
         }
         for key in set.descriptors {
+            self.unindex_chunk(true, key);
             pool.descriptors.release(key, self.owner)?;
         }
         Ok(count)
@@ -1770,6 +1796,20 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .transfer(*key, self.owner, destination.owner)?;
         }
         let promoted = payload.len() + descriptors.len();
+        for key in &payload {
+            self.unindex_chunk(false, *key);
+        }
+        for key in &descriptors {
+            self.unindex_chunk(true, *key);
+        }
+        let payload_start = destination.live_payload_len();
+        let descriptor_start = destination.live_descriptor_len();
+        for (offset, key) in payload.iter().copied().enumerate() {
+            destination.index_chunk(false, key, payload_start + offset);
+        }
+        for (offset, key) in descriptors.iter().copied().enumerate() {
+            destination.index_chunk(true, key, descriptor_start + offset);
+        }
         {
             let current = destination.current_chunks_mut();
             current.payload.extend(payload);
@@ -1783,8 +1823,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .counters
             .chunks_promoted
             .saturating_add(promoted as u64);
-        self.rebuild_resolvers();
-        destination.rebuild_resolvers();
         self.pending_batch = None;
         Ok(promoted_lists)
     }
