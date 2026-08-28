@@ -176,9 +176,6 @@ pub type ScratchListId = NodeListId<ScratchLifetime>;
 /// List coordinate used by open modes and the page builder.
 pub use crate::page_node_arena::PageListId;
 
-/// List coordinate retained by one revision generation.
-pub use crate::page_node_arena::DurableListId;
-
 pub(crate) type LegacyPageListId = NodeListId<PageLifetime>;
 
 /// Copy-only coordinate of one immutable subrange in a node-arena row.

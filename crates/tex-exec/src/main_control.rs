@@ -167,14 +167,13 @@ struct ImmediatePrint {
 }
 
 #[derive(Debug)]
-pub(crate) enum PreparedShipoutSource<G> {
+pub(crate) enum PreparedShipoutSource {
     Page(Node),
-    Durable(tex_state::node_arena::DurableListId<G>),
 }
 
 #[derive(Debug)]
-pub(crate) struct PreparedShipout<G> {
-    pub(crate) source: PreparedShipoutSource<G>,
+pub(crate) struct PreparedShipout {
+    pub(crate) source: PreparedShipoutSource,
     pub(crate) region:
         Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
 }
@@ -365,7 +364,7 @@ pub struct MainControl<G> {
     /// corresponding World artifact/effect roots commit.
     prepared_dvi_pages: PreparedDviPages,
     immediate_prints: Vec<ImmediatePrint>,
-    prepared_shipout: Option<PreparedShipout<G>>,
+    prepared_shipout: Option<PreparedShipout>,
     /// Named safe boundaries committed by the last direct operation. The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
@@ -1834,7 +1833,7 @@ struct CommandMachine<'a, G> {
     initex: bool,
     emit_dvi_override: Option<bool>,
     immediate_prints: &'a mut Vec<ImmediatePrint>,
-    prepared_shipout: &'a mut Option<PreparedShipout<G>>,
+    prepared_shipout: &'a mut Option<PreparedShipout>,
     pending_show_completion: Option<PendingShowCompletion>,
     pending_outer_page_build_context: Option<String>,
     output_routine_active: bool,
@@ -6471,7 +6470,7 @@ impl<G> MainControl<G> {
                 }
             }
             MathRequest::Fraction(fraction) => {
-                if !start_fraction(self.modes.current_list_mutation(), stores, fraction) {
+                if !start_fraction(self.modes.current_list_mutation(), fraction) {
                     let context = self
                         .command
                         .output_open_context(&stores.command_context().expect("live generation"));
@@ -9126,8 +9125,11 @@ impl<G> MainControl<G> {
                         true,
                     )?
                     .expect("immediate form creation returns a publication record");
+                    let form_page = context
+                        .copy_pdf_form_to_page(form.object())
+                        .ok_or(ExecError::PdfXFormVoidBox)?;
                     let source_resolver =
-                        DetachedArtifactSourceResolver::capture_durable(form.box_list(), &context);
+                        DetachedArtifactSourceResolver::capture_page_list(form_page, &context);
                     (form, source_resolver)
                 };
                 let mut geometry = DetachedShipoutGeometry::default();
@@ -9995,9 +9997,8 @@ fn apply_limits<G>(
     .unwrap_or(false)
 }
 
-fn start_fraction<G>(
+fn start_fraction(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &mut Universe<G>,
     fraction: tex_command::ScannedMathFraction,
 ) -> bool {
     if list.incomplete_fraction().is_some() {

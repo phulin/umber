@@ -74,7 +74,9 @@ fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
         )
         .expect("accepted head");
 
-    let accepted_tail = state.begin_checkpoint_candidate(checkpoint);
+    let accepted_tail = state
+        .begin_checkpoint_candidate(&mut arena, checkpoint)
+        .expect("candidate");
     assert_eq!(current_region(&state, 3), Some(accepted_id));
     let candidate = owner(&mut arena, 23);
     let candidate_id = candidate.region_id();
@@ -152,7 +154,7 @@ fn local_group_restore_moves_the_saved_owner_back() {
             2,
         )
         .expect("local assignment");
-    state.end_group(&mut arena, 2);
+    state.end_group(&mut arena, 2).expect("group restore");
 
     assert_eq!(current_region(&state, 9), Some(original_id));
     assert!(!arena.durable_region_is_live(local_id));
@@ -186,7 +188,9 @@ fn checkpoint_accept_drops_the_superseded_owner_only_once() {
             LEVEL_ONE,
         )
         .expect("accepted suffix");
-    let accepted_tail = state.begin_checkpoint_candidate(checkpoint);
+    let accepted_tail = state
+        .begin_checkpoint_candidate(&mut arena, checkpoint)
+        .expect("candidate");
     let current = owner(&mut arena, 53);
     let current_id = current.region_id();
     state
@@ -203,5 +207,87 @@ fn checkpoint_accept_drops_the_superseded_owner_only_once() {
     assert_eq!(current_region(&state, 12), Some(current_id));
     assert!(!arena.durable_region_is_live(superseded_id));
     assert!(arena.durable_region_is_live(old_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn checkpoint_restore_reopens_group_and_restores_exact_live_owner() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let outer = owner(&mut arena, 59);
+    state
+        .assign(
+            &mut arena,
+            18,
+            Some(outer),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("outer assignment");
+    state.begin_group(2);
+    let local = owner(&mut arena, 61);
+    let local_id = local.region_id();
+    state
+        .assign(
+            &mut arena,
+            18,
+            Some(local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("local assignment");
+    let checkpoint = state.checkpoint_cursor();
+
+    state.end_group(&mut arena, 2).expect("accepted group exit");
+    state.restore(&mut arena, checkpoint);
+
+    assert_eq!(current_region(&state, 18), Some(local_id));
+    state
+        .end_group(&mut arena, 2)
+        .expect("restored group topology exits again");
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn candidate_reject_redoes_accepted_group_exit_with_exact_owner() {
+    let mut arena = PageMaterialArena::with_chunk_bytes(64);
+    let mut state = DurableBoxState::new();
+    let outer = owner(&mut arena, 67);
+    let outer_id = outer.region_id();
+    state
+        .assign(
+            &mut arena,
+            21,
+            Some(outer),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("outer assignment");
+    state.begin_group(2);
+    let local = owner(&mut arena, 71);
+    state
+        .assign(
+            &mut arena,
+            21,
+            Some(local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("local assignment");
+    let checkpoint = state.checkpoint_cursor();
+    state.end_group(&mut arena, 2).expect("accepted group exit");
+    let accepted = state
+        .begin_checkpoint_candidate(&mut arena, checkpoint)
+        .expect("candidate");
+    let candidate = owner(&mut arena, 73);
+    let candidate_id = candidate.region_id();
+    state
+        .replace(&mut arena, 21, Some(candidate))
+        .expect("candidate replacement");
+
+    state.reject_checkpoint_candidate(&mut arena, checkpoint, accepted);
+
+    assert_eq!(current_region(&state, 21), Some(outer_id));
+    assert!(!arena.durable_region_is_live(candidate_id));
     state.retire_all(&mut arena);
 }

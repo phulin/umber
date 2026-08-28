@@ -1428,43 +1428,14 @@ impl DetachedArtifactSourceResolver {
         Self { recipes }
     }
 
-    pub(in crate::main_control) fn capture_durable<G>(
-        list: tex_state::node_arena::DurableListId<G>,
+    pub(in crate::main_control) fn capture_page_list<G>(
+        list: tex_state::node_arena::PageListId,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> Self {
-        fn visit<G>(
-            node: &tex_state::node::Node,
-            stores: &tex_state::CommandContext<'_, G>,
-            recipes: &mut std::collections::HashMap<
-                tex_state::token::OriginId,
-                tex_state::world::ArtifactSourceRecipe,
-            >,
-        ) {
-            let origins: &[tex_state::token::OriginId] = match node {
-                tex_state::node::Node::Char { origin, .. } => std::slice::from_ref(origin),
-                tex_state::node::Node::Lig { origins, .. } => origins,
-                _ => &[],
-            };
-            for &origin in origins {
-                if !recipes.contains_key(&origin)
-                    && let Some(recipe) = stores.detach_artifact_source_recipe(origin)
-                {
-                    recipes.insert(origin, recipe);
-                }
-            }
-            node.visit_semantic_node_lists(|child| {
-                if let Ok(list) = stores.durable_child_node_list(*child) {
-                    for node in list.nodes() {
-                        visit(node, stores, recipes);
-                    }
-                }
-            });
-        }
-
         let mut recipes = std::collections::HashMap::new();
-        if let Ok(list) = stores.node_list(list) {
+        if let Ok(list) = stores.page_node_list(list) {
             for node in list.nodes() {
-                visit(node, stores, &mut recipes);
+                recipes.extend(Self::capture(node, stores).recipes);
             }
         }
         Self { recipes }
@@ -1483,7 +1454,7 @@ impl crate::shipout::ShipoutGeometrySink for DetachedShipoutGeometry {
 }
 
 pub(in crate::main_control) fn shipout_replay_box<G>(
-    shipout: PreparedShipout<G>,
+    shipout: PreparedShipout,
     stores: &mut Universe<G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
@@ -1513,18 +1484,12 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             PreparedShipoutSource::Page(node) => {
                 DetachedArtifactSourceResolver::capture(node, &context)
             }
-            PreparedShipoutSource::Durable(list) => {
-                DetachedArtifactSourceResolver::capture_durable(*list, &context)
-            }
         };
         let traced_dump = (tracing_output > 0).then(|| {
             let config = crate::node_dump::DumpConfig::read(&context);
             match &source {
                 PreparedShipoutSource::Page(node) => {
                     crate::node_dump::dump_node_slice(&context, std::slice::from_ref(node), config)
-                }
-                PreparedShipoutSource::Durable(list) => {
-                    crate::node_dump::dump_durable_list(&context, *list, config)
                 }
             }
         });
@@ -1739,7 +1704,6 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     );
     let source = match source {
         PreparedShipoutSource::Page(node) => crate::shipout::direct::ShipoutRoot::Page(node),
-        PreparedShipoutSource::Durable(list) => crate::shipout::direct::ShipoutRoot::Durable(list),
     };
     let mut receipt = transaction.stage_page(
         source,

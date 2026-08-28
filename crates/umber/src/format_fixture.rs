@@ -704,8 +704,7 @@ fn capture_loaded_projection<G>(
     let mut boxes = Vec::with_capacity(demand.box_outlines.len());
     for request in &demand.box_outlines {
         let nodes = universe
-            .box_register(request.register)
-            .map_err(|error| FormatFixtureError::Format(format!("box projection: {error:?}")))?
+            .copy_box_to_page(request.register)
             .map(|root| {
                 let mut output = Vec::new();
                 push_detached_node_outline(
@@ -801,13 +800,13 @@ fn loaded_format_outputs(world: &tex_state::World) -> Vec<LoadedFormatOutput> {
 
 fn push_detached_node_outline<G>(
     universe: &tex_state::Universe<G>,
-    root: tex_state::node_arena::DurableListId<G>,
+    root: tex_state::node_arena::PageListId,
     path: &mut Vec<usize>,
     depth: u8,
     output: &mut Vec<DetachedNodeOutlineEntry>,
 ) -> Result<(), FormatFixtureError> {
     let list = universe
-        .node_list(root)
+        .page_node_list(root)
         .map_err(|error| FormatFixtureError::Format(format!("box outline root: {error:?}")))?;
     push_detached_node_children(universe, list.nodes(), path, depth, output)
 }

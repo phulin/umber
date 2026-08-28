@@ -1,11 +1,10 @@
-use super::{DynamicMemoryScratch, StateCore};
+use super::StateCore;
 use crate::env::AssignmentScope;
 use crate::generation::with_generation;
 use crate::glue::GlueSpec;
 use crate::interner::{Interner, InternerBudget};
 use crate::meaning::{MeaningFlags, MeaningWord, ResolvedMeaning};
-use crate::node::Node;
-use crate::token::{Catcode, Token, TokenWord};
+use crate::token::{Token, TokenWord};
 
 #[cfg(feature = "profiling")]
 #[global_allocator]

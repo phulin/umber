@@ -1,16 +1,15 @@
 //! Reusable node storage visible only while one shipout attempt is active.
 //!
-//! Rows retain page-list children because normalization may derive a small
-//! replacement from a checkpointable page without copying that page graph.
-//! The row coordinate itself has a distinct type, so it cannot enter page
-//! state, a mode summary, or an engine checkpoint.
+//! Rows are self-contained: every child names another scratch row. Page and
+//! durable coordinates are borrowed only while recursively materializing a
+//! scratch-local replacement and can never be stored here.
 
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
-use crate::node_arena::{DurableListId, PageListId};
+use crate::node_arena::PageListId;
 
 #[cfg(test)]
 mod tests;
@@ -33,53 +32,14 @@ pub struct ShipoutScratchListId {
 ///
 /// No semantic page, mode, journal, format, memo, or checkpoint carrier
 /// accepts this type.
-pub enum ShipoutListId<G> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShipoutListId {
     Page(PageListId),
-    Durable(DurableListId<G>),
     Scratch(ShipoutScratchListId),
 }
 
-impl<G> ShipoutListId<G> {
-    /// Rebrands a child borrowed from a durable root's generation-owned row.
-    #[must_use]
-    pub fn durable_child(list: PageListId) -> Self {
-        Self::Durable(list.rebrand())
-    }
-}
-
-impl<G> Clone for ShipoutListId<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<G> Copy for ShipoutListId<G> {}
-
-impl<G> core::fmt::Debug for ShipoutListId<G> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Page(_) => formatter.write_str("ShipoutListId::Page(..)"),
-            Self::Durable(_) => formatter.write_str("ShipoutListId::Durable(..)"),
-            Self::Scratch(_) => formatter.write_str("ShipoutListId::Scratch(..)"),
-        }
-    }
-}
-
-impl<G> PartialEq for ShipoutListId<G> {
-    fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
-            (Self::Page(left), Self::Page(right)) => left == right,
-            (Self::Durable(left), Self::Durable(right)) => left == right,
-            (Self::Scratch(left), Self::Scratch(right)) => left == right,
-            _ => false,
-        }
-    }
-}
-
-impl<G> Eq for ShipoutListId<G> {}
-
 /// Node representation stored only in the reusable shipout lane.
-pub type ShipoutScratchNode<G> = Node<ShipoutListId<G>, GlueSpec, NodeTokenList>;
+pub type ShipoutScratchNode = Node<ShipoutScratchListId, GlueSpec, NodeTokenList>;
 
 /// Token payload selected from one immutable shipout source node.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,8 +55,9 @@ pub enum ShipoutTokenField {
 /// Borrow-only coordinate for a shipout source node whose non-token payload
 /// must be interpreted in place.
 pub struct ShipoutNodeSource<G> {
-    pub(crate) list: ShipoutListId<G>,
+    pub(crate) list: ShipoutListId,
     pub(crate) index: usize,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Clone for ShipoutNodeSource<G> {
@@ -115,16 +76,21 @@ impl<G> core::fmt::Debug for ShipoutNodeSource<G> {
 
 impl<G> ShipoutNodeSource<G> {
     #[must_use]
-    pub fn new(list: ShipoutListId<G>, index: usize) -> Self {
-        Self { list, index }
+    pub fn new(list: ShipoutListId, index: usize) -> Self {
+        Self {
+            list,
+            index,
+            _generation: PhantomData,
+        }
     }
 }
 
 /// Generation-branded token input retained across deferred replay.
 pub struct ShipoutTokenSource<G> {
-    pub(crate) list: ShipoutListId<G>,
+    pub(crate) list: ShipoutListId,
     pub(crate) index: usize,
     pub(crate) field: ShipoutTokenField,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> Clone for ShipoutTokenSource<G> {
@@ -143,8 +109,13 @@ impl<G> core::fmt::Debug for ShipoutTokenSource<G> {
 
 impl<G> ShipoutTokenSource<G> {
     #[must_use]
-    pub fn new(list: ShipoutListId<G>, index: usize, field: ShipoutTokenField) -> Self {
-        Self { list, index, field }
+    pub fn new(list: ShipoutListId, index: usize, field: ShipoutTokenField) -> Self {
+        Self {
+            list,
+            index,
+            field,
+            _generation: PhantomData,
+        }
     }
 }
 
@@ -157,7 +128,8 @@ pub(crate) struct ShipoutScratchMark {
 
 struct ShipoutScratchRow<G> {
     serial: u64,
-    nodes: Vec<ShipoutScratchNode<G>>,
+    nodes: Vec<ShipoutScratchNode>,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 /// One generation-owned lane whose physical rows remain at warmed high water.
@@ -207,6 +179,7 @@ impl<G> ShipoutScratchArena<G> {
             self.rows.push(ShipoutScratchRow {
                 serial: 0,
                 nodes: Vec::new(),
+                _generation: PhantomData,
             });
         }
         let row = &mut self.rows[index];
@@ -221,7 +194,7 @@ impl<G> ShipoutScratchArena<G> {
         }
     }
 
-    pub(crate) fn get(&self, id: ShipoutScratchListId) -> Option<&[ShipoutScratchNode<G>]> {
+    pub(crate) fn get(&self, id: ShipoutScratchListId) -> Option<&[ShipoutScratchNode]> {
         let index = id.row.checked_sub(1)? as usize;
         (id.owner == self.owner && index < self.active_rows)
             .then(|| self.rows.get(index))
@@ -231,7 +204,7 @@ impl<G> ShipoutScratchArena<G> {
     }
 
     /// Appends one node directly to its final scratch row.
-    pub(crate) fn push(&mut self, id: ShipoutScratchListId, node: ShipoutScratchNode<G>) {
+    pub(crate) fn push(&mut self, id: ShipoutScratchListId, node: ShipoutScratchNode) {
         let index = id
             .row
             .checked_sub(1)

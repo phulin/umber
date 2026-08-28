@@ -11,7 +11,6 @@ use crate::generation::{
     AcceptedGenerationTail, Generation, GenerationCursor, GenerationOwner, GenerationRetirement,
 };
 use crate::glue::GlueSpec;
-use crate::node_arena::NodeArenaError;
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
@@ -86,9 +85,6 @@ impl<G> StateCore<G> {
             DynamicMemoryRoot::TokenList(tokens) => {
                 token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
             }
-            DynamicMemoryRoot::Nodes(root) => {
-                let _ = root;
-            }
         };
         self.state.visit_dynamic_memory_roots(&mut capture_root);
         for root in extra_roots {
@@ -151,29 +147,10 @@ impl<G> StateCore<G> {
         &self.state
     }
 
-    #[must_use]
-    pub(crate) const fn durable_node_cursor(&self) {}
-
-    pub(crate) fn validate_durable_node_cursor(&self, _cursor: ()) -> Result<(), NodeArenaError> {
-        Ok(())
-    }
-
-    pub(crate) fn truncate_durable_nodes(&mut self, _cursor: ()) -> Result<(), NodeArenaError> {
-        Ok(())
-    }
-
-    pub(crate) fn restore_durable_node_cursor(
-        &mut self,
-        _cursor: (),
-    ) -> Result<(), NodeArenaError> {
-        Ok(())
-    }
-
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         journal: crate::journal::JournalCursor<G>,
         dense: DenseStateCursor,
-        _durable: (),
         generation: GenerationCursor,
     ) -> Result<AcceptedStateCoreTail<G>, StateError> {
         self.state.validate_restore(journal)?;
@@ -195,7 +172,6 @@ impl<G> StateCore<G> {
         &mut self,
         journal: crate::journal::JournalCursor<G>,
         dense: DenseStateCursor,
-        _durable: (),
         generation: GenerationCursor,
         tail: AcceptedStateCoreTail<G>,
     ) -> Result<(), StateError> {
@@ -245,14 +221,6 @@ impl<G> StateCore<G> {
     }
 }
 
-pub(crate) struct DynamicMemoryScratch<G>(core::marker::PhantomData<fn(&G) -> &G>);
-
-impl<G> Default for DynamicMemoryScratch<G> {
-    fn default() -> Self {
-        Self(core::marker::PhantomData)
-    }
-}
-
 /// Immutable, already-admitted hot view.
 pub(crate) struct AdmittedState<'a, G> {
     generation: RwLockReadGuard<'a, Generation<G>>,
@@ -260,12 +228,6 @@ pub(crate) struct AdmittedState<'a, G> {
 }
 
 impl<'a, G> AdmittedState<'a, G> {
-    pub(crate) fn current_dynamic_memory_words(
-        &self,
-        etex_node_sizes: bool,
-    ) -> Result<usize, NodeArenaError> {
-        Ok(14_usize.saturating_add(self.generation.memory_accounting().words(etex_node_sizes).1))
-    }
     #[must_use]
     pub(crate) const fn state(&self) -> &'a DenseState<G> {
         self.state
@@ -299,12 +261,6 @@ pub(crate) struct AdmittedStateMut<'a, G> {
 }
 
 impl<'a, G> AdmittedStateMut<'a, G> {
-    pub(crate) fn current_dynamic_memory_words(
-        &self,
-        etex_node_sizes: bool,
-    ) -> Result<usize, NodeArenaError> {
-        Ok(14_usize.saturating_add(self.generation.memory_accounting().words(etex_node_sizes).1))
-    }
     pub(crate) const fn state_ref(&self) -> &DenseState<G> {
         self.state
     }

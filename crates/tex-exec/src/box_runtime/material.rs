@@ -5,7 +5,7 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
-use crate::vertical::{append_vertical_contribution, is_outer_vertical};
+use crate::vertical::is_outer_vertical;
 
 use super::append_node_to_current_list;
 use crate::{ExecError, Mode, ModeNest};

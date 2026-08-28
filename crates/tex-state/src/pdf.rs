@@ -50,7 +50,6 @@ use serde::{Deserialize, Serialize};
 use crate::ContentHash;
 use crate::durable_arena::TokenListId;
 use crate::ids::FontId;
-use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
 use std::collections::BTreeMap;
@@ -1095,7 +1094,6 @@ impl<G> Clone for PdfPageRecord<G> {
 pub struct PdfFormRecord<G> {
     object: u32,
     resource: u32,
-    box_list: DurableListId<G>,
     box_semantic_id: StateHashFragment,
     width: Scaled,
     height: Scaled,
@@ -1110,7 +1108,6 @@ impl<G> Clone for PdfFormRecord<G> {
         Self {
             object: self.object,
             resource: self.resource,
-            box_list: self.box_list,
             box_semantic_id: self.box_semantic_id,
             width: self.width,
             height: self.height,
@@ -1128,7 +1125,6 @@ impl<G> std::fmt::Debug for PdfFormRecord<G> {
             .debug_struct("PdfFormRecord")
             .field("object", &self.object)
             .field("resource", &self.resource)
-            .field("box_list", &self.box_list)
             .field("box_semantic_id", &self.box_semantic_id)
             .field("width", &self.width)
             .field("height", &self.height)
@@ -1144,7 +1140,6 @@ impl<G> PartialEq for PdfFormRecord<G> {
     fn eq(&self, other: &Self) -> bool {
         self.object == other.object
             && self.resource == other.resource
-            && self.box_list == other.box_list
             && self.box_semantic_id == other.box_semantic_id
             && self.width == other.width
             && self.height == other.height
@@ -1161,7 +1156,6 @@ impl<G> std::hash::Hash for PdfFormRecord<G> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.object.hash(state);
         self.resource.hash(state);
-        self.box_list.hash(state);
         self.box_semantic_id.hash(state);
         self.width.hash(state);
         self.height.hash(state);
@@ -1214,10 +1208,6 @@ impl<G> PdfFormRecord<G> {
     #[must_use]
     pub const fn resource(&self) -> u32 {
         self.resource
-    }
-    #[must_use]
-    pub const fn box_list(&self) -> DurableListId<G> {
-        self.box_list
     }
     #[must_use]
     pub const fn width(&self) -> Scaled {
@@ -1491,6 +1481,10 @@ impl<G> Clone for PdfStateSnapshot<G> {
 }
 
 impl<G> PdfStateSnapshot<G> {
+    pub(crate) const fn form_count(&self) -> usize {
+        self.cursor.form_count
+    }
+
     pub(crate) fn history_position(&self) -> (u64, u64) {
         (self.undo_pos, self.cursor.color_undo_pos)
     }
@@ -2574,7 +2568,7 @@ impl<G> PdfState<G> {
     pub(crate) fn capture_format(
         &self,
         mut detach_tokens: impl FnMut(TokenListId<G>) -> Result<Vec<u8>, String>,
-        mut detach_nodes: impl FnMut(DurableListId<G>) -> Result<Vec<u8>, String>,
+        mut detach_nodes: impl FnMut(u32) -> Result<Vec<u8>, String>,
     ) -> Result<Option<PdfFormatState>, String> {
         let glyph_to_unicode = self
             .font_operations
@@ -2640,7 +2634,7 @@ impl<G> PdfState<G> {
                 Ok(PdfFormatForm {
                     object: form.object,
                     resource: form.resource,
-                    nodes: detach_nodes(form.box_list)?,
+                    nodes: detach_nodes(form.object)?,
                     width: form.width,
                     height: form.height,
                     depth: form.depth,
@@ -2690,7 +2684,7 @@ impl<G> PdfState<G> {
     pub(crate) fn capture_format_bytes(
         &self,
         detach_tokens: impl FnMut(TokenListId<G>) -> Result<Vec<u8>, String>,
-        detach_nodes: impl FnMut(DurableListId<G>) -> Result<Vec<u8>, String>,
+        detach_nodes: impl FnMut(u32) -> Result<Vec<u8>, String>,
     ) -> Result<Option<Vec<u8>>, String> {
         self.capture_format(detach_tokens, detach_nodes)?
             .map(|format| {
@@ -2709,7 +2703,7 @@ impl<G> PdfState<G> {
         bytes: &[u8],
         capacities: Option<crate::PdfEngineCapacities>,
         import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
-        import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
+        import_nodes: impl FnMut(u32, &[u8]) -> Result<StateHashFragment, String>,
     ) -> Result<Self, String> {
         let format = bincode::deserialize(bytes)
             .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?;
@@ -2720,7 +2714,7 @@ impl<G> PdfState<G> {
         format: PdfFormatState,
         capacities: Option<crate::PdfEngineCapacities>,
         mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
-        mut import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
+        mut import_nodes: impl FnMut(u32, &[u8]) -> Result<StateHashFragment, String>,
     ) -> Result<Self, String> {
         if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
             return Err("unsupported or invalid PDF format resource state".to_owned());
@@ -2810,7 +2804,7 @@ impl<G> PdfState<G> {
             }
         }
         for form in format.forms {
-            let (nodes, semantic_id) = import_nodes(&form.nodes)?;
+            let semantic_id = import_nodes(form.object, &form.nodes)?;
             let attr = form.attr.as_deref().map(&mut import_tokens).transpose()?;
             let resources = form
                 .resources
@@ -2820,7 +2814,6 @@ impl<G> PdfState<G> {
             state
                 .initialize_form(
                     (form.object, form.resource),
-                    nodes,
                     semantic_id,
                     (form.width, form.height, form.depth),
                     (attr, resources),
@@ -3636,7 +3629,6 @@ impl<G> PdfState<G> {
     pub(crate) fn initialize_form(
         &mut self,
         identity: (u32, u32),
-        box_list: DurableListId<G>,
         box_semantic_id: StateHashFragment,
         dimensions: (Scaled, Scaled, Scaled),
         options: (Option<PdfTokenParameter<G>>, Option<PdfTokenParameter<G>>),
@@ -3647,7 +3639,6 @@ impl<G> PdfState<G> {
         let record = PdfFormRecord {
             object,
             resource,
-            box_list,
             box_semantic_id,
             width: dimensions.0,
             height: dimensions.1,

@@ -25,8 +25,8 @@ const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 /// The typed result of TeX82 §1016 packing, before either the default
 /// routine or command-owned `\\output` replay begins.
 #[derive(Debug)]
-pub(crate) enum SelectedPageOutput<G> {
-    Default(crate::main_control::PreparedShipout<G>),
+pub(crate) enum SelectedPageOutput {
+    Default(crate::main_control::PreparedShipout),
     UserRoutine,
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn select_pending_page_output<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fire_up: PageFireUp,
     diagnostic_context: ExecutionDiagnosticContext,
-) -> Result<SelectedPageOutput<G>, ExecError> {
+) -> Result<SelectedPageOutput, ExecError> {
     prepare_box255(
         stores,
         diagnostic_effects,
@@ -325,7 +325,7 @@ fn distribute_insertions<G>(
             _ => None,
         };
         match insertion {
-            Some((class, size, split_top_skip, split_max_depth, floating_penalty, content)) => {
+            Some((class, _size, split_top_skip, split_max_depth, floating_penalty, content)) => {
                 let mut wait = true;
                 if let Some(queue) = queues.get_mut(&class)
                     && queue.accepting
@@ -674,25 +674,22 @@ fn report_deleted_box<G>(
 
 pub(crate) fn take_box255_node<G>(
     stores: &mut CommandContext<'_, G>,
-) -> Result<crate::main_control::PreparedShipout<G>, ExecError> {
-    let Some(owner) = stores
-        .box_register(255)
-        .expect("box 255 register is admitted")
-    else {
+) -> Result<crate::main_control::PreparedShipout, ExecError> {
+    let Some(owner) = stores.take_box_to_page(255) else {
         return Err(ExecError::MissingToken { context: "box" });
     };
-    let valid = stores
-        .node_list(owner)
-        .expect("box 255 belongs to the live durable generation")
+    let root = stores
+        .page_node_list(owner)
+        .expect("consumed box 255 belongs to the live page region")
         .nodes()
         .first()
-        .is_some_and(|node| matches!(node, Node::HList(_) | Node::VList(_)));
-    if !valid {
+        .cloned()
+        .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)));
+    let Some(root) = root else {
         return Err(ExecError::MissingToken { context: "box" });
-    }
-    stores.clear_box_preserving_level(255);
+    };
     Ok(crate::main_control::PreparedShipout {
-        source: crate::main_control::PreparedShipoutSource::Durable(owner),
+        source: crate::main_control::PreparedShipoutSource::Page(root),
         region: None,
     })
 }

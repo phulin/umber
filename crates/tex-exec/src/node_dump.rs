@@ -71,28 +71,6 @@ pub(crate) fn dump_page_list<G>(
     out
 }
 
-pub(crate) fn dump_durable_list<G>(
-    stores: &CommandContext<'_, G>,
-    owner: tex_state::node_arena::DurableListId<G>,
-    config: DumpConfig,
-) -> String {
-    let mut out = String::new();
-    let list = stores
-        .node_list(owner)
-        .expect("diagnostic root belongs to the live durable generation");
-    let nodes = list.nodes();
-    dump_nodes::<_, _, _, _, PageDumpStorage>(
-        stores,
-        &nodes,
-        &config,
-        -1,
-        ListContext::Neutral,
-        false,
-        &mut out,
-    );
-    out
-}
-
 pub(crate) fn dump_node_slice<G>(
     stores: &CommandContext<'_, G>,
     nodes: &[Node],
@@ -154,7 +132,6 @@ enum ListContext {
 }
 
 struct PageDumpStorage;
-struct DurableDumpStorage;
 
 trait DumpListProjection<G, Storage> {
     fn is_empty(&self, stores: &CommandContext<'_, G>) -> bool;
@@ -186,36 +163,6 @@ impl<G> DumpListProjection<G, PageDumpStorage> for PageListId {
         let list = stores
             .page_node_list(*self)
             .expect("diagnostic child belongs to the live page arena");
-        let nodes = list.nodes();
-        dump_nodes::<_, _, _, _, PageDumpStorage>(
-            stores,
-            &nodes,
-            config,
-            depth,
-            context,
-            physical_replacement_spans,
-            out,
-        );
-    }
-}
-
-impl<G> DumpListProjection<G, DurableDumpStorage> for tex_state::node_arena::DurableListId<G> {
-    fn is_empty(&self, _stores: &CommandContext<'_, G>) -> bool {
-        tex_state::node_arena::DurableListId::is_empty(*self)
-    }
-
-    fn dump(
-        &self,
-        stores: &CommandContext<'_, G>,
-        config: &DumpConfig,
-        depth: i32,
-        context: ListContext,
-        physical_replacement_spans: bool,
-        out: &mut String,
-    ) {
-        let list = stores
-            .node_list(*self)
-            .expect("diagnostic child belongs to the live durable generation");
         let nodes = list.nodes();
         dump_nodes::<_, _, _, _, PageDumpStorage>(
             stores,

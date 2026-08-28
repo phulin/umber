@@ -7,13 +7,16 @@ use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
 use crate::env::banks::IntParam;
-use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
+use crate::env::{
+    AssignmentScope, CodeTableKind, DenseState, DurableBoxState, DurableFormState,
+    DurableNodeMetadata, StateError,
+};
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
-use crate::node_arena::{DurableListId, NodeArenaError, PageListId, PageNodeArena};
+use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
 use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
 use crate::provenance::OriginRecord;
@@ -491,20 +494,6 @@ impl EngineUsageRuntime {
         self.memory.observe_transient(variable, dynamic);
     }
 
-    pub(crate) fn observe_node_copy(
-        &mut self,
-        variable: usize,
-        current_dynamic: usize,
-        copied_dynamic: usize,
-    ) {
-        self.memory.observe_transient(
-            variable,
-            current_dynamic
-                .saturating_sub(self.memory.dynamic_live)
-                .saturating_add(copied_dynamic),
-        );
-    }
-
     pub(crate) fn uses_etex_node_sizes(&self) -> bool {
         self.init_str_ptr >= ETEX26_STRING_BASELINE
     }
@@ -531,6 +520,8 @@ pub struct CommandContext<'a, G> {
     dependencies: &'a mut DependencyRuntime,
     fonts: &'a mut FontStore,
     page_nodes: &'a mut PageNodeArena,
+    durable_boxes: &'a mut DurableBoxState,
+    durable_forms: &'a mut DurableFormState,
     shipout_scratch: &'a mut ShipoutScratchArena<G>,
     page: &'a mut PageBuilderState,
     pdf: &'a mut PdfState<G>,
@@ -540,7 +531,6 @@ pub struct CommandContext<'a, G> {
     prepared_mag: &'a mut Option<i32>,
     error_context_widths: crate::print::ErrorContextWidths,
     engine_usage: &'a mut EngineUsageRuntime,
-    dynamic_memory_scratch: &'a mut crate::stores::DynamicMemoryScratch<G>,
 }
 
 pub(super) struct CommandContextParts<'a, G> {
@@ -552,6 +542,8 @@ pub(super) struct CommandContextParts<'a, G> {
     pub dependencies: &'a mut DependencyRuntime,
     pub fonts: &'a mut FontStore,
     pub page_nodes: &'a mut PageNodeArena,
+    pub durable_boxes: &'a mut DurableBoxState,
+    pub durable_forms: &'a mut DurableFormState,
     pub shipout_scratch: &'a mut ShipoutScratchArena<G>,
     pub page: &'a mut PageBuilderState,
     pub pdf: &'a mut PdfState<G>,
@@ -561,7 +553,6 @@ pub(super) struct CommandContextParts<'a, G> {
     pub prepared_mag: &'a mut Option<i32>,
     pub error_context_widths: crate::print::ErrorContextWidths,
     pub engine_usage: &'a mut EngineUsageRuntime,
-    pub dynamic_memory_scratch: &'a mut crate::stores::DynamicMemoryScratch<G>,
 }
 
 impl<'a, G> CommandContext<'a, G> {
@@ -575,6 +566,8 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
+            durable_boxes,
+            durable_forms,
             shipout_scratch,
             page,
             pdf,
@@ -584,7 +577,6 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
-            dynamic_memory_scratch,
         } = parts;
         Self {
             interner,
@@ -595,6 +587,8 @@ impl<'a, G> CommandContext<'a, G> {
             dependencies,
             fonts,
             page_nodes,
+            durable_boxes,
+            durable_forms,
             shipout_scratch,
             page,
             pdf,
@@ -604,7 +598,6 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
-            dynamic_memory_scratch,
         }
     }
 
@@ -1196,19 +1189,8 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, StateError> {
-        self.admitted.state_ref().box_register(index)
-    }
-
-    pub fn assign_box_register(
-        &mut self,
-        index: u16,
-        value: Option<DurableListId<G>>,
-        scope: AssignmentScope,
-    ) -> Result<(), StateError> {
-        self.admitted
-            .state()
-            .assign_box_register(index, value, scope)
+    pub fn box_register(&self, index: u16) -> Option<DurableNodeMetadata> {
+        self.durable_boxes.metadata(index)
     }
 
     pub fn assign_page_box(
@@ -1217,14 +1199,13 @@ impl<'a, G> CommandContext<'a, G> {
         value: Option<PageListId>,
         scope: AssignmentScope,
     ) -> Result<(), crate::NodePromotionError> {
-        let durable = value.map(|root| root.rebrand());
-        if durable.is_some() {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_node_coordinate_transfer();
-        }
-        self.admitted
-            .state()
-            .assign_box_register(index, durable, scope)
+        let durable = value
+            .map(|root| self.page_nodes.copy_page_root_to_durable(root))
+            .transpose()
+            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+        let current_level = self.admitted.state_ref().current_level();
+        self.durable_boxes
+            .assign(self.page_nodes, index, durable, scope, current_level)
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
@@ -1241,62 +1222,35 @@ impl<'a, G> CommandContext<'a, G> {
         index: u16,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
-        let durable = value.rebrand();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_node_coordinate_transfer();
-        self.admitted
-            .state()
-            .replace_box_register(index, Some(durable))
+        let durable = self
+            .page_nodes
+            .copy_page_root_to_durable(value)
+            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+        self.durable_boxes
+            .replace(self.page_nodes, index, Some(durable))
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
     /// Obtains TeX's logical box copy as a page coordinate.
     ///
-    /// Ordinary runtime boxes already live in the page arena and only rebrand
-    /// their coordinate. A box loaded from a detached format is materialized
-    /// once into the destination arena on first use.
+    /// The durable owner stays in eqtb and the shared recursive walker builds
+    /// TeX's independent page-lifetime copy.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        let root = self.box_register(index).ok().flatten()?;
-        let page_root = root.rebrand();
-        self.page_nodes.contains(page_root).then_some(page_root)
+        self.durable_boxes
+            .copy_to_page(self.page_nodes, index)
+            .expect("box copy allocation")
     }
 
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        let copied = self.copy_box_to_page(index);
-        if copied.is_some() {
-            self.admitted
-                .state()
-                .replace_box_register(index, None)
-                .expect("box register index is admitted");
-        }
-        copied
+        self.durable_boxes
+            .take_to_page(self.page_nodes, index)
+            .expect("box transfer allocation")
     }
 
     pub fn clear_box_preserving_level(&mut self, index: u16) {
-        self.admitted
-            .state()
-            .replace_box_register(index, None)
-            .expect("box register index is admitted");
-    }
-
-    #[inline(always)]
-    pub fn node_list(
-        &self,
-        id: DurableListId<G>,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_nodes
-            .node_cursor(id.rebrand())
-            .map_err(|_| NodeArenaError::InvalidList)
-    }
-
-    /// Resolves a child coordinate borrowed from a durable root.
-    pub fn durable_child_node_list(
-        &self,
-        id: PageListId,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_nodes
-            .node_cursor(id)
-            .map_err(|_| NodeArenaError::InvalidList)
+        self.durable_boxes
+            .replace(self.page_nodes, index, None)
+            .expect("void box replacement cannot allocate");
     }
 
     #[inline(always)]
@@ -1498,14 +1452,21 @@ impl<'a, G> CommandContext<'a, G> {
         kind: crate::GroupKind,
         entered_line: u32,
     ) -> Result<crate::GroupFrame, StateError> {
-        self.admitted.state().begin_group(kind, entered_line)
+        let frame = self.admitted.state().begin_group(kind, entered_line)?;
+        self.durable_boxes.begin_group(frame.level());
+        Ok(frame)
     }
 
     pub fn end_group(
         &mut self,
         kind: crate::GroupKind,
     ) -> Result<crate::GroupRestorationReceipt<G>, StateError> {
-        let receipt = self.admitted.state().end_group(kind)?;
+        let mut receipt = self.admitted.state().end_group(kind)?;
+        let trace = self.admitted.state_ref().group_restoration_trace_state()?;
+        let durable = self
+            .durable_boxes
+            .end_group(self.page_nodes, receipt.frame().level())?;
+        receipt.append_durable(durable, trace);
         // Closing a save level replays an ordered environment-journal suffix.
         // That timeline mutation cannot be validated from the individual live
         // post-images alone, so an in-flight memo episode must fail closed.
@@ -1537,9 +1498,9 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
-        let id = self.box_register(index).ok().flatten()?;
-        let list = self.node_list(id).ok()?;
-        match (list.len(), list.nodes().first()) {
+        let owner = self.durable_boxes.value(index)?;
+        let list = self.page_nodes.durable_list(owner).ok()?;
+        match (list.len(), list.get(0)) {
             (1, Some(crate::node::Node::HList(_))) => Some(CommandBoxKind::Horizontal),
             (1, Some(crate::node::Node::VList(_))) => Some(CommandBoxKind::Vertical),
             _ => None,
@@ -1596,9 +1557,9 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
-        let id = self.box_register(index).ok().flatten()?;
-        let list = self.node_list(id).ok()?;
-        let node = match (list.len(), list.nodes().first()) {
+        let owner = self.durable_boxes.value(index)?;
+        let list = self.page_nodes.durable_list(owner).ok()?;
+        let node = match (list.len(), list.get(0)) {
             (1, Some(crate::node::Node::HList(node) | crate::node::Node::VList(node))) => node,
             _ => return None,
         };
@@ -1611,17 +1572,18 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_margin_kern(&self, index: u16, side: crate::node::MarginKernSide) -> Option<Scaled> {
-        let id = self.box_register(index).ok().flatten()?;
-        let list = self.node_list(id).ok()?;
-        let children = match (list.len(), list.nodes().first()) {
-            (1, Some(crate::node::Node::HList(node))) => {
-                self.durable_child_node_list(node.children).ok()?
-            }
+        let owner = self.durable_boxes.value(index)?;
+        let list = self.page_nodes.durable_list(owner).ok()?;
+        let children = match (list.len(), list.get(0)) {
+            (1, Some(crate::node::Node::HList(node))) => self
+                .page_nodes
+                .durable_child_list(owner, node.children)
+                .ok()?,
             _ => return None,
         };
         let candidate = match side {
-            crate::node::MarginKernSide::Left => children.nodes().first(),
-            crate::node::MarginKernSide::Right => children.nodes().last(),
+            crate::node::MarginKernSide::Left => children.get(0),
+            crate::node::MarginKernSide::Right => children.get(children.len().saturating_sub(1)),
         };
         Some(match candidate {
             Some(crate::node::Node::MarginKern {
@@ -2843,19 +2805,37 @@ impl<'a, G> CommandContext<'a, G> {
             self.admitted.state_ref(),
             box_list,
         );
-        let box_list = box_list.rebrand();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_node_coordinate_transfer();
+        let owner = self
+            .page_nodes
+            .copy_page_root_to_durable(box_list)
+            .map_err(|_| crate::PdfObjectCapacityError)?;
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
-        self.pdf.initialize_form(
+        let record = self.pdf.initialize_form(
             identity,
-            box_list,
             semantic_id,
             dimensions,
             (attr, resources),
             immediate,
-        )
+        );
+        match record {
+            Ok(record) => {
+                self.durable_forms.insert(record.object(), owner);
+                Ok(record)
+            }
+            Err(error) => {
+                self.page_nodes
+                    .retire_durable(owner)
+                    .expect("rejected PDF form owner remains live");
+                Err(error)
+            }
+        }
+    }
+
+    pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
+        self.durable_forms
+            .copy_to_page(self.page_nodes, object)
+            .expect("PDF form copy must succeed")
     }
 
     pub fn append_pdf_document_fragment(
@@ -3047,17 +3027,6 @@ impl<'a, G> CommandContext<'a, G> {
                         .expect("page shipout color row is live")
                         .get(source.index)
                         .expect("page shipout color index is live"),
-                    id,
-                );
-                self.pdf.apply_color_stack(id, target, action)
-            }
-            crate::ShipoutListId::Durable(list) => {
-                let action = action(
-                    self.page_nodes
-                        .get(list.rebrand())
-                        .expect("durable shipout color row is live")
-                        .get(source.index)
-                        .expect("durable shipout color index is live"),
                     id,
                 );
                 self.pdf.apply_color_stack(id, target, action)
@@ -3380,8 +3349,43 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn shipout_scratch_nodes(
         &self,
         list: ShipoutScratchListId,
-    ) -> Option<&[crate::ShipoutScratchNode<G>]> {
+    ) -> Option<&[crate::ShipoutScratchNode]> {
         self.shipout_scratch.get(list)
+    }
+
+    /// Materializes one page closure as a self-contained shipout-scratch
+    /// closure. The page coordinates are borrowed only during this call and
+    /// cannot escape through the scratch node type.
+    pub fn copy_page_list_to_shipout_scratch(
+        &mut self,
+        root: PageListId,
+    ) -> Result<ShipoutScratchListId, NodeArenaError> {
+        fn copy<G>(
+            context: &mut CommandContext<'_, G>,
+            source: PageListId,
+            copied: &mut std::collections::HashMap<PageListId, ShipoutScratchListId>,
+        ) -> Result<ShipoutScratchListId, NodeArenaError> {
+            if let Some(destination) = copied.get(&source) {
+                return Ok(*destination);
+            }
+            let nodes = context
+                .page_node_list(source)?
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            let destination = context.begin_shipout_scratch_list();
+            copied.insert(source, destination);
+            for node in nodes {
+                let node = node.map_lists(|child| {
+                    copy(context, child, copied)
+                        .expect("page closure contains only live page-arena children")
+                });
+                context.push_shipout_scratch_node(destination, node);
+            }
+            Ok(destination)
+        }
+
+        copy(self, root, &mut std::collections::HashMap::new())
     }
 
     /// Opens one final shipout-scratch row for direct construction.
@@ -3393,7 +3397,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn push_shipout_scratch_node(
         &mut self,
         list: ShipoutScratchListId,
-        node: crate::ShipoutScratchNode<G>,
+        node: crate::ShipoutScratchNode,
     ) {
         self.shipout_scratch.push(list, node);
     }
@@ -3478,24 +3482,6 @@ impl<'a, G> CommandContext<'a, G> {
                         .try_for_each(&mut visit)
                 }
             }
-            crate::ShipoutListId::Durable(list) => {
-                let node = self
-                    .page_nodes
-                    .get(list.rebrand())
-                    .ok()
-                    .and_then(|list| list.get(source.index))
-                    .expect("shipout token source belongs to the live durable row");
-                if let Some(identifier) = identifier(node, source.field) {
-                    identifier.words().iter().copied().try_for_each(&mut visit)
-                } else {
-                    payload(node, source.field)
-                        .expect("shipout token field belongs to its durable source")
-                        .words()
-                        .iter()
-                        .copied()
-                        .try_for_each(&mut visit)
-                }
-            }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
                     .shipout_scratch
@@ -3516,9 +3502,8 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
-    /// Admits a deferred shipout token source to command expansion. Durable
-    /// sources share their existing generation row; page/scratch sources are
-    /// streamed once into their final durable semantic escape.
+    /// Admits a deferred page/scratch shipout token source to command
+    /// expansion by streaming it once into its final durable semantic escape.
     pub fn admit_shipout_tokens(
         &mut self,
         source: crate::ShipoutTokenSource<G>,
@@ -3593,40 +3578,6 @@ impl<'a, G> CommandContext<'a, G> {
                         crate::ShipoutTokenField::DeferredPdfLiteral,
                     ) => tokens.words(),
                     _ => panic!("scratch shipout token field matches its source node"),
-                };
-                append(&mut self.admitted, tokens)?;
-            }
-            crate::ShipoutListId::Durable(list) => {
-                let page = list.rebrand();
-                let node = self
-                    .page_nodes
-                    .get(page)
-                    .expect("durable page token row is live")
-                    .get(source.index)
-                    .expect("durable page token index is live");
-                let tokens = match (node, source.field) {
-                    (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
-                            tokens,
-                            ..
-                        }),
-                        crate::ShipoutTokenField::DeferredWrite,
-                    )
-                    | (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
-                            tokens,
-                            ..
-                        }),
-                        crate::ShipoutTokenField::DeferredSpecial,
-                    )
-                    | (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
-                            tokens,
-                            ..
-                        }),
-                        crate::ShipoutTokenField::DeferredPdfLiteral,
-                    ) => tokens.words(),
-                    _ => panic!("durable shipout token field matches its source node"),
                 };
                 append(&mut self.admitted, tokens)?;
             }

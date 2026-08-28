@@ -5,7 +5,6 @@
 //! optional demand-maintained identity used by state hashing.
 
 use core::hash::{Hash, Hasher};
-use core::marker::PhantomData;
 use core::num::NonZeroU64;
 use std::ops::Range;
 
@@ -192,80 +191,6 @@ impl Hash for PageListId {
 }
 
 const _: () = assert!(core::mem::size_of::<PageListId>() <= 32);
-
-/// Generation-branded durable root into the same runtime page-material arena.
-pub struct DurableListId<G> {
-    page: PageListId,
-    _generation: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> DurableListId<G> {
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            page: PageListId::empty(),
-            _generation: PhantomData,
-        }
-    }
-
-    #[must_use]
-    pub const fn page(self) -> PageListId {
-        self.page
-    }
-
-    #[must_use]
-    pub const fn rebrand(self) -> PageListId {
-        self.page
-    }
-
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.page.is_empty()
-    }
-
-    #[must_use]
-    pub const fn semantic_identity(self) -> Option<u64> {
-        self.page.semantic_identity()
-    }
-}
-
-impl PageListId {
-    #[must_use]
-    pub const fn rebrand<G>(self) -> DurableListId<G> {
-        DurableListId {
-            page: self,
-            _generation: PhantomData,
-        }
-    }
-}
-
-impl<G> Clone for DurableListId<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<G> Copy for DurableListId<G> {}
-
-impl<G> core::fmt::Debug for DurableListId<G> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("DurableListId(..)")
-    }
-}
-
-impl<G> PartialEq for DurableListId<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.page == other.page
-    }
-}
-
-impl<G> Eq for DurableListId<G> {}
-
-impl<G> Hash for DurableListId<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.page.hash(state);
-    }
-}
 
 /// Runtime page payload owner. Every `Node` is appended exactly once.
 pub struct PageMaterialArena {

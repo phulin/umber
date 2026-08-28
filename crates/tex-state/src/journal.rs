@@ -117,12 +117,25 @@ pub struct StateOperation<G> {
     checkpoint_entries: u32,
     operation_position: u32,
     pending_group_position: u32,
+    durable_box: Option<crate::env::DurableBoxOperation>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> core::fmt::Debug for StateOperation<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("StateOperation(..)")
+    }
+}
+
+impl<G> StateOperation<G> {
+    pub(crate) fn attach_durable_box(&mut self, operation: crate::env::DurableBoxOperation) {
+        assert!(self.durable_box.replace(operation).is_none());
+    }
+
+    pub(crate) fn take_durable_box(&mut self) -> crate::env::DurableBoxOperation {
+        self.durable_box
+            .take()
+            .expect("aggregate operation carries its durable box lane")
     }
 }
 
@@ -430,6 +443,7 @@ impl<G> SaveJournal<G> {
                 .expect("operation journal exceeds u32 entries"),
             pending_group_position: u32::try_from(self.pending_operation_groups.len())
                 .expect("pending group journal exceeds u32 entries"),
+            durable_box: None,
             _brand: PhantomData,
         }
     }

@@ -113,22 +113,21 @@ mod tests {
                 .expect("restore pdfTeX test checkpoint");
         }
 
-        fn box_reg_ref(&mut self, index: u16) -> Option<tex_state::node_arena::DurableListId<G>> {
-            self.context(|context| context.box_register(index).expect("box register"))
+        fn box_reg_ref(&mut self, index: u16) -> Option<tex_state::DurableNodeMetadata> {
+            self.context(|context| context.box_register(index))
         }
 
         fn box_line_dimensions(&mut self, index: u16) -> Vec<(Scaled, Scaled)> {
             self.context(|context| {
+                let root = context.copy_box_to_page(index).expect("setbox result");
                 let root = context
-                    .box_register(index)
-                    .expect("box register")
-                    .expect("setbox result");
-                let root = context.node_list(root).expect("box-register node list");
+                    .page_node_list(root)
+                    .expect("box-register node list");
                 let Some(tex_state::node::Node::VList(vbox)) = root.nodes().first() else {
                     panic!("box register is not a vbox");
                 };
                 context
-                    .durable_child_node_list(vbox.children)
+                    .page_node_list(vbox.children)
                     .expect("vbox child list")
                     .nodes()
                     .iter()

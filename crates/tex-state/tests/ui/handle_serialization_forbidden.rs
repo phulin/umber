@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tex_state::node_arena::{DurableListId, PageListId};
+use tex_state::node_arena::PageListId;
 use tex_state::{DefinitionId, GlueId, ProvenanceId, TokenListId};
 
 enum Generation {}
@@ -13,13 +13,11 @@ fn main() {
     require_deserialize::<TokenListId<Generation>>();
     require_deserialize::<GlueId<Generation>>();
     require_deserialize::<ProvenanceId<Generation>>();
-    require_deserialize::<DurableListId<Generation>>();
     require_deserialize::<PageListId>();
 
     require_serialize::<DefinitionId<Generation>>();
     require_serialize::<TokenListId<Generation>>();
     require_serialize::<GlueId<Generation>>();
     require_serialize::<ProvenanceId<Generation>>();
-    require_serialize::<DurableListId<Generation>>();
     require_serialize::<PageListId>();
 }

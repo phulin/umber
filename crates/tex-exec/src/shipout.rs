@@ -112,7 +112,7 @@ impl<'a, G> ShipoutTransaction<'a, G> {
 
     pub(crate) fn stage_page(
         &mut self,
-        source: direct::ShipoutRoot<G>,
+        source: direct::ShipoutRoot,
         region: Option<
             tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
         >,

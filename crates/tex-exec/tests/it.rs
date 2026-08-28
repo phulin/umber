@@ -216,7 +216,7 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
         let state = (
             context.count(0).expect("count zero"),
             context.count(1).expect("count one"),
-            context.box_register(0).expect("box zero").is_some(),
+            context.box_register(0).is_some(),
         );
         drop(context);
         (
@@ -251,7 +251,7 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
         let state = (
             context.count(0).expect("count zero"),
             context.count(1).expect("count one"),
-            context.box_register(0).expect("box zero").is_some(),
+            context.box_register(0).is_some(),
         );
         drop(context);
         (

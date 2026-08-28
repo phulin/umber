@@ -203,7 +203,7 @@ fn restoration_text<G>(
             false,
         ),
         (GroupRestorationCell::BoxRegister(index), GroupRestorationValue::NodeList(value)) => {
-            debug_assert_eq!(stores.box_register(index).ok().flatten(), value);
+            debug_assert_eq!(stores.box_register(index), value);
             let page = stores.copy_box_to_page(index);
             (
                 escaped(&format!("box{index}")),

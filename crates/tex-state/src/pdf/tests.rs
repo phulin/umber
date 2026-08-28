@@ -852,7 +852,7 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
                 assert_eq!(recipe, [4]);
                 Ok(parameter.clone())
             },
-            |_| Err("unexpected node recipe".to_owned()),
+            |_, _| Err("unexpected node recipe".to_owned()),
         )
         .expect("detached PDF state materializes");
         assert!(restored.enabled());
@@ -873,7 +873,7 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
                     .configuration()
                     .pdf,
                 |_| unreachable!(),
-                |_| unreachable!(),
+                |_, _| unreachable!(),
             )
             .is_err()
         );

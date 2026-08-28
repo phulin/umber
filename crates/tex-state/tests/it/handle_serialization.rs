@@ -17,7 +17,6 @@ fn downstream_serde_cannot_mint_or_construct_live_handles() {
             "TokenListId",
             "GlueId",
             "ProvenanceId",
-            "DurableListId",
             "PageListId",
             "Deserialize",
             "Serialize",

@@ -143,52 +143,68 @@ struct DecodedFormat {
     cells: Vec<FormatCell>,
 }
 
-struct FormatNodeCollector<'a, G> {
-    admitted: crate::stores::AdmittedState<'a, G>,
+struct FormatNodeCollector<'a> {
     page_nodes: &'a crate::node_arena::PageNodeArena,
     token_lists: &'a mut Vec<Vec<u32>>,
     glue: &'a mut Vec<FormatGlue>,
     rows: Vec<FormatNodeList>,
-    indices: std::collections::HashMap<crate::node_arena::DurableListId<G>, u32>,
+    durable_indices: std::collections::HashMap<
+        (
+            crate::node_region::NodeRegionId,
+            crate::page_node_arena::PageListId,
+        ),
+        u32,
+    >,
 }
 
-impl<'a, G> FormatNodeCollector<'a, G> {
+impl<'a> FormatNodeCollector<'a> {
     fn new(
-        admitted: crate::stores::AdmittedState<'a, G>,
         page_nodes: &'a crate::node_arena::PageNodeArena,
         token_lists: &'a mut Vec<Vec<u32>>,
         glue: &'a mut Vec<FormatGlue>,
     ) -> Self {
         Self {
-            admitted,
             page_nodes,
             token_lists,
             glue,
             rows: Vec::new(),
-            indices: std::collections::HashMap::new(),
+            durable_indices: std::collections::HashMap::new(),
         }
     }
 
-    fn capture_root(&mut self, root: crate::node_arena::DurableListId<G>) -> Result<u32, String> {
+    fn capture_owner(
+        &mut self,
+        owner: &crate::page_node_arena::DurableNodeClosure,
+    ) -> Result<u32, String> {
+        self.capture_owned_list(owner, owner.root().list())
+    }
+
+    fn capture_owned_list(
+        &mut self,
+        owner: &crate::page_node_arena::DurableNodeClosure,
+        root: crate::page_node_arena::PageListId,
+    ) -> Result<u32, String> {
         if root.is_empty() {
             return Ok(0);
         }
-        if let Some(&row) = self.indices.get(&root) {
+        let key = (owner.region_id(), root);
+        if let Some(&row) = self.durable_indices.get(&key) {
             return Ok(row);
         }
-        let page_root = root.rebrand();
-        let nodes = self
-            .page_nodes
-            .get(page_root)
-            .map_err(|_| "format node root is not live".to_owned())?
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let nodes = if root == owner.root().list() {
+            self.page_nodes.durable_list(owner)
+        } else {
+            self.page_nodes.durable_child_list(owner, root)
+        }
+        .map_err(|_| "format durable node root is not live".to_owned())?
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
         for node in &nodes {
             let mut children = Vec::new();
             node.visit_node_lists(|child| children.push(*child));
             for child in children {
-                self.capture_root(child.rebrand())?;
+                self.capture_owned_list(owner, child)?;
             }
         }
         let encoded = nodes
@@ -200,7 +216,7 @@ impl<'a, G> FormatNodeCollector<'a, G> {
                         if child.is_empty() {
                             0
                         } else {
-                            self.indices[&child.rebrand()]
+                            self.durable_indices[&(owner.region_id(), child)]
                         }
                     })
                     .map_payloads(
@@ -229,9 +245,9 @@ impl<'a, G> FormatNodeCollector<'a, G> {
         let row = u32::try_from(self.rows.len())
             .ok()
             .and_then(|row| row.checked_add(1))
-            .ok_or_else(|| "format node row count exceeds u32".to_owned())?;
+            .ok_or_else(|| "too many format node rows".to_owned())?;
         self.rows.push(FormatNodeList { nodes: encoded });
-        self.indices.insert(root, row);
+        self.durable_indices.insert(key, row);
         Ok(row)
     }
 
@@ -309,20 +325,14 @@ impl DetachedFormatImage {
         }
         let pdf_roots = pdf_token_roots
             .into_iter()
-            .map(crate::env::DynamicMemoryRoot::TokenList)
-            .chain(
-                pdf_node_roots
-                    .into_iter()
-                    .map(crate::env::DynamicMemoryRoot::Nodes),
-            );
+            .map(crate::env::DynamicMemoryRoot::TokenList);
+        drop(pdf_node_roots);
         let (definitions, mut token_lists, mut glue) = core.capture_format_values(pdf_roots);
         let fonts = universe
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        let admitted = core.admit();
         let mut node_lists = FormatNodeCollector::new(
-            admitted,
             universe.page_region.nodes(),
             &mut token_lists,
             &mut glue,
@@ -335,7 +345,11 @@ impl DetachedFormatImage {
                         .map_err(|error| format!("cannot encode format token root: {error}"))
                 },
                 |nodes| {
-                    let row = node_lists.capture_root(nodes)?;
+                    let owner = universe
+                        .durable_forms
+                        .owner(nodes)
+                        .ok_or_else(|| "PDF form node owner is not live".to_owned())?;
+                    let row = node_lists.capture_owner(owner)?;
                     bincode::serialize(&row)
                         .map_err(|error| format!("cannot encode format node root: {error}"))
                 },
@@ -344,8 +358,18 @@ impl DetachedFormatImage {
             .ok_or(FormatError::NonEmptyPdfDocument)?;
         let mut cells = core
             .state()
-            .capture_format_cells(|nodes| node_lists.capture_root(nodes))
+            .capture_format_cells(|_| unreachable!("dense metadata has no node owners"))
             .map_err(FormatError::InvalidState)?;
+        let mut box_cells = Vec::new();
+        universe.durable_boxes.visit_current(|index, owner| {
+            box_cells.push((index, node_lists.capture_owner(owner)));
+        });
+        for (index, row) in box_cells {
+            cells.push(FormatCell::BoxRegister(
+                index,
+                row.map_err(FormatError::InvalidState)?,
+            ));
+        }
         // e-TeX change 17.11's `Dump the e-TeX state` writes the extended-mode
         // bit to the format header, then disables every optional enhancement
         // before tex.web's table-of-equivalents dump. `TeXXeTstate` is the
@@ -965,18 +989,15 @@ fn validate_pdf_format_roots(
                 ),
             })
         },
-        |recipe| {
+        |_object, recipe| {
             let row: u32 = bincode::deserialize(recipe)
                 .map_err(|error| format!("invalid PDF node root: {error}"))?;
-            if row as usize > node_count {
+            if row == 0 || row as usize > node_count {
                 return Err("PDF node root is out of range".to_owned());
             }
-            Ok((
-                crate::node_arena::DurableListId::empty(),
-                crate::state_hash::StateHashFragment::from_builder(
-                    0x666d_745f_6e6f_6465,
-                    |hasher| hasher.u32(row),
-                ),
+            Ok(crate::state_hash::StateHashFragment::from_builder(
+                0x666d_745f_6e6f_6465,
+                |hasher| hasher.u32(row),
             ))
         },
     )
@@ -1228,59 +1249,63 @@ impl<G> Universe<G> {
         &mut self,
         bytes: &[u8],
         token_lists: &[crate::TokenListId<G>],
-        node_lists: &[crate::node_arena::DurableListId<G>],
+        node_lists: &[crate::page_node_arena::PageListId],
     ) -> Result<(), FormatError> {
-        self.pdf = crate::pdf::PdfStateSlot::Owned(Box::new(
-            PdfState::restore_format_bytes(
-                bytes,
-                self.engine_usage.capacities().pdf,
-                |recipe| {
-                    let row: u32 = bincode::deserialize(recipe)
-                        .map_err(|error| format!("invalid PDF token root: {error}"))?;
-                    let tokens = token_lists
-                        .get(row as usize)
-                        .ok_or_else(|| "PDF token root is out of range".to_owned())?
-                        .clone();
-                    let admitted = self
-                        .core
-                        .as_ref()
-                        .expect("format candidate retains core")
-                        .admit();
-                    let words = admitted.token_list(tokens.clone());
-                    Ok(crate::pdf::PdfTokenParameter {
-                        tokens,
-                        semantic_id: crate::state_hash::StateHashFragment::from_exact_builder(
-                            0x7064_665f_746f_6b70,
-                            |hasher| {
-                                hasher.usize(words.len());
-                                for word in words {
-                                    hasher.u32(word.raw());
-                                }
-                            },
-                        ),
-                    })
-                },
-                |recipe| {
-                    let row: u32 = bincode::deserialize(recipe)
-                        .map_err(|error| format!("invalid PDF node root: {error}"))?;
-                    let nodes = if row == 0 {
-                        crate::node_arena::DurableListId::empty()
-                    } else {
-                        *node_lists
-                            .get(row as usize - 1)
-                            .ok_or_else(|| "PDF node root is out of range".to_owned())?
-                    };
-                    Ok((
-                        nodes,
-                        crate::state_hash::StateHashFragment::from_exact_builder(
-                            0x666d_745f_6e6f_6465,
-                            |hasher| hasher.u32(row),
-                        ),
-                    ))
-                },
-            )
-            .map_err(FormatError::InvalidState)?,
-        ));
+        let mut owners = Vec::new();
+        let pdf = PdfState::restore_format_bytes(
+            bytes,
+            self.engine_usage.capacities().pdf,
+            |recipe| {
+                let row: u32 = bincode::deserialize(recipe)
+                    .map_err(|error| format!("invalid PDF token root: {error}"))?;
+                let tokens = token_lists
+                    .get(row as usize)
+                    .ok_or_else(|| "PDF token root is out of range".to_owned())?
+                    .clone();
+                let admitted = self
+                    .core
+                    .as_ref()
+                    .expect("format candidate retains core")
+                    .admit();
+                let words = admitted.token_list(tokens.clone());
+                Ok(crate::pdf::PdfTokenParameter {
+                    tokens,
+                    semantic_id: crate::state_hash::StateHashFragment::from_exact_builder(
+                        0x7064_665f_746f_6b70,
+                        |hasher| {
+                            hasher.usize(words.len());
+                            for word in words {
+                                hasher.u32(word.raw());
+                            }
+                        },
+                    ),
+                })
+            },
+            |object, recipe| {
+                let row: u32 = bincode::deserialize(recipe)
+                    .map_err(|error| format!("invalid PDF node root: {error}"))?;
+                let root = row
+                    .checked_sub(1)
+                    .and_then(|row| node_lists.get(row as usize))
+                    .ok_or_else(|| "PDF node root is out of range".to_owned())?
+                    .to_owned();
+                let owner = self
+                    .page_region
+                    .nodes_mut()
+                    .copy_page_root_to_durable(root)
+                    .map_err(|_| "PDF form owner allocation failed".to_owned())?;
+                owners.push((object, owner));
+                Ok(crate::state_hash::StateHashFragment::from_exact_builder(
+                    0x666d_745f_6e6f_6465,
+                    |hasher| hasher.u32(row),
+                ))
+            },
+        )
+        .map_err(FormatError::InvalidState)?;
+        self.pdf = crate::pdf::PdfStateSlot::Owned(Box::new(pdf));
+        for (object, owner) in owners {
+            self.durable_forms.insert(object, owner);
+        }
         Ok(())
     }
 
@@ -1372,6 +1397,28 @@ impl<G> Universe<G> {
                 &fonts,
             )
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        for cell in &cells {
+            let FormatCell::BoxRegister(index, row) = *cell else {
+                continue;
+            };
+            let root = *node_lists.get(row as usize - 1).ok_or_else(|| {
+                FormatError::InvalidState("format box row is out of range".into())
+            })?;
+            let owner = self
+                .page_region
+                .nodes_mut()
+                .copy_page_root_to_durable(root)
+                .map_err(|_| FormatError::AllocationFailed)?;
+            self.durable_boxes
+                .assign(
+                    self.page_region.nodes_mut(),
+                    index,
+                    Some(owner),
+                    crate::AssignmentScope::Global,
+                    crate::env::banks::LEVEL_ONE,
+                )
+                .map_err(|_| FormatError::AllocationFailed)?;
+        }
         drop(cells);
         self.hyphenation = hyphenation;
         self.install_format_pdf(&metadata.pdf, &promoted.token_lists, &node_lists)?;
@@ -1384,9 +1431,8 @@ impl<G> Universe<G> {
         token_lists: &[crate::TokenListId<G>],
         glue: &[crate::GlueId<G>],
         fonts: &[crate::ids::FontId],
-    ) -> Result<Vec<crate::node_arena::DurableListId<G>>, FormatError> {
-        let mut installed: Vec<crate::node_arena::DurableListId<G>> =
-            Vec::with_capacity(rows.len());
+    ) -> Result<Vec<crate::page_node_arena::PageListId>, FormatError> {
+        let mut installed: Vec<crate::page_node_arena::PageListId> = Vec::with_capacity(rows.len());
         for row in rows {
             let nodes = {
                 let admitted = self
@@ -1405,7 +1451,7 @@ impl<G> Universe<G> {
                                 if child == 0 {
                                     crate::node_arena::PageListId::empty()
                                 } else {
-                                    installed[child as usize - 1].rebrand()
+                                    installed[child as usize - 1]
                                 }
                             })
                             .map_payloads(
@@ -1422,7 +1468,7 @@ impl<G> Universe<G> {
                 .nodes_mut()
                 .publish_owned(nodes)
                 .map_err(|_| FormatError::AllocationFailed)?;
-            installed.push(id.rebrand());
+            installed.push(id);
         }
         Ok(installed)
     }

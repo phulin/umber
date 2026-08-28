@@ -2,13 +2,13 @@ use super::*;
 use smallvec::SmallVec;
 use tex_state::world::ArtifactEffectOrdinal;
 
-pub(super) struct PageOverlay<G> {
+pub(super) struct PageOverlay {
     pub(super) pending_effect_count: usize,
     pub(super) effects: Vec<PageEffect>,
     pub(super) open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
-    pub(super) math: Vec<MathSubstitution<G>>,
-    pub(super) directions: Vec<DirectionPermutation<G>>,
-    pub(super) omitted_whatsits: Vec<(tex_state::ShipoutListId<G>, usize)>,
+    pub(super) math: Vec<MathSubstitution>,
+    pub(super) directions: Vec<DirectionPermutation>,
+    pub(super) omitted_whatsits: Vec<(tex_state::ShipoutListId, usize)>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     #[cfg(test)]
     pub(super) base_whatsit_visits: Vec<BaseWhatsitVisit>,
@@ -18,14 +18,14 @@ pub(super) struct PageOverlay<G> {
     announce_openout: bool,
 }
 
-pub(super) struct MathSubstitution<G> {
-    pub(super) list: tex_state::ShipoutListId<G>,
+pub(super) struct MathSubstitution {
+    pub(super) list: tex_state::ShipoutListId,
     pub(super) index: usize,
-    pub(super) replacement: tex_state::ShipoutListId<G>,
+    pub(super) replacement: tex_state::ShipoutListId,
 }
 
-pub(super) struct DirectionPermutation<G> {
-    pub(super) list: tex_state::ShipoutListId<G>,
+pub(super) struct DirectionPermutation {
+    pub(super) list: tex_state::ShipoutListId,
     pub(super) order: Vec<usize>,
 }
 
@@ -36,7 +36,7 @@ struct NormalizeExpansion<'a, G> {
 
 #[allow(clippy::too_many_arguments)] // Output traversal keeps independent immutable/replay inputs.
 pub(super) fn normalize_page<G>(
-    root: tex_state::ShipoutListId<G>,
+    root: tex_state::ShipoutListId,
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe<G>,
@@ -44,7 +44,7 @@ pub(super) fn normalize_page<G>(
     write_expander: &mut super::WriteExpander<'_, G>,
     replay_expander: &mut super::ReplayTextExpander<'_, G>,
     color_target: tex_state::PdfColorStackTarget,
-) -> Result<PageOverlay<G>, ExecError> {
+) -> Result<PageOverlay, ExecError> {
     let (root_vertical, root_box_lr) = root_box;
     let (pending, output_open_context, announce_openout) = effects_and_context;
     let PendingPageEffects {
@@ -125,13 +125,8 @@ pub(super) fn normalize_page<G>(
 
 enum NormalizeNode<G> {
     Leaf,
-    List(
-        tex_state::ShipoutListId<G>,
-        bool,
-        bool,
-        tex_state::node::BoxLr,
-    ),
-    Lists([tex_state::ShipoutListId<G>; 3]),
+    List(tex_state::ShipoutListId, bool, bool, tex_state::node::BoxLr),
+    Lists([tex_state::ShipoutListId; 3]),
     Whatsit(PreparedWhatsit<G>),
     Math(tex_state::math::MathListNode),
     Unsupported(&'static str),
@@ -191,9 +186,9 @@ fn normalize_list<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
-    list: tex_state::ShipoutListId<G>,
+    list: tex_state::ShipoutListId,
     context: NormalizeListContext,
-    overlay: &mut PageOverlay<G>,
+    overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     let NormalizeListContext {
         suppress_deferred_streams,
@@ -214,13 +209,6 @@ fn normalize_list<G>(
             stores
                 .shipout_scratch_nodes(id)
                 .expect("shipout scratch root belongs to the active transaction"),
-            box_lr,
-        ),
-        tex_state::ShipoutListId::Durable(id) => normalization_work_cursor(
-            stores
-                .node_list(id)
-                .expect("shipout root belongs to the live durable generation")
-                .nodes(),
             box_lr,
         ),
     };
@@ -322,11 +310,11 @@ fn normalize_index<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
-    list: tex_state::ShipoutListId<G>,
+    list: tex_state::ShipoutListId,
     index: usize,
     suppress_deferred_streams: bool,
     location: NormalizeLocation,
-    overlay: &mut PageOverlay<G>,
+    overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
     let action = match list {
@@ -346,15 +334,6 @@ fn normalize_index<G>(
                 .get(index)
                 .expect("normalization index belongs to the frozen list");
             classify_scratch_node(node, list, index, suppress_deferred_streams, in_hlist)
-        }
-        tex_state::ShipoutListId::Durable(id) => {
-            let node = stores
-                .node_list(id)
-                .expect("shipout root belongs to the live durable generation")
-                .nodes()
-                .owned_node(index)
-                .expect("normalization index belongs to the frozen list");
-            classify_durable_node(node, list, index, suppress_deferred_streams, in_hlist)
         }
     };
     match action {
@@ -459,7 +438,7 @@ fn normalize_index<G>(
 
 fn classify_page_node<G>(
     node: &Node,
-    source: tex_state::ShipoutListId<G>,
+    source: tex_state::ShipoutListId,
     index: usize,
     suppress_deferred_streams: bool,
     in_hlist: bool,
@@ -479,8 +458,8 @@ fn classify_page_node<G>(
 }
 
 fn classify_scratch_node<G>(
-    node: &tex_state::ShipoutScratchNode<G>,
-    source: tex_state::ShipoutListId<G>,
+    node: &tex_state::ShipoutScratchNode,
+    source: tex_state::ShipoutListId,
     index: usize,
     suppress_deferred_streams: bool,
     in_hlist: bool,
@@ -488,12 +467,17 @@ fn classify_scratch_node<G>(
     if let Node::Whatsit(whatsit) = node {
         return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
     }
-    classify_transient_node(node, |list| list, suppress_deferred_streams, in_hlist)
+    classify_transient_node(
+        node,
+        tex_state::ShipoutListId::Scratch,
+        suppress_deferred_streams,
+        in_hlist,
+    )
 }
 
 fn prepare_whatsit<G, Glue: Copy, Tokens: Clone>(
     whatsit: &Whatsit<Glue, Tokens>,
-    source: tex_state::ShipoutListId<G>,
+    source: tex_state::ShipoutListId,
     index: usize,
     resolve_glue: impl Fn(Glue) -> tex_state::glue::GlueSpec,
 ) -> PreparedWhatsit<G> {
@@ -578,7 +562,7 @@ fn prepare_whatsit<G, Glue: Copy, Tokens: Clone>(
 
 fn classify_transient_node<G, List: Copy, Glue, Tokens>(
     node: &Node<List, Glue, Tokens>,
-    map: impl Fn(List) -> tex_state::ShipoutListId<G>,
+    map: impl Fn(List) -> tex_state::ShipoutListId,
     suppress_deferred_streams: bool,
     in_hlist: bool,
 ) -> NormalizeNode<G> {
@@ -640,24 +624,6 @@ fn classify_transient_node<G, List: Copy, Glue, Tokens>(
     }
 }
 
-fn classify_durable_node<G>(
-    node: &Node,
-    source: tex_state::ShipoutListId<G>,
-    index: usize,
-    suppress_deferred_streams: bool,
-    in_hlist: bool,
-) -> NormalizeNode<G> {
-    if let Node::Whatsit(whatsit) = node {
-        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
-    }
-    classify_transient_node(
-        node,
-        tex_state::ShipoutListId::durable_child,
-        suppress_deferred_streams,
-        in_hlist,
-    )
-}
-
 #[cfg(test)]
 fn prepared_whatsit_visit_kind<G>(whatsit: &PreparedWhatsit<G>) -> Option<BaseWhatsitVisitKind> {
     match whatsit {
@@ -701,7 +667,7 @@ fn prepared_whatsit_is_anchored<G>(
 #[allow(clippy::too_many_arguments)]
 fn append_prepared_pdf_thread<G>(
     stores: &mut Universe<G>,
-    overlay: &mut PageOverlay<G>,
+    overlay: &mut PageOverlay,
     identifier: PreparedPdfIdentifier<G>,
     dimensions: tex_state::PdfAnnotationDimensions,
     attributes: tex_state::ShipoutTokenSource<G>,
@@ -800,7 +766,7 @@ fn render_prepared_pdf_identity<G>(
 
 fn append_prepared_pdf_destination<G>(
     stores: &mut Universe<G>,
-    overlay: &mut PageOverlay<G>,
+    overlay: &mut PageOverlay,
     identifier: PreparedPdfIdentifier<G>,
     structure: Option<u32>,
     kind: tex_state::node::PdfDestinationKind,
@@ -881,7 +847,7 @@ fn append_whatsit_effect<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
-    overlay: &mut PageOverlay<G>,
+    overlay: &mut PageOverlay,
     whatsit: PreparedWhatsit<G>,
     suppress_deferred_streams: bool,
     location: NormalizeLocation,

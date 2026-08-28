@@ -338,7 +338,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                     target,
                     children,
                 } => {
-                    let boxed = lower_math_box(&boxed, tex_state::ShipoutListId::Scratch(children));
+                    let boxed = lower_math_box(&boxed, children);
                     self.stores.push_shipout_scratch_node(
                         target,
                         if vertical {
@@ -375,10 +375,12 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 } else {
                                     Node::HList(source_box)
                                 };
-                                self.stores.push_shipout_scratch_node(
-                                    target,
-                                    source_node.map_lists(tex_state::ShipoutListId::Page),
-                                );
+                                let source_node = source_node.map_lists(|child| {
+                                    self.stores
+                                        .copy_page_list_to_shipout_scratch(child)
+                                        .expect("native math box children remain live")
+                                });
+                                self.stores.push_shipout_scratch_node(target, source_node);
                                 continue;
                             }
                             let children = self.stores.begin_shipout_scratch_list();
@@ -412,14 +414,19 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                             },
                         ),
                         MathNode::Glue { spec, kind, leader } => {
+                            let leader = leader.map(|leader| {
+                                leader.map_lists(|child| {
+                                    self.stores
+                                        .copy_page_list_to_shipout_scratch(child)
+                                        .expect("math leader children remain live")
+                                })
+                            });
                             self.stores.push_shipout_scratch_node(
                                 target,
                                 Node::Glue {
                                     spec: *spec,
                                     kind: lower_math_glue_kind(*kind),
-                                    leader: leader.map(|leader| {
-                                        leader.map_lists(tex_state::ShipoutListId::Page)
-                                    }),
+                                    leader,
                                 },
                             )
                         }
@@ -446,7 +453,11 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 .owned_node(*index as usize)
                                 .expect("math native source index remains live")
                                 .clone()
-                                .map_lists(tex_state::ShipoutListId::Page);
+                                .map_lists(|child| {
+                                    self.stores
+                                        .copy_page_list_to_shipout_scratch(child)
+                                        .expect("native math source children remain live")
+                                });
                             self.stores.push_shipout_scratch_node(target, node);
                         }
                     }

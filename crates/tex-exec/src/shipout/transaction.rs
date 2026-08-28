@@ -73,7 +73,7 @@ pub fn retry_unavailable_stream_open<G>(
 /// transaction argument rather than entering that detached value.
 #[allow(clippy::too_many_arguments)] // Shipout is the explicit join of transaction capabilities and page policy.
 pub(crate) fn shipout_node<G>(
-    source: direct::ShipoutRoot<G>,
+    source: direct::ShipoutRoot,
     region: Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
@@ -144,7 +144,6 @@ pub(crate) fn shipout_node<G>(
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = cacheable.then(|| match &source {
         direct::ShipoutRoot::Page(node) => shipout_key(stores, node),
-        direct::ShipoutRoot::Durable(_) => unreachable!("durable shipout memo is not admitted"),
     });
     if cacheable {
         stores.with_pure_memo(|memo| {
@@ -368,7 +367,7 @@ fn retain_failed_page<G>(
 fn report_huge_page_deleted_box<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    source: &direct::ShipoutRoot<G>,
+    source: &direct::ShipoutRoot,
     tracing_output: i32,
 ) {
     if tracing_output > 0 {
@@ -379,9 +378,6 @@ fn report_huge_page_deleted_box<G>(
     let dump = match source {
         direct::ShipoutRoot::Page(node) => {
             crate::node_dump::dump_node_slice(&command, std::slice::from_ref(node), config)
-        }
-        direct::ShipoutRoot::Durable(list) => {
-            crate::node_dump::dump_durable_list(&command, *list, config)
         }
     };
     let mut diagnostic = command.begin_diagnostic(diagnostic_effects);
@@ -394,7 +390,7 @@ fn report_huge_page_deleted_box<G>(
 
 #[allow(clippy::too_many_arguments)] // Staging retains the same explicit capabilities at the replay boundary.
 pub(crate) fn stage_page<G>(
-    source: direct::ShipoutRoot<G>,
+    source: direct::ShipoutRoot,
     region: Option<tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>>,
     origin: ShipoutOrigin,
     pending_effect_end: usize,
@@ -442,10 +438,10 @@ pub(crate) fn stage_form<G>(
 }
 
 fn shipout_geometry<G>(
-    source: &direct::ShipoutRoot<G>,
+    source: &direct::ShipoutRoot,
     stores: &mut Universe<G>,
 ) -> Option<ShipoutGeometry> {
-    let (width, height, depth) = shipout_box_dimensions(source, stores)?;
+    let (width, height, depth) = shipout_box_dimensions(source)?;
     let command = stores
         .command_context()
         .expect("shipout geometry runs inside an admitted command episode");
@@ -638,9 +634,8 @@ fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
     visit(stores, root)
 }
 
-fn shipout_box_dimensions<G>(
-    source: &direct::ShipoutRoot<G>,
-    stores: &Universe<G>,
+fn shipout_box_dimensions(
+    source: &direct::ShipoutRoot,
 ) -> Option<(
     tex_state::scaled::Scaled,
     tex_state::scaled::Scaled,
@@ -651,19 +646,11 @@ fn shipout_box_dimensions<G>(
             Some((node.width, node.height, node.depth))
         }
         direct::ShipoutRoot::Page(_) => None,
-        direct::ShipoutRoot::Durable(list) => {
-            match stores.node_list(*list).ok()?.nodes().first()? {
-                Node::HList(node) | Node::VList(node) => {
-                    Some((node.width, node.height, node.depth))
-                }
-                _ => None,
-            }
-        }
     }
 }
 
-fn huge_shipout_box<G>(source: &direct::ShipoutRoot<G>, stores: &Universe<G>) -> bool {
-    let Some((width, height, depth)) = shipout_box_dimensions(source, stores) else {
+fn huge_shipout_box<G>(source: &direct::ShipoutRoot, stores: &Universe<G>) -> bool {
+    let Some((width, height, depth)) = shipout_box_dimensions(source) else {
         return false;
     };
     height > tex_state::scaled::Scaled::MAX_DIMEN

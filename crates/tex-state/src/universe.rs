@@ -9,7 +9,10 @@ use crate::dependency::{
 };
 use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
-use crate::env::{AssignmentScope, CodeTableKind, DenseStateCursor, StateError};
+use crate::env::{
+    AcceptedDurableBoxTail, AssignmentScope, CodeTableKind, DenseStateCursor, DurableBoxCursor,
+    DurableBoxState, DurableFormState, StateError,
+};
 use crate::font::{AcceptedFontStoreTail, FontStore, FontStoreMark};
 use crate::fork_arena::{CheckpointMark, OperationMark, PageMaterialLane};
 use crate::generation::{GenerationBrand, GenerationCursor, GenerationOwner, with_generation};
@@ -23,7 +26,7 @@ use crate::interner::{
 use crate::journal::{JournalCursor, StateOperation};
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
-use crate::node_arena::{DurableListId, NodeArenaError, PageListId};
+use crate::node_arena::{NodeArenaError, PageListId};
 use crate::page::{
     AcceptedPageRegionHistoryTail, PageCheckpointMark, PageRegionCheckpointKey, PageRegionHistory,
 };
@@ -204,6 +207,7 @@ struct CheckpointStateCandidate<G> {
     generation: GenerationCursor,
     core: AcceptedStateCoreTail<G>,
     page: AcceptedPageRegionHistoryTail,
+    durable_boxes: AcceptedDurableBoxTail,
     source_mark: SourceMapMark,
     sources: AcceptedSourceMapTail,
     font_mark: FontStoreMark,
@@ -539,7 +543,11 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
                 .page_region
                 .builder_mut()
                 .rollback_transaction(rollback.page);
+            let form_count = rollback.pdf.form_count();
             self.universe.pdf.rollback(rollback.pdf);
+            self.universe
+                .durable_forms
+                .truncate(self.universe.page_region.nodes_mut(), form_count);
             self.universe.world.rollback(&rollback.world);
             self.universe.prepared_mag = rollback.prepared_mag;
             self.universe.engine_usage = rollback.engine_usage;
@@ -655,7 +663,7 @@ pub enum NodePromotionError {
 
 /// Fixed-size tex-state portion of a retained aggregate checkpoint.
 pub type StateCheckpointMark<G, Input = DenseStateCursor> =
-    BoundedStateMark<JournalCursor<G>, (), CheckpointMark<PageMaterialLane>, Input>;
+    BoundedStateMark<JournalCursor<G>, DurableBoxCursor, CheckpointMark<PageMaterialLane>, Input>;
 
 /// Coarse generation owner plus bounded state cursors.
 pub type StateCheckpoint<G, Input = DenseStateCursor> =
@@ -714,6 +722,8 @@ pub struct Universe<G> {
     pub(crate) interner: Option<InternerLease>,
     pub(crate) core: Option<StateCore<G>>,
     pub(crate) page_region: PageRegionHistory,
+    pub(crate) durable_boxes: DurableBoxState,
+    pub(crate) durable_forms: DurableFormState,
     checkpoint_candidate: Option<CheckpointStateCandidate<G>>,
     shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
@@ -728,7 +738,6 @@ pub struct Universe<G> {
     prepared_mag: Option<i32>,
     error_context_widths: ErrorContextWidths,
     pub(crate) engine_usage: crate::command_context::EngineUsageRuntime,
-    dynamic_memory_scratch: crate::stores::DynamicMemoryScratch<G>,
     pub(crate) provenance_demand: crate::ProvenanceDemand,
     pub(crate) provenance_budgets: crate::ProvenanceBudgets,
     primitive_registry: Rc<PrimitiveRegistry<G>>,
@@ -750,7 +759,7 @@ impl<G> Universe<G> {
         core.owns_generation(checkpoint.state.owner())
             && core.state().validate_restore(*mark.journal()).is_ok()
             && core.state().validate_checkpoint_cursor(*mark.input())
-            && core.validate_durable_node_cursor(*mark.durable()).is_ok()
+            && self.durable_boxes.validates_cursor(*mark.durable())
             && core.validates_generation_cursor(checkpoint.generation)
             && self
                 .page_region
@@ -763,11 +772,14 @@ impl<G> Universe<G> {
         checkpoint: &RuntimeCheckpoint<G>,
     ) -> Result<(), UniverseError> {
         let mark = *checkpoint.state.mark();
-        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        core.state_mut().restore(*mark.journal())?;
-        core.state_mut().restore_checkpoint_cursor(*mark.input());
-        core.restore_durable_node_cursor(*mark.durable())?;
-        core.restore_generation_cursor(checkpoint.generation);
+        {
+            let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+            core.state_mut().restore(*mark.journal())?;
+            core.state_mut().restore_checkpoint_cursor(*mark.input());
+            core.restore_generation_cursor(checkpoint.generation);
+        }
+        self.durable_boxes
+            .restore(self.page_region.nodes_mut(), *mark.durable());
         Ok(())
     }
 
@@ -886,12 +898,13 @@ impl<G> Universe<G> {
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
-            .begin_checkpoint_candidate(
-                *mark.journal(),
-                *mark.input(),
-                *mark.durable(),
-                checkpoint.generation,
-            )?;
+            .begin_checkpoint_candidate(*mark.journal(), *mark.input(), checkpoint.generation)?;
+        let durable_box_tail = self
+            .durable_boxes
+            .begin_checkpoint_candidate(self.page_region.nodes_mut(), *mark.durable())
+            .map_err(StateError::Bank)?;
+        self.durable_forms
+            .begin_candidate(checkpoint.pdf.form_count());
         // PageBuilder roots must select the checkpoint prefix while every
         // accepted page-material chunk is still attached. The arena selection
         // was prevalidated above, so detachment is infallible after this root
@@ -922,10 +935,13 @@ impl<G> Universe<G> {
             interner: None,
             core: Some(core),
             page_region,
+            durable_boxes: std::mem::replace(&mut self.durable_boxes, DurableBoxState::new()),
+            durable_forms: std::mem::replace(&mut self.durable_forms, DurableFormState::new()),
             checkpoint_candidate: Some(CheckpointStateCandidate {
                 mark: *mark,
                 generation: checkpoint.generation,
                 core: core_tail,
+                durable_boxes: durable_box_tail,
                 page: page_tail,
                 source_mark: checkpoint.sources,
                 sources: source_tail,
@@ -947,7 +963,6 @@ impl<G> Universe<G> {
             prepared_mag: checkpoint.prepared_mag,
             error_context_widths: self.error_context_widths,
             engine_usage: checkpoint.engine_usage.clone(),
-            dynamic_memory_scratch: crate::stores::DynamicMemoryScratch::default(),
             provenance_demand: self.provenance_demand,
             provenance_budgets: self.provenance_budgets,
             primitive_registry: Rc::clone(&self.primitive_registry),
@@ -984,6 +999,14 @@ impl<G> Universe<G> {
         candidate
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
+        candidate.durable_boxes.reject_checkpoint_candidate(
+            candidate.page_region.nodes_mut(),
+            *mark.durable(),
+            transaction.durable_boxes,
+        );
+        candidate
+            .durable_forms
+            .reject_candidate(candidate.page_region.nodes_mut());
         let mut core = candidate
             .core
             .take()
@@ -991,13 +1014,16 @@ impl<G> Universe<G> {
         core.reject_checkpoint_candidate(
             *mark.journal(),
             *mark.input(),
-            *mark.durable(),
             transaction.generation,
             transaction.core,
         )
         .expect("validated candidate state can undo and redo");
         self.core = Some(core);
         self.page_region = std::mem::take(&mut candidate.page_region);
+        self.durable_boxes =
+            std::mem::replace(&mut candidate.durable_boxes, DurableBoxState::new());
+        self.durable_forms =
+            std::mem::replace(&mut candidate.durable_forms, DurableFormState::new());
         self.sources = std::mem::take(&mut candidate.sources);
         self.fonts = std::mem::take(&mut candidate.fonts);
         self.world = std::mem::take(&mut candidate.world);
@@ -1018,6 +1044,10 @@ impl<G> Universe<G> {
             .as_mut()
             .expect("the current lineage owns the direct state core")
             .accept_checkpoint_candidate(transaction.core);
+        self.durable_boxes
+            .accept_checkpoint_candidate(self.page_region.nodes_mut(), transaction.durable_boxes);
+        self.durable_forms
+            .accept_candidate(self.page_region.nodes_mut());
         self.world.accept_checkpoint_candidate(transaction.world);
         self.dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
@@ -1181,6 +1211,8 @@ impl<G> Universe<G> {
             interner: Some(interner),
             core: Some(core),
             page_region,
+            durable_boxes: DurableBoxState::new(),
+            durable_forms: DurableFormState::new(),
             checkpoint_candidate: None,
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
@@ -1194,7 +1226,6 @@ impl<G> Universe<G> {
             prepared_mag: None,
             error_context_widths: ErrorContextWidths::default(),
             engine_usage: crate::command_context::EngineUsageRuntime::default(),
-            dynamic_memory_scratch: crate::stores::DynamicMemoryScratch::default(),
             provenance_demand: crate::ProvenanceDemand::default(),
             provenance_budgets: crate::ProvenanceBudgets::default(),
             primitive_registry: Rc::new(PrimitiveRegistry::default()),
@@ -1990,19 +2021,6 @@ impl<G> Universe<G> {
             .promote_format_values(definitions, live_definitions, token_lists, glue_values)
     }
 
-    /// Resolves a runtime alias or materializes one cold loaded-format closure.
-    fn resolve_box_root_to_page(
-        &mut self,
-        root: DurableListId<G>,
-    ) -> Result<PageListId, NodeArenaError> {
-        let page_root = root.rebrand();
-        self.page_region
-            .nodes()
-            .contains(page_root)
-            .then_some(page_root)
-            .ok_or(NodeArenaError::InvalidList)
-    }
-
     /// Publishes a page-lifetime node list by moving the caller's buffer.
     pub fn publish_page_nodes_owned(&mut self, nodes: Vec<Node>) -> PageListId {
         let words = tex_memory_words(&nodes, self.engine_usage.uses_etex_node_sizes());
@@ -2048,16 +2066,13 @@ impl<G> Universe<G> {
     pub fn push_shipout_scratch_node(
         &mut self,
         list: ShipoutScratchListId,
-        node: ShipoutScratchNode<G>,
+        node: ShipoutScratchNode,
     ) {
         self.shipout_scratch.push(list, node);
     }
 
     /// Resolves one live shipout-only scratch row.
-    pub fn shipout_scratch_nodes(
-        &self,
-        id: ShipoutScratchListId,
-    ) -> Option<&[ShipoutScratchNode<G>]> {
+    pub fn shipout_scratch_nodes(&self, id: ShipoutScratchListId) -> Option<&[ShipoutScratchNode]> {
         self.shipout_scratch.get(id)
     }
 
@@ -2198,41 +2213,32 @@ impl<G> Universe<G> {
         Ok(())
     }
 
-    pub fn assign_box_register(
-        &mut self,
-        index: u16,
-        value: Option<DurableListId<G>>,
-        scope: AssignmentScope,
-    ) -> Result<(), UniverseError> {
-        self.live_state_mut()?
-            .assign_box_register(index, value, scope)?;
-        Ok(())
-    }
-
-    /// Rebrands a page-lifetime box coordinate and assigns it atomically at
-    /// the TeX state boundary without moving its graph.
+    /// Cold-copies a page-lifetime closure into an independently owned durable
+    /// region and assigns that owner atomically at the TeX state boundary.
     pub fn assign_page_box(
         &mut self,
         index: u16,
         value: Option<PageListId>,
         scope: AssignmentScope,
     ) -> Result<(), NodePromotionError> {
-        let durable = value.map(|root| root.rebrand());
-        if durable.is_some() {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_node_coordinate_transfer();
-        }
-        self.live_state_mut()
-            .map_err(|error| {
-                NodePromotionError::Values(match error {
-                    UniverseError::State(StateError::GenerationInUse) => {
-                        PromotionError::GenerationInUse
-                    }
-                    UniverseError::Retired => PromotionError::Retired,
-                    _ => PromotionError::AllocationFailed,
-                })
-            })?
-            .assign_box_register(index, durable, scope)
+        let durable = value
+            .map(|root| self.page_region.nodes_mut().copy_page_root_to_durable(root))
+            .transpose()
+            .map_err(|_| NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+        let current_level = self
+            .core
+            .as_ref()
+            .ok_or(NodePromotionError::Values(PromotionError::Retired))?
+            .state()
+            .current_level();
+        self.durable_boxes
+            .assign(
+                self.page_region.nodes_mut(),
+                index,
+                durable,
+                scope,
+                current_level,
+            )
             .map_err(|_| NodePromotionError::Values(PromotionError::AllocationFailed))?;
         Ok(())
     }
@@ -2259,12 +2265,12 @@ impl<G> Universe<G> {
 
     /// Promotes and replaces a box while retaining its current eq level.
     pub fn replace_page_box(&mut self, index: u16, value: PageListId) {
-        let durable = value.rebrand();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_node_coordinate_transfer();
-        self.live_state_mut()
-            .expect("live generation is admitted")
-            .replace_box_register(index, Some(durable))
+        let durable = self
+            .page_nodes
+            .copy_page_root_to_durable(value)
+            .expect("live page box copy must succeed");
+        self.durable_boxes
+            .replace(self.page_region.nodes_mut(), index, Some(durable))
             .expect("box register index is admitted")
     }
 
@@ -2274,53 +2280,34 @@ impl<G> Universe<G> {
     /// their coordinate. A box loaded from a detached format is materialized
     /// once into the destination arena on first use.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        self.box_register(index)
-            .expect("box register index is admitted")
-            .map(|root| {
-                self.resolve_box_root_to_page(root)
-                    .expect("durable box closure belongs to the live generation")
-            })
+        self.durable_boxes
+            .copy_to_page(self.page_region.nodes_mut(), index)
+            .expect("box copy must succeed")
     }
 
     /// Moves a box-register closure into page storage while preserving the
     /// register's TeX eq level.
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        let copied = self.copy_box_to_page(index);
-        if copied.is_some() {
-            self.live_state_mut()
-                .expect("live generation is admitted")
-                .replace_box_register(index, None)
-                .expect("box register index is admitted");
-        }
-        copied
+        self.durable_boxes
+            .take_to_page(self.page_region.nodes_mut(), index)
+            .expect("box transfer must succeed")
     }
 
     /// Voids one register without changing its TeX eq level.
     pub fn clear_box_preserving_level(&mut self, index: u16) {
-        self.live_state_mut()
-            .expect("live generation is admitted")
-            .replace_box_register(index, None)
+        self.durable_boxes
+            .replace(self.page_region.nodes_mut(), index, None)
             .expect("box register index is admitted")
     }
 
-    pub fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, UniverseError> {
-        Ok(self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .admit()
-            .state()
-            .box_register(index)?)
+    pub fn box_register(&self, index: u16) -> Option<crate::env::DurableNodeMetadata> {
+        self.durable_boxes.metadata(index)
     }
 
-    pub fn node_list(
-        &self,
-        id: DurableListId<G>,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, UniverseError> {
-        self.page_region
-            .nodes()
-            .node_cursor(id.rebrand())
-            .map_err(|_| UniverseError::NodeArena(NodeArenaError::InvalidList))
+    pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
+        self.durable_forms
+            .copy_to_page(self.page_region.nodes_mut(), object)
+            .expect("PDF form copy must succeed")
     }
 
     /// Resolves a child coordinate borrowed from a durable root.
@@ -2362,13 +2349,18 @@ impl<G> Universe<G> {
     }
 
     pub fn begin_state_operation(&mut self) -> Result<StateOperation<G>, UniverseError> {
-        Ok(self.live_state_mut()?.begin_state_operation())
+        let mut operation = self.live_state_mut()?.begin_state_operation();
+        operation.attach_durable_box(self.durable_boxes.begin_operation());
+        Ok(operation)
     }
 
     pub fn commit_state_operation(
         &mut self,
-        operation: StateOperation<G>,
+        mut operation: StateOperation<G>,
     ) -> Result<(), UniverseError> {
+        let durable = operation.take_durable_box();
+        self.durable_boxes
+            .commit_operation(self.page_region.nodes_mut(), durable);
         self.live_state_mut()?.commit_state_operation(operation);
         Ok(())
     }
@@ -2388,7 +2380,10 @@ impl<G> Universe<G> {
             .journal_retained_bytes())
     }
 
-    pub fn restore_state(&mut self, operation: StateOperation<G>) -> Result<(), UniverseError> {
+    pub fn restore_state(&mut self, mut operation: StateOperation<G>) -> Result<(), UniverseError> {
+        let durable = operation.take_durable_box();
+        self.durable_boxes
+            .rollback_operation(self.page_region.nodes_mut(), durable);
         self.live_state_mut()?.rollback_state_operation(operation)?;
         Ok(())
     }
@@ -2423,7 +2418,7 @@ impl<G> Universe<G> {
         let dense = core.state().checkpoint_cursor();
         Ok(GenerationCheckpoint::new(
             owner,
-            BoundedStateMark::new(journal, core.durable_node_cursor(), page, dense),
+            BoundedStateMark::new(journal, self.durable_boxes.checkpoint_cursor(), page, dense),
         ))
     }
 
@@ -2530,19 +2525,23 @@ impl<G> Universe<G> {
                 .saturating_add(self.fonts.checkpoint_retained_bytes(font_mark)),
         };
         let pdf = self.pdf.snapshot();
-        let core_identity = live_core.reachable_state_identity_root().map(|core| {
-            crate::state_hash::semantic_scalar_root(0x636f_7265_5f61_6767, |hasher| {
-                hasher.u64(core);
-                hasher.u8(self.interaction_mode as u8);
-                match self.prepared_mag {
-                    Some(mag) => {
-                        hasher.bool(true);
-                        hasher.i32(mag);
+        let core_identity = live_core
+            .reachable_state_identity_root()
+            .zip(self.durable_boxes.semantic_identity_root())
+            .map(|(core, boxes)| {
+                crate::state_hash::semantic_scalar_root(0x636f_7265_5f61_6767, |hasher| {
+                    hasher.u64(core);
+                    hasher.u64(boxes);
+                    hasher.u8(self.interaction_mode as u8);
+                    match self.prepared_mag {
+                        Some(mag) => {
+                            hasher.bool(true);
+                            hasher.i32(mag);
+                        }
+                        None => hasher.bool(false),
                     }
-                    None => hasher.bool(false),
-                }
-            })
-        });
+                })
+            });
         let identity_roots = RuntimeCheckpointIdentityRoots {
             page: wants_reachable_state_identity
                 .then(|| self.page_region.checkpoint_identity_root(page))
@@ -2646,7 +2645,10 @@ impl<G> Universe<G> {
             .restore_checkpoint(checkpoint.page)
             .expect("runtime restore prevalidated the page-region checkpoint");
         if !generation_fork {
+            let form_count = checkpoint.pdf.form_count();
             self.pdf.rollback(checkpoint.pdf.clone());
+            self.durable_forms
+                .truncate(self.page_region.nodes_mut(), form_count);
         }
         if !generation_fork {
             self.world.rollback(&checkpoint.world);
@@ -2760,14 +2762,28 @@ impl<G> Universe<G> {
         kind: GroupKind,
         entered_line: u32,
     ) -> Result<GroupFrame, UniverseError> {
-        Ok(self.live_state_mut()?.begin_group(kind, entered_line)?)
+        let frame = self.live_state_mut()?.begin_group(kind, entered_line)?;
+        self.durable_boxes.begin_group(frame.level());
+        Ok(frame)
     }
 
     pub fn end_group(
         &mut self,
         kind: GroupKind,
     ) -> Result<crate::GroupRestorationReceipt<G>, UniverseError> {
-        Ok(self.live_state_mut()?.end_group(kind)?)
+        let mut receipt = self.live_state_mut()?.end_group(kind)?;
+        let trace = self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .state()
+            .group_restoration_trace_state()?;
+        let durable = self
+            .durable_boxes
+            .end_group(self.page_region.nodes_mut(), receipt.frame().level())
+            .map_err(StateError::Bank)?;
+        receipt.append_durable(durable, trace);
+        Ok(receipt)
     }
 
     /// Admits matching coarse owners once for a command episode.
@@ -2786,6 +2802,8 @@ impl<G> Universe<G> {
             dependencies: &mut self.dependencies,
             fonts: &mut self.fonts,
             page_nodes,
+            durable_boxes: &mut self.durable_boxes,
+            durable_forms: &mut self.durable_forms,
             shipout_scratch: &mut self.shipout_scratch,
             page,
             pdf: &mut self.pdf,
@@ -2795,7 +2813,6 @@ impl<G> Universe<G> {
             prepared_mag: &mut self.prepared_mag,
             error_context_widths: self.error_context_widths,
             engine_usage: &mut self.engine_usage,
-            dynamic_memory_scratch: &mut self.dynamic_memory_scratch,
         }))
     }
 
@@ -2925,6 +2942,10 @@ impl<G> Universe<G> {
                 .take()
                 .expect("live generation has one command authority"),
         );
+        std::mem::replace(&mut self.durable_boxes, DurableBoxState::new())
+            .retire_all(self.page_region.nodes_mut());
+        std::mem::replace(&mut self.durable_forms, DurableFormState::new())
+            .retire_all(self.page_region.nodes_mut());
         self.core.take().map_or_else(
             || Ok(StateCoreRetirement::transferred()),
             |core| core.retire().map_err(UniverseError::State),
@@ -3028,7 +3049,9 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
         if !core.state().validate_checkpoint_cursor(*mark.input()) {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        core.validate_durable_node_cursor(*mark.durable())?;
+        if !self.durable_boxes.validates_cursor(*mark.durable()) {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
         if !self
             .page_region
             .nodes()
@@ -3065,8 +3088,8 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
             .as_mut()
             .expect("restore plan validated a live state core");
         core.state_mut().restore_checkpoint_cursor(*mark.input());
-        core.truncate_durable_nodes(*mark.durable())
-            .expect("restore plan prevalidated durable-node suffix");
+        self.durable_boxes
+            .restore(self.page_region.nodes_mut(), *mark.durable());
         self.page_region
             .nodes_mut()
             .restore_checkpoint(*mark.page())

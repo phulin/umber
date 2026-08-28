@@ -1699,14 +1699,13 @@ fn execute_loaded_format(
 
 /// Detaches only the box registers selected by the fixture projection.
 fn capture_box_outlines<G>(
-    universe: &tex_state::Universe<G>,
+    universe: &mut tex_state::Universe<G>,
     projection: &Projection,
 ) -> Result<BTreeMap<u16, Option<Vec<umber::DetachedNodeOutlineEntry>>>, String> {
     let mut outlines = BTreeMap::new();
     for &register in &projection.box_registers {
         let nodes = universe
-            .box_register(register)
-            .map_err(|error| format!("box projection: {error:?}"))?
+            .copy_box_to_page(register)
             .map(|root| {
                 let mut output = Vec::new();
                 push_live_node_outline(
@@ -1726,13 +1725,13 @@ fn capture_box_outlines<G>(
 
 fn push_live_node_outline<G>(
     universe: &tex_state::Universe<G>,
-    root: tex_state::node_arena::DurableListId<G>,
+    root: tex_state::node_arena::PageListId,
     path: &mut Vec<usize>,
     depth: u8,
     output: &mut Vec<umber::DetachedNodeOutlineEntry>,
 ) -> Result<(), String> {
     let list = universe
-        .node_list(root)
+        .page_node_list(root)
         .map_err(|error| format!("box outline root: {error:?}"))?;
     push_live_node_children(universe, list.nodes(), path, depth, output)
 }
@@ -1754,7 +1753,7 @@ fn push_live_node_children<G>(
             && let tex_state::node::Node::HList(boxed) | tex_state::node::Node::VList(boxed) = node
         {
             let children = universe
-                .durable_child_node_list(boxed.children)
+                .page_node_list(boxed.children)
                 .map_err(|error| format!("box outline child: {error:?}"))?;
             push_live_node_children(universe, children.nodes(), path, depth - 1, output)?;
         }

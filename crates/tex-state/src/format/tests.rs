@@ -1036,12 +1036,9 @@ fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
                     .font_name(font),
                 "formatfont"
             );
-            let root = universe
-                .box_register(12)
-                .expect("box register")
-                .expect("box root");
+            let root = universe.copy_box_to_page(12).expect("box root");
             let context = universe.command_context().expect("node admission");
-            let nodes = context.node_list(root).expect("node list").nodes();
+            let nodes = context.page_node_list(root).expect("node list").nodes();
             assert!(matches!(
                 nodes.owned_node(0),
                 Some(Node::Char { font: node_font, ch: 'X', .. })
