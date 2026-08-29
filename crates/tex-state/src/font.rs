@@ -752,7 +752,7 @@ impl FontStore {
                 Some(fragment) => fragment,
                 None => {
                     let fragment = hash_fragments.len();
-                    hash_fragments.push(font_hash_fragment(&font));
+                    hash_fragments.push(font_hash_fragment(font));
                     hash_fragments_by_key.insert(fragment_key, fragment);
                     fragment
                 }

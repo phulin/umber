@@ -639,7 +639,7 @@ fn compact_inverse_layout_and_representative_recorded_bytes_are_exact() {
     let layout = super::journal::inverse_layout_for_test();
     assert_eq!(
         layout,
-        [16, 48, 128, 72, 160, 56, 8, 152, 168, 840],
+        [16, 40, 128, 64, 144, 48, 8, 152, 168, 800],
         "descriptor, list root, alignment, fraction, display interrupt, equation number, previous depth, pending projection, pending value, and popped level layouts"
     );
     let [
@@ -661,8 +661,8 @@ fn compact_inverse_layout_and_representative_recorded_bytes_are_exact() {
         + 1_334 * (descriptor + prev_depth)
         + 908 * (descriptor + layout[3]);
     assert_eq!(profiled_inline_calls + 1_334 + 908, 233_236);
-    assert_eq!(profiled_recorded_bytes, 3_807_824);
-    assert_eq!(233_236 * 624 - profiled_recorded_bytes, 141_731_440);
+    assert_eq!(profiled_recorded_bytes, 3_800_560);
+    assert_eq!(233_236 * 624 - profiled_recorded_bytes, 141_738_704);
 
     let mut scalar = ModeNest::new();
     scalar.reset_journal_for_test();

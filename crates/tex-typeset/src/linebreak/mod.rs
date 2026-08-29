@@ -792,10 +792,10 @@ fn observe_expansion_fonts<S: TypesetState>(
         }
         match node {
             Node::Char { font, .. } | Node::Lig { font, .. } => {
-                if let Some(spec) = state.font_expansion_spec(*font) {
-                    if let Err(found) = paragraph.observe(spec) {
-                        error = Some(found);
-                    }
+                if let Some(spec) = state.font_expansion_spec(*font)
+                    && let Err(found) = paragraph.observe(spec)
+                {
+                    error = Some(found);
                 }
             }
             Node::Disc {
