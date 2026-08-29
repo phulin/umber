@@ -867,6 +867,7 @@ fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
                 Some(kern(9_001))
             );
             assert!(candidate.current_list().is_empty());
+            candidate.reject_checkpoint_candidate();
         }
 
         let source_nodes = nest_nodes(&source, context);
@@ -889,7 +890,7 @@ fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
         assert!(nest_nodes(&candidate, context).is_empty());
         candidate.push(Mode::Vertical).expect("candidate push");
         candidate.current_list_mutation().push(context, kern(3));
-        candidate.accept_checkpoint_candidate();
+        candidate = candidate.accept_checkpoint_candidate();
         assert_eq!(candidate.depth(), 2);
         assert_eq!(nest_nodes(&candidate, context), [kern(3)]);
 
@@ -897,6 +898,7 @@ fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
             let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling fork");
             assert_eq!(sibling.depth(), 1);
             assert!(nest_nodes(&sibling, context).is_empty());
+            sibling.reject_checkpoint_candidate();
         }
         assert_eq!(candidate.depth(), 2);
         assert_eq!(nest_nodes(&candidate, context), [kern(3)]);
@@ -912,12 +914,132 @@ fn accepted_candidate_keeps_its_published_mark_seedable() {
         candidate.current_list_mutation().set_prev_graf(1);
         let published = candidate.checkpoint();
         candidate.current_list_mutation().set_prev_graf(2);
-        candidate.accept_checkpoint_candidate();
+        drop(candidate.accept_checkpoint_candidate());
 
         let restarted = ModeNest::fork_checkpoint(&published).expect("published fork");
         assert_eq!(restarted.current_list().prev_graf(), 1);
         assert!(nest_nodes(&restarted, context).is_empty());
+        restarted.reject_checkpoint_candidate();
     });
+}
+
+fn populate_nested_candidate<G>(
+    candidate: &mut ModeNest,
+    context: &mut tex_state::CommandContext<'_, G>,
+) {
+    candidate
+        .push_at_line(Mode::Horizontal, 17)
+        .expect("horizontal candidate level");
+    {
+        let mut list = candidate.current_list_mutation();
+        list.push(context, kern(31));
+        list.begin_pending_hchars(
+            FontId::testing_new(2),
+            'a',
+            tex_state::token::OriginId::UNKNOWN,
+        );
+        list.set_align_state(align_state());
+        list.set_space_factor(777);
+        list.set_no_boundary(true);
+        list.set_hyphen_context(9, 2, 3);
+        list.set_prev_depth(Scaled::from_raw(41));
+        list.set_prev_graf(5);
+    }
+    candidate
+        .push_at_line(Mode::Math, 23)
+        .expect("math candidate level");
+    {
+        let mut list = candidate.current_list_mutation();
+        list.set_incomplete_fraction(
+            context,
+            IncompleteFraction {
+                numerator: tex_state::node_arena::PageListId::empty(),
+                thickness: FractionThickness::Default,
+                left_delimiter: Some(7),
+                right_delimiter: Some(11),
+            },
+        );
+        list.set_display_interrupt(
+            context,
+            DisplayInterrupt {
+                active_directions: vec![tex_state::node::Direction::BeginR],
+                prototype: None,
+            },
+        );
+        list.set_display_eq_no(
+            context,
+            DisplayEqNo {
+                side: EqNoSide::Right,
+                display: tex_state::node_arena::PageListId::empty(),
+            },
+        );
+    }
+    candidate
+        .push_at_line(Mode::DisplayMath, 29)
+        .expect("display candidate level");
+    let display = context.publish_page_nodes(vec![kern(43), kern(47)]);
+    candidate.current_list_mutation().set_display_alignment(
+        context,
+        display,
+        Some(Scaled::from_raw(53)),
+    );
+}
+
+#[test]
+fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling_marks() {
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        {
+            let mut outer = source.current_list_mutation();
+            outer.set_space_factor(901);
+            outer.set_no_boundary(true);
+            outer.set_hyphen_context(6, 3, 4);
+            outer.set_prev_depth(Scaled::from_raw(59));
+            outer.set_prev_graf(13);
+        }
+        let checkpoint = source.checkpoint();
+        let rooted = source.summary();
+
+        let mut accepted = ModeNest::fork_checkpoint(&checkpoint).expect("accepted fork");
+        assert_eq!(accepted.summary(), rooted, "fork restores every retained scalar");
+        populate_nested_candidate(&mut accepted, context);
+        let expected = accepted.summary();
+        let counters_before_accept = context.page_material_counters();
+        accepted = accepted.accept_checkpoint_candidate();
+        assert_eq!(accepted.summary(), expected, "accept preserves exact topology");
+        assert_eq!(
+            context.page_material_counters(),
+            counters_before_accept,
+            "acceptance neither copies nor republishes candidate roots"
+        );
+        drop(accepted);
+
+        let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling after accept");
+        assert_eq!(sibling.summary(), rooted, "accepted work does not rewrite the mark");
+        sibling.reject_checkpoint_candidate();
+
+        let mut rejected = ModeNest::fork_checkpoint(&checkpoint).expect("rejected fork");
+        populate_nested_candidate(&mut rejected, context);
+        let counters_before_reject = context.page_material_counters();
+        rejected.reject_checkpoint_candidate();
+        assert_eq!(
+            context.page_material_counters(),
+            counters_before_reject,
+            "mode rejection settles no accepted prefix or replacement copy"
+        );
+
+        let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling after reject");
+        assert_eq!(sibling.summary(), rooted, "rejection leaves the mark reusable");
+        sibling.reject_checkpoint_candidate();
+    });
+}
+
+#[test]
+#[should_panic(expected = "checkpoint candidate mode owner requires explicit accept or reject")]
+fn unresolved_mode_candidate_cannot_hide_disposition_in_drop() {
+    let mut source = ModeNest::new();
+    let checkpoint = source.checkpoint();
+    let _candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted candidate");
 }
 
 #[test]
@@ -944,6 +1066,7 @@ fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
                 [kern(-2)]
             );
             assert!(candidate.current_list().is_empty());
+            candidate.reject_checkpoint_candidate();
         }
 
         let source_nodes = nest_nodes(&source, context);

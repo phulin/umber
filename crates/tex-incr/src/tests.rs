@@ -1109,6 +1109,77 @@ fn late_edit_restarts_from_a_retained_non_job_start_boundary() {
 }
 
 #[test]
+fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
+    let source = "A\\par\nB\\par\nC\\par\\end";
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("baseline");
+    let edit_position = source.find('C').expect("third paragraph exists");
+    let candidate_edit = edit(
+        &incremental,
+        edit_position..edit_position,
+        "\\relax ",
+    );
+
+    let mut rejected = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
+        .expect("non-JobStart rejection candidate");
+    drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
+        .expect("drive rejection candidate");
+    let rejected = incremental
+        .prepare_revision_candidate(rejected)
+        .expect("prepare explicit rejection");
+    let selected = rejected
+        .reuse()
+        .restart_boundary
+        .expect("candidate selects a retained boundary");
+    assert_eq!(selected.boundary, EngineBoundary::OuterParagraphEnd);
+    rejected.reject();
+
+    let mut accepted = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit)
+        .expect("same sibling mark remains seedable after rejection");
+    drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
+        .expect("drive accepted candidate");
+    let accepted = incremental
+        .prepare_revision_candidate(accepted)
+        .expect("prepare explicit acceptance");
+    assert_eq!(accepted.reuse().restart_boundary, Some(selected));
+    let output = incremental
+        .accept_revision(accepted)
+        .expect("accept candidate exactly once");
+
+    let edited = format!("{}\\relax {}", &source[..edit_position], &source[edit_position..]);
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("cold comparison");
+    assert_detached_output_eq(&output, &expected);
+
+    let next_position = incremental
+        .source()
+        .find('C')
+        .expect("accepted third paragraph remains");
+    let mut sibling = incremental
+        .start_advance_candidate(
+            RevisionId::new(3),
+            edit(&incremental, next_position..next_position, "\\relax "),
+        )
+        .expect("post-accept sibling candidate");
+    drive_synchronous_candidate(&mut sibling, &mut DirectResourceHost)
+        .expect("drive post-accept sibling");
+    let sibling = incremental
+        .prepare_revision_candidate(sibling)
+        .expect("prepare post-accept sibling rejection");
+    assert_eq!(
+        sibling
+            .reuse()
+            .restart_boundary
+            .expect("post-accept restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    sibling.reject();
+}
+
+#[test]
 fn zero_history_budget_retires_only_complete_old_generations() {
     let mut source = page_source(1);
     let mut incremental = Session::start(

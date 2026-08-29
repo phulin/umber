@@ -2115,8 +2115,9 @@ impl<G> MainControl<G> {
     /// [`Self::prepare_checkpoint_candidate`] so destination owners settle
     /// first.
     pub fn accept_checkpoint_candidate(self) {
-        let mut control = self;
-        control.accept_checkpoint_candidate_in_place();
+        let (mut command, control) = self.into_checkpoint_candidate_parts();
+        control.accept();
+        command.accept_checkpoint_candidate();
     }
 
     /// Returns command and mode roots through their rejection paths before
@@ -2128,11 +2129,13 @@ impl<G> MainControl<G> {
         command.reject_checkpoint_candidate();
     }
 
-    /// Settles a quiescent command/mode candidate while retaining the live
-    /// control owner and any host suspension continuation it carries.
-    pub(crate) fn accept_checkpoint_candidate_in_place(&mut self) {
-        self.modes.accept_checkpoint_candidate();
+    /// Settles a quiescent command/mode candidate while returning the live
+    /// control owner. The consuming transition cannot run twice.
+    pub(crate) fn into_accepted_checkpoint_candidate(mut self) -> Self {
+        let modes = std::mem::take(&mut self.modes);
+        self.modes = modes.accept_checkpoint_candidate();
         self.command.state_mut().accept_checkpoint_candidate();
+        self
     }
 
     /// Discards any candidate-only direct-operation continuation before the
@@ -9778,12 +9781,16 @@ pub struct PreparedCheckpointControl {
 }
 
 impl PreparedCheckpointControl {
-    pub fn accept(mut self) {
-        self.modes.accept_checkpoint_candidate();
+    pub fn accept(self) {
+        if self.modes.is_checkpoint_candidate() {
+            drop(self.modes.accept_checkpoint_candidate());
+        }
     }
 
-    pub fn reject(mut self) {
-        self.modes.reject_checkpoint_candidate();
+    pub fn reject(self) {
+        if self.modes.is_checkpoint_candidate() {
+            self.modes.reject_checkpoint_candidate();
+        }
     }
 }
 

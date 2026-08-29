@@ -819,11 +819,11 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
                 if let Some(command) = candidate.command.as_mut() {
                     command.accept_checkpoint_candidate();
                 } else {
-                    candidate
+                    let control = candidate
                         .control
-                        .as_mut()
-                        .ok_or(RetainedStateAccessError::StaleAttachment)?
-                        .accept_checkpoint_candidate_in_place();
+                        .take()
+                        .ok_or(RetainedStateAccessError::StaleAttachment)?;
+                    candidate.control = Some(control.into_accepted_checkpoint_candidate());
                 }
                 candidate
                     .boundaries

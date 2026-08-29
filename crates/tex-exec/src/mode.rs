@@ -2159,9 +2159,29 @@ impl ModeCheckpoint {
 
 pub struct ModeNest {
     storage: ModeNestStorage,
+    lifecycle: ModeNestLifecycle,
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
     max_nest_stack: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModeNestLifecycle {
+    Independent,
+    CheckpointCandidate,
+}
+
+impl Drop for ModeNest {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        assert_eq!(
+            self.lifecycle,
+            ModeNestLifecycle::Independent,
+            "checkpoint candidate mode owner requires explicit accept or reject"
+        );
+    }
 }
 
 impl std::fmt::Debug for ModeNest {
@@ -2186,14 +2206,32 @@ impl Default for ModeNest {
 }
 
 impl ModeNest {
-    /// Promotes the current mode owner. This is called only by the aggregate
-    /// candidate barrier; ordinary `Drop` remains the emergency reject path.
-    pub(crate) fn accept_checkpoint_candidate(&mut self) {}
+    pub(crate) const fn is_checkpoint_candidate(&self) -> bool {
+        matches!(self.lifecycle, ModeNestLifecycle::CheckpointCandidate)
+    }
 
-    /// Returns candidate-owned ranges to the accepted mode owner after every
-    /// destination owner has completed its rejection phase. `Drop` calls the
-    /// same path only as an unwind guard.
-    pub(crate) fn reject_checkpoint_candidate(&mut self) {}
+    /// Promotes the current mode owner through the aggregate candidate
+    /// barrier. Consuming the candidate makes a second disposition impossible.
+    pub(crate) fn accept_checkpoint_candidate(mut self) -> Self {
+        assert_eq!(
+            self.lifecycle,
+            ModeNestLifecycle::CheckpointCandidate,
+            "only a rooted mode candidate can be accepted"
+        );
+        self.lifecycle = ModeNestLifecycle::Independent;
+        self
+    }
+
+    /// Rejects the candidate-only mode suffix after destination owners have
+    /// returned their roots. Consuming the candidate prevents later use.
+    pub(crate) fn reject_checkpoint_candidate(mut self) {
+        assert_eq!(
+            self.lifecycle,
+            ModeNestLifecycle::CheckpointCandidate,
+            "only a rooted mode candidate can be rejected"
+        );
+        self.lifecycle = ModeNestLifecycle::Independent;
+    }
 
     /// TeX82 §11's maximum number of simultaneously saved semantic levels.
     const TEX82_NEST_SIZE: usize = 40;
@@ -2212,6 +2250,7 @@ impl ModeNest {
                 journal: journal::ModeJournal::enabled(1),
                 identity_enabled: false,
             },
+            lifecycle: ModeNestLifecycle::Independent,
             max_nest_stack: 0,
         }
     }
@@ -2233,6 +2272,7 @@ impl ModeNest {
                 levels: summary.levels,
                 identity_enabled: false,
             },
+            lifecycle: ModeNestLifecycle::Independent,
             max_nest_stack: 0,
         })
     }
@@ -2337,6 +2377,11 @@ impl ModeNest {
         &mut self,
         checkpoint: &ModeCheckpoint,
     ) -> Result<(), ExecError> {
+        assert_eq!(
+            self.lifecycle,
+            ModeNestLifecycle::Independent,
+            "candidate settlement precedes same-owner restoration"
+        );
         self.storage.levels.clear();
         self.storage.levels.push(checkpoint.outer.clone_rootless());
         self.storage.journal = journal::ModeJournal::enabled(1);
@@ -2353,6 +2398,7 @@ impl ModeNest {
                 journal: journal::ModeJournal::enabled(1),
                 identity_enabled: checkpoint.reachable_state_identity_root.is_some(),
             },
+            lifecycle: ModeNestLifecycle::CheckpointCandidate,
             max_nest_stack: 0,
         })
     }

@@ -527,6 +527,7 @@ impl<G> EngineCheckpoint<G> {
             }
         };
         if let Err(error) = output.resume(output_checkpoint) {
+            modes.reject_checkpoint_candidate();
             command.reject_checkpoint_candidate();
             *command_owner = Some(command);
             source.reject_checkpoint_candidate(&mut destination);
@@ -574,7 +575,7 @@ impl<G> EngineCheckpoint<G> {
                 .pop_last_node(&mut context)
                 .is_some(),
         );
-        drop(modes);
+        modes.reject_checkpoint_candidate();
         drop(context);
         let mode_work = self.modes.replay_work().saturating_sub(mode_before);
         let page_work = source
