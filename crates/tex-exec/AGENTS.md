@@ -114,9 +114,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   allocating category closes before operation commit while warmed category
   capacity remains with the operation owner.
 - `src/mode.rs` and `src/mode/`: mode nest, page-arena list roots with detached
-  active builders, `PageRegion`-admitted owner-relative live roots, direct-value
-  paragraph/alignment glue, copy-only pending-character provenance, rootless
-  retained summaries, and the operation-local rollback journal. Restart
+  active builders, checked `PageListSpan` live roots carried only within their
+  admitting `PageRegion`, direct-value paragraph/alignment glue, copy-only
+  pending-character provenance, rootless retained summaries, and the
+  same-region operation-local rollback journal. Restart
   eligibility proves a sole empty outer vertical level, so a named boundary
   stores that fixed scalar level directly and candidate forks retain no shared
   mode tail or transient mode payload. The move-only mode succession receipt is

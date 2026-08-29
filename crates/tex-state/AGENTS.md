@@ -200,8 +200,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   reason-counted structural-copy fallback; production durable carrier cutover
   remains a separate migration stage.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
-  the four PageBuilder roots, scalar state, reversible journal, and private
-  owner-relative checkpoint rows; active insertion classes and sparse mark
+  the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
+  same-region journal, and private owner-relative checkpoint rows; active
+  insertion classes and sparse mark
   classes retain canonical iteration order beside dense direct lookup indexes.
   Exact edit settlement and shipout succession keep roots and payload suffixes
   atomic, direct node parent/child publication is same-region checked, and
@@ -240,7 +241,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   component framing; no page COW root is retained for hash reuse.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Runtime
   page-material facade pairing the canonical coarse-arena coordinate with its
-  demand-maintained semantic identity scalar, including zero-hash disabled
+  checked traversal span and demand-maintained semantic identity scalar,
+  including span-native zero-allocation compose/slice, zero-hash disabled
   execution, identity-preserving split/compose/fork settlement, and exact
   recursive cross-region semantic copy used only by lifetime transitions. Its
   payload is explicitly `Node<PageListId>` so the replacement topology cannot

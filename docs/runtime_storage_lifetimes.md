@@ -587,9 +587,10 @@ envelopes and generation-invalidate their ids.
 A `ClosureBuildMark` seals payload and descriptor tails before structural box
 construction. Sealing first proves that the owner-relative root, every range,
 every recursively stored child coordinate, and every referenced chunk lie in
-the suffix; the caller supplies a consumed-roots receipt after auditing its
-PageBuilder, ModeList, journal, and checkpoint roots. Rejection mutates neither
-source authority nor lifecycle counters and returns the move-only build mark.
+the suffix; the caller supplies a consumed-roots receipt after auditing the
+checked spans held by PageBuilder, ModeList, and their same-region journal and
+checkpoint projections. Rejection mutates neither source authority nor
+lifecycle counters and returns the move-only build mark.
 Success detaches whole envelopes into a `SealedNodeClosure`; a transient loan
 can reattach them without copying, while transfer rebrands only coordinates in
 the bounded suffix scan and preserves payload addresses. Interleaved prefix
@@ -632,15 +633,16 @@ same envelopes. No per-node prefix table, root registry, or source payload copy
 participates. Without explicit identity demand, these paths do no hash or
 summary work.
 
-The page builder stores four independent owner-relative roots inside the
-current `PageRegion`: contribution list, current page, page discards, and split
-discards. The aggregate checkpoint row records the region id, those four roots,
+The page builder stores four independent checked `PageListSpan` roots inside
+the current `PageRegion`: contribution list, current page, page discards, and
+split discards. The aggregate checkpoint row records those same-region spans,
 sealed payload/descriptor positions, scalar state, and journal position; it
-never composes them into a synthetic list. Multiple paragraph checkpoints in
-one page share the same region and copy no nodes. Restart publication is
-admitted only with one quiescent, empty outer vertical mode, so the mode
-checkpoint retains scalar continuation state but no active builder or
-transient mode-material root.
+never composes them into a synthetic list. Root and arena marks settle
+atomically, so rollback does not carry a proof across owner or generation
+boundaries. Multiple paragraph checkpoints in one page share the same region
+and copy no nodes. Restart publication is admitted only with one quiescent,
+empty outer vertical mode, so the mode checkpoint retains scalar continuation
+state but no active builder or transient mode-material root.
 
 Shipout starts a new page region. The existing page-break traversal moves
 self-contained whole held-over envelopes when unique or copies only the exact
