@@ -162,25 +162,22 @@ impl ArenaPostLineChannel {
             && self.active_directions.is_empty()
             && self.pending_post.is_empty()
             && par_fill_override.is_none()
-            && (self.position..end).all(|absolute| {
-                actions
-                    .and_then(|actions| actions.get(absolute))
-                    .is_none_or(|action| {
-                        *action == tex_typeset::linebreak::MaterializationAction::Copy
-                    })
-                    && matches!(
-                        classify_post_line_node(stores, self.source, absolute),
-                        PostLineNode::Other
-                    )
-                    && !matches!(
-                        stores
-                            .page_node_span(self.source)
-                            .expect("paragraph source remains live")
-                            .nodes()
-                            .owned_node(absolute),
-                        Some(Node::Direction(_))
-                    )
-            });
+            && stores
+                .page_node_span(self.source)
+                .expect("paragraph source remains live")
+                .nodes()
+                .iter_from(self.position)
+                .take(end - self.position)
+                .enumerate()
+                .all(|(offset, node)| {
+                    let absolute = self.position + offset;
+                    actions
+                        .and_then(|actions| actions.get(absolute))
+                        .is_none_or(|action| {
+                            *action == tex_typeset::linebreak::MaterializationAction::Copy
+                        })
+                        && matches!(classify_post_line_node_value(node), PostLineNode::Other)
+                });
         if plain_source_run {
             output_lineages.clear();
             for absolute in self.position..end {
@@ -276,7 +273,6 @@ impl ArenaPostLineChannel {
                     let _ = (replace, physical_replace_count);
                 }
                 PostLineNode::Discretionary { replace, .. } => {
-                    append_source_direction(stores, self.source, absolute, &mut self.active_directions);
                     stores.append_page_active_span_range(
                         &mut output,
                         self.source,
@@ -322,8 +318,16 @@ impl ArenaPostLineChannel {
                         Node::MathOff(Scaled::from_raw(0)),
                     );
                 }
+                PostLineNode::Direction(direction) => {
+                    update_direction(direction, &mut self.active_directions);
+                    stores.append_page_active_span_range(
+                        &mut output,
+                        self.source,
+                        absolute..absolute + 1,
+                    );
+                    output_lineages.extend(self.lineages[absolute].iter().cloned());
+                }
                 _ => {
-                    append_source_direction(stores, self.source, absolute, &mut self.active_directions);
                     stores.append_page_active_span_range(
                         &mut output,
                         self.source,
@@ -372,6 +376,7 @@ enum PostLineNode {
     ParFillGlue,
     DiscardableGlue,
     MathOff,
+    Direction(Direction),
     Other,
 }
 
@@ -380,13 +385,18 @@ fn classify_post_line_node<G>(
     source: tex_state::page_node_arena::PageListSpan,
     index: usize,
 ) -> PostLineNode {
-    match stores
-        .page_node_span(source)
-        .expect("paragraph source remains live")
-        .nodes()
-        .owned_node(index)
-        .expect("paragraph cursor remains in bounds")
-    {
+    classify_post_line_node_value(
+        stores
+            .page_node_span(source)
+            .expect("paragraph source remains live")
+            .nodes()
+            .owned_node(index)
+            .expect("paragraph cursor remains in bounds"),
+    )
+}
+
+fn classify_post_line_node_value(node: &Node) -> PostLineNode {
+    match node {
         Node::Disc {
             kind,
             pre,
@@ -406,23 +416,8 @@ fn classify_post_line_node<G>(
         } => PostLineNode::ParFillGlue,
         Node::Glue { .. } => PostLineNode::DiscardableGlue,
         Node::MathOff(_) => PostLineNode::MathOff,
+        Node::Direction(direction) => PostLineNode::Direction(*direction),
         _ => PostLineNode::Other,
-    }
-}
-
-fn append_source_direction<G>(
-    stores: &CommandContext<'_, G>,
-    source: tex_state::page_node_arena::PageListSpan,
-    index: usize,
-    active: &mut Vec<Direction>,
-) {
-    if let Some(Node::Direction(direction)) = stores
-        .page_node_span(source)
-        .expect("paragraph source remains live")
-        .nodes()
-        .owned_node(index)
-    {
-        update_direction(*direction, active);
     }
 }
 

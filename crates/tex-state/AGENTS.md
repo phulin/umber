@@ -95,8 +95,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   pool mutation, constant-time opaque-root admission into stable borrowed
   views whose ordinary reads carry owner-relative chunk/offset cursors without
   repeating owner or incarnation validation, allocation-free logical-order
-  chunk-slice visitation over the sole predecessor chain, explicit cold
-  structural audits, and reverse `ChunkCursor` traversal, canonical
+  chunk-slice visitation over the sole predecessor chain, sequential iterators
+  that retain their owner-relative cursor within each packed block, explicit
+  cold structural audits, and reverse `ChunkCursor` traversal, canonical
   nonrecursive range lists, partial operation rollback, whole-chunk retained
   marks, exclusive batch promotion, and exactly accepted-versus-forked
   settlement.
@@ -194,7 +195,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   typed/rebranded coordinates; shared immutable checkpoint rows; exact
   branch-local generation frontiers; owner-checked suffix cursors; borrowed
   resolution, including the replacement page-material `ArenaListView` cursor
-  and direct sequential `NodeCursor::for_each` traversal;
+  and direct sequential `NodeCursor::for_each` plus start-position traversal;
   demand-enabled layout-independent list identities; and cold-only exact-root
   relocation.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,

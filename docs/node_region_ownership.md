@@ -211,7 +211,9 @@ Ordinary list processing is packed-block movement plus append-only output:
   post-line path consume move-only whole roots at their semantic handoffs;
 - packing, line breaking, paragraph post-processing, alignment setting, math
   lowering, and page breaking borrow short-lived `ArenaListView` or
-  `NodeCursor` views; and
+  `NodeCursor` views; sequential consumers retain one admitted owner-relative
+  cursor within each packed block, while genuinely positional semantic reads
+  remain explicit; and
 - source identities compose from packed-block summaries without a descriptor
   lookup.
 

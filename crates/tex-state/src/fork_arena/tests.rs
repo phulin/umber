@@ -357,6 +357,7 @@ fn admitted_index_lookup_is_allocation_free_and_repeats_no_owner_validation_at_r
         let view = arena.list(&pool, root).expect("admitted view");
         let validations_before = pool.payload.validation_reads();
         let links_before = pool.payload.previous_link_reads();
+        let resolutions_before = pool.payload.admitted_index_resolutions();
         let allocation_before = thread_measurement(ALLOCATION_OWNER);
         let checksum = {
             let _scope = scope(ALLOCATION_OWNER);
@@ -375,13 +376,72 @@ fn admitted_index_lookup_is_allocation_free_and_repeats_no_owner_validation_at_r
         };
         let validations = pool.payload.validation_reads() - validations_before;
         let links = pool.payload.previous_link_reads() - links_before;
+        let resolutions = pool.payload.admitted_index_resolutions() - resolutions_before;
 
         assert_eq!(checksum, u64::from(chunks) * u64::from(chunks - 1) / 2);
         assert_eq!(validations, 0);
         assert_eq!(links, 0);
+        assert_eq!(resolutions, u64::from(chunks));
         assert_eq!(allocation, AllocationMeasurement::default());
         eprintln!(
-            "ADMITTED_INDEX_LOOKUP_SCALE chunks={chunks} lookups={chunks} owner_validations={validations} checked_predecessor_reads={links} allocation_calls={} allocation_bytes={}",
+            "ADMITTED_INDEX_LOOKUP_SCALE chunks={chunks} lookups={chunks} index_resolutions={resolutions} owner_validations={validations} checked_predecessor_reads={links} allocation_calls={} allocation_bytes={}",
+            allocation.calls, allocation.requested_bytes
+        );
+    }
+}
+
+#[test]
+fn admitted_sequential_iteration_resolves_once_per_packed_block_at_required_sizes() {
+    const ALLOCATION_OWNER: usize = 15;
+
+    for values in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..values {
+                builder.push(value).expect("packed direct node");
+            }
+            builder.seal().expect("direct root")
+        };
+        let view = arena.list(&pool, root).expect("admitted view");
+        let expected_blocks = usize::try_from(values)
+            .expect("test size fits usize")
+            .div_ceil(pool.payload.chunk_capacity());
+        let validations_before = pool.payload.validation_reads();
+        let links_before = pool.payload.previous_link_reads();
+        let resolutions_before = pool.payload.admitted_index_resolutions();
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        let (checksum, crossings) = {
+            let _scope = scope(ALLOCATION_OWNER);
+            let mut nodes = view.iter();
+            let mut checksum = 0_u64;
+            for value in nodes.by_ref() {
+                checksum += u64::from(*value);
+            }
+            (checksum, nodes.forward_chunk_crossings())
+        };
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
+        let allocation = AllocationMeasurement {
+            calls: allocation_after
+                .calls
+                .saturating_sub(allocation_before.calls),
+            requested_bytes: allocation_after
+                .requested_bytes
+                .saturating_sub(allocation_before.requested_bytes),
+        };
+        let validations = pool.payload.validation_reads() - validations_before;
+        let links = pool.payload.previous_link_reads() - links_before;
+        let resolutions = pool.payload.admitted_index_resolutions() - resolutions_before;
+
+        assert_eq!(checksum, u64::from(values) * u64::from(values - 1) / 2);
+        assert_eq!(resolutions, expected_blocks as u64);
+        assert_eq!(crossings, expected_blocks.saturating_sub(1));
+        assert_eq!(validations, 0);
+        assert_eq!(links, 0);
+        assert_eq!(allocation, AllocationMeasurement::default());
+        eprintln!(
+            "ADMITTED_SEQUENTIAL_SCALE values={values} packed_blocks={expected_blocks} index_resolutions={resolutions} forward_block_crossings={crossings} owner_validations={validations} checked_predecessor_reads={links} allocation_calls={} allocation_bytes={}",
             allocation.calls, allocation.requested_bytes
         );
     }
@@ -910,6 +970,15 @@ fn direct_chunk_sequence_has_indexed_and_sequential_parity() {
             view.iter().copied().collect::<Vec<_>>(),
             vec![1, 2, 3, 7, 8]
         );
+        assert_eq!(
+            view.iter_from(2).copied().collect::<Vec<_>>(),
+            vec![3, 7, 8],
+            "start-position traversal preserves composite edge bounds"
+        );
+        let mut middle = view.iter_from(1);
+        assert_eq!(middle.next(), Some(&2));
+        assert_eq!(middle.next_back(), Some(&8));
+        assert_eq!(middle.copied().collect::<Vec<_>>(), vec![3, 7]);
     }
 
     let sliced = arena

@@ -2986,12 +2986,12 @@ impl NodeRef<'_> {
     }
 }
 
-/// Unified indexed view for operation buffers and direct or composite page
-/// sequences.
+/// Unified borrowed view for operation buffers and direct page sequences.
 ///
-/// The arena variant retains only a borrow and a compact coordinate. Random
-/// access binary-searches flat piece endpoints; sequential consumers should
-/// use [`Self::iter`], whose arena iterator caches its current piece.
+/// The arena variant retains only a borrow and a compact direct root.
+/// Genuinely positional consumers use [`Self::owned_node`]. Sequential
+/// consumers use [`Self::iter`] or [`Self::iter_from`], which retain the
+/// admitted owner-relative cursor within each packed block.
 #[derive(Clone, Copy)]
 pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
@@ -3080,9 +3080,21 @@ impl<'a> NodeCursor<'a> {
         CharRun::new(*self, index)
     }
     pub fn iter(&self) -> NodeCursorIter<'a> {
+        self.iter_from(0)
+    }
+
+    /// Iterates from one logical node position. Arena-backed lists retain
+    /// their admitted packed-block cursor rather than resolving every node by
+    /// index.
+    pub fn iter_from(&self, start: usize) -> NodeCursorIter<'a> {
         match self.source {
-            NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(nodes.iter()),
-            NodeCursorSource::Fork(view) => NodeCursorIter::Fork(view.iter()),
+            NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(
+                nodes
+                    .get(start.min(nodes.len())..)
+                    .unwrap_or_default()
+                    .iter(),
+            ),
+            NodeCursorSource::Fork(view) => NodeCursorIter::Fork(view.iter_from(start)),
         }
     }
 

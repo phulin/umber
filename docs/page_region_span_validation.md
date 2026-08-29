@@ -70,7 +70,12 @@ arena mark and root projection are settled atomically by the same owner.
 Page and mode append-heavy owners retain checked left roots and consume fresh
 `UniquePageList` suffixes. Tail and append are O(1); reverse traversal is
 O(nodes inspected + actual block crossings), with no descriptor lookup or
-binary search. Shared and sliced transforms increment `source_nodes_copied`
+binary search. Forward sequential iteration resolves its starting position,
+then advances the admitted owner-relative cursor directly inside each packed
+block and re-enters positional resolution only at an actual block boundary.
+This is traversal state, not a successor cache: persistent checkpoint forks
+continue to use the sole predecessor topology. Genuinely indexed reads remain
+the explicit `owned_node` path. Shared and sliced transforms increment `source_nodes_copied`
 exactly; they are not permitted to hide a whole-list copy behind generic
 concatenation. The counted fallback collects one reverse traversal and replays
 it once, so it visits and hashes every copied node exactly once and never
