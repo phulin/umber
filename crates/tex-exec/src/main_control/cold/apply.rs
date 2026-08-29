@@ -2396,6 +2396,31 @@ pub(in crate::main_control) fn apply<G>(
             // §1241's `if global then n:=256+cur_val` is the *effective*
             // scope. Resolving it at `box_end` instead would read
             // `\globaldefs` as the box body left it.
+            // TeX82 §§1074 and 1077 remove `\lastbox` from the current
+            // list before storing that box in the destination register. Keep
+            // the same ownership boundary: the source-list rewrite must
+            // settle before the destination construction suffix opens, or
+            // sealing that suffix would transfer the live source descriptor
+            // into durable box ownership along with the selected box.
+            if let ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::LastBox { error_context }) =
+                path
+            {
+                let node = crate::box_runtime::take_last_box(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.fuel,
+                    error_context,
+                )?;
+                boxes.pending_setbox = Some(PendingSetBox {
+                    target,
+                    region: stores.begin_page_node_region(),
+                });
+                let context = boxes.take_box_context(false);
+                box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                return Ok(ReplayStep::Continue);
+            }
+
             boxes.pending_setbox = Some(PendingSetBox {
                 target,
                 region: stores.begin_page_node_region(),
@@ -2425,16 +2450,8 @@ pub(in crate::main_control) fn apply<G>(
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
-                    ScannedBoxShiftPayload::LastBox { error_context } => {
-                        let node = crate::box_runtime::take_last_box(
-                            modes,
-                            stores,
-                            command.diagnostic_effects,
-                            command.fuel,
-                            error_context,
-                        )?;
-                        let context = boxes.take_box_context(false);
-                        box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                    ScannedBoxShiftPayload::LastBox { .. } => {
+                        unreachable!("setbox lastbox is ordered before its destination suffix")
                     }
                     ScannedBoxShiftPayload::VSplit(split) => {
                         if let Some(context) = &split.missing_to_context {

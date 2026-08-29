@@ -122,6 +122,12 @@ move-only operation-local state. Popping or packaging a level transfers its
 exact list root, and the private rollback journal records the owner identity and
 coordinate together. No production summary clones a rooted mode level.
 
+An operation which both rewrites a mode root and opens a different lifetime
+owner orders those transitions source-first. In particular, TeX82 §§1074 and
+1077's `\setbox<n>=\lastbox` settles the shortened mode list before opening the
+durable destination suffix, so destination sealing cannot capture the live
+page-owned source descriptor.
+
 A retained mode checkpoint is legal only at a quiescent root-main-file
 paragraph boundary with one empty outer vertical level. It stores that fixed
 rootless scalar level, the mode-timeline lineage and serial, and the semantic

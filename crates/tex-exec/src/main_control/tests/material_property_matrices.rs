@@ -2358,6 +2358,56 @@ fn box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix() {
 }
 
 #[test]
+fn setbox_lastbox_settles_source_list_before_destination_region() {
+    // TeX82 §§1074 and 1077: `\lastbox` first removes the tail box from
+    // the current list, then `box_end` stores that selected box. The retained
+    // prefix is the positive control which keeps the rewritten source root
+    // live after the durable destination takes ownership.
+    with_run(
+        br"\setbox0=\hbox{\kern2pt\hbox{\kern4pt}\global\setbox1=\lastbox\kern3pt}",
+        false,
+        |_, universe| {
+            assert!(matches!(
+                register_shapes(universe, 0).as_deref(),
+                Some([Shape::HBox { children, .. }])
+                    if children.as_slice() == [
+                        Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit),
+                        Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit),
+                    ]
+            ));
+            assert!(matches!(
+                register_shapes(universe, 1).as_deref(),
+                Some([Shape::HBox { children, .. }])
+                    if children.as_slice() == [
+                        Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit),
+                    ]
+            ));
+        },
+    );
+
+    // Removing the sole node leaves no rewritten source root. This control
+    // preserves the same setbox/lastbox surface while removing the ownership
+    // history that exposed the defect.
+    with_run(
+        br"\setbox2=\hbox{\hbox{\kern5pt}\global\setbox3=\lastbox}",
+        false,
+        |_, universe| {
+            assert!(matches!(
+                register_shapes(universe, 2).as_deref(),
+                Some([Shape::HBox { children, .. }]) if children.is_empty()
+            ));
+            assert!(matches!(
+                register_shapes(universe, 3).as_deref(),
+                Some([Shape::HBox { children, .. }])
+                    if children.as_slice() == [
+                        Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit),
+                    ]
+            ));
+        },
+    );
+}
+
+#[test]
 fn paragraph_empty_discardable_display_and_insert_matrix() {
     // TeX82 §§1088--1096: a genuinely null noindent paragraph contributes no
     // line, a discardable-only nonnull list follows line breaking, display

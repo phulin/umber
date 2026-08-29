@@ -379,6 +379,13 @@ token values use their existing explicit shared owners. Node payload and node
 topology are duplicated. No copied or moved result retains an arbitrary node
 coordinate into its source region.
 
+TeX82 §§1074 and 1077's `\setbox<n>=\lastbox` first removes the selected
+tail box from the current mode list and only then stores that box in the
+register. The page-region source-list rewrite therefore settles before the
+destination durable-closure build mark opens. Opening the destination mark
+earlier would put the rewritten live source descriptor in the destination
+suffix and transfer it out of page ownership when the box is sealed.
+
 The historical-preservation copy is not a hidden optimization accident. It is
 the explicit cost of adding rollback history to a TeX operation that otherwise
 consumes its sole owner. The counter family below distinguishes it from a TeX
