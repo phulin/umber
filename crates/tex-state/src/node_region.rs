@@ -877,51 +877,57 @@ fn copy_list_recursive<Source, Destination>(
         return Err(ForkArenaError::InvalidRegion);
     }
     let source_view = source.list(pool, list.coordinate())?;
-    let mut nodes = Vec::with_capacity(source_view.len());
-    source_view.for_each(|node| nodes.push(node.clone()));
+    let source_len = source_view.len();
+    let mut source_children = Vec::new();
+    source_view.for_each(|node| node.visit_node_lists(|child| source_children.push(*child)));
     stack.push(list);
-    let mut copied_nodes = Vec::with_capacity(nodes.len());
-    let mut copied_count = nodes.len();
-    for mut node in nodes {
-        let mut child_error = None;
-        node.visit_node_lists_mut(|child| {
-            if child_error.is_some() {
-                return;
+    let mut copied_count = source_len;
+    for child in &mut source_children {
+        match copy_list_recursive::<Source, Destination>(
+            pool,
+            source,
+            destination,
+            *child,
+            stack,
+            semantic_identity_enabled,
+        ) {
+            Ok((copied, count)) => {
+                *child = copied;
+                copied_count = copied_count.saturating_add(count);
             }
-            match copy_list_recursive::<Source, Destination>(
-                pool,
-                source,
-                destination,
-                *child,
-                stack,
-                semantic_identity_enabled,
-            ) {
-                Ok((copied, count)) => {
-                    *child = copied;
-                    copied_count = copied_count.saturating_add(count);
-                }
-                Err(error) => child_error = Some(error),
+            Err(error) => {
+                stack.pop();
+                return Err(error);
             }
-        });
-        if let Some(error) = child_error {
-            stack.pop();
-            return Err(error);
         }
-        copied_nodes.push(node);
     }
     stack.pop();
-    let mut builder = destination.begin_builder(pool)?;
+
+    let mut copied_children = source_children.into_iter();
     let mut identity = semantic_identity_enabled.then(SemanticSequenceIdentity::empty);
-    for node in copied_nodes {
-        if let Some(sequence_identity) = &mut identity {
-            let node_identity = semantic_node_identity(&node);
-            sequence_identity.push_back(node_identity);
-            builder.push_summarized(node, node_identity)?;
-        } else {
-            builder.push(node)?;
+    let coordinate = destination.clone_mapped_list_from(pool, source, list.coordinate(), |node| {
+        let mut missing_replacement = false;
+        node.visit_node_lists_mut(|child| {
+            if let Some(replacement) = copied_children.next() {
+                *child = replacement;
+            } else {
+                missing_replacement = true;
+            }
+        });
+        if missing_replacement {
+            return Err(ForkArenaError::InvalidRegion);
         }
+        let item_identity = identity.as_mut().map(|sequence_identity| {
+            let node_identity = semantic_node_identity(node);
+            sequence_identity.push_back(node_identity);
+            node_identity
+        });
+        Ok(item_identity)
+    });
+    let coordinate = coordinate?;
+    if copied_children.next().is_some() {
+        return Err(ForkArenaError::InvalidRegion);
     }
-    let coordinate = builder.seal()?;
     Ok((PageListId::from_parts(coordinate, identity), copied_count))
 }
 

@@ -1388,6 +1388,117 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Clones one admitted source list directly into this arena's packed
+    /// destination chunks while rewriting each newly owned value in place.
+    ///
+    /// The source and destination share the caller-owned pool, so a borrowed
+    /// source view cannot remain live across destination mutation. This seam
+    /// instead admits each source cell by its stable chunk coordinate, clones
+    /// exactly that value, applies the caller's coordinate rewrite, and
+    /// immediately appends it to the final list. No whole-list `Vec<T>` or
+    /// second payload representation exists between the two arenas.
+    pub(crate) fn clone_mapped_list_from(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        source: &ForkArena<T, Lane>,
+        list: ArenaListId<Lane>,
+        mut rewrite: impl FnMut(&mut T) -> Result<Option<u64>, ForkArenaError>,
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: Clone,
+    {
+        source.validate_list(pool, list)?;
+        self.bind_pool(pool)?;
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        let operation = self.operation_mark(pool);
+        self.active_builder = true;
+        let mut root = ArenaListId::empty();
+        let mut identity_mode = None;
+        let copied = if list.is_empty() {
+            Ok(())
+        } else {
+            self.clone_chunk_prefix_from(
+                pool,
+                source,
+                list,
+                list.tail.raw,
+                list.tail.offset,
+                &mut root,
+                &mut identity_mode,
+                &mut rewrite,
+            )
+        };
+        let copied = copied.and_then(|()| {
+            self.seal_direct_tail(pool, root)?;
+            self.validate_list(pool, root)
+        });
+        self.active_builder = false;
+        if let Err(error) = copied {
+            self.restore_operation(pool, operation)
+                .expect("direct mapped clone rollback mark belongs to its arena");
+            return Err(error);
+        }
+        Ok(root)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn clone_chunk_prefix_from(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        source: &ForkArena<T, Lane>,
+        list: ArenaListId<Lane>,
+        key: RawChunkKey,
+        end: u32,
+        root: &mut ArenaListId<Lane>,
+        identity_mode: &mut Option<bool>,
+        rewrite: &mut impl FnMut(&mut T) -> Result<Option<u64>, ForkArenaError>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Clone,
+    {
+        let start = if key == list.head.raw {
+            list.head.offset
+        } else {
+            let previous = pool
+                .payload
+                .previous_in_list(key, source.owner)?
+                .ok_or(ForkArenaError::InvalidRange)?;
+            self.clone_chunk_prefix_from(
+                pool,
+                source,
+                list,
+                previous.0,
+                previous.1,
+                root,
+                identity_mode,
+                rewrite,
+            )?;
+            0
+        };
+        for offset in start..end {
+            let mut value = pool
+                .payload
+                .get(key, source.owner, offset)
+                .ok_or(ForkArenaError::InvalidRange)?
+                .clone();
+            let item_identity = rewrite(&mut value)?;
+            match *identity_mode {
+                Some(enabled) if enabled != item_identity.is_some() => {
+                    return Err(ForkArenaError::IdentityModeMismatch);
+                }
+                None => *identity_mode = Some(item_identity.is_some()),
+                _ => {}
+            }
+            self.append_payload(pool, root, value, item_identity)?;
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn operation_mark(&self, pool: &ChunkPool<T>) -> OperationMark<Lane> {
         let payload_tail_used = self
@@ -3770,6 +3881,7 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         self.push_with_identity(value, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn push_summarized(
         &mut self,
         value: T,

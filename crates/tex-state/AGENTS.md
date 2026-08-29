@@ -203,9 +203,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_region.rs` and `src/node_region/tests.rs`: Exclusive move-only node
   regions above the shared fixed-chunk pool, generation-checked owner-relative
   roots and borrows, sealed `ClosureBuildMark` suffix loans, mutation-free
-  recursive transfer preflight, address-stable detach/rollback/rebranding, and
-  reason-counted structural-copy fallback; production durable carrier cutover
-  remains a separate migration stage.
+  recursive transfer preflight, direct mapped cross-region construction into
+  final packed chunks without whole-node staging, address-stable
+  detach/rollback/rebranding, and reason-counted structural-copy fallback;
+  production durable carrier cutover remains a separate migration stage.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active

@@ -3,6 +3,18 @@ use crate::node::Node;
 use crate::node_arena::NodeCursor;
 use umber_hot_core_allocator::{AllocationMeasurement, scope, thread_measurement};
 
+static DIRECT_CLONE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[derive(Debug, Eq, PartialEq)]
+struct CloneTracked(u32);
+
+impl Clone for CloneTracked {
+    fn clone(&self) -> Self {
+        DIRECT_CLONE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(self.0)
+    }
+}
+
 enum ActiveLane {}
 enum PageLane {}
 
@@ -373,6 +385,122 @@ fn admitted_index_lookup_is_allocation_free_and_repeats_no_owner_validation_at_r
             allocation.calls, allocation.requested_bytes
         );
     }
+}
+
+#[test]
+fn direct_mapped_clone_clones_each_source_once_and_reuses_warmed_storage() {
+    const ALLOCATION_OWNER: usize = 14;
+    const VALUES: usize = 4_096;
+
+    let mut pool = ChunkPool::<CloneTracked>::with_chunk_bytes(512);
+    let mut source = ForkArena::<CloneTracked, ActiveLane>::new();
+    let source_root = {
+        let mut builder = source.begin_builder(&mut pool).expect("source builder");
+        for value in 0..VALUES as u32 {
+            builder.push(CloneTracked(value)).expect("source value");
+        }
+        builder.seal().expect("source root")
+    };
+    let mut destination = ForkArena::<CloneTracked, ActiveLane>::new();
+    let empty = destination.operation_mark(&pool);
+
+    destination
+        .clone_mapped_list_from(&mut pool, &source, source_root, |value| {
+            value.0 += 1;
+            Ok(None)
+        })
+        .expect("warm direct clone");
+    destination
+        .restore_operation(&mut pool, empty)
+        .expect("return warmed destination chunks");
+
+    DIRECT_CLONE_CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
+    let before = thread_measurement(ALLOCATION_OWNER);
+    let copied = {
+        let _scope = scope(ALLOCATION_OWNER);
+        destination
+            .clone_mapped_list_from(&mut pool, &source, source_root, |value| {
+                value.0 += 1;
+                Ok(None)
+            })
+            .expect("measured direct clone")
+    };
+    let after = thread_measurement(ALLOCATION_OWNER);
+
+    assert_eq!(copied.len(), VALUES);
+    assert_eq!(
+        DIRECT_CLONE_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+        VALUES,
+        "the destination is constructed from exactly one clone per source value"
+    );
+    assert_eq!(
+        after.calls - before.calls,
+        0,
+        "warmed direct construction has no transient staging allocation"
+    );
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    assert_eq!(
+        destination
+            .list(&pool, copied)
+            .expect("copied list")
+            .iter()
+            .map(|value| value.0)
+            .collect::<Vec<_>>(),
+        (1..=VALUES as u32).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        source
+            .list(&pool, source_root)
+            .expect("source remains live")
+            .get(0),
+        Some(&CloneTracked(0))
+    );
+}
+
+#[test]
+fn direct_mapped_clone_rewrite_failure_rolls_back_the_partial_destination() {
+    let mut pool = ChunkPool::<CloneTracked>::with_chunk_bytes(64);
+    let mut source = ForkArena::<CloneTracked, ActiveLane>::new();
+    let source_root = {
+        let mut builder = source.begin_builder(&mut pool).expect("source builder");
+        for value in 0..32 {
+            builder.push(CloneTracked(value)).expect("source value");
+        }
+        builder.seal().expect("source root")
+    };
+    let mut destination = ForkArena::<CloneTracked, ActiveLane>::new();
+
+    assert_eq!(
+        destination.clone_mapped_list_from(&mut pool, &source, source_root, |value| {
+            if value.0 == 17 {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+            value.0 += 1;
+            Ok(None)
+        }),
+        Err(ForkArenaError::InvalidRegion)
+    );
+    let mut replacement = destination
+        .begin_builder(&mut pool)
+        .expect("failed clone leaves no active builder");
+    replacement
+        .push(CloneTracked(41))
+        .expect("rolled-back destination accepts new work");
+    let replacement = replacement.seal().expect("replacement root");
+    assert_eq!(
+        destination
+            .list(&pool, replacement)
+            .expect("replacement list")
+            .get(0),
+        Some(&CloneTracked(41))
+    );
+    assert_eq!(
+        source
+            .list(&pool, source_root)
+            .expect("source remains unchanged")
+            .get(17),
+        Some(&CloneTracked(17))
+    );
 }
 
 #[test]
