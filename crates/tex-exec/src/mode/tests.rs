@@ -1058,6 +1058,49 @@ fn unresolved_mode_candidate_cannot_hide_disposition_in_drop() {
     let _candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted candidate");
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn rooted_candidate_accept_and_reject_allocate_and_copy_nothing() {
+    let _serial = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    with_context(|context| {
+        let mut source = ModeNest::new();
+        let checkpoint = source.checkpoint();
+
+        let mut accepted = ModeNest::fork_checkpoint(&checkpoint).expect("accepted fork");
+        accepted.current_list_mutation().push(context, kern(61));
+        let page_before = context.page_material_counters();
+        let before = semantic_apply_allocations();
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+            );
+            accepted = accepted.accept_checkpoint_candidate();
+        }
+        let after = semantic_apply_allocations();
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(context.page_material_counters(), page_before);
+        drop(accepted);
+
+        let mut rejected = ModeNest::fork_checkpoint(&checkpoint).expect("rejected fork");
+        rejected.current_list_mutation().push(context, kern(67));
+        let page_before = context.page_material_counters();
+        let before = semantic_apply_allocations();
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+            );
+            rejected.reject_checkpoint_candidate();
+        }
+        let after = semantic_apply_allocations();
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(context.page_material_counters(), page_before);
+    });
+}
+
 #[test]
 fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
     with_context(|context| {
