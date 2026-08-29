@@ -89,144 +89,113 @@ struct Frame {
     rollback_retains_page_roots: bool,
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "rollback values stay move-only and inline; boxing a popped mode level would add a per-operation heap owner"
-)]
-enum Inverse {
-    ListRoot {
-        level_id: u64,
-        old: tex_state::page_node_arena::PageListSpan,
-    },
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum InverseKind {
+    ListRoot,
     #[cfg(test)]
-    AlignState {
-        level_id: u64,
-        old: Option<AlignState>,
-    },
-    IncompleteFraction {
-        level_id: u64,
-        old: Option<super::IncompleteFraction>,
-    },
-    DisplayInterrupt {
-        level_id: u64,
-        old: Option<super::DisplayInterrupt>,
-    },
-    DisplayEqNo {
-        level_id: u64,
-        old: Option<super::DisplayEqNo>,
-    },
-    DisplayAlignment {
-        level_id: u64,
-        old: bool,
-    },
-    PrevDepth {
-        level_id: u64,
-        old: Option<tex_state::scaled::Scaled>,
-    },
-    PrevGraf {
-        level_id: u64,
-        old: i32,
-    },
-    PendingHchars {
-        level_id: u64,
-        old: PendingHcharsRollback,
-    },
-    SpaceFactor {
-        level_id: u64,
-        old: i32,
-    },
-    NoBoundary {
-        level_id: u64,
-        old: bool,
-    },
-    HyphenContext {
-        level_id: u64,
-        old: (u8, u8, u8),
-    },
-    Push {
-        level_id: u64,
-    },
-    Pop {
-        level_id: u64,
-        level: ModeLevelSummary,
-    },
+    AlignState,
+    IncompleteFraction,
+    DisplayInterrupt,
+    DisplayEqNo,
+    DisplayAlignment,
+    PrevDepth,
+    PrevGraf,
+    PendingAbsent,
+    PendingProjection,
+    PendingValue,
+    SpaceFactor,
+    NoBoundary,
+    HyphenContext,
+    Push,
+    Pop,
 }
 
-enum PendingHcharsRollback {
-    Absent,
-    Projection(PendingHRunProjection),
-    Value(Option<super::PendingHRun>),
+/// One exact position in the global reverse-order stream.
+///
+/// Payloads larger than four bytes live inline in their type-specific journal
+/// lane. This descriptor is the only value copied for scalar mutations; the
+/// popped-level payload therefore cannot inflate every unrelated entry.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct Inverse {
+    level_id: u64,
+    payload: u32,
+    kind: InverseKind,
 }
 
 impl Inverse {
-    /// Restores one operation-local inverse. Aggregate checkpoints retain no
-    /// mode journal tail, so an inverse is consumed exactly once and never
-    /// needs a forward-redo payload.
-    fn restore(self, storage: &mut ModeNestStorage) {
-        match self {
-            Self::ListRoot { level_id, old } => {
-                let list = &mut storage.level_by_id_mut(level_id).list;
-                list.nodes = old;
-            }
-            #[cfg(test)]
-            Self::AlignState { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.align_state = old;
-            }
-            Self::IncompleteFraction { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.incomplete_fraction = old;
-            }
-            Self::DisplayInterrupt { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.display_interrupt = old;
-            }
-            Self::DisplayEqNo { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.display_eq_no = old;
-            }
-            Self::DisplayAlignment { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.display_alignment = old;
-            }
-            Self::PrevDepth { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.prev_depth = old;
-            }
-            Self::PrevGraf { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.prev_graf = old;
-            }
-            Self::PendingHchars { level_id, old } => {
-                let pending = &mut storage.level_by_id_mut(level_id).list.pending_hchars;
-                match old {
-                    PendingHcharsRollback::Absent => *pending = None,
-                    PendingHcharsRollback::Projection(projection) => projection.restore(
-                        pending
-                            .as_mut()
-                            .expect("projected pending run remains in place"),
-                    ),
-                    PendingHcharsRollback::Value(value) => *pending = value,
-                }
-            }
-            Self::SpaceFactor { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.space_factor = old;
-            }
-            Self::NoBoundary { level_id, old } => {
-                storage.level_by_id_mut(level_id).list.no_boundary = old;
-            }
-            Self::HyphenContext { level_id, old } => {
-                let list = &mut storage.level_by_id_mut(level_id).list;
-                (
-                    list.hyphen_language,
-                    list.left_hyphen_min,
-                    list.right_hyphen_min,
-                ) = old;
-            }
-            Self::Push { level_id } => {
-                let index = storage.level_index(level_id);
-                storage.levels.remove(index);
-                storage.journal.level_ids.remove(index);
-            }
-            Self::Pop { level_id, level } => {
-                storage.levels.push(level);
-                storage.journal.level_ids.push(level_id);
-            }
+    const fn new(level_id: u64, kind: InverseKind, payload: u32) -> Self {
+        Self {
+            level_id,
+            payload,
+            kind,
         }
     }
+}
+
+struct InverseLanes {
+    list_roots: Vec<tex_state::page_node_arena::PageListSpan>,
+    #[cfg(test)]
+    align_states: Vec<Option<AlignState>>,
+    incomplete_fractions: Vec<Option<super::IncompleteFraction>>,
+    display_interrupts: Vec<Option<super::DisplayInterrupt>>,
+    display_eq_nos: Vec<Option<super::DisplayEqNo>>,
+    prev_depths: Vec<Option<tex_state::scaled::Scaled>>,
+    pending_projections: Vec<PendingHRunProjection>,
+    pending_values: Vec<Option<super::PendingHRun>>,
+    popped_levels: Vec<ModeLevelSummary>,
+}
+
+impl Default for InverseLanes {
+    fn default() -> Self {
+        // One entry per kind covers the ordinary single-operation frame
+        // without a mutation-time allocation. Nested frames grow only the
+        // particular typed lane they actually use.
+        Self {
+            list_roots: Vec::with_capacity(1),
+            #[cfg(test)]
+            align_states: Vec::with_capacity(1),
+            incomplete_fractions: Vec::with_capacity(1),
+            display_interrupts: Vec::with_capacity(1),
+            display_eq_nos: Vec::with_capacity(1),
+            prev_depths: Vec::with_capacity(1),
+            pending_projections: Vec::with_capacity(1),
+            pending_values: Vec::with_capacity(1),
+            popped_levels: Vec::with_capacity(1),
+        }
+    }
+}
+
+impl InverseLanes {
+    fn clear(&mut self) {
+        self.list_roots.clear();
+        #[cfg(test)]
+        self.align_states.clear();
+        self.incomplete_fractions.clear();
+        self.display_interrupts.clear();
+        self.display_eq_nos.clear();
+        self.prev_depths.clear();
+        self.pending_projections.clear();
+        self.pending_values.clear();
+        self.popped_levels.clear();
+    }
+}
+
+fn push_lane<T>(lane: &mut Vec<T>, value: T) -> u32 {
+    let index = u32::try_from(lane.len()).expect("mode journal lane exceeds u32");
+    lane.push(value);
+    index
+}
+
+fn pop_lane<T>(lane: &mut Vec<T>, index: u32) -> T {
+    assert_eq!(
+        usize::try_from(index).expect("u32 fits usize"),
+        lane.len() - 1,
+        "reverse replay consumes each compact lane in stack order"
+    );
+    lane.pop()
+        .expect("inverse descriptor owns its lane payload")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +221,7 @@ pub(super) struct ModeJournal {
     frames: Vec<Frame>,
     projections: Vec<ListProjection>,
     inverses: Vec<Inverse>,
+    inverse_lanes: InverseLanes,
     replay_work: u64,
 }
 
@@ -290,6 +260,7 @@ impl ModeJournal {
             frames: Vec::with_capacity(frame_capacity),
             projections: Vec::with_capacity(projection_capacity),
             inverses: Vec::with_capacity(32),
+            inverse_lanes: InverseLanes::default(),
             replay_work: 0,
         }
     }
@@ -303,10 +274,16 @@ impl ModeJournal {
         if projection.id != self.level_ids[index] {
             return None;
         }
+        let Self {
+            inverses,
+            inverse_lanes,
+            ..
+        } = self;
         Some(ListJournal {
             level_id: projection.id,
             inverse_positions: &mut projection.inverse_positions,
-            inverses: &mut self.inverses,
+            inverses,
+            inverse_lanes,
         })
     }
 
@@ -317,7 +294,7 @@ impl ModeJournal {
         let id = self.allocate_level_id();
         self.level_ids.push(id);
         if !self.frames.is_empty() {
-            self.inverses.push(Inverse::Push { level_id: id });
+            self.inverses.push(Inverse::new(id, InverseKind::Push, 0));
         }
     }
 
@@ -327,7 +304,9 @@ impl ModeJournal {
         }
         let level_id = self.level_ids.pop().expect("journal level identity exists");
         if !self.frames.is_empty() {
-            self.inverses.push(Inverse::Pop { level_id, level });
+            let payload = push_lane(&mut self.inverse_lanes.popped_levels, level);
+            self.inverses
+                .push(Inverse::new(level_id, InverseKind::Pop, payload));
         }
     }
 
@@ -339,24 +318,56 @@ impl ModeJournal {
             .expect("mode journal id overflow");
         id
     }
+
+    #[cfg(test)]
+    fn recorded_bytes_for_test(&self) -> usize {
+        self.inverses.len() * std::mem::size_of::<Inverse>()
+            + self.inverse_lanes.list_roots.len()
+                * std::mem::size_of::<tex_state::page_node_arena::PageListSpan>()
+            + self.inverse_lanes.align_states.len() * std::mem::size_of::<Option<AlignState>>()
+            + self.inverse_lanes.incomplete_fractions.len()
+                * std::mem::size_of::<Option<super::IncompleteFraction>>()
+            + self.inverse_lanes.display_interrupts.len()
+                * std::mem::size_of::<Option<super::DisplayInterrupt>>()
+            + self.inverse_lanes.display_eq_nos.len()
+                * std::mem::size_of::<Option<super::DisplayEqNo>>()
+            + self.inverse_lanes.prev_depths.len()
+                * std::mem::size_of::<Option<tex_state::scaled::Scaled>>()
+            + self.inverse_lanes.pending_projections.len()
+                * std::mem::size_of::<PendingHRunProjection>()
+            + self.inverse_lanes.pending_values.len()
+                * std::mem::size_of::<Option<super::PendingHRun>>()
+            + self.inverse_lanes.popped_levels.len() * std::mem::size_of::<ModeLevelSummary>()
+    }
 }
 
 pub(super) struct ListJournal<'a> {
     level_id: u64,
     inverse_positions: &'a mut [usize; FIELD_COUNT],
     inverses: &'a mut Vec<Inverse>,
+    inverse_lanes: &'a mut InverseLanes,
 }
 
-/// Writes the concrete inverse variant at its producing call site.
-///
-/// This deliberately remains a macro: passing [`Inverse`] through a generic
-/// helper would transfer the enum's maximum-sized variant even when the
-/// mutation needs only a scalar payload.
-macro_rules! push_inverse_once {
-    ($journal:ident, $field:expr, $inverse:expr) => {
+macro_rules! push_inline_once {
+    ($journal:ident, $field:expr, $kind:expr, $payload:expr) => {
         if $journal.inverse_positions[$field] == UNRECORDED {
             let position = $journal.inverses.len();
-            $journal.inverses.push($inverse);
+            $journal
+                .inverses
+                .push(Inverse::new($journal.level_id, $kind, $payload));
+            $journal.inverse_positions[$field] = position;
+        }
+    };
+}
+
+macro_rules! push_lane_once {
+    ($journal:ident, $field:expr, $kind:expr, $lane:ident, $value:expr) => {
+        if $journal.inverse_positions[$field] == UNRECORDED {
+            let payload = push_lane(&mut $journal.inverse_lanes.$lane, $value);
+            let position = $journal.inverses.len();
+            $journal
+                .inverses
+                .push(Inverse::new($journal.level_id, $kind, payload));
             $journal.inverse_positions[$field] = position;
         }
     };
@@ -367,180 +378,127 @@ impl ListJournal<'_> {
         self.inverse_positions[NODES] == UNRECORDED
     }
     pub(super) fn record_nodes(&mut self, old: tex_state::page_node_arena::PageListSpan) {
-        if self.inverse_positions[NODES] == UNRECORDED {
-            self.inverse_positions[NODES] = self.inverses.len();
-            self.inverses.push(Inverse::ListRoot {
-                level_id: self.level_id,
-                old,
-            });
-        }
+        push_lane_once!(self, NODES, InverseKind::ListRoot, list_roots, old);
     }
 
     #[cfg(test)]
     pub(super) fn record_align_state(&mut self, old: Option<AlignState>) {
-        push_inverse_once!(
+        push_lane_once!(
             self,
             ALIGN_STATE,
-            Inverse::AlignState {
-                level_id: self.level_id,
-                old,
-            }
+            InverseKind::AlignState,
+            align_states,
+            old
         );
     }
 
     pub(super) fn record_incomplete_fraction(&mut self, old: Option<super::IncompleteFraction>) {
-        push_inverse_once!(
+        push_lane_once!(
             self,
             INCOMPLETE_FRACTION,
-            Inverse::IncompleteFraction {
-                level_id: self.level_id,
-                old,
-            }
+            InverseKind::IncompleteFraction,
+            incomplete_fractions,
+            old
         );
     }
 
     pub(super) fn record_display_interrupt(&mut self, old: Option<super::DisplayInterrupt>) {
-        push_inverse_once!(
+        push_lane_once!(
             self,
             DISPLAY_INTERRUPT,
-            Inverse::DisplayInterrupt {
-                level_id: self.level_id,
-                old,
-            }
+            InverseKind::DisplayInterrupt,
+            display_interrupts,
+            old
         );
     }
 
     pub(super) fn record_display_eq_no(&mut self, old: Option<super::DisplayEqNo>) {
-        push_inverse_once!(
+        push_lane_once!(
             self,
             DISPLAY_EQ_NO,
-            Inverse::DisplayEqNo {
-                level_id: self.level_id,
-                old,
-            }
+            InverseKind::DisplayEqNo,
+            display_eq_nos,
+            old
         );
     }
 
     pub(super) fn record_display_alignment(&mut self, old: bool) {
-        push_inverse_once!(
+        push_inline_once!(
             self,
             DISPLAY_ALIGNMENT,
-            Inverse::DisplayAlignment {
-                level_id: self.level_id,
-                old,
-            }
+            InverseKind::DisplayAlignment,
+            old.into()
         );
     }
 
     pub(super) fn record_prev_depth(&mut self, old: Option<tex_state::scaled::Scaled>) {
-        push_inverse_once!(
-            self,
-            PREV_DEPTH,
-            Inverse::PrevDepth {
-                level_id: self.level_id,
-                old,
-            }
-        );
+        push_lane_once!(self, PREV_DEPTH, InverseKind::PrevDepth, prev_depths, old);
     }
 
     pub(super) fn record_prev_graf(&mut self, old: i32) {
-        push_inverse_once!(
-            self,
-            PREV_GRAF,
-            Inverse::PrevGraf {
-                level_id: self.level_id,
-                old,
-            }
-        );
+        push_inline_once!(self, PREV_GRAF, InverseKind::PrevGraf, old as u32);
     }
 
     pub(super) fn record_pending_projection(&mut self, old: Option<PendingHRunProjection>) {
         if self.inverse_positions[PENDING_HCHARS] == UNRECORDED {
-            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
-            self.inverses.push(Inverse::PendingHchars {
-                level_id: self.level_id,
-                old: old.map_or(
-                    PendingHcharsRollback::Absent,
-                    PendingHcharsRollback::Projection,
-                ),
+            let (kind, payload) = old.map_or((InverseKind::PendingAbsent, 0), |projection| {
+                (
+                    InverseKind::PendingProjection,
+                    push_lane(&mut self.inverse_lanes.pending_projections, projection),
+                )
             });
+            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
+            self.inverses
+                .push(Inverse::new(self.level_id, kind, payload));
         }
     }
 
-    pub(super) fn record_pending_owned(&mut self, mut old: Option<super::PendingHRun>) {
+    pub(super) fn record_pending_owned(&mut self, old: Option<super::PendingHRun>) {
         let position = self.inverse_positions[PENDING_HCHARS];
         if position == UNRECORDED {
-            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
-            self.inverses.push(Inverse::PendingHchars {
-                level_id: self.level_id,
-                old: PendingHcharsRollback::Value(old),
-            });
+            self.push_pending_value(old);
             return;
         }
-        let Inverse::PendingHchars { old: rollback, .. } = &mut self.inverses[position] else {
-            unreachable!("pending-hchar field records its own inverse variant")
-        };
-        if let PendingHcharsRollback::Projection(projection) = rollback {
-            if let Some(run) = &mut old {
-                projection.clone().restore(run);
-            }
-            *rollback = PendingHcharsRollback::Value(old);
+        if self.inverses[position].kind == InverseKind::PendingProjection {
+            // A projection assumes the run still exists. Record the destructive
+            // transition separately so reverse replay first reinstates that run
+            // and can then apply the earlier narrow projection.
+            self.push_pending_value(old);
         }
     }
 
     pub(super) fn record_pending_value(&mut self, old: Option<&super::PendingHRun>) {
         let position = self.inverse_positions[PENDING_HCHARS];
         if position == UNRECORDED {
-            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
-            self.inverses.push(Inverse::PendingHchars {
-                level_id: self.level_id,
-                old: PendingHcharsRollback::Value(old.cloned()),
-            });
+            self.push_pending_value(old.cloned());
             return;
         }
-        let Inverse::PendingHchars { old: rollback, .. } = &mut self.inverses[position] else {
-            unreachable!("pending-hchar field records its own inverse variant")
-        };
-        if let PendingHcharsRollback::Projection(projection) = rollback {
-            let mut value = old.cloned();
-            if let Some(run) = &mut value {
-                projection.clone().restore(run);
-            }
-            *rollback = PendingHcharsRollback::Value(value);
+        if self.inverses[position].kind == InverseKind::PendingProjection {
+            self.push_pending_value(old.cloned());
         }
+    }
+
+    fn push_pending_value(&mut self, old: Option<super::PendingHRun>) {
+        let payload = push_lane(&mut self.inverse_lanes.pending_values, old);
+        self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
+        self.inverses.push(Inverse::new(
+            self.level_id,
+            InverseKind::PendingValue,
+            payload,
+        ));
     }
 
     pub(super) fn record_space_factor(&mut self, old: i32) {
-        push_inverse_once!(
-            self,
-            SPACE_FACTOR,
-            Inverse::SpaceFactor {
-                level_id: self.level_id,
-                old,
-            }
-        );
+        push_inline_once!(self, SPACE_FACTOR, InverseKind::SpaceFactor, old as u32);
     }
 
     pub(super) fn record_no_boundary(&mut self, old: bool) {
-        push_inverse_once!(
-            self,
-            NO_BOUNDARY,
-            Inverse::NoBoundary {
-                level_id: self.level_id,
-                old,
-            }
-        );
+        push_inline_once!(self, NO_BOUNDARY, InverseKind::NoBoundary, old.into());
     }
 
     pub(super) fn record_hyphen_context(&mut self, old: (u8, u8, u8)) {
-        push_inverse_once!(
-            self,
-            HYPHEN_CONTEXT,
-            Inverse::HyphenContext {
-                level_id: self.level_id,
-                old,
-            }
-        );
+        let payload = u32::from(old.0) | (u32::from(old.1) << 8) | (u32::from(old.2) << 16);
+        push_inline_once!(self, HYPHEN_CONTEXT, InverseKind::HyphenContext, payload);
     }
 }
 
@@ -603,6 +561,11 @@ impl ModeNestStorage {
         self.journal.inverses.len()
     }
 
+    #[cfg(test)]
+    pub(super) fn journal_recorded_bytes_for_test(&self) -> usize {
+        self.journal.recorded_bytes_for_test()
+    }
+
     #[cfg(feature = "profiling")]
     pub(super) const fn replay_work(&self) -> u64 {
         self.journal.replay_work
@@ -614,6 +577,7 @@ impl ModeNestStorage {
         self.journal.projections.truncate(frame.projection_start);
         if self.journal.frames.is_empty() {
             self.journal.inverses.clear();
+            self.journal.inverse_lanes.clear();
         }
         Ok(())
     }
@@ -624,7 +588,7 @@ impl ModeNestStorage {
         while self.journal.inverses.len() > frame.cursor {
             self.journal.replay_work = self.journal.replay_work.saturating_add(1);
             let inverse = self.journal.inverses.pop().expect("cursor bounds inverses");
-            inverse.restore(self);
+            self.restore_inverse(inverse);
         }
         for index in frame.projection_start..self.journal.projections.len() {
             let projection = self.journal.projections[index];
@@ -635,6 +599,106 @@ impl ModeNestStorage {
         }
         self.journal.projections.truncate(frame.projection_start);
         Ok(())
+    }
+
+    /// Restores one operation-local inverse. Aggregate checkpoints retain no
+    /// mode journal tail, so every descriptor and lane payload is consumed
+    /// exactly once and never needs a forward-redo value.
+    fn restore_inverse(&mut self, inverse: Inverse) {
+        let level_id = inverse.level_id;
+        match inverse.kind {
+            InverseKind::ListRoot => {
+                let old = pop_lane(&mut self.journal.inverse_lanes.list_roots, inverse.payload);
+                self.level_by_id_mut(level_id).list.nodes = old;
+            }
+            #[cfg(test)]
+            InverseKind::AlignState => {
+                let old = pop_lane(
+                    &mut self.journal.inverse_lanes.align_states,
+                    inverse.payload,
+                );
+                self.level_by_id_mut(level_id).list.align_state = old;
+            }
+            InverseKind::IncompleteFraction => {
+                let old = pop_lane(
+                    &mut self.journal.inverse_lanes.incomplete_fractions,
+                    inverse.payload,
+                );
+                self.level_by_id_mut(level_id).list.incomplete_fraction = old;
+            }
+            InverseKind::DisplayInterrupt => {
+                let old = pop_lane(
+                    &mut self.journal.inverse_lanes.display_interrupts,
+                    inverse.payload,
+                );
+                self.level_by_id_mut(level_id).list.display_interrupt = old;
+            }
+            InverseKind::DisplayEqNo => {
+                let old = pop_lane(
+                    &mut self.journal.inverse_lanes.display_eq_nos,
+                    inverse.payload,
+                );
+                self.level_by_id_mut(level_id).list.display_eq_no = old;
+            }
+            InverseKind::DisplayAlignment => {
+                self.level_by_id_mut(level_id).list.display_alignment = inverse.payload != 0;
+            }
+            InverseKind::PrevDepth => {
+                let old = pop_lane(&mut self.journal.inverse_lanes.prev_depths, inverse.payload);
+                self.level_by_id_mut(level_id).list.prev_depth = old;
+            }
+            InverseKind::PrevGraf => {
+                self.level_by_id_mut(level_id).list.prev_graf = inverse.payload as i32;
+            }
+            InverseKind::PendingAbsent => {
+                self.level_by_id_mut(level_id).list.pending_hchars = None;
+            }
+            InverseKind::PendingProjection => {
+                let projection = pop_lane(
+                    &mut self.journal.inverse_lanes.pending_projections,
+                    inverse.payload,
+                );
+                projection.restore(
+                    self.level_by_id_mut(level_id)
+                        .list
+                        .pending_hchars
+                        .as_mut()
+                        .expect("destructive pending inverse reinstates projected run"),
+                );
+            }
+            InverseKind::PendingValue => {
+                let value = pop_lane(
+                    &mut self.journal.inverse_lanes.pending_values,
+                    inverse.payload,
+                );
+                self.level_by_id_mut(level_id).list.pending_hchars = value;
+            }
+            InverseKind::SpaceFactor => {
+                self.level_by_id_mut(level_id).list.space_factor = inverse.payload as i32;
+            }
+            InverseKind::NoBoundary => {
+                self.level_by_id_mut(level_id).list.no_boundary = inverse.payload != 0;
+            }
+            InverseKind::HyphenContext => {
+                let list = &mut self.level_by_id_mut(level_id).list;
+                list.hyphen_language = inverse.payload as u8;
+                list.left_hyphen_min = (inverse.payload >> 8) as u8;
+                list.right_hyphen_min = (inverse.payload >> 16) as u8;
+            }
+            InverseKind::Push => {
+                let index = self.level_index(level_id);
+                self.levels.remove(index);
+                self.journal.level_ids.remove(index);
+            }
+            InverseKind::Pop => {
+                let level = pop_lane(
+                    &mut self.journal.inverse_lanes.popped_levels,
+                    inverse.payload,
+                );
+                self.levels.push(level);
+                self.journal.level_ids.push(level_id);
+            }
+        }
     }
 
     fn validate_cursor(&self, cursor: Cursor) -> Result<(), CursorError> {
@@ -682,6 +746,11 @@ impl ModeNest {
         self.storage.journal_inverse_len_for_test()
     }
 
+    #[cfg(test)]
+    pub(super) fn journal_recorded_bytes_for_test(&self) -> usize {
+        self.storage.journal_recorded_bytes_for_test()
+    }
+
     pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.storage.commit_journal(cursor)
     }
@@ -689,4 +758,20 @@ impl ModeNest {
     pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.storage.rollback_journal(cursor)
     }
+}
+
+#[cfg(test)]
+pub(super) fn inverse_layout_for_test() -> [usize; 10] {
+    [
+        std::mem::size_of::<Inverse>(),
+        std::mem::size_of::<tex_state::page_node_arena::PageListSpan>(),
+        std::mem::size_of::<Option<AlignState>>(),
+        std::mem::size_of::<Option<super::IncompleteFraction>>(),
+        std::mem::size_of::<Option<super::DisplayInterrupt>>(),
+        std::mem::size_of::<Option<super::DisplayEqNo>>(),
+        std::mem::size_of::<Option<tex_state::scaled::Scaled>>(),
+        std::mem::size_of::<PendingHRunProjection>(),
+        std::mem::size_of::<Option<super::PendingHRun>>(),
+        std::mem::size_of::<ModeLevelSummary>(),
+    ]
 }

@@ -115,6 +115,56 @@ fn warmed_mode_journal_begin_and_commit_allocate_nothing() {
 
 #[cfg(feature = "profiling")]
 #[test]
+fn warmed_compact_journal_scalar_payload_and_level_rollback_allocate_nothing() {
+    let _serial = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal mode");
+
+    let warm = nest.begin_journal();
+    {
+        let mut list = nest.current_list_mutation();
+        list.set_space_factor(777);
+        list.set_prev_depth(Scaled::from_raw(11));
+        let _ = list.take_nodes();
+        let _ = list.take_incomplete_fraction();
+        let _ = list.take_display_interrupt();
+        let _ = list.take_display_eq_no();
+    }
+    nest.pop().expect("journaled level pop");
+    nest.rollback_journal(warm).expect("warm journal rollback");
+    drop(tex_state::measurement::hot_core_allocation_scope(
+        tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+    ));
+
+    let before = semantic_apply_allocations();
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
+        for _ in 0..16_384 {
+            let cursor = nest.begin_journal();
+            {
+                let mut list = nest.current_list_mutation();
+                list.set_space_factor(777);
+                list.set_prev_depth(Scaled::from_raw(11));
+                let _ = list.take_nodes();
+                let _ = list.take_incomplete_fraction();
+                let _ = list.take_display_interrupt();
+                let _ = list.take_display_eq_no();
+            }
+            nest.pop().expect("journaled level pop");
+            nest.rollback_journal(cursor).expect("journal rollback");
+        }
+    }
+    let after = semantic_apply_allocations();
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
 fn warmed_long_pending_run_mutation_and_rollback_allocate_nothing() {
     let _serial = ALLOCATION_TEST_LOCK
         .lock()
@@ -585,6 +635,124 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
 }
 
 #[test]
+fn compact_inverse_layout_and_representative_recorded_bytes_are_exact() {
+    let layout = super::journal::inverse_layout_for_test();
+    assert_eq!(
+        layout,
+        [16, 48, 128, 72, 160, 56, 8, 152, 168, 840],
+        "descriptor, list root, alignment, fraction, display interrupt, equation number, previous depth, pending projection, pending value, and popped level layouts"
+    );
+    let [
+        descriptor,
+        list_root,
+        _align,
+        _fraction,
+        _interrupt,
+        _eq_no,
+        prev_depth,
+        _projection,
+        _pending_value,
+        popped_level,
+    ] = layout;
+    assert_eq!(descriptor, 16);
+
+    let profiled_inline_calls = 123_024 + 106_816 + 1_142 + 8 + 4;
+    let profiled_recorded_bytes = profiled_inline_calls * descriptor
+        + 1_334 * (descriptor + prev_depth)
+        + 908 * (descriptor + layout[3]);
+    assert_eq!(profiled_inline_calls + 1_334 + 908, 233_236);
+    assert_eq!(profiled_recorded_bytes, 3_807_824);
+    assert_eq!(233_236 * 624 - profiled_recorded_bytes, 141_731_440);
+
+    let mut scalar = ModeNest::new();
+    scalar.reset_journal_for_test();
+    let cursor = scalar.begin_journal();
+    scalar.current_list_mutation().set_space_factor(777);
+    assert_eq!(scalar.journal_recorded_bytes_for_test(), descriptor);
+    scalar.rollback_journal(cursor).expect("scalar rollback");
+    assert_eq!(scalar.journal_recorded_bytes_for_test(), 0);
+
+    let mut root = ModeNest::new();
+    root.reset_journal_for_test();
+    let cursor = root.begin_journal();
+    let _ = root.current_list_mutation().take_nodes();
+    assert_eq!(
+        root.journal_recorded_bytes_for_test(),
+        descriptor + list_root
+    );
+    root.rollback_journal(cursor).expect("root rollback");
+    assert_eq!(root.journal_recorded_bytes_for_test(), 0);
+
+    let mut depth = ModeNest::new();
+    depth.reset_journal_for_test();
+    let cursor = depth.begin_journal();
+    depth
+        .current_list_mutation()
+        .set_prev_depth(Scaled::from_raw(11));
+    assert_eq!(
+        depth.journal_recorded_bytes_for_test(),
+        descriptor + prev_depth
+    );
+    depth.rollback_journal(cursor).expect("depth rollback");
+    assert_eq!(depth.journal_recorded_bytes_for_test(), 0);
+
+    let mut pop = ModeNest::new();
+    pop.push(Mode::Horizontal).expect("horizontal mode");
+    pop.reset_journal_for_test();
+    let cursor = pop.begin_journal();
+    pop.pop().expect("journaled level pop");
+    assert_eq!(
+        pop.journal_recorded_bytes_for_test(),
+        descriptor + popped_level
+    );
+    pop.rollback_journal(cursor).expect("level rollback");
+    assert_eq!(pop.journal_recorded_bytes_for_test(), 0);
+    assert_eq!(pop.current_mode(), Mode::Horizontal);
+}
+
+#[test]
+fn pending_projection_and_later_ownership_transfer_replay_in_reverse_order() {
+    let mut nest = ModeNest::new();
+    nest.current_list_mutation().begin_pending_hchars(
+        FontId::testing_new(2),
+        'a',
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    nest.current_list_mutation().append_pending_hchar(
+        FontId::testing_new(2),
+        'b',
+        tex_state::token::OriginId::UNKNOWN,
+        None,
+    );
+    let before = nest.current_list().pending_hchars().cloned();
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
+
+    nest.current_list_mutation().append_pending_hchar(
+        FontId::testing_new(2),
+        'c',
+        tex_state::token::OriginId::UNKNOWN,
+        None,
+    );
+    nest.current_list_mutation()
+        .set_pending_hchars(super::PendingHRun::new(
+            FontId::testing_new(3),
+            'x',
+            tex_state::token::OriginId::UNKNOWN,
+            0,
+        ));
+    assert!(nest.current_list_mutation().take_pending_hchars().is_some());
+    assert_eq!(
+        nest.journal_inverse_len_for_test(),
+        2,
+        "the projection and destructive transition retain separate narrow inverses"
+    );
+
+    nest.rollback_journal(cursor).expect("pending rollback");
+    assert_eq!(nest.current_list().pending_hchars(), before.as_ref());
+}
+
+#[test]
 fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
     with_context(|context| {
         let mut nest = ModeNest::new();
@@ -846,6 +1014,7 @@ fn journal_fatal_commit_model_and_operational_invisibility_hold() {
         assert_ne!(format!("{nest:?}"), debug_before);
         assert_eq!(nest_nodes(&nest, context), [kern(42)]);
         assert_eq!(nest.journal_inverse_len_for_test(), 0);
+        assert_eq!(nest.journal_recorded_bytes_for_test(), 0);
     });
 }
 

@@ -97,12 +97,52 @@ add none. Nested commit retains the inverse suffix required by its parent,
 while rollback validates the exact innermost frame before replay.
 
 First-write inverse construction is part of each typed journal operation. The
-operation checks its projection slot, constructs exactly its concrete tagged
-payload only when that slot is unrecorded, pushes it directly into the one
-ordered inverse log, and then publishes the log position. There is no generic
-maximum-enum argument between the producer and the log. This keeps rollback
-ordering and O(1) field marks in one representation without a side payload
-arena, boxing, whole-list snapshot, or retained cache.
+operation checks its projection slot, stores its concrete old value in the
+matching typed payload lane only when that slot is unrecorded, appends one
+16-byte descriptor to the ordered inverse stream, and then publishes the
+stream position. Four-byte scalar payloads stay in the descriptor. Reverse
+replay pops the descriptor and its named lane together, so the descriptor
+stream remains the sole ordering authority and field marks and frame cursors
+remain O(1). The lanes are inline journal owners with warmed capacity, not
+per-entry boxes or a second list representation; they are cleared immediately
+after the outermost commit and consumed in stack order by rollback. This keeps
+the 840-byte popped-level value from inflating every unrelated scalar or list
+inverse without adding compaction, a whole-list snapshot, or a retained cache.
+
+On the 64-bit native test target the descriptor is 16 bytes. The payload lanes
+are 48 bytes for a page-list root, 128 for test-only alignment state, 72 for an
+incomplete fraction, 160 for a display interrupt, 56 for an equation number,
+8 for previous depth, 152 for a pending-run projection, 168 for an owned
+pending-run value, and 840 for a popped level. Boolean, integer, hyphen-context,
+push, and absent-pending inverses add no lane payload. The exact-layout test
+pins these values and charges representative records as descriptor plus only
+their named payload.
+
+The audited mutation boundary is exhaustive. `push`, `append`, `take_nodes`,
+`append_unique_list`, `take_span`, `pop_last_node`, `remove_node_range`,
+`with_node_mut`, `with_last_node_mut`, the test-only reconstitution operations,
+and display-alignment root transfers use the page-list-root lane. Pending-run
+begin, append, and test mutation use absent or projection descriptors;
+`set_pending_hchars` and `take_pending_hchars` use the owned-value lane, with a
+separate destructive descriptor when an earlier projection must replay after
+the run is reinstated. Space factor, no-boundary, hyphen context, previous
+depth, previous paragraph lines, incomplete fraction, display interrupt,
+equation number, display alignment, test-only alignment state, and mode-level
+push/pop each map to their correspondingly named descriptor or lane. There is
+no remaining generic inverse-record mutation call site.
+
+The authenticated 20-million-action census recorded this exact first-write
+mix: 123,024 no-boundary, 106,816 space-factor, 1,334 previous-depth, 1,142
+previous-paragraph-line, 908 incomplete-fraction, eight hyphen-context, and
+four display-alignment inverses. At the measured 624-byte historical entry
+that was 145,539,264 transferred bytes. The compact structural charge is
+3,807,824 bytes: one 16-byte descriptor per call, plus 8-byte previous-depth
+and 72-byte incomplete-fraction payloads. The expected reduction is
+141,731,440 bytes, or 97.38%, before a new whole-program copy census. At the
+direct-chunk/effective-tail integration base, reconstructing the superseded
+enum measured 848 bytes because its maximum 840-byte level payload had grown;
+the same mix would therefore reduce by 193,976,304 of 197,784,128 bytes, or
+98.07%.
 
 Every live `ModeNest` directly owns an enabled journal. Cloning or rehydrating
 a `ModeNest` creates a fresh operational journal over the cloned live levels;
