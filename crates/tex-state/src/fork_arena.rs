@@ -3655,9 +3655,9 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             .get(cursor.raw, self.arena.owner, cursor.offset)
     }
 
-    pub fn iter(&self) -> ArenaListIter<'_, 'a, T, Lane> {
+    pub fn iter(&self) -> ArenaListIter<'a, T, Lane> {
         ArenaListIter {
-            view: self,
+            view: *self,
             front: 0,
             back: self.len(),
             back_cursor: (!self.is_empty()).then_some(self.list.tail),
