@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use tex_command::{
-    AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandObservation,
-    CommandObserver, CommandProcessor, CommandState, PrintCommand, RegisteredSourceKind,
-    SourceRegistration, append_print_cmd_chr_text, install_tex82_expandable_primitives,
-    install_tex82_unexpandable_primitives,
+    AlignmentIdentity, CommandFuelLedger, CommandHostCapabilities, CommandHostContext,
+    CommandObservation, CommandObserver, CommandProcessor, CommandState, PrintCommand,
+    RegisteredSourceKind, SourceRegistration, append_print_cmd_chr_text,
+    install_tex82_expandable_primitives, install_tex82_unexpandable_primitives,
 };
 use tex_state::env::AssignmentScope;
 use tex_state::interner::InternerBudget;
@@ -185,6 +185,7 @@ fn run_one<G>(
     }
 
     let mut case = processor_case(universe, workload);
+    let mut fuel = CommandFuelLedger::default();
     let region = Region::new(GLOBAL);
     perturb_if_requested(perturb);
     let mut observer = CountingObserver::default();
@@ -193,6 +194,8 @@ fn run_one<G>(
         &mut case.command,
         &mut context,
         CommandHostContext::new(&mut case.capabilities),
+        fuel.fuel_mut(),
+        None,
         &mut case.diagnostic_effects,
     );
     let mut processor = match configuration {
@@ -446,11 +449,14 @@ fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> Processo
         replay,
     };
     if matches!(workload, Workload::MacroArgumentMatching) {
+        let mut fuel = CommandFuelLedger::default();
         let mut context = universe.command_context().expect("command context");
         let mut processor = CommandProcessor::new(
             &mut case.command,
             &mut context,
             CommandHostContext::new(&mut case.capabilities),
+            fuel.fuel_mut(),
+            None,
             &mut case.diagnostic_effects,
         );
         for _ in 0..48 {
@@ -547,12 +553,15 @@ fn rendering_case<G>(universe: &mut Universe<G>) -> RenderingCase<G> {
         .open_registered_source(registered)
         .expect("rendering source opens");
     let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = CommandFuelLedger::default();
     let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
     let mut context = universe.command_context().expect("command context");
     let current = CommandProcessor::new(
         &mut command,
         &mut context,
         CommandHostContext::new(&mut capabilities),
+        fuel.fuel_mut(),
+        None,
         &mut diagnostic_effects,
     )
     .get_next()

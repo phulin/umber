@@ -338,10 +338,8 @@ impl<G> CommandState<G> {
                 }
                 InputLevel::Tokens(cursor) => {
                     let identity = cursor.identity();
-                    let delivered = cursor.deliver_into(
-                        PackedTokenSources::new(replay_lane, attempt),
-                        destination,
-                    )?;
+                    let delivered = cursor
+                        .deliver_into(PackedTokenSources::new(replay_lane, attempt), destination)?;
                     if delivered {
                         (
                             InputTopTransition::Delivered,
