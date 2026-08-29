@@ -95,7 +95,7 @@ fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
 }
 
 #[test]
-fn source_retirement_moves_its_open_depth_owners() {
+fn source_retirement_returns_only_the_prepared_copy_boundary() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();
         let source = state
@@ -108,22 +108,25 @@ fn source_retirement_moves_its_open_depth_owners() {
             group_lineages: vec![11, 12].into_boxed_slice(),
             conditional_identities: vec![21, 22].into_boxed_slice(),
         };
-        let group_owner = open_depths.group_lineages.as_ptr();
-        let conditional_owner = open_depths.conditional_identities.as_ptr();
         let (identity, _) = state
             .open_registered_file_with_depths(source, open_depths)
             .expect("source opens");
 
         let retirement = state
-            .retire_exhausted_input(identity)
+            .retire_exhausted_input_with_file_warning(
+                identity,
+                Some(super::FileWarningBoundary {
+                    group_start: 1,
+                    condition_start: 2,
+                }),
+            )
             .expect("source retires");
-        let retired_depths = retirement
-            .source_open_depths
-            .expect("nested source owns open depths");
-        assert_eq!(retired_depths.group_lineages.as_ptr(), group_owner);
         assert_eq!(
-            retired_depths.conditional_identities.as_ptr(),
-            conditional_owner
+            retirement.file_warning_boundary,
+            Some(super::FileWarningBoundary {
+                group_start: 1,
+                condition_start: 2,
+            })
         );
     });
 }

@@ -76,10 +76,17 @@ pub(crate) struct InputRetirement {
     pub(crate) name_class: Option<SourceNameClass>,
     pub(crate) source: Option<tex_state::SourceId>,
     pub(crate) trace: Option<ReplayTrace>,
-    /// Frame-owned e-TeX nesting ancestry moved out by source retirement.
-    pub(crate) source_open_depths: Option<Box<super::SourceOpenDepths>>,
+    /// Copy-only result of comparing the still-borrowed source ancestry with
+    /// current group and conditional stacks before the row is popped.
+    pub(crate) file_warning_boundary: Option<FileWarningBoundary>,
     /// Whether §362 must print this source retirement's bare `)` now.
     pub(crate) closes_file_frame: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct FileWarningBoundary {
+    pub(crate) group_start: u32,
+    pub(crate) condition_start: u32,
 }
 
 enum RetiredInputLevel<G> {
@@ -88,7 +95,6 @@ enum RetiredInputLevel<G> {
         name_class: SourceNameClass,
         source: tex_state::SourceId,
         retirement: super::SourceRetirement,
-        open_depths: Option<Box<super::SourceOpenDepths>>,
         framed: bool,
     },
     Tokens {
@@ -106,9 +112,8 @@ impl<G> RetiredInputLevel<G> {
             InputLevel::Source(source) => Self::Source {
                 identity: source.identity(),
                 name_class: source.name_class,
-                source: source.cursor.current_backing().id,
+                source: source.slot.cursor.current_backing().id,
                 retirement: source.retirement,
-                open_depths: source.open_depths.clone(),
                 framed: source_level_is_framed(source),
             },
             InputLevel::Tokens(cursor) => Self::Tokens {
@@ -138,9 +143,8 @@ impl<G> RetiredInputLevel<G> {
                 Self::Source {
                     identity: source.identity(),
                     name_class: source.name_class,
-                    source: source.cursor.current_backing().id,
+                    source: source.slot.cursor.current_backing().id,
                     retirement: source.retirement,
-                    open_depths: source.open_depths,
                     framed,
                 }
             }
@@ -270,7 +274,7 @@ impl<G> CommandState<G> {
             match level {
                 InputLevel::Source(source) => {
                     let identity = source.identity();
-                    let position = source.cursor.next_physical_offset;
+                    let position = source.slot.cursor.next_physical_offset;
                     if state.tracked_region_is_active() {
                         super::observe_immutable_source(state, source);
                     }
@@ -280,9 +284,11 @@ impl<G> CommandState<G> {
                     };
                     let step = match profile.character_mode() {
                         crate::CharacterMode::EightBitExact => source
+                            .slot
                             .cursor
                             .next_compact_exact_byte_step(force_eof, &mut queries),
                         crate::CharacterMode::UnicodeExtended => source
+                            .slot
                             .cursor
                             .next_compact_unicode_step(force_eof, &mut queries),
                     };
@@ -302,7 +308,7 @@ impl<G> CommandState<G> {
                                     range.end(),
                                 )
                             };
-                            let direct_source_line = source.cursor.line.as_ref().map(|line| {
+                            let direct_source_line = source.slot.cursor.line.as_ref().map(|line| {
                                 u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
                             });
                             if source.frame.identity() != identity.0
@@ -401,7 +407,7 @@ impl<G> CommandState<G> {
         pending_acquired_line: bool,
     ) -> Result<Option<super::PhysicalLine>, ()> {
         if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
-            register_pending_source_backings(state, &mut source.cursor);
+            register_pending_source_backings(state, &mut source.slot.cursor);
             if state.tracked_region_is_active() {
                 super::observe_immutable_source(state, source);
             }
@@ -419,7 +425,7 @@ impl<G> CommandState<G> {
             )?
         };
         if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
-            register_pending_source_backings(state, &mut source.cursor);
+            register_pending_source_backings(state, &mut source.slot.cursor);
             if state.tracked_region_is_active() {
                 super::observe_immutable_source(state, source);
             }
@@ -457,49 +463,58 @@ impl<G> CommandState<G> {
         let (physical, retained_line) = {
             let usage = &mut self.stack_usage;
             let input = &mut self.roots.input;
-            let Some(InputLevel::Source(source)) = input.levels.last_mut() else {
+            let Some(result) = input.levels.mutate_last_stored(|level| {
+                let InputLevel::Source(source) = level else {
+                    unreachable!("physical acquisition requires a source top");
+                };
+                let identity = source.identity();
+                let name_class = source.name_class;
+                let stored = super::SourceLevelExecutionState::cursor(source);
+                if pending_acquired_line {
+                    source.slot.cursor.pending_acquired_line = true;
+                }
+                let mut lines = super::LineBackingRegistry {
+                    profile,
+                    next_identity: &mut input.next_source_identity,
+                    usage,
+                    buffer_start,
+                    name_class: Some(name_class),
+                };
+                let result = source
+                    .slot
+                    .cursor
+                    .load_next_line(endlinechar)
+                    .map(|line| line.physical)
+                    .map(|physical| {
+                        lines.record_line_usage(&source.slot.cursor);
+                        if firm {
+                            source
+                                .slot
+                                .cursor
+                                .firm_up_the_line(endlinechar, queries, &mut lines);
+                            lines.record_line_usage(&source.slot.cursor);
+                        }
+                        let retained_line = match name_class {
+                            SourceNameClass::File | SourceNameClass::Scantokens(_) => source
+                                .slot
+                                .cursor
+                                .line
+                                .as_ref()
+                                .map(|line| line.physical.number().min(i32::MAX as u64) as i32)
+                                .unwrap_or(0),
+                            SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
+                        };
+                        debug_assert_eq!(source.identity(), identity);
+                        (physical, retained_line)
+                    });
+                (stored, result)
+            }) else {
                 return Err(());
             };
-            let identity = source.identity();
-            let name_class = source.name_class;
-            if pending_acquired_line {
-                source.cursor.pending_acquired_line = true;
-            }
-            // A non-final exhausted line remains installed until this cold
-            // acquisition seam so a failed replacement-backing registration
-            // receives one retry before its sole cursor owner is released.
-            if source.cursor.line.is_some() {
-                source.cursor.finish_line();
-            }
-            let mut lines = super::LineBackingRegistry {
-                profile,
-                next_identity: &mut input.next_source_identity,
-                usage,
-                buffer_start,
-                name_class: Some(name_class),
-            };
-            let Some(line) = source.cursor.load_next_line(endlinechar) else {
+            let Some(result) = result else {
                 return Ok(None);
             };
-            let physical = line.physical;
-            lines.record_line_usage(&source.cursor);
-            if firm {
-                source
-                    .cursor
-                    .firm_up_the_line(endlinechar, queries, &mut lines);
-                lines.record_line_usage(&source.cursor);
-            }
-            let retained_line = match name_class {
-                SourceNameClass::File | SourceNameClass::Scantokens(_) => source
-                    .cursor
-                    .line
-                    .as_ref()
-                    .map(|line| line.physical.number().min(i32::MAX as u64) as i32)
-                    .unwrap_or(0),
-                SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
-            };
-            debug_assert_eq!(source.identity(), identity);
-            (physical, retained_line)
+            result
         };
         if self.input.next_source_identity != old_next_source_identity {
             self.timeline
@@ -527,7 +542,7 @@ impl<G> CommandState<G> {
         if source.identity() != identity {
             return Err(());
         }
-        register_pending_source_backings(state, &mut source.cursor);
+        register_pending_source_backings(state, &mut source.slot.cursor);
         Ok(())
     }
 
@@ -804,6 +819,14 @@ impl<G> CommandState<G> {
         &mut self,
         expected: InputLevelId,
     ) -> Result<InputRetirement, InputRetirementError> {
+        self.retire_exhausted_input_with_file_warning(expected, None)
+    }
+
+    pub(crate) fn retire_exhausted_input_with_file_warning(
+        &mut self,
+        expected: InputLevelId,
+        file_warning_boundary: Option<FileWarningBoundary>,
+    ) -> Result<InputRetirement, InputRetirementError> {
         let level = self
             .input
             .levels
@@ -834,7 +857,7 @@ impl<G> CommandState<G> {
                 name_class: None,
                 source: None,
                 trace: Some(trace),
-                source_open_depths: None,
+                file_warning_boundary: None,
                 closes_file_frame: false,
             });
         }
@@ -844,7 +867,6 @@ impl<G> CommandState<G> {
                 name_class,
                 source: source_id,
                 retirement,
-                open_depths,
                 framed,
                 ..
             } = self
@@ -884,7 +906,7 @@ impl<G> CommandState<G> {
                 name_class: Some(name_class),
                 source: Some(source_id),
                 trace: None,
-                source_open_depths: open_depths,
+                file_warning_boundary,
                 closes_file_frame: framed,
             });
         };
@@ -912,7 +934,7 @@ impl<G> CommandState<G> {
                 name_class: None,
                 source: None,
                 trace: Some(trace),
-                source_open_depths: None,
+                file_warning_boundary: None,
                 closes_file_frame: false,
             });
         }
@@ -958,7 +980,7 @@ impl<G> CommandState<G> {
             name_class: None,
             source: None,
             trace: Some(trace),
-            source_open_depths: None,
+            file_warning_boundary: None,
             closes_file_frame: false,
         })
     }
@@ -988,7 +1010,6 @@ impl<G> CommandState<G> {
                 name_class,
                 source,
                 retirement,
-                open_depths,
                 ..
             } = level
             else {
@@ -1003,7 +1024,7 @@ impl<G> CommandState<G> {
                 name_class: Some(name_class),
                 source: Some(source),
                 trace: None,
-                source_open_depths: open_depths,
+                file_warning_boundary: None,
                 closes_file_frame: false,
             });
         };
@@ -1030,7 +1051,7 @@ impl<G> CommandState<G> {
             name_class: None,
             source: None,
             trace: Some(trace),
-            source_open_depths: None,
+            file_warning_boundary: None,
             closes_file_frame: false,
         })
     }
@@ -1090,11 +1111,12 @@ impl<G> CommandState<G> {
                 InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
                 InputLevel::Source(source) => Some(match source.name_class {
                     SourceNameClass::File | SourceNameClass::Scantokens(_) => source
+                        .slot
                         .cursor
                         .line
                         .as_ref()
                         .map_or_else(
-                            || source.cursor.next_line_number.saturating_sub(1),
+                            || source.slot.cursor.next_line_number.saturating_sub(1),
                             |line| line.physical.number(),
                         )
                         .min(i32::MAX as u64)
@@ -1138,8 +1160,8 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
 fn source_level_is_framed<G>(source: &super::SourceLevel<G>) -> bool {
     match source.name_class {
         SourceNameClass::File => {
-            source.cursor.backing.name.is_some()
-                && source.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
+            source.slot.cursor.backing.name.is_some()
+                && source.slot.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
         }
         SourceNameClass::Scantokens(19) => true,
         SourceNameClass::Terminal

@@ -346,11 +346,12 @@ fn forced_eof_before_production_acquisition_registers_source_before_retirement()
             panic!("source is active");
         };
         let line = active
+            .slot
             .cursor
             .load_next_line(13)
             .expect("line is acquired outside production delivery");
-        line.byte_cursor = line.retained_end;
-        line.endline_delivered = true;
+        line.cursor.byte_cursor = line.retained_end;
+        line.cursor.endline_delivered = true;
         assert!(command.end_current_source_after_current_line());
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -444,7 +445,7 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
         let Some(InputLevel::Source(source)) = command.input.levels.last() else {
             panic!("source remains live after its first token");
         };
-        assert!(!source.cursor.backing_registered);
+        assert!(!source.slot.cursor.backing_registered);
 
         {
             let mut processor = crate::test_harness::processor(
@@ -649,6 +650,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let first_line_number = match processor.command.input.levels.last() {
             Some(InputLevel::Source(source)) => source
+                .slot
                 .cursor
                 .line
                 .as_ref()
@@ -674,6 +676,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let second_line_number = match processor.command.input.levels.last() {
             Some(InputLevel::Source(source)) => source
+                .slot
                 .cursor
                 .line
                 .as_ref()

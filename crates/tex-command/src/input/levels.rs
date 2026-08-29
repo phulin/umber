@@ -12,8 +12,8 @@ use crate::attempt::AttemptTokenListId;
 use crate::macro_call::MacroActivationId;
 
 use super::{
-    lines::SourceProvenance,
-    source::{SourceCursor, SourceNameClass},
+    lines::{SourceLexCursor, SourceProvenance},
+    source::{RegisteredSource, SourceCursor, SourceCursorExecutionState, SourceNameClass},
 };
 
 /// Stable identity for one live input level.
@@ -95,24 +95,16 @@ pub(crate) enum InputLevel<G> {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceLevel<G> {
     pub(crate) frame: PackedInputFrame,
-    pub(crate) cursor: Box<SourceCursor>,
+    /// Stable owner slot for all variable source state. The input row carries
+    /// one pointer to this authoritative owner; checkpoint execution state
+    /// contains only its checked key and reversible cursor/owner values.
+    pub(crate) slot: Box<SourceSlot<G>>,
     /// tex.web §303's `name` classification for this level. A token-list
     /// level has no counterpart: §307 reuses `name` there as the eqtb address
     /// of the macro being expanded, which is why this lives on `SourceLevel`
     /// and not on [`InputLevel`].
     pub(crate) name_class: SourceNameClass,
     pub(crate) retirement: SourceRetirement,
-    /// e-TeX §24.362's once-only token list, pushed above this source when
-    /// natural EOF is first observed and before `end_file_reading`.
-    pub(crate) every_eof: Option<tex_state::TokenListId<G>>,
-    /// e-TeX 2.6 [23.328]'s `grp_stack[in_open]`/`if_stack[in_open]`: the
-    /// live group and conditional boundary ancestry recorded when this
-    /// level's `begin_file_reading` ran, compared against the current stacks
-    /// at `end_file_reading` to drive `\tracingnesting`'s `file_warning`.
-    /// A nested source-opening transition installs this record before the
-    /// frame becomes visible on the input stack. Root, terminal, and `\read`
-    /// sources need no record and keep the compact optional owner empty.
-    pub(crate) open_depths: Option<Box<SourceOpenDepths>>,
 }
 
 impl<G> SourceLevel<G> {
@@ -121,8 +113,46 @@ impl<G> SourceLevel<G> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SourceSlotKey(u64);
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SourceSlot<G> {
+    key: SourceSlotKey,
+    pub(crate) cursor: SourceCursor,
+    /// e-TeX §24.362's once-only token list, pushed above this source when
+    /// natural EOF is first observed and before `end_file_reading`.
+    pub(crate) every_eof: Option<tex_state::TokenListId<G>>,
+    /// e-TeX 2.6 [23.328]'s source-opening group/conditional ancestry.
+    pub(crate) open_depths: Option<Box<SourceOpenDepths>>,
+}
+
+impl<G> SourceSlot<G> {
+    pub(crate) fn new(
+        identity: InputLevelId,
+        cursor: SourceCursor,
+        every_eof: Option<tex_state::TokenListId<G>>,
+        open_depths: Option<Box<SourceOpenDepths>>,
+    ) -> Self {
+        Self {
+            key: SourceSlotKey(identity.0),
+            cursor,
+            every_eof,
+            open_depths,
+        }
+    }
+
+    pub(crate) fn key(&self) -> SourceSlotKey {
+        self.key
+    }
+
+    fn validate(&self, key: SourceSlotKey) {
+        assert_eq!(self.key, key, "source execution state names the live slot");
+    }
+}
+
 /// e-TeX 2.6's `grp_stack`/`if_stack` entry for one open source level.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceOpenDepths {
     pub(crate) group_lineages: Box<[u64]>,
     pub(crate) conditional_identities: Box<[u64]>,
@@ -453,30 +483,82 @@ pub(crate) struct InputLevelInlineState {
     retirement: RetirementBehavior,
 }
 
-#[derive(Debug)]
-pub(crate) struct SourceLevelExecutionState<G> {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SourceLexExecutionState {
     frame: PackedInputFrame,
-    cursor: Box<SourceCursor>,
-    name_class: SourceNameClass,
-    retirement: SourceRetirement,
-    every_eof: Option<tex_state::TokenListId<G>>,
+    cursor: SourceLexCursor,
+    line_loaded: bool,
+    backing_registered: bool,
+    line_backing_registered: bool,
+}
+
+#[derive(Debug)]
+pub(crate) enum SourceLevelExecutionState<G> {
+    Cursor {
+        frame: PackedInputFrame,
+        cursor: SourceCursorExecutionState,
+    },
+    EveryEof {
+        frame: PackedInputFrame,
+        cursor: SourceCursorExecutionState,
+        every_eof: Option<tex_state::TokenListId<G>>,
+    },
+    Backing {
+        frame: PackedInputFrame,
+        cursor: SourceCursorExecutionState,
+        backing: RegisteredSource,
+        name_class: SourceNameClass,
+    },
+}
+
+impl<G> SourceLevelExecutionState<G> {
+    pub(crate) fn cursor(source: &mut SourceLevel<G>) -> Self {
+        Self::Cursor {
+            frame: source.frame,
+            cursor: source.slot.cursor.take_execution_state(),
+        }
+    }
+
+    pub(crate) fn every_eof(source: &mut SourceLevel<G>) -> Self {
+        Self::EveryEof {
+            frame: source.frame,
+            cursor: source.slot.cursor.take_execution_state(),
+            every_eof: source.slot.every_eof.take(),
+        }
+    }
+
+    pub(crate) fn backing(source: &mut SourceLevel<G>, replacement: RegisteredSource) -> Self {
+        let backing = std::mem::replace(&mut source.slot.cursor.backing, replacement);
+        Self::Backing {
+            frame: source.frame,
+            cursor: source.slot.cursor.take_execution_state(),
+            backing,
+            name_class: source.name_class,
+        }
+    }
 }
 
 impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
     type InlineState = InputLevelInlineState;
+    type CompactState = SourceLexExecutionState;
     type StoredState = SourceLevelExecutionState<G>;
 
     fn capture_state(
         &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
         match self {
             Self::Source(source) => {
-                crate::timeline::CapturedStackState::Stored(SourceLevelExecutionState {
+                crate::timeline::CapturedStackState::Compact(SourceLexExecutionState {
                     frame: source.frame,
-                    cursor: source.cursor.clone(),
-                    name_class: source.name_class,
-                    retirement: source.retirement,
-                    every_eof: source.every_eof.clone(),
+                    cursor: source
+                        .slot
+                        .cursor
+                        .line
+                        .as_ref()
+                        .map_or(SourceLexCursor::EMPTY, |line| line.cursor),
+                    line_loaded: source.slot.cursor.line.is_some(),
+                    backing_registered: source.slot.cursor.backing_registered,
+                    line_backing_registered: source.slot.cursor.line_backing_registered,
                 })
             }
             Self::Tokens(tokens) => {
@@ -510,15 +592,58 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
         }
     }
 
+    fn swap_compact_state(&mut self, state: &mut Self::CompactState) {
+        let Self::Source(source) = self else {
+            unreachable!("only a source row uses compact stored execution state");
+        };
+        source.slot.validate(SourceSlotKey(state.frame.identity()));
+        std::mem::swap(&mut source.frame, &mut state.frame);
+        std::mem::swap(
+            &mut source.slot.cursor.backing_registered,
+            &mut state.backing_registered,
+        );
+        std::mem::swap(
+            &mut source.slot.cursor.line_backing_registered,
+            &mut state.line_backing_registered,
+        );
+        match source.slot.cursor.line.as_mut() {
+            Some(line) if state.line_loaded => std::mem::swap(&mut line.cursor, &mut state.cursor),
+            None if !state.line_loaded => {}
+            _ => unreachable!("compact source mutation cannot replace line ownership"),
+        }
+    }
+
     fn swap_stored_state(&mut self, state: &mut Self::StoredState) {
         match self {
-            Self::Source(source) => {
-                std::mem::swap(&mut source.frame, &mut state.frame);
-                std::mem::swap(&mut source.cursor, &mut state.cursor);
-                std::mem::swap(&mut source.name_class, &mut state.name_class);
-                std::mem::swap(&mut source.retirement, &mut state.retirement);
-                std::mem::swap(&mut source.every_eof, &mut state.every_eof);
-            }
+            Self::Source(source) => match state {
+                SourceLevelExecutionState::Cursor { frame, cursor } => {
+                    source.slot.validate(SourceSlotKey(frame.identity()));
+                    std::mem::swap(&mut source.frame, frame);
+                    source.slot.cursor.swap_execution_state(cursor);
+                }
+                SourceLevelExecutionState::EveryEof {
+                    frame,
+                    cursor,
+                    every_eof,
+                } => {
+                    source.slot.validate(SourceSlotKey(frame.identity()));
+                    std::mem::swap(&mut source.frame, frame);
+                    source.slot.cursor.swap_execution_state(cursor);
+                    std::mem::swap(&mut source.slot.every_eof, every_eof);
+                }
+                SourceLevelExecutionState::Backing {
+                    frame,
+                    cursor,
+                    backing,
+                    name_class,
+                } => {
+                    source.slot.validate(SourceSlotKey(frame.identity()));
+                    std::mem::swap(&mut source.frame, frame);
+                    source.slot.cursor.swap_execution_state(cursor);
+                    std::mem::swap(&mut source.slot.cursor.backing, backing);
+                    std::mem::swap(&mut source.name_class, name_class);
+                }
+            },
             Self::Tokens(_) | Self::MacroArgument(_) => {
                 unreachable!("a token frame uses the inline state lane")
             }

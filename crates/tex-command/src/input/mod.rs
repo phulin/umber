@@ -16,8 +16,8 @@ pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroArgumentCursor,
     PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
     PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace, RetirementBehavior,
-    SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior,
-    TokenCursor, packed_token_frame,
+    SourceLevel, SourceLevelExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot,
+    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -29,8 +29,9 @@ pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
 pub(crate) use stack::source_registration_counters;
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
-    InputRetirement, InputRetirementAction, InputRetirementError, InputRetirementReason,
-    InputTopTransition, OutParameterReplay, ParameterReplayError, input_level_identity,
+    FileWarningBoundary, InputRetirement, InputRetirementAction, InputRetirementError,
+    InputRetirementReason, InputTopTransition, OutParameterReplay, ParameterReplayError,
+    input_level_identity,
 };
 
 pub use lines::{
@@ -295,8 +296,8 @@ pub(crate) fn tracked_input_projection<G>(
                 stack.byte(0);
                 observe_immutable_source(state, source);
                 project_source(&mut stack, source);
-                if let Some(current) = &source.cursor.line {
-                    project_line(&mut line, &source.cursor, current);
+                if let Some(current) = &source.slot.cursor.line {
+                    project_line(&mut line, &source.slot.cursor, current);
                 }
             }
             InputLevel::Tokens(cursor) => {
@@ -323,13 +324,13 @@ pub(crate) fn observe_immutable_source<G>(
     state: &mut tex_state::CommandContext<'_, G>,
     source: &SourceLevel<G>,
 ) {
-    let backing = source.cursor.current_backing();
+    let backing = source.slot.cursor.current_backing();
     let record = tex_state::world::ContentHash::from_bytes(&backing.bytes);
     state.observe_command_projection(
         tex_state::DependencyKey::InputRecord(record),
         tex_state::DependencyValue::Content(record),
     );
-    let Some(line) = &source.cursor.line else {
+    let Some(line) = &source.slot.cursor.line else {
         return;
     };
     let range = line.physical.content_range();
@@ -352,10 +353,11 @@ pub(crate) fn observe_immutable_source<G>(
 }
 
 fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>) {
-    hash.bytes(&source.cursor.backing.bytes);
-    hash.byte(source.cursor.backing.mode as u8);
+    hash.bytes(&source.slot.cursor.backing.bytes);
+    hash.byte(source.slot.cursor.backing.mode as u8);
     hash.bytes(
         source
+            .slot
             .cursor
             .backing
             .name
@@ -363,15 +365,23 @@ fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>) {
             .unwrap_or_default()
             .as_bytes(),
     );
-    hash.u64(source.cursor.next_physical_offset);
-    hash.u64(source.cursor.next_line_number);
-    hash.byte(source.cursor.pending_acquired_line.into());
-    hash.byte(source.cursor.end_after_line.into());
-    hash.byte(match source.cursor.lexer_state {
-        LexerState::MidLine => 0,
-        LexerState::SkipBlanks => 1,
-        LexerState::NewLine => 2,
-    });
+    hash.u64(source.slot.cursor.next_physical_offset);
+    hash.u64(source.slot.cursor.next_line_number);
+    hash.byte(source.slot.cursor.pending_acquired_line.into());
+    hash.byte(source.slot.cursor.end_after_line.into());
+    hash.byte(
+        match source
+            .slot
+            .cursor
+            .line
+            .as_ref()
+            .map_or(LexerState::NewLine, |line| line.cursor.lexer_state)
+        {
+            LexerState::MidLine => 0,
+            LexerState::SkipBlanks => 1,
+            LexerState::NewLine => 2,
+        },
+    );
     hash.byte(match source.retirement {
         SourceRetirement::Pop => 0,
         SourceRetirement::EndReadLine => 1,
@@ -385,17 +395,18 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
     hash.u64(line.physical.content_range().start());
     hash.u64(line.physical.content_range().end());
     hash.u64(line.retained_end);
-    hash.u64(line.byte_cursor);
-    hash.u64(line.scalar_cursor);
-    hash.byte(line.endline_delivered.into());
+    hash.u64(line.cursor.byte_cursor);
+    hash.u64(line.cursor.scalar_cursor);
+    hash.byte(line.cursor.endline_delivered.into());
     if let Some(endline) = line.endline {
         hash.byte(1);
         hash.bytes(&endline.to_stable_bytes());
     } else {
         hash.byte(0);
     }
-    hash.u64(line.reduced_spellings.len() as u64);
-    for spelling in &line.reduced_spellings {
+    let spellings = line.active_reduced_spellings();
+    hash.u64(spellings.len() as u64);
+    for spelling in spellings {
         hash.u64(spelling.range.start());
         hash.u64(spelling.range.end());
         hash.bytes(&spelling.code.to_stable_bytes());
@@ -662,7 +673,7 @@ impl<G> InputState<G> {
                 Self::source_context_level(
                     retiring.unwrap_or(source),
                     index == 0,
-                    retiring.map(|source| source.cursor.next_line_number),
+                    retiring.map(|source| source.slot.cursor.next_line_number),
                     live_endlinechar,
                     newlinechar,
                     widths,
@@ -691,6 +702,7 @@ impl<G> InputState<G> {
                 InputLevel::Source(source) => retiring_source
                     .filter(|retiring| retiring.identity() == source.identity())
                     .unwrap_or(source)
+                    .slot
                     .cursor
                     .line
                     .is_some(),
@@ -750,7 +762,7 @@ impl<G> InputState<G> {
         current: bool,
     ) -> bool {
         match level {
-            InputLevel::Source(source) => source.cursor.line.is_some(),
+            InputLevel::Source(source) => source.slot.cursor.line.is_some(),
             InputLevel::Tokens(tokens) => {
                 if matches!(tokens.trace, ReplayTrace::BackedUp)
                     && tokens.position() >= tokens.span.frame_len()
@@ -853,11 +865,11 @@ impl<G> InputState<G> {
             Some(())
         }
 
-        let line = source.cursor.line.as_ref()?;
-        let bytes = &source.cursor.current_backing().bytes;
+        let line = source.slot.cursor.line.as_ref()?;
+        let bytes = &source.slot.cursor.current_backing().bytes;
         let start = line.physical.content_range().start();
         let end = line.retained_end;
-        let cursor = line.byte_cursor.clamp(start, end);
+        let cursor = line.cursor.byte_cursor.clamp(start, end);
         let (Ok(start), Ok(end), Ok(cursor)) = (
             usize::try_from(start),
             usize::try_from(end),
@@ -890,7 +902,7 @@ impl<G> InputState<G> {
                             scratch: &mut String|
          -> Option<()> {
             let mut position = range_start;
-            for spelling in &line.reduced_spellings {
+            for spelling in line.active_reduced_spellings() {
                 if sink.is_complete() {
                     break;
                 }
@@ -938,7 +950,7 @@ impl<G> InputState<G> {
             // §313 sets `j:=limit` when the stored buffer sentinel still
             // equals the live `end_line_char`, excluding it from pseudoprint;
             // otherwise `j:=limit+1` and the stale character is visible.
-            if Some(character) != live_endlinechar && line.endline_delivered {
+            if Some(character) != live_endlinechar && line.cursor.endline_delivered {
                 scratch.clear();
                 if Some(character) == newlinechar {
                     scratch.push('\n');
@@ -964,7 +976,7 @@ impl<G> InputState<G> {
         )?;
         if !after.is_complete()
             && let Some(endline) = line.endline
-            && !line.endline_delivered
+            && !line.cursor.endline_delivered
         {
             let character = if endline.is_byte() {
                 char::from(endline.to_byte().ok()?)
@@ -1300,7 +1312,7 @@ impl<G> InputState<G> {
                     SourceNameClass::Scantokens(_) | SourceNameClass::File
                 ) =>
             {
-                Some(source.cursor.current_backing().id)
+                Some(source.slot.cursor.current_backing().id)
             }
             InputLevel::Source(_) => None,
             InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,

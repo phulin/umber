@@ -6,7 +6,6 @@
 //! contract over validated Unicode scalars, never a pdfTeX compatibility mode.
 
 use std::ops::Deref;
-use std::sync::Arc;
 
 use tex_state::token::{Catcode, TokenWord};
 
@@ -398,6 +397,28 @@ struct SourceStepControls {
     superscript: SuperscriptPolicy,
 }
 
+/// Copy-only speculative cursor used by control-word and `^^` lookahead.
+/// Variable line owners remain in the authoritative source slot.
+#[derive(Clone, Copy)]
+struct LineProbe {
+    cursor: super::lines::SourceLexCursor,
+}
+
+impl LineProbe {
+    fn new(cursor: super::lines::SourceLexCursor) -> Self {
+        Self { cursor }
+    }
+
+    fn next_character(
+        &mut self,
+        line: &super::lines::SourceLineState,
+        mode: CharacterMode,
+        bytes: &[u8],
+    ) -> Option<SourceCharacter> {
+        line.next_character_from(&mut self.cursor, mode, bytes)
+    }
+}
+
 impl SourceCursor {
     /// Delivers one exact-byte tokenization step.
     pub(crate) fn next_exact_byte_step(
@@ -527,11 +548,15 @@ impl SourceCursor {
             // The replacement §363 installs has backing of its own, so the
             // current line's bytes must be taken after it has run, not once
             // for the whole level.
-            let bytes = Arc::clone(&self.current_backing().bytes);
+            let bytes = match self.line_backing.as_ref() {
+                Some(replacement) => replacement.bytes.as_ref(),
+                None => self.backing.bytes.as_ref(),
+            };
             let mut catcode = |code: CharacterCode| queries.catcode(code);
+            let line = self.line.as_mut().expect("checked loaded source line");
 
             let Some(character) =
-                self.next_reduced_character(&bytes, mode, superscript, false, &mut catcode)
+                Self::next_reduced_character(line, bytes, mode, superscript, false, &mut catcode)
             else {
                 if force_eof || (self.end_after_line && !self.pending_acquired_line) {
                     // TeX82 §362 reaches `end_file_reading` with the final
@@ -547,7 +572,7 @@ impl SourceCursor {
                 // the old line and loading the next one.
                 return SourceStep::NeedLine;
             };
-            let scalar_range = self.spelling_scalar_range(character);
+            let scalar_range = Self::spelling_scalar_range(line, character);
             let observed = catcode(character.code());
 
             // A reduced active character is itself a control-sequence name.
@@ -562,15 +587,11 @@ impl SourceCursor {
                     .end()
                     .saturating_sub(character.range().start())
                     > 1
-                && let Some(line) = self.line.as_mut()
             {
-                line.reduced_spellings
-                    .retain(|spelling| spelling.range.start() != character.range().start());
-                line.reduced_spellings
-                    .push(super::lines::ReducedSourceSpelling {
-                        range: character.range(),
-                        code: character.code(),
-                    });
+                line.commit_reduced_spelling(super::lines::ReducedSourceSpelling {
+                    range: character.range(),
+                    code: character.code(),
+                });
             }
 
             match observed {
@@ -583,13 +604,14 @@ impl SourceCursor {
                     });
                 }
                 Catcode::Comment => {
-                    self.skip_rest_of_line();
+                    Self::skip_rest_of_line(line);
                     continue;
                 }
                 Catcode::Escape => {
-                    let token = self.scan_control_sequence(
+                    let token = Self::scan_control_sequence(
+                        line,
                         character,
-                        &bytes,
+                        bytes,
                         mode,
                         superscript,
                         &mut catcode,
@@ -597,7 +619,7 @@ impl SourceCursor {
                     return SourceStep::Token(emit(queries, token));
                 }
                 Catcode::Active => {
-                    self.lexer_state = LexerState::MidLine;
+                    line.cursor.lexer_state = LexerState::MidLine;
                     let token = SourceToken::ControlSequence {
                         name: std::iter::once(character.code()).collect(),
                         kind: SourceControlSequenceKind::Active,
@@ -607,9 +629,9 @@ impl SourceCursor {
                     };
                     return SourceStep::Token(emit(queries, ScannedSourceToken::Owned(token)));
                 }
-                Catcode::Space => match self.lexer_state {
+                Catcode::Space => match line.cursor.lexer_state {
                     LexerState::MidLine => {
-                        self.lexer_state = LexerState::SkipBlanks;
+                        line.cursor.lexer_state = LexerState::SkipBlanks;
                         let token = SourceToken::Character {
                             code: semantic_ascii(mode, b' '),
                             catcode: Catcode::Space,
@@ -630,7 +652,7 @@ impl SourceCursor {
                     // catcode assignment from turning an ordinary buffered
                     // character into a physical line boundary.
                     if !character.is_synthetic() {
-                        self.lexer_state = LexerState::MidLine;
+                        line.cursor.lexer_state = LexerState::MidLine;
                         let token = SourceToken::Character {
                             code: character.code(),
                             catcode: Catcode::EndLine,
@@ -639,10 +661,10 @@ impl SourceCursor {
                         };
                         return SourceStep::Token(emit(queries, ScannedSourceToken::Owned(token)));
                     }
-                    let range = self.line_end_anchor();
-                    let state = self.lexer_state;
-                    self.skip_rest_of_line();
-                    self.lexer_state = LexerState::NewLine;
+                    let range = line_end_anchor(line, bytes, mode);
+                    let state = line.cursor.lexer_state;
+                    Self::skip_rest_of_line(line);
+                    line.cursor.lexer_state = LexerState::NewLine;
                     match state {
                         LexerState::MidLine => {
                             let token = SourceToken::Character {
@@ -677,7 +699,7 @@ impl SourceCursor {
                     }
                 }
                 _ => {
-                    self.lexer_state = LexerState::MidLine;
+                    line.cursor.lexer_state = LexerState::MidLine;
                     let token = SourceToken::Character {
                         code: character.code(),
                         catcode: observed,
@@ -691,25 +713,32 @@ impl SourceCursor {
     }
 
     fn scan_control_sequence<'line>(
-        &mut self,
+        line: &mut super::lines::SourceLineState,
         escape: SourceCharacter,
         bytes: &'line [u8],
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
         catcode: &mut impl FnMut(CharacterCode) -> Catcode,
     ) -> ScannedSourceToken<'line> {
-        let Some(first) = self.next_reduced_character(bytes, mode, superscript, true, catcode)
+        let Some(first) =
+            Self::next_reduced_character(line, bytes, mode, superscript, false, catcode)
         else {
             return ScannedSourceToken::Owned(SourceToken::ControlSequence {
                 name: ControlSequenceName::new(),
                 kind: SourceControlSequenceKind::Null,
                 range: escape.range(),
-                scalar_range: self.spelling_scalar_range(escape),
+                scalar_range: Self::spelling_scalar_range(line, escape),
                 location: escape.range().terminal_location(),
             });
         };
+        if !character_matches_raw_text(first, bytes, mode) {
+            line.commit_reduced_spelling(super::lines::ReducedSourceSpelling {
+                range: first.range(),
+                code: first.code(),
+            });
+        }
         let first_catcode = catcode(first.code());
-        self.lexer_state = if matches!(first_catcode, Catcode::Letter | Catcode::Space) {
+        line.cursor.lexer_state = if matches!(first_catcode, Catcode::Letter | Catcode::Space) {
             LexerState::SkipBlanks
         } else {
             LexerState::MidLine
@@ -726,15 +755,21 @@ impl SourceCursor {
         let mut name_len = 1_usize;
         let kind = if first_catcode == Catcode::Letter {
             loop {
-                let saved = self.line.clone().expect("control sequence has a line");
+                let saved = line.cursor;
                 let Some(next) =
-                    self.next_reduced_character(bytes, mode, superscript, true, catcode)
+                    Self::next_reduced_character(line, bytes, mode, superscript, false, catcode)
                 else {
                     break;
                 };
                 if catcode(next.code()) != Catcode::Letter {
-                    self.line = Some(saved);
+                    line.cursor = saved;
                     break;
+                }
+                if !character_matches_raw_text(next, bytes, mode) {
+                    line.commit_reduced_spelling(super::lines::ReducedSourceSpelling {
+                        range: next.range(),
+                        code: next.code(),
+                    });
                 }
                 if let Some(name) = &mut owned_name {
                     name.push(next.code());
@@ -758,12 +793,8 @@ impl SourceCursor {
         };
 
         let range = SourceRange::new(escape.range().source(), escape.range().start(), end);
-        let scalar_range = SourceScalarRange::new(
-            escape.scalar_offset(),
-            self.line
-                .as_ref()
-                .map_or(first.scalar_offset() + 1, |line| line.scalar_cursor),
-        );
+        let scalar_range =
+            SourceScalarRange::new(escape.scalar_offset(), line.cursor.scalar_cursor);
         if kind == SourceControlSequenceKind::Word
             && let Some(name) = owned_name
         {
@@ -797,14 +828,13 @@ impl SourceCursor {
     }
 
     fn next_reduced_character(
-        &mut self,
+        line: &mut super::lines::SourceLineState,
         bytes: &[u8],
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
         persist_reduction: bool,
         catcode: &mut impl FnMut(CharacterCode) -> Catcode,
     ) -> Option<SourceCharacter> {
-        let line = self.line.as_mut()?;
         let first = line.next_character(mode, bytes)?;
         reduce_superscript_notation(
             line,
@@ -817,13 +847,11 @@ impl SourceCursor {
         )
     }
 
-    fn spelling_scalar_range(&self, character: SourceCharacter) -> SourceScalarRange {
-        SourceScalarRange::new(
-            character.scalar_offset(),
-            self.line
-                .as_ref()
-                .map_or(character.scalar_offset() + 1, |line| line.scalar_cursor),
-        )
+    fn spelling_scalar_range(
+        line: &super::lines::SourceLineState,
+        character: SourceCharacter,
+    ) -> SourceScalarRange {
+        SourceScalarRange::new(character.scalar_offset(), line.cursor.scalar_cursor)
     }
 
     /// tex.web's `loc:=limit+1`, shared by every case that abandons the rest
@@ -835,12 +863,28 @@ impl SourceCursor {
     /// `loc>limit` branch. That branch is where §362 observes `force_eof` and
     /// retires the file, so finishing the line eagerly here would skip
     /// `\endinput`.
-    fn skip_rest_of_line(&mut self) {
-        if let Some(line) = &mut self.line {
-            line.byte_cursor = line.retained_end;
-            line.endline_delivered = true;
-        }
+    fn skip_rest_of_line(line: &mut super::lines::SourceLineState) {
+        line.cursor.byte_cursor = line.retained_end;
+        line.cursor.endline_delivered = true;
     }
+}
+
+fn line_end_anchor(
+    line: &super::lines::SourceLineState,
+    bytes: &[u8],
+    mode: CharacterMode,
+) -> SourceRange {
+    let end = line.retained_end;
+    if line.endline.is_some() {
+        return SourceRange::new(line.physical.source, end, end);
+    }
+    let start = super::lines::final_character_start_for_tokenizer(
+        bytes,
+        mode,
+        line.physical.content_range().start(),
+        end,
+    );
+    SourceRange::new(line.physical.source, start, end)
 }
 
 fn character_matches_raw_text(
@@ -904,30 +948,30 @@ fn reduce_superscript_notation(
                 synthetic: current.is_synthetic(),
             });
         }
-        let mut trial = line.clone();
-        let Some(second) = trial.next_character(mode, bytes) else {
+        let mut trial = LineProbe::new(line.cursor);
+        let Some(second) = trial.next_character(line, mode, bytes) else {
             return Some(current);
         };
         if second.code() != current.code() {
             return Some(current);
         }
-        let Some(third) = trial.next_character(mode, bytes) else {
+        let Some(third) = trial.next_character(line, mode, bytes) else {
             return Some(current);
         };
 
         let reduced = match policy {
-            SuperscriptPolicy::ExactByte => reduce_exact_superscript(trial, bytes, third),
+            SuperscriptPolicy::ExactByte => reduce_exact_superscript(line, trial, bytes, third),
             SuperscriptPolicy::UnicodeExtended => {
-                reduce_unicode_superscript(trial, bytes, current.code(), third)
+                reduce_unicode_superscript(line, trial, bytes, current.code(), third)
             }
         };
         let Some((code, consumed)) = reduced else {
             return Some(current);
         };
-        *line = consumed;
+        line.cursor = consumed.cursor;
         current = SourceCharacter {
             code,
-            range: SourceRange::new(first.range().source(), start, line.byte_cursor),
+            range: SourceRange::new(first.range().source(), start, line.cursor.byte_cursor),
             scalar_offset: first.scalar_offset(),
             synthetic: false,
         };
@@ -937,13 +981,10 @@ fn reduce_superscript_notation(
         // §316's later pseudoprint of the live buffer. A recursive reduction
         // supersedes the shorter replacement recorded by its first pass.
         if persist_reduction {
-            line.reduced_spellings
-                .retain(|spelling| spelling.range.start() != start);
-            line.reduced_spellings
-                .push(super::lines::ReducedSourceSpelling {
-                    range: current.range(),
-                    code,
-                });
+            line.commit_reduced_spelling(super::lines::ReducedSourceSpelling {
+                range: current.range(),
+                code,
+            });
         }
         // TeX's `reswitch` behavior applies again if the replacement currently
         // has superscript catcode.
@@ -951,17 +992,18 @@ fn reduce_superscript_notation(
 }
 
 fn reduce_exact_superscript(
-    trial: super::lines::SourceLineState,
+    line: &super::lines::SourceLineState,
+    trial: LineProbe,
     bytes: &[u8],
     third: SourceCharacter,
-) -> Option<(CharacterCode, super::lines::SourceLineState)> {
+) -> Option<(CharacterCode, LineProbe)> {
     let third_byte = third.code().to_byte().ok()?;
     if third_byte >= 128 {
         return None;
     }
     let (result, consumed) = if let Some(high) = lower_hex_value(third_byte) {
-        let mut hexadecimal = trial.clone();
-        match hexadecimal.next_character(CharacterMode::EightBitExact, bytes) {
+        let mut hexadecimal = trial;
+        match hexadecimal.next_character(line, CharacterMode::EightBitExact, bytes) {
             Some(fourth) => match fourth.code().to_byte().ok().and_then(lower_hex_value) {
                 Some(low) => (16 * high + low, hexadecimal),
                 None => (toggle_ascii(third_byte), trial),
@@ -975,25 +1017,26 @@ fn reduce_exact_superscript(
 }
 
 fn reduce_unicode_superscript(
-    trial: super::lines::SourceLineState,
+    line: &super::lines::SourceLineState,
+    trial: LineProbe,
     bytes: &[u8],
     superscript: CharacterCode,
     third: SourceCharacter,
-) -> Option<(CharacterCode, super::lines::SourceLineState)> {
-    let mut after_fourth = trial.clone();
+) -> Option<(CharacterCode, LineProbe)> {
+    let mut after_fourth = trial;
     if third.code() == superscript
         && after_fourth
-            .next_character(CharacterMode::UnicodeExtended, bytes)
+            .next_character(line, CharacterMode::UnicodeExtended, bytes)
             .is_some_and(|fourth| fourth.code() == superscript)
-        && let Some((value, consumed)) = take_unicode_hex(after_fourth, bytes, 4)
+        && let Some((value, consumed)) = take_unicode_hex(line, after_fourth, bytes, 4)
         && let Ok(code) = CharacterCode::from_unicode_scalar(value)
     {
         return Some((code, consumed));
     }
 
     if let Some(high) = ascii_hex_value(third.code()) {
-        let mut consumed = trial.clone();
-        if let Some(fourth) = consumed.next_character(CharacterMode::UnicodeExtended, bytes)
+        let mut consumed = trial;
+        if let Some(fourth) = consumed.next_character(line, CharacterMode::UnicodeExtended, bytes)
             && let Some(low) = ascii_hex_value(fourth.code())
         {
             return Some((
@@ -1016,18 +1059,19 @@ fn reduce_unicode_superscript(
 }
 
 fn take_unicode_hex(
-    mut line: super::lines::SourceLineState,
+    line: &super::lines::SourceLineState,
+    mut cursor: LineProbe,
     bytes: &[u8],
     count: usize,
-) -> Option<(u32, super::lines::SourceLineState)> {
+) -> Option<(u32, LineProbe)> {
     let mut value = 0_u32;
     for _ in 0..count {
-        let character = line.next_character(CharacterMode::UnicodeExtended, bytes)?;
+        let character = cursor.next_character(line, CharacterMode::UnicodeExtended, bytes)?;
         value = value
             .checked_mul(16)?
             .checked_add(ascii_hex_value(character.code())?)?;
     }
-    Some((value, line))
+    Some((value, cursor))
 }
 
 fn semantic_ascii(mode: CharacterMode, byte: u8) -> CharacterCode {

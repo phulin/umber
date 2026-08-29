@@ -649,6 +649,181 @@ fn nested_source_pop_and_snapshot_restore_keep_authoritative_line_exact() {
 }
 
 #[test]
+fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"AB"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let slot = match command.input.levels.last() {
+            Some(crate::input::InputLevel::Source(source)) => {
+                std::ptr::from_ref(source.slot.as_ref())
+            }
+            _ => panic!("source row is live"),
+        };
+        let snapshot = command.snapshot(universe).expect("source checkpoint");
+        let before = command.input.levels.counters();
+        let mut capabilities = crate::CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let first = processor
+                .get_next()
+                .expect("source delivery")
+                .expect("source token");
+            assert_eq!(
+                first.spelling().semantic_token(),
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                }
+            );
+        }
+        let after = command.input.levels.counters();
+        assert_eq!(after.full_payload_history_clones, 0);
+        assert_eq!(after.owner_swaps - before.owner_swaps, 1);
+        assert_eq!(
+            after.stored_state_captures - before.stored_state_captures,
+            1
+        );
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("source owner and lexer restore");
+        let restored = match command.input.levels.last() {
+            Some(crate::input::InputLevel::Source(source)) => source,
+            _ => panic!("restored source row is live"),
+        };
+        assert_eq!(std::ptr::from_ref(restored.slot.as_ref()), slot);
+        assert!(restored.slot.cursor.line.is_none());
+        assert_eq!(restored.slot.cursor.next_physical_offset, 0);
+        assert!(!restored.slot.cursor.backing_registered);
+    });
+}
+
+#[test]
+fn source_owner_swap_candidate_reject_redoes_prior_and_accept_promotes_current() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"AB"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let early = command.publish_summary(universe).expect("pre-line summary");
+        let mut capabilities = crate::CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+
+        macro_rules! deliver {
+            ($command:expr) => {{
+                let mut context = universe.command_context().expect("command context");
+                crate::test_harness::processor(
+                    $command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                )
+                .get_next()
+                .expect("source delivery")
+                .expect("source token")
+                .spelling()
+                .semantic_token()
+            }};
+        }
+
+        assert_eq!(
+            deliver!(&mut command),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        let accepted_slot = match command.input.levels.last() {
+            Some(crate::input::InputLevel::Source(source)) => {
+                std::ptr::from_ref(source.slot.as_ref())
+            }
+            _ => panic!("accepted source remains live"),
+        };
+
+        let mut rejected = crate::CommandState::fork_summary(command, &early, universe, universe)
+            .expect("source prefix forks");
+        assert_eq!(
+            deliver!(&mut rejected),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        rejected.reject_checkpoint_candidate();
+        let restored_slot = match rejected.input.levels.last() {
+            Some(crate::input::InputLevel::Source(source)) => {
+                assert_eq!(
+                    source
+                        .slot
+                        .cursor
+                        .line
+                        .as_ref()
+                        .map(|line| line.cursor.byte_cursor),
+                    Some(1)
+                );
+                std::ptr::from_ref(source.slot.as_ref())
+            }
+            _ => panic!("rejected source remains live"),
+        };
+        assert_eq!(restored_slot, accepted_slot);
+        assert_eq!(
+            deliver!(&mut rejected),
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Letter,
+            }
+        );
+
+        let mut accepted = crate::CommandState::fork_summary(rejected, &early, universe, universe)
+            .expect("source prefix forks again");
+        assert_eq!(
+            deliver!(&mut accepted),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        accepted.accept_checkpoint_candidate();
+        assert_eq!(
+            deliver!(&mut accepted),
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Letter,
+            }
+        );
+        assert_eq!(
+            accepted.input.levels.counters().full_payload_history_clones,
+            0
+        );
+    });
+}
+
+#[test]
 fn token_frame_history_is_one_compact_record_without_payload_clones() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

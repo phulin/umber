@@ -1660,20 +1660,22 @@ Opening an input resolves host policy once into immutable registered backing:
 
 ```rust
 struct SourceCursor {
-    source: SourceId,
     backing: RegisteredBacking,
-    next_physical_offset: u64,
-    line: SourceLineState,
-    lexer: LexerState,
-    end_after_line: bool,
-    trace: SourceTrace,
+    file_cursor: SourceFileCursor,
+    line: Option<SourceLineState>,
 }
 
 struct SourceLevel {
     frame: PackedInputFrame,
+    slot: Box<SourceSlot>,
+    // copy-only source classification and retirement state
+}
+
+struct SourceSlot {
+    key: SourceSlotKey,
     cursor: SourceCursor,
+    every_eof: Option<TokenListId>,
     open_depths: Option<Box<SourceOpenDepths>>,
-    // source classification and cold diagnostic state
 }
 ```
 
@@ -1683,9 +1685,15 @@ Ordinary line refill does not call host file search. Dynamic dispatch, if
 retained, is confined to cold source acquisition or physical-line refill and
 does not enter character delivery.
 
-`SourceLineState` stores one canonical byte cursor and enough physical metadata
-to map normalized characters to immutable backing ranges. There is no parallel
-mutable character-index representation.
+`SourceLineState` is the one variable line owner: it stores physical geometry
+and the reusable reduced-spelling arena. Its separate 24-byte
+`SourceLexCursor` stores byte/scalar positions, lexer state, endline phase, and
+a copy-only reduction head. Control-word and exact/Unicode `^^` lookahead copy
+only that cursor through `LineProbe`; no probe clones a source backing, line
+state, spelling vector, or ancestry. Accepted reductions append one immutable
+node and update the head. Rejected probes restore the copied head, so the
+authoritative line remains singular and there is no parallel mutable
+character-index representation.
 
 The implemented registration boundary accepts only complete, already acquired
 immutable bytes and records whether they came from World, generated input, an
@@ -1819,11 +1827,18 @@ lane, acquire a shared token buffer, or copy their packed words at admission.
 Logical input history separates the immutable frame payload from its mutable
 execution phase. A token row owns its span, behavior, trace, and identity once;
 its packed frame and retirement phase form a fixed inline state record. Source
-rows similarly retain backing and nesting payload once, while the rarer
-line/backing execution state uses a separate reusable fixed slab so it cannot
-inflate token-cursor records. The first mutation of one row visible at a legal
-checkpoint or operation mark records the old state; later cursor advances
-coalesce into that record and the live row holds the final state. A row first
+rows point to one stable, checked `SourceSlot`, which is the sole owner of
+backing, current-line, `everyeof`, reduced-spelling, and nesting payloads. An
+ordinary source first touch copies only its packed frame, 24-byte lexer cursor,
+and two registration bits into the reusable compact-state slab. Physical-line,
+replacement-backing, read-line-backing, and `everyeof` transitions move their
+old owners into typed stored states. Both lanes publish records in the same ordered
+`LogicalStack` journal as row replacement, so direct restore and candidate
+reject/redo cannot settle source state separately from its input row. No
+`SourceCursor`, `SourceLineState`, or `SourceOpenDepths` implements `Clone`.
+The first mutation of one row visible at a legal checkpoint or operation mark
+records the old state; later cursor advances coalesce into that record and the
+live row holds the final state. A row first
 pushed after the newest mark is not observable rollback state. Pop/push at that
 depth therefore overwrites the same physical row directly, and repeated reuse
 retains no displaced payload or undo record. Pop/push replacement of a row
@@ -1894,11 +1909,14 @@ once to `AwaitingVTemplateRetirement`, remains the exact top level through
 end-template delivery, and is popped only after successful `do_endv`.
 Macro-body retirement atomically removes the activation matching that level's
 typed `param_start`; a mismatched activation chain is rejected before either
-owner is mutated. A source pop moves its boxed `SourceOpenDepths` owner into
-the retirement result, so `file_warning` consumes the already-validated top
-frame record without an identity walk. A history-retained retirement projects
-only its diagnostic ancestry while the rollback-reachable source payload stays
-in its stable row; an uncheckpointed final cleanup moves the owner directly.
+owner is mutated. Before a source pop, the processor borrows the still-live
+`SourceOpenDepths` and compares it with the current group and conditional
+stacks. Retirement returns only the two copy-small common-prefix coordinates;
+the boxed ancestry never crosses the pop and is never cloned for checkpoint
+history. The cold order remains: successful source-map registration,
+`everyeof` take/push if present, retiring-context preparation, source pop,
+`file_warning`, file close, and retirement observation. Failed registration
+changes neither registration bit and leaves the source live for an exact retry.
 Nested `\input` and
 `\scantokens` install that record in the source-opening transition before the
 frame becomes observable. The committed lifecycle record may copy `ReplayTrace` for

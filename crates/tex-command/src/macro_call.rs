@@ -60,15 +60,17 @@ pub(crate) struct MacroActivation<G> {
 
 impl<G> crate::timeline::LogicalStackElement for MacroActivation<G> {
     type InlineState = ();
+    type CompactState = ();
     type StoredState = ();
 
     fn capture_state(
         &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
         crate::timeline::CapturedStackState::Inline(())
     }
 
     fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
+    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
 
     fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }

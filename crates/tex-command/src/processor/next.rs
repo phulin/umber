@@ -1933,21 +1933,22 @@ impl<G> CommandProcessor<'_, '_, G> {
             .pending_file_warning_context
             .take()
             .and_then(|(level, context)| (level == identity).then_some(context));
+        let file_warning_boundary = self.prepare_file_warning_boundary(identity);
         let retirement = self
             .command
-            .retire_exhausted_input(identity)
+            .retire_exhausted_input_with_file_warning(identity, file_warning_boundary)
             .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
-        let open_depths = retirement.source_open_depths;
+        let file_warning_boundary = retirement.file_warning_boundary;
         let closes_file_frame = retirement.closes_file_frame;
         // e-TeX 2.6 [23.328]'s `file_warning`: `end_file_reading` retiring a
         // real source level (never a `\read` pseudo-file's `EndReadLine`, and
         // never a token-list level) is the one point this level's recorded
         // group/conditional open depth can be compared against the live one.
         if matches!(action, InputRetirementAction::SourcePopped)
-            && let Some(open_depths) = open_depths
+            && let Some(boundary) = file_warning_boundary
         {
-            self.warn_file_boundary_incomplete(*open_depths, nesting_context);
+            self.warn_file_boundary_incomplete(boundary, nesting_context);
         }
         // TeX82 §362 closes the file after `file_warning` and before the next
         // `check_outer_validity` diagnostic. Render the call-local retirement

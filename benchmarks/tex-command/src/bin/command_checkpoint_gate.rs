@@ -49,9 +49,16 @@ struct PrefixPlateauCounts {
     elapsed: Duration,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SourceHistoryCounts {
+    lex_first_touch: Counts,
+    cold_owner_swap: Counts,
+}
+
 fn main() {
     let shallow = run_fixture(1);
     let accumulated = run_fixture(64);
+    let source_history = run_source_history_fixture();
     assert_eq!(
         shallow, accumulated,
         "command checkpoint costs must be independent of accumulated state"
@@ -79,6 +86,8 @@ fn main() {
     ] {
         assert_eq!(counts, Counts::ZERO, "{name} must remain allocation-free");
     }
+    assert_eq!(source_history.lex_first_touch, Counts::ZERO);
+    assert_eq!(source_history.cold_owner_swap, Counts::ZERO);
     let prefix_plateau = run_prefix_plateau(10_000_000);
     assert_eq!(prefix_plateau.live_frames, 1);
     assert_eq!(prefix_plateau.frame_capacity, 128);
@@ -87,7 +96,7 @@ fn main() {
         prefix_plateau.boundaries
     );
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} prefix_plateau={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} prefix_plateau={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -99,8 +108,64 @@ fn main() {
         shallow.repeated_input_frame_mutations,
         shallow.repeated_input_level_reuse,
         shallow.logical_history,
+        source_history,
         prefix_plateau,
     );
+}
+
+fn run_source_history_fixture() -> SourceHistoryCounts {
+    tex_state::with_universe(budget(), |universe| {
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"a\nb"[..]),
+            ))
+            .expect("source-history fixture source");
+        command
+            .open_registered_source(source)
+            .expect("source-history fixture opens");
+        command.profile_prepare_source_line(13);
+        let summary = command
+            .publish_summary(universe)
+            .expect("source-history checkpoint");
+
+        let before = command.profile_timeline_counters();
+        let (_, lex_first_touch) = measure(|| command.profile_repeated_source_lex_mutations(8_192));
+        let after = command.profile_timeline_counters();
+        assert_eq!(after.full_frame_history_clones, 0);
+        assert_eq!(
+            after.logical_stored_state_captures - before.logical_stored_state_captures,
+            1
+        );
+        assert_eq!(after.logical_owner_swaps, before.logical_owner_swaps);
+        assert_eq!(
+            after.logical_coalesced_mutations - before.logical_coalesced_mutations,
+            8_191
+        );
+        command
+            .restore_summary(&summary, universe)
+            .expect("source lexer cleanup restores");
+
+        let before = command.profile_timeline_counters();
+        let (_, cold_owner_swap) = measure(|| command.profile_advance_source_line(13));
+        let after = command.profile_timeline_counters();
+        assert_eq!(after.full_frame_history_clones, 0);
+        assert_eq!(after.logical_owner_swaps - before.logical_owner_swaps, 1);
+        assert_eq!(
+            after.logical_stored_state_captures,
+            before.logical_stored_state_captures
+        );
+        command
+            .restore_summary(&summary, universe)
+            .expect("source owner cleanup restores");
+
+        SourceHistoryCounts {
+            lex_first_touch,
+            cold_owner_swap,
+        }
+    })
+    .expect("source-history universe")
 }
 
 impl Counts {

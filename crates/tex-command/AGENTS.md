@@ -81,7 +81,9 @@ collector (see `src/conditionals.rs`).
 - `src/timeline.rs`: generation-owned reversible stack storage. Immutable frame
   payloads are admitted once in dense rows; fixed-chunk journals retain only
   first-touch inline execution state or generation-checked handles into a
-  reusable stored-state/displaced-payload slab. A row admitted or already
+  reusable stored-state/displaced-payload slab. Input source owner swaps move
+  through that same ordered stored-state lane; they are not a separately
+  settled source journal. A row admitted or already
   replaced after the newest observable mark is overwritten directly on
   pop/push reuse; only the first replacement of a marked version retains a
   displaced payload. Physical input, parameter, condition, group, aftergroup,
@@ -169,18 +171,22 @@ collector (see `src/conditionals.rs`).
   creation; ordinary delivery writes through that lifetime tag into the
   caller's final `CurrentCommand` and advances only the packed frame scalar.
   A parameter candidate overwrites the same unresolved value before meaning
-  resolution; there is no raw command envelope or second delivery slot. The
-  module also owns cold backup source coordinates,
+  resolution; there is no raw command envelope or second delivery slot. A
+  source row points to one stable checked owner slot. Ordinary history stores
+  only its copy-small lexer cursor; cold line, backing, and everyeof changes
+  move prior owners into the same logical-stack journal. The module also owns cold backup source coordinates,
   explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
-  reuse, and orthogonal delivery/retirement classifications. A source level's
+  reuse, and orthogonal delivery/retirement classifications. A source slot's
   optional `open_depths` owner is `\tracingnesting`'s own record. Nested source
-  opening installs it before the frame becomes visible, and retirement moves
-  it out with that exact top frame; see `src/tracing_nesting.rs`.
+  opening installs it before the frame becomes visible; retirement borrows it
+  before pop and carries only copy-small boundary facts afterward. See
+  `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   the one destination-directed source/token top transition, the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
-  macro-activation cleanup, `param_start` parameter replay ownership, and
+  macro-activation cleanup, borrowed source-ancestry comparison with copy-only
+  retirement facts, `param_start` parameter replay ownership, and
   trace-independence tests.
 - `src/input/mod.rs` and `src/input/tests.rs`: tex.web §§310--318's live error-
   context traversal and omission matrix. The traversal selects the current,

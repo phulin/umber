@@ -642,6 +642,8 @@ pub struct CommandTimelineCounters {
     pub logical_records: u64,
     pub logical_record_bytes: u64,
     pub logical_coalesced_mutations: u64,
+    pub logical_stored_state_captures: u64,
+    pub logical_owner_swaps: u64,
     pub displaced_payloads: u64,
     pub displaced_reuses: u64,
 }
@@ -1763,7 +1765,7 @@ impl<G> CommandState<G> {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
             };
-            Some(source.cursor.next_physical_offset)
+            Some(source.slot.cursor.next_physical_offset)
         });
         let retained_owner_bytes = self
             .roots

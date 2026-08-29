@@ -200,17 +200,20 @@ pub(crate) struct ConditionFrame {
 
 impl crate::timeline::LogicalStackElement for ConditionFrame {
     type InlineState = IfLimit;
+    type CompactState = ();
     type StoredState = ();
 
     fn capture_state(
         &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
         crate::timeline::CapturedStackState::Inline(self.limit)
     }
 
     fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
         std::mem::swap(&mut self.limit, state);
     }
+
+    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
 
     fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }

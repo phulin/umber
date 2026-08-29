@@ -484,15 +484,17 @@ impl<G> Copy for CommandPayload<G> {}
 
 impl<G> crate::timeline::LogicalStackElement for CommandPayload<G> {
     type InlineState = ();
+    type CompactState = ();
     type StoredState = ();
 
     fn capture_state(
         &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
         crate::timeline::CapturedStackState::Inline(())
     }
 
     fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
+    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
 
     fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
@@ -530,11 +532,12 @@ impl<G> Copy for CommandGroupPayload<G> {}
 
 impl<G> crate::timeline::LogicalStackElement for CommandGroupPayload<G> {
     type InlineState = (usize, Option<u32>);
+    type CompactState = ();
     type StoredState = ();
 
     fn capture_state(
         &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::StoredState> {
+    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
         crate::timeline::CapturedStackState::Inline((
             self.token_top,
             self.latest_aftergroup_position,
@@ -545,6 +548,8 @@ impl<G> crate::timeline::LogicalStackElement for CommandGroupPayload<G> {
         std::mem::swap(&mut self.token_top, &mut state.0);
         std::mem::swap(&mut self.latest_aftergroup_position, &mut state.1);
     }
+
+    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
 
     fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
@@ -1187,6 +1192,66 @@ impl<G> CommandState<G> {
         }
     }
 
+    /// Installs the first physical line for the standalone source-history
+    /// allocation gate before its observable checkpoint.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_prepare_source_line(&mut self, endlinechar: i32) {
+        let Some(crate::input::InputLevel::Source(source)) = self.input.levels.last_mut() else {
+            panic!("profiling fixture keeps a source frame on top");
+        };
+        source
+            .slot
+            .cursor
+            .load_next_line(endlinechar)
+            .expect("profiling source has a first line");
+    }
+
+    /// Rewrites only the copy-small source lexer cursor. One checkpoint
+    /// interval must retain one checked stored-state handle and no owner copy.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_repeated_source_lex_mutations(&mut self, mutations: usize) {
+        for _ in 0..mutations {
+            let Some(crate::input::InputLevel::Source(source)) = self.input.levels.last_mut()
+            else {
+                panic!("profiling fixture keeps a source frame on top");
+            };
+            let line = source
+                .slot
+                .cursor
+                .line
+                .as_mut()
+                .expect("profiling fixture keeps one loaded line");
+            line.cursor.lexer_state = match line.cursor.lexer_state {
+                crate::LexerState::MidLine => crate::LexerState::SkipBlanks,
+                crate::LexerState::SkipBlanks | crate::LexerState::NewLine => {
+                    crate::LexerState::MidLine
+                }
+            };
+        }
+    }
+
+    /// Moves one loaded-line owner into ordered rollback history and installs
+    /// the next physical line without cloning its backing or spelling arena.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_advance_source_line(&mut self, endlinechar: i32) {
+        let loaded = self
+            .input
+            .levels
+            .mutate_last_stored(|level| {
+                let crate::input::InputLevel::Source(source) = level else {
+                    panic!("profiling fixture keeps a source frame on top");
+                };
+                let stored = crate::input::SourceLevelExecutionState::cursor(source);
+                let loaded = source.slot.cursor.load_next_line(endlinechar).is_some();
+                (stored, loaded)
+            })
+            .expect("profiling fixture keeps a source frame on top");
+        assert!(loaded, "profiling source has a second line");
+    }
+
     /// Reuses one physical input-stack row repeatedly after its current
     /// interval has reached the requested high water. No retained checkpoint
     /// observes an intermediate frame, so the loop must allocate and append
@@ -1240,6 +1305,12 @@ impl<G> CommandState<G> {
             counters.logical_coalesced_mutations = counters
                 .logical_coalesced_mutations
                 .saturating_add(stack.coalesced_mutations);
+            counters.logical_stored_state_captures = counters
+                .logical_stored_state_captures
+                .saturating_add(stack.stored_state_captures);
+            counters.logical_owner_swaps = counters
+                .logical_owner_swaps
+                .saturating_add(stack.owner_swaps);
             counters.displaced_payloads = counters
                 .displaced_payloads
                 .saturating_add(u64::from(stack.displaced_payloads));
@@ -2345,11 +2416,18 @@ impl<G> CommandState<G> {
             None,
             None,
         );
-        let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
-            unreachable!("the inserted replacement source was just pushed");
-        };
-        assert_eq!(active.identity(), identity);
-        active.cursor.pending_acquired_line = true;
+        self.input
+            .levels
+            .mutate_last_stored(|level| {
+                let InputLevel::Source(active) = level else {
+                    unreachable!("the inserted replacement source was just pushed");
+                };
+                assert_eq!(active.identity(), identity);
+                let stored = crate::input::SourceLevelExecutionState::cursor(active);
+                active.slot.cursor.pending_acquired_line = true;
+                (stored, ())
+            })
+            .expect("the inserted replacement source was just pushed");
         Ok(())
     }
 
@@ -2364,7 +2442,7 @@ impl<G> CommandState<G> {
             let InputLevel::Source(level) = level else {
                 return None;
             };
-            let backing = level.cursor.current_backing();
+            let backing = level.slot.cursor.current_backing();
             (backing.id == source
                 && level.name_class == SourceNameClass::File
                 && backing.framing == crate::SourceFramingPolicy::Canonical)
@@ -2388,17 +2466,25 @@ impl<G> CommandState<G> {
         let registered = self
             .take_registered_source(source)
             .expect("a source registered above is present");
-        let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
-            unreachable!("begin_read_line keeps its source level active during acquisition");
-        };
-        assert_eq!(
-            active.identity(),
-            level,
-            "begin_read_line keeps the exact source level active during acquisition"
-        );
-        active.name_class = name_class;
-        active.cursor.backing = registered;
-        active.cursor.pending_acquired_line = true;
+        self.input
+            .levels
+            .mutate_last_stored(|entry| {
+                let InputLevel::Source(active) = entry else {
+                    unreachable!(
+                        "begin_read_line keeps its source level active during acquisition"
+                    );
+                };
+                assert_eq!(
+                    active.identity(),
+                    level,
+                    "begin_read_line keeps the exact source level active during acquisition"
+                );
+                let stored = crate::input::SourceLevelExecutionState::backing(active, registered);
+                active.name_class = name_class;
+                active.slot.cursor.pending_acquired_line = true;
+                (stored, ())
+            })
+            .expect("begin_read_line keeps its source level active during acquisition");
         Ok(())
     }
 
@@ -2432,25 +2518,37 @@ impl<G> CommandState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         source: InputLevelId,
     ) -> Option<InputLevelId> {
-        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
+        let InputLevel::Source(level) = self.input.levels.last()? else {
             return None;
         };
         if level.identity() != source {
             return None;
         }
-        let every_eof = level.every_eof.take()?;
-        if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
-            level.cursor.install_scantokens_eof_context_line();
-        }
-        let retained_line = level
-            .cursor
-            .line
-            .as_ref()
-            .map(|line| line.physical.number().min(i32::MAX as u64) as i32);
+        let every_eof = level.slot.every_eof.as_ref()?.clone();
+        let retained_line = self
+            .input
+            .levels
+            .mutate_last_stored(|entry| {
+                let InputLevel::Source(level) = entry else {
+                    unreachable!("the checked everyeof source remains on top");
+                };
+                let stored = crate::input::SourceLevelExecutionState::every_eof(level);
+                if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
+                    level.slot.cursor.install_scantokens_eof_context_line();
+                }
+                let retained_line = level
+                    .slot
+                    .cursor
+                    .line
+                    .as_ref()
+                    .map(|line| line.physical.number().min(i32::MAX as u64) as i32);
+                (stored, retained_line)
+            })
+            .expect("the checked everyeof source remains on top");
         if let Some(retained_line) = retained_line {
             self.set_retained_file_line_number(retained_line);
         }
-        let words = stores.token_list(every_eof.clone());
+        let words = stores.token_list(every_eof);
         Some(self.push_token_level(
             PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
@@ -2475,11 +2573,14 @@ impl<G> CommandState<G> {
         let identity = self.allocate_input_level_identity();
         self.push_input_level(InputLevel::Source(SourceLevel {
             frame: crate::input::PackedInputFrame::source(identity.0, registered.id),
-            cursor: Box::new(SourceCursor::new(registered)),
+            slot: Box::new(crate::input::SourceSlot::new(
+                identity,
+                SourceCursor::new(registered),
+                every_eof,
+                open_depths,
+            )),
             name_class,
             retirement,
-            every_eof,
-            open_depths,
         }));
         self.set_retained_file_line_number(0);
         identity
@@ -2491,8 +2592,26 @@ impl<G> CommandState<G> {
             .iter()
             .rev()
             .find_map(|entry| match entry {
-                InputLevel::Source(source) => source.open_depths.as_deref(),
+                InputLevel::Source(source) => source.slot.open_depths.as_deref(),
                 _ => None,
+            })
+    }
+
+    pub(crate) fn source_open_depths(
+        &self,
+        identity: InputLevelId,
+    ) -> Option<&crate::input::SourceOpenDepths> {
+        self.input
+            .levels
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                InputLevel::Source(source) if source.identity() == identity => {
+                    source.slot.open_depths.as_deref()
+                }
+                InputLevel::Source(_) | InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => {
+                    None
+                }
             })
     }
 
@@ -2570,10 +2689,14 @@ impl<G> CommandState<G> {
         let InputLevel::Source(level) = self.input.levels.last_mut()? else {
             return None;
         };
-        let backing = level.cursor.current_backing();
+        let cursor = &mut level.slot.cursor;
+        let backing = match cursor.line_backing.as_ref() {
+            Some(replacement) => replacement,
+            None => &cursor.backing,
+        };
         let mode = backing.mode;
-        let bytes = std::sync::Arc::clone(&backing.bytes);
-        level.cursor.line.as_mut()?.next_character(mode, &bytes)
+        let bytes = backing.bytes.as_ref();
+        cursor.line.as_mut()?.next_character(mode, bytes)
     }
 
     /// Captures the active source's immutable identity and bytes for detached
@@ -2584,7 +2707,7 @@ impl<G> CommandState<G> {
         let Some(InputLevel::Source(level)) = self.input.levels.last() else {
             return None;
         };
-        let backing = level.cursor.current_backing();
+        let backing = level.slot.cursor.current_backing();
         Some(crate::observation::OpenedSourceSnapshot {
             id: backing.id,
             bytes: std::sync::Arc::clone(&backing.bytes),
@@ -2593,9 +2716,14 @@ impl<G> CommandState<G> {
 
     /// Retires the active normalized line so the next physical line may load.
     pub fn finish_source_line(&mut self) {
-        if let Some(InputLevel::Source(level)) = self.input.levels.last_mut() {
-            level.cursor.finish_line();
-        }
+        let _ = self.input.levels.mutate_last_stored(|entry| {
+            let InputLevel::Source(level) = entry else {
+                unreachable!("finish_source_line requires a source top");
+            };
+            let stored = crate::input::SourceLevelExecutionState::cursor(level);
+            level.slot.cursor.finish_line();
+            (stored, ())
+        });
     }
 
     /// Tokenizes one exact-byte source step using the caller's live catcodes.
@@ -2624,7 +2752,7 @@ impl<G> CommandState<G> {
             let force_eof = self.source_force_eof();
             let step = match self.input.levels.last_mut() {
                 Some(InputLevel::Source(level)) => {
-                    level.cursor.next_exact_byte_step(force_eof, queries)
+                    level.slot.cursor.next_exact_byte_step(force_eof, queries)
                 }
                 _ => return SourceTokenizationStep::End,
             };
@@ -2675,7 +2803,7 @@ impl<G> CommandState<G> {
             let force_eof = self.source_force_eof();
             let step = match self.input.levels.last_mut() {
                 Some(InputLevel::Source(level)) => {
-                    level.cursor.next_unicode_step(force_eof, queries)
+                    level.slot.cursor.next_unicode_step(force_eof, queries)
                 }
                 _ => return SourceTokenizationStep::End,
             };
@@ -2710,6 +2838,7 @@ impl<G> CommandState<G> {
             let force_eof = self.source_force_eof();
             let step = match self.input.levels.last_mut() {
                 Some(InputLevel::Source(level)) => level
+                    .slot
                     .cursor
                     .next_compact_exact_byte_step(force_eof, queries),
                 _ => return CompactSourceTokenizationStep::End,
@@ -2792,15 +2921,16 @@ pub(crate) fn source_buffer_line<G>(level: &InputLevel<G>) -> Option<(usize, boo
     let InputLevel::Source(source) = level else {
         return None;
     };
-    let line = source.cursor.line.as_ref()?;
+    let line = source.slot.cursor.line.as_ref()?;
     let start = line.physical.content_range().start();
     let retained = line.retained_end.saturating_sub(start);
-    let len = match source.cursor.current_backing().mode {
+    let len = match source.slot.cursor.current_backing().mode {
         crate::CharacterMode::EightBitExact => usize::try_from(retained).unwrap_or(usize::MAX),
         crate::CharacterMode::UnicodeExtended => {
             let start = usize::try_from(start).unwrap_or(usize::MAX);
             let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
             source
+                .slot
                 .cursor
                 .current_backing()
                 .bytes

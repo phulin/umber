@@ -8,6 +8,7 @@ use tex_state::env::banks::IntParam;
 
 use crate::conditionals::{ConditionFrame, IfLimit};
 use crate::input::SourceOpenDepths;
+use crate::input::{FileWarningBoundary, InputLevelId};
 use crate::processor::CommandProcessor;
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -25,6 +26,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         }
+    }
+
+    /// Borrows the still-live source ancestry and returns the only facts
+    /// `file_warning` needs after retirement. No ancestry owner crosses the
+    /// pop or enters a checkpoint retirement receipt.
+    pub(crate) fn prepare_file_warning_boundary(
+        &self,
+        identity: InputLevelId,
+    ) -> Option<FileWarningBoundary> {
+        let open_depths = self.command.source_open_depths(identity)?;
+        let current_group_lineages = self.state.group_lineages();
+        let group_start = open_depths
+            .group_lineages
+            .iter()
+            .zip(&current_group_lineages)
+            .take_while(|(saved, current)| saved == current)
+            .count();
+        let condition_start = open_depths
+            .conditional_identities
+            .iter()
+            .zip(&self.command.conditions.frames)
+            .take_while(|(saved, current)| **saved == current.identity.0)
+            .count();
+        Some(FileWarningBoundary {
+            group_start: u32::try_from(group_start).unwrap_or(u32::MAX),
+            condition_start: u32::try_from(condition_start).unwrap_or(u32::MAX),
+        })
     }
 
     /// Completes e-TeX 2.6 [23.328]'s nesting-warning context tail.
@@ -120,27 +148,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the terminal whenever the ambient selector already does.
     pub(crate) fn warn_file_boundary_incomplete(
         &mut self,
-        open_depths: SourceOpenDepths,
+        boundary: FileWarningBoundary,
         saved_context: Option<String>,
     ) {
         let tracing_nesting = self.state.int_param(IntParam::TRACING_NESTING);
         if tracing_nesting <= 0 {
             return;
         }
-        let current_group_lineages = self.state.group_lineages();
-        let group_start = open_depths
-            .group_lineages
-            .iter()
-            .zip(&current_group_lineages)
-            .take_while(|(saved, current)| saved == current)
-            .count();
+        let group_start = boundary.group_start as usize;
         let current_conditional_depth = self.command.conditions.frames.len();
-        let condition_start = open_depths
-            .conditional_identities
-            .iter()
-            .zip(&self.command.conditions.frames)
-            .take_while(|(saved, current)| **saved == current.identity.0)
-            .count();
+        let condition_start = (boundary.condition_start as usize).min(current_conditional_depth);
 
         // Pre-render every line's text before opening any print scope: the
         // group text needs no borrow, but the conditional text borrows

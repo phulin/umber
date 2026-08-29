@@ -528,13 +528,20 @@ migration allowance because runtime detachment adapters are not installed.
 It is therefore a real cold ownership boundary under construction, not a
 claim that every live suspension can already detach across a revision.
 
-An input level owns either a source cursor or a classified token cursor. A
-source level owns its `SourceCursor`, registered backing, and optional boxed
-open-depth snapshot until EOF retirement. Nested source opening installs that
-snapshot as part of the same frame transition which updates the singular
-session-owned TeX82 input-stack maximum; retirement moves the snapshot owner
-out of the exact top frame for `file_warning`. There is no shared usage ledger,
-post-open identity search, or retirement-time ancestry clone. A durable token-list input now owns
+An input level owns either one stable pointer to an authoritative `SourceSlot`
+or a classified token cursor. The source slot owns its move-only
+`SourceCursor`, registered/replacement backing, reduced-spelling arena,
+`everyeof`, and optional boxed open-depth snapshot until EOF retirement. A
+24-byte copy-only lexer cursor is the only ordinary source execution state;
+control-word and `^^` probes copy it without cloning an `Arc`, `Vec`, or `Box`.
+The existing `LogicalStack<InputLevel>` stores compact lexer first touches and
+cold typed owner swaps in its one ordered reversible history, so candidate
+redo restores the exact source owner without a second live representation.
+Nested source opening installs ancestry as part of the same frame transition
+which updates the singular session-owned TeX82 input-stack maximum; before
+retirement the processor borrows it and returns only copy-small common-prefix
+coordinates for `file_warning`. There is no shared usage ledger, post-open
+identity search, checkpoint source clone, or retirement-time ancestry clone. A durable token-list input now owns
 only the list id, chunk cursor, and length. Macro replacement input owns a
 definition coordinate; macro-argument input owns a sealed absolute scratch
 range and advances only the packed input frame's scalar position.

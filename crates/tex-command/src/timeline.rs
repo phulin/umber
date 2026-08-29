@@ -14,31 +14,36 @@ const UNDO_RECORDS_PER_CHUNK: usize = 16;
 /// Implementations deliberately capture only execution state. Immutable frame
 /// identity, token/source owners, command metadata, and argument references
 /// remain in the payload row admitted at push time.
-pub(crate) enum CapturedStackState<Inline, Stored> {
+pub(crate) enum CapturedStackState<Inline, Compact> {
     Inline(Inline),
-    Stored(Stored),
+    Compact(Compact),
 }
 
 pub(crate) trait LogicalStackElement {
     type InlineState;
+    type CompactState;
     type StoredState;
 
-    fn capture_state(&self) -> CapturedStackState<Self::InlineState, Self::StoredState>;
+    fn capture_state(&self) -> CapturedStackState<Self::InlineState, Self::CompactState>;
     fn swap_inline_state(&mut self, state: &mut Self::InlineState);
+    fn swap_compact_state(&mut self, state: &mut Self::CompactState);
     fn swap_stored_state(&mut self, state: &mut Self::StoredState);
 }
 
 impl LogicalStackElement for i32 {
     type InlineState = i32;
+    type CompactState = ();
     type StoredState = ();
 
-    fn capture_state(&self) -> CapturedStackState<Self::InlineState, Self::StoredState> {
+    fn capture_state(&self) -> CapturedStackState<Self::InlineState, Self::CompactState> {
         CapturedStackState::Inline(*self)
     }
 
     fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
         std::mem::swap(self, state);
     }
+
+    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
 
     fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
@@ -173,10 +178,24 @@ impl<T> PayloadSlab<T> {
     }
 }
 
-enum ElementUndo<S> {
-    InlineState { index: u32, state: S },
-    StoredState { index: u32, payload: PayloadHandle },
-    Replacement { index: u32, payload: PayloadHandle },
+enum ElementUndo<I, C> {
+    InlineState {
+        index: u32,
+        state: I,
+    },
+    CompactState {
+        index: u32,
+        payload: PayloadHandle,
+        marker: core::marker::PhantomData<fn() -> C>,
+    },
+    StoredState {
+        index: u32,
+        payload: PayloadHandle,
+    },
+    Replacement {
+        index: u32,
+        payload: PayloadHandle,
+    },
 }
 
 /// A stack whose payload rows are admitted once and whose history contains
@@ -184,8 +203,9 @@ enum ElementUndo<S> {
 pub(crate) struct LogicalStack<T: LogicalStackElement> {
     rows: Vec<T>,
     top: usize,
-    undo: PackedJournal<ElementUndo<T::InlineState>, UNDO_RECORDS_PER_CHUNK>,
+    undo: PackedJournal<ElementUndo<T::InlineState, T::CompactState>, UNDO_RECORDS_PER_CHUNK>,
     displaced: PayloadSlab<T>,
+    compact_states: PayloadSlab<T::CompactState>,
     stored_states: PayloadSlab<T::StoredState>,
     fork: Option<LogicalStackFork>,
     recording: bool,
@@ -193,6 +213,8 @@ pub(crate) struct LogicalStack<T: LogicalStackElement> {
     touched: Vec<u64>,
     coalesced_mutations: u64,
     payload_admissions: u64,
+    stored_state_captures: u64,
+    owner_swaps: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -216,6 +238,8 @@ pub(crate) struct LogicalStackCounters {
     pub(crate) coalesced_mutations: u64,
     pub(crate) displaced_payloads: u32,
     pub(crate) displaced_reuses: u64,
+    pub(crate) stored_state_captures: u64,
+    pub(crate) owner_swaps: u64,
 }
 
 impl<T: LogicalStackElement> Default for LogicalStack<T> {
@@ -225,6 +249,7 @@ impl<T: LogicalStackElement> Default for LogicalStack<T> {
             top: 0,
             undo: PackedJournal::default(),
             displaced: PayloadSlab::default(),
+            compact_states: PayloadSlab::default(),
             stored_states: PayloadSlab::default(),
             fork: None,
             recording: false,
@@ -232,6 +257,8 @@ impl<T: LogicalStackElement> Default for LogicalStack<T> {
             touched: Vec::new(),
             coalesced_mutations: 0,
             payload_admissions: 0,
+            stored_state_captures: 0,
+            owner_swaps: 0,
         }
     }
 }
@@ -364,6 +391,35 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         self.rows.get_mut(index)
     }
 
+    /// Applies one owner-changing mutation whose inverse is moved into the
+    /// same ordered journal as compact execution-state and row-replacement
+    /// records.
+    ///
+    /// The callback returns the exact displaced owner state after installing
+    /// its successor. No owner clone is needed, and candidate rollback/redo
+    /// observes this event in its original order relative to stack changes.
+    pub(crate) fn mutate_last_stored<R>(
+        &mut self,
+        mutate: impl FnOnce(&mut T) -> (T::StoredState, R),
+    ) -> Option<R> {
+        let index = self.top.checked_sub(1)?;
+        if !self.recording {
+            let (state, result) = mutate(&mut self.rows[index]);
+            drop(state);
+            return Some(result);
+        }
+        self.stored_states.warm_first_page();
+        let (state, result) = mutate(&mut self.rows[index]);
+        let payload = self.stored_states.insert(state);
+        self.undo.append(ElementUndo::StoredState {
+            index: u32::try_from(index).expect("logical stack index fits u32"),
+            payload,
+        });
+        self.touched[index] = self.interval;
+        self.owner_swaps = self.owner_swaps.saturating_add(1);
+        Some(result)
+    }
+
     pub(crate) fn truncate_top(&mut self, top: usize) -> bool {
         if top > self.top {
             return false;
@@ -388,6 +444,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         self.recording = true;
         self.undo.warm_first_page();
         self.displaced.warm_first_page();
+        self.compact_states.warm_first_page();
         self.stored_states.warm_first_page();
         let mark = LogicalStackMark {
             top: u32::try_from(self.top).ok()?,
@@ -405,16 +462,20 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         if self.fork.is_some() || !self.validates(mark) {
             return false;
         }
-        let (rows, displaced, stored_states) =
-            (&mut self.rows, &mut self.displaced, &mut self.stored_states);
+        let (rows, displaced, compact_states, stored_states) = (
+            &mut self.rows,
+            &mut self.displaced,
+            &mut self.compact_states,
+            &mut self.stored_states,
+        );
         let restored = self.undo.restore_with(
             mark.undo,
-            &mut (rows, displaced, stored_states),
-            |inverse, (rows, displaced, stored_states)| {
-                inverse.swap(rows, displaced, stored_states);
+            &mut (rows, displaced, compact_states, stored_states),
+            |inverse, (rows, displaced, compact_states, stored_states)| {
+                inverse.swap(rows, displaced, compact_states, stored_states);
             },
-            |inverse, (_, displaced, stored_states)| {
-                inverse.release(displaced, stored_states);
+            |inverse, (_, displaced, compact_states, stored_states)| {
+                inverse.release(displaced, compact_states, stored_states);
             },
         );
         if restored {
@@ -428,9 +489,13 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         if self.fork.is_some() || !self.validates(mark) {
             return None;
         }
-        let (displaced, stored_states) = (&mut self.displaced, &mut self.stored_states);
+        let (displaced, compact_states, stored_states) = (
+            &mut self.displaced,
+            &mut self.compact_states,
+            &mut self.stored_states,
+        );
         self.undo.release_prefix(mark.undo, |inverse| {
-            inverse.release(displaced, stored_states);
+            inverse.release(displaced, compact_states, stored_states);
         })
     }
 
@@ -444,10 +509,14 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             "logical stack candidate mark was prevalidated"
         );
         let accepted_top = self.top;
-        let (rows, displaced, stored_states) =
-            (&mut self.rows, &mut self.displaced, &mut self.stored_states);
+        let (rows, displaced, compact_states, stored_states) = (
+            &mut self.rows,
+            &mut self.displaced,
+            &mut self.compact_states,
+            &mut self.stored_states,
+        );
         self.undo.begin_checkpoint_candidate(mark.undo, |inverse| {
-            inverse.swap(rows, displaced, stored_states);
+            inverse.swap(rows, displaced, compact_states, stored_states);
         });
         self.top = mark.top as usize;
         self.fork = Some(LogicalStackFork { accepted_top });
@@ -459,15 +528,19 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             .fork
             .take()
             .expect("logical stack rejection requires a candidate fork");
-        let (rows, displaced, stored_states) =
-            (&mut self.rows, &mut self.displaced, &mut self.stored_states);
+        let (rows, displaced, compact_states, stored_states) = (
+            &mut self.rows,
+            &mut self.displaced,
+            &mut self.compact_states,
+            &mut self.stored_states,
+        );
         self.undo.reject_checkpoint_candidate_with(
-            &mut (rows, displaced, stored_states),
-            |inverse, (rows, displaced, stored_states)| {
-                inverse.swap(rows, displaced, stored_states);
+            &mut (rows, displaced, compact_states, stored_states),
+            |inverse, (rows, displaced, compact_states, stored_states)| {
+                inverse.swap(rows, displaced, compact_states, stored_states);
             },
-            |inverse, (_, displaced, stored_states)| {
-                inverse.release(displaced, stored_states);
+            |inverse, (_, displaced, compact_states, stored_states)| {
+                inverse.release(displaced, compact_states, stored_states);
             },
         );
         self.top = fork.accepted_top;
@@ -479,9 +552,13 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             .take()
             .expect("logical stack acceptance requires a candidate fork");
         self.undo.accept_checkpoint_candidate_with(
-            &mut (&mut self.displaced, &mut self.stored_states),
-            |inverse, (displaced, stored_states)| {
-                inverse.release(displaced, stored_states);
+            &mut (
+                &mut self.displaced,
+                &mut self.compact_states,
+                &mut self.stored_states,
+            ),
+            |inverse, (displaced, compact_states, stored_states)| {
+                inverse.release(displaced, compact_states, stored_states);
             },
         );
         self.next_interval();
@@ -505,6 +582,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             )
             .saturating_add(self.undo.retained_bytes())
             .saturating_add(self.displaced.retained_bytes())
+            .saturating_add(self.compact_states.retained_bytes())
             .saturating_add(self.stored_states.retained_bytes())
     }
 
@@ -519,6 +597,8 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             coalesced_mutations: self.coalesced_mutations,
             displaced_payloads: self.displaced.live,
             displaced_reuses: self.displaced.reuses,
+            stored_state_captures: self.stored_state_captures,
+            owner_swaps: self.owner_swaps,
         }
     }
 
@@ -535,10 +615,14 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             CapturedStackState::Inline(state) => {
                 self.undo.append(ElementUndo::InlineState { index, state });
             }
-            CapturedStackState::Stored(state) => {
-                let payload = self.stored_states.insert(state);
-                self.undo
-                    .append(ElementUndo::StoredState { index, payload });
+            CapturedStackState::Compact(state) => {
+                self.stored_state_captures = self.stored_state_captures.saturating_add(1);
+                let payload = self.compact_states.insert(state);
+                self.undo.append(ElementUndo::CompactState {
+                    index,
+                    payload,
+                    marker: core::marker::PhantomData,
+                });
             }
         }
     }
@@ -551,16 +635,24 @@ impl<T: LogicalStackElement> LogicalStack<T> {
     }
 }
 
-impl<S> ElementUndo<S> {
-    fn swap<T: LogicalStackElement<InlineState = S>>(
+impl<I, C> ElementUndo<I, C> {
+    fn swap<T: LogicalStackElement<InlineState = I, CompactState = C>>(
         &mut self,
         rows: &mut [T],
         displaced: &mut PayloadSlab<T>,
+        compact_states: &mut PayloadSlab<T::CompactState>,
         stored_states: &mut PayloadSlab<T::StoredState>,
     ) {
         match self {
             Self::InlineState { index, state } => {
                 rows[*index as usize].swap_inline_state(state);
+            }
+            Self::CompactState { index, payload, .. } => {
+                let state = compact_states
+                    .slot_mut(*payload)
+                    .and_then(|slot| slot.value.as_mut())
+                    .expect("logical-stack compact execution state remains live");
+                rows[*index as usize].swap_compact_state(state);
             }
             Self::StoredState { index, payload } => {
                 let state = stored_states
@@ -578,10 +670,12 @@ impl<S> ElementUndo<S> {
     fn release<T: LogicalStackElement>(
         self,
         displaced: &mut PayloadSlab<T>,
+        compact_states: &mut PayloadSlab<T::CompactState>,
         stored_states: &mut PayloadSlab<T::StoredState>,
     ) {
         match self {
             Self::Replacement { payload, .. } => displaced.release(payload),
+            Self::CompactState { payload, .. } => compact_states.release(payload),
             Self::StoredState { payload, .. } => stored_states.release(payload),
             Self::InlineState { .. } => {}
         }

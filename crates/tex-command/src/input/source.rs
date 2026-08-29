@@ -11,7 +11,6 @@ use tex_state::{InputRecordId, SourceId};
 use crate::profile::{CharacterMode, CommandProfile};
 
 use super::lines::SourceLineState;
-use super::tokenizer::LexerState;
 
 /// The acquisition class of immutable bytes handed to the command machine.
 ///
@@ -490,7 +489,7 @@ impl Hash for RegisteredSource {
 }
 
 /// Future-relevant physical cursor into registered immutable backing.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceCursor {
     pub(crate) backing: RegisteredSource,
     /// Whether the aggregate source map already owns this backing's cold
@@ -522,8 +521,24 @@ pub(crate) struct SourceCursor {
     pub(crate) next_physical_offset: u64,
     pub(crate) next_line_number: u64,
     pub(crate) line: Option<SourceLineState>,
-    pub(crate) lexer_state: LexerState,
     pub(crate) end_after_line: bool,
+}
+
+/// Reversible cold execution state for one authoritative source slot.
+///
+/// The immutable physical backing stays in the slot. Current-line and
+/// replacement-backing owners move into this value exactly once; rollback and
+/// candidate redo swap them back without cloning an `Arc`, `Vec`, or `Box`.
+#[derive(Debug)]
+pub(crate) struct SourceCursorExecutionState {
+    backing_registered: bool,
+    line_backing: Option<RegisteredSource>,
+    line_backing_registered: bool,
+    pending_acquired_line: bool,
+    next_physical_offset: u64,
+    next_line_number: u64,
+    line: Option<SourceLineState>,
+    end_after_line: bool,
 }
 
 impl SourceCursor {
@@ -537,7 +552,6 @@ impl SourceCursor {
             next_physical_offset: 0,
             next_line_number: 1,
             line: None,
-            lexer_state: LexerState::NewLine,
             end_after_line: false,
         }
     }
@@ -548,6 +562,39 @@ impl SourceCursor {
             Some(replacement) => replacement,
             None => &self.backing,
         }
+    }
+
+    pub(crate) fn take_execution_state(&mut self) -> SourceCursorExecutionState {
+        SourceCursorExecutionState {
+            backing_registered: self.backing_registered,
+            line_backing: self.line_backing.take(),
+            line_backing_registered: self.line_backing_registered,
+            pending_acquired_line: self.pending_acquired_line,
+            next_physical_offset: self.next_physical_offset,
+            next_line_number: self.next_line_number,
+            line: self.line.take(),
+            end_after_line: self.end_after_line,
+        }
+    }
+
+    pub(crate) fn swap_execution_state(&mut self, state: &mut SourceCursorExecutionState) {
+        std::mem::swap(&mut self.backing_registered, &mut state.backing_registered);
+        std::mem::swap(&mut self.line_backing, &mut state.line_backing);
+        std::mem::swap(
+            &mut self.line_backing_registered,
+            &mut state.line_backing_registered,
+        );
+        std::mem::swap(
+            &mut self.pending_acquired_line,
+            &mut state.pending_acquired_line,
+        );
+        std::mem::swap(
+            &mut self.next_physical_offset,
+            &mut state.next_physical_offset,
+        );
+        std::mem::swap(&mut self.next_line_number, &mut state.next_line_number);
+        std::mem::swap(&mut self.line, &mut state.line);
+        std::mem::swap(&mut self.end_after_line, &mut state.end_after_line);
     }
 }
 

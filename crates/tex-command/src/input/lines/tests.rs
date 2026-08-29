@@ -81,6 +81,7 @@ fn a_final_terminator_does_not_create_an_extra_physical_line() {
 #[test]
 fn source_line_state_stays_at_the_pre_transition_layout() {
     assert_eq!(std::mem::size_of::<super::SourceLineState>(), 128);
+    assert_eq!(std::mem::size_of::<super::SourceLexCursor>(), 24);
 }
 
 #[test]

@@ -59,6 +59,51 @@ fn hot_character_delivery_has_no_host_lookup_surface() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let source = fs::read_to_string(manifest_dir.join("src/input/source.rs"))
+        .expect("read source owner implementation");
+    let lines = fs::read_to_string(manifest_dir.join("src/input/lines.rs"))
+        .expect("read source line implementation");
+    let tokenizer = fs::read_to_string(manifest_dir.join("src/input/tokenizer.rs"))
+        .expect("read source tokenizer implementation");
+    let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
+        .expect("read input checkpoint implementation");
+    let owners = format!("{source}\n{lines}\n{levels}");
+
+    for owner in ["SourceCursor", "SourceLineState", "SourceOpenDepths"] {
+        let declaration = format!("struct {owner}");
+        let prefix = owners.split(&declaration).next().unwrap_or_default();
+        let derive = prefix.rsplit("#[derive(").next().unwrap_or_default();
+        assert!(
+            !derive
+                .split(')')
+                .next()
+                .unwrap_or_default()
+                .contains("Clone"),
+            "{owner} must remain a move-only variable owner"
+        );
+    }
+    assert!(tokenizer.contains("struct LineProbe"));
+    assert!(tokenizer.contains("LineProbe::new(line.cursor)"));
+    for forbidden in [
+        "line.clone()",
+        "self.line.clone()",
+        "trial.clone()",
+        "Arc::clone",
+    ] {
+        assert!(
+            !tokenizer.contains(forbidden),
+            "source probes must not clone owner state through {forbidden}"
+        );
+    }
+    assert!(!levels.contains("source.slot.cursor.clone()"));
+    assert!(levels.contains("struct SourceLexExecutionState"));
+    assert!(levels.contains("CapturedStackState::Compact"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))

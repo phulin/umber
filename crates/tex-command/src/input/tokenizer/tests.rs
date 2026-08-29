@@ -349,6 +349,30 @@ fn constructs_words_symbols_active_characters_and_null_names_with_exact_ranges()
 }
 
 #[test]
+fn rejected_control_word_superscript_probe_does_not_publish_or_retain_an_edit() {
+    let mut command = state(br"\a^^3f");
+    assert_eq!(
+        control(command.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
+        (b"a".to_vec(), SourceControlSequenceKind::Word, 0, 2)
+    );
+    let line = match command.input.levels.last() {
+        Some(crate::input::InputLevel::Source(source)) => source
+            .slot
+            .cursor
+            .line
+            .as_ref()
+            .expect("control-word line remains loaded"),
+        _ => panic!("source remains live"),
+    };
+    assert_eq!(line.reduced_spelling_storage_len(), 0);
+    assert_eq!(line.active_reduced_spellings().len(), 0);
+    assert_eq!(
+        character(command.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
+        (b'?', Catcode::Other, 2, 6)
+    );
+}
+
+#[test]
 fn canonical_superscript_forms_use_lowercase_hex_and_complete_ranges() {
     let mut state = state(b"^^41^^7a^^8^^5A");
 
@@ -846,6 +870,15 @@ fn production_source_step_does_not_carry_owned_control_sequence_names() {
         std::mem::size_of::<super::CompactSourceTokenizationStep>()
             < std::mem::size_of::<SourceTokenizationStep>(),
         "production delivery must not inherit the owned tokenizer-name width"
+    );
+}
+
+#[test]
+fn speculative_line_probe_is_exactly_the_copy_small_lexer_cursor() {
+    assert_eq!(std::mem::size_of::<super::LineProbe>(), 24);
+    assert_eq!(
+        std::mem::size_of::<super::LineProbe>(),
+        std::mem::size_of::<crate::input::lines::SourceLexCursor>()
     );
 }
 

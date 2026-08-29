@@ -279,24 +279,48 @@ impl SourceCharacter {
     }
 }
 
-/// Snapshot-safe canonical cursor for one normalized line.
+/// Copy-small lexer cursor for one normalized line.
 ///
 /// `byte_cursor` is authoritative in both modes. `scalar_cursor` is the
 /// operational scalar position advanced alongside decoding; no character
-/// vector or independently seekable scalar index exists.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// vector or independently seekable scalar index exists. The reduction head
+/// is a coordinate into the line-owned spelling arena, not an owner. Copying
+/// this value therefore never clones source bytes or a spelling buffer.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SourceLexCursor {
+    pub(crate) byte_cursor: u64,
+    pub(crate) scalar_cursor: u64,
+    pub(crate) reduced_head: u32,
+    pub(crate) lexer_state: super::tokenizer::LexerState,
+    pub(crate) endline_delivered: bool,
+}
+
+impl SourceLexCursor {
+    pub(crate) const EMPTY: Self = Self {
+        byte_cursor: 0,
+        scalar_cursor: 0,
+        reduced_head: 0,
+        lexer_state: super::tokenizer::LexerState::NewLine,
+        endline_delivered: false,
+    };
+}
+
+/// Variable owner state for one normalized line.
+///
+/// Geometry and the spelling arena remain owned once. Speculative token probes
+/// copy only [`SourceLexCursor`]; checkpoint history likewise retains cursor
+/// values rather than cloning this owner.
+#[derive(Debug)]
 pub(crate) struct SourceLineState {
     pub(crate) physical: PhysicalLine,
     pub(crate) retained_end: u64,
-    pub(crate) byte_cursor: u64,
-    pub(crate) scalar_cursor: u64,
     pub(crate) endline: Option<CharacterCode>,
-    pub(crate) endline_delivered: bool,
+    pub(crate) cursor: SourceLexCursor,
     /// TeX82 §355 reductions already applied to the mutable input buffer.
     ///
     /// Source bytes remain immutable for provenance, so §316's pseudoprint
     /// projects these replacements over them to recover TeX's live buffer.
-    pub(crate) reduced_spellings: Vec<ReducedSourceSpelling>,
+    reduced_spellings: ReducedSourceSpellings,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -305,14 +329,155 @@ pub(crate) struct ReducedSourceSpelling {
     pub(crate) code: CharacterCode,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ReducedSourceSpellingNode {
+    spelling: ReducedSourceSpelling,
+    previous: u32,
+}
+
+#[derive(Debug, Default)]
+struct ReducedSourceSpellings {
+    nodes: Vec<ReducedSourceSpellingNode>,
+}
+
+impl ReducedSourceSpellings {
+    fn commit(&mut self, cursor: &mut SourceLexCursor, spelling: ReducedSourceSpelling) {
+        let previous = cursor.reduced_head;
+        let previous = previous
+            .checked_sub(1)
+            .and_then(|index| self.nodes.get(index as usize))
+            .filter(|node| node.spelling.range.start() == spelling.range.start())
+            .map_or(previous, |node| node.previous);
+        let index = u32::try_from(self.nodes.len()).expect("source reduction arena fits u32");
+        self.nodes
+            .push(ReducedSourceSpellingNode { spelling, previous });
+        cursor.reduced_head = index.saturating_add(1);
+    }
+
+    fn active_len(&self, head: u32) -> usize {
+        let mut len = 0_usize;
+        let mut next = head;
+        while let Some(index) = next.checked_sub(1) {
+            let node = self
+                .nodes
+                .get(index as usize)
+                .expect("live source reduction head is admitted");
+            len = len.saturating_add(1);
+            next = node.previous;
+        }
+        len
+    }
+
+    fn active(&self, head: u32) -> ActiveReducedSourceSpellings<'_> {
+        ActiveReducedSourceSpellings {
+            owner: self,
+            head,
+            emitted: 0,
+            len: self.active_len(head),
+        }
+    }
+}
+
+pub(crate) struct ActiveReducedSourceSpellings<'a> {
+    owner: &'a ReducedSourceSpellings,
+    head: u32,
+    emitted: usize,
+    len: usize,
+}
+
+impl Iterator for ActiveReducedSourceSpellings<'_> {
+    type Item = ReducedSourceSpelling;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.emitted == self.len {
+            return None;
+        }
+        let steps = self.len.saturating_sub(self.emitted).saturating_sub(1);
+        let mut next = self.head;
+        for _ in 0..steps {
+            let index = next.checked_sub(1)?;
+            next = self.owner.nodes.get(index as usize)?.previous;
+        }
+        let index = next.checked_sub(1)?;
+        self.emitted += 1;
+        self.owner
+            .nodes
+            .get(index as usize)
+            .map(|node| node.spelling)
+    }
+}
+
+impl ExactSizeIterator for ActiveReducedSourceSpellings<'_> {
+    fn len(&self) -> usize {
+        self.len.saturating_sub(self.emitted)
+    }
+}
+
+impl PartialEq for SourceLineState {
+    fn eq(&self, other: &Self) -> bool {
+        self.physical == other.physical
+            && self.retained_end == other.retained_end
+            && self.endline == other.endline
+            && self.cursor.byte_cursor == other.cursor.byte_cursor
+            && self.cursor.scalar_cursor == other.cursor.scalar_cursor
+            && self.cursor.lexer_state == other.cursor.lexer_state
+            && self.cursor.endline_delivered == other.cursor.endline_delivered
+            && self
+                .active_reduced_spellings()
+                .eq(other.active_reduced_spellings())
+    }
+}
+
+impl Eq for SourceLineState {}
+
+impl std::hash::Hash for SourceLineState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.physical.hash(state);
+        self.retained_end.hash(state);
+        self.endline.hash(state);
+        self.cursor.byte_cursor.hash(state);
+        self.cursor.scalar_cursor.hash(state);
+        self.cursor.lexer_state.hash(state);
+        self.cursor.endline_delivered.hash(state);
+        for spelling in self.active_reduced_spellings() {
+            spelling.hash(state);
+        }
+    }
+}
+
 impl SourceLineState {
+    pub(crate) fn active_reduced_spellings(&self) -> ActiveReducedSourceSpellings<'_> {
+        self.reduced_spellings.active(self.cursor.reduced_head)
+    }
+
+    pub(crate) fn commit_reduced_spelling(&mut self, spelling: ReducedSourceSpelling) {
+        self.reduced_spellings.commit(&mut self.cursor, spelling);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reduced_spelling_storage_len(&self) -> usize {
+        self.reduced_spellings.nodes.len()
+    }
+
     pub(crate) fn next_character(
         &mut self,
         mode: CharacterMode,
         bytes: &[u8],
     ) -> Option<SourceCharacter> {
-        if self.byte_cursor < self.retained_end {
-            let start = self.byte_cursor;
+        let mut cursor = self.cursor;
+        let character = self.next_character_from(&mut cursor, mode, bytes);
+        self.cursor = cursor;
+        character
+    }
+
+    pub(crate) fn next_character_from(
+        &self,
+        cursor: &mut SourceLexCursor,
+        mode: CharacterMode,
+        bytes: &[u8],
+    ) -> Option<SourceCharacter> {
+        if cursor.byte_cursor < self.retained_end {
+            let start = cursor.byte_cursor;
             let (code, width) = match mode {
                 CharacterMode::EightBitExact => {
                     let index = usize::try_from(start).ok()?;
@@ -332,23 +497,23 @@ impl SourceLineState {
                     )
                 }
             };
-            self.byte_cursor += width;
-            let scalar_offset = self.scalar_cursor;
-            self.scalar_cursor += 1;
+            cursor.byte_cursor += width;
+            let scalar_offset = cursor.scalar_cursor;
+            cursor.scalar_cursor += 1;
             return Some(SourceCharacter {
                 code,
-                range: SourceRange::new(self.physical.source, start, self.byte_cursor),
+                range: SourceRange::new(self.physical.source, start, cursor.byte_cursor),
                 scalar_offset,
                 synthetic: false,
             });
         }
-        if self.endline_delivered {
+        if cursor.endline_delivered {
             return None;
         }
-        self.endline_delivered = true;
+        cursor.endline_delivered = true;
         let code = self.endline?;
-        let scalar_offset = self.scalar_cursor;
-        self.scalar_cursor += 1;
+        let scalar_offset = cursor.scalar_cursor;
+        cursor.scalar_cursor += 1;
         Some(SourceCharacter {
             code,
             range: SourceRange::new(self.physical.source, self.retained_end, self.retained_end),
@@ -359,38 +524,6 @@ impl SourceLineState {
 }
 
 impl SourceCursor {
-    /// Physical anchor of TeX82's `buffer[limit]` for the loaded line.
-    ///
-    /// Every `car_ret` case finishes the line with `loc:=limit+1` -- tex.web
-    /// §348 (emit a space), §350 (skip to the next line), and §351 (emit
-    /// `\par`) -- so a token produced by a line terminator is always located
-    /// at `limit`, never at the character that triggered it. tex.web §362
-    /// stores an active `\endlinechar` in `buffer[limit]`, which is the
-    /// zero-width synthetic anchor at the normalized content end; when
-    /// `\endlinechar` is inactive §362 decrements `limit` instead, leaving the
-    /// line's last retained character in that position.
-    pub(crate) fn line_end_anchor(&self) -> SourceRange {
-        let Some(line) = self.line.as_ref() else {
-            return SourceRange::new(
-                self.backing.id,
-                self.next_physical_offset,
-                self.next_physical_offset,
-            );
-        };
-        let end = line.retained_end;
-        if line.endline.is_some() {
-            return SourceRange::new(line.physical.source, end, end);
-        }
-        let backing = self.current_backing();
-        let start = final_character_start(
-            &backing.bytes,
-            backing.mode,
-            line.physical.content.start,
-            end,
-        );
-        SourceRange::new(line.physical.source, start, end)
-    }
-
     pub(crate) fn load_next_line(&mut self, endlinechar: i32) -> Option<&mut SourceLineState> {
         if self.line.is_some() {
             return self.line.as_mut();
@@ -448,13 +581,16 @@ impl SourceCursor {
         self.line = Some(SourceLineState {
             physical: line,
             retained_end,
-            byte_cursor: start,
-            scalar_cursor: 0,
             endline,
-            endline_delivered: false,
-            reduced_spellings: Vec::new(),
+            cursor: SourceLexCursor {
+                byte_cursor: start,
+                scalar_cursor: 0,
+                reduced_head: 0,
+                lexer_state: super::tokenizer::LexerState::NewLine,
+                endline_delivered: false,
+            },
+            reduced_spellings: ReducedSourceSpellings::default(),
         });
-        self.lexer_state = super::tokenizer::LexerState::NewLine;
         self.line.as_mut()
     }
 
@@ -530,15 +666,18 @@ impl SourceCursor {
         self.line = Some(SourceLineState {
             physical,
             retained_end,
-            byte_cursor: 0,
-            scalar_cursor: 0,
             endline,
-            endline_delivered: false,
-            reduced_spellings: Vec::new(),
+            cursor: SourceLexCursor {
+                byte_cursor: 0,
+                scalar_cursor: 0,
+                reduced_head: 0,
+                lexer_state: super::tokenizer::LexerState::NewLine,
+                endline_delivered: false,
+            },
+            reduced_spellings: ReducedSourceSpellings::default(),
         });
         self.line_backing = Some(backing);
         self.line_backing_registered = false;
-        self.lexer_state = super::tokenizer::LexerState::NewLine;
     }
 
     pub(crate) fn finish_line(&mut self) {
@@ -566,22 +705,30 @@ impl SourceCursor {
         self.line = Some(SourceLineState {
             physical,
             retained_end: end,
-            byte_cursor: end,
-            scalar_cursor: 0,
             endline: None,
-            endline_delivered: true,
-            reduced_spellings: Vec::new(),
+            cursor: SourceLexCursor {
+                byte_cursor: end,
+                scalar_cursor: 0,
+                reduced_head: 0,
+                lexer_state: super::tokenizer::LexerState::NewLine,
+                endline_delivered: true,
+            },
+            reduced_spellings: ReducedSourceSpellings::default(),
         });
         self.line_backing = None;
         self.line_backing_registered = false;
-        self.lexer_state = super::tokenizer::LexerState::NewLine;
         self.end_after_line = true;
     }
 }
 
 /// Start offset of the character that ends at `end`, or `end` itself when the
 /// normalized line is empty.
-fn final_character_start(bytes: &[u8], mode: CharacterMode, line_start: u64, end: u64) -> u64 {
+pub(crate) fn final_character_start_for_tokenizer(
+    bytes: &[u8],
+    mode: CharacterMode,
+    line_start: u64,
+    end: u64,
+) -> u64 {
     if end <= line_start {
         return end;
     }
