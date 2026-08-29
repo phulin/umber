@@ -857,9 +857,20 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 };
                 match initialize_candidate_runtime(&mut admitted, self.candidate, restored) {
                     Ok(runtime) => runtime,
-                    Err(error) => {
+                    Err(failure) => {
+                        if let Some(control) = failure.control {
+                            match admitted.prepare_checkpoint_control(control) {
+                                Ok(prepared) => prepared.reject(),
+                                Err(error) => {
+                                    return CandidateRunResult {
+                                        execution: Err(SessionError::RetainedEngine(error)),
+                                        runtime_key: None,
+                                    };
+                                }
+                            }
+                        }
                         return CandidateRunResult {
-                            execution: Err(error),
+                            execution: Err(failure.error),
                             runtime_key: None,
                         };
                     }
@@ -1247,11 +1258,16 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
     }
 }
 
+struct CandidateInitializationFailure<G> {
+    error: SessionError,
+    control: Option<MainControl<G>>,
+}
+
 fn initialize_candidate_runtime<G: 'static>(
     admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
     candidate: &mut RevisionCandidate<'_>,
-    restored: Option<MainControl<G>>,
-) -> Result<(CandidateRuntime, MainControl<G>), SessionError> {
+    mut restored: Option<MainControl<G>>,
+) -> Result<(CandidateRuntime, MainControl<G>), CandidateInitializationFailure<G>> {
     let rooted_restart = restored.is_some()
         && candidate
             .plan
@@ -1262,7 +1278,12 @@ fn initialize_candidate_runtime<G: 'static>(
     let materialized_job_start = candidate.materialized_job_start;
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if !rooted_restart {
-        universe.begin_retained_session()?;
+        if let Err(error) = universe.begin_retained_session() {
+            return Err(CandidateInitializationFailure {
+                error: error.into(),
+                control: restored.take(),
+            });
+        }
     }
     // Identity owners must see every job mutation, including fresh profile,
     // registered input, and JobStart setup. Batch execution never selects
@@ -1270,16 +1291,34 @@ fn initialize_candidate_runtime<G: 'static>(
     universe.enable_reachable_state_identity();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     if restored.is_none() && !materialized_job_start {
-        install_plain_catcodes(universe)?;
+        if let Err(error) = install_plain_catcodes(universe) {
+            return Err(CandidateInitializationFailure {
+                error,
+                control: restored.take(),
+            });
+        }
     }
     if materialized_job_start {
         register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
-        validate_materialized_font_policy(universe, candidate.required_font_layout_policy)?;
+        if let Err(error) =
+            validate_materialized_font_policy(universe, candidate.required_font_layout_policy)
+        {
+            return Err(CandidateInitializationFailure {
+                error,
+                control: restored.take(),
+            });
+        }
     }
     for (path, bytes) in &candidate.registered_inputs {
-        universe
+        if let Err(error) = universe
             .world_mut()
-            .set_shared_memory_file(path, Arc::clone(bytes))?;
+            .set_shared_memory_file(path, Arc::clone(bytes))
+        {
+            return Err(CandidateInitializationFailure {
+                error: error.into(),
+                control: restored.take(),
+            });
+        }
     }
     let options = CandidateControlOptions {
         job_name: &candidate.job_name,
@@ -1295,7 +1334,11 @@ fn initialize_candidate_runtime<G: 'static>(
         root_framing: candidate.root_framing,
         root_framing_name: candidate.root_framing_name.as_deref(),
     };
-    let mut control = candidate_control(universe, &options, restored, materialized_job_start)?;
+    let mut control = candidate_control(universe, &options, restored, materialized_job_start)
+        .map_err(|error| CandidateInitializationFailure {
+            error,
+            control: None,
+        })?;
     control
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
@@ -1311,7 +1354,7 @@ fn initialize_candidate_runtime<G: 'static>(
     }
     if !rooted_restart {
         if !rooted {
-            _ledger.commit_job_start(
+            if let Err(error) = _ledger.commit_job_start(
                 &mut control,
                 universe,
                 &mut LiveHistorySink {
@@ -1319,12 +1362,23 @@ fn initialize_candidate_runtime<G: 'static>(
                     retained: checkpoints,
                     pending_release: None,
                 },
-            )?;
+            ) {
+                return Err(CandidateInitializationFailure {
+                    error: error.into(),
+                    control: Some(control),
+                });
+            }
             if candidate.job_start_anchor.is_none() {
                 let started = Timer::start();
-                let image = universe
-                    .capture_format_image()
-                    .map_err(SessionError::Format)?;
+                let image = match universe.capture_format_image() {
+                    Ok(image) => image,
+                    Err(error) => {
+                        return Err(CandidateInitializationFailure {
+                            error: SessionError::Format(error),
+                            control: Some(control),
+                        });
+                    }
+                };
                 candidate.job_start_anchor = Some(FrozenJobStartAnchor::captured(
                     image,
                     candidate.job_start_session_metadata(),
@@ -1332,7 +1386,12 @@ fn initialize_candidate_runtime<G: 'static>(
                 ));
             }
         }
-        start_candidate_job(universe, &mut control, options)?;
+        if let Err(error) = start_candidate_job(universe, &mut control, options) {
+            return Err(CandidateInitializationFailure {
+                error,
+                control: Some(control),
+            });
+        }
     }
     Ok((
         CandidateRuntime {
