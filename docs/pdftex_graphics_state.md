@@ -109,7 +109,9 @@ The grammar is:
 
 The primitive is legal in vertical, horizontal, and math mode, but requires
 positive `\pdfoutput`; use in DVI mode is a fatal pdfTeX error. It appends a
-zero-size whatsit to the current list. Without `shipout`, `<general text>` is
+zero-size whatsit to the current list. The outer-vertical current list is the
+page contribution queue, while internal vertical, box-building, and math modes
+retain their mode-list owner. Without `shipout`, `<general text>` is
 balanced and fully expanded while the node is built, like `\special`. With
 `shipout`, the unexpanded token list is retained and expanded when the node is
 traversed, like a non-immediate `\write`. The `shipout` keyword must precede

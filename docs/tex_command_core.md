@@ -3442,10 +3442,13 @@ sequence stays rollback-safe. The expanded write bytes remain at the whatsit's
 exact list position, so §§1373--1374 open and close effects cannot commit
 around an absent write or materialize an empty numbered-stream artifact.
 Deferred special and PDF-literal diagnostics retain their separate
-post-transaction command-owned publication path. TeX82 §1043
-extension whatsits in outer vertical mode enter
-the page contribution list directly; leaving them on the mode nest delays
-their write expansion past the page that canonically owns it.
+post-transaction command-owned publication path. TeX82 §1043 and pdfTeX's
+any-mode extensions append whatsits through the same current-list boundary.
+In outer vertical mode that boundary is the page contribution list; internal
+vertical, box-building, and math modes retain their `ModeList` owner. Leaving
+any whatsit subtype on the outer mode nest can retain an old page-region root,
+delay its effect past the page that canonically owns it, and block §1026's page
+successor before a later §1054 end-job ejection.
 
 Batch/nonstop transcript fixtures compare canonical wording and order where
 the project claims transcript parity. Host-specific paths, banners, terminal

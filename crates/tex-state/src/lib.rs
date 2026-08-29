@@ -210,8 +210,8 @@ pub use memo::{
     MEMO_VALUE_SCHEMA_VERSION, MemoValueError, MemoValueKind, MemoValueLimits,
 };
 pub use page::{
-    AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageCandidateSettlementCounters,
-    PageBuilderProgressToken, PageContents, PageDimension, PageFireUp, PageInteger,
+    AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageBuilderProgressToken,
+    PageCandidateSettlementCounters, PageContents, PageDimension, PageFireUp, PageInteger,
     PageRegionCounters,
 };
 pub use primitive::PrimitiveHandle;

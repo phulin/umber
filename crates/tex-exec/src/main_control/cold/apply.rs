@@ -1629,6 +1629,7 @@ pub(in crate::main_control) fn apply<G>(
             modes,
             command.state,
             command.diagnostic_effects,
+            command.fuel,
         ),
         ColdOperation::PdfNavigation(request) => apply_pdf_navigation_request(
             request,

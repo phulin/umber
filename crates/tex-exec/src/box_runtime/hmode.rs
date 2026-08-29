@@ -121,26 +121,14 @@ pub(crate) fn append_whatsit<G>(
     whatsit: tex_state::node::Whatsit,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
-    let contributes_directly_in_outer_vertical = matches!(
-        whatsit,
-        tex_state::node::Whatsit::OpenOut { .. }
-            | tex_state::node::Whatsit::CloseOut { .. }
-            | tex_state::node::Whatsit::DeferredWrite { .. }
-            | tex_state::node::Whatsit::Special { .. }
-            | tex_state::node::Whatsit::PdfReferenceObject { .. }
-    );
-    let node = Node::Whatsit(whatsit);
-    if contributes_directly_in_outer_vertical {
-        // TeX82 §1043 reaches the classic four extension subtypes through
-        // `append_to_vlist` in outer vertical mode, where `tail` is the page
-        // contribution list rather than the otherwise-empty mode list.
-        // pdftex.web §1544's `pdf_ref_obj_node` has the same any-mode list
-        // ownership, allowing §1054's end-job ejection to ship the reference.
-        crate::vertical::append_vertical_contribution(nest, stores, node);
-    } else {
-        nest.current_list_mutation().push(stores, node);
-    }
-    Ok(())
+    // TeX82 §1043 reaches classic extensions through the current-list tail,
+    // while pdftex.web §§1524/1563--1567 add further any-mode whatsits at the
+    // same list boundary. In Umber the outer vertical current list is the page
+    // contribution queue; internal vertical, box-building, and math lists are
+    // still owned by their `ModeList`. Route every whatsit through the shared
+    // ownership decision so a new subtype cannot accidentally retain an old
+    // page-region handle across output succession.
+    crate::vertical::append_node_to_current_list(nest, stores, Node::Whatsit(whatsit))
 }
 
 /// Closes the current list's mutable construction phase.

@@ -224,6 +224,14 @@ fn mode_vec<G>(control: &MainControl<G>, stores: &mut Universe<G>) -> Vec<Node> 
         .collect())
 }
 
+fn current_list_owner_vec<G>(control: &MainControl<G>, stores: &mut Universe<G>) -> Vec<Node> {
+    if crate::vertical::is_outer_vertical(&control.modes) {
+        admitted!(stores, |context| context.page_contributions().to_vec())
+    } else {
+        mode_vec(control, stores)
+    }
+}
+
 #[test]
 fn private_box_construction_retains_only_committed_lists() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
@@ -9051,7 +9059,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive
             ));
             assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
-            assert!(mode_vec(&control, stores).is_empty());
+            assert!(current_list_owner_vec(&control, stores).is_empty());
 
             crate::test_harness::assign_int_param(
                 stores,
@@ -9064,7 +9072,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 control.step(stores).expect("graphics command retries"),
                 MainControlStep::Continue
             );
-            let current_nodes = mode_vec(&control, stores);
+            let current_nodes = current_list_owner_vec(&control, stores);
             let [node] = current_nodes.as_slice() else {
                 panic!("{expected}: retry must append exactly one node");
             };
@@ -9080,7 +9088,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 MainControlStep::Continue
             );
             assert!(matches!(
-                mode_vec(&control, stores).last(),
+                current_list_owner_vec(&control, stores).last(),
                 Some(Node::Whatsit(Whatsit::PdfSave))
             ));
         });
@@ -9099,7 +9107,7 @@ fn pdfsavepos_remains_available_in_dvi_mode() {
             MainControlStep::Continue
         );
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSavePos)]
         ));
     });
@@ -9135,7 +9143,7 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
             register_source(&mut control, source);
             let _ = control.step(stores).expect("recoverable bad stack id");
             assert!(matches!(
-                mode_vec(&control, stores).as_slice(),
+                current_list_owner_vec(&control, stores).as_slice(),
                 [Node::Whatsit(Whatsit::PdfColorStack { id: 0, .. })]
             ));
             let terminal = terminal_text(stores);
@@ -9157,12 +9165,12 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
         let mut control = pdftex_graphics_control(stores);
         register_source(&mut control, br"\pdfcolorstack0\pdfsave");
         let _ = control.step(stores).expect("missing action is recoverable");
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
         let _ = control
             .step(stores)
             .expect("following command remains available");
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSave)]
         ));
         let terminal = terminal_text(stores);
@@ -10362,7 +10370,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
             assert!(
                 matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
             );
-            assert!(mode_vec(&control, stores).is_empty());
+            assert!(current_list_owner_vec(&control, stores).is_empty());
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -10374,7 +10382,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
                 control.step(stores).expect("retry preserves every operand"),
                 MainControlStep::Continue
             );
-            assert_eq!(mode_vec(&control, stores).len(), 1);
+            assert_eq!(current_list_owner_vec(&control, stores).len(), 1);
         });
     }
 }
@@ -10422,7 +10430,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                 control.step(stores).expect("destination command"),
                 MainControlStep::Continue
             );
-            let current_nodes = mode_vec(&control, stores);
+            let current_nodes = current_list_owner_vec(&control, stores);
             let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
             else {
                 panic!(
@@ -10430,6 +10438,17 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                     current_nodes
                 );
             };
+            if mode == Mode::Vertical {
+                assert!(
+                    mode_vec(&control, stores).is_empty(),
+                    "outer vertical material has no separate ModeList owner"
+                );
+            } else {
+                assert!(
+                    admitted!(stores, |context| context.page_contributions().is_empty()),
+                    "mode {mode:?} retains its own current-list owner"
+                );
+            }
             assert_eq!(destination.structure, Some(9));
             assert!(matches!(
                 destination.kind,
@@ -10470,13 +10489,13 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed destination command"),
             MainControlStep::Continue
         );
-        assert_eq!(mode_vec(&control, stores).len(), 1);
+        assert_eq!(current_list_owner_vec(&control, stores).len(), 1);
 
         crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
             let mut dvi = pdftex_destination_control(dvi_stores);
@@ -10488,7 +10507,7 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
                 dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfdest"))
             ));
-            assert!(mode_vec(&dvi, dvi_stores).is_empty());
+            assert!(current_list_owner_vec(&dvi, dvi_stores).is_empty());
             crate::test_harness::assign_int_param(
                 dvi_stores,
                 IntParam::PDF_OUTPUT,
@@ -10501,7 +10520,7 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
                     .expect("failed destination retries with every operand intact"),
                 MainControlStep::Continue
             );
-            let current_nodes = mode_vec(&dvi, dvi_stores);
+            let current_nodes = current_list_owner_vec(&dvi, dvi_stores);
             let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
             else {
                 panic!("one retried destination expected");
@@ -10552,7 +10571,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfDestination(destination))]
                 if matches!(
                     destination.kind,
@@ -10563,7 +10582,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("destination state restores");
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
         for label in [
             "retried open group",
             "retried destination",
@@ -10576,7 +10595,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         }
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfDestination(destination))]
                 if matches!(
                     destination.kind,
@@ -10775,7 +10794,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
                     MainControlStep::Continue
                 );
             }
-            let nodes = mode_vec(&control, stores);
+            let nodes = current_list_owner_vec(&control, stores);
             assert!(
                 matches!(
                     nodes.as_slice(),
@@ -10818,14 +10837,14 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed snapping command"),
             MainControlStep::Continue
         );
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSnapRefPoint)]
         ));
 
@@ -10836,7 +10855,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
                 dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfsnapy"))
             ));
-            assert!(mode_vec(&dvi, dvi_stores).is_empty());
+            assert!(current_list_owner_vec(&dvi, dvi_stores).is_empty());
             crate::test_harness::assign_int_param(
                 dvi_stores,
                 IntParam::PDF_OUTPUT,
@@ -10850,7 +10869,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
                 MainControlStep::Continue
             );
             assert!(matches!(
-                mode_vec(&dvi, dvi_stores).as_slice(),
+                current_list_owner_vec(&dvi, dvi_stores).as_slice(),
                 [Node::Whatsit(Whatsit::PdfSnapY { .. })]
             ));
         });
@@ -10875,7 +10894,7 @@ fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
                 "pdfTeX error (ext1): negative snap glue"
             ))
         ));
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
     });
 }
 
@@ -10929,7 +10948,7 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
             MainControlStep::Continue
         );
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [
                 Node::Whatsit(Whatsit::PdfSnapRefPoint),
                 Node::Whatsit(Whatsit::PdfSnapY { .. }),
@@ -11117,7 +11136,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
             );
             run_to_end(&mut control, stores);
 
-            let controls: Vec<_> = mode_vec(&control, stores)
+            let controls: Vec<_> = current_list_owner_vec(&control, stores)
                 .iter()
                 .filter_map(|node| match node {
                     Node::Whatsit(Whatsit::PdfAccessibility(control)) => Some(*control),
@@ -11148,7 +11167,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
         register_source(&mut grouped, br"{\pdffakespace}");
         run_to_end(&mut grouped, grouped_stores);
         assert!(matches!(
-            mode_vec(&grouped, grouped_stores).as_slice(),
+            current_list_owner_vec(&grouped, grouped_stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfAccessibility(
                 tex_state::node::PdfAccessibilityControl::FakeSpace
             ))]
@@ -11179,14 +11198,14 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfAccessibility(
                 tex_state::node::PdfAccessibilityControl::InterwordSpaceOn
             ))]
@@ -11199,7 +11218,7 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
                 dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdffakespace"))
             ));
-            assert!(mode_vec(&dvi_control, dvi_stores).is_empty());
+            assert!(current_list_owner_vec(&dvi_control, dvi_stores).is_empty());
         });
     });
 }
@@ -11244,7 +11263,7 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             MainControlStep::Continue
         );
 
-        let controls: Vec<_> = mode_vec(&control, stores)
+        let controls: Vec<_> = current_list_owner_vec(&control, stores)
             .iter()
             .filter_map(|node| match node {
                 Node::Whatsit(Whatsit::PdfAccessibility(control)) => Some(*control),
@@ -11288,7 +11307,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
             register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
             run_to_end(&mut control, stores);
 
-            let toggles = mode_vec(&control, stores)
+            let toggles = current_list_owner_vec(&control, stores)
                 .iter()
                 .filter_map(|node| match node {
                     Node::Whatsit(Whatsit::PdfRunningLink(enabled)) => Some(*enabled),
@@ -11315,7 +11334,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
         register_source(&mut grouped, br"{\pdfrunninglinkoff\pdfrunninglinkon}");
         run_to_end(&mut grouped, grouped_stores);
         assert!(matches!(
-            mode_vec(&grouped, grouped_stores).as_slice(),
+            current_list_owner_vec(&grouped, grouped_stores).as_slice(),
             [
                 Node::Whatsit(Whatsit::PdfRunningLink(false)),
                 Node::Whatsit(Whatsit::PdfRunningLink(true))
@@ -11347,14 +11366,14 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
             control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(mode_vec(&control, stores).is_empty());
+        assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
             control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
         assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
+            current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfRunningLink(false))]
         ));
 
@@ -11365,7 +11384,7 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
                 dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
             ));
-            assert!(mode_vec(&dvi_control, dvi_stores).is_empty());
+            assert!(current_list_owner_vec(&dvi_control, dvi_stores).is_empty());
         });
     });
 }
@@ -11410,7 +11429,7 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
             MainControlStep::Continue
         );
 
-        let toggles = mode_vec(&control, stores)
+        let toggles = current_list_owner_vec(&control, stores)
             .iter()
             .filter_map(|node| match node {
                 Node::Whatsit(Whatsit::PdfRunningLink(enabled)) => Some(*enabled),
@@ -12930,6 +12949,69 @@ fn end_job_transition_census_covers_output_and_residual_paths() {
                 stop_positions.last().is_some_and(|last| *last < termination),
                 "{name}: termination follows its accepted stop"
             );
+        });
+    }
+}
+
+#[test]
+fn outer_vertical_pdf_whatsits_cross_page_successors_before_final_end() {
+    // pdftex.web §§1524/1563/1565 append graphics and destination whatsits to
+    // the current list in every mode. TeX82 §§994--1026 then completes either
+    // default or explicit output and resumes the page builder on its successor
+    // before §1054 may accept the final stop. The late whatsits therefore
+    // belong to the successor's contribution queue, never the old outer mode
+    // root, and each of the two pages ships exactly once.
+    for (name, output) in [
+        ("default", ""),
+        ("explicit", "\\output={\\shipout\\box255}"),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_initex(stores);
+            register_source(
+                &mut control,
+                format!(
+                    "\\pdfoutput=1\\vsize=5pt{output}\\hrule height10pt\\penalty-10000\\pdfdest name{{late}} fit\\pdfcolorstack0 push{{0 g}}\\end"
+                )
+                .as_bytes(),
+            );
+            let mut observations = ObservationRecorder::default();
+            run_to_end_observed(&mut control, stores, &mut observations);
+
+            assert_eq!(stores.world().artifact_commits().len(), 2, "{name}");
+            assert!(mode_vec(&control, stores).is_empty(), "{name}");
+            assert!(admitted!(stores, |context| context
+                .page_contributions()
+                .is_empty()));
+            assert!(admitted!(stores, |context| context
+                .current_page_nodes()
+                .next()
+                .is_none()));
+            assert!(!control.page_region_succession_pending, "{name}");
+            assert!(!control.boxes.output_routine_active, "{name}");
+            admitted!(stores, |context| {
+                assert!(context.page_fire_up().is_none(), "{name}");
+                assert!(
+                    !context.page_builder_resume_after_output_pending(),
+                    "{name}"
+                );
+            });
+            let shipouts = observations
+                .0
+                .iter()
+                .filter(|observation| {
+                    matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == ObservationEffectKind::Shipout
+                    )
+                })
+                .count();
+            assert_eq!(shipouts, 2, "{name}");
+            assert!(observations.0.iter().any(|observation| matches!(
+                observation,
+                CommandObservation::Effect(effect)
+                    if effect.kind == ObservationEffectKind::Terminate
+            )));
         });
     }
 }

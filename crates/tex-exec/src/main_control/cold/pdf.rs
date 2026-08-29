@@ -398,6 +398,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
     modes: &mut ModeNest,
     command: &CommandState<G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
     use RootedPdfColorStackAction as Action;
 
@@ -418,39 +419,35 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
         return Err(ExecError::PdfExtensionInDviMode(primitive));
     }
 
-    let node = match request {
+    let whatsit = match request {
         RootedPdfGraphicsRequest::Literal {
             mode,
             deferred: true,
             text,
-        } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
+        } => Whatsit::DeferredPdfLiteral {
             mode,
             tokens: stores.node_token_list(&text.tokens),
-        }),
-        RootedPdfGraphicsRequest::Literal { mode, text, .. } => {
-            Node::Whatsit(Whatsit::PdfLiteral {
-                mode,
-                payload: pdf_graphics_text(text.tokens, stores),
-            })
-        }
-        RootedPdfGraphicsRequest::SetMatrix { text } => Node::Whatsit(Whatsit::PdfSetMatrix {
+        },
+        RootedPdfGraphicsRequest::Literal { mode, text, .. } => Whatsit::PdfLiteral {
+            mode,
             payload: pdf_graphics_text(text.tokens, stores),
-        }),
-        RootedPdfGraphicsRequest::Save => Node::Whatsit(Whatsit::PdfSave),
-        RootedPdfGraphicsRequest::Restore => Node::Whatsit(Whatsit::PdfRestore),
-        RootedPdfGraphicsRequest::SavePosition => Node::Whatsit(Whatsit::PdfSavePos),
-        RootedPdfGraphicsRequest::SnapReferencePoint => Node::Whatsit(Whatsit::PdfSnapRefPoint),
+        },
+        RootedPdfGraphicsRequest::SetMatrix { text } => Whatsit::PdfSetMatrix {
+            payload: pdf_graphics_text(text.tokens, stores),
+        },
+        RootedPdfGraphicsRequest::Save => Whatsit::PdfSave,
+        RootedPdfGraphicsRequest::Restore => Whatsit::PdfRestore,
+        RootedPdfGraphicsRequest::SavePosition => Whatsit::PdfSavePos,
+        RootedPdfGraphicsRequest::SnapReferencePoint => Whatsit::PdfSnapRefPoint,
         RootedPdfGraphicsRequest::SnapY { glue } => {
             if glue.width.raw() < 0 {
                 return Err(ExecError::PdfNavigation(
                     "pdfTeX error (ext1): negative snap glue",
                 ));
             }
-            Node::Whatsit(Whatsit::PdfSnapY { glue })
+            Whatsit::PdfSnapY { glue }
         }
-        RootedPdfGraphicsRequest::SnapYComp { ratio } => {
-            Node::Whatsit(Whatsit::PdfSnapYComp { ratio })
-        }
+        RootedPdfGraphicsRequest::SnapYComp { ratio } => Whatsit::PdfSnapYComp { ratio },
         RootedPdfGraphicsRequest::ColorStack { id, action } => {
             // pdftex.web's `<Implement \pdfcolorstack>` reports all three of
             // these through `print_err`/`error`, so each is a counted error
@@ -511,10 +508,10 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
                 Action::Pop => tex_state::PdfColorStackAction::Pop,
                 Action::Current => tex_state::PdfColorStackAction::Current,
             };
-            Node::Whatsit(Whatsit::PdfColorStack { id, action })
+            Whatsit::PdfColorStack { id, action }
         }
     };
-    modes.current_list_mutation().push(stores, node);
+    crate::box_runtime::append_whatsit(modes, stores, diagnostic_effects, fuel, whatsit)?;
     Ok(ReplayStep::Continue)
 }
 

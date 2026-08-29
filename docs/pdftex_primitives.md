@@ -118,6 +118,9 @@ pdftex.web §§1524 and 1565 make `\pdfdest` an any-mode typed whatsit. DVI-mode
 rejection precedes allocation and every operand scan; assignment prefixes are
 rejected, ordinary grouping does not remove an appended destination, and
 engine checkpoints restore both its current-list node and the unconsumed input.
+The shared current-list boundary puts outer-vertical destinations in the page
+contribution queue; internal vertical, horizontal, and math lists keep their
+mode-list owner.
 The shared scanner and positioned PDF traversal continue to own the complete
 identifier, destination-kind, duplicate, coordinate, and backend contracts
 recorded in `pdftex_navigation.md`.
