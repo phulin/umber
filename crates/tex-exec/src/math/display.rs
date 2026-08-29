@@ -335,8 +335,10 @@ pub(crate) fn finish_display_alignment<G>(
     // `append_vertical_contribution` is that direct tail/page-contribution
     // router; unlike `append_node_to_vertical_list`, it inserts no baseline
     // glue around the rows §799 already separated.
-    let mut aligned = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut aligned);
+    let source = stores
+        .admit_page_node_span(finished.nodes)
+        .expect("consumed display alignment belongs to the live page arena");
+    let mut aligned = tex_state::page_node_arena::PageListSpan::empty();
     let mut unchanged_start = 0;
     for index in 0..finished.nodes.len() {
         let replacement = {
@@ -351,17 +353,41 @@ pub(crate) fn finish_display_alignment<G>(
         let Some(replacement) = replacement else {
             continue;
         };
-        stores.append_page_active_list_range(&mut aligned, finished.nodes, unchanged_start..index);
-        stores.push_page_active_list(&mut aligned, replacement);
+        if aligned.is_empty() && unchanged_start == 0 && index != 0 {
+            aligned = stores.slice_page_node_span(source, 0..index);
+        } else if unchanged_start != index {
+            let mut unchanged =
+                tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+            stores.open_page_active_list(&mut unchanged);
+            stores.append_page_active_list_range(
+                &mut unchanged,
+                finished.nodes,
+                unchanged_start..index,
+            );
+            let unchanged = stores.finalize_unique_page_active_list(&mut unchanged);
+            aligned = stores.append_unique_page_nodes(aligned, unchanged);
+        }
+        let replacement = stores.publish_unique_page_nodes(vec![replacement]);
+        aligned = stores.append_unique_page_nodes(aligned, replacement);
         unchanged_start = index + 1;
     }
-    stores.append_page_active_list_range(
-        &mut aligned,
-        finished.nodes,
-        unchanged_start..finished.nodes.len(),
-    );
-    let aligned = stores.finalize_page_active_list(&mut aligned);
-    append_display_list(nest, stores, aligned);
+    let aligned = if unchanged_start == 0 {
+        stores.reclaim_unique_page_list(finished.nodes)
+    } else {
+        if unchanged_start != finished.nodes.len() {
+            let mut suffix = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+            stores.open_page_active_list(&mut suffix);
+            stores.append_page_active_list_range(
+                &mut suffix,
+                finished.nodes,
+                unchanged_start..finished.nodes.len(),
+            );
+            let suffix = stores.finalize_unique_page_active_list(&mut suffix);
+            aligned = stores.append_unique_page_nodes(aligned, suffix);
+        }
+        stores.reclaim_unique_page_nodes(aligned)
+    };
+    append_unique_display_list(nest, stores, aligned);
     if let Some(prev_depth) = finished.aux_prev_depth {
         nest.current_list_mutation().set_prev_depth(prev_depth);
     }
@@ -502,6 +528,19 @@ fn append_display_list<G>(
         stores.append_page_contributions(nodes);
     } else {
         nest.current_list_mutation().append_list(stores, nodes);
+    }
+}
+
+fn append_unique_display_list<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    nodes: tex_state::page_node_arena::UniquePageList,
+) {
+    if crate::vertical::is_outer_vertical(nest) {
+        stores.append_unique_page_contributions(nodes);
+    } else {
+        nest.current_list_mutation()
+            .append_unique_list(stores, nodes);
     }
 }
 
