@@ -120,7 +120,10 @@ the top-level coordinate in constant time without walking payload or building a
 root census. Nested horizontal, vertical, math, and alignment levels are
 move-only operation-local state. Popping or packaging a level transfers its
 exact list root, and the private rollback journal records the owner identity and
-coordinate together. No production summary clones a rooted mode level.
+coordinate together. Each journal frame carries a cumulative scalar summary of
+whether any active rollback projection can restore a page root, so page-region
+succession remains constant-time and cannot retire that root's region. No
+production summary clones a rooted mode level.
 
 An operation which both rewrites a mode root and opens a different lifetime
 owner orders those transitions source-first. In particular, TeX82 §§1074 and
@@ -141,11 +144,12 @@ Append-only list changes restore by resetting span ends. A mutation which
 cannot be expressed as range movement records exactly one first-before value in
 the active semantic interval. It does not clone an accumulated node prefix.
 
-After shipout has consumed all mode-list roots, the executor issues a move-only
-same-region preflight receipt which `Universe` must consume before preparing
-page-region succession. The combined seam deliberately remains outside the
-production shipout tail until durable box and form carriers have the same
-owner-relative lifecycle; mode lists no longer block that later cutover.
+After shipout has consumed all live and rollback-restorable mode-list roots,
+the executor issues a move-only same-region preflight receipt which `Universe`
+must consume before preparing page-region succession. The combined seam
+deliberately remains outside the production shipout tail until durable box and
+form carriers have the same owner-relative lifecycle; mode lists no longer
+block that later cutover.
 
 ## Page marks
 

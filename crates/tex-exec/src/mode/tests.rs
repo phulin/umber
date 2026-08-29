@@ -1129,3 +1129,41 @@ fn page_region_succession_preflight_succeeds_after_mode_roots_are_consumed() {
         universe.cancel_page_region_after_output();
     });
 }
+
+#[test]
+fn page_region_succession_preflight_rejects_rollback_restorable_mode_root() {
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(context, kern(41));
+        nest.reset_journal_for_test();
+        let operation = nest.begin_journal();
+
+        let _consumed = nest.current_list_mutation().take_nodes();
+        assert!(
+            nest.preflight_page_region_succession(context).is_none(),
+            "operation-start root remains owned by the rollback journal"
+        );
+
+        nest.rollback_journal(operation)
+            .expect("operation rollback restores the mode root");
+        assert_eq!(nest_nodes(&nest, context), [kern(41)]);
+    });
+}
+
+#[test]
+fn rootless_operation_start_does_not_block_page_region_succession() {
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.reset_journal_for_test();
+        let operation = nest.begin_journal();
+
+        nest.current_list_mutation().push(context, kern(43));
+        let _consumed = nest.current_list_mutation().take_nodes();
+        nest.preflight_page_region_succession(context)
+            .expect("a rootless operation-start projection owns no page coordinate");
+
+        nest.rollback_journal(operation)
+            .expect("rootless operation rollback");
+        assert!(nest.current_list().is_empty());
+    });
+}

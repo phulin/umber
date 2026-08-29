@@ -88,6 +88,7 @@ struct Frame {
     id: u64,
     cursor: usize,
     projection_start: usize,
+    rollback_retains_page_roots: bool,
 }
 
 #[expect(
@@ -265,6 +266,12 @@ pub(super) struct ModeJournal {
 impl ModeJournal {
     pub(super) fn has_active_frame(&self) -> bool {
         !self.frames.is_empty()
+    }
+
+    pub(super) fn retains_page_node_handles(&self) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.rollback_retains_page_roots)
     }
 
     pub(super) fn enabled(level_count: usize) -> Self {
@@ -572,17 +579,30 @@ impl ModeNestStorage {
             .checked_add(1)
             .expect("mode journal frame identity overflow");
         let projection_start = self.journal.projections.len();
-        self.journal.projections.extend(
-            self.levels
-                .iter()
-                .zip(&self.journal.level_ids)
-                .map(|(level, &id)| ListProjection::capture(id, &level.list)),
-        );
+        let mut current_frame_retains_page_roots = false;
+        self.journal
+            .projections
+            .extend(
+                self.levels
+                    .iter()
+                    .zip(&self.journal.level_ids)
+                    .map(|(level, &id)| {
+                        current_frame_retains_page_roots |= level.list.has_node_roots();
+                        ListProjection::capture(id, &level.list)
+                    }),
+            );
+        let rollback_retains_page_roots = current_frame_retains_page_roots
+            || self
+                .journal
+                .frames
+                .last()
+                .is_some_and(|frame| frame.rollback_retains_page_roots);
         self.journal.frames.push(Frame {
             generation: self.journal.generation,
             id: frame_id,
             cursor,
             projection_start,
+            rollback_retains_page_roots,
         });
         Cursor {
             generation: self.journal.generation,

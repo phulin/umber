@@ -2280,29 +2280,17 @@ impl ModeNest {
     /// [`ModeNestSummary`] and every retained list merely to answer the
     /// lifetime question.
     pub(crate) fn retains_page_node_handles(&self) -> bool {
-        self.storage.levels.iter().any(|level| {
-            let list = &level.list;
-            !list.nodes.is_empty()
-                || list
-                    .incomplete_fraction
-                    .as_ref()
-                    .is_some_and(|fraction| !fraction.numerator.is_empty())
-                || list
-                    .display_interrupt
-                    .as_ref()
-                    .and_then(|interrupt| interrupt.prototype.as_ref())
-                    .is_some_and(|prototype| !prototype.children.is_empty())
-                || list
-                    .display_eq_no
-                    .as_ref()
-                    .is_some_and(|eqno| !eqno.display.is_empty())
-        })
+        self.storage
+            .levels
+            .iter()
+            .any(|level| level.list.has_node_roots())
+            || self.storage.journal.retains_page_node_handles()
     }
 
     /// Preflights the mode half of page succession without cloning a mode
     /// level or scanning arena payload. Every level is checked against the
     /// admitted current region; succession is permitted only after the exact
-    /// mode-list closure has become rootless.
+    /// live and rollback-restorable mode-list closures have become rootless.
     pub(crate) fn preflight_page_region_succession<G>(
         &self,
         stores: &CommandContext<'_, G>,

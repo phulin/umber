@@ -4673,6 +4673,7 @@ impl<G> MainControl<G> {
         self.command
             .commit_attempt_operation(attempt)
             .expect("committed operation owns a valid command-attempt scope");
+        self.finish_pending_page_region_succession(stores);
     }
 
     fn retain_direct_operation_for_retry(
@@ -4938,6 +4939,71 @@ impl<G> MainControl<G> {
             };
             let operation_mark = self.begin_direct_operation(stores, operation);
             let mut diagnostic_effects = DiagnosticEffects::new();
+            // A cascading §1026 page break can become ready while the prior
+            // operation still owns a rollback-restorable mode root. Resume
+            // that builder continuation in its own journaled operation before
+            // delivering another TeX command.
+            let resumes_page_output = !self.page_region_succession_pending
+                && !self.boxes.output_routine_active
+                && stores
+                    .command_context()
+                    .expect("live generation")
+                    .page_fire_up()
+                    .is_some();
+            if resumes_page_output {
+                let applied = self
+                    .fire_pending_page_output(stores, &mut diagnostic_effects)
+                    .map(|()| ReplayStep::Continue);
+                let boundary = self.episode_commit_boundary(
+                    stores,
+                    &applied,
+                    1,
+                    max_operations,
+                    initial_boundaries,
+                    initial_effect_pos,
+                    initial_artifacts,
+                    initial_format_dump,
+                    initial_diagnostic,
+                    initial_error_count,
+                    tracked_region.is_some(),
+                );
+                let step = match applied {
+                    Ok(step) => step,
+                    Err(error) => {
+                        return self.finish_direct_failure(
+                            stores,
+                            operation_mark,
+                            error,
+                            DirectFailureContext {
+                                operations: 1,
+                                initial_artifacts,
+                                initial_boundaries,
+                                initial_effect_pos,
+                            },
+                            diagnostic_effects,
+                        );
+                    }
+                };
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(diagnostic_effects);
+                if let Some(error) =
+                    self.admit_observed_receipt(stores, OperationTermination::Continue)
+                {
+                    self.commit_direct_operation(stores, operation_mark);
+                    return Err(error);
+                }
+                self.commit_direct_operation(stores, operation_mark);
+                self.record_direct_episode_commit(
+                    stores,
+                    1,
+                    boundary.unwrap_or(crate::EpisodeCommitBoundary::SliceLimit),
+                    initial_artifacts,
+                    initial_boundaries,
+                    initial_effect_pos,
+                );
+                return Ok(StepResult::Progress(step));
+            }
             let preflight = if let Some(capabilities) = resumed_resource {
                 PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared,
@@ -6133,6 +6199,11 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
         self.finish_pending_page_region_succession(stores);
+        if self.page_region_succession_pending {
+            // The active operation can still restore a mode root. Its commit
+            // retries succession before this builder continuation resumes.
+            return Ok(());
+        }
         while !self.boxes.output_routine_active {
             let mut context = stores.command_context().expect("live generation");
             let selected = {
