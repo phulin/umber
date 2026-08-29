@@ -1424,11 +1424,7 @@ fn initialize_candidate_runtime<G: 'static>(
     }
     if materialized_job_start {
         register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
-        if let Err(error) =
-            validate_materialized_font_policy(universe, candidate.required_font_layout_policy)
-        {
-            return Err(error);
-        }
+        validate_materialized_font_policy(universe, candidate.required_font_layout_policy)?;
     }
     for (path, bytes) in &candidate.registered_inputs {
         if let Err(error) = universe
@@ -1497,9 +1493,7 @@ fn initialize_candidate_runtime<G: 'static>(
                 ));
             }
         }
-        if let Err(error) = start_candidate_job(universe, control, options) {
-            return Err(error);
-        }
+        start_candidate_job(universe, control, options)?;
     }
     Ok(CandidateRuntime {
         history,
