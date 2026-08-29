@@ -90,6 +90,13 @@ therefore measures generated line nodes, while `source_nodes_copied` remains
 zero after paragraph publication and is backed by an explicit nonzero negative
 control plus source-address retention tests.
 
+Automatic hyphenation follows TeX82 §§914--918's nested-list order. Before it
+publishes a discretionary's pre-break, post-break, or replacement child, it
+seals the preceding main-list segment; after the children are complete, it
+resumes the main-list builder and composes the segments by coordinate. Thus one
+page-arena builder owns the mutable suffix at every instant without copying
+the retained paragraph prefix or republishing generated word nodes.
+
 Raw `PageListId` and `ArenaListId` values are borrowed capabilities under the
 matching region owner. They cannot be stored as production top-level owning
 roots. PageBuilder roots live inside `PageRegion`; a box/form owner carries its

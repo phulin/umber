@@ -211,6 +211,14 @@ Ordinary list processing remains borrowed-range plus append-only output:
 - source range identities compose from the existing chunk and descriptor
   summaries without scanning the unchanged middle.
 
+TeX82 §§914--918 constructs an automatic discretionary's pre-break,
+post-break, and replacement closures before linking the discretionary into the
+reconstituted main list. Post-line hyphenation therefore seals the preceding
+main-list segment before publishing those child closures, then resumes a fresh
+main-list segment and composes the segments by descriptor. An active main-list
+builder never becomes a second owner around nested child publication, and the
+reconstituted word's generated nodes are still appended exactly once.
+
 There is no ordinary node closure copy, source-node republish, or ownership
 scan. Active paragraph, math, alignment, and box builders remain move-only.
 Their operation marks may name partial tails for local failure, while retained

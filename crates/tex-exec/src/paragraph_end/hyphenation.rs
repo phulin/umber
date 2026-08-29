@@ -86,6 +86,8 @@ fn hyphenated_hlist_with_projections<G>(
     stores.close_hyphenation_patterns();
     let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut out);
+    let mut out_segments = Vec::new();
+    let mut generated_word = Vec::new();
     let mut output_len = 0usize;
     let mut index = 0;
     let mut auto_breaking = true;
@@ -121,6 +123,8 @@ fn hyphenated_hlist_with_projections<G>(
                 index,
                 (language, left, right),
                 &mut out,
+                &mut out_segments,
+                &mut generated_word,
                 &mut output_len,
                 fuel,
                 projection,
@@ -129,8 +133,17 @@ fn hyphenated_hlist_with_projections<G>(
             index = next;
         }
     }
+    let tail = stores.finalize_page_active_list(&mut out);
+    if !tail.is_empty() {
+        out_segments.push(tail);
+    }
+    let output = match out_segments.as_slice() {
+        [] => tex_state::node_arena::PageListId::empty(),
+        [only] => *only,
+        segments => stores.compose_page_node_sequences(segments),
+    };
     Ok((
-        stores.finalize_page_active_list(&mut out),
+        output,
         HyphenationContext {
             language,
             left,
@@ -196,13 +209,37 @@ fn project_physical_hlist<G>(
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let mut physical = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut physical);
+    let mut physical_segments = Vec::new();
     let mut override_index = 0usize;
     for index in 0..semantic.len() {
         let post_override = (post_overrides.get(override_index).map(|entry| entry.0)
             == Some(index))
         .then(|| post_overrides[override_index].1);
         let pre_projection =
-            physical_pre_break_projection(stores, diagnostic_effects, semantic, index, fuel)?;
+            if let Some(pending) = physical_pre_break_pending(stores, semantic, index) {
+                // TeX82 §§914--918 builds a discretionary's child closures before
+                // linking the discretionary into the main list. Close this
+                // output suffix while the child list is published so the page
+                // arena likewise has one active construction owner at a time.
+                let segment = stores.finalize_page_active_list(&mut physical);
+                if !segment.is_empty() {
+                    physical_segments.push(segment);
+                }
+                let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+                    stores,
+                    diagnostic_effects,
+                    &pending,
+                    true,
+                    false,
+                    fuel,
+                )
+                .map_err(ExecError::Command)?;
+                let pre = stores.publish_page_nodes(pre);
+                stores.open_page_active_list(&mut physical);
+                Some(pre)
+            } else {
+                None
+            };
         if post_override.is_some() || pre_projection.is_some() {
             let mut replacement = stores
                 .page_nodes(semantic)
@@ -225,18 +262,24 @@ fn project_physical_hlist<G>(
             stores.append_page_active_list_range(&mut physical, semantic, index..index + 1);
         }
     }
-    Ok(stores.finalize_page_active_list(&mut physical))
+    let tail = stores.finalize_page_active_list(&mut physical);
+    if !tail.is_empty() {
+        physical_segments.push(tail);
+    }
+    Ok(match physical_segments.as_slice() {
+        [] => tex_state::node_arena::PageListId::empty(),
+        [only] => *only,
+        segments => stores.compose_page_node_sequences(segments),
+    })
 }
 
-fn physical_pre_break_projection<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+fn physical_pre_break_pending<G>(
+    stores: &CommandContext<'_, G>,
     semantic: tex_state::node_arena::PageListId,
     index: usize,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
+) -> Option<Vec<PendingHChar>> {
     if index == 0 {
-        return Ok(None);
+        return None;
     }
     let qualifies = {
         let nodes = stores
@@ -249,7 +292,7 @@ fn physical_pre_break_projection<G>(
             ..
         }) = nodes.owned_node(index)
         else {
-            return Ok(None);
+            return None;
         };
         let replacement = stores
             .page_node_list(*replace)
@@ -264,7 +307,7 @@ fn physical_pre_break_projection<G>(
             )
     };
     if !qualifies {
-        return Ok(None);
+        return None;
     }
     let (font, mut pending) = {
         let nodes = stores
@@ -296,12 +339,10 @@ fn physical_pre_break_projection<G>(
                     })
                     .collect(),
             ),
-            _ => return Ok(None),
+            _ => return None,
         }
     };
-    let Some(hyphen) = usable_hyphen_char(stores, font) else {
-        return Ok(None);
-    };
+    let hyphen = usable_hyphen_char(stores, font)?;
     let last_origin = pending
         .last()
         .map_or(OriginId::UNKNOWN, |entry| entry.origin);
@@ -310,16 +351,7 @@ fn physical_pre_break_projection<G>(
         ch: hyphen,
         origin: last_origin,
     });
-    let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
-        stores,
-        diagnostic_effects,
-        &pending,
-        true,
-        false,
-        fuel,
-    )
-    .map_err(ExecError::Command)?;
-    Ok(Some(stores.publish_page_nodes(pre)))
+    Some(pending)
 }
 
 fn compacted_physical_boundaries<G>(
@@ -367,6 +399,8 @@ fn hyphenate_after_glue<G>(
     start: usize,
     context: (u8, usize, usize),
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    out_segments: &mut Vec<tex_state::node_arena::PageListId>,
+    generated_word: &mut Vec<Node>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -420,17 +454,30 @@ fn hyphenate_after_glue<G>(
                     }
                 )
             });
+    // TeX82 §§914--918 constructs each discretionary's three child lists
+    // before it links the discretionary into the reconstituted main list.
+    // Seal the retained source segment before that nested construction, then
+    // resume a fresh main-list segment for the generated word.
+    let segment = stores.finalize_page_active_list(out);
+    if !segment.is_empty() {
+        out_segments.push(segment);
+    }
+    generated_word.clear();
     append_hyphenated_word(
         stores,
         diagnostic_effects,
         &word,
         &positions,
         no_left_boundary,
-        out,
+        generated_word,
         output_len,
         fuel,
         projection,
     )?;
+    stores.open_page_active_list(out);
+    for node in generated_word.drain(..) {
+        stores.push_page_active_list(out, node);
+    }
     if trailing_font_kern {
         stores.append_page_active_list_range(out, source, index - 1..index);
         *output_len += 1;
@@ -692,7 +739,7 @@ fn append_hyphenated_word<G>(
     word: &[WordChar],
     positions: &[usize],
     no_left_boundary: bool,
-    out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    out: &mut Vec<Node>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -727,7 +774,7 @@ fn append_hyphenated_word<G>(
                 *output_len,
                 projection.missing_hyphens,
             );
-            stores.push_page_active_list(out, disc);
+            out.push(disc);
             *output_len += 1;
             position_index += 1;
         }
@@ -753,7 +800,7 @@ fn append_hyphenated_word<G>(
             projection
                 .physical_post_overrides
                 .push((*output_len, physical_post));
-            stores.push_page_active_list(out, disc);
+            out.push(disc);
             *output_len += 1;
             position_index += 1;
             // TeX82 likewise suppresses another hyphenation point whose
@@ -765,7 +812,7 @@ fn append_hyphenated_word<G>(
                 position_index += 1;
             }
         } else {
-            stores.push_page_active_list(out, node);
+            out.push(node);
             *output_len += 1;
         }
         char_start = char_end;
@@ -780,7 +827,7 @@ fn append_hyphenated_word<G>(
             *output_len,
             projection.missing_hyphens,
         );
-        stores.push_page_active_list(out, disc);
+        out.push(disc);
         *output_len += 1;
         position_index += 1;
     }
@@ -1111,6 +1158,44 @@ mod tests {
         ))
     }
 
+    fn hyphenation_font<G>(stores: &mut CommandContext<'_, G>) -> tex_state::ids::FontId {
+        let mut characters = vec![None; 256];
+        for code in [b'-', b'a', b'b', b'c', b'd'] {
+            characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
+                width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY / 2),
+                height: tex_state::scaled::Scaled::from_raw(0),
+                depth: tex_state::scaled::Scaled::from_raw(0),
+                italic_correction: tex_state::scaled::Scaled::from_raw(0),
+                tag: tex_state::font::CharTag::None,
+            });
+        }
+        let size = tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY);
+        stores.intern_font(tex_state::font::LoadedFont::new(
+            "hyphenation-test",
+            "hyphenation-test.tfm",
+            tex_fonts::font_content_hash(b"hyphenation-test"),
+            0,
+            size,
+            size,
+            vec![tex_state::scaled::Scaled::from_raw(0); 7],
+            tex_state::font::FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+        ))
+    }
+
+    fn hyphenation_source<G>(
+        stores: &mut CommandContext<'_, G>,
+        font: tex_state::ids::FontId,
+    ) -> tex_state::node_arena::PageListId {
+        let mut nodes = vec![Node::Glue {
+            spec: tex_state::glue::GlueSpec::ZERO,
+            kind: tex_state::node::GlueKind::Normal,
+            leader: None,
+        }];
+        nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+        nodes.push(Node::Penalty(0));
+        stores.publish_page_nodes(nodes)
+    }
+
     fn diagnostic_text<G>(stores: &tex_state::Universe<G>) -> String {
         stores
             .world()
@@ -1160,6 +1245,93 @@ mod tests {
             assert!(
                 diagnostic_text(universe)
                     .contains("Missing character: There is no ? in font nullfont!")
+            );
+        });
+    }
+
+    #[test]
+    fn automatic_discretionary_children_publish_between_main_list_segments() {
+        // TeX82 §§914--918 constructs pre-break, post-break, and replacement
+        // lists before linking the discretionary into the main list.
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "abcd".to_owned(),
+                    positions: vec![2],
+                },
+            );
+            stores
+                .assign_int_param(
+                    IntParam::LEFT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("left minimum");
+            stores
+                .assign_int_param(
+                    IntParam::RIGHT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("right minimum");
+            let source = hyphenation_source(&mut stores, font);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+
+            let hyphenated =
+                hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
+                    .expect("automatic discretionary construction succeeds");
+            let semantic = stores
+                .page_nodes(hyphenated.semantic)
+                .expect("semantic list");
+            let disc = semantic
+                .iter()
+                .find(|node| matches!(node, Node::Disc { .. }))
+                .expect("exception inserts a discretionary");
+            let Node::Disc { pre, .. } = disc else {
+                unreachable!()
+            };
+            assert!(matches!(
+                stores
+                    .page_node_list(*pre)
+                    .expect("pre-break child remains live")
+                    .first(),
+                Some(Node::Char { ch: '-', .. })
+            ));
+
+            let afterward = stores.publish_page_nodes(vec![Node::Penalty(17)]);
+            assert_eq!(
+                afterward.len(),
+                1,
+                "no active builder escapes paragraph end"
+            );
+        });
+    }
+
+    #[test]
+    fn unhyphenated_word_keeps_the_single_main_list_owner() {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            let source = hyphenation_source(&mut stores, font);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+
+            let unchanged =
+                hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
+                    .expect("word without an allowed position succeeds");
+            assert!(
+                stores
+                    .page_nodes(unchanged.semantic)
+                    .expect("semantic list")
+                    .iter()
+                    .all(|node| !matches!(node, Node::Disc { .. })),
+                "the same word without hyphenation history is the negative control"
             );
         });
     }
