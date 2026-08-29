@@ -110,6 +110,18 @@ pub(crate) fn build_page_if_outer_vertical_with_error_context<G>(
     Ok(())
 }
 
+pub(crate) fn build_page_if_outer_vertical<G>(
+    nest: &ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    command: &tex_command::CommandState<G>,
+) -> Result<(), ExecError> {
+    if is_outer_vertical(nest) {
+        crate::page_builder::build_page(stores, diagnostic_effects, command)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn is_outer_vertical(nest: &ModeNest) -> bool {
     nest.depth() == 1 && nest.current_mode() == Mode::Vertical
 }

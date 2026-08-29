@@ -903,12 +903,11 @@ pub(in crate::main_control) fn append_shifted_box<G>(
         node,
         command.fuel,
     )?;
-    let error_context = command.state.output_open_context(stores);
-    crate::vertical::build_page_if_outer_vertical_with_error_context(
+    crate::vertical::build_page_if_outer_vertical(
         modes,
         stores,
         command.diagnostic_effects,
-        &error_context,
+        command.state.state(),
     )
 }
 

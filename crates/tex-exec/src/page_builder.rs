@@ -1,6 +1,6 @@
 //! TeX.web page-builder accounting for outer vertical contributions.
 
-use tex_command::FatalError;
+use tex_command::{CommandState, FatalError};
 use tex_state::CommandContext;
 use tex_state::diagnostic::{Diagnostic, DiagnosticEffects};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
@@ -17,17 +17,34 @@ use tex_typeset::{INF_BAD, VerticalBreakError, badness, vert_break};
 use crate::{ExecError, diagnostics};
 
 #[cfg(test)]
-pub(crate) fn build_page<G>(stores: &mut CommandContext<'_, G>) -> Result<(), ExecError> {
+pub(crate) fn build_page_without_error_context<G>(
+    stores: &mut CommandContext<'_, G>,
+) -> Result<(), ExecError> {
     let mut diagnostic_effects = DiagnosticEffects::new();
     build_page_impl(
         stores,
         &mut diagnostic_effects,
-        &diagnostics::ExecutionDiagnosticContext::source_free(""),
+        PageDiagnosticContext::Rendered(""),
     )
 }
 
-/// Runs TeX82's page builder with the live §82 input display of the command
-/// whose contribution triggered it.
+/// Runs TeX82's page builder with borrowed access to the command whose
+/// contribution triggered it. The live §82 input display is rendered only if
+/// page building actually publishes a diagnostic.
+pub(crate) fn build_page<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    command: &CommandState<G>,
+) -> Result<(), ExecError> {
+    build_page_impl(
+        stores,
+        diagnostic_effects,
+        PageDiagnosticContext::Live(command),
+    )
+}
+
+/// Runs page building with context already detached by a real command,
+/// suspension, or publication boundary.
 pub(crate) fn build_page_with_error_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -36,7 +53,7 @@ pub(crate) fn build_page_with_error_context<G>(
     build_page_impl(
         stores,
         diagnostic_effects,
-        &diagnostics::ExecutionDiagnosticContext::source_free(error_context),
+        PageDiagnosticContext::Rendered(error_context),
     )
 }
 
@@ -45,13 +62,78 @@ pub(crate) fn build_page_with_diagnostic_context<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    build_page_impl(stores, diagnostic_effects, diagnostic_context)
+    build_page_impl(
+        stores,
+        diagnostic_effects,
+        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+    )
+}
+
+enum PageDiagnosticContext<'a, G> {
+    Live(&'a CommandState<G>),
+    Rendered(&'a str),
+}
+
+impl<G> Clone for PageDiagnosticContext<'_, G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for PageDiagnosticContext<'_, G> {}
+
+impl<G> PageDiagnosticContext<'_, G> {
+    fn render(self, stores: &CommandContext<'_, G>) -> String {
+        let rendered = match self {
+            Self::Live(command) => command.output_open_context(stores),
+            Self::Rendered(context) => context.to_owned(),
+        };
+        #[cfg(test)]
+        PAGE_CONTEXT_RENDER_MEASUREMENT.with(|measurement| {
+            let mut measurement = measurement.get();
+            measurement.renders += 1;
+            measurement.owned_allocations += usize::from(rendered.capacity() != 0);
+            measurement.owned_bytes += rendered.capacity();
+            PAGE_CONTEXT_RENDER_MEASUREMENT.set(measurement);
+        });
+        rendered
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PageContextRenderMeasurement {
+    pub(crate) renders: usize,
+    pub(crate) owned_allocations: usize,
+    pub(crate) owned_bytes: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static PAGE_CONTEXT_RENDER_MEASUREMENT: std::cell::Cell<PageContextRenderMeasurement> =
+        const {
+            std::cell::Cell::new(PageContextRenderMeasurement {
+                renders: 0,
+                owned_allocations: 0,
+                owned_bytes: 0,
+            })
+        };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_page_context_render_measurement() {
+    PAGE_CONTEXT_RENDER_MEASUREMENT.set(PageContextRenderMeasurement::default());
+}
+
+#[cfg(test)]
+pub(crate) fn page_context_render_measurement() -> PageContextRenderMeasurement {
+    PAGE_CONTEXT_RENDER_MEASUREMENT.get()
 }
 
 fn build_page_impl<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     build_page_cold(stores, diagnostic_effects, diagnostic_context)
 }
@@ -59,7 +141,7 @@ fn build_page_impl<G>(
 fn build_page_cold<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
@@ -142,9 +224,13 @@ fn build_page_cold<G>(
                 if stores.page_contents() == PageContents::Empty {
                     freeze_page_specs(stores, diagnostic_effects, PageContents::InsertsOnly);
                 }
-                let node =
-                    prepare_insertion(stores, diagnostic_effects, &node, diagnostic_context)?
-                        .unwrap_or(node);
+                let node = prepare_insertion_with_context(
+                    stores,
+                    diagnostic_effects,
+                    &node,
+                    diagnostic_context,
+                )?
+                .unwrap_or(node);
                 contribute_front_as(stores, node)?;
             }
             Node::Whatsit(_)
@@ -162,11 +248,11 @@ fn build_page_cold<G>(
     Ok(())
 }
 
-fn prepare_insertion<G>(
+fn prepare_insertion_with_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     node: &Node,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Option<Node>, ExecError> {
     let Node::Ins {
         class,
@@ -229,10 +315,10 @@ fn create_page_insertion<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<PageInsertion, ExecError> {
     let existing_height =
-        insertion_box_size(stores, diagnostic_effects, class, diagnostic_context)?;
+        insertion_box_size_with_context(stores, diagnostic_effects, class, diagnostic_context)?;
     let insertion = PageInsertion::new(class, existing_height);
     let scaled_height = scaled_insertion_size(
         existing_height,
@@ -251,23 +337,26 @@ fn create_page_insertion<G>(
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
     if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
+        let diagnostic_context =
+            diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_context.render(stores));
         diagnostics::report_insertion_skip_infinite_shrinkage(
             stores,
             diagnostic_effects,
             class,
-            diagnostic_context,
+            &diagnostic_context,
         )?;
     }
     Ok(insertion)
 }
 
-fn insertion_box_size<G>(
+fn insertion_box_size_with_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Scaled, ExecError> {
-    let Some(list) = ensure_insertion_vbox(stores, diagnostic_effects, class, diagnostic_context)?
+    let Some(list) =
+        ensure_insertion_vbox_with_context(stores, diagnostic_effects, class, diagnostic_context)?
     else {
         return Ok(Scaled::from_raw(0));
     };
@@ -287,11 +376,11 @@ fn insertion_box_size<G>(
 
 /// TeX82 §993's `ensure_vbox`, used both when a class first reaches the page
 /// and when §1018 prepares insertion queues during `fire_up`.
-pub(crate) fn ensure_insertion_vbox<G>(
+fn ensure_insertion_vbox_with_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
     let Some(list) = stores.copy_box_to_page(class) else {
         return Ok(None);
@@ -307,10 +396,11 @@ pub(crate) fn ensure_insertion_vbox<G>(
         return Ok(Some(list));
     }
 
-    // Production page building is synchronous with the contributing command,
-    // whose dispatcher supplies §82's live display. Only the explicit
-    // source-free test seam falls back to the published summary.
-    let context = diagnostic_context.output_context.clone();
+    // Production page building borrows the contributing command and renders
+    // §82's live display only after this diagnostic branch is selected.
+    // Explicit suspension/publication boundaries instead lend their already
+    // detached text through the same short-lived capability.
+    let context = diagnostic_context.render(stores);
     crate::error_report::report_ordered_error(
         stores,
         diagnostic_effects,
@@ -344,6 +434,50 @@ pub(crate) fn ensure_insertion_vbox<G>(
     Ok(None)
 }
 
+pub(crate) fn ensure_insertion_vbox<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    class: u16,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
+    ensure_insertion_vbox_with_context(
+        stores,
+        diagnostic_effects,
+        class,
+        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+    )
+}
+
+#[cfg(test)]
+fn insertion_box_size<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    class: u16,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+) -> Result<Scaled, ExecError> {
+    insertion_box_size_with_context(
+        stores,
+        diagnostic_effects,
+        class,
+        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+    )
+}
+
+#[cfg(test)]
+fn prepare_insertion<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    node: &Node,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+) -> Result<Option<Node>, ExecError> {
+    prepare_insertion_with_context(
+        stores,
+        diagnostic_effects,
+        node,
+        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+    )
+}
+
 fn insertion_delta<G>(stores: &CommandContext<'_, G>) -> Result<Scaled, ExecError> {
     let delta = sub(
         stores.page_dimension(PageDimension::Goal),
@@ -362,7 +496,7 @@ fn split_page_insertion<G>(
     node: &Node,
     content: tex_state::node_arena::PageListId,
     split_max_depth: Scaled,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Option<Node>, ExecError> {
     let class = insertion.class();
     let count = stores
@@ -540,7 +674,7 @@ fn update_glue_or_kern<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     node: &Node,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Node, ExecError> {
     let mut replacement = None;
     let width = match node {
@@ -574,13 +708,15 @@ fn finite_page_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     mut spec: GlueSpec,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<GlueSpec, ExecError> {
     if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
+        let diagnostic_context =
+            diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_context.render(stores));
         diagnostics::report_page_infinite_shrinkage(
             stores,
             diagnostic_effects,
-            diagnostic_context,
+            &diagnostic_context,
         )?;
         spec.shrink_order = Order::Normal;
     }
@@ -593,7 +729,7 @@ fn normalize_insert_content_shrink<G>(
     insert_node: &Node,
     content: tex_state::node_arena::PageListId,
     indices: &[usize],
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Option<Node>, ExecError> {
     if indices.is_empty() {
         return Ok(None);
@@ -624,10 +760,12 @@ fn normalize_insert_content_shrink<G>(
     let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
     let mut start = 0;
     for (index, spec, kind, leader) in replacements {
+        let rendered_context =
+            diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_context.render(stores));
         diagnostics::report_split_infinite_shrinkage(
             stores,
             diagnostic_effects,
-            diagnostic_context,
+            &rendered_context,
         )?;
         if start < index {
             pieces.push(stores.slice_page_node_sequence(content, start..index, &mut slices));

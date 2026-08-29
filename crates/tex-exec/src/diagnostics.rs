@@ -763,8 +763,9 @@ pub(crate) fn report_page_infinite_shrinkage<G>(
     context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     // TeX82 §1004 reaches §82's `error` while handling the command that
-    // contributed this glue. The command boundary detaches its already-
-    // rendered display before this hot recovery path runs.
+    // contributed this glue. Synchronous page building renders from that
+    // borrowed live command only after selecting this recovery; replay after
+    // a real suspension/publication boundary supplies the same detached text.
     crate::error_report::report_ordered_error(
         stores,
         diagnostic_effects,

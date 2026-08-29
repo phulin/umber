@@ -12880,6 +12880,7 @@ fn end_job_transition_census_covers_output_and_residual_paths() {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, source);
+            crate::page_builder::reset_page_context_render_measurement();
             let mut observations = ObservationRecorder::default();
             let mut terminal = None;
             for step in 1..=128 {
@@ -12936,6 +12937,11 @@ fn end_job_transition_census_covers_output_and_residual_paths() {
                 stores.world().artifact_commits().len(),
                 expected_pages,
                 "{name}"
+            );
+            assert_eq!(
+                crate::page_builder::page_context_render_measurement(),
+                crate::page_builder::PageContextRenderMeasurement::default(),
+                "{name}: successful page retries must not render or own context bytes"
             );
             assert!(
                 stop_positions.first() < shipout_positions.first(),

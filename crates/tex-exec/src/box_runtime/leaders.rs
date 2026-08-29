@@ -65,7 +65,6 @@ pub(crate) fn append_leader_contribution<G>(
     payload: LeaderPayload,
     spec: GlueSpec,
     fuel: &mut tex_command::CommandFuel,
-    error_context: &str,
 ) -> Result<(), ExecError> {
     append_node_to_current_list(
         nest,
@@ -77,12 +76,6 @@ pub(crate) fn append_leader_contribution<G>(
             leader: Some(payload),
         },
         fuel,
-    )?;
-    crate::vertical::build_page_if_outer_vertical_with_error_context(
-        nest,
-        stores,
-        diagnostic_effects,
-        error_context,
     )?;
     Ok(())
 }

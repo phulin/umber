@@ -523,7 +523,8 @@ fn base_whatsits_are_passive_for_page_and_vertical_break_visits() {
             for node in &whatsits {
                 context.append_page_contribution(node.clone());
             }
-            crate::page_builder::build_page(context).expect("contentless whatsit page visits");
+            crate::page_builder::build_page_without_error_context(context)
+                .expect("contentless whatsit page visits");
             assert_eq!(
                 context.page_contents(),
                 tex_state::page::PageContents::Empty

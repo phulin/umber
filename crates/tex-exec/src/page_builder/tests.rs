@@ -167,7 +167,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
         stores.append_page_contribution(reference.clone());
         stores.append_page_contribution(first_box.clone());
 
-        build_page(&mut stores).expect("page-top snapping classification");
+        build_page_without_error_context(&mut stores).expect("page-top snapping classification");
 
         let discards = stores.take_page_discards();
         assert_eq!(
@@ -264,7 +264,7 @@ fn page_builder_output_active_boundary_preserves_pending_contributions() {
         stores.record_page_fire_up(0);
         stores.append_page_contribution(Node::Penalty(17));
         stores.append_page_contribution(rule(5, 2));
-        build_page(&mut stores).expect("white-box operation succeeds");
+        build_page_without_error_context(&mut stores).expect("white-box operation succeeds");
         assert_eq!(
             stores
                 .page_contributions()
@@ -581,7 +581,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
         });
         stores.append_page_contribution(rule(5, 1));
         stores.append_page_contribution(Node::Penalty(INF_PENALTY));
-        build_page(&mut stores).expect("white-box operation succeeds");
+        build_page_without_error_context(&mut stores).expect("white-box operation succeeds");
         assert_eq!(stores.take_page_discards().len(), 3);
         let current_page = stores.current_page_nodes().cloned().collect::<Vec<_>>();
         assert!(matches!(current_page[0], Node::Mark { class: 2, .. }));
@@ -680,7 +680,8 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             });
             stores.append_page_contribution(node.clone());
 
-            let error = build_page(&mut stores).expect_err("impossible page node must be fatal");
+            let error = build_page_without_error_context(&mut stores)
+                .expect_err("impossible page node must be fatal");
 
             assert_eq!(error.as_fatal(), Some(FatalError::confusion("page")));
             assert_eq!(stores.page_contributions().len(), 1);
@@ -707,7 +708,7 @@ fn page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82() {
             amount: s(2),
             kind: KernKind::Explicit,
         });
-        build_page(&mut stores).expect("white-box operation succeeds");
+        build_page_without_error_context(&mut stores).expect("white-box operation succeeds");
         assert_eq!(stores.page_dimension(PageDimension::Total), s(11));
         assert_eq!(stores.page_dimension(PageDimension::Depth), s(3));
         assert!(matches!(
@@ -715,7 +716,7 @@ fn page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82() {
             Some(Node::Kern { .. })
         ));
         stores.append_page_contribution(Node::Penalty(INF_PENALTY));
-        build_page(&mut stores).expect("white-box operation succeeds");
+        build_page_without_error_context(&mut stores).expect("white-box operation succeeds");
         assert_eq!(stores.page_dimension(PageDimension::Total), s(16));
         assert_eq!(stores.page_dimension(PageDimension::Depth), s(0));
         assert!(stores.page_contributions().is_empty());
@@ -732,7 +733,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
         params(&mut stores, 10_000, 3, 0);
 
         stores.append_page_contribution(rule(5, 7));
-        build_page(&mut stores).expect("box contribution succeeds");
+        build_page_without_error_context(&mut stores).expect("box contribution succeeds");
         assert!(!stores.page_has_last_glue());
         assert_eq!(stores.page_last_penalty(), 0);
         assert_eq!(stores.page_last_kern(), s(0));
@@ -745,7 +746,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
             kind: GlueKind::Normal,
             leader: None,
         });
-        build_page(&mut stores).expect("glue contribution succeeds");
+        build_page_without_error_context(&mut stores).expect("glue contribution succeeds");
         assert!(stores.page_has_last_glue());
         assert_eq!(stores.page_last_skip(), Some(GlueSpec::ZERO));
         assert_eq!(stores.page_dimension(PageDimension::Total), s(12));
@@ -755,7 +756,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
             amount: s(11),
             kind: KernKind::Explicit,
         });
-        build_page(&mut stores).expect("terminal kern remains pending");
+        build_page_without_error_context(&mut stores).expect("terminal kern remains pending");
         assert_eq!(stores.page_last_kern(), s(11));
         assert_eq!(stores.current_page_len(), 3);
         assert!(matches!(
@@ -764,7 +765,8 @@ fn page_contribution_last_items_and_max_depth_matrix() {
         ));
 
         stores.append_page_contribution(Node::Penalty(23));
-        build_page(&mut stores).expect("kern and penalty contributions succeed");
+        build_page_without_error_context(&mut stores)
+            .expect("kern and penalty contributions succeed");
         assert!(!stores.page_has_last_glue());
         assert_eq!(stores.page_last_penalty(), 23);
         assert_eq!(stores.page_last_kern(), s(0));
@@ -775,7 +777,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
             class: 4,
             tokens: mark,
         });
-        build_page(&mut stores).expect("mark contribution succeeds");
+        build_page_without_error_context(&mut stores).expect("mark contribution succeeds");
         assert!(!stores.page_has_last_glue());
         assert_eq!(stores.page_last_penalty(), 0);
         assert_eq!(stores.page_last_kern(), s(0));
@@ -811,12 +813,22 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
             kind: GlueKind::Normal,
             leader: None,
         });
+        reset_page_context_render_measurement();
         build_page_with_error_context(
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
             "l.27 published page continuation",
         )
         .expect("white-box operation succeeds");
+        assert_eq!(
+            page_context_render_measurement(),
+            PageContextRenderMeasurement {
+                renders: 1,
+                owned_allocations: 1,
+                owned_bytes: "l.27 published page continuation".len(),
+            },
+            "the owned context is materialized exactly at the diagnostic branch"
+        );
         let specs = stores
             .current_page_nodes()
             .filter_map(|node| match node {

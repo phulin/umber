@@ -6264,11 +6264,10 @@ impl<G> MainControl<G> {
             {
                 let mut context = stores.command_context().expect("live generation");
                 if context.take_page_builder_resume_after_output() {
-                    let error_context = self.command.output_open_context(&context);
-                    crate::page_builder::build_page_with_error_context(
+                    crate::page_builder::build_page(
                         &mut context,
                         diagnostic_effects,
-                        &error_context,
+                        self.command.state(),
                     )?;
                 }
             }

@@ -399,12 +399,11 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
             )?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
-            let error_context = command.state.output_open_context(&**stores);
-            crate::vertical::build_page_if_outer_vertical_with_error_context(
+            crate::vertical::build_page_if_outer_vertical(
                 modes,
                 stores,
                 command.diagnostic_effects,
-                &error_context,
+                command.state.state(),
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -2561,7 +2560,6 @@ pub(in crate::main_control) fn apply<G>(
             glue,
         } => {
             boxes.pending_leader = None;
-            let error_context = command.state.output_open_context(&**stores);
             crate::box_runtime::append_leader_contribution(
                 modes,
                 stores,
@@ -2570,7 +2568,12 @@ pub(in crate::main_control) fn apply<G>(
                 payload,
                 glue,
                 command.fuel,
-                &error_context,
+            )?;
+            crate::vertical::build_page_if_outer_vertical(
+                modes,
+                stores,
+                command.diagnostic_effects,
+                command.state.state(),
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -2581,7 +2584,6 @@ pub(in crate::main_control) fn apply<G>(
             glue,
         } => {
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
-                let error_context = command.state.output_open_context(&**stores);
                 crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
@@ -2590,7 +2592,12 @@ pub(in crate::main_control) fn apply<G>(
                     payload,
                     glue,
                     command.fuel,
-                    &error_context,
+                )?;
+                crate::vertical::build_page_if_outer_vertical(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.state.state(),
                 )?;
             }
             Ok(ReplayStep::Continue)
@@ -2967,11 +2974,10 @@ pub(in crate::main_control) fn apply<G>(
                 .begin_end_job_ejection()
                 .map_err(|_| ExecError::Fatal(FatalError::confusion("end job page progress")))?;
             crate::page_output::append_end_job_contributions(stores);
-            let error_context = command.state.output_open_context(&**stores);
-            crate::page_builder::build_page_with_error_context(
+            crate::page_builder::build_page(
                 stores,
                 command.diagnostic_effects,
-                &error_context,
+                command.state.state(),
             )?;
             if !stores.complete_end_job_ejection(progress) {
                 return Err(ExecError::Fatal(FatalError::confusion(
@@ -3331,12 +3337,11 @@ pub(in crate::main_control) fn apply<G>(
                     node,
                     command.fuel,
                 )?;
-                let error_context = command.state.output_open_context(&**stores);
-                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                crate::vertical::build_page_if_outer_vertical(
                     modes,
                     stores,
                     command.diagnostic_effects,
-                    &error_context,
+                    command.state.state(),
                 )?;
             }
             Ok(ReplayStep::Continue)
@@ -3748,12 +3753,11 @@ pub(in crate::main_control) fn apply<G>(
                 Mode::Vertical | Mode::InternalVertical
             ) {
                 crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
-                let error_context = command.state.output_open_context(&**stores);
-                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                crate::vertical::build_page_if_outer_vertical(
                     modes,
                     stores,
                     command.diagnostic_effects,
-                    &error_context,
+                    command.state.state(),
                 )?;
             } else {
                 let mut diagnostic_context = command_diagnostic_context(command, stores);
