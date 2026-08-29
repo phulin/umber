@@ -556,6 +556,51 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
     assert!(control.contains("pending.consume_into(publish.then_some(observer))"));
 }
 
+#[test]
+fn operation_host_preparation_has_one_effective_tail_authority() {
+    let control = include_str!("../src/main_control.rs");
+    assert!(
+        !control.contains("refresh_host_capabilities"),
+        "the retired duplicate refresh layer must remain absent"
+    );
+    let direct_episode = control
+        .split_once("fn execute_direct_episode(")
+        .expect("direct operation authority")
+        .1
+        .split_once("fn execute_operation(")
+        .expect("operation authority boundary")
+        .0;
+    assert_eq!(
+        direct_episode
+            .matches("self.prepare_host_capabilities(")
+            .count(),
+        1,
+        "one call-local host preparation owns each direct operation"
+    );
+    let preparation = control
+        .split_once("fn prepare_host_capabilities<'operation>(")
+        .expect("host preparation authority")
+        .1
+        .split_once("fn classify_last_node(")
+        .expect("host preparation boundary")
+        .0;
+    assert_eq!(
+        preparation
+            .matches("self.effective_tail_facts(stores)")
+            .count(),
+        1,
+        "last-item and last-node-type projections share one tail result"
+    );
+    let operation = control
+        .split_once("fn prepare_operation(")
+        .expect("operation preparation authority")
+        .1;
+    assert!(
+        !operation.contains("effective_tail_facts"),
+        "operation preparation must consume sampled facts without rescanning"
+    );
+}
+
 fn register_mutation_keys(observations: &[CommandObservation]) -> Vec<&str> {
     observations
         .iter()

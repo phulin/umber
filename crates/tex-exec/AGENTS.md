@@ -29,6 +29,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   retired. Coverage fallback is
   structurally absent: every retained root uses this same dispatcher loop.
 - `src/main_control.rs`: generation-typed sole production command delivery and execution driver, including same-borrow delivery, expansion, tracing, and ranked ordinary scanning whose retry command is retained only at a typed resource barrier, trace-mode continuity across that borrow, command-owned undefined recovery before stomach dispatch, typed alignment, diagnostic-assignment, and nested-immediate continuations, snapshot-free direct episodes, a singular caller-owned `OperationFrame` written by preparation and consumed fieldwise by application or moved intact into typed suspension, complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, attempt-owned macro operands across scanned assignment apply seams, the execution-owned memo capability, demand-selected convergence-root activation before execution, and direct tracked-region lifecycle and mode projection.
+- Each topology-stable operation prepares executor host capabilities once from
+  the authoritative live list. A stack-branded preparation carries the mode
+  and shared effective-tail result through delivery/scanning into application;
+  mutation consumes it, while suspension and error re-entry recompute it.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation` and

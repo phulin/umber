@@ -3082,11 +3082,7 @@ impl<'a> NodeCursor<'a> {
     pub fn iter(&self) -> NodeCursorIter<'a> {
         match self.source {
             NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(nodes.iter()),
-            NodeCursorSource::Fork(view) => NodeCursorIter::Fork {
-                view,
-                front: 0,
-                back: view.len(),
-            },
+            NodeCursorSource::Fork(view) => NodeCursorIter::Fork(view.iter()),
         }
     }
 }
@@ -3102,11 +3098,20 @@ impl<'a> IntoIterator for NodeCursor<'a> {
 
 pub enum NodeCursorIter<'a> {
     Slice(core::slice::Iter<'a, Node>),
-    Fork {
-        view: crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>,
-        front: usize,
-        back: usize,
-    },
+    Fork(crate::fork_arena::ArenaListIter<'a, Node, crate::fork_arena::PageMaterialLane>),
+}
+
+impl NodeCursorIter<'_> {
+    /// Descriptor rows visited by reverse traversal of a page-material list.
+    ///
+    /// Direct chunk roots always report zero; slices have no descriptor lane.
+    #[must_use]
+    pub const fn reverse_descriptor_visits(&self) -> usize {
+        match self {
+            Self::Slice(_) => 0,
+            Self::Fork(nodes) => nodes.reverse_descriptor_visits(),
+        }
+    }
 }
 
 impl<'a> Iterator for NodeCursorIter<'a> {
@@ -3115,24 +3120,14 @@ impl<'a> Iterator for NodeCursorIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Slice(nodes) => nodes.next(),
-            Self::Fork { view, front, back } => {
-                if *front == *back {
-                    return None;
-                }
-                let node = view.get(*front);
-                *front += usize::from(node.is_some());
-                node
-            }
+            Self::Fork(nodes) => nodes.next(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             Self::Slice(nodes) => nodes.size_hint(),
-            Self::Fork { front, back, .. } => {
-                let remaining = *back - *front;
-                (remaining, Some(remaining))
-            }
+            Self::Fork(nodes) => nodes.size_hint(),
         }
     }
 }
@@ -3143,13 +3138,7 @@ impl<'a> DoubleEndedIterator for NodeCursorIter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         match self {
             Self::Slice(nodes) => nodes.next_back(),
-            Self::Fork { view, front, back } => {
-                if *front == *back {
-                    return None;
-                }
-                *back -= 1;
-                view.get(*back)
-            }
+            Self::Fork(nodes) => nodes.next_back(),
         }
     }
 }

@@ -65,6 +65,8 @@ fn main_control_slice_is_bounded_and_groups_do_not_stop_the_episode() {
         let telemetry = control.episode_telemetry();
         assert_eq!(telemetry.commits(), 1);
         assert_eq!(telemetry.operations(), 256);
+        assert_eq!(telemetry.host_preparations(), 256);
+        assert_eq!(telemetry.effective_tail_traversals(), 256);
         assert_eq!(telemetry.slice_limits(), 1);
         assert_eq!(
             telemetry.last_commit().expect("one commit").boundary(),
@@ -85,6 +87,37 @@ fn main_control_slice_is_bounded_and_groups_do_not_stop_the_episode() {
             });
         },
     );
+}
+
+#[test]
+fn growing_list_tail_direct_chunk_work_is_linear_in_operations() {
+    let mut source = br"\setbox0=\vbox{".to_vec();
+    for _ in 0..2_048 {
+        source.extend_from_slice(br"\kern1pt");
+    }
+    source.extend_from_slice(br"}\end");
+    with_control(&source, |control, stores| {
+        loop {
+            let step = control
+                .advance_episode(stores)
+                .expect("bounded episode commits");
+            if matches!(step, StepResult::Progress(crate::MainControlStep::End)) {
+                break;
+            }
+        }
+        let telemetry = control.episode_telemetry();
+        assert!(telemetry.host_preparations() >= 2_048);
+        assert_eq!(
+            telemetry.effective_tail_descriptor_visits(),
+            0,
+            "direct ChunkCursor roots perform no descriptor lookup: {telemetry:?}"
+        );
+        assert_eq!(
+            telemetry.effective_tail_traversals(),
+            telemetry.host_preparations(),
+            "each preparation performs exactly one authoritative tail traversal"
+        );
+    });
 }
 
 #[test]

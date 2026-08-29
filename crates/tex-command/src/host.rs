@@ -190,7 +190,6 @@ pub struct CommandHostCapabilities {
     prev_graf: Option<i32>,
     last_node: Option<LastNodeItem>,
     last_node_type: i32,
-    page_insertion_heights: BTreeMap<u16, Scaled>,
 }
 
 impl Default for CommandHostCapabilities {
@@ -212,7 +211,6 @@ impl Default for CommandHostCapabilities {
             prev_graf: None,
             last_node: None,
             last_node_type: -1,
-            page_insertion_heights: BTreeMap::new(),
         }
     }
 }
@@ -418,14 +416,6 @@ impl CommandHostCapabilities {
     pub fn set_last_node_type(&mut self, last_node_type: i32) {
         self.last_node_type = last_node_type;
     }
-
-    /// Installs pdftex.web §1590's live `page_ins_head` projection for one
-    /// bounded command operation. The executor remains the sole owner of the
-    /// mutable page builder; command expansion receives only copied heights.
-    pub fn set_page_insertion_heights(&mut self, heights: impl IntoIterator<Item = (u16, Scaled)>) {
-        self.page_insertion_heights.clear();
-        self.page_insertion_heights.extend(heights);
-    }
 }
 
 /// Returns the exact ordered names tried by canonical `\input` lookup.
@@ -534,14 +524,6 @@ impl<'a> CommandHostContext<'a> {
     #[must_use]
     pub(crate) const fn last_node_type(&self) -> i32 {
         self._capabilities.last_node_type
-    }
-
-    #[must_use]
-    pub(crate) fn page_insertion_height(&self, class: u16) -> Option<Scaled> {
-        self._capabilities
-            .page_insertion_heights
-            .get(&class)
-            .copied()
     }
 }
 

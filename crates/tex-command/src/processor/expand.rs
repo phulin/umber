@@ -3402,8 +3402,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             suspended,
         )?;
         let rendered = self
-            .host
-            .page_insertion_height(class)
+            .state
+            .page_insertion(class)
+            .map(|insertion| insertion.height())
             .map_or_else(|| "0pt".to_owned(), format_scaled);
         self.push_rendered_text(&rendered, opener.origin());
         Ok(())

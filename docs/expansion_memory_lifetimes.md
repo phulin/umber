@@ -807,6 +807,11 @@ or roots. Ordinary box and page work reads it directly; it no longer scans
 meanings, the 65,536 token and box registers, payload identities, or node
 closures merely to discover the current total.
 
+Borrow-scoped host preparation similarly owns no copied page-insertion map.
+Expansion-time insertion enquiries read the authoritative row through the live
+`CommandContext`; the borrow ends with that processor episode and no projection
+survives list mutation, suspension, or error re-entry.
+
 ## Non-negotiable prohibitions
 
 - No compactor, in-place relocation, forwarding pointer, live-id rewrite, or

@@ -3060,6 +3060,11 @@ particular, pdftex.web §1590's `\pdfcreationdate` and the LaTeX-compatible
 `\creationdate` alias read the current job's clock after a format load and
 return it through the ordinary conversion-token path.
 
+The same rule applies to pdftex.web §1590's page-insertion enquiries:
+expansion borrows the authoritative insertion row through `CommandContext`.
+`CommandHostCapabilities` owns no copied insertion-height map, so operation
+preparation neither allocates nor retains a stale projection across mutation.
+
 A missing resource returns a typed `NeedResource`. No async future or callback
 is stored in `CommandState`. The unfinished operation moves exactly once into
 `PendingCommandAttempt<G, R>`, the sole in-session suspension package: it owns

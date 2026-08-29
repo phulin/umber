@@ -5,6 +5,7 @@
 //! `tex-command`; no independent source stack is accepted here.
 
 use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1283,6 +1284,28 @@ struct PreflightDelivery<G> {
     expansion: Option<tex_command::ExpansionWorkKey<G>>,
 }
 
+/// Stack-owned brand for one topology-stable command-processing interval.
+///
+/// A preparation may cross delivery and scanning borrows, but cannot enter a
+/// suspension or persistent operation frame. Semantic application consumes
+/// the preparation before it can mutate the mode/page topology.
+struct OperationPreparationScope;
+
+/// Copy-free executor facts sampled once for one topology-stable operation.
+struct OperationHostPreparation<'operation> {
+    mode: Mode,
+    last_node_type: i32,
+    _scope: PhantomData<&'operation mut OperationPreparationScope>,
+}
+
+#[derive(Clone, Copy)]
+struct EffectiveTailFacts {
+    last_node: Option<tex_command::LastNodeItem>,
+    last_node_type: i32,
+    traversed: bool,
+    descriptor_visits: usize,
+}
+
 fn preflight_delivery_from_retry<G>(
     command: PreflightCommand<G>,
     frame: &mut OperationFrame<G>,
@@ -2295,7 +2318,8 @@ impl<G> MainControl<G> {
         self.ensure_primitive_handles(stores);
         let mut diagnostic_effects = DiagnosticEffects::new();
         let mut command_context = stores.command_context().expect("live generation");
-        self.refresh_host_capabilities(&command_context);
+        let mut preparation_scope = OperationPreparationScope;
+        let _preparation = self.prepare_host_capabilities(&command_context, &mut preparation_scope);
         let processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
@@ -3238,30 +3262,31 @@ impl<G> MainControl<G> {
         }
     }
 
-    /// Refreshes executor-owned mode facts for the next processor borrow.
+    /// Prepares executor-owned mode facts for one topology-stable operation.
     ///
-    /// This is intentionally call-local capability state rather than part of
-    /// a command snapshot or durable session summary.
-    fn refresh_host_capabilities(&mut self, stores: &CommandContext<'_, G>) {
+    /// The returned scope proves that delivery, scanning, and application use
+    /// the same effective-tail projection. It cannot enter an operation frame
+    /// or a suspension, so a cold re-entry prepares from authoritative state
+    /// again.
+    fn prepare_host_capabilities<'operation>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        _scope: &'operation mut OperationPreparationScope,
+    ) -> OperationHostPreparation<'operation> {
+        let mode = self.modes.current_mode();
+        let tail = self.effective_tail_facts(stores);
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
         self.capabilities.set_space_factor(
-            matches!(
-                self.modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            )
-            .then(|| self.modes.current_list().space_factor()),
+            matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+                .then(|| self.modes.current_list().space_factor()),
         );
         let ignored_depth = crate::mode::ignored_depth_with_handle(stores, self.pdf_ignore_depth);
         // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
         // readable only in vertical mode, where an unset `prev_depth` is
         // §215's `ignore_depth` initial value.
         self.capabilities.set_prev_depth(
-            matches!(
-                self.modes.current_mode(),
-                Mode::Vertical | Mode::InternalVertical
-            )
-            .then(|| {
+            matches!(mode, Mode::Vertical | Mode::InternalVertical).then(|| {
                 self.modes
                     .current_list()
                     .prev_depth()
@@ -3272,22 +3297,18 @@ impl<G> MainControl<G> {
         // vertical level rather than testing the current mode.
         self.capabilities
             .set_prev_graf(Some(self.modes.enclosing_vertical_prev_graf()));
-        self.capabilities
-            .set_last_node(self.last_node_value(stores));
-        self.capabilities
-            .set_last_node_type(self.last_node_type_value(stores));
-        let insertion_heights = stores
-            .page_insertions()
-            .iter()
-            .map(|insertion| (insertion.class(), insertion.height()))
-            .collect::<Vec<_>>();
-        self.capabilities
-            .set_page_insertion_heights(insertion_heights);
+        self.capabilities.set_last_node(tail.last_node);
+        self.capabilities.set_last_node_type(tail.last_node_type);
+        self.episode_telemetry
+            .record_host_preparation(tail.traversed, tail.descriptor_visits);
+        OperationHostPreparation {
+            mode,
+            last_node_type: tail.last_node_type,
+            _scope: PhantomData,
+        }
     }
 
-    /// TeX82 §424's "Fetch an item in the current node, if appropriate": the
-    /// current list's tail-node classification consumed by
-    /// `\lastpenalty`/`\lastkern`/`\lastskip`.
+    /// Samples TeX82 §424 and e-TeX [26.424] from one effective-tail walk.
     ///
     /// The outer vertical list is special (matching `\unskip`'s existing
     /// `is_outer_vertical`/`page_has_last_glue` precedent from
@@ -3302,51 +3323,66 @@ impl<G> MainControl<G> {
     /// builder sweeps a node onto the page) exactly when the contribution
     /// list has been swept empty; while it is nonempty, the real
     /// contribution tail governs, just as it does for `\unskip`.
-    fn last_node_value(
-        &self,
-        context: &CommandContext<'_, G>,
-    ) -> Option<tex_command::LastNodeItem> {
+    fn effective_tail_facts(&self, context: &CommandContext<'_, G>) -> EffectiveTailFacts {
         if is_outer_vertical(&self.modes) {
-            return match crate::effective_tail::EffectiveTail::find(
-                context.page_contributions().iter(),
-            ) {
-                Some(tail) => Self::classify_last_node(context, tail.node()),
-                None => match context.page_last_node_type() {
-                    11 => context
-                        .page_last_skip()
-                        .map(tex_command::LastNodeItem::Glue),
-                    12 => Some(tex_command::LastNodeItem::Kern(context.page_last_kern())),
-                    13 => Some(tex_command::LastNodeItem::Penalty(
-                        context.page_last_penalty(),
-                    )),
-                    _ => None,
+            let contributions = context.page_contributions();
+            let mut nodes = contributions.iter();
+            let tail = crate::effective_tail::EffectiveTail::find(&mut nodes);
+            let descriptor_visits = nodes.reverse_descriptor_visits();
+            return match tail {
+                Some(tail) => EffectiveTailFacts {
+                    last_node: Self::classify_last_node(context, tail.node()),
+                    last_node_type: tail.node().etex_type(),
+                    traversed: true,
+                    descriptor_visits,
                 },
+                None => {
+                    let last_node_type = context.page_last_node_type();
+                    let last_node = match last_node_type {
+                        11 => context
+                            .page_last_skip()
+                            .map(tex_command::LastNodeItem::Glue),
+                        12 => Some(tex_command::LastNodeItem::Kern(context.page_last_kern())),
+                        13 => Some(tex_command::LastNodeItem::Penalty(
+                            context.page_last_penalty(),
+                        )),
+                        _ => None,
+                    };
+                    EffectiveTailFacts {
+                        last_node,
+                        last_node_type,
+                        traversed: true,
+                        descriptor_visits,
+                    }
+                }
             };
         }
         if self.modes.current_list().pending_hchars().is_some() {
-            return None;
+            return EffectiveTailFacts {
+                last_node: None,
+                last_node_type: 0,
+                traversed: false,
+                descriptor_visits: 0,
+            };
         }
-        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes(context).iter())
-            .and_then(|tail| Self::classify_last_node(context, tail.node()))
-    }
-
-    /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
-    /// `\lastnodetype`.
-    fn last_node_type_value(&self, context: &CommandContext<'_, G>) -> i32 {
-        if is_outer_vertical(&self.modes) {
-            return crate::effective_tail::EffectiveTail::find(context.page_contributions().iter())
-                .map_or_else(
-                    || context.page_last_node_type(),
-                    |tail| tail.node().etex_type(),
-                );
+        let current = self.modes.current_list().nodes(context);
+        let mut nodes = current.iter();
+        let tail = crate::effective_tail::EffectiveTail::find(&mut nodes);
+        let descriptor_visits = nodes.reverse_descriptor_visits();
+        match tail {
+            Some(tail) => EffectiveTailFacts {
+                last_node: Self::classify_last_node(context, tail.node()),
+                last_node_type: tail.node().etex_type(),
+                traversed: true,
+                descriptor_visits,
+            },
+            None => EffectiveTailFacts {
+                last_node: None,
+                last_node_type: -1,
+                traversed: true,
+                descriptor_visits,
+            },
         }
-        // Batched horizontal characters are already semantic character nodes
-        // even though Umber has not materialized their shaped run yet.
-        if self.modes.current_list().pending_hchars().is_some() {
-            return 0;
-        }
-        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes(context).iter())
-            .map_or(-1, |tail| tail.node().etex_type())
     }
 
     /// Classifies one real node as a `\lastpenalty`/`\lastkern`/`\lastskip`
@@ -5008,6 +5044,11 @@ impl<G> MainControl<G> {
                 );
                 return Ok(StepResult::Progress(step));
             }
+            let mut preparation_scope = OperationPreparationScope;
+            let host_preparation = {
+                let context = stores.command_context().expect("live generation");
+                self.prepare_host_capabilities(&context, &mut preparation_scope)
+            };
             let preflight = if let Some(capabilities) = resumed_resource {
                 PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared,
@@ -5046,6 +5087,7 @@ impl<G> MainControl<G> {
             } else {
                 let preflight = match self.preflight_replay_delivery(
                     stores,
+                    &host_preparation,
                     &mut diagnostic_effects,
                     &mut operation_frame,
                 ) {
@@ -5131,9 +5173,9 @@ impl<G> MainControl<G> {
                 let tracked_mark = episode_tracked_mark.take();
                 let prepared = self.prepare_operation(
                     stores,
+                    host_preparation,
                     preflight.delivery,
-                    preflight.scanner,
-                    preflight.expansion,
+                    (preflight.scanner, preflight.expansion),
                     &mut diagnostic_effects,
                     &mut operation_frame,
                 );
@@ -5281,9 +5323,9 @@ impl<G> MainControl<G> {
                 }
                 let prepared = self.prepare_operation(
                     stores,
+                    host_preparation,
                     preflight.delivery,
-                    preflight.scanner,
-                    preflight.expansion,
+                    (preflight.scanner, preflight.expansion),
                     &mut diagnostic_effects,
                     &mut operation_frame,
                 );
@@ -5484,9 +5526,9 @@ impl<G> MainControl<G> {
             }
             let prepared = self.prepare_operation(
                 stores,
+                host_preparation,
                 preflight.delivery,
-                preflight.scanner,
-                preflight.expansion,
+                (preflight.scanner, preflight.expansion),
                 &mut diagnostic_effects,
                 &mut operation_frame,
             );
@@ -5841,13 +5883,17 @@ impl<G> MainControl<G> {
         };
         let operation_mark = self.begin_direct_operation(stores, retained_attempt);
         let mut diagnostic_effects = DiagnosticEffects::new();
+        let mut preparation_scope = OperationPreparationScope;
+        let host_preparation = {
+            let context = stores.command_context().expect("live generation");
+            self.prepare_host_capabilities(&context, &mut preparation_scope)
+        };
         let assignment = match continuation {
             Some(continuation) => Some(continuation),
             None => {
                 self.ensure_primitive_handles(stores);
                 let (command, cursor, retry_expansion) = {
                     let mut context = stores.command_context().expect("live generation");
-                    self.refresh_host_capabilities(&context);
                     let mut processor = command_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
@@ -5923,9 +5969,9 @@ impl<G> MainControl<G> {
         let mode_mark = self.modes.begin_journal();
         let prepared = self.prepare_operation(
             stores,
+            host_preparation,
             delivery,
-            scanner,
-            None,
+            (scanner, None),
             &mut diagnostic_effects,
             &mut operation_frame,
         );
@@ -7052,7 +7098,8 @@ impl<G> MainControl<G> {
         let mut context = stores
             .command_context()
             .expect("display-end scan requires a live generation");
-        self.refresh_host_capabilities(&context);
+        let mut preparation_scope = OperationPreparationScope;
+        let _preparation = self.prepare_host_capabilities(&context, &mut preparation_scope);
         let mut machine = self.command_machine(diagnostic_effects);
         let mut processor = machine.processor(&mut context);
         prepare_command_trace(&mut processor, mode, shown_mode);
@@ -8003,11 +8050,12 @@ impl<G> MainControl<G> {
     fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
+        host_preparation: &OperationHostPreparation<'_>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
     ) -> Result<Option<PreflightDelivery<G>>, PreflightDeliveryError<G>> {
         frame.assert_empty();
-        let mode = self.modes.current_mode();
+        let mode = host_preparation.mode;
         if self.active_alignment.is_some()
             || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
         {
@@ -8032,7 +8080,6 @@ impl<G> MainControl<G> {
                 .collect();
             self.observe_committed(entry_records);
         }
-        self.refresh_host_capabilities(&context);
         let innermost_group = context.innermost_group_kind();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
@@ -8358,8 +8405,19 @@ impl<G> MainControl<G> {
         } else {
             OperationDelivery::<G>::Replay
         };
-        let readiness =
-            self.prepare_operation(stores, delivery, None, None, diagnostic_effects, &mut frame);
+        let mut preparation_scope = OperationPreparationScope;
+        let host_preparation = {
+            let context = stores.command_context().expect("live generation");
+            self.prepare_host_capabilities(&context, &mut preparation_scope)
+        };
+        let readiness = self.prepare_operation(
+            stores,
+            host_preparation,
+            delivery,
+            (None, None),
+            diagnostic_effects,
+            &mut frame,
+        );
         if readiness == OperationReadiness::Failed {
             return Err(frame.take_error());
         }
@@ -8434,12 +8492,16 @@ impl<G> MainControl<G> {
     fn prepare_operation(
         &mut self,
         stores: &mut Universe<G>,
+        host_preparation: OperationHostPreparation<'_>,
         delivery: OperationDelivery<G>,
-        scanner_resume: Option<tex_command::ScannerFrameKey<G>>,
-        expansion_resume: Option<tex_command::ExpansionWorkKey<G>>,
+        resume: (
+            Option<tex_command::ScannerFrameKey<G>>,
+            Option<tex_command::ExpansionWorkKey<G>>,
+        ),
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
     ) -> OperationReadiness {
+        let (scanner_resume, expansion_resume) = resume;
         if matches!(&delivery, OperationDelivery::<G>::Prepared) {
             assert!(
                 frame.unavailable.is_some()
@@ -8457,7 +8519,11 @@ impl<G> MainControl<G> {
         } else {
             frame.assert_empty();
         }
-        let mode = self.modes.current_mode();
+        let OperationHostPreparation {
+            mode,
+            last_node_type,
+            _scope: _,
+        } = host_preparation;
         let tracked_region_is_active = stores
             .command_context()
             .is_ok_and(|context| context.tracked_region_is_active());
@@ -8466,7 +8532,6 @@ impl<G> MainControl<G> {
             let mut context = stores
                 .command_context()
                 .expect("tracked region keeps its generation admitted");
-            let last_node_type = self.last_node_type_value(&context);
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
             let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
             let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);
@@ -8524,7 +8589,6 @@ impl<G> MainControl<G> {
                 .collect();
             self.observe_committed(entry_records);
         }
-        self.refresh_host_capabilities(&context);
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let root_main_file_origin = self.active_external_file_is_root_main();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());

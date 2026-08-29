@@ -196,8 +196,16 @@ checkpoint, format, output, cancellation, fuel, and required state-identity
 boundaries. `EpisodeCommit` names the primary boundary and completed operation
 count. Fixed-size `EpisodeTelemetry` counts attempts, operations, commits,
 rollbacks, every semantic barrier, bounded-slice returns, terminal returns,
-temporary coverage boundaries, and coverage fallback by family. The counters
-are operational like command fuel: rollback never refunds them and they enter
+temporary coverage boundaries, coverage fallback by family, call-local host
+preparations, and effective-tail traversals. Delivery, scanning, and application
+consume one stack-branded preparation derived from the authoritative live list;
+its shared tail result supplies both `\last*` and `\lastnodetype`. List mutation
+ends that scope, and suspension or error re-entry prepares again. The arena's
+direct reverse `ChunkCursor` starts from the root's stored tail and crosses only
+the packed blocks in that three-node window regardless of accumulated list size;
+it visits no list descriptor. Tail work is therefore linear in prepared
+operations rather than operations times growing list depth. The counters are
+operational like command fuel: rollback never refunds them and they enter
 neither formats nor checkpoints.
 
 Temporary migration debt has a separate `EpisodeCoverageFamily` vocabulary.

@@ -82,6 +82,9 @@ pub struct EpisodeTelemetry {
     semantic_barriers: [u64; SemanticEpisodeBarrier::COUNT],
     slice_limits: u64,
     terminals: u64,
+    host_preparations: u64,
+    effective_tail_traversals: u64,
+    effective_tail_descriptor_visits: u64,
     last_commit: Option<EpisodeCommit>,
 }
 
@@ -95,6 +98,9 @@ impl Default for EpisodeTelemetry {
             semantic_barriers: [0; SemanticEpisodeBarrier::COUNT],
             slice_limits: 0,
             terminals: 0,
+            host_preparations: 0,
+            effective_tail_traversals: 0,
+            effective_tail_descriptor_visits: 0,
             last_commit: None,
         }
     }
@@ -103,6 +109,20 @@ impl Default for EpisodeTelemetry {
 impl EpisodeTelemetry {
     pub(crate) fn record_attempt(&mut self) {
         self.attempts = self.attempts.saturating_add(1);
+    }
+
+    pub(crate) fn record_host_preparation(
+        &mut self,
+        traversed_effective_tail: bool,
+        descriptor_visits: usize,
+    ) {
+        self.host_preparations = self.host_preparations.saturating_add(1);
+        self.effective_tail_traversals = self
+            .effective_tail_traversals
+            .saturating_add(u64::from(traversed_effective_tail));
+        self.effective_tail_descriptor_visits = self
+            .effective_tail_descriptor_visits
+            .saturating_add(u64::try_from(descriptor_visits).unwrap_or(u64::MAX));
     }
 
     pub(crate) fn record_commit(&mut self, commit: EpisodeCommit) {
@@ -184,6 +204,28 @@ impl EpisodeTelemetry {
     #[must_use]
     pub const fn terminals(self) -> u64 {
         self.terminals
+    }
+
+    /// Number of call-local executor host projections prepared for command
+    /// processing. Suspension and rollback do not retain or refund them.
+    #[must_use]
+    pub const fn host_preparations(self) -> u64 {
+        self.host_preparations
+    }
+
+    /// Number of authoritative effective-tail traversals used to prepare host
+    /// projections. Pending horizontal characters need no arena traversal.
+    #[must_use]
+    pub const fn effective_tail_traversals(self) -> u64 {
+        self.effective_tail_traversals
+    }
+
+    /// Descriptor rows visited by effective-tail traversal. Reverse arena
+    /// cursors keep this bounded by the fixed tail window, independent of the
+    /// accumulated list length.
+    #[must_use]
+    pub const fn effective_tail_descriptor_visits(self) -> u64 {
+        self.effective_tail_descriptor_visits
     }
 
     #[must_use]
