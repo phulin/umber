@@ -68,6 +68,7 @@ pub(crate) struct InputStack<G> {
     interval: u64,
     touched: Vec<u64>,
     partially_captured: Vec<u64>,
+    source_owner_captured: Vec<u64>,
     coalesced_mutations: u64,
     row_admissions: u64,
     source_lex_captures: u64,
@@ -88,6 +89,7 @@ impl<G> Default for InputStack<G> {
             interval: 1,
             touched: Vec::new(),
             partially_captured: Vec::new(),
+            source_owner_captured: Vec::new(),
             coalesced_mutations: 0,
             row_admissions: 0,
             source_lex_captures: 0,
@@ -162,6 +164,7 @@ impl<G> InputStack<G> {
             self.rows.push(value);
             self.touched.push(self.interval);
             self.partially_captured.push(0);
+            self.source_owner_captured.push(0);
         } else if self.recording
             && (self.touched[self.top] != self.interval
                 || self.partially_captured[self.top] == self.interval)
@@ -175,10 +178,12 @@ impl<G> InputStack<G> {
             });
             self.touched[self.top] = self.interval;
             self.partially_captured[self.top] = 0;
+            self.source_owner_captured[self.top] = 0;
         } else {
             self.rows[self.top] = value;
             self.touched[self.top] = self.interval;
             self.partially_captured[self.top] = 0;
+            self.source_owner_captured[self.top] = 0;
         }
         self.top += 1;
     }
@@ -194,6 +199,7 @@ impl<G> InputStack<G> {
             drop(self.rows.pop());
             self.touched.pop();
             self.partially_captured.pop();
+            self.source_owner_captured.pop();
         }
         Some(result)
     }
@@ -205,6 +211,7 @@ impl<G> InputStack<G> {
         self.top -= 1;
         self.touched.pop();
         self.partially_captured.pop();
+        self.source_owner_captured.pop();
         self.rows.pop()
     }
 
@@ -218,8 +225,13 @@ impl<G> InputStack<G> {
         self.rows.get_mut(index)
     }
 
-    /// Moves one source-owner inverse into the same ordered history as row
-    /// advances and replacements.
+    /// Moves the first source-owner inverse in an interval into the same
+    /// ordered history as row advances and replacements.
+    ///
+    /// Later owner transitions of that row can drop their displaced owner:
+    /// rollback needs the interval's initial owner and candidate redo obtains
+    /// the final owner by swapping that one inverse a second time. A row
+    /// admitted during the interval needs no inverse until it is displaced.
     pub(crate) fn mutate_top_source<R>(
         &mut self,
         mutate: impl FnOnce(&mut InputLevel<G>) -> (SourceLevelExecutionState<G>, R),
@@ -228,6 +240,15 @@ impl<G> InputStack<G> {
         if !self.recording {
             let (state, result) = mutate(&mut self.rows[index]);
             drop(state);
+            return Some(result);
+        }
+        let row_needs_inverse = self.touched[index] != self.interval
+            || (self.partially_captured[index] == self.interval
+                && self.source_owner_captured[index] != self.interval);
+        if !row_needs_inverse {
+            let (state, result) = mutate(&mut self.rows[index]);
+            drop(state);
+            self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
             return Some(result);
         }
         self.source_owner_states.warm_first_page();
@@ -240,6 +261,7 @@ impl<G> InputStack<G> {
         });
         self.touched[index] = self.interval;
         self.partially_captured[index] = self.interval;
+        self.source_owner_captured[index] = self.interval;
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         Some(result)
     }
@@ -385,6 +407,11 @@ impl<G> InputStack<G> {
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u64>()),
             )
+            .saturating_add(
+                self.source_owner_captured
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
             .saturating_add(self.undo.retained_bytes())
             .saturating_add(self.displaced_rows.retained_bytes())
             .saturating_add(self.source_lex_states.retained_bytes())
@@ -434,6 +461,7 @@ impl<G> InputStack<G> {
         if self.interval == 1 {
             self.touched.fill(0);
             self.partially_captured.fill(0);
+            self.source_owner_captured.fill(0);
         }
     }
 }

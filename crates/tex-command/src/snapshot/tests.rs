@@ -825,6 +825,112 @@ fn source_owner_swap_candidate_reject_redoes_prior_and_accept_promotes_current()
 }
 
 #[test]
+fn repeated_source_owner_swaps_coalesce_and_candidate_reject_redoes_the_final_owner() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"a\nb\nc"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let early = command.publish_summary(universe).expect("pre-line summary");
+        let before = command.input.levels.counters();
+
+        for expected_line in 1..=3 {
+            command
+                .input
+                .levels
+                .mutate_top_source(|level| {
+                    let crate::input::InputLevel::Source(source) = level else {
+                        panic!("source remains live");
+                    };
+                    let stored = crate::input::SourceLevelExecutionState::cursor(source);
+                    let line = source
+                        .slot
+                        .cursor
+                        .load_next_line(13)
+                        .expect("next line loads");
+                    assert_eq!(line.physical.number(), expected_line);
+                    (stored, ())
+                })
+                .expect("source owner transition records");
+        }
+        let after = command.input.levels.counters();
+        assert_eq!(after.owner_swaps - before.owner_swaps, 1);
+        assert_eq!(after.undo_records - before.undo_records, 1);
+        assert_eq!(after.coalesced_mutations - before.coalesced_mutations, 2);
+
+        let mut candidate = crate::CommandState::fork_summary(command, &early, universe, universe)
+            .expect("source prefix forks");
+        let restored = match candidate.input.levels.last() {
+            Some(crate::input::InputLevel::Source(source)) => source,
+            _ => panic!("source remains live at the early checkpoint"),
+        };
+        assert!(restored.slot.cursor.line.is_none());
+
+        candidate.reject_checkpoint_candidate();
+        let redone = match candidate.input.levels.last() {
+            Some(crate::input::InputLevel::Source(source)) => source,
+            _ => panic!("source remains live after candidate rejection"),
+        };
+        assert_eq!(
+            redone
+                .slot
+                .cursor
+                .line
+                .as_ref()
+                .map(|line| line.physical.number()),
+            Some(3)
+        );
+    });
+}
+
+#[test]
+fn source_owner_swaps_on_an_interval_local_row_need_no_inverse() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let empty = command.snapshot(universe).expect("empty snapshot");
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"a\nb"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let before = command.input.levels.counters();
+
+        for _ in 0..2 {
+            command.input.levels.mutate_top_source(|level| {
+                let crate::input::InputLevel::Source(source) = level else {
+                    panic!("source remains live");
+                };
+                let stored = crate::input::SourceLevelExecutionState::cursor(source);
+                source
+                    .slot
+                    .cursor
+                    .load_next_line(13)
+                    .expect("next line loads");
+                (stored, ())
+            });
+        }
+        let after = command.input.levels.counters();
+        assert_eq!(after.owner_swaps, before.owner_swaps);
+        assert_eq!(after.undo_records, before.undo_records);
+
+        command
+            .rollback(&empty, universe)
+            .expect("interval-local row disappears at rollback");
+        assert!(command.input.levels.is_empty());
+    });
+}
+
+#[test]
 fn compact_source_touch_then_token_row_reuse_restores_the_source_incarnation() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

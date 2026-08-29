@@ -543,6 +543,10 @@ The generation-tied `InputStack` owns stable source, stored-token, and direct
 macro-argument rows. Its one compact `InputUndo` history orders copy-small
 lexer/frame first touches, cold typed source-owner swaps, row replacement and
 reuse, retirement, rollback/redo, candidate settlement, and prefix release.
+Only the first owner-changing transition of a checkpoint-visible source row is
+retained in an interval; later transitions drop their displaced intermediate
+owners, because rollback needs the initial owner and redo recovers the final
+owner from that same swap. An interval-local row retains no owner inverse.
 Alternate owners exist only as generation-checked inverse payloads, so
 candidate redo restores the exact authoritative row without a second live
 input representation or the generic logical-stack stored-state machinery.

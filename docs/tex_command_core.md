@@ -1841,9 +1841,12 @@ ordered `InputUndo` journal as row replacement, retirement, candidate
 settlement, and prefix release, so direct restore and candidate reject/redo
 cannot settle source state separately from its input row. No
 `SourceCursor`, `SourceLineState`, or `SourceOpenDepths` implements `Clone`.
-The first mutation of one row visible at a legal checkpoint or operation mark
-records the old state; later cursor advances coalesce into that record and the
-live row holds the final state. A row first
+The first mutation or owner transition of one row visible at a legal checkpoint
+or operation mark records the old state; later cursor and owner advances
+coalesce into that record and the live row holds the final state. Rollback
+therefore swaps in the interval's initial owner, while candidate redo obtains
+the final owner from that same inverse instead of retaining intermediate
+physical lines. A row first
 pushed after the newest mark is not observable rollback state. Pop/push at that
 depth therefore overwrites the same physical row directly only while its current
 occupant has no compact or stored inverse. If that occupant was partially

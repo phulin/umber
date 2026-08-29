@@ -187,8 +187,10 @@ collector (see `src/conditionals.rs`).
   Stable source, stored-token, and macro-argument rows share one ordered
   `InputUndo` journal for first-touch advances, cold source-owner swaps,
   replacement/reuse, retirement, rollback/redo, candidate settlement, and
-  prefix release. Alternate owners live only in checked reusable slabs; there
-  is no generic logical-stack adapter or second input representation.
+  prefix release. Repeated source-owner changes coalesce to the first inverse
+  per checkpoint-visible row and interval; rows admitted in the interval need
+  no inverse. Alternate owners live only in checked reusable slabs; there is no
+  generic logical-stack adapter or second input representation.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   the one destination-directed source/token top transition, the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
