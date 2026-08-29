@@ -823,6 +823,15 @@ roots. Acceptance removes checkpoint rows and accepted root inverses before
 pruning the detached suffix and dropping later accepted regions. No fallible
 step may begin after this prevalidated root transition.
 
+PageBuilder insertions, insertion-class lookup positions, the five class-zero
+marks, sparse mark classes, and mark-class lookup positions are canonical
+current values beside that same reversible fixed-chunk journal. They have no
+parallel append history. Checkpoint selection swaps journal alternates over the
+explicit selected suffix; acceptance releases detached prior chunks without a
+record visit, and rejection visits only current undo plus the already selected
+prior redo. The removed insertion/mark lane rebuild cannot turn accumulated
+page history into a publication or settlement scan.
+
 Named execution evidence is not itself checkpoint authority. A fresh command
 processor owns one move-only job-start eligibility receipt, consumed before
 execution begins. Live execution can produce another receipt only after a

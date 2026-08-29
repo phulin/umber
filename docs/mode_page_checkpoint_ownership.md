@@ -184,10 +184,16 @@ roots for the contribution, current-page, page-discard, and split-discard
 lists. Fixed page dimensions, integers, contents, last-item facts, best-break
 coordinates, and fire-up coordinates are stored directly in the mark.
 Insertions and sparse mark classes use
-generation-owned append/journal lanes with scalar roots; the five class-zero
-marks are journaled token-list roots. Neither the insertion-position index nor
-the mark-class direct-lookup index is checkpoint ownership. They are rebuilt or
-rewound as part of applying their canonical journal roots.
+one reversible fixed-chunk PageBuilder journal together with their canonical
+current values; the five class-zero marks use the same journal. There is no
+second insertion or mark mutation lane. The insertion-position and mark-class
+direct-lookup indexes remain canonical current state and reversible journal
+alternates update them directly. Checkpoint selection visits only the explicit
+journal distance from the accepted head to the selected fixed mark. Candidate
+acceptance releases superseded prior journal chunks without visiting their
+records; rejection rewinds only current records, then forward-redoes the exact
+accepted distance selected at edit start. Neither settlement reconstructs
+canonical values from an accumulated payload lane.
 
 Validation checks every lineage, region generation, serial, range, font root,
 token root, and page-node root without mutation. Application follows the
@@ -231,6 +237,14 @@ The storage may retain bounded spare capacity up to the generation's observed
 high-water mark. That capacity is reusable storage, not live semantic payload.
 No compaction, per-value owner, root registration, ordinary-path copy-on-write,
 or deferred prefix clone is permitted.
+
+PageBuilder settlement counters distinguish checkpoint capture, selected
+journal rewind, candidate rejection rewind, accepted redo, whole prior/current
+journal-chunk release, forbidden canonical-lane scans, and forbidden canonical-
+value copies. Capture, acceptance, and canonical-lane scan/copy counters remain
+zero-work across size-parameterized page payloads. Rejection's candidate work
+depends only on the candidate suffix; the separately reported accepted redo is
+exactly the journal distance explicitly selected at edit start.
 
 Identity maintenance is selected once, before execution, by the incremental
 history session. Batch and other non-incremental sessions leave it disabled:

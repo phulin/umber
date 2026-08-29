@@ -547,6 +547,96 @@ fn page_candidate_identity_follows_reject_and_accept_ownership_transfer() {
     );
 }
 
+fn page_candidate_settlement_work(
+    accepted_updates: usize,
+    accept: bool,
+) -> super::PageCandidateSettlementCounters {
+    page_arena!(arena, pool, state);
+    let mut page = PageBuilderState::default();
+    page.push_contribution(&mut arena, kern(-1));
+    page.push_current_page(&mut arena, kern(-2));
+    page.push_page_discard(&mut arena, kern(-3));
+    set_split_discards(&mut page, &mut arena, [kern(-4)]);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-5)));
+    page.set_mark(PageMark::Top, tokens(&[Token::param(1)]));
+    page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(2)]));
+    let selected = page.checkpoint_mark();
+
+    for index in 0..accepted_updates {
+        let value = i32::try_from(index).expect("test update fits i32");
+        page.push_contribution(&mut arena, kern(value));
+        page.push_current_page(&mut arena, kern(value));
+        page.push_page_discard(&mut arena, kern(value));
+        page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(value)));
+        page.set_mark_class(
+            PageMark::Bot,
+            7,
+            tokens(&[Token::param(
+                u8::try_from(index % 9 + 1).expect("parameter fits u8"),
+            )]),
+        );
+    }
+
+    let tail = page.begin_checkpoint_candidate(selected);
+    let carrier = page
+        .pop_contribution_front(&mut arena)
+        .expect("selected contribution");
+    page.discard_carrier(carrier);
+    assert_eq!(page.pop_current_page(&mut arena), Some(kern(-2)));
+    page.clear_page_discards(&arena);
+    page.clear_split_discards(&arena);
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(91)));
+    page.set_mark(PageMark::Top, tokens(&[Token::param(8)]));
+    page.set_mark_class(PageMark::Bot, 7, tokens(&[Token::param(9)]));
+
+    if accept {
+        page.prepare_checkpoint_candidate_acceptance(tail);
+    } else {
+        page.prepare_checkpoint_candidate_rejection(&tail);
+        page.finish_checkpoint_candidate_rejection(tail);
+    }
+    page.candidate_settlement_counters()
+}
+
+#[test]
+fn candidate_settlement_counters_exclude_accepted_page_payload_scans_and_copies() {
+    let small_accept = page_candidate_settlement_work(1, true);
+    let large_accept = page_candidate_settlement_work(4_096, true);
+    for counters in [small_accept, large_accept] {
+        assert_eq!(counters.checkpoint_capture_records_scanned, 0);
+        assert_eq!(counters.acceptance_payload_records_scanned, 0);
+        assert_eq!(counters.canonical_lane_records_scanned, 0);
+        assert_eq!(counters.canonical_values_copied, 0);
+        assert_eq!(counters.candidate_acceptances, 1);
+        assert_eq!(counters.candidate_rejections, 0);
+    }
+    assert!(
+        large_accept.selected_journal_records_rewound
+            > small_accept.selected_journal_records_rewound,
+        "checkpoint selection reports its explicitly chosen journal distance"
+    );
+
+    let small_reject = page_candidate_settlement_work(1, false);
+    let large_reject = page_candidate_settlement_work(4_096, false);
+    for counters in [small_reject, large_reject] {
+        assert_eq!(counters.checkpoint_capture_records_scanned, 0);
+        assert_eq!(counters.acceptance_payload_records_scanned, 0);
+        assert_eq!(counters.canonical_lane_records_scanned, 0);
+        assert_eq!(counters.canonical_values_copied, 0);
+        assert_eq!(counters.candidate_acceptances, 0);
+        assert_eq!(counters.candidate_rejections, 1);
+        assert_eq!(
+            counters.rejected_prior_records_redone, counters.selected_journal_records_rewound,
+            "rejection redoes only the journal distance selected at edit start"
+        );
+    }
+    assert_eq!(
+        small_reject.rejected_candidate_records_rewound,
+        large_reject.rejected_candidate_records_rewound,
+        "candidate rejection work is independent of accepted page payload"
+    );
+}
+
 #[test]
 fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
     let mut pool = NodePool::new();

@@ -23,4 +23,6 @@ the sole retained generation.
 then runs the production `Session` accept and transaction-reject paths. The
 MainControl-to-prepared disposition scopes must report zero allocation calls
 and requested bytes, while page-material counters across the complete
-transitions must report zero source-node copies.
+transitions must report zero source-node copies. PageBuilder settlement
+counters additionally require zero checkpoint-capture scans, acceptance
+payload scans, canonical-lane scans, and canonical-value copies.

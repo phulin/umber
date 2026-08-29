@@ -49,22 +49,38 @@ fn main() {
     // transition enters its internally attributed allocation scope.
     let _ = measurement();
 
-    let (mut rejected_session, rejected, rejected_page_before) = prepared_non_job_start();
+    let (mut rejected_session, mut rejected, rejected_page_before) = prepared_non_job_start();
+    let rejected_settlement_before = rejected
+        .page_candidate_settlement_counters()
+        .expect("candidate settlement counters");
     let rejected_allocations = measure(|| rejected.reject());
     let rejected_page_after = rejected_session
         .page_material_counters()
         .expect("returned accepted counters")
+        .expect("returned accepted generation");
+    let rejected_settlement_after = rejected_session
+        .page_candidate_settlement_counters()
+        .expect("returned accepted settlement counters")
         .expect("returned accepted generation");
     assert_zero("reject", rejected_allocations);
     assert_eq!(
         rejected_page_after.source_nodes_copied, rejected_page_before.source_nodes_copied,
         "production reject copied page material"
     );
+    assert_forbidden_settlement_work_is_zero(rejected_settlement_after);
+    assert_eq!(
+        rejected_settlement_after.candidate_rejections,
+        rejected_settlement_before.candidate_rejections + 1,
+        "production rejection settles exactly once"
+    );
 
     let (mut accepted_session, mut accepted, _) = prepared_non_job_start();
     let accepted_page_before = accepted
         .page_material_counters()
         .expect("candidate counters");
+    let accepted_settlement_before = accepted
+        .page_candidate_settlement_counters()
+        .expect("candidate settlement counters");
     let (accepted_allocations, _output) = measure_with_output(|| {
         accepted_session
             .accept_revision(accepted)
@@ -74,16 +90,36 @@ fn main() {
         .page_material_counters()
         .expect("accepted counters")
         .expect("accepted generation");
+    let accepted_settlement_after = accepted_session
+        .page_candidate_settlement_counters()
+        .expect("accepted settlement counters")
+        .expect("accepted generation");
     assert_zero("accept", accepted_allocations);
     assert_eq!(
         accepted_page_after.source_nodes_copied, accepted_page_before.source_nodes_copied,
         "production accept copied page material"
     );
+    assert_forbidden_settlement_work_is_zero(accepted_settlement_after);
+    assert_eq!(
+        accepted_settlement_after.candidate_acceptances,
+        accepted_settlement_before.candidate_acceptances + 1,
+        "production acceptance settles exactly once"
+    );
 
     println!(
         "CANDIDATE_SETTLEMENT_GATE accept_allocations=0 accept_bytes=0 \
-         reject_allocations=0 reject_bytes=0 accept_page_copies=0 reject_page_copies=0"
+         reject_allocations=0 reject_bytes=0 accept_page_copies=0 reject_page_copies=0 \
+         capture_scans=0 accept_scans=0 canonical_lane_scans=0 canonical_value_copies=0"
     );
+}
+
+fn assert_forbidden_settlement_work_is_zero(
+    counters: tex_state::PageCandidateSettlementCounters,
+) {
+    assert_eq!(counters.checkpoint_capture_records_scanned, 0);
+    assert_eq!(counters.acceptance_payload_records_scanned, 0);
+    assert_eq!(counters.canonical_lane_records_scanned, 0);
+    assert_eq!(counters.canonical_values_copied, 0);
 }
 
 fn prepared_non_job_start() -> (

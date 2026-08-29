@@ -1180,6 +1180,179 @@ fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
 }
 
 #[test]
+fn non_job_start_page_owner_settles_insertions_marks_and_output_closure() {
+    let source = concat!(
+        "A\\par\n",
+        "\\relax\n",
+        "\\hsize=40pt\\vsize=12pt\\maxdepth=0pt",
+        "\\count0=1000\\dimen0=5pt\\skip0=0pt",
+        "\\output={\\shipout\\box255}",
+        "B\\mark{top}\\insert0{\\hrule height10pt}\\par",
+        "\\vskip12pt\\penalty-10000",
+        "C\\marks7{class-seven}\\par",
+        "D\\par\\end",
+    );
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("accepted page-rich prior");
+    let edit_position = source
+        .find("\\hsize")
+        .expect("page-rich suffix follows first paragraph");
+    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\relax ");
+
+    let mut rejected = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
+        .expect("page-rich non-JobStart rejection candidate");
+    drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
+        .expect("drive page-rich rejection candidate");
+    let mut rejected = incremental
+        .prepare_revision_candidate(rejected)
+        .expect("prepare page-rich rejection");
+    assert_eq!(
+        rejected
+            .reuse()
+            .restart_boundary
+            .expect("page-rich retained restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    let before_reject = rejected
+        .page_candidate_settlement_counters()
+        .expect("candidate settlement counters");
+    rejected.reject();
+    let after_reject = incremental
+        .page_candidate_settlement_counters()
+        .expect("accepted settlement counters")
+        .expect("accepted generation");
+    assert_eq!(
+        after_reject.candidate_rejections,
+        before_reject.candidate_rejections + 1
+    );
+    assert_eq!(after_reject.canonical_lane_records_scanned, 0);
+    assert_eq!(after_reject.canonical_values_copied, 0);
+
+    let mut accepted = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit)
+        .expect("rejected sibling page mark remains seedable");
+    drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
+        .expect("drive page-rich accepted candidate");
+    let mut accepted = incremental
+        .prepare_revision_candidate(accepted)
+        .expect("prepare page-rich acceptance");
+    let before_accept = accepted
+        .page_candidate_settlement_counters()
+        .expect("candidate settlement counters");
+    let output = incremental
+        .accept_revision(accepted)
+        .expect("accept page-rich candidate");
+    let after_accept = incremental
+        .page_candidate_settlement_counters()
+        .expect("accepted settlement counters")
+        .expect("accepted generation");
+    assert_eq!(
+        after_accept.candidate_acceptances,
+        before_accept.candidate_acceptances + 1
+    );
+    assert_eq!(after_accept.acceptance_payload_records_scanned, 0);
+    assert_eq!(after_accept.canonical_lane_records_scanned, 0);
+    assert_eq!(after_accept.canonical_values_copied, 0);
+    let region_counters = incremental
+        .page_region_counters()
+        .expect("accepted page-region counters")
+        .expect("accepted generation");
+    assert!(
+        region_counters.held_over_nodes_copied != 0
+            || region_counters.held_over_envelopes_moved != 0,
+        "the page-rich production candidate settles a held-over closure"
+    );
+
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("page-rich cold comparison");
+    assert_detached_output_eq(&output, &expected);
+
+    let next_position = incremental
+        .source()
+        .find("\\hsize")
+        .expect("accepted page-rich suffix remains");
+    let mut sibling = incremental
+        .start_advance_candidate(
+            RevisionId::new(3),
+            edit(&incremental, next_position..next_position, "\\relax "),
+        )
+        .expect("post-accept page-rich sibling candidate");
+    drive_synchronous_candidate(&mut sibling, &mut DirectResourceHost)
+        .expect("drive post-accept page-rich sibling");
+    let sibling = incremental
+        .prepare_revision_candidate(sibling)
+        .expect("prepare post-accept page-rich sibling rejection");
+    assert_eq!(
+        sibling
+            .reuse()
+            .restart_boundary
+            .expect("post-accept page-rich restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    sibling.reject();
+}
+
+#[test]
+fn non_job_start_page_owner_accepts_the_default_output_path() {
+    let source = concat!(
+        "A\\par\n",
+        "\\relax\n",
+        "\\vsize=8pt\\maxdepth=0pt",
+        "B\\par\\vskip8pt\\penalty-10000",
+        "C\\par\\end",
+    );
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("accepted default-output prior");
+    let edit_position = source.find("\\vsize").expect("default-output suffix");
+    let mut candidate = incremental
+        .start_advance_candidate(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position, "\\relax "),
+        )
+        .expect("default-output non-JobStart candidate");
+    drive_synchronous_candidate(&mut candidate, &mut DirectResourceHost)
+        .expect("drive default-output candidate");
+    let candidate = incremental
+        .prepare_revision_candidate(candidate)
+        .expect("prepare default-output candidate");
+    assert_eq!(
+        candidate
+            .reuse()
+            .restart_boundary
+            .expect("default-output retained restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    let output = incremental
+        .accept_revision(candidate)
+        .expect("accept default-output candidate");
+
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("default-output cold comparison");
+    assert_detached_output_eq(&output, &expected);
+    let counters = incremental
+        .page_candidate_settlement_counters()
+        .expect("accepted settlement counters")
+        .expect("accepted generation");
+    assert_eq!(counters.acceptance_payload_records_scanned, 0);
+    assert_eq!(counters.canonical_lane_records_scanned, 0);
+    assert_eq!(counters.canonical_values_copied, 0);
+}
+
+#[test]
 fn caught_candidate_run_panic_returns_every_owner_and_keeps_prior_reusable() {
     let source = "A\\par\nB\\par\nC\\par\\end";
     let mut incremental = session(RevisionId::new(1), source);

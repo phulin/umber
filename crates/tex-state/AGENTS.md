@@ -202,8 +202,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active
-  insertion classes and sparse mark
-  classes retain canonical iteration order beside dense direct lookup indexes.
+  insertion classes and sparse mark classes retain canonical iteration order
+  beside dense direct lookup indexes. One fixed-chunk prior/current journal
+  owns every reversible alternate; duplicate insertion/mark mutation lanes and
+  canonical-lane rebuild scans are absent.
   Exact edit settlement and shipout succession keep roots and payload suffixes
   atomic, direct node parent/child publication is same-region checked, and
   held-over evacuation uses the explicit semantic-copy boundary. One
