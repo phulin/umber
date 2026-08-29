@@ -89,7 +89,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
 }
 
 #[test]
-fn directed_display_retains_prototype_glue_ranges() {
+fn directed_display_retains_left_prototype_edge_and_copies_only_right_edge() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -149,7 +149,11 @@ fn directed_display_retains_prototype_glue_ranges() {
 
         let after = stores.page_node_arena_counters();
         assert!(after.new_semantic_nodes > before.new_semantic_nodes);
-        assert_eq!(after.source_nodes_copied, before.source_nodes_copied);
+        assert_eq!(after.source_nodes_copied, before.source_nodes_copied + 1);
+        assert_eq!(
+            after.partial_edge_nodes_copied,
+            before.partial_edge_nodes_copied + 1
+        );
         let reused = stores
             .page_node_list(reused.children)
             .expect("directed display belongs to the page arena");
@@ -157,7 +161,7 @@ fn directed_display_retains_prototype_glue_ranges() {
             std::ptr::from_ref(reused.owned_node(0).expect("left skip retained")),
             left_address
         );
-        assert_eq!(
+        assert_ne!(
             std::ptr::from_ref(reused.owned_node(6).expect("right skip retained")),
             right_address
         );

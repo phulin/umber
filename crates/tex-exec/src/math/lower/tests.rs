@@ -7,7 +7,7 @@ use tex_state::token::OriginId;
 use super::finish_math_lists_owned;
 
 #[test]
-fn math_lowering_retains_unchanged_ranges_without_source_copies() {
+fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let leaf_children = stores.publish_page_nodes(vec![Node::Penalty(17)]);
@@ -96,9 +96,11 @@ fn math_lowering_retains_unchanged_ranges_without_source_copies() {
             2,
             "only the inline math boundary nodes are genuinely new"
         );
+        assert_eq!(after.source_nodes_copied, before.source_nodes_copied + 1);
         assert_eq!(
-            after.source_nodes_copied, before.source_nodes_copied,
-            "math lowering must retain unchanged source ranges by coordinate"
+            after.partial_edge_nodes_copied,
+            before.partial_edge_nodes_copied + 1,
+            "only the trailing wrapper fragment shares the retained prefix block"
         );
         let lowered = stores
             .page_node_list(lowered)
@@ -162,9 +164,10 @@ fn math_lowering_retains_unchanged_ranges_without_source_copies() {
                 leaf_address
             );
         }
-        assert_eq!(
+        assert_ne!(
             std::ptr::from_ref(lowered.owned_node(11).expect("trailing marker retained")),
-            trailing_address
+            trailing_address,
+            "the trailing wrapper edge must split from the retained prefix block"
         );
     });
 }

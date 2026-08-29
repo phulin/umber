@@ -8,6 +8,7 @@ use tex_state::ids::FontId;
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
 use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::UniquePageList;
 use tex_state::scaled::Scaled;
 use tex_typeset::TypesetState;
 use tex_typeset::math::{
@@ -35,7 +36,7 @@ pub(crate) fn finish_math_list_node<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
-) -> PageListId {
+) -> UniquePageList {
     finish_math_list_node_with_reads(
         stores,
         diagnostic_effects,
@@ -98,14 +99,15 @@ pub(crate) fn finish_inline_math_list_node<G>(
     insert_penalties: bool,
     error_context: MathConversionErrorContext,
 ) -> (PageListId, u64) {
-    finish_math_list_node_with_reads(
+    let (list, family_mask) = finish_math_list_node_with_reads(
         stores,
         diagnostic_effects,
         geometry,
         list,
         insert_penalties,
         Some(&error_context),
-    )
+    );
+    (stores.publish_unique_page_list(list), family_mask)
 }
 
 fn finish_math_list_node_with_reads<G>(
@@ -115,7 +117,7 @@ fn finish_math_list_node_with_reads<G>(
     list: MathListNode,
     insert_penalties: bool,
     error_context: Option<&MathConversionErrorContext>,
-) -> (PageListId, u64) {
+) -> (UniquePageList, u64) {
     let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     let params = MathParams::read(&sink);
     let style = if list.display {
@@ -138,7 +140,9 @@ fn finish_math_list_node_with_reads<G>(
         sink.stores
             .push_page_active_list(&mut nodes, Node::MathOn(surround));
     }
-    sink.stores.append_page_active_list(&mut nodes, hlist);
+    let hlist = sink.stores.reclaim_unique_page_list(hlist);
+    sink.stores
+        .append_unique_page_active_list(&mut nodes, hlist);
     if !list.display {
         // AppG rule 22
         let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
@@ -146,7 +150,7 @@ fn finish_math_list_node_with_reads<G>(
             .push_page_active_list(&mut nodes, Node::MathOff(surround));
     }
     (
-        sink.stores.finalize_page_active_list(&mut nodes),
+        sink.stores.finalize_unique_page_active_list(&mut nodes),
         family_mask,
     )
 }
@@ -206,17 +210,22 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
         }
     }
 
-    fn lower_span(&mut self, list: FrozenHList, layout: &MathLayout) -> PageListId {
+    fn lower_span(&mut self, list: FrozenHList, layout: &MathLayout) -> UniquePageList {
+        if let Some(source) = self.whole_native_source(list, layout) {
+            return self.stores.reclaim_unique_page_list(source);
+        }
         let mut target = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
         self.stores.open_page_active_list(&mut target);
         for node in layout.nodes(list) {
             match node {
                 MathNode::Sequence(child) => {
-                    let result = self.stores.finalize_page_active_list(&mut target);
+                    let result = self.stores.finalize_unique_page_active_list(&mut target);
                     let child = self.lower_span(*child, layout);
                     self.stores.open_page_active_list(&mut target);
-                    self.stores.append_page_active_list(&mut target, result);
-                    self.stores.append_page_active_list(&mut target, child);
+                    self.stores
+                        .append_unique_page_active_list(&mut target, result);
+                    self.stores
+                        .append_unique_page_active_list(&mut target, child);
                 }
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
                     let vertical = matches!(node, MathNode::VList(_));
@@ -229,11 +238,13 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                         );
                         continue;
                     }
-                    let result = self.stores.finalize_page_active_list(&mut target);
+                    let result = self.stores.finalize_unique_page_active_list(&mut target);
                     let children = self.lower_span(boxed.list, layout);
+                    let children = self.stores.publish_unique_page_list(children);
                     let boxed_node = lower_math_box(boxed, children);
                     self.stores.open_page_active_list(&mut target);
-                    self.stores.append_page_active_list(&mut target, result);
+                    self.stores
+                        .append_unique_page_active_list(&mut target, result);
                     self.stores.push_page_active_list(
                         &mut target,
                         if vertical {
@@ -302,7 +313,38 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                 }
             }
         }
-        self.stores.finalize_page_active_list(&mut target)
+        self.stores.finalize_unique_page_active_list(&mut target)
+    }
+
+    /// Returns the one source list represented by this span when math
+    /// conversion left every node unchanged and retained the whole list in
+    /// order. The caller owns the consumed math closure, so this is a direct
+    /// ownership transfer rather than a shared-range append.
+    fn whole_native_source(&self, list: FrozenHList, layout: &MathLayout) -> Option<PageListId> {
+        let nodes = layout.nodes(list);
+        let source_coordinate = |node: &MathNode| match node {
+            MathNode::NativeSource { list, index, .. } => Some((*list, *index as usize)),
+            MathNode::HList(boxed) => self.unchanged_native_box(boxed, false).and_then(|_| {
+                boxed
+                    .source
+                    .map(|source| (source.list, source.index as usize))
+            }),
+            MathNode::VList(boxed) => self.unchanged_native_box(boxed, true).and_then(|_| {
+                boxed
+                    .source
+                    .map(|source| (source.list, source.index as usize))
+            }),
+            _ => None,
+        };
+        let (source, first_index) = source_coordinate(nodes.first()?)?;
+        if first_index != 0 || source.len() != nodes.len() {
+            return None;
+        }
+        nodes
+            .iter()
+            .enumerate()
+            .all(|(expected, node)| source_coordinate(node) == Some((source, expected)))
+            .then_some(source)
     }
 
     fn append_span_to_shipout(
@@ -726,7 +768,8 @@ impl<G> LoweredMathSink<'_, '_, G> {
                 }
             }
         }
-        self.root_nodes = self.lower_span(list, layout);
+        let root = self.lower_span(list, layout);
+        self.root_nodes = self.stores.publish_unique_page_list(root);
     }
 }
 
@@ -738,7 +781,10 @@ pub(crate) fn finish_math_lists_owned<G>(
     insert_penalties: bool,
 ) -> tex_state::node_arena::PageListId {
     let source_len = nodes.len();
-    let mut result = PageListId::empty();
+    let source = stores
+        .admit_page_node_span(nodes)
+        .expect("owned math-list source belongs to the page arena");
+    let mut result = tex_state::page_node_arena::PageListSpan::empty();
     let mut copied_through = 0;
     for index in 0..source_len {
         let list = match stores
@@ -753,27 +799,40 @@ pub(crate) fn finish_math_lists_owned<G>(
         let Some(list) = list else {
             continue;
         };
-        let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
-        stores.open_page_active_list(&mut output);
-        stores.append_page_active_list(&mut output, result);
-        stores.append_page_active_list_range(&mut output, nodes, copied_through..index);
-        result = stores.finalize_page_active_list(&mut output);
+        if result.is_empty() && copied_through == 0 && index != 0 {
+            // The first retained prefix remains the immutable left root. Its
+            // tail is never reopened; the generated math chain donates its
+            // write-once head predecessor below.
+            result = stores.slice_page_node_span(source, 0..index);
+        } else if copied_through != index {
+            // A second source fragment shares its original block topology
+            // with the already-retained left fragment. It cannot donate a
+            // second predecessor, so copy precisely this partial edge.
+            let mut fragment = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+            stores.open_page_active_list(&mut fragment);
+            stores.append_page_active_list_range(&mut fragment, nodes, copied_through..index);
+            let fragment = stores.finalize_unique_page_active_list(&mut fragment);
+            result = stores.append_unique_page_nodes(result, fragment);
+        }
         let lowered =
             finish_math_list_node(stores, diagnostic_effects, geometry, list, insert_penalties);
-        stores.open_page_active_list(&mut output);
-        stores.append_page_active_list(&mut output, result);
-        stores.append_page_active_list(&mut output, lowered);
-        result = stores.finalize_page_active_list(&mut output);
+        result = stores.append_unique_page_nodes(result, lowered);
         copied_through = index + 1;
     }
     if copied_through == 0 {
         return nodes;
     }
-    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
-    stores.open_page_active_list(&mut output);
-    stores.append_page_active_list(&mut output, result);
-    stores.append_page_active_list_range(&mut output, nodes, copied_through..source_len);
-    stores.finalize_page_active_list(&mut output)
+    if copied_through != source_len {
+        // The suffix is the other edge of the consumed source block. Since
+        // the prefix may already be linked into `result`, this is the one
+        // unavoidable fragment copy for a replacement inside that block.
+        let mut suffix = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut suffix);
+        stores.append_page_active_list_range(&mut suffix, nodes, copied_through..source_len);
+        let suffix = stores.finalize_unique_page_active_list(&mut suffix);
+        result = stores.append_unique_page_nodes(result, suffix);
+    }
+    result.list()
 }
 
 fn lower_math_box<List>(boxed: &MathBox, children: List) -> BoxNode<List> {

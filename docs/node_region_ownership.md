@@ -15,10 +15,10 @@ computed through dependency counts, this document takes precedence.
 
 The design preserves the fixed-chunk work already completed for
 `ChunkPool<Node>`, `ForkArena<Node, Lane>`, stable generation-checked chunk
-keys, sealed payload and descriptor marks, canonical nonrecursive `ArenaList`
-descriptors, composable source-range summaries, and atomic payload-plus-
-descriptor suffix settlement. It changes the coarse lifetime owner above that
-substrate.
+keys, sealed payload marks, composable summaries, and atomic chunk-suffix
+settlement. Lists now use direct `ListRoot { head, tail, length }` coordinates
+over packed logical blocks carved from the same physical pool pages. There is
+no list-descriptor lane or owner-local range lookup.
 
 The following are explicitly rejected:
 
@@ -119,16 +119,14 @@ selected paragraph boundary.
 ## Coarse owners
 
 `NodeRegion<Lane>` is an exclusive, move-only owner of a self-contained node
-closure domain. It owns the payload and descriptor chunk envelopes allocated
-to that domain, its stable `NodeRegionId`, and the private roots needed to
-resolve its canonical lists. It is neither `Clone` nor `Copy` and has no
-shared-owner constructor.
+closure domain. It owns the packed logical-block envelopes allocated to that
+domain, its stable `NodeRegionId`, and the private roots needed to resolve its
+lists. It is neither `Clone` nor `Copy` and has no shared-owner constructor.
 
 `PageRegion` is the page-building specialization. One exists for each period
 from the start of page building through the corresponding shipout. It owns:
 
-- the fixed-chunk page-node payload and canonical range descriptors allocated
-  during that period;
+- the fixed-chunk page-node blocks allocated during that period;
 - the contribution, current-page, page-discard, and split-discard roots;
 - PageBuilder scalar state and its reversible operation journal; and
 - the contiguous interval of retained boundary rows published while that
@@ -146,14 +144,13 @@ PageRegionCheckpoint
   page_discard_root
   split_discard_root
   sealed_payload_position
-  sealed_descriptor_position
   page_builder_scalar_state
   page_builder_journal_position
 ```
 
-Payload and descriptor tails are sealed before publication. Later execution
-only appends and changes current roots through the reversible journal, so an
-earlier row remains exact.
+Payload tails are sealed before publication. Later execution only appends and
+changes current roots through the reversible journal, so an earlier row
+remains exact.
 
 `DurableNodeRegion` is the corresponding exclusive owner for a box register,
 PDF form, or another durable node closure whose lifetime is independent of the
@@ -200,22 +197,26 @@ production top-level owner without the matching region.
 
 ## Ordinary construction and list processing
 
-Ordinary list processing remains borrowed-range plus append-only output:
+Ordinary list processing is packed-block movement plus append-only output:
 
-- an unchanged input interval is retained as its canonical range;
+- a uniquely owned whole chain is represented by move-only `UniqueArenaList`
+  or `UniquePageList` authority and is spliced by consuming that authority;
+- the right-head predecessor is write-once, so a copyable shared root can
+  never silently mutate retained topology;
 - a genuinely generated or rewritten node is appended exactly once;
-- a mixed result publishes one nonrecursive range descriptor sequence;
+- a shared slice uses an explicitly named counted-copy path until its semantic
+  owner is migrated to the move-only handoff;
 - packing, line breaking, paragraph post-processing, alignment setting, math
   lowering, and page breaking borrow short-lived `ArenaListView` or
   `NodeCursor` views; and
-- source range identities compose from the existing chunk and descriptor
-  summaries without scanning the unchanged middle.
+- source identities compose from packed-block summaries without a descriptor
+  lookup.
 
 TeX82 §§914--918 constructs an automatic discretionary's pre-break,
 post-break, and replacement closures before linking the discretionary into the
 reconstituted main list. Post-line hyphenation therefore seals the preceding
 main-list segment before publishing those child closures, then resumes a fresh
-main-list segment and composes the segments by descriptor. An active main-list
+main-list segment and consumes the unique segments into one direct chain. An active main-list
 builder never becomes a second owner around nested child publication, and the
 reconstituted word's generated nodes are still appended exactly once.
 

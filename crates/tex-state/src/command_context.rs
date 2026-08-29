@@ -3199,6 +3199,69 @@ impl<'a, G> CommandContext<'a, G> {
         self.publish_page_node_range(nodes).list()
     }
 
+    /// Publishes a move-only whole list for one direct-chain suffix splice.
+    pub fn publish_unique_page_nodes(
+        &mut self,
+        nodes: Vec<crate::node::Node>,
+    ) -> crate::page_node_arena::UniquePageList {
+        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
+        let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
+            let node_words = node.tex_memory_words(etex_node_sizes);
+            (
+                words.0.saturating_add(node_words.0),
+                words.1.saturating_add(node_words.1),
+            )
+        });
+        for node in &nodes {
+            self.assert_live_node_font_roots(node);
+        }
+        let list = self
+            .page_nodes
+            .publish_owned_unique(nodes)
+            .expect("page construction contains only live page-arena children");
+        self.engine_usage.observe_transient_memory(words.0, words.1);
+        list
+    }
+
+    pub fn append_unique_page_nodes(
+        &mut self,
+        left: crate::page_node_arena::PageListSpan,
+        right: crate::page_node_arena::UniquePageList,
+    ) -> crate::page_node_arena::PageListSpan {
+        self.page_nodes
+            .append_unique_to_span(left, right)
+            .expect("unique page suffix and checked left root share one live owner")
+    }
+
+    pub fn reclaim_unique_page_nodes(
+        &self,
+        span: crate::page_node_arena::PageListSpan,
+    ) -> crate::page_node_arena::UniquePageList {
+        self.page_nodes
+            .reclaim_unique_span(span)
+            .expect("consumed page-list owner retains an unlinked direct head")
+    }
+
+    pub fn reclaim_unique_page_list(
+        &self,
+        list: PageListId,
+    ) -> crate::page_node_arena::UniquePageList {
+        let span = self
+            .page_nodes
+            .admit_span(list)
+            .expect("consumed page list belongs to the live owner");
+        self.reclaim_unique_page_nodes(span)
+    }
+
+    /// Converts move-only whole-list authority into an immutable embedded
+    /// root without copying its nodes.
+    pub fn publish_unique_page_list(
+        &self,
+        list: crate::page_node_arena::UniquePageList,
+    ) -> PageListId {
+        self.page_nodes.publish_unique_list(list)
+    }
+
     /// Returns allocation/copy accounting for the canonical page-material
     /// arena owned by this admitted execution episode.
     #[must_use]
@@ -3246,6 +3309,16 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("checked page active-list span remains in its live owner");
     }
 
+    pub fn append_unique_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        list: crate::page_node_arena::UniquePageList,
+    ) {
+        self.page_nodes
+            .append_unique_active_list(builder, list)
+            .expect("unique page active-list suffix belongs to its live owner");
+    }
+
     pub fn append_page_active_list_range(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
@@ -3274,6 +3347,15 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> PageListId {
         self.page_nodes
             .finalize_active_list(builder)
+            .expect("page active-list builder belongs to its live owner")
+    }
+
+    pub fn finalize_unique_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+    ) -> crate::page_node_arena::UniquePageList {
+        self.page_nodes
+            .finalize_unique_active_list(builder)
             .expect("page active-list builder belongs to its live owner")
     }
 
@@ -3933,6 +4015,14 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn append_page_contributions(&mut self, nodes: PageListId) {
         self.page.append_contributions(&mut self.page_nodes, nodes);
+    }
+
+    pub fn append_unique_page_contributions(
+        &mut self,
+        nodes: crate::page_node_arena::UniquePageList,
+    ) {
+        self.page
+            .append_unique_contributions(&mut self.page_nodes, nodes);
     }
 
     pub fn remove_page_contribution_range(

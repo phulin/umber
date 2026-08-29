@@ -158,6 +158,54 @@ impl ArenaPostLineChannel {
         output_lineages: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
     ) -> tex_state::node_arena::PageListId {
         let end = decision.position.min(self.source.len());
+        let plain_source_run = params.left_skip == GlueSpec::ZERO
+            && self.active_directions.is_empty()
+            && self.pending_post.is_empty()
+            && par_fill_override.is_none()
+            && (self.position..end).all(|absolute| {
+                actions
+                    .and_then(|actions| actions.get(absolute))
+                    .is_none_or(|action| {
+                        *action == tex_typeset::linebreak::MaterializationAction::Copy
+                    })
+                    && matches!(
+                        classify_post_line_node(stores, self.source, absolute),
+                        PostLineNode::Other
+                    )
+                    && !matches!(
+                        stores
+                            .page_node_span(self.source)
+                            .expect("paragraph source remains live")
+                            .nodes()
+                            .owned_node(absolute),
+                        Some(Node::Direction(_))
+                    )
+            });
+        if plain_source_run {
+            output_lineages.clear();
+            for absolute in self.position..end {
+                output_lineages.extend(self.lineages[absolute].iter().cloned());
+            }
+            let retained = stores.slice_page_node_span(self.source, self.position..end);
+            self.position = end;
+            let suffix = stores.publish_unique_page_nodes(vec![Node::Glue {
+                spec: params.right_skip,
+                kind: GlueKind::RightSkip,
+                leader: None,
+            }]);
+            let output = stores.append_unique_page_nodes(retained, suffix).list();
+            while self.position < self.source.len()
+                && stores
+                    .page_node_span(self.source)
+                    .expect("paragraph source remains live")
+                    .nodes()
+                    .owned_node(self.position)
+                    .is_some_and(post_line_discardable)
+            {
+                self.position += 1;
+            }
+            return output;
+        }
         let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
         stores.open_page_active_list(&mut output);
         output_lineages.clear();

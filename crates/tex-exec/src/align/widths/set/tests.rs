@@ -416,8 +416,13 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             "the setting pass must publish genuinely new set rows/rules"
         );
         assert_eq!(
-            counters_after.source_nodes_copied, counters_before.source_nodes_copied,
-            "retained alignment ranges must not copy source payload"
+            counters_after.source_nodes_copied,
+            counters_before.source_nodes_copied + 2,
+            "only the two trailing fragments sharing retained-prefix blocks are copied"
+        );
+        assert_eq!(
+            counters_after.partial_edge_nodes_copied,
+            counters_before.partial_edge_nodes_copied + 2
         );
         let set_view = stores
             .page_node_list(set)
@@ -426,7 +431,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             std::ptr::from_ref(set_view.owned_node(0).expect("first marker retained")),
             first_marker_address
         );
-        assert_eq!(
+        assert_ne!(
             std::ptr::from_ref(set_view.owned_node(3).expect("last marker retained")),
             last_marker_address
         );
@@ -447,7 +452,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             ),
             leading_tabskip_address
         );
-        assert_eq!(
+        assert_ne!(
             std::ptr::from_ref(
                 set_children
                     .owned_node(2)

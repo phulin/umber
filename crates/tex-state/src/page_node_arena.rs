@@ -10,7 +10,8 @@ use std::ops::Range;
 
 use crate::fork_arena::{
     ActiveListBuilder, ArenaListId, ArenaListView, CheckpointMark, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary, ValidatedArenaList,
+    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary, UniqueArenaList,
+    ValidatedArenaList,
 };
 use crate::node::Node;
 use crate::node_region::{
@@ -63,6 +64,26 @@ impl PageMaterialActiveListBuilder {
 pub struct PageListId {
     coordinate: ArenaListId<PageMaterialLane>,
     semantic_identity: Option<NonZeroU64>,
+}
+
+/// Move-only whole-list result whose head predecessor has not been published.
+///
+/// Page journals retain copyable [`PageListSpan`] roots. Fresh builders use
+/// this capability only for the right suffix of an append, where consuming it
+/// permits one O(1) direct-chain splice without weakening retained roots.
+pub struct UniquePageList {
+    coordinate: UniqueArenaList<PageMaterialLane>,
+    identity: Option<SemanticSequenceIdentity>,
+}
+
+impl UniquePageList {
+    pub(crate) fn list(&self) -> PageListId {
+        PageListId::from_parts(self.coordinate.coordinate(), self.identity)
+    }
+
+    fn publish(self) -> PageListId {
+        PageListId::from_parts(self.coordinate.publish(), self.identity)
+    }
 }
 
 impl PageListId {
@@ -506,6 +527,13 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         nodes: impl IntoIterator<Item = PageMaterialNode>,
     ) -> Result<PageListId, ForkArenaError> {
+        Ok(self.publish_owned_unique(nodes)?.publish())
+    }
+
+    pub fn publish_owned_unique(
+        &mut self,
+        nodes: impl IntoIterator<Item = PageMaterialNode>,
+    ) -> Result<UniquePageList, ForkArenaError> {
         let mut builder = PageMaterialActiveListBuilder::vacant();
         self.open_active_list(&mut builder)?;
         for node in nodes {
@@ -515,7 +543,7 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         }
-        self.finalize_active_list(&mut builder)
+        self.finalize_unique_active_list(&mut builder)
     }
 
     pub fn publish_owned_span(
@@ -962,6 +990,30 @@ impl<'a> PageMaterialArena<'a> {
         Ok(())
     }
 
+    /// Moves one unpublished whole chain into the builder's private suffix.
+    pub fn append_unique_active_list(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+        list: UniquePageList,
+    ) -> Result<(), ForkArenaError> {
+        let UniquePageList {
+            coordinate,
+            identity: appended_identity,
+        } = list;
+        self.region.pub_arena.append_unique_active_list(
+            &mut self.pool.chunks,
+            &mut builder.inner,
+            coordinate,
+        )?;
+        if let Some(identity) = &mut builder.identity {
+            *identity = identity
+                .concat(appended_identity.expect("demand-enabled unique list carries identity"));
+            builder.identity_work.combined_summaries =
+                builder.identity_work.combined_summaries.saturating_add(1);
+        }
+        Ok(())
+    }
+
     pub fn append_range_to_active_list(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
@@ -1021,15 +1073,34 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<PageListId, ForkArenaError> {
+        Ok(self.finalize_unique_active_list(builder)?.publish())
+    }
+
+    pub fn finalize_unique_active_list(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+    ) -> Result<UniquePageList, ForkArenaError> {
         self.region
             .pub_arena
             .finalize_active_list(&mut self.pool.chunks, &mut builder.inner)?;
-        let coordinate = builder.inner.take_sealed()?;
+        let coordinate = builder.inner.take_unique_sealed()?;
         self.region
             .pub_arena
             .record_identity_work(builder.identity_work);
         builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
-        Ok(PageListId::from_parts(coordinate, builder.identity.take()))
+        Ok(UniquePageList {
+            coordinate,
+            identity: builder.identity.take(),
+        })
+    }
+
+    /// Publishes a move-only list without copying it.
+    ///
+    /// This is reserved for semantic ownership boundaries that need to place
+    /// the finished coordinate inside another immutable node rather than
+    /// splice it into a list chain.
+    pub fn publish_unique_list(&self, list: UniquePageList) -> PageListId {
+        list.publish()
     }
 
     pub fn finalize_active_span(
@@ -1092,6 +1163,64 @@ impl<'a> PageMaterialArena<'a> {
                 });
         }
         Ok(PageListId::from_parts(coordinate, identity))
+    }
+
+    /// Consumes a freshly built whole right suffix after one admitted shared
+    /// left root. This is the production O(1) append seam used by page and
+    /// mode owners; it neither copies nodes nor walks the existing chain.
+    pub fn append_unique_to_span(
+        &mut self,
+        left: PageListSpan,
+        right: UniquePageList,
+    ) -> Result<PageListSpan, ForkArenaError> {
+        let UniquePageList {
+            coordinate: right_coordinate,
+            identity: right_identity,
+        } = right;
+        let identity = match *self.semantic_identity_enabled {
+            true => Some(
+                left.list
+                    .sequence_identity()
+                    .expect("demand-enabled left span carries identity")
+                    .concat(right_identity.expect("demand-enabled unique suffix carries identity")),
+            ),
+            false => None,
+        };
+        let (coordinate, validated) = self.region.pub_arena.append_unique_to_validated_list(
+            &mut self.pool.chunks,
+            left.list.coordinate(),
+            left.coordinate,
+            right_coordinate,
+        )?;
+        if identity.is_some() {
+            self.region
+                .pub_arena
+                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                    combined_summaries: 1,
+                    ..crate::fork_arena::SequenceSummaryWork::default()
+                });
+        }
+        Ok(PageListSpan {
+            list: PageListId::from_parts(coordinate, identity),
+            coordinate: validated,
+        })
+    }
+
+    /// Converts a removed semantic owner into move-only direct-chain
+    /// authority. The root must still have its original unlinked head.
+    pub fn reclaim_unique_span(
+        &self,
+        span: PageListSpan,
+    ) -> Result<UniquePageList, ForkArenaError> {
+        let coordinate = self.region.pub_arena.reclaim_unlinked_validated_list(
+            &self.pool.chunks,
+            span.list.coordinate(),
+            span.coordinate,
+        )?;
+        Ok(UniquePageList {
+            coordinate,
+            identity: span.list.sequence_identity(),
+        })
     }
 
     pub fn compose_spans(

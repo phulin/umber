@@ -1,9 +1,10 @@
 //! Fixed-chunk storage with one accepted lineage and one transactional fork.
 //!
-//! Payload lives in coarse pool pages. Arenas own only stable chunk keys and
-//! canonical, non-recursive range-list descriptors. Retained checkpoints land
-//! on sealed whole-chunk boundaries; operation marks may additionally name a
-//! partially used tail.
+//! Payload lives in coarse pool pages subdivided into packed logical list
+//! blocks. Direct roots carry head/tail cursors and length; reverse traversal
+//! follows block metadata without a descriptor lookup. Retained checkpoints
+//! land on sealed whole-block boundaries, while operation marks may name the
+//! private current tail's used cursor.
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -420,6 +421,24 @@ impl<T> ChunkPool<T> {
         self.payload.page_count()
     }
 
+    #[must_use]
+    pub const fn logical_block_metadata_bytes(&self) -> usize {
+        std::mem::size_of::<ChunkMeta>()
+    }
+
+    #[must_use]
+    pub fn physical_page_payload_bytes(&self) -> usize {
+        self.payload
+            .slots_per_chunk
+            .saturating_mul(CHUNKS_PER_PAGE)
+            .saturating_mul(std::mem::size_of::<Option<T>>())
+    }
+
+    #[must_use]
+    pub const fn physical_page_metadata_bytes(&self) -> usize {
+        CHUNKS_PER_PAGE * std::mem::size_of::<ChunkMeta>()
+    }
+
     /// Heap capacity retained by payload and descriptor pages plus their
     /// allocation metadata. Allocator-private bookkeeping is not observable.
     #[must_use]
@@ -510,6 +529,11 @@ pub struct UniqueArenaList<Lane> {
 }
 
 impl<Lane> UniqueArenaList<Lane> {
+    #[must_use]
+    pub(crate) const fn coordinate(&self) -> ArenaListId<Lane> {
+        self.root
+    }
+
     #[must_use]
     pub const fn publish(self) -> ArenaListId<Lane> {
         self.root
@@ -1000,6 +1024,13 @@ impl<T, Lane> ForkArena<T, Lane> {
             .counters
             .source_nodes_copied
             .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
+
+    fn record_partial_edge_nodes_copied(&mut self, count: usize) {
+        self.counters.partial_edge_nodes_copied = self
+            .counters
+            .partial_edge_nodes_copied
+            .saturating_add(count as u64);
     }
 
     pub(crate) fn record_identity_work(&mut self, work: SequenceSummaryWork) {
@@ -1525,6 +1556,51 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Consumes a unique whole right chain after an already admitted shared
+    /// left root. The returned admission follows directly from the two input
+    /// proofs, so the ordinary append path performs no chain census.
+    pub(crate) fn append_unique_to_validated_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        left: ArenaListId<Lane>,
+        validated: ValidatedArenaList<Lane>,
+        right: UniqueArenaList<Lane>,
+    ) -> Result<(ArenaListId<Lane>, ValidatedArenaList<Lane>), ForkArenaError> {
+        self.validate_checked_list(pool, left, validated)?;
+        let root = self.splice_unique_direct_root(pool, left, right)?;
+        Ok((
+            root,
+            ValidatedArenaList {
+                arena: self.owner,
+                _lane: PhantomData,
+            },
+        ))
+    }
+
+    /// Reclaims move authority from a semantically consumed admitted root.
+    ///
+    /// The caller must have removed its owning carrier before calling this
+    /// seam. The metadata check prevents reclaiming a root that has already
+    /// donated its head predecessor to an earlier composition.
+    pub(crate) fn reclaim_unlinked_validated_list(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        validated: ValidatedArenaList<Lane>,
+    ) -> Result<UniqueArenaList<Lane>, ForkArenaError> {
+        self.validate_checked_list(pool, list, validated)?;
+        if !list.is_empty()
+            && (list.head.offset != 0
+                || pool
+                    .payload
+                    .previous_in_list(list.head.raw, self.owner)?
+                    .is_some())
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        Ok(UniqueArenaList { root: list })
+    }
+
     /// Copies an existing immutable list into the active private suffix.
     ///
     /// Shared roots cannot donate their write-once head predecessor. Callers
@@ -1577,6 +1653,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Ok(());
         }
         let selected_root = self.slice_direct_root(pool, list, selected)?;
+        if selected_root.len() != list.len() {
+            self.record_partial_edge_nodes_copied(selected_root.len());
+        }
         let root = self.active_list_open_mut(builder)?.root;
         let root = self.copy_shared_then_splice(pool, root, selected_root)?;
         self.active_list_open_mut(builder)?.root = root;
@@ -1806,14 +1885,21 @@ impl<T, Lane> ForkArena<T, Lane> {
         right: UniqueArenaList<Lane>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
         let right = right.root;
-        self.validate_list(pool, left)?;
-        self.validate_list(pool, right)?;
+        if (!left.is_empty() && left.arena != self.owner)
+            || (!right.is_empty() && right.arena != self.owner)
+        {
+            return Err(ForkArenaError::ForeignArena);
+        }
         if left.is_empty() {
             return Ok(right);
         }
         if right.is_empty() {
             return Ok(left);
         }
+        // Once another whole block follows it, the prior private tail can no
+        // longer accept payload. Sealing here also guarantees that every
+        // internal block of a published direct chain is immutable.
+        self.seal_direct_tail(pool, left)?;
         if right.head.offset != 0
             || pool
                 .payload
@@ -1830,7 +1916,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .checked_add(right.len)
             .ok_or(ForkArenaError::CapacityOverflow)?;
         let root = ArenaListId::from_root(self.owner, left.head, right.tail, len);
-        self.validate_list(pool, root)?;
         Ok(root)
     }
 
@@ -1846,12 +1931,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         T: Clone,
     {
         let mut copy = ArenaListId::empty();
-        for index in 0..right.len() {
-            let value = self
-                .list(pool, right)?
-                .get(index)
-                .cloned()
-                .ok_or(ForkArenaError::InvalidRange)?;
+        // The chain is reverse-linked, so collect the explicit fallback in
+        // its cheap direction and replay it once. This keeps counted shared
+        // copying O(nodes + actual block crossings), never O(nodes*blocks).
+        let reverse = self
+            .list(pool, right)?
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
+        for value in reverse.into_iter().rev() {
             self.append_payload(pool, &mut copy, value, None)?;
         }
         self.counters.new_semantic_nodes = self
@@ -3234,8 +3323,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         scratch.clear();
         let mut root = ArenaListId::empty();
         for list in lists.iter().copied() {
-            root = self.copy_shared_then_splice(pool, root, list)?;
+            self.validate_list(pool, list)?;
+            root = if root.is_empty() {
+                list
+            } else {
+                self.copy_shared_then_splice(pool, root, list)?
+            };
         }
+        self.seal_direct_tail(pool, root)?;
         Ok(root)
     }
 
@@ -3252,8 +3347,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut root = ArenaListId::empty();
         for (list, validated) in lists {
             self.validate_checked_list(pool, list, validated)?;
-            root = self.copy_shared_then_splice(pool, root, list)?;
+            root = if root.is_empty() {
+                list
+            } else {
+                self.copy_shared_then_splice(pool, root, list)?
+            };
         }
+        self.seal_direct_tail(pool, root)?;
         Ok(root)
     }
 

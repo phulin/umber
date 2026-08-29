@@ -358,10 +358,8 @@ impl ModeList {
 
     pub fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
         assert!(self.admit_page_region(stores));
-        stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_span(&mut self.active, self.nodes);
-        stores.push_page_active_list(&mut self.active, node);
-        self.nodes = stores.finalize_page_active_span(&mut self.active);
+        let suffix = stores.publish_unique_page_nodes(vec![node]);
+        self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
         assert!(self.admit_page_region(stores));
     }
 
@@ -371,12 +369,11 @@ impl ModeList {
         nodes: impl IntoIterator<Item = Node>,
     ) {
         assert!(self.admit_page_region(stores));
-        stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_span(&mut self.active, self.nodes);
-        for node in nodes {
-            stores.push_page_active_list(&mut self.active, node);
+        let nodes = nodes.into_iter().collect::<Vec<_>>();
+        if !nodes.is_empty() {
+            let suffix = stores.publish_unique_page_nodes(nodes);
+            self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
         }
-        self.nodes = stores.finalize_page_active_span(&mut self.active);
         assert!(self.admit_page_region(stores));
     }
 
@@ -389,6 +386,16 @@ impl ModeList {
         stores.append_page_active_span(&mut self.active, self.nodes);
         stores.append_page_active_span(&mut self.active, nodes);
         self.nodes = stores.finalize_page_active_span(&mut self.active);
+        assert!(self.admit_page_region(stores));
+    }
+
+    pub fn append_unique_list<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        nodes: tex_state::page_node_arena::UniquePageList,
+    ) {
+        assert!(self.admit_page_region(stores));
+        self.nodes = stores.append_unique_page_nodes(self.nodes, nodes);
         assert!(self.admit_page_region(stores));
     }
 
@@ -815,6 +822,15 @@ impl ModeListMutation<'_> {
     pub(crate) fn take_nodes(&mut self) -> PageListId {
         self.record_nodes();
         self.list.take_nodes()
+    }
+
+    pub(crate) fn append_unique_list<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        nodes: tex_state::page_node_arena::UniquePageList,
+    ) {
+        self.record_nodes();
+        self.list.append_unique_list(stores, nodes);
     }
 
     pub(crate) fn take_span(&mut self) -> PageListSpan {

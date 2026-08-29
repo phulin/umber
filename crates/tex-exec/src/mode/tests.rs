@@ -1162,9 +1162,10 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
                 .is_ok()
         );
         let mut nested = nest.pop().expect("pop nested mode");
-        let nested_nodes = nested.list_mutation().take_nodes();
+        let nested_span = nested.list_mutation().take_span();
+        let nested_nodes = context.reclaim_unique_page_nodes(nested_span);
         nest.current_list_mutation()
-            .append_list(context, nested_nodes);
+            .append_unique_list(context, nested_nodes);
 
         assert_eq!(nest_nodes(&nest, context), [kern(11), kern(17)]);
         assert_eq!(

@@ -6,7 +6,7 @@ mod tests;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetNode};
 use tex_state::node_arena::PageListId;
-use tex_state::page_node_arena::PageMaterialActiveListBuilder;
+use tex_state::page_node_arena::{PageListSpan, PageMaterialActiveListBuilder};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::ExecError;
@@ -48,7 +48,10 @@ pub(super) fn set_alignment_nodes<G>(
         empty,
         offset,
     };
-    let mut out = PageListId::empty();
+    let source = stores
+        .admit_page_node_span(rows)
+        .expect("consumed alignment rows belong to the page arena");
+    let mut out = PageListSpan::empty();
     let mut retained_start = 0;
     for index in 0..rows.len() {
         let action = match stores
@@ -90,22 +93,32 @@ pub(super) fn set_alignment_nodes<G>(
         let Some(replacement) = replacement else {
             continue;
         };
-        let mut builder = PageMaterialActiveListBuilder::vacant();
-        stores.open_page_active_list(&mut builder);
-        stores.append_page_active_list(&mut builder, out);
-        stores.append_page_active_list_range(&mut builder, rows, retained_start..index);
-        stores.push_page_active_list(&mut builder, replacement);
-        out = stores.finalize_page_active_list(&mut builder);
+        if out.is_empty() && retained_start == 0 && index != 0 {
+            out = stores.slice_page_node_span(source, 0..index);
+        } else if retained_start != index {
+            let mut retained = PageMaterialActiveListBuilder::vacant();
+            stores.open_page_active_list(&mut retained);
+            stores.append_page_active_list_range(&mut retained, rows, retained_start..index);
+            let retained = stores.finalize_unique_page_active_list(&mut retained);
+            out = stores.append_unique_page_nodes(out, retained);
+        }
+        let replacement = stores.publish_unique_page_nodes(vec![replacement]);
+        out = stores.append_unique_page_nodes(out, replacement);
         retained_start = index + 1;
     }
-    if retained_start < rows.len() {
-        let mut builder = PageMaterialActiveListBuilder::vacant();
-        stores.open_page_active_list(&mut builder);
-        stores.append_page_active_list(&mut builder, out);
-        stores.append_page_active_list_range(&mut builder, rows, retained_start..rows.len());
-        out = stores.finalize_page_active_list(&mut builder);
+    if retained_start == 0 {
+        return Ok(rows);
     }
-    Ok(out)
+    if retained_start < rows.len() {
+        // The retained prefix and suffix share the source block. The prefix
+        // already anchors the replacement chain, so copy only this edge.
+        let mut suffix = PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut suffix);
+        stores.append_page_active_list_range(&mut suffix, rows, retained_start..rows.len());
+        let suffix = stores.finalize_unique_page_active_list(&mut suffix);
+        out = stores.append_unique_page_nodes(out, suffix);
+    }
+    Ok(out.list())
 }
 
 enum RowAction {
@@ -215,7 +228,10 @@ fn set_row_children<G>(
     stores: &mut CommandContext<'_, G>,
 ) -> Result<PageListId, ExecError> {
     let source_len = row.children.len();
-    let mut result = PageListId::empty();
+    let source = stores
+        .admit_page_node_span(row.children)
+        .expect("consumed unset-row children belong to the page arena");
+    let mut result = PageListSpan::empty();
     let mut retained_start = 0;
     let mut column = 0usize;
     for index in 0..source_len {
@@ -230,42 +246,45 @@ fn set_row_children<G>(
         };
         let span = usize::from(cell.span_count) + 1;
         let set = set_cell(config, row, &cell, column, span, stores)?;
-        let mut builder = PageMaterialActiveListBuilder::vacant();
-        stores.open_page_active_list(&mut builder);
-        stores.append_page_active_list(&mut builder, result);
-        stores.append_page_active_list_range(&mut builder, row.children, retained_start..index);
-        stores.push_page_active_list(&mut builder, set);
+        if result.is_empty() && retained_start == 0 && index != 0 {
+            result = stores.slice_page_node_span(source, 0..index);
+        } else if retained_start != index {
+            let mut retained = PageMaterialActiveListBuilder::vacant();
+            stores.open_page_active_list(&mut retained);
+            stores.append_page_active_list_range(
+                &mut retained,
+                row.children,
+                retained_start..index,
+            );
+            let retained = stores.finalize_unique_page_active_list(&mut retained);
+            result = stores.append_unique_page_nodes(result, retained);
+        }
+        let mut generated = vec![set];
         for offset in 1..span {
             let spanned_column = column + offset;
-            stores.push_page_active_list(
-                &mut builder,
-                tabskip_node(config.resolved.tabskips[spanned_column]),
-            );
-            stores.push_page_active_list(
-                &mut builder,
-                empty_column_box(
-                    config.kind,
-                    config.resolved.columns[spanned_column],
-                    config.empty,
-                ),
-            );
+            generated.push(tabskip_node(config.resolved.tabskips[spanned_column]));
+            generated.push(empty_column_box(
+                config.kind,
+                config.resolved.columns[spanned_column],
+                config.empty,
+            ));
         }
-        result = stores.finalize_page_active_list(&mut builder);
+        let generated = stores.publish_unique_page_nodes(generated);
+        result = stores.append_unique_page_nodes(result, generated);
         column += span;
         retained_start = index + 1;
     }
-    if retained_start < source_len {
-        let mut builder = PageMaterialActiveListBuilder::vacant();
-        stores.open_page_active_list(&mut builder);
-        stores.append_page_active_list(&mut builder, result);
-        stores.append_page_active_list_range(
-            &mut builder,
-            row.children,
-            retained_start..source_len,
-        );
-        result = stores.finalize_page_active_list(&mut builder);
+    if retained_start == 0 {
+        return Ok(row.children);
     }
-    Ok(result)
+    if retained_start < source_len {
+        let mut suffix = PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut suffix);
+        stores.append_page_active_list_range(&mut suffix, row.children, retained_start..source_len);
+        let suffix = stores.finalize_unique_page_active_list(&mut suffix);
+        result = stores.append_unique_page_nodes(result, suffix);
+    }
+    Ok(result.list())
 }
 
 fn set_cell<G>(

@@ -3515,10 +3515,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned_span([node])
+            .publish_owned_unique([node])
             .expect("page arena accepts contribution");
         self.contribution = arena
-            .compose_spans(&[self.contribution, node])
+            .append_unique_to_span(self.contribution, node)
             .expect("page contribution roots belong to the live arena");
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
@@ -3670,6 +3670,36 @@ impl PageBuilderState {
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
+    pub(crate) fn append_unique_contributions(
+        &mut self,
+        arena: &mut PageNodeArena,
+        nodes: crate::page_node_arena::UniquePageList,
+    ) {
+        let list = nodes.list();
+        if list.is_empty() {
+            return;
+        }
+        self.record_scalars();
+        self.record_page_inverse(PageInverse::Contribution(self.contribution));
+        let span = arena
+            .admit_span(list)
+            .expect("unique contribution belongs to the live owner");
+        let view = arena
+            .span_list(span)
+            .expect("unique contribution remains live");
+        let words = dynamic_words(view.iter());
+        let roots = view
+            .iter()
+            .filter(|node| node_retains_page_handle(node))
+            .count();
+        self.allocate_dynamic_word_totals(words);
+        self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
+        self.contribution = arena
+            .append_unique_to_span(self.contribution, nodes)
+            .expect("unique contribution suffix splices into the live root");
+        self.semantic_roots.contribution = list_identity(self.contribution);
+    }
+
     pub(crate) fn current_page<'a>(&self, arena: &'a PageNodeArena) -> PageCurrentIter<'a> {
         arena
             .span_node_cursor(self.current_page)
@@ -3682,10 +3712,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned_span([node])
+            .publish_owned_unique([node])
             .expect("page arena accepts discard");
         self.page_discards = arena
-            .compose_spans(&[self.page_discards, node])
+            .append_unique_to_span(self.page_discards, node)
             .expect("page discard roots compose");
         self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
@@ -3763,10 +3793,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned_span([node])
+            .publish_owned_unique([node])
             .expect("page arena accepts current node");
         self.current_page = arena
-            .compose_spans(&[self.current_page, node])
+            .append_unique_to_span(self.current_page, node)
             .expect("current page roots compose");
     }
 

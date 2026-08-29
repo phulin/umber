@@ -93,7 +93,7 @@ pub(super) fn package_directed_display_line<G>(
         let mut payload = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
         stores.open_page_active_list(&mut payload);
         stores.push_page_active_list(&mut payload, Node::HList(display_line));
-        stores.finalize_page_active_list(&mut payload)
+        stores.finalize_unique_page_active_list(&mut payload)
     } else {
         let children = stores
             .page_node_list(display_line.children)
@@ -101,7 +101,7 @@ pub(super) fn package_directed_display_line<G>(
             .nodes();
         let len = children.len();
         if pre_display_direction >= 0 {
-            display_line.children
+            stores.reclaim_unique_page_list(display_line.children)
         } else {
             let mut reversed = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
             stores.open_page_active_list(&mut reversed);
@@ -112,7 +112,7 @@ pub(super) fn package_directed_display_line<G>(
                     index..index + 1,
                 );
             }
-            stores.finalize_page_active_list(&mut reversed)
+            stores.finalize_unique_page_active_list(&mut reversed)
         }
     };
     if let Some(mut prototype) = prototype {
@@ -162,53 +162,73 @@ pub(super) fn package_directed_display_line<G>(
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         };
 
-        let mut replacement = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
-        stores.open_page_active_list(&mut replacement);
+        let prototype_span = stores
+            .admit_page_node_span(prototype.children)
+            .expect("consumed display prototype belongs to the live page arena");
+        let mut generated = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+        stores.open_page_active_list(&mut generated);
+        let retained_left = matches!(left, PrototypeBoundary::Glue(_, _));
         if let PrototypeBoundary::Glue(spec, kind) = left {
-            stores.append_page_active_list_range(&mut replacement, prototype.children, 0..1);
             stores.push_page_active_list(
-                &mut replacement,
+                &mut generated,
                 Node::Direction(tex_state::node::Direction::BeginM),
             );
             let cancelled = cancel_display_skip(stores, &spec, kind, displacement);
-            stores.push_page_active_list(&mut replacement, cancelled);
+            stores.push_page_active_list(&mut generated, cancelled);
         } else if let PrototypeBoundary::Kern(kind) = left {
             stores.push_page_active_list(
-                &mut replacement,
+                &mut generated,
                 Node::Direction(tex_state::node::Direction::BeginM),
             );
             stores.push_page_active_list(
-                &mut replacement,
+                &mut generated,
                 Node::Kern {
                     amount: displacement,
                     kind,
                 },
             );
         }
-        stores.append_page_active_list(&mut replacement, payload);
+        stores.append_unique_page_active_list(&mut generated, payload);
 
         if let PrototypeBoundary::Glue(spec, kind) = right {
             let cancelled = cancel_display_skip(stores, &spec, kind, end_displacement);
-            stores.push_page_active_list(&mut replacement, cancelled);
+            stores.push_page_active_list(&mut generated, cancelled);
             stores.push_page_active_list(
-                &mut replacement,
+                &mut generated,
                 Node::Direction(tex_state::node::Direction::EndM),
             );
-            stores.append_page_active_list_range(&mut replacement, prototype.children, 1..2);
         } else if let PrototypeBoundary::Kern(kind) = right {
             stores.push_page_active_list(
-                &mut replacement,
+                &mut generated,
                 Node::Kern {
                     amount: end_displacement,
                     kind,
                 },
             );
             stores.push_page_active_list(
-                &mut replacement,
+                &mut generated,
                 Node::Direction(tex_state::node::Direction::EndM),
             );
         }
-        prototype.children = stores.finalize_page_active_list(&mut replacement);
+        let generated = stores.finalize_unique_page_active_list(&mut generated);
+        let left = if retained_left {
+            stores.slice_page_node_span(prototype_span, 0..1)
+        } else {
+            tex_state::page_node_arena::PageListSpan::empty()
+        };
+        let mut replacement = stores.append_unique_page_nodes(left, generated);
+        if matches!(right, PrototypeBoundary::Glue(_, _)) {
+            // The two prototype boundaries share one original logical block.
+            // Its left edge is already part of `replacement`, so the right
+            // edge cannot donate the block's predecessor a second time.
+            let mut right_edge =
+                tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+            stores.open_page_active_list(&mut right_edge);
+            stores.append_page_active_list_range(&mut right_edge, prototype.children, 1..2);
+            let right_edge = stores.finalize_unique_page_active_list(&mut right_edge);
+            replacement = stores.append_unique_page_nodes(replacement, right_edge);
+        }
+        prototype.children = replacement.list();
         return prototype;
     }
 
@@ -225,7 +245,7 @@ pub(super) fn package_directed_display_line<G>(
             kind: KernKind::Font,
         },
     );
-    stores.append_page_active_list(&mut list, payload);
+    stores.append_unique_page_active_list(&mut list, payload);
     stores.push_page_active_list(
         &mut list,
         Node::Kern {

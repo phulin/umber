@@ -27,10 +27,11 @@ pub(crate) fn append_finished_alignment<G>(
     {
         nest.current_list_mutation().set_space_factor(space_factor);
     }
+    let nodes = stores.reclaim_unique_page_list(finished.nodes);
     if crate::vertical::is_outer_vertical(nest) {
-        stores.append_page_contributions(finished.nodes);
+        stores.append_unique_page_contributions(nodes);
     } else {
         nest.current_list_mutation()
-            .append_list(stores, finished.nodes);
+            .append_unique_list(stores, nodes);
     }
 }

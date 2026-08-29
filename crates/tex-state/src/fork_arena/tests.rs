@@ -43,6 +43,27 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
 }
 
 #[test]
+fn block_byte_budgets_report_payload_and_metadata_overhead() {
+    for bytes in [128, 512, 4_096] {
+        let pool = ChunkPool::<u64>::with_chunk_bytes(bytes);
+        let capacity = (bytes / std::mem::size_of::<Option<u64>>()).max(1);
+        assert_eq!(pool.chunk_capacity(), capacity);
+        assert_eq!(
+            pool.physical_page_payload_bytes(),
+            capacity * super::CHUNKS_PER_PAGE * std::mem::size_of::<Option<u64>>()
+        );
+        assert_eq!(
+            pool.physical_page_metadata_bytes(),
+            super::CHUNKS_PER_PAGE * pool.logical_block_metadata_bytes()
+        );
+        assert!(
+            pool.physical_page_metadata_bytes() < pool.physical_page_payload_bytes(),
+            "the supported block classes keep chain metadata below payload capacity"
+        );
+    }
+}
+
+#[test]
 fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
@@ -164,9 +185,9 @@ fn copying_a_shared_right_root_never_rewrites_an_earlier_composite() {
             .collect::<Vec<_>>(),
         [9, 2, 3]
     );
-    // Each explicitly shared input, including the first root in each result,
-    // is copied so the returned chain retains a unique write-once head.
-    assert_eq!(arena.counters().source_nodes_copied, 6);
+    // Each explicitly shared right input is copied; the first root can remain
+    // the immutable prefix because no predecessor is changed.
+    assert_eq!(arena.counters().source_nodes_copied, 4);
 }
 
 #[test]
@@ -516,7 +537,7 @@ fn direct_chunk_sequence_has_indexed_and_sequential_parity() {
             .collect::<Vec<_>>(),
         vec![2, 3, 7]
     );
-    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(arena.counters().source_nodes_copied, 2);
 }
 
 #[test]
@@ -620,7 +641,7 @@ fn open_active_builder_blocks_checkpoint_sealing_and_rolls_back_partial_tail() {
 }
 
 #[test]
-fn active_range_append_is_zero_copy_and_keeps_stable_source_references() {
+fn shared_active_append_copies_explicitly_and_keeps_the_source_stable() {
     let mut pool = ChunkPool::<Node>::with_chunk_bytes(128);
     let mut arena = ForkArena::<Node, super::PageMaterialLane>::new();
     let source = {
@@ -651,17 +672,17 @@ fn active_range_append_is_zero_copy_and_keeps_stable_source_references() {
     let output = active.take_sealed().expect("sealed coordinate");
     let output_view = arena.list(&pool, output).expect("output view");
     assert_eq!(output_view.len(), 3);
-    assert_eq!(
+    assert_ne!(
         output_view.get(0).expect("retained source") as *const Node,
         source_address
     );
     assert!(matches!(output_view.get(2), Some(Node::Penalty(13))));
-    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(arena.counters().source_nodes_copied, 2);
     assert_eq!(arena.counters().new_semantic_nodes, 3);
 }
 
 #[test]
-fn active_logical_subrange_crosses_source_descriptors_without_copying_payload() {
+fn active_shared_subrange_crosses_chunks_with_one_counted_copy() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let left = list(&mut arena, &mut pool, [1, 2]);
@@ -692,15 +713,15 @@ fn active_logical_subrange_crosses_source_descriptors_without_copying_payload() 
         output_view.iter().copied().collect::<Vec<_>>(),
         vec![2, 3, 4]
     );
-    assert_eq!(
+    assert_ne!(
         output_view.get(0).expect("retained source") as *const u32,
         source_address
     );
-    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(arena.counters().source_nodes_copied, 6);
 }
 
 #[test]
-fn active_logical_subrange_normalizes_an_offset_past_the_first_payload_chunk() {
+fn active_shared_subrange_copies_an_offset_past_the_first_payload_chunk() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let source = list(&mut arena, &mut pool, [0, 1, 2, 3, 4, 5, 6, 7]);
@@ -723,11 +744,11 @@ fn active_logical_subrange_normalizes_an_offset_past_the_first_payload_chunk() {
     let output = active.take_sealed().expect("sealed destination");
     let output_view = arena.list(&pool, output).expect("output view");
     assert_eq!(output_view.iter().copied().collect::<Vec<_>>(), [4, 5, 6]);
-    assert_eq!(
+    assert_ne!(
         output_view.get(0).expect("retained source") as *const u32,
         source_address
     );
-    assert_eq!(arena.counters().source_nodes_copied, 0);
+    assert_eq!(arena.counters().source_nodes_copied, 3);
 }
 
 #[test]
