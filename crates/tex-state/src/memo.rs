@@ -520,10 +520,18 @@ impl<G> Universe<G> {
             .into_iter()
             .map(|token| import_token(self, token))
             .collect::<Result<Vec<_>, _>>()?;
-        let definitions = [DefinitionPromotion {
-            parameter_text: &parameter_text,
-            replacement_text: &replacement_text,
-        }];
+        let mut builder = crate::DefinitionBuilder::new(self.definition_identity_policy());
+        for word in parameter_text {
+            builder.push_parameter(word).map_err(PromotionError::from)?;
+        }
+        builder.finish_parameters().map_err(PromotionError::from)?;
+        for word in replacement_text {
+            builder
+                .push_replacement(word)
+                .map_err(PromotionError::from)?;
+        }
+        builder.seal().map_err(PromotionError::from)?;
+        let definitions = [DefinitionPromotion::new(builder)];
         let id = self
             .promote_values(&definitions, &[], &[], &[])?
             .definitions[0]

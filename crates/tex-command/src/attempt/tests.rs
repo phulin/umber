@@ -33,6 +33,31 @@ fn budget() -> InternerBudget {
     InternerBudget::new(64, 64, 4096).expect("test budget")
 }
 
+fn definition<G>(
+    attempt: &mut AttemptArena<G>,
+    parameters: &[TracedTokenWord],
+    replacement: &[TracedTokenWord],
+) -> super::AttemptDefinitionId {
+    let definition = attempt
+        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .expect("definition builder");
+    for word in parameters {
+        attempt
+            .push_definition_parameter(definition, word.token_word())
+            .expect("parameter word");
+    }
+    attempt
+        .finish_definition_parameters(definition)
+        .expect("parameter boundary");
+    for word in replacement {
+        attempt
+            .push_definition_replacement(definition, word.token_word())
+            .expect("replacement word");
+    }
+    attempt.finish_definition(definition).expect("definition");
+    definition
+}
+
 #[test]
 fn mark_truncates_every_suffix_without_inspecting_values() {
     tex_state::with_universe(budget(), |universe| {
@@ -105,21 +130,16 @@ fn foreign_marks_and_offsets_are_rejected() {
 }
 
 #[test]
-fn promotion_follows_only_declared_roots_and_definition_children() {
+fn promotion_follows_only_declared_roots_and_owned_definition_builders() {
     tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
-        let parameter = attempt
-            .allocate_token_list([word('#')])
-            .expect("test fixture is valid");
         let replacement = attempt
             .allocate_token_list([word('x')])
             .expect("test fixture is valid");
         let unrelated = attempt
             .allocate_token_list([word('z')])
             .expect("test fixture is valid");
-        let definition = attempt
-            .allocate_definition(parameter, replacement)
-            .expect("test fixture is valid");
+        let definition = definition(&mut attempt, &[word('#')], &[word('x')]);
         let promoted_glue = attempt
             .allocate_glue(glue(42))
             .expect("test fixture is valid");
@@ -163,9 +183,108 @@ fn promotion_follows_only_declared_roots_and_definition_children() {
                 .expect("test fixture is valid")
                 .token_list_rows(),
             1,
-            "the unrelated list and definition children were not independently promoted"
+            "the unrelated list and builder words were not independently promoted"
         );
         let _ = (unrelated, unrelated_glue);
+    })
+    .expect("test fixture is valid");
+}
+
+#[test]
+fn generic_promotion_recycles_the_original_definition_builder() {
+    tex_state::with_universe(budget(), |universe| {
+        let mut attempt = AttemptArena::default();
+        let definition = definition(&mut attempt, &[], &[word('x'); 32]);
+        let storage = attempt
+            .definition_builder(definition)
+            .expect("live builder")
+            .words()
+            .as_ptr();
+
+        let promoted = attempt
+            .promote(
+                universe,
+                AttemptEscapeRoots {
+                    definitions: &[definition],
+                    ..AttemptEscapeRoots::default()
+                },
+            )
+            .expect("definition promotion");
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("admission")
+                .definition(promoted.definitions[0].clone())
+                .replacement_text()
+                .len(),
+            32
+        );
+        assert!(attempt.definition_builder(definition).is_err());
+        let recycled = attempt
+            .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+            .expect("recycled builder");
+        assert_eq!(
+            attempt
+                .definition_builder(recycled)
+                .expect("recycled builder")
+                .words()
+                .as_ptr(),
+            storage
+        );
+    })
+    .expect("test fixture is valid");
+}
+
+#[test]
+fn generic_policy_mismatch_restores_the_builder_and_publishes_nothing() {
+    tex_state::with_universe(budget(), |universe| {
+        let mut attempt = AttemptArena::default();
+        let token = attempt
+            .allocate_token_list([word('t')])
+            .expect("token root");
+        let glue = attempt.allocate_glue(glue(7)).expect("glue root");
+        let definition = attempt
+            .allocate_definition_builder(DefinitionIdentityPolicy::Enabled)
+            .expect("definition builder");
+        attempt
+            .finish_definition_parameters(definition)
+            .expect("parameter boundary");
+        attempt
+            .push_definition_replacement(definition, word('x').token_word())
+            .expect("replacement word");
+        attempt.finish_definition(definition).expect("definition");
+        let storage = attempt
+            .definition_builder(definition)
+            .expect("live builder")
+            .words()
+            .as_ptr();
+
+        assert!(matches!(
+            attempt.promote(
+                universe,
+                AttemptEscapeRoots {
+                    token_lists: &[token],
+                    glue: &[glue],
+                    definitions: &[definition],
+                    ..AttemptEscapeRoots::default()
+                },
+            ),
+            Err(AttemptError::Promotion(
+                tex_state::PromotionError::IdentityPolicyMismatch
+            ))
+        ));
+        assert_eq!(
+            attempt
+                .definition_builder(definition)
+                .expect("rejected builder is restored")
+                .words()
+                .as_ptr(),
+            storage
+        );
+        let retired = universe.retire().expect("retirement");
+        assert_eq!(retired.definition_rows(), 0);
+        assert_eq!(retired.token_list_rows(), 0);
+        assert_eq!(retired.glue_rows(), 0);
     })
     .expect("test fixture is valid");
 }

@@ -5,6 +5,23 @@ use super::{
 use crate::generation::with_generation;
 use crate::token::{Catcode, Token, TokenWord};
 
+fn checked_builder(
+    policy: DefinitionIdentityPolicy,
+    parameter_text: &[TokenWord],
+    replacement_text: &[TokenWord],
+) -> DefinitionBuilder {
+    let mut builder = DefinitionBuilder::new(policy);
+    for &word in parameter_text {
+        builder.push_parameter(word).expect("parameter word");
+    }
+    builder.finish_parameters().expect("parameter boundary");
+    for &word in replacement_text {
+        builder.push_replacement(word).expect("replacement word");
+    }
+    builder.seal().expect("sealed builder");
+    builder
+}
+
 #[test]
 fn definition_handle_is_one_thin_non_atomic_owner() {
     assert_eq!(
@@ -133,12 +150,11 @@ fn checked_builder_accepts_custom_markers_and_all_nine_parameters() {
             parameters.push(TokenWord::pack(Token::param(slot)));
         }
         let replacement = [TokenWord::pack(Token::param(9))];
-        let builder = DefinitionBuilder::from_slices(
+        let builder = checked_builder(
             DefinitionIdentityPolicy::Disabled,
             &parameters,
             &replacement,
-        )
-        .expect("nine-parameter program");
+        );
         let definition = generation
             .definitions_mut()
             .publish(&builder)
@@ -225,12 +241,11 @@ fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() 
         .expect("replacement reference");
     builder.seal().expect("sealed row");
 
-    let reference = DefinitionBuilder::from_slices(
+    let reference = checked_builder(
         DefinitionIdentityPolicy::Enabled,
         &[TokenWord::pack(Token::param(1))],
         &[TokenWord::pack(Token::param(1))],
-    )
-    .expect("reference row");
+    );
     with_generation(|mut generation| {
         assert!(generation.enable_semantic_identity());
         let after_failure = generation

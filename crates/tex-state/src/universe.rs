@@ -594,11 +594,31 @@ pub enum InteractionMode {
     ErrorStop,
 }
 
-/// One explicit macro-definition escape root in a promotion batch.
-#[derive(Clone, Copy, Debug)]
-pub struct DefinitionPromotion<'a> {
-    pub parameter_text: &'a [TokenWord],
-    pub replacement_text: &'a [TokenWord],
+/// One checked macro-definition builder moved through a promotion batch.
+///
+/// The owner preserves the identity policy and incremental parameter-program
+/// state selected where collection began. Generic promotion may borrow the
+/// builder to publish its one immutable row, but cannot rebuild it from token
+/// slices under a different destination policy.
+#[derive(Debug)]
+pub struct DefinitionPromotion {
+    builder: crate::DefinitionBuilder,
+}
+
+impl DefinitionPromotion {
+    #[must_use]
+    pub fn new(builder: crate::DefinitionBuilder) -> Self {
+        Self { builder }
+    }
+
+    pub(crate) const fn builder(&self) -> &crate::DefinitionBuilder {
+        &self.builder
+    }
+
+    #[must_use]
+    pub fn into_builder(self) -> crate::DefinitionBuilder {
+        self.builder
+    }
 }
 
 /// One explicit durable token-list escape root in a promotion batch.
@@ -2036,7 +2056,7 @@ impl<G> Universe<G> {
     /// relocation.
     pub fn promote_values(
         &mut self,
-        definitions: &[DefinitionPromotion<'_>],
+        definitions: &[DefinitionPromotion],
         token_lists: &[TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],

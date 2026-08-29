@@ -9,6 +9,64 @@ fn token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
+fn assert_read_failure_is_fully_cleaned(finalize: bool) {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .world_mut()
+            .push_memory_terminal_line("read body")
+            .expect("terminal line");
+        let target = universe.intern("readtarget").expect("read target").symbol();
+        let mut command = CommandState::default();
+        let operation = command.begin_attempt_operation();
+        let before = command.attempt.arena().mark();
+        command.alignment.align_state = 37;
+        if finalize {
+            command
+                .attempt
+                .arena_mut()
+                .inject_definition_finalization_failure();
+        } else {
+            command
+                .attempt
+                .arena_mut()
+                .inject_definition_builder_allocation_failure();
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let before_meaning = context.meaning(target);
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert!(processor.read_toks(16, target, finalize).is_err());
+        assert_eq!(processor.command.alignment.align_state, 37);
+        assert!(processor.command.scanner.is_quiescent());
+        assert_eq!(processor.command.attempt.arena().mark(), before);
+        assert_eq!(processor.state.meaning(target), before_meaning);
+        drop(processor);
+        command
+            .rollback_attempt_operation(operation)
+            .expect("failed read leaves an exact operation scope");
+        assert!(command.attempt.is_empty());
+    });
+}
+
+#[test]
+fn read_builder_setup_failure_restores_scanner_alignment_and_attempt_scope() {
+    assert_read_failure_is_fully_cleaned(false);
+}
+
+#[test]
+fn read_builder_finalize_failure_restores_scanner_alignment_and_attempt_scope() {
+    assert_read_failure_is_fully_cleaned(true);
+}
+
 #[test]
 fn balanced_collection_freezes_nested_tokens_in_the_attempt_arena() {
     crate::test_harness::with_universe(|universe| {

@@ -272,12 +272,16 @@ The scanner first fills one attempt-local `DefinitionBuilder` in monotonic
 parameter and replacement phases. Each append validates and updates the
 parameter program and, when requested by the destination generation, the
 framed semantic identity. `\def`, `\edef`, `\read`, and `\readline` share this
-path; ordinary allocation, memo import, and format restore reconstruct through
-the same checked builder. Publication validates the destination identity policy
-and all capacities before changing accounting or the serial, then performs one
-explicit word traversal into the contiguous `ThinRc`. This describes the
-observable traversal boundary, not the number of physical copies made inside
-the thin-DST allocator.
+path. The cold-operation promotion batch moves the original attempt builder
+through a typed `DefinitionPromotion` owner; destination preflight validates
+that builder's preserved identity policy before any batch row is published.
+Success recycles the same word allocation and rejection restores it to its
+exact attempt row. Neither path materializes parameter/replacement vectors or
+constructs a second builder. Ordinary allocation, memo import, and format
+restore construct their own checked builders because their inputs begin as
+cold detached data. Publication then performs one explicit word traversal into
+the contiguous `ThinRc`. This describes the observable traversal boundary, not
+the number of physical copies made inside the thin-DST allocator.
 
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`; resolution constructs in
@@ -367,6 +371,15 @@ carrying the macro match character across the synthetic `->` separator. No
 diagnostic token vector, second token traversal, or success-path string exists;
 resource suspension retains only the sinks and cursor already owned by the
 scanner frame.
+
+TeX82's separate `read_toks` collector wraps scanner-status installation,
+`align_state := 1000000`, builder setup, line collection, sealing, and scope
+retirement in one structured cleanup transaction. Every setup, collection,
+validation, or finalization error restores the saved alignment scalar and
+complete prior scanner episode before truncating the exact attempt child
+scope. No failure can leave a partial definition builder or eqtb write behind;
+the executor installs the target meaning only after successful durable
+promotion.
 
 Multi-child primitives require a caller frame of their own. For example,
 `\pdfstrcmp` stores whether its left or right expanded scan owns the child; the

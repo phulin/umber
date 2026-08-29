@@ -1593,7 +1593,7 @@ fn prepare_immediate_extension<G>(
 /// operation by consuming the ordered receipt exactly once.
 pub(in crate::main_control) fn prepare_cold_operation<G>(
     operation: ColdOperation<G>,
-    command: &tex_command::CommandState<G>,
+    command: &mut tex_command::CommandState<G>,
     stores: &mut Universe<G>,
     additional_token_roots: &[tex_command::AttemptTokenListId],
 ) -> Result<(PreparedColdCommand<G>, Vec<tex_state::TokenListId<G>>), ColdPreparationError> {

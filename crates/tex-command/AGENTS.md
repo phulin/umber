@@ -300,8 +300,14 @@ collector (see `src/conditionals.rs`).
   the scanner word/builder lanes. Macro `\def`/`\edef` and `read_toks`
   collect semantic words into one attempt-local recyclable definition builder;
   successful publication traverses that checked row once into its final
-  current-generation `DefinitionId`, while general token-list scans retain
-  their dedicated token buffers. Nested macros
+  current-generation `DefinitionId`. Generic cold-operation promotion moves
+  that exact builder through a typed owner, validates its original destination
+  identity policy before publishing any batch row, then recycles the owner;
+  it never copies the parameter/replacement slices or reconstructs a second
+  builder. Read setup and finalization share one cleanup transaction which
+  restores `align_state` and scanner status and truncates the exact child scope
+  on every error. General token-list scans retain their dedicated token
+  buffers. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their
   scratch with scanner output. A suspended scan carries branded frame indices
   under the same exclusive current-generation lease. Its semantic

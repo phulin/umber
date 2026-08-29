@@ -285,11 +285,15 @@ monotonic parameter and replacement phases. It incrementally maintains the
 checked parameter program and the destination generation's optional framed
 identity. Macro scanning and `read_toks` retain that exact row through
 suspension and recycle it on cancellation; it is never part of checkpoint
-state. Ordinary allocation, memo import, and format restore use the same
-checked metadata path, so malformed parameter numbering or replacement
-references fail before publication. The final `ThinRc` construction traverses
-the builder once. This is deliberately not a claim that the thin-DST allocator
-performs only one physical copy internally.
+state. Generic cold promotion moves that row in one typed owner, validates its
+preserved identity policy together with the complete batch before publication,
+and either restores it on rejection or recycles it after success. It creates no
+temporary parameter/replacement vectors and no second builder. Ordinary
+allocation, memo import, and format restore use the same checked metadata path,
+so malformed parameter numbering or replacement references fail before
+publication. The final `ThinRc` construction traverses the builder once. This
+is deliberately not a claim that the thin-DST allocator performs only one
+physical copy internally.
 
 ```rust
 pub struct DefinitionId<G> {

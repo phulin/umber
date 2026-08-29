@@ -104,32 +104,6 @@ impl DefinitionBuilder {
         builder
     }
 
-    pub fn from_slices(
-        policy: DefinitionIdentityPolicy,
-        parameter_text: &[TokenWord],
-        replacement_text: &[TokenWord],
-    ) -> Result<Self, DefinitionBuildError> {
-        let mut builder = Self::new(policy);
-        builder
-            .words
-            .try_reserve(
-                parameter_text
-                    .len()
-                    .checked_add(replacement_text.len())
-                    .ok_or(DefinitionBuildError::CapacityOverflow)?,
-            )
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
-        for word in parameter_text.iter().copied() {
-            builder.push_parameter(word)?;
-        }
-        builder.finish_parameters()?;
-        for word in replacement_text.iter().copied() {
-            builder.push_replacement(word)?;
-        }
-        builder.seal()?;
-        Ok(builder)
-    }
-
     /// Clears one recycled row while retaining its high-water allocation.
     pub fn reset(&mut self, policy: DefinitionIdentityPolicy) {
         self.words.clear();
@@ -515,9 +489,7 @@ impl<G> DefinitionArena<G> {
         &mut self,
         builder: &DefinitionBuilder,
     ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
-        if builder.policy() != self.identity_policy() {
-            return Err(DefinitionAllocationError::IdentityPolicyMismatch);
-        }
+        self.validate_builder(builder)?;
         let metadata = builder.metadata()?;
         let final_word_len = builder.words().len();
         let serial = self
@@ -544,6 +516,21 @@ impl<G> DefinitionArena<G> {
             allocation,
             _brand: PhantomData,
         })
+    }
+
+    /// Validates every fallible destination-specific property without
+    /// changing publisher serial or memory accounting.
+    pub(crate) fn validate_builder(
+        &self,
+        builder: &DefinitionBuilder,
+    ) -> Result<(), DefinitionAllocationError> {
+        if builder.policy() != self.identity_policy() {
+            return Err(DefinitionAllocationError::IdentityPolicyMismatch);
+        }
+        builder.metadata()?;
+        u32::try_from(builder.words().len())
+            .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
+        Ok(())
     }
 
     #[must_use]

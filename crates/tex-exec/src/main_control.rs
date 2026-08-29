@@ -8713,16 +8713,20 @@ impl<G> MainControl<G> {
             .unavailable
             .take()
             .expect("resolved operation remains in its caller-owned frame");
-        let (scanned, promoted_alignment_roots) =
-            match prepare_cold_operation(scanned, &self.command, stores, &alignment_roots) {
-                Ok(prepared) => prepared,
-                Err(_) => {
-                    frame.error = Some(ExecError::MissingToken {
-                        context: "cold operation root preparation",
-                    });
-                    return OperationReadiness::Failed;
-                }
-            };
+        let (scanned, promoted_alignment_roots) = match prepare_cold_operation(
+            scanned,
+            self.command.state_mut(),
+            stores,
+            &alignment_roots,
+        ) {
+            Ok(prepared) => prepared,
+            Err(_) => {
+                frame.error = Some(ExecError::MissingToken {
+                    context: "cold operation root preparation",
+                });
+                return OperationReadiness::Failed;
+            }
+        };
         let alignment_preamble = completed_preamble.map(|(alignment, preamble)| {
             let mut promoted = promoted_alignment_roots.into_iter();
             let columns = preamble

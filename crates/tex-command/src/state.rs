@@ -776,7 +776,7 @@ impl<G> CommandState<G> {
     /// Promotes one declared token-list escape root into generation-durable
     /// storage. No unrelated attempt row is inspected or copied.
     pub fn promote_attempt_token_list(
-        &self,
+        &mut self,
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptTokenListId,
     ) -> Result<tex_state::TokenListId<G>, crate::AttemptError> {
@@ -794,11 +794,11 @@ impl<G> CommandState<G> {
     /// publishing destination rows. On success, every receipt vector retains
     /// the corresponding request slice's order, including duplicates.
     pub fn promote_attempt_roots(
-        &self,
+        &mut self,
         universe: &mut tex_state::Universe<G>,
         roots: crate::AttemptPromotionRoots<'_, G>,
     ) -> Result<crate::AttemptPromotionReceipt<G>, crate::AttemptError> {
-        let promotion = self.attempt.arena().promote(
+        let promotion = self.attempt.arena_mut().promote(
             universe,
             crate::attempt::AttemptEscapeRoots {
                 token_lists: roots.token_lists,
@@ -875,11 +875,21 @@ impl<G> CommandState<G> {
     ) -> Result<(), crate::AttemptError> {
         self.active_attempt_operation
             .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        self.attempt.validate_child_retirement(&scope)?;
         if self.attempt.child_scope_is_direct_operation_child(&scope) {
             self.attempt.defer_child_to_operation(scope)
         } else {
             self.attempt.close_child_scope(scope)
         }
+    }
+
+    pub(crate) fn validate_attempt_scope_retirement(
+        &self,
+        scope: &crate::attempt::OwnedAttemptScope,
+    ) -> Result<(), crate::AttemptError> {
+        self.active_attempt_operation
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        self.attempt.validate_child_retirement(scope)
     }
 
     pub(crate) fn discard_attempt_scope_suffix(

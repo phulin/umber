@@ -1,3 +1,4 @@
+use tex_state::DefinitionIdentityPolicy;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
@@ -15,6 +16,43 @@ fn word(ch: char) -> TracedTokenWord {
         },
         OriginId::UNKNOWN,
     )
+}
+
+fn attempt_definition<G>(
+    state: &mut CommandState<G>,
+    parameters: &[TracedTokenWord],
+    replacement: &[TracedTokenWord],
+) -> crate::AttemptDefinitionId {
+    let definition = state
+        .attempt
+        .arena_mut()
+        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .expect("definition builder");
+    for word in parameters {
+        state
+            .attempt
+            .arena_mut()
+            .push_definition_parameter(definition, word.token_word())
+            .expect("parameter word");
+    }
+    state
+        .attempt
+        .arena_mut()
+        .finish_definition_parameters(definition)
+        .expect("parameter boundary");
+    for word in replacement {
+        state
+            .attempt
+            .arena_mut()
+            .push_definition_replacement(definition, word.token_word())
+            .expect("replacement word");
+    }
+    state
+        .attempt
+        .arena_mut()
+        .finish_definition(definition)
+        .expect("definition");
+    definition
 }
 
 #[test]
@@ -176,21 +214,12 @@ fn attempt_promotion_preserves_multiple_root_order_and_duplicates() {
 fn attempt_promotion_returns_mixed_roots_in_declared_order() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
-        let parameter = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('#')])
-            .expect("parameter text");
         let replacement = state
             .attempt
             .arena_mut()
             .allocate_token_list([word('x')])
             .expect("replacement text");
-        let definition = state
-            .attempt
-            .arena_mut()
-            .allocate_definition(parameter, replacement)
-            .expect("definition");
+        let definition = attempt_definition(&mut state, &[word('#')], &[word('x')]);
         let glue_root = state
             .attempt
             .arena_mut()
@@ -236,61 +265,10 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
     });
 }
 
-#[cfg(feature = "profiling")]
-#[test]
-fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
-    crate::test_harness::with_universe(|universe| {
-        let mut state = CommandState::default();
-        for _ in 0..16_384 {
-            state
-                .attempt
-                .arena_mut()
-                .allocate_token_list([word('z')])
-                .expect("large unrelated attempt row");
-        }
-        let parameter = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('#')])
-            .expect("parameter text");
-        let replacement = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('x')])
-            .expect("replacement text");
-        let definition = state
-            .attempt
-            .arena_mut()
-            .allocate_definition(parameter, replacement)
-            .expect("definition");
-
-        // Grow the two generation-owned destination vectors before measuring;
-        // ordinary repeated promotions then reuse their retained capacity.
-        for _ in 0..17 {
-            state
-                .promote_attempt_definition(universe, definition)
-                .expect("warm definition promotion");
-        }
-        let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
-        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        {
-            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            for _ in 0..8 {
-                state
-                    .promote_attempt_definition(universe, definition)
-                    .expect("measured definition promotion");
-            }
-        }
-        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        assert_eq!(after.calls - before.calls, 0);
-        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-    });
-}
-
 #[test]
 fn foreign_attempt_root_rejection_is_mutation_free() {
     crate::test_harness::with_universe(|universe| {
-        let state = CommandState::<_>::default();
+        let mut state = CommandState::<_>::default();
         let mut foreign = CommandState::<()>::default();
         let foreign_root = foreign
             .attempt
@@ -377,21 +355,7 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
         let coordinate = operation.coordinate();
-        let parameter = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('#')])
-            .expect("parameter text");
-        let replacement = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('x')])
-            .expect("replacement text");
-        let definition = state
-            .attempt
-            .arena_mut()
-            .allocate_definition(parameter, replacement)
-            .expect("definition");
+        let definition = attempt_definition(&mut state, &[word('#')], &[word('x')]);
         let durable = state
             .promote_attempt_definition(universe, definition)
             .expect("successful operation publishes its durable root");

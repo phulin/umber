@@ -395,15 +395,13 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     /// prevents any consumer from observing partial destination state.
     pub(crate) fn promote_values(
         &mut self,
-        definitions: &[crate::universe::DefinitionPromotion<'_>],
+        definitions: &[crate::universe::DefinitionPromotion],
         token_lists: &[crate::universe::TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],
     ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError> {
         let definition_words = definitions.iter().try_fold(0usize, |total, definition| {
-            total
-                .checked_add(definition.parameter_text.len())
-                .and_then(|total| total.checked_add(definition.replacement_text.len()))
+            total.checked_add(definition.builder().words().len())
         });
         let token_words = token_lists
             .iter()
@@ -415,17 +413,9 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             return Err(crate::universe::PromotionError::CapacityOverflow);
         };
 
-        let policy = self.generation.definitions().identity_policy();
-        let mut definition_builders = Vec::new();
-        definition_builders
-            .try_reserve_exact(definitions.len())
-            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+        let definitions_arena = self.generation.definitions();
         for definition in definitions {
-            definition_builders.push(crate::DefinitionBuilder::from_slices(
-                policy,
-                definition.parameter_text,
-                definition.replacement_text,
-            )?);
+            definitions_arena.validate_builder(definition.builder())?;
         }
 
         // Reserve every destination before the first logical length changes.
@@ -461,11 +451,11 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(provenance.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for definition in &definition_builders {
+        for definition in definitions {
             promoted_definitions.push(
                 self.generation
                     .definitions_mut()
-                    .publish(definition)
+                    .publish(definition.builder())
                     .expect("validated destination-policy definition publication"),
             );
         }

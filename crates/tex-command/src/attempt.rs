@@ -464,7 +464,7 @@ impl AttemptRange {
 }
 
 struct AttemptDefinition {
-    builder: DefinitionBuilder,
+    builder: Option<DefinitionBuilder>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -503,6 +503,10 @@ pub(crate) struct AttemptArena<G> {
     glue_values: Vec<AttemptRow<GlueSpec>>,
     definitions: Vec<AttemptRow<AttemptDefinition>>,
     recycled_definition_builders: Vec<DefinitionBuilder>,
+    #[cfg(test)]
+    fail_next_definition_builder_allocation: bool,
+    #[cfg(test)]
+    fail_next_definition_finalization: bool,
     token_buffers: Vec<AttemptRow<AttemptTokenBuffer>>,
     recycled_token_buffers: Vec<Vec<TracedTokenWord>>,
     #[cfg(test)]
@@ -530,6 +534,10 @@ impl<G> Default for AttemptArena<G> {
             glue_values: Vec::new(),
             definitions: Vec::new(),
             recycled_definition_builders: Vec::new(),
+            #[cfg(test)]
+            fail_next_definition_builder_allocation: false,
+            #[cfg(test)]
+            fail_next_definition_finalization: false,
             token_buffers: Vec::new(),
             recycled_token_buffers: Vec::new(),
             #[cfg(test)]
@@ -715,7 +723,9 @@ impl<G> AttemptArena<G> {
                 .expect("attempt definition suffix is nonempty")
                 .value
                 .builder;
-            self.recycled_definition_builders.push(builder);
+            if let Some(builder) = builder {
+                self.recycled_definition_builders.push(builder);
+            }
         }
         self.glue_values.truncate(mark.glue_values as usize);
         self.token_lists.truncate(mark.token_lists as usize);
@@ -974,42 +984,6 @@ impl<G> AttemptArena<G> {
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
-    #[cfg(test)]
-    pub(crate) fn allocate_definition(
-        &mut self,
-        parameter_text: AttemptTokenListId,
-        replacement_text: AttemptTokenListId,
-    ) -> Result<AttemptDefinitionId, AttemptError> {
-        #[cfg(feature = "profiling")]
-        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
-        );
-        let parameter_text = self.semantic_words(parameter_text)?;
-        let replacement_text = self.semantic_words(replacement_text)?;
-        let mut builder = self
-            .recycled_definition_builders
-            .pop()
-            .unwrap_or_else(|| DefinitionBuilder::new(DefinitionIdentityPolicy::Disabled));
-        builder.reset(DefinitionIdentityPolicy::Disabled);
-        for word in parameter_text {
-            builder.push_parameter(word)?;
-        }
-        builder.finish_parameters()?;
-        for word in replacement_text {
-            builder.push_replacement(word)?;
-        }
-        builder.seal()?;
-        let id = AttemptDefinitionId::new(self.key, self.definitions.len())?;
-        self.definitions
-            .try_reserve(1)
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        self.definitions.push(AttemptRow {
-            serial: id.serial,
-            value: AttemptDefinition { builder },
-        });
-        Ok(id)
-    }
-
     pub(crate) fn allocate_definition_builder(
         &mut self,
         policy: DefinitionIdentityPolicy,
@@ -1018,6 +992,10 @@ impl<G> AttemptArena<G> {
         let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
         );
+        #[cfg(test)]
+        if core::mem::take(&mut self.fail_next_definition_builder_allocation) {
+            return Err(AttemptError::AllocationFailed);
+        }
         let id = AttemptDefinitionId::new(self.key, self.definitions.len())?;
         self.definitions
             .try_reserve(1)
@@ -1029,7 +1007,9 @@ impl<G> AttemptArena<G> {
         builder.reset(policy);
         self.definitions.push(AttemptRow {
             serial: id.serial,
-            value: AttemptDefinition { builder },
+            value: AttemptDefinition {
+                builder: Some(builder),
+            },
         });
         Ok(id)
     }
@@ -1042,7 +1022,7 @@ impl<G> AttemptArena<G> {
         self.definitions
             .get(id.index())
             .filter(|row| row.serial == id.serial)
-            .map(|row| &row.value.builder)
+            .and_then(|row| row.value.builder.as_ref())
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
@@ -1054,7 +1034,7 @@ impl<G> AttemptArena<G> {
         self.definitions
             .get_mut(id.index())
             .filter(|row| row.serial == id.serial)
-            .map(|row| &mut row.value.builder)
+            .and_then(|row| row.value.builder.as_mut())
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
@@ -1096,8 +1076,22 @@ impl<G> AttemptArena<G> {
         &mut self,
         id: AttemptDefinitionId,
     ) -> Result<(), AttemptError> {
+        #[cfg(test)]
+        if core::mem::take(&mut self.fail_next_definition_finalization) {
+            return Err(AttemptError::AllocationFailed);
+        }
         self.definition_builder_mut(id)?.seal()?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_definition_builder_allocation_failure(&mut self) {
+        self.fail_next_definition_builder_allocation = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_definition_finalization_failure(&mut self) {
+        self.fail_next_definition_finalization = true;
     }
 
     pub(crate) fn definition_parameter_words(
@@ -1245,23 +1239,26 @@ impl<G> AttemptArena<G> {
         std::str::from_utf8(bytes).map_err(|_| AttemptError::InvalidCoordinate)
     }
 
-    /// Copies only declared roots and schema-declared definition children.
+    /// Moves declared definition builders and copies only the other declared
+    /// compact roots.
     ///
     /// This is the multi-root cold preparation path. Its inline root staging
     /// spills only when a declared batch exceeds four unique roots; work and
     /// storage are proportional to that declaration, never to unrelated live
-    /// attempt rows. Ordinary one-definition promotion uses
+    /// attempt rows. Definition owners retain their original identity policy
+    /// and word allocation through destination preflight; rejection restores
+    /// them to their exact attempt rows and success recycles them. Ordinary
+    /// one-definition promotion uses
     /// [`Self::promote_definition`] and allocates no staging or receipt.
     pub(crate) fn promote(
-        &self,
+        &mut self,
         universe: &mut Universe<G>,
         roots: AttemptEscapeRoots<'_>,
     ) -> Result<AttemptPromotion<G>, AttemptError> {
         let mut token_sources =
             smallvec::SmallVec::<[(AttemptTokenListId, Vec<TokenWord>); 4]>::new();
         let mut glue_sources = smallvec::SmallVec::<[(AttemptGlueId, GlueSpec); 4]>::new();
-        let mut definition_sources =
-            smallvec::SmallVec::<[(AttemptDefinitionId, Vec<TokenWord>, Vec<TokenWord>); 4]>::new();
+        let mut definition_sources = smallvec::SmallVec::<[AttemptDefinitionId; 4]>::new();
         let mut provenance_sources =
             smallvec::SmallVec::<[(AttemptProvenanceId, OriginRecord); 4]>::new();
 
@@ -1281,20 +1278,11 @@ impl<G> AttemptArena<G> {
         }
         for &id in roots.definitions {
             self.validate_key(id.key)?;
-            let row = self
-                .definitions
-                .get(id.index())
-                .filter(|row| row.serial == id.serial)
-                .ok_or(AttemptError::InvalidCoordinate)?;
-            if definition_sources
-                .iter()
-                .any(|(source, _, _)| *source == id)
-            {
+            self.definition_builder(id)?;
+            if definition_sources.contains(&id) {
                 continue;
             }
-            let parameter_text = row.value.builder.parameter_text().to_vec();
-            let replacement_text = row.value.builder.replacement_text().to_vec();
-            definition_sources.push((id, parameter_text, replacement_text));
+            definition_sources.push(id);
         }
         for &id in roots.provenance {
             self.validate_key(id.key)?;
@@ -1304,15 +1292,6 @@ impl<G> AttemptArena<G> {
             }
         }
 
-        let definitions = definition_sources
-            .iter()
-            .map(
-                |(_, parameter_text, replacement_text)| DefinitionPromotion {
-                    parameter_text,
-                    replacement_text,
-                },
-            )
-            .collect::<smallvec::SmallVec<[_; 4]>>();
         let token_lists = token_sources
             .iter()
             .map(|(_, words)| TokenListPromotion { words })
@@ -1325,8 +1304,50 @@ impl<G> AttemptArena<G> {
             .iter()
             .map(|(_, record)| *record)
             .collect::<smallvec::SmallVec<[_; 4]>>();
+        self.recycled_definition_builders
+            .try_reserve(definition_sources.len())
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        let mut definitions = smallvec::SmallVec::<[DefinitionPromotion; 4]>::new();
+        definitions
+            .try_reserve(definition_sources.len())
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        for &id in &definition_sources {
+            let row = self
+                .definitions
+                .get_mut(id.index())
+                .filter(|row| row.serial == id.serial)
+                .expect("validated definition row remains live");
+            definitions.push(DefinitionPromotion::new(
+                row.value
+                    .builder
+                    .take()
+                    .expect("validated definition builder remains owned"),
+            ));
+        }
         let receipt =
-            universe.promote_values(&definitions, &token_lists, &glue_values, &provenance)?;
+            match universe.promote_values(&definitions, &token_lists, &glue_values, &provenance) {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    for (id, definition) in definition_sources
+                        .iter()
+                        .copied()
+                        .zip(definitions.into_iter())
+                    {
+                        let row = self
+                            .definitions
+                            .get_mut(id.index())
+                            .filter(|row| row.serial == id.serial)
+                            .expect("promotion failure retains the attempt row");
+                        debug_assert!(row.value.builder.is_none());
+                        row.value.builder = Some(definition.into_builder());
+                    }
+                    return Err(error.into());
+                }
+            };
+        for definition in definitions {
+            self.recycled_definition_builders
+                .push(definition.into_builder());
+        }
 
         Ok(AttemptPromotion {
             token_lists: roots
@@ -1357,7 +1378,7 @@ impl<G> AttemptArena<G> {
                 .map(|id| {
                     let index = definition_sources
                         .iter()
-                        .position(|(source, _, _)| source == id)
+                        .position(|source| source == id)
                         .expect("declared definition root was promoted");
                     receipt.definitions[index].clone()
                 })
@@ -1388,9 +1409,10 @@ impl<G> AttemptArena<G> {
             .definitions
             .get(id.index())
             .filter(|row| row.serial == id.serial)
+            .and_then(|row| row.value.builder.as_ref())
             .ok_or(AttemptError::InvalidCoordinate)?;
         universe
-            .promote_definition_builder(&definition.value.builder)
+            .promote_definition_builder(definition)
             .map_err(AttemptError::from)
     }
 
@@ -1620,6 +1642,26 @@ impl<G> CommandAttempt<G> {
         self.active_operation
             .as_ref()
             .is_some_and(|operation| child.is_direct_child_of(operation))
+    }
+
+    pub(crate) fn validate_child_retirement(
+        &self,
+        child: &OwnedAttemptScope,
+    ) -> Result<(), AttemptError> {
+        self.arena.validate_top_owner(child)?;
+        if self.child_scope_is_direct_operation_child(child) {
+            let parent = self
+                .active_operation
+                .as_ref()
+                .ok_or(AttemptError::InvalidCoordinate)?;
+            self.arena.validate_owner(parent)?;
+            if !child.is_direct_child_of(parent) {
+                return Err(AttemptError::InvalidCoordinate);
+            }
+        } else {
+            self.arena.validate_mark(child.close_through)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn defer_child_to_operation(

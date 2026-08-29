@@ -2179,10 +2179,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
     ) -> Result<AttemptDefinitionId, CommandError> {
-        let scope = self
-            .command
-            .begin_attempt_scanner_scope()
-            .map_err(attempt_command_error)?;
+        let mut scope = Some(
+            self.command
+                .begin_attempt_scanner_scope()
+                .map_err(attempt_command_error)?,
+        );
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
@@ -2198,46 +2199,51 @@ impl<G> CommandProcessor<'_, '_, G> {
         let saved_align_state = self.command.alignment.align_state;
         self.command.record_alignment_phase();
         self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
-        let definition = self
-            .command
-            .attempt
-            .arena_mut()
-            .allocate_definition_builder(self.state.definition_identity_policy())
-            .map_err(attempt_command_error)?;
-        self.command
-            .attempt
-            .arena_mut()
-            .finish_definition_parameters(definition)
-            .map_err(attempt_command_error)?;
-        let output = ScanToksSink::DefinitionReplacement(definition);
-        let result = self.read_toks_lines(stream, target, raw_catcodes, output);
+        let result = (|| {
+            let definition = self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_definition_builder(self.state.definition_identity_policy())
+                .map_err(attempt_command_error)?;
+            self.command
+                .attempt
+                .arena_mut()
+                .finish_definition_parameters(definition)
+                .map_err(attempt_command_error)?;
+            let output = ScanToksSink::DefinitionReplacement(definition);
+            self.read_toks_lines(stream, target, raw_catcodes, output)?;
+            // §482 leaves the collected list in `cur_val`; §1225 immediately
+            // installs it with `define(p,call,cur_val)`. Unlike §473's
+            // `scan_toks`, this is not an independently observable completed
+            // token-list assignment. The committed observation is §1225's
+            // meaning mutation, whose macro body includes §482's leading
+            // `end_match_token`.
+            match self.finish_scan_toks_sink(output)? {
+                ScannedToksPart::Definition(completed) if completed == definition => {}
+                _ => return Err(CommandError::input_invariant()),
+            }
+            self.command
+                .validate_attempt_scope_retirement(
+                    scope.as_ref().expect("read owns its scanner scope"),
+                )
+                .map_err(attempt_command_error)?;
+            self.command
+                .defer_attempt_scope_retirement(
+                    scope
+                        .take()
+                        .expect("successful read owns its scanner scope"),
+                )
+                .expect("validated read scope retires without intervening mutation");
+            Ok(definition)
+        })();
         self.command.record_alignment_phase();
         self.command.alignment.align_state = saved_align_state;
         self.finish_scanner_episode(episode);
         match result {
-            Ok(()) => {}
+            Ok(definition) => Ok(definition),
             Err(error) => {
-                self.command
-                    .discard_attempt_scope_suffix(scope)
-                    .map_err(attempt_command_error)?;
-                return Err(error);
-            }
-        };
-        // §482 leaves the collected list in `cur_val`; §1225 immediately
-        // installs it with `define(p,call,cur_val)`. Unlike §473's
-        // `scan_toks`, this is not an independently observable completed
-        // token-list assignment. The committed observation is §1225's
-        // meaning mutation, whose macro body includes §482's leading
-        // `end_match_token`.
-        match self.finish_scan_toks_sink(output) {
-            Ok(ScannedToksPart::Definition(completed)) if completed == definition => {
-                self.command
-                    .defer_attempt_scope_retirement(scope)
-                    .map_err(attempt_command_error)?;
-                Ok(definition)
-            }
-            Ok(_) => Err(CommandError::input_invariant()),
-            Err(error) => {
+                let scope = scope.take().ok_or_else(CommandError::input_invariant)?;
                 self.command
                     .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
