@@ -7,6 +7,58 @@ use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{SourceLocation, SourceProvenance, SourceRange};
 
+/// Profiling-only proof of how current-command ownership changes.
+///
+/// The counter is thread-local and absent from shipping builds. It records
+/// only explicit ownership operations, never semantic command state.
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CommandOwnershipCounters {
+    pub(crate) clones: u64,
+    pub(crate) backup_copies: u64,
+    pub(crate) expansion_moves_in: u64,
+    pub(crate) expansion_moves_out: u64,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+thread_local! {
+    static COMMAND_OWNERSHIP_COUNTERS: core::cell::Cell<CommandOwnershipCounters> =
+        const { core::cell::Cell::new(CommandOwnershipCounters {
+            clones: 0,
+            backup_copies: 0,
+            expansion_moves_in: 0,
+            expansion_moves_out: 0,
+        }) };
+}
+
+#[cfg(any(test, feature = "profiling"))]
+pub(crate) fn command_ownership_counters() -> CommandOwnershipCounters {
+    COMMAND_OWNERSHIP_COUNTERS.with(core::cell::Cell::get)
+}
+
+#[cfg(any(test, feature = "profiling"))]
+fn update_command_ownership_counters(update: impl FnOnce(&mut CommandOwnershipCounters)) {
+    COMMAND_OWNERSHIP_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        update(&mut counters);
+        slot.set(counters);
+    });
+}
+
+pub(crate) fn record_expansion_command_move_in() {
+    #[cfg(any(test, feature = "profiling"))]
+    update_command_ownership_counters(|counters| {
+        counters.expansion_moves_in = counters.expansion_moves_in.saturating_add(1);
+    });
+}
+
+pub(crate) fn record_expansion_command_move_out() {
+    #[cfg(any(test, feature = "profiling"))]
+    update_command_ownership_counters(|counters| {
+        counters.expansion_moves_out = counters.expansion_moves_out.saturating_add(1);
+    });
+}
+
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
 /// and `cur_tok`.
 ///
@@ -57,6 +109,10 @@ impl CommandDeliveryFlags {
 
 impl<G> Clone for CurrentCommand<G> {
     fn clone(&self) -> Self {
+        #[cfg(any(test, feature = "profiling"))]
+        update_command_ownership_counters(|counters| {
+            counters.clones = counters.clones.saturating_add(1);
+        });
         Self {
             spelling: self.spelling,
             meaning: self.meaning.clone(),
@@ -628,6 +684,10 @@ impl<G> CurrentCommand<G> {
     /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
     /// remains deliberately non-`Clone` at the public boundary.
     pub(crate) fn copy_for_backup(&self) -> Self {
+        #[cfg(any(test, feature = "profiling"))]
+        update_command_ownership_counters(|counters| {
+            counters.backup_copies = counters.backup_copies.saturating_add(1);
+        });
         Self {
             spelling: self.spelling,
             meaning: self.meaning.clone(),

@@ -2,6 +2,8 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+use std::cell::Cell;
 use thin_dst::ThinRc;
 
 use crate::generation::ArenaToken;
@@ -74,8 +76,26 @@ pub struct DefinitionId<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+thread_local! {
+    static DEFINITION_RETAIN_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Process-local proof counter for non-atomic definition-owner retains.
+///
+/// This is compiled only in test and profiling resolutions. It is operational
+/// evidence, not generation state, and therefore never enters a checkpoint or
+/// format image.
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[must_use]
+pub fn definition_retain_count() -> u64 {
+    DEFINITION_RETAIN_COUNT.with(Cell::get)
+}
+
 impl<G> Clone for DefinitionId<G> {
     fn clone(&self) -> Self {
+        #[cfg(any(test, feature = "profiling", feature = "testing"))]
+        DEFINITION_RETAIN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
         Self {
             allocation: self.allocation.clone(),
             _brand: PhantomData,

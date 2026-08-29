@@ -173,6 +173,8 @@ pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
     FontIdentifier, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
 };
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+pub use definition_arena::definition_retain_count;
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
