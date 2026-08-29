@@ -1672,6 +1672,7 @@ struct SourceLevel {
 }
 
 struct SourceSlot {
+    // runtime-only incarnation, independent of rollback-reused InputLevelId
     key: SourceSlotKey,
     cursor: SourceCursor,
     every_eof: Option<TokenListId>,
@@ -1829,7 +1830,10 @@ execution phase. A token row owns its span, behavior, trace, and identity once;
 its packed frame and retirement phase form a fixed inline state record. Source
 rows point to one stable, checked `SourceSlot`, which is the sole owner of
 backing, current-line, `everyeof`, reduced-spelling, and nesting payloads. An
-ordinary source first touch copies only its packed frame, 24-byte lexer cursor,
+authoritative slot receives a monotonic runtime incarnation which is never
+rolled back with semantic `InputLevelId`; compact and stored inverses validate
+that incarnation before changing the row. An ordinary source first touch copies
+only its packed frame, 24-byte lexer cursor,
 and two registration bits into the reusable compact-state slab. Physical-line,
 replacement-backing, read-line-backing, and `everyeof` transitions move their
 old owners into typed stored states. Both lanes publish records in the same ordered
@@ -1840,11 +1844,12 @@ The first mutation of one row visible at a legal checkpoint or operation mark
 records the old state; later cursor advances coalesce into that record and the
 live row holds the final state. A row first
 pushed after the newest mark is not observable rollback state. Pop/push at that
-depth therefore overwrites the same physical row directly, and repeated reuse
-retains no displaced payload or undo record. Pop/push replacement of a row
-that _was_ visible at the mark moves its old payload into one
-generation-checked slab slot and journals only that handle; further replacement
-in the interval again coalesces. No input history entry clones `InputLevel`, a
+depth therefore overwrites the same physical row directly only while its current
+occupant has no compact or stored inverse. If that occupant was partially
+captured, reuse first moves it into one generation-checked replacement slot so
+the ordered journal restores the right incarnation before applying its inverse.
+Pop/push replacement of a row that _was_ visible at the mark uses the same
+mechanism; later uncaptured replacements in the interval coalesce. No input history entry clones `InputLevel`, a
 token span, macro definition, source ancestry, or command frame, and retained
 memory is independent of unmarked push/pop count after the live-depth high
 water is warm.

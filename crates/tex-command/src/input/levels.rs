@@ -114,7 +114,13 @@ impl<G> SourceLevel<G> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SourceSlotKey(u64);
+pub(crate) struct SourceSlotKey(u32);
+
+impl SourceSlotKey {
+    pub(crate) const fn new(incarnation: u32) -> Self {
+        Self(incarnation)
+    }
+}
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceSlot<G> {
@@ -129,13 +135,13 @@ pub(crate) struct SourceSlot<G> {
 
 impl<G> SourceSlot<G> {
     pub(crate) fn new(
-        identity: InputLevelId,
+        key: SourceSlotKey,
         cursor: SourceCursor,
         every_eof: Option<tex_state::TokenListId<G>>,
         open_depths: Option<Box<SourceOpenDepths>>,
     ) -> Self {
         Self {
-            key: SourceSlotKey(identity.0),
+            key,
             cursor,
             every_eof,
             open_depths,
@@ -485,6 +491,7 @@ pub(crate) struct InputLevelInlineState {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SourceLexExecutionState {
+    slot: SourceSlotKey,
     frame: PackedInputFrame,
     cursor: SourceLexCursor,
     line_loaded: bool,
@@ -495,15 +502,18 @@ pub(crate) struct SourceLexExecutionState {
 #[derive(Debug)]
 pub(crate) enum SourceLevelExecutionState<G> {
     Cursor {
+        slot: SourceSlotKey,
         frame: PackedInputFrame,
         cursor: SourceCursorExecutionState,
     },
     EveryEof {
+        slot: SourceSlotKey,
         frame: PackedInputFrame,
         cursor: SourceCursorExecutionState,
         every_eof: Option<tex_state::TokenListId<G>>,
     },
     Backing {
+        slot: SourceSlotKey,
         frame: PackedInputFrame,
         cursor: SourceCursorExecutionState,
         backing: RegisteredSource,
@@ -514,6 +524,7 @@ pub(crate) enum SourceLevelExecutionState<G> {
 impl<G> SourceLevelExecutionState<G> {
     pub(crate) fn cursor(source: &mut SourceLevel<G>) -> Self {
         Self::Cursor {
+            slot: source.slot.key(),
             frame: source.frame,
             cursor: source.slot.cursor.take_execution_state(),
         }
@@ -521,6 +532,7 @@ impl<G> SourceLevelExecutionState<G> {
 
     pub(crate) fn every_eof(source: &mut SourceLevel<G>) -> Self {
         Self::EveryEof {
+            slot: source.slot.key(),
             frame: source.frame,
             cursor: source.slot.cursor.take_execution_state(),
             every_eof: source.slot.every_eof.take(),
@@ -530,6 +542,7 @@ impl<G> SourceLevelExecutionState<G> {
     pub(crate) fn backing(source: &mut SourceLevel<G>, replacement: RegisteredSource) -> Self {
         let backing = std::mem::replace(&mut source.slot.cursor.backing, replacement);
         Self::Backing {
+            slot: source.slot.key(),
             frame: source.frame,
             cursor: source.slot.cursor.take_execution_state(),
             backing,
@@ -549,6 +562,7 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
         match self {
             Self::Source(source) => {
                 crate::timeline::CapturedStackState::Compact(SourceLexExecutionState {
+                    slot: source.slot.key(),
                     frame: source.frame,
                     cursor: source
                         .slot
@@ -596,7 +610,7 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
         let Self::Source(source) = self else {
             unreachable!("only a source row uses compact stored execution state");
         };
-        source.slot.validate(SourceSlotKey(state.frame.identity()));
+        source.slot.validate(state.slot);
         std::mem::swap(&mut source.frame, &mut state.frame);
         std::mem::swap(
             &mut source.slot.cursor.backing_registered,
@@ -616,28 +630,34 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
     fn swap_stored_state(&mut self, state: &mut Self::StoredState) {
         match self {
             Self::Source(source) => match state {
-                SourceLevelExecutionState::Cursor { frame, cursor } => {
-                    source.slot.validate(SourceSlotKey(frame.identity()));
+                SourceLevelExecutionState::Cursor {
+                    slot,
+                    frame,
+                    cursor,
+                } => {
+                    source.slot.validate(*slot);
                     std::mem::swap(&mut source.frame, frame);
                     source.slot.cursor.swap_execution_state(cursor);
                 }
                 SourceLevelExecutionState::EveryEof {
+                    slot,
                     frame,
                     cursor,
                     every_eof,
                 } => {
-                    source.slot.validate(SourceSlotKey(frame.identity()));
+                    source.slot.validate(*slot);
                     std::mem::swap(&mut source.frame, frame);
                     source.slot.cursor.swap_execution_state(cursor);
                     std::mem::swap(&mut source.slot.every_eof, every_eof);
                 }
                 SourceLevelExecutionState::Backing {
+                    slot,
                     frame,
                     cursor,
                     backing,
                     name_class,
                 } => {
-                    source.slot.validate(SourceSlotKey(frame.identity()));
+                    source.slot.validate(*slot);
                     std::mem::swap(&mut source.frame, frame);
                     source.slot.cursor.swap_execution_state(cursor);
                     std::mem::swap(&mut source.slot.cursor.backing, backing);

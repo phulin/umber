@@ -205,6 +205,10 @@ pub struct CommandState<G> {
     /// Retained width of TeX82 §31's bottom terminal buffer. This is live
     /// session accounting used to compose later nested buffer high waters.
     pub(crate) terminal_buffer_slots: usize,
+    /// Runtime-only source-owner incarnation allocator. Unlike semantic input
+    /// identities, this counter is never rolled back, so an ordered source
+    /// inverse cannot name a later occupant of the same physical stack row.
+    pub(crate) next_source_slot_incarnation: u32,
     /// Storage for scanner, expansion, and retry coordinates in the current
     /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
@@ -374,6 +378,7 @@ impl<G> Default for CommandState<G> {
             timeline: crate::snapshot::CommandTimeline::default(),
             stack_usage: CommandStackUsage::default(),
             terminal_buffer_slots: 0,
+            next_source_slot_incarnation: 1,
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
@@ -1250,6 +1255,56 @@ impl<G> CommandState<G> {
             })
             .expect("profiling fixture keeps a source frame on top");
         assert!(loaded, "profiling source has a second line");
+    }
+
+    /// Captures one compact source inverse, reuses its physical row for a
+    /// token frame, and mutates that replacement. The ordered journal must
+    /// preserve the source incarnation without cloning either full row.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_source_lex_then_token_row_reuse(
+        &mut self,
+        stores: &tex_state::CommandContext<'_, G>,
+        tokens: tex_state::TokenListId<G>,
+    ) {
+        self.profile_repeated_source_lex_mutations(1);
+        self.profile_replace_source_row_with_token(stores, tokens);
+    }
+
+    /// Moves one cold source owner into history before reusing its physical
+    /// row for a token frame. This is the owner-bearing counterpart of
+    /// [`Self::profile_source_lex_then_token_row_reuse`].
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_source_owner_then_token_row_reuse(
+        &mut self,
+        stores: &tex_state::CommandContext<'_, G>,
+        tokens: tex_state::TokenListId<G>,
+        endlinechar: i32,
+    ) {
+        self.profile_advance_source_line(endlinechar);
+        self.profile_replace_source_row_with_token(stores, tokens);
+    }
+
+    #[cfg(feature = "profiling")]
+    fn profile_replace_source_row_with_token(
+        &mut self,
+        stores: &tex_state::CommandContext<'_, G>,
+        tokens: tex_state::TokenListId<G>,
+    ) {
+        self.pop_input_level_at_end_of_job()
+            .expect("profiling ordered reuse retires its source frame");
+        let words = stores.token_list(tokens);
+        self.push_token_level(
+            crate::input::PackedTokenSpanHandle::durable(words),
+            crate::input::TokenBehavior::Ordinary,
+            crate::input::RetirementBehavior::Pop,
+            crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
+        );
+        let Some(crate::input::InputLevel::Tokens(tokens)) = self.input.levels.last_mut() else {
+            panic!("profiling ordered reuse installs a token frame");
+        };
+        tokens.retirement = crate::input::RetirementBehavior::StopAtEnd;
     }
 
     /// Reuses one physical input-stack row repeatedly after its current
@@ -2571,10 +2626,15 @@ impl<G> CommandState<G> {
         open_depths: Option<Box<crate::input::SourceOpenDepths>>,
     ) -> InputLevelId {
         let identity = self.allocate_input_level_identity();
+        let slot_key = crate::input::SourceSlotKey::new(self.next_source_slot_incarnation);
+        self.next_source_slot_incarnation = self
+            .next_source_slot_incarnation
+            .checked_add(1)
+            .expect("source slot incarnation space exhausted");
         self.push_input_level(InputLevel::Source(SourceLevel {
             frame: crate::input::PackedInputFrame::source(identity.0, registered.id),
             slot: Box::new(crate::input::SourceSlot::new(
-                identity,
+                slot_key,
                 SourceCursor::new(registered),
                 every_eof,
                 open_depths,

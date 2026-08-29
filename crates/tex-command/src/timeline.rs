@@ -211,6 +211,11 @@ pub(crate) struct LogicalStack<T: LogicalStackElement> {
     recording: bool,
     interval: u64,
     touched: Vec<u64>,
+    /// The current row occupant has an inline, compact, or stored inverse in
+    /// this interval. Reusing such a row must first preserve that occupant as
+    /// a replacement, even though ordinary first-touch coalescing has already
+    /// marked the physical row touched.
+    partially_captured: Vec<u64>,
     coalesced_mutations: u64,
     payload_admissions: u64,
     stored_state_captures: u64,
@@ -255,6 +260,7 @@ impl<T: LogicalStackElement> Default for LogicalStack<T> {
             recording: false,
             interval: 1,
             touched: Vec::new(),
+            partially_captured: Vec::new(),
             coalesced_mutations: 0,
             payload_admissions: 0,
             stored_state_captures: 0,
@@ -331,7 +337,11 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         if self.top == self.rows.len() {
             self.rows.push(value);
             self.touched.push(self.interval);
-        } else if self.recording && self.touched[self.top] != self.interval {
+            self.partially_captured.push(0);
+        } else if self.recording
+            && (self.touched[self.top] != self.interval
+                || self.partially_captured[self.top] == self.interval)
+        {
             self.displaced.warm_first_page();
             let old = std::mem::replace(&mut self.rows[self.top], value);
             let payload = self.displaced.insert(old);
@@ -340,6 +350,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
                 payload,
             });
             self.touched[self.top] = self.interval;
+            self.partially_captured[self.top] = 0;
         } else {
             // This physical row was admitted after the newest observable
             // mark, or was already replaced once in its interval. No retained
@@ -350,6 +361,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             // the stack high water, not one displaced payload per push.
             self.rows[self.top] = value;
             self.touched[self.top] = self.interval;
+            self.partially_captured[self.top] = 0;
         }
         self.top += 1;
     }
@@ -361,6 +373,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         if !self.recording {
             drop(self.rows.pop());
             self.touched.pop();
+            self.partially_captured.pop();
         }
         Some(result)
     }
@@ -371,6 +384,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         }
         self.top -= 1;
         self.touched.pop();
+        self.partially_captured.pop();
         self.rows.pop()
     }
 
@@ -416,6 +430,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             payload,
         });
         self.touched[index] = self.interval;
+        self.partially_captured[index] = self.interval;
         self.owner_swaps = self.owner_swaps.saturating_add(1);
         Some(result)
     }
@@ -428,6 +443,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         if !self.recording {
             self.rows.truncate(top);
             self.touched.truncate(top);
+            self.partially_captured.truncate(top);
         }
         true
     }
@@ -580,6 +596,11 @@ impl<T: LogicalStackElement> LogicalStack<T> {
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u64>()),
             )
+            .saturating_add(
+                self.partially_captured
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
             .saturating_add(self.undo.retained_bytes())
             .saturating_add(self.displaced.retained_bytes())
             .saturating_add(self.compact_states.retained_bytes())
@@ -610,6 +631,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             return;
         }
         self.touched[index] = self.interval;
+        self.partially_captured[index] = self.interval;
         let index = u32::try_from(index).expect("logical stack index fits u32");
         match self.rows[index as usize].capture_state() {
             CapturedStackState::Inline(state) => {

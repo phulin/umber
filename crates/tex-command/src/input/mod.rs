@@ -17,7 +17,7 @@ pub(crate) use levels::{
     PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
     PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace, RetirementBehavior,
     SourceLevel, SourceLevelExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot,
-    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
+    SourceSlotKey, StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{

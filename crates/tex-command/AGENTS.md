@@ -83,10 +83,11 @@ collector (see `src/conditionals.rs`).
   first-touch inline execution state or generation-checked handles into a
   reusable stored-state/displaced-payload slab. Input source owner swaps move
   through that same ordered stored-state lane; they are not a separately
-  settled source journal. A row admitted or already
-  replaced after the newest observable mark is overwritten directly on
-  pop/push reuse; only the first replacement of a marked version retains a
-  displaced payload. Physical input, parameter, condition, group, aftergroup,
+  settled source journal. A row admitted or already replaced after the newest
+  observable mark is overwritten directly on pop/push reuse only while its
+  current occupant has no compact or stored inverse; partially captured reuse
+  first journals a replacement. Only required marked or partially captured
+  versions retain displaced payloads. Physical input, parameter, condition, group, aftergroup,
   and alignment rows survive a logical pop while a checkpoint can reach them.
   Fixed marks retain logical tops and packed journal positions; reject redoes
   the detached accepted suffix and accept releases its obsolete slab slots
@@ -174,7 +175,9 @@ collector (see `src/conditionals.rs`).
   resolution; there is no raw command envelope or second delivery slot. A
   source row points to one stable checked owner slot. Ordinary history stores
   only its copy-small lexer cursor; cold line, backing, and everyeof changes
-  move prior owners into the same logical-stack journal. The module also owns cold backup source coordinates,
+  move prior owners into the same logical-stack journal. The slot's runtime-only
+  incarnation never rolls back with its semantic `InputLevelId`, so stale or
+  foreign compact and stored inverses fail before mutation. The module also owns cold backup source coordinates,
   explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
   reuse, and orthogonal delivery/retirement classifications. A source slot's
   optional `open_depths` owner is `\tracingnesting`'s own record. Nested source

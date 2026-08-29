@@ -53,6 +53,8 @@ struct PrefixPlateauCounts {
 struct SourceHistoryCounts {
     lex_first_touch: Counts,
     cold_owner_swap: Counts,
+    lex_ordered_row_reuse: Counts,
+    cold_ordered_row_reuse: Counts,
 }
 
 fn main() {
@@ -88,6 +90,8 @@ fn main() {
     }
     assert_eq!(source_history.lex_first_touch, Counts::ZERO);
     assert_eq!(source_history.cold_owner_swap, Counts::ZERO);
+    assert_eq!(source_history.lex_ordered_row_reuse, Counts::ZERO);
+    assert_eq!(source_history.cold_ordered_row_reuse, Counts::ZERO);
     let prefix_plateau = run_prefix_plateau(10_000_000);
     assert_eq!(prefix_plateau.live_frames, 1);
     assert_eq!(prefix_plateau.frame_capacity, 128);
@@ -126,6 +130,15 @@ fn run_source_history_fixture() -> SourceHistoryCounts {
             .open_registered_source(source)
             .expect("source-history fixture opens");
         command.profile_prepare_source_line(13);
+        let token_words = [TokenWord::pack(Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        })];
+        let tokens = universe
+            .command_context()
+            .expect("source-history token context")
+            .allocate_token_list(&token_words)
+            .expect("source-history token list");
         let summary = command
             .publish_summary(universe)
             .expect("source-history checkpoint");
@@ -160,9 +173,63 @@ fn run_source_history_fixture() -> SourceHistoryCounts {
             .restore_summary(&summary, universe)
             .expect("source owner cleanup restores");
 
+        {
+            let stores = universe
+                .command_context()
+                .expect("source-history warm reuse context");
+            command.profile_source_lex_then_token_row_reuse(&stores, tokens.clone());
+        }
+        command
+            .restore_summary(&summary, universe)
+            .expect("source lexer reuse warmup restores");
+        let before = command.profile_timeline_counters();
+        let (_, lex_ordered_row_reuse) = measure(|| {
+            let stores = universe
+                .command_context()
+                .expect("source-history measured reuse context");
+            command.profile_source_lex_then_token_row_reuse(&stores, tokens.clone());
+        });
+        let after = command.profile_timeline_counters();
+        assert_eq!(after.full_frame_history_clones, 0);
+        assert_eq!(after.logical_records - before.logical_records, 2);
+        assert_eq!(
+            after.logical_stored_state_captures - before.logical_stored_state_captures,
+            1
+        );
+        assert_eq!(after.logical_owner_swaps, before.logical_owner_swaps);
+        command
+            .restore_summary(&summary, universe)
+            .expect("source lexer ordered reuse restores");
+
+        {
+            let stores = universe
+                .command_context()
+                .expect("source-history warm owner reuse context");
+            command.profile_source_owner_then_token_row_reuse(&stores, tokens.clone(), 13);
+        }
+        command
+            .restore_summary(&summary, universe)
+            .expect("source owner reuse warmup restores");
+        let before = command.profile_timeline_counters();
+        let (_, cold_ordered_row_reuse) = measure(|| {
+            let stores = universe
+                .command_context()
+                .expect("source-history measured owner reuse context");
+            command.profile_source_owner_then_token_row_reuse(&stores, tokens.clone(), 13);
+        });
+        let after = command.profile_timeline_counters();
+        assert_eq!(after.full_frame_history_clones, 0);
+        assert_eq!(after.logical_records - before.logical_records, 2);
+        assert_eq!(after.logical_owner_swaps - before.logical_owner_swaps, 1);
+        command
+            .restore_summary(&summary, universe)
+            .expect("source owner ordered reuse restores");
+
         SourceHistoryCounts {
             lex_first_touch,
             cold_owner_swap,
+            lex_ordered_row_reuse,
+            cold_ordered_row_reuse,
         }
     })
     .expect("source-history universe")

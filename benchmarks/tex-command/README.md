@@ -101,8 +101,11 @@ and pops one input frame after warming its physical depth; it requires zero
 allocation, no new logical undo record, and no additional displaced payload.
 The source-history fixture separately requires zero allocation for 8,192
 copy-small lexer mutations (one stored-state capture and 8,191 coalesces) and
-for one cold loaded-line owner swap. Both rows require zero full source/frame
-history clones; the latter must add exactly one ordered owner-swap record.
+for one cold loaded-line owner swap. After warming, it also measures compact
+and cold-owner source inverses followed by pop, physical-row token replacement,
+and replacement-frame mutation. Both ordered-reuse rows require zero allocation,
+zero full source/frame clones, and exactly the required inverse plus replacement
+records; the cold row must add exactly one ordered owner swap.
 The gate also rejects a candidate mutation, releases one obsolete prefix, and
 forks the surviving accepted mark again to prove exact rollback, lineage
 isolation, and prefix-floor validity. Finally it measures 10,000,000 successive

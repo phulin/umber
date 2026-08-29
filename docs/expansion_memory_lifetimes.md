@@ -532,6 +532,11 @@ An input level owns either one stable pointer to an authoritative `SourceSlot`
 or a classified token cursor. The source slot owns its move-only
 `SourceCursor`, registered/replacement backing, reduced-spelling arena,
 `everyeof`, and optional boxed open-depth snapshot until EOF retirement. A
+runtime-only monotonic slot incarnation is independent of rollback-reused
+semantic `InputLevelId`; every compact and cold inverse validates it before
+mutation. If a partially captured source occupant is popped and its physical
+row reused in the same interval, the ordered history preserves a row
+replacement before the new occupant becomes eligible for direct reuse. A
 24-byte copy-only lexer cursor is the only ordinary source execution state;
 control-word and `^^` probes copy it without cloning an `Arc`, `Vec`, or `Box`.
 The existing `LogicalStack<InputLevel>` stores compact lexer first touches and
@@ -711,8 +716,10 @@ Checkpoint history retains only frame versions that an observable mark can
 name. `LogicalStack` admits a frame into one reusable physical row and tags
 that row with the current checkpoint interval. A push after a pop overwrites
 the row directly when it was admitted or already replaced in that same
-interval: no intervening checkpoint or operation mark can observe the old
-payload. The first replacement of a row visible at a mark moves its old
+interval and its current occupant has no compact or stored inverse: no
+intervening checkpoint or operation mark can observe the old payload. A
+partially captured occupant is replacement-visible even in that interval, so
+reuse moves it aside before its inverse can address the new row. The first replacement of a row visible at a mark moves its old
 payload into one generation-checked slab slot and journals only that handle;
 later replacements and mutable cursor, phase, or status changes coalesce in
 the same interval. Acceptance, rejection, or rollback releases the required
