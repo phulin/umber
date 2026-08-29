@@ -15,8 +15,8 @@ use super::{
 };
 
 /// Result of one admission of the current input top.
-pub(crate) enum InputTopTransition {
-    Delivered,
+pub(crate) enum InputTopTransition<'slot, G> {
+    Delivered(crate::command::RawCommand<'slot, G>),
     ParameterPushed(InputLevelId),
     InvalidCharacter,
     NeedLine(InputLevelId),
@@ -255,15 +255,16 @@ impl<G> CommandState<G> {
     /// command value in place. Physical-line acquisition is deliberately a
     /// separate transition: a cursor without a loaded line returns
     /// [`InputTopTransition::NeedLine`] without loading or journaling one.
-    pub(crate) fn transition_input_top_into(
+    pub(crate) fn next_raw_into<'slot>(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
         create_control_sequences: bool,
-        destination: &mut crate::CurrentCommand<G>,
-    ) -> Result<InputTopTransition, ()> {
+        destination: crate::command::EmptyCommand<'slot, G>,
+    ) -> Result<InputTopTransition<'slot, G>, ()> {
         let profile = self.profile();
         let force_eof = self.source_force_eof();
-        let (delivered, delivered_by_parameter, admitted_identity) = {
+        let mut destination = Some(destination);
+        let (raw, cold, delivered_by_parameter, admitted_identity) = {
             let attempt = self.attempt.arena();
             let scratch = &self.scratch;
             let roots = &mut self.roots;
@@ -316,27 +317,35 @@ impl<G> CommandState<G> {
                             {
                                 return Err(());
                             }
-                            destination.write_raw_delivery(
-                                TracedTokenWord::from_parts(token.word, origin),
-                                identity.0,
-                                position,
-                                Some(token.provenance),
-                                true,
-                                direct_source_line,
-                                false,
-                            );
-                            (InputTopTransition::Delivered, false, Some(identity))
+                            let raw = destination
+                                .take()
+                                .expect("one raw destination per input transition")
+                                .write_raw_delivery(
+                                    TracedTokenWord::from_parts(token.word, origin),
+                                    identity.0,
+                                    position,
+                                    Some(token.provenance),
+                                    true,
+                                    direct_source_line,
+                                    false,
+                                );
+                            (Some(raw), None, false, Some(identity))
                         }
-                        CompactSourceTokenizationStep::InvalidCharacter => {
-                            (InputTopTransition::InvalidCharacter, false, Some(identity))
-                        }
+                        CompactSourceTokenizationStep::InvalidCharacter => (
+                            None,
+                            Some(InputTopTransition::InvalidCharacter),
+                            false,
+                            Some(identity),
+                        ),
                         CompactSourceTokenizationStep::NeedLine => (
-                            InputTopTransition::NeedLine(identity),
+                            None,
+                            Some(InputTopTransition::NeedLine(identity)),
                             false,
                             Some(identity),
                         ),
                         CompactSourceTokenizationStep::End => (
-                            InputTopTransition::SourceExhausted(identity),
+                            None,
+                            Some(InputTopTransition::SourceExhausted(identity)),
                             false,
                             Some(identity),
                         ),
@@ -344,17 +353,23 @@ impl<G> CommandState<G> {
                 }
                 InputLevel::Tokens(cursor) => {
                     let identity = cursor.identity();
-                    let delivered = cursor
-                        .deliver_into(PackedTokenSources::new(replay_lane, attempt), destination)?;
-                    if delivered {
+                    let raw = cursor.deliver_into(
+                        PackedTokenSources::new(replay_lane, attempt),
+                        destination
+                            .take()
+                            .expect("one raw destination per input transition"),
+                    )?;
+                    if raw.is_some() {
                         (
-                            InputTopTransition::Delivered,
+                            raw,
+                            None,
                             matches!(cursor.behavior, TokenBehavior::Parameter),
                             Some(identity),
                         )
                     } else {
                         (
-                            InputTopTransition::TokenExhausted(identity),
+                            None,
+                            Some(InputTopTransition::TokenExhausted(identity)),
                             false,
                             Some(identity),
                         )
@@ -362,12 +377,18 @@ impl<G> CommandState<G> {
                 }
                 InputLevel::MacroArgument(cursor) => {
                     let identity = cursor.identity();
-                    let delivered = cursor.deliver_into(scratch, destination)?;
-                    if delivered {
-                        (InputTopTransition::Delivered, true, Some(identity))
+                    let raw = cursor.deliver_into(
+                        scratch,
+                        destination
+                            .take()
+                            .expect("one raw destination per input transition"),
+                    )?;
+                    if raw.is_some() {
+                        (raw, None, true, Some(identity))
                     } else {
                         (
-                            InputTopTransition::TokenExhausted(identity),
+                            None,
+                            Some(InputTopTransition::TokenExhausted(identity)),
                             false,
                             Some(identity),
                         )
@@ -376,13 +397,14 @@ impl<G> CommandState<G> {
             }
         };
 
-        if !matches!(delivered, InputTopTransition::Delivered) {
-            return Ok(delivered);
+        if let Some(cold) = cold {
+            return Ok(cold);
         }
-        let Token::Param(slot) = destination.spelling().semantic_token() else {
-            return Ok(InputTopTransition::Delivered);
+        let raw = raw.ok_or(())?;
+        let Token::Param(slot) = raw.spelling().semantic_token() else {
+            return Ok(InputTopTransition::Delivered(raw));
         };
-        let delivering_level = InputLevelId(destination.delivery_stamp().input_level());
+        let delivering_level = InputLevelId(raw.delivery_coordinate().0);
         if admitted_identity != Some(delivering_level) {
             return Err(());
         }
@@ -390,7 +412,7 @@ impl<G> CommandState<G> {
             .replay_out_parameter_after_admission(delivering_level, delivered_by_parameter, slot)
             .map_err(|_| ())?
         {
-            OutParameterReplay::Literal => Ok(InputTopTransition::Delivered),
+            OutParameterReplay::Literal => Ok(InputTopTransition::Delivered(raw)),
             OutParameterReplay::Pushed(level) => Ok(InputTopTransition::ParameterPushed(level)),
         }
     }

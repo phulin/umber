@@ -149,19 +149,23 @@ impl CommandFuel {
         Ok(())
     }
 
-    pub(crate) fn record_token_frame(&mut self, scanner: bool) {
+    /// Commits the exact work produced by one resolved raw delivery.
+    ///
+    /// Resolution knows all three facts at once, so the hot pipeline updates
+    /// the singular ledger once instead of repeatedly reborrowing it. The
+    /// preceding fuel charge remains separate and happens before input work.
+    pub(crate) fn record_raw_delivery(&mut self, scanner: bool, meaning_lookup: bool) {
         self.work.token_frame_steps = self.work.token_frame_steps.saturating_add(1);
         if scanner {
             self.work.scanner_tokens = self.work.scanner_tokens.saturating_add(1);
+        }
+        if meaning_lookup {
+            self.work.meaning_lookups = self.work.meaning_lookups.saturating_add(1);
         }
     }
 
     pub(crate) fn record_expanded_delivery(&mut self) {
         self.work.expanded_deliveries = self.work.expanded_deliveries.saturating_add(1);
-    }
-
-    pub(crate) fn record_meaning_lookup(&mut self) {
-        self.work.meaning_lookups = self.work.meaning_lookups.saturating_add(1);
     }
 
     pub(crate) fn record_write_expansion(&mut self) {

@@ -372,6 +372,16 @@ active frame or owning view. Parameter and replacement reads dereference the
 shared immutable slice directly. Admission acquires one guard for the episode,
 not one lock or heap allocation per lookup.
 
+Each active next-command request also owns one reusable `CurrentCommand` slot.
+Reference-only `EmptyCommand`, `RawCommand`, and `ResolvedCommand` typestates
+prove its in-place progression without adding storage or moving the command.
+The input stack ends its raw borrow before a cold line, EOF, parameter push, or
+suspension transition; meaning resolution ends its dense-state borrow before
+outer recovery, alignment settlement, observation, or delivery. Raw delivery
+records token-frame, scanner, and optional meaning-lookup work together in the
+singular fuel ledger after resolution, while the admission charge remains at
+the canonical episode boundary.
+
 No borrow crosses an executor barrier. A suspended scanner, macro expansion,
 or resource request stores the current-generation execution lease plus ids and
 integer cursors:
@@ -1045,6 +1055,10 @@ perform zero heap allocation. An ordinary read requires:
 - no content hash or content comparison; and
 - no per-value heap-owner construction (an allocation-free `Rc::clone` for a
   true semantic alias is allowed).
+
+The next-command pipeline additionally requires one caller-owned command value,
+pointer-sized phase proofs only, and no raw-delivery envelope, duplicate command
+representation, or borrow retained across a cold input transition.
 
 TeX main-memory usage reads and capacity observations additionally perform one
 scalar projection. They never visit eqtb banks, register banks, definitions,

@@ -5,7 +5,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CurrentCommand, DeliveryStamp};
+use super::{CurrentCommand, DeliveryStamp, EmptyCommand, RawCommand, ResolvedCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
@@ -15,6 +15,18 @@ fn command_delivery_layout_stays_compact() {
     // provenance, and execution metadata in less than two 64-byte cache lines.
     assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 112);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
+    assert_eq!(
+        std::mem::size_of::<EmptyCommand<'_, ()>>(),
+        std::mem::size_of::<&mut CurrentCommand<()>>()
+    );
+    assert_eq!(
+        std::mem::size_of::<RawCommand<'_, ()>>(),
+        std::mem::size_of::<&mut CurrentCommand<()>>()
+    );
+    assert_eq!(
+        std::mem::size_of::<ResolvedCommand<'_, ()>>(),
+        std::mem::size_of::<&mut CurrentCommand<()>>()
+    );
 }
 
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
@@ -90,10 +102,13 @@ fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
             OriginId::UNKNOWN,
         );
         let slot = core::ptr::from_ref(&command);
-        command.write_raw_delivery(spelling, 17, 23, None, false, None, false);
-        assert_eq!(core::ptr::from_ref(&command), slot);
-        command.resolve_raw_delivery(29, &universe.command_context().expect("command context"));
-        assert_eq!(core::ptr::from_ref(&command), slot);
+        let raw = command
+            .empty_for_raw_delivery()
+            .write_raw_delivery(spelling, 17, 23, None, false, None, false);
+        assert_eq!(core::ptr::from_ref(raw.0), slot);
+        let resolved =
+            raw.resolve_in_place(29, &universe.command_context().expect("command context"));
+        assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
 
         fn prepare<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
             core::ptr::from_ref(command)
@@ -101,11 +116,14 @@ fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
         fn execute<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
             core::ptr::from_ref(command)
         }
-        assert_eq!(prepare(&command), slot);
-        assert_eq!(execute(&command), slot);
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23, 29));
+        assert_eq!(prepare(resolved.as_ref()), slot);
+        assert_eq!(execute(resolved.as_ref()), slot);
         assert_eq!(
-            command.meaning_ref(),
+            resolved.as_ref().delivery_stamp(),
+            DeliveryStamp::new(17, 23, 29)
+        );
+        assert_eq!(
+            resolved.as_ref().meaning_ref(),
             &ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'x',
                 cat: Catcode::Letter,
@@ -182,7 +200,7 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
         let baseline = definition.semantic_owner_count();
         let mut command = CurrentCommand::empty();
 
-        command.write_raw_delivery(
+        let raw = command.empty_for_raw_delivery().write_raw_delivery(
             TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN),
             3,
             5,
@@ -192,10 +210,10 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
             false,
         );
         assert_eq!(definition.semantic_owner_count(), baseline);
-        command.resolve_raw_delivery(7, &universe.command_context().expect("command context"));
+        raw.resolve_in_place(7, &universe.command_context().expect("command context"));
         assert_eq!(definition.semantic_owner_count(), baseline + 1);
 
-        command.write_raw_delivery(
+        let raw = command.empty_for_raw_delivery().write_raw_delivery(
             TracedTokenWord::pack(
                 Token::Char {
                     ch: 'x',
@@ -213,7 +231,7 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
         // Raw preparation does not manufacture another owner. Resolution is
         // the sole point that replaces the preceding resolved meaning.
         assert_eq!(definition.semantic_owner_count(), baseline + 1);
-        command.resolve_raw_delivery(17, &universe.command_context().expect("command context"));
+        raw.resolve_in_place(17, &universe.command_context().expect("command context"));
         assert_eq!(definition.semantic_owner_count(), baseline);
         assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13, 17));
     });

@@ -8,7 +8,7 @@ use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::command::{CurrentCommand, DeliveryStamp};
+use crate::command::{CurrentCommand, DeliveryStamp, ResolvedCommand};
 use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputRetirementAction,
@@ -1607,151 +1607,40 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.start_alignment_v_template(alignment, delimiter, delimiter_line)
     }
 
-    pub(super) fn get_next_canonical(
+    /// Runs the one TeX82 §341 next-command pipeline in the caller's final
+    /// slot: authoritative raw input, in-place meaning resolution, then one
+    /// delivery-policy settlement. Cold input transitions re-enter this loop
+    /// only after their slot typestate borrow has ended.
+    pub(super) fn next_command_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         *destination = Some(CurrentCommand::empty());
-        loop {
-            let command = destination
-                .as_mut()
-                .expect("canonical delivery owns its reusable command slot");
-            let raw_status = match self.deliver_raw_input_into(command) {
-                Ok(status) => status,
+        let result = (|| loop {
+            if let Some(episode) = self.take_ready_replay_completion() {
+                destination.take();
+                return Ok(super::DeliveryStatus::ReplayCompleted(episode));
+            }
+            let transition = self
+                .command
+                .next_raw_into(
+                    self.state,
+                    self.create_source_control_sequences,
+                    destination
+                        .as_mut()
+                        .expect("next-command pipeline owns its reusable command slot")
+                        .empty_for_raw_delivery(),
+                )
+                .map_err(|()| CommandError::input_invariant());
+            let transition = match transition {
+                Ok(transition) => transition,
                 Err(error) => {
                     destination.take();
                     return Err(error);
                 }
             };
-            match raw_status {
-                RawInputStatus::ReplayCompleted(episode) => {
-                    destination.take();
-                    return Ok(super::DeliveryStatus::ReplayCompleted(episode));
-                }
-                RawInputStatus::Delivered => {}
-                RawInputStatus::End => {
-                    // §360: a `\read` pseudo-file's line has ended, which is
-                    // `cur_cmd:=0; cur_chr:=0; return` -- an ordinary end of
-                    // line inside a live `read_toks`, not end of input, so
-                    // `check_outer_validity` must not run and no runaway may be
-                    // reported.
-                    if std::mem::take(&mut self.read_line_ended) {
-                        destination.take();
-                        return Ok(super::DeliveryStatus::End);
-                    }
-                    if self.recover_runaway_eof()? {
-                        continue;
-                    }
-                    destination.take();
-                    return Ok(super::DeliveryStatus::End);
-                }
-            }
-
-            let command = destination
-                .as_mut()
-                .expect("raw delivery retains its final command slot");
-            let spelling = command.spelling();
-            let delivery_stamp = DeliveryStamp::new(
-                command.delivery_stamp().input_level(),
-                command.delivery_stamp().position(),
-                self.next_delivery_sequence,
-            );
-            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            if matches!(
-                spelling.semantic_token(),
-                Token::Cs(_)
-                    | Token::Char {
-                        cat: Catcode::Active,
-                        ..
-                    }
-            ) {
-                self.record_meaning_lookup();
-            }
-            command.resolve_raw_delivery(delivery_stamp.sequence(), self.state);
-            self.record_token_frame(!matches!(
-                self.command.scanner.status(),
-                crate::processor::ScannerStatus::Normal
-            ));
-            if command.suppresses_expandable_control_sequence() {
-                command.suppress_expandable();
-            }
-            // Outer-validity recovery canonically backs up this exact raw
-            // delivery before substituting its recovery space.
-            self.last_delivery = Some(delivery_stamp);
-            self.check_outer_validity_entry(command)?;
-            let previous_align_state = self.command.alignment.align_state;
-            self.command.record_alignment_phase();
-            self.command.alignment.classify_delivery(command);
-            let adjustment = command.alignment_adjustment();
-            if self.command.alignment.active_alignment.is_some()
-                && !matches!(
-                    adjustment,
-                    crate::processor::AlignmentDeliveryAdjustment::None
-                )
-            {
-                self.observe(CommandObservation::Alignment(AlignmentRecord {
-                    transition: match adjustment {
-                        crate::processor::AlignmentDeliveryAdjustment::BeginGroup => "begin_group",
-                        crate::processor::AlignmentDeliveryAdjustment::EndGroup => "end_group",
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_) => "delimiter",
-                        crate::processor::AlignmentDeliveryAdjustment::None => unreachable!(),
-                    },
-                    alignment: self
-                        .command
-                        .alignment
-                        .active_alignment
-                        .map(|identity| identity.raw()),
-                    nesting: self.command.alignment_observation_nesting(),
-                    align_state: if matches!(
-                        adjustment,
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    ) {
-                        previous_align_state
-                    } else {
-                        self.command.alignment.align_state
-                    },
-                    delimiter: match adjustment {
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(delimiter) => {
-                            Some(delimiter.observation_name())
-                        }
-                        _ => None,
-                    },
-                    previous_align_state: matches!(
-                        adjustment,
-                        crate::processor::AlignmentDeliveryAdjustment::BeginGroup
-                            | crate::processor::AlignmentDeliveryAdjustment::EndGroup
-                    )
-                    .then_some(previous_align_state),
-                }));
-            }
-            if !matches!(
-                adjustment,
-                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-            ) {
-                self.observe_raw_delivery(command);
-            }
-            return Ok(super::DeliveryStatus::Command);
-        }
-    }
-
-    fn deliver_raw_input_into(
-        &mut self,
-        destination: &mut CurrentCommand<G>,
-    ) -> Result<RawInputStatus, CommandError> {
-        loop {
-            if let Some(episode) = self.take_ready_replay_completion() {
-                return Ok(RawInputStatus::ReplayCompleted(episode));
-            }
-            let transition = self
-                .command
-                .transition_input_top_into(
-                    self.state,
-                    self.create_source_control_sequences,
-                    destination,
-                )
-                .map_err(|()| CommandError::input_invariant())?;
-            match transition {
+            let raw = match transition {
                 InputTopTransition::Empty => {
                     observe!(
                         self,
@@ -1764,9 +1653,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                             position: 0,
                         }),
                     );
-                    return Ok(RawInputStatus::End);
+                    if self.raw_end_restarts()? {
+                        continue;
+                    }
+                    destination.take();
+                    return Ok(super::DeliveryStatus::End);
                 }
-                InputTopTransition::Delivered => return Ok(RawInputStatus::Delivered),
+                InputTopTransition::Delivered(raw) => raw,
                 InputTopTransition::ParameterPushed(parameter_level) => {
                     observe!(
                         self,
@@ -1799,7 +1692,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             SourceExhaustionStatus::End
                         )
                     {
-                        return Ok(RawInputStatus::End);
+                        if self.raw_end_restarts()? {
+                            continue;
+                        }
+                        destination.take();
+                        return Ok(super::DeliveryStatus::End);
                     }
                     continue;
                 }
@@ -1808,8 +1705,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.finish_exhausted_source(identity)?,
                         SourceExhaustionStatus::End
                     ) {
-                        return Ok(RawInputStatus::End);
+                        if self.raw_end_restarts()? {
+                            continue;
+                        }
+                        destination.take();
+                        return Ok(super::DeliveryStatus::End);
                     }
+                    continue;
                 }
                 InputTopTransition::TokenExhausted(identity) => {
                     let index = self
@@ -1829,29 +1731,141 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .ok_or_else(CommandError::input_invariant)?;
                     match self.retire_and_restart(identity)? {
                         RetirementRestart::Stop => {
-                            return Ok(RawInputStatus::End);
+                            if self.raw_end_restarts()? {
+                                continue;
+                            }
+                            destination.take();
+                            return Ok(super::DeliveryStatus::End);
                         }
                         RetirementRestart::Completed => continue,
                         RetirementRestart::Continue => continue,
                         RetirementRestart::EndV(level) => {
-                            destination.write_raw_delivery(
-                                TracedTokenWord::pack(
-                                    self.state.frozen_end_template_token(),
-                                    OriginId::UNKNOWN,
-                                ),
-                                level.0,
-                                u64::from(index),
-                                None,
-                                false,
-                                None,
-                                false,
-                            );
-                            return Ok(RawInputStatus::Delivered);
+                            let raw = destination
+                                .as_mut()
+                                .expect("next-command pipeline owns its reusable command slot")
+                                .empty_for_raw_delivery()
+                                .write_raw_delivery(
+                                    TracedTokenWord::pack(
+                                        self.state.frozen_end_template_token(),
+                                        OriginId::UNKNOWN,
+                                    ),
+                                    level.0,
+                                    u64::from(index),
+                                    None,
+                                    false,
+                                    None,
+                                    false,
+                                );
+                            raw
                         }
                     }
                 }
+            };
+
+            let meaning_lookup = raw.requires_meaning_lookup();
+            let (input_level, position) = raw.delivery_coordinate();
+            let delivery_stamp =
+                DeliveryStamp::new(input_level, position, self.next_delivery_sequence);
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+            let scanner = !matches!(
+                self.command.scanner.status(),
+                crate::processor::ScannerStatus::Normal
+            );
+            let resolved = raw.resolve_in_place(delivery_stamp.sequence(), self.state);
+            self.record_raw_delivery(scanner, meaning_lookup);
+            if let Err(error) = self.apply_delivery_rules(resolved, delivery_stamp) {
+                destination.take();
+                return Err(error);
             }
+            return Ok(super::DeliveryStatus::Command);
+        })();
+        if result.is_err() {
+            destination.take();
         }
+        result
+    }
+
+    /// Settles an input-end transition after every raw typestate borrow has
+    /// ended. `true` means outer-validity recovery installed new input and the
+    /// caller must re-enter the pipeline.
+    fn raw_end_restarts(&mut self) -> Result<bool, CommandError> {
+        // §360: a `\read` pseudo-file's line has ended, which is
+        // `cur_cmd:=0; cur_chr:=0; return` -- an ordinary end of line inside
+        // live `read_toks`, so no runaway recovery may run.
+        if std::mem::take(&mut self.read_line_ended) {
+            return Ok(false);
+        }
+        self.recover_runaway_eof()
+    }
+
+    /// Applies the remaining §341 delivery rules to one resolved command.
+    /// Resolution has ended its dense meaning borrow before this function can
+    /// perform recovery, alignment mutation, or observation.
+    fn apply_delivery_rules(
+        &mut self,
+        mut resolved: ResolvedCommand<'_, G>,
+        delivery_stamp: DeliveryStamp,
+    ) -> Result<(), CommandError> {
+        if resolved.as_ref().suppresses_expandable_control_sequence() {
+            resolved.as_mut().suppress_expandable();
+        }
+        // Outer-validity recovery canonically backs up this exact raw
+        // delivery before substituting its recovery space.
+        self.last_delivery = Some(delivery_stamp);
+        self.check_outer_validity_entry(resolved.as_mut())?;
+        let previous_align_state = self.command.alignment.align_state;
+        self.command.record_alignment_phase();
+        self.command.alignment.classify_delivery(resolved.as_mut());
+        let command = resolved.as_ref();
+        let adjustment = command.alignment_adjustment();
+        if self.command.alignment.active_alignment.is_some()
+            && !matches!(
+                adjustment,
+                crate::processor::AlignmentDeliveryAdjustment::None
+            )
+        {
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: match adjustment {
+                    crate::processor::AlignmentDeliveryAdjustment::BeginGroup => "begin_group",
+                    crate::processor::AlignmentDeliveryAdjustment::EndGroup => "end_group",
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_) => "delimiter",
+                    crate::processor::AlignmentDeliveryAdjustment::None => unreachable!(),
+                },
+                alignment: self
+                    .command
+                    .alignment
+                    .active_alignment
+                    .map(|identity| identity.raw()),
+                nesting: self.command.alignment_observation_nesting(),
+                align_state: if matches!(
+                    adjustment,
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                ) {
+                    previous_align_state
+                } else {
+                    self.command.alignment.align_state
+                },
+                delimiter: match adjustment {
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(delimiter) => {
+                        Some(delimiter.observation_name())
+                    }
+                    _ => None,
+                },
+                previous_align_state: matches!(
+                    adjustment,
+                    crate::processor::AlignmentDeliveryAdjustment::BeginGroup
+                        | crate::processor::AlignmentDeliveryAdjustment::EndGroup
+                )
+                .then_some(previous_align_state),
+            }));
+        }
+        if !matches!(
+            adjustment,
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+        ) {
+            self.observe_raw_delivery(command);
+        }
+        Ok(())
     }
 
     pub(crate) fn acquire_source_line(
@@ -2634,12 +2648,6 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
         Stored::Write => InputReason::Write,
         Stored::Discretionary => InputReason::UmberReplay(UmberReplayKind::Discretionary),
     }
-}
-
-enum RawInputStatus {
-    Delivered,
-    ReplayCompleted(crate::CommandReplayEpisode),
-    End,
 }
 
 enum SourceExhaustionStatus {

@@ -80,6 +80,23 @@ pub struct CurrentCommand<G> {
     delivery_flags: CommandDeliveryFlags,
 }
 
+/// Exclusive proof that the caller-owned command slot is ready for raw input.
+///
+/// The wrapper is only one mutable reference. It adds no storage and cannot
+/// outlive the caller's final [`CurrentCommand`]. Consuming it is the only
+/// production route to [`RawCommand`], so cold input transitions cannot leave
+/// a half-initialized command borrow live.
+pub(crate) struct EmptyCommand<'slot, G>(&'slot mut CurrentCommand<G>);
+
+/// Exclusive proof that raw spelling, provenance, and delivery coordinates
+/// have been written into the caller-owned command slot.
+pub(crate) struct RawCommand<'slot, G>(&'slot mut CurrentCommand<G>);
+
+/// Exclusive proof that meaning resolution completed in the same command
+/// slot. Delivery policy may now settle noexpand, outer validity, alignment,
+/// and observation exactly once.
+pub(crate) struct ResolvedCommand<'slot, G>(&'slot mut CurrentCommand<G>);
+
 /// Scalar delivery facts shared by the raw, resolved, and recovery phases.
 ///
 /// These bits replace the raw input-frame kind/flags and the final command's
@@ -309,16 +326,18 @@ impl<G> CurrentCommand<G> {
         state: &CommandContext<'_, G>,
     ) -> Self {
         let mut command = Self::empty();
-        command.write_raw_delivery(
-            spelling,
-            delivery.input_level,
-            delivery.position,
-            source_provenance,
-            direct_source,
-            direct_source_line,
-            false,
-        );
-        command.resolve_raw_delivery(delivery.sequence, state);
+        command
+            .empty_for_raw_delivery()
+            .write_raw_delivery(
+                spelling,
+                delivery.input_level,
+                delivery.position,
+                source_provenance,
+                direct_source,
+                direct_source_line,
+                false,
+            )
+            .resolve_in_place(delivery.sequence, state);
         command
     }
 
@@ -348,41 +367,34 @@ impl<G> CurrentCommand<G> {
         }
     }
 
-    /// Writes one raw input transition into this command's final storage.
-    ///
-    /// The destination is the unresolved slot created for this delivery
-    /// request. Parameter substitution may overwrite its raw fields before
-    /// resolution, but a resolved slot is never recycled in place. The
-    /// semantic fields therefore retain their initialized unresolved values
-    /// until [`Self::resolve_raw_delivery`] writes them once.
-    #[allow(clippy::too_many_arguments)]
+    /// Borrows this reusable caller-owned value as an empty raw destination.
     #[inline(always)]
-    pub(crate) fn write_raw_delivery(
-        &mut self,
-        spelling: TracedTokenWord,
-        input_level: u64,
-        position: u64,
-        source_provenance: Option<SourceProvenance>,
-        direct_source: bool,
-        direct_source_line: Option<u32>,
-        suppress_expandable: bool,
-    ) {
-        self.spelling = spelling;
-        self.delivery = DeliveryStamp::new(input_level, position, 0);
-        self.source_provenance = source_provenance;
-        self.direct_source_line = direct_source_line;
-        self.delivery_flags = CommandDeliveryFlags::default();
-        self.delivery_flags
-            .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
-        self.delivery_flags.set(
-            CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
-            suppress_expandable,
-        );
+    pub(crate) fn empty_for_raw_delivery(&mut self) -> EmptyCommand<'_, G> {
+        EmptyCommand(self)
+    }
+
+    /// Returns whether the raw spelling requires a dense meaning lookup.
+    #[inline(always)]
+    fn raw_requires_meaning_lookup(&self) -> bool {
+        matches!(
+            self.spelling.semantic_token(),
+            Token::Cs(_)
+                | Token::Char {
+                    cat: Catcode::Active,
+                    ..
+                }
+        )
+    }
+
+    /// Returns the input coordinate written by raw input before resolution.
+    #[inline(always)]
+    fn raw_delivery_coordinate(&self) -> (u64, u64) {
+        (self.delivery.input_level, self.delivery.position)
     }
 
     /// Resolves the raw spelling already held by this final command slot.
     #[inline(always)]
-    pub(crate) fn resolve_raw_delivery(&mut self, sequence: u64, state: &CommandContext<'_, G>) {
+    fn resolve_raw_delivery(&mut self, sequence: u64, state: &CommandContext<'_, G>) {
         self.delivery.sequence = sequence;
         let token = self.spelling.semantic_token();
         match token {
@@ -699,6 +711,83 @@ impl<G> CurrentCommand<G> {
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
         }
+    }
+}
+
+impl<'slot, G> EmptyCommand<'slot, G> {
+    /// Writes one raw input transition into the final caller-owned slot.
+    ///
+    /// Parameter substitution may discard this proof and overwrite the slot
+    /// on a later input transition. No semantic consumer can obtain a
+    /// [`ResolvedCommand`] until resolution consumes the resulting raw proof.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub(crate) fn write_raw_delivery(
+        self,
+        spelling: TracedTokenWord,
+        input_level: u64,
+        position: u64,
+        source_provenance: Option<SourceProvenance>,
+        direct_source: bool,
+        direct_source_line: Option<u32>,
+        suppress_expandable: bool,
+    ) -> RawCommand<'slot, G> {
+        let command = self.0;
+        command.spelling = spelling;
+        command.delivery = DeliveryStamp::new(input_level, position, 0);
+        command.source_provenance = source_provenance;
+        command.direct_source_line = direct_source_line;
+        command.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
+        command.delivery_flags = CommandDeliveryFlags::default();
+        command
+            .delivery_flags
+            .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
+        command.delivery_flags.set(
+            CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
+            suppress_expandable,
+        );
+        RawCommand(command)
+    }
+}
+
+impl<'slot, G> RawCommand<'slot, G> {
+    #[inline(always)]
+    pub(crate) fn spelling(&self) -> TracedTokenWord {
+        self.0.spelling
+    }
+
+    #[inline(always)]
+    pub(crate) fn delivery_coordinate(&self) -> (u64, u64) {
+        self.0.raw_delivery_coordinate()
+    }
+
+    #[inline(always)]
+    pub(crate) fn requires_meaning_lookup(&self) -> bool {
+        self.0.raw_requires_meaning_lookup()
+    }
+
+    /// Completes the same caller-owned slot in place and ends the dense
+    /// meaning borrow before delivery policy can mutate command state.
+    #[inline(always)]
+    pub(crate) fn resolve_in_place(
+        self,
+        sequence: u64,
+        state: &CommandContext<'_, G>,
+    ) -> ResolvedCommand<'slot, G> {
+        self.0.resolve_raw_delivery(sequence, state);
+        ResolvedCommand(self.0)
+    }
+}
+
+impl<'slot, G> ResolvedCommand<'slot, G> {
+    #[inline(always)]
+    pub(crate) fn as_ref(&self) -> &CurrentCommand<G> {
+        self.0
+    }
+
+    #[inline(always)]
+    pub(crate) fn as_mut(&mut self) -> &mut CurrentCommand<G> {
+        self.0
     }
 }
 

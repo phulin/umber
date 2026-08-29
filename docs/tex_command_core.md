@@ -186,13 +186,16 @@ character or a packed stable control-sequence identity. Canonically named
 methods remain as thin entry points; they do not own alternate fetch loops.
 
 The driver is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request; raw resolution and
-expanded settlement construct or mutate the command in that slot. The return
-is only a compact `DeliveryStatus` naming end of input, command completion,
-replay completion, pending observation, or an alignment boundary. A command
-moves out of this slot only into its final consumer or the one typed expansion
-suspension slot at a real resource barrier. There is no process-global slot,
-mailbox, destination inference, or nested-request reuse.
+`Option<CurrentCommand<G>>` slot for that active request. The private
+`next_command_into` pipeline advances that value through reference-only
+`EmptyCommand`, `RawCommand`, and `ResolvedCommand` typestates: input writes raw
+facts, resolution completes the same address, and delivery policy settles it
+once. The return is only a compact `DeliveryStatus` naming end of input,
+command completion, replay completion, pending observation, or an alignment
+boundary. A command moves out of this slot only into its final consumer or the
+one typed expansion suspension slot at a real resource barrier. There is no
+process-global slot, mailbox, destination inference, nested-request reuse, or
+second raw representation.
 
 The input side writes into that same final command value. The top input level
 keeps its packed frame position, backing handle, source cursor,
@@ -203,7 +206,9 @@ flags directly into `CurrentCommand`, and advances the fixed frame in place.
 A macro parameter candidate pushes its argument range and overwrites the same
 unresolved value on the next iteration. No raw command envelope is created or
 copied, and only a resolved command may enter a scanner or resource
-continuation.
+continuation. Empty, line-acquisition, EOF, parameter-push, invalid-character,
+and token-retirement transitions carry no slot borrow, so every cold action
+runs outside the live raw phase.
 
 The command state admits that top row once per input transition. A source
 cursor without a loaded line returns `NeedLine`; it never reconstructs lower
@@ -223,13 +228,15 @@ suspension can mutate state. Assignment level remains solely in the dense bank,
 so delivered-command ownership does not duplicate journaling or reinterpret a
 meaning after delivery.
 
-`CurrentCommand::resolve_raw_delivery` resolves the spelling already stored in
-the caller destination, so the remaining delivery steps mutate and observe
-that one final command in place. Alignment classification writes its exact
-`AlignmentDeliveryAdjustment` into the same command before raw observation;
-backup later consumes that recorded adjustment rather than reclassifying the
-spelling. Internal ErrorStop deletion, math-shift lookahead, and recovery-list
-draining likewise provide their discard-or-backup slot directly to the driver.
+Consuming `RawCommand::resolve_in_place` resolves the spelling already stored
+in the caller destination and returns the only `ResolvedCommand` proof. One
+delivery settlement then applies `\noexpand`, outer-validity recovery,
+alignment classification, and optional observation in canonical order.
+Alignment classification writes its exact `AlignmentDeliveryAdjustment` into
+the same command before raw observation; backup later consumes that recorded
+adjustment rather than reclassifying the spelling. Internal ErrorStop deletion,
+math-shift lookahead, and recovery-list draining likewise provide their
+discard-or-backup slot directly to the driver.
 
 The value-returning entry points are conveniences over the same destination
 driver; the executor hot loop and destination-aware callers use

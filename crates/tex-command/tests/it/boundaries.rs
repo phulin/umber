@@ -120,40 +120,52 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         .expect("read input-top transition");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
         .expect("read input-level representation");
+    let command = fs::read_to_string(manifest_dir.join("src/command.rs"))
+        .expect("read current-command typestate");
 
     assert_eq!(
-        next.matches("fn deliver_raw_input_into(").count(),
+        next.matches("fn next_command_into(").count(),
         1,
-        "the command core must have exactly one destination-directed input delivery loop"
+        "the command core must have exactly one destination-directed next-command pipeline"
     );
     assert_eq!(
-        next.matches("fn get_next_canonical(").count(),
+        next.matches("fn apply_delivery_rules(").count(),
         1,
-        "the command core must have exactly one canonical raw-command loop"
+        "the next-command pipeline must settle each resolved delivery once"
     );
-    for retired in ["fn take_input_token(", "ActiveInput", "DeliveredToken"] {
+    for retired in [
+        "fn take_input_token(",
+        "fn deliver_raw_input_into(",
+        "fn get_next_canonical(",
+        "ActiveInput",
+        "DeliveredToken",
+    ] {
         assert!(
             !next.contains(retired),
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
     assert!(next.contains("Some(CurrentCommand::empty())"));
-    assert!(next.contains("self.deliver_raw_input_into(command)"));
-    assert!(next.contains("command.resolve_raw_delivery("));
-    assert!(levels.contains("destination: &mut crate::CurrentCommand<G>"));
+    assert!(next.contains(".next_raw_into("));
+    assert!(next.contains("raw.resolve_in_place("));
+    assert!(next.contains("self.apply_delivery_rules(resolved, delivery_stamp)"));
+    assert!(command.contains("struct EmptyCommand<'slot, G>"));
+    assert!(command.contains("struct RawCommand<'slot, G>"));
+    assert!(command.contains("struct ResolvedCommand<'slot, G>"));
+    assert!(levels.contains("crate::command::EmptyCommand<'slot, G>"));
     for retired in ["RawDeliverySlot", "resolve_into"] {
         assert!(
-            !format!("{next}\n{levels}").contains(retired),
+            !format!("{next}\n{levels}\n{command}").contains(retired),
             "raw delivery must write the canonical command directly, without {retired}"
         );
     }
     assert_eq!(
-        input_stack.matches("fn transition_input_top_into(").count(),
+        input_stack.matches("fn next_raw_into<'slot>(").count(),
         1,
         "source and stored input must share one destination-directed top transition"
     );
     let input_top_transition = input_stack
-        .split("fn transition_input_top_into(")
+        .split("fn next_raw_into<'slot>(")
         .nth(1)
         .and_then(|tail| tail.split("/// Acquires, firms, registers").next())
         .expect("locate warmed input-top transition");
@@ -174,7 +186,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "canonical command delivery must not carry source-name creation policy"
     );
     assert_eq!(
-        expansion.matches("self.get_next_canonical(").count(),
+        expansion.matches("self.next_command_into(").count(),
         2,
         "raw and expanded drivers must share canonical ID delivery"
     );
@@ -683,7 +695,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     );
     assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
     assert_eq!(
-        next.matches("self.command.alignment.classify_delivery(")
+        next.matches(".classify_delivery(resolved.as_mut())")
             .count(),
         1
     );

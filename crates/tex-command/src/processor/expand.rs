@@ -993,7 +993,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if destination.is_none() {
                 self.last_delivery = None;
                 self.charge_command_action()?;
-                match self.get_next_canonical(destination)? {
+                match self.next_command_into(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
@@ -1041,7 +1041,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if destination.is_none() {
                 self.last_delivery = None;
                 self.charge_command_action()?;
-                match self.get_next_canonical(destination)? {
+                match self.next_command_into(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {

@@ -237,17 +237,17 @@ impl<G> MacroArgumentCursor<G> {
     }
 
     #[inline(always)]
-    pub(crate) fn deliver_into(
+    pub(crate) fn deliver_into<'slot>(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        destination: &mut crate::CurrentCommand<G>,
-    ) -> Result<bool, ()> {
+        destination: crate::command::EmptyCommand<'slot, G>,
+    ) -> Result<Option<crate::command::RawCommand<'slot, G>>, ()> {
         let frame = self.frame;
         let position = frame.position();
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
-            return Ok(false);
+            return Ok(None);
         };
-        destination.write_raw_delivery(
+        let raw = destination.write_raw_delivery(
             TracedTokenWord::from_parts(word.token_word(), word.origin()),
             frame.identity(),
             u64::from(position),
@@ -261,7 +261,7 @@ impl<G> MacroArgumentCursor<G> {
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(true)
+        Ok(Some(raw))
     }
 }
 
@@ -282,20 +282,20 @@ impl<G> TokenCursor<G> {
 
     /// Delivers the canonical word at the fixed frame's scalar position.
     #[inline(always)]
-    pub(crate) fn deliver_into(
+    pub(crate) fn deliver_into<'slot>(
         &mut self,
         sources: PackedTokenSources<'_, G>,
-        destination: &mut crate::CurrentCommand<G>,
-    ) -> Result<bool, ()> {
+        destination: crate::command::EmptyCommand<'slot, G>,
+    ) -> Result<Option<crate::command::RawCommand<'slot, G>>, ()> {
         let frame = self.frame;
         let position = frame.position();
-        if !sources.deliver_at_into(&self.span, position, frame, destination) {
-            return Ok(false);
-        }
+        let Some(raw) = sources.deliver_at_into(&self.span, position, frame, destination) else {
+            return Ok(None);
+        };
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(true)
+        Ok(Some(raw))
     }
 }
 
@@ -401,77 +401,53 @@ impl<'a, G> PackedTokenSources<'a, G> {
     /// so this small direct match is the sole storage-domain boundary. No
     /// caller rebuilds a generic delivery object or repeats this routing.
     #[inline(always)]
-    pub(crate) fn deliver_at_into(
+    pub(crate) fn deliver_at_into<'slot>(
         &self,
         span: &PackedTokenSpanHandle<G>,
         position: u32,
         frame: PackedInputFrame,
-        destination: &mut crate::CurrentCommand<G>,
-    ) -> bool {
+        destination: crate::command::EmptyCommand<'slot, G>,
+    ) -> Option<crate::command::RawCommand<'slot, G>> {
         let index = position as usize;
-        match span {
+        let (word, origin, source_provenance) = match span {
             PackedTokenSpanHandle::Replay { replay, .. } => {
                 let Some((word, provenance)) = self.replay.get(*replay, index) else {
-                    return false;
+                    return None;
                 };
-                Self::write_stored(
-                    destination,
-                    frame,
-                    position,
-                    word.token_word(),
-                    word.origin(),
-                    provenance,
-                );
+                (word.token_word(), word.origin(), provenance)
             }
             PackedTokenSpanHandle::MacroReplacement { definition, .. } => {
                 let Some(word) = definition.replacement_word(index) else {
-                    return false;
+                    return None;
                 };
-                Self::write_stored(destination, frame, position, word, OriginId::UNKNOWN, None);
+                (word, OriginId::UNKNOWN, None)
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => {
                 let Ok(word) = self.attempt.token_word(*list, index) else {
-                    return false;
+                    return None;
                 };
-                Self::write_stored(
-                    destination,
-                    frame,
-                    position,
-                    word.token_word(),
-                    word.origin(),
-                    None,
-                );
+                (word.token_word(), word.origin(), None)
             }
             PackedTokenSpanHandle::DurableList { list, .. } => {
                 let Some(word) = list.word_at(index) else {
-                    return false;
+                    return None;
                 };
-                Self::write_stored(destination, frame, position, word, OriginId::UNKNOWN, None);
+                (word, OriginId::UNKNOWN, None)
             }
-        }
-        true
-    }
-
-    #[inline(always)]
-    fn write_stored(
-        destination: &mut crate::CurrentCommand<G>,
-        frame: PackedInputFrame,
-        position: u32,
-        word: TokenWord,
-        origin: OriginId,
-        source_provenance: Option<SourceProvenance>,
-    ) {
-        destination.write_raw_delivery(
-            TracedTokenWord::from_parts(word, origin),
-            frame.identity(),
-            u64::from(position),
-            source_provenance,
-            false,
-            None,
-            frame
-                .flags()
-                .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
-        );
+        };
+        Some(
+            destination.write_raw_delivery(
+                TracedTokenWord::from_parts(word, origin),
+                frame.identity(),
+                u64::from(position),
+                source_provenance,
+                false,
+                None,
+                frame
+                    .flags()
+                    .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
+            ),
+        )
     }
 }
 

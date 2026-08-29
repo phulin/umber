@@ -169,8 +169,9 @@ collector (see `src/conditionals.rs`).
   source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
-  caller's final `CurrentCommand` and advances only the packed frame scalar.
-  A parameter candidate overwrites the same unresolved value before meaning
+  caller's final `CurrentCommand` through a reference-only `EmptyCommand` to
+  `RawCommand` phase proof and advances only the packed frame scalar. A
+  parameter candidate overwrites the same unresolved value before meaning
   resolution; there is no raw command envelope or second delivery slot. A
   source row points to one stable checked owner slot. Ordinary history stores
   only its copy-small lexer cursor; cold line, backing, and everyeof changes
@@ -192,7 +193,8 @@ collector (see `src/conditionals.rs`).
   no inverse. Alternate owners live only in checked reusable slabs; there is no
   generic logical-stack adapter or second input representation.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  the one destination-directed source/token top transition, the singular
+  the one destination-directed `next_raw_into` source/token top transition,
+  whose cold results retain no command-slot borrow, the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, borrowed source-ancestry comparison with copy-only
@@ -205,7 +207,10 @@ collector (see `src/conditionals.rs`).
   level strings.
 - `src/processor/`: public borrow-only processor facade with specialized raw
   and expanded delivery loops, expansion, scanner-status, and alignment
-  orchestration. The loops share canonical token-to-current-meaning delivery;
+  orchestration. `next_command_into` is the one Empty-to-Raw-to-Resolved
+  in-place pipeline; its sole delivery settlement applies noexpand, outer
+  validity, alignment classification, and observation after dense resolution
+  has ended. The loops share canonical token-to-current-meaning delivery;
   creation permission exists only at source tokenization and is absent from
   delivery policy. The loops do not test a raw-versus-expanded mode on every
   token.
