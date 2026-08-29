@@ -894,20 +894,8 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         list: PageListId,
     ) -> Result<(), ForkArenaError> {
-        self.region.pub_arena.append_active_list(
-            &mut self.pool.chunks,
-            &mut builder.inner,
-            list.coordinate(),
-        )?;
-        if let Some(identity) = &mut builder.identity {
-            *identity = identity.concat(
-                list.sequence_identity()
-                    .expect("demand-enabled page list carries identity"),
-            );
-            builder.identity_work.combined_summaries =
-                builder.identity_work.combined_summaries.saturating_add(1);
-        }
-        Ok(())
+        let span = self.admit_span(list)?;
+        self.append_span_to_active_list(builder, span)
     }
 
     pub fn append_span_to_active_list(
@@ -939,38 +927,8 @@ impl<'a> PageMaterialArena<'a> {
         list: PageListId,
         selected: Range<usize>,
     ) -> Result<(), ForkArenaError> {
-        let selected_identity = if *self.semantic_identity_enabled {
-            let (identity, work) = self.region.pub_arena.append_active_list_range_summarized(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                list.coordinate(),
-                selected,
-                semantic_node_identity,
-            )?;
-            builder.identity_work.hashed_values = builder
-                .identity_work
-                .hashed_values
-                .saturating_add(work.hashed_values);
-            builder.identity_work.combined_summaries = builder
-                .identity_work
-                .combined_summaries
-                .saturating_add(work.combined_summaries);
-            Some(identity)
-        } else {
-            self.region.pub_arena.append_active_list_range(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                list.coordinate(),
-                selected,
-            )?;
-            None
-        };
-        if let (Some(identity), Some(selected_identity)) =
-            (&mut builder.identity, selected_identity)
-        {
-            *identity = identity.concat(selected_identity);
-        }
-        Ok(())
+        let span = self.admit_span(list)?;
+        self.append_span_range_to_active_list(builder, span, selected)
     }
 
     pub fn append_span_range_to_active_list(
@@ -1127,7 +1085,7 @@ impl<'a> PageMaterialArena<'a> {
         let coordinate = self
             .region
             .pub_arena
-            .admit_list(&self.pool.chunks, list.coordinate())?;
+            .admit_owned_list(&self.pool.chunks, list.coordinate())?;
         Ok(PageListSpan { list, coordinate })
     }
 
@@ -1153,8 +1111,8 @@ impl<'a> PageMaterialArena<'a> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_arena::NodeCursor<'_>, ForkArenaError> {
-        self.list(list)
-            .map(crate::node_arena::NodeCursor::fork_arena)
+        self.admit_span(list)
+            .and_then(|span| self.span_node_cursor(span))
     }
 
     pub fn span_node_cursor(
@@ -1335,7 +1293,15 @@ impl<'a> PageMaterialView<'a> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_arena::NodeCursor<'a>, ForkArenaError> {
-        self.list(list)
+        let validated = self
+            .state
+            .region
+            .pub_arena
+            .admit_owned_list(&self.pool.chunks, list.coordinate())?;
+        self.state
+            .region
+            .pub_arena
+            .validated_list(&self.pool.chunks, list.coordinate(), validated)
             .map(crate::node_arena::NodeCursor::fork_arena)
     }
 

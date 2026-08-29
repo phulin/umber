@@ -1722,25 +1722,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
-    pub(crate) fn append_active_list_range_summarized(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        builder: &mut ActiveListBuilder<T, Lane>,
-        list: ArenaListId<Lane>,
-        selected: Range<usize>,
-        item_identity: impl FnMut(&T) -> u64,
-    ) -> Result<(SemanticSequenceIdentity, SequenceSummaryWork), ForkArenaError> {
-        let validated = self.validate_list(pool, list)?;
-        self.append_validated_active_list_range_summarized(
-            pool,
-            builder,
-            list,
-            validated,
-            selected,
-            item_identity,
-        )
-    }
-
     pub(crate) fn append_validated_active_list_range_summarized(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -3507,6 +3488,52 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.validate_list(pool, list)
     }
 
+    /// Reconstitutes the compact traversal proof for a coordinate whose
+    /// structure was validated when the current semantic owner accepted it.
+    /// Foreign, stale, truncated, and noncanonical endpoint coordinates still
+    /// fail before a view or retained range is exposed.
+    pub(crate) fn admit_owned_list(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+    ) -> Result<ValidatedArenaList<Lane>, ForkArenaError> {
+        self.validate_pool(pool)?;
+        if list.is_empty() {
+            return (list == ArenaListId::empty())
+                .then_some(ValidatedArenaList {
+                    descriptor_first_position: 0,
+                    descriptor_last_position: 0,
+                    descriptor_last_key: list.first,
+                    descriptor_last_offset: 0,
+                    _lane: PhantomData,
+                })
+                .ok_or(ForkArenaError::InvalidRange);
+        }
+        if list.arena != self.owner || list.count == 0 {
+            return Err(ForkArenaError::ForeignArena);
+        }
+        let descriptor_first_position = self
+            .resolved_position(true, list.first)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let descriptor_capacity = pool.descriptors.chunk_capacity();
+        let descriptor_last_absolute = list.start as usize + list.count as usize - 1;
+        let descriptor_last_position =
+            descriptor_first_position + descriptor_last_absolute / descriptor_capacity;
+        let descriptor_last_key = self
+            .live_key_at(true, descriptor_last_position)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let descriptor_last_offset = (descriptor_last_absolute % descriptor_capacity) as u32;
+        let validated = ValidatedArenaList {
+            descriptor_first_position,
+            descriptor_last_position,
+            descriptor_last_key,
+            descriptor_last_offset,
+            _lane: PhantomData,
+        };
+        self.validate_checked_list(pool, list, validated)?;
+        Ok(validated)
+    }
+
     pub(crate) fn validated_list<'a>(
         &'a self,
         pool: &'a ChunkPool<T>,
@@ -3556,36 +3583,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<ValidatedArenaList<Lane>, ForkArenaError> {
-        self.validate_pool(pool)?;
+        let validated = self.admit_owned_list(pool, list)?;
         if list.is_empty() {
-            return (list == ArenaListId::empty())
-                .then_some(ValidatedArenaList {
-                    descriptor_first_position: 0,
-                    descriptor_last_position: 0,
-                    descriptor_last_key: list.first,
-                    descriptor_last_offset: 0,
-                    _lane: PhantomData,
-                })
-                .ok_or(ForkArenaError::InvalidRange);
+            return Ok(validated);
         }
-        if list.arena != self.owner || list.count == 0 {
-            return Err(ForkArenaError::ForeignArena);
-        }
-        let descriptor_first_position = self
-            .resolved_position(true, list.first)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let descriptor_capacity = pool.descriptors.chunk_capacity();
-        let descriptor_last_absolute = list.start as usize + list.count as usize - 1;
-        let descriptor_last_position =
-            descriptor_first_position + descriptor_last_absolute / descriptor_capacity;
-        let descriptor_last_key = self
-            .live_key_at(true, descriptor_last_position)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let descriptor_last_offset = (descriptor_last_absolute % descriptor_capacity) as u32;
         let mut cumulative_end = 0;
         for index in 0..list.count {
-            let entry =
-                self.descriptor_entry_at(pool, descriptor_first_position, list.start, index)?;
+            let entry = self.validated_descriptor_entry(pool, list, validated, index)?;
             cumulative_end = entry.cumulative_end;
             self.validate_raw_range(pool, entry.range)?;
             if entry
@@ -3598,13 +3602,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if cumulative_end != list.len {
             return Err(ForkArenaError::InvalidRange);
         }
-        Ok(ValidatedArenaList {
-            descriptor_first_position,
-            descriptor_last_position,
-            descriptor_last_key,
-            descriptor_last_offset,
-            _lane: PhantomData,
-        })
+        Ok(validated)
     }
 
     fn validate_checked_list(

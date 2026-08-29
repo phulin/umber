@@ -272,16 +272,20 @@ impl ModeList {
             return true;
         }
         let region = stores.page_node_region_id();
-        if self.page_region.is_some_and(|owner| owner != region)
-            || !self
-                .node_roots()
-                .into_iter()
-                .all(|root| stores.admits_page_node_closure(root))
-        {
-            return false;
+        match self.page_region {
+            Some(owner) => owner == region,
+            None => {
+                if !self
+                    .node_roots()
+                    .into_iter()
+                    .all(|root| stores.admits_page_node_closure(root))
+                {
+                    return false;
+                }
+                self.page_region = Some(region);
+                true
+            }
         }
-        self.page_region = Some(region);
-        true
     }
 
     fn admit_new_root<G>(&mut self, stores: &CommandContext<'_, G>, root: PageListId) -> bool {
@@ -351,7 +355,8 @@ impl ModeList {
     #[must_use]
     pub fn nodes<'a, G>(&self, stores: &'a CommandContext<'_, G>) -> NodeCursor<'a> {
         assert!(
-            self.validate_page_region(stores),
+            (!self.has_node_roots() && self.page_region.is_none())
+                || self.page_region == Some(stores.page_node_region_id()),
             "mode list root belongs to a foreign page region: stored={:?}, current={:?}, admitted={}",
             self.page_region,
             stores.page_node_region_id(),

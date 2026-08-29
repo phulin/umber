@@ -6,11 +6,11 @@ Page material has two deliberately different coordinate forms:
   state, page-builder state, journals, and checkpoint rows. It may cross a
   lifecycle boundary, so a receiving owner must validate it.
 - `PageListSpan` is the checked traversal capability minted from one
-  `PageListId` by the current `PageMaterialArena`. It records the resolved
-  descriptor position established by full list and payload-range validation.
-  Its fields and constructor are private. Ordinary traversal and retained-range
-  append accept this type and do not repeat `descriptor_entry` or
-  `validate_raw_range`.
+  owner-admitted `PageListId` by the current `PageMaterialArena`. It records
+  the descriptor endpoints established when construction or root admission
+  fully validated the list. Its fields and constructor are private. Ordinary
+  traversal and retained-range append accept this type and do not repeat
+  `descriptor_entry` or `validate_raw_range`.
 
 The span is not an owner, cache, copied node list, or public unchecked handle.
 It contains only the original coordinate and its validated descriptor
@@ -24,7 +24,7 @@ fails closed instead of resolving replacement storage.
 | Boundary                 | Input                                                                | Validation and result                                                                                                                                                                                                                                                                                                                          |
 | ------------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Construction             | Newly published payload and descriptors                              | Node publication rejects child coordinates outside the current arena. Builder finalization validates the complete canonical descriptor record once. Callers may explicitly admit the resulting `PageListId` as a `PageListSpan` before a traversal.                                                                                            |
-| Existing-owner traversal | `PageListSpan`                                                       | Cursor construction, indexed reads, iteration, full-list append, and subrange append reuse the checked descriptor position. They perform no list-wide descriptor/range walk and publish no copied payload.                                                                                                                                     |
+| Existing-owner traversal | Opaque `PageListId` already accepted by the current semantic owner   | Span admission checks the current arena, resolves the first and last descriptor keys, and verifies both generation/used bounds. `PageListSpan` then carries those endpoints through cursor construction, indexed reads, iteration, full-list append, and subrange append. No list-wide descriptor/range walk or copied payload is performed.   |
 | New root admission       | `PageListId` entering a mode list or page-builder root               | The receiver validates the complete list against the current `NodeRegionId`, then stores the region admission beside its roots. Repeated reads of unchanged roots use that admission instead of rescanning all roots.                                                                                                                          |
 | Operation rollback       | Operation mark plus active builder                                   | The active builder can roll back only its own appended suffix. Source spans admitted before the builder opened remain in the prefix. Any span into the discarded suffix fails the descriptor chunk generation/used-bound check. Aggregate rollback restores page roots and arena marks together and re-admits roots at the aggregate boundary. |
 | Checkpoint candidate     | Private checkpoint row                                               | Candidate begin validates the page-region key, node checkpoint mark, and builder mark before detaching any later owner. Accept/reject settles the complete arena and builder aggregates; traversal spans are not stored in checkpoint rows.                                                                                                    |
