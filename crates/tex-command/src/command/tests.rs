@@ -106,8 +106,9 @@ fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
             .empty_for_raw_delivery()
             .write_raw_delivery(spelling, 17, 23, None, false, None, false);
         assert_eq!(core::ptr::from_ref(raw.0), slot);
-        let resolved =
+        let (resolved, meaning_lookup) =
             raw.resolve_in_place(29, &universe.command_context().expect("command context"));
+        assert!(!meaning_lookup);
         assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
 
         fn prepare<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
@@ -210,7 +211,7 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
             false,
         );
         assert_eq!(definition.semantic_owner_count(), baseline);
-        raw.resolve_in_place(7, &universe.command_context().expect("command context"));
+        let _ = raw.resolve_in_place(7, &universe.command_context().expect("command context"));
         assert_eq!(definition.semantic_owner_count(), baseline + 1);
 
         let raw = command.empty_for_raw_delivery().write_raw_delivery(
@@ -231,7 +232,7 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
         // Raw preparation does not manufacture another owner. Resolution is
         // the sole point that replaces the preceding resolved meaning.
         assert_eq!(definition.semantic_owner_count(), baseline + 1);
-        raw.resolve_in_place(17, &universe.command_context().expect("command context"));
+        let _ = raw.resolve_in_place(17, &universe.command_context().expect("command context"));
         assert_eq!(definition.semantic_owner_count(), baseline);
         assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13, 17));
     });

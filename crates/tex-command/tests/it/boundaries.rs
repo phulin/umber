@@ -409,10 +409,13 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
-    assert!(expansion.contains("match self.expand_with_trace("));
+    assert!(expansion.contains("let expansion = self.expand_with_trace("));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("expand_owned_with_trace("));
+    assert!(expansion.contains("let mut fetch = destination.is_none();"));
+    assert!(expansion.contains("suspension moves the command out of its delivery slot"));
+    assert!(!expansion.contains("expand_owned_with_trace("));
+    assert!(!expansion.contains("delivery_driver_inner("));
     assert!(policies.contains("take_pending_expansion_work"));
     assert!(expansion.contains("ChildContinuation::capture("));
     assert!(expansion.contains("PendingExpansionChildDestination::Dispatch"));

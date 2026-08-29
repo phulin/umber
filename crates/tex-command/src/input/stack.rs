@@ -265,8 +265,7 @@ impl<G> CommandState<G> {
     ) -> Result<InputTopTransition<'slot, G>, ()> {
         let profile = self.profile();
         let force_eof = self.source_force_eof();
-        let mut destination = Some(destination);
-        let (raw, cold, delivered_by_parameter, admitted_identity) = {
+        let (raw, delivered_by_parameter, admitted_identity) = {
             let attempt = self.attempt.arena();
             let scratch = &self.scratch;
             let roots = &mut self.roots;
@@ -319,95 +318,56 @@ impl<G> CommandState<G> {
                             {
                                 return Err(());
                             }
-                            let raw = destination
-                                .take()
-                                .expect("one raw destination per input transition")
-                                .write_raw_delivery(
-                                    TracedTokenWord::from_parts(token.word, origin),
-                                    identity.0,
-                                    position,
-                                    Some(token.provenance),
-                                    true,
-                                    direct_source_line,
-                                    false,
-                                );
-                            (Some(raw), None, false, Some(identity))
+                            let raw = destination.write_raw_delivery(
+                                TracedTokenWord::from_parts(token.word, origin),
+                                identity.0,
+                                position,
+                                Some(token.provenance),
+                                true,
+                                direct_source_line,
+                                false,
+                            );
+                            (raw, false, identity)
                         }
-                        CompactSourceTokenizationStep::InvalidCharacter => (
-                            None,
-                            Some(InputTopTransition::InvalidCharacter),
-                            false,
-                            Some(identity),
-                        ),
-                        CompactSourceTokenizationStep::NeedLine => (
-                            None,
-                            Some(InputTopTransition::NeedLine(identity)),
-                            false,
-                            Some(identity),
-                        ),
-                        CompactSourceTokenizationStep::End => (
-                            None,
-                            Some(InputTopTransition::SourceExhausted(identity)),
-                            false,
-                            Some(identity),
-                        ),
+                        CompactSourceTokenizationStep::InvalidCharacter => {
+                            return Ok(InputTopTransition::InvalidCharacter);
+                        }
+                        CompactSourceTokenizationStep::NeedLine => {
+                            return Ok(InputTopTransition::NeedLine(identity));
+                        }
+                        CompactSourceTokenizationStep::End => {
+                            return Ok(InputTopTransition::SourceExhausted(identity));
+                        }
                     }
                 }
                 InputLevel::Tokens(cursor) => {
                     let identity = cursor.identity();
-                    let raw = cursor.deliver_into(
-                        PackedTokenSources::new(replay_lane, attempt),
-                        destination
-                            .take()
-                            .expect("one raw destination per input transition"),
-                    )?;
-                    if raw.is_some() {
-                        (
-                            raw,
-                            None,
-                            matches!(cursor.behavior, TokenBehavior::Parameter),
-                            Some(identity),
-                        )
-                    } else {
-                        (
-                            None,
-                            Some(InputTopTransition::TokenExhausted(identity)),
-                            false,
-                            Some(identity),
-                        )
-                    }
+                    let raw = cursor
+                        .deliver_into(PackedTokenSources::new(replay_lane, attempt), destination)?;
+                    let Some(raw) = raw else {
+                        return Ok(InputTopTransition::TokenExhausted(identity));
+                    };
+                    (
+                        raw,
+                        matches!(cursor.behavior, TokenBehavior::Parameter),
+                        identity,
+                    )
                 }
                 InputLevel::MacroArgument(cursor) => {
                     let identity = cursor.identity();
-                    let raw = cursor.deliver_into(
-                        scratch,
-                        destination
-                            .take()
-                            .expect("one raw destination per input transition"),
-                    )?;
-                    if raw.is_some() {
-                        (raw, None, true, Some(identity))
-                    } else {
-                        (
-                            None,
-                            Some(InputTopTransition::TokenExhausted(identity)),
-                            false,
-                            Some(identity),
-                        )
-                    }
+                    let Some(raw) = cursor.deliver_into(scratch, destination)? else {
+                        return Ok(InputTopTransition::TokenExhausted(identity));
+                    };
+                    (raw, true, identity)
                 }
             }
         };
 
-        if let Some(cold) = cold {
-            return Ok(cold);
-        }
-        let raw = raw.ok_or(())?;
         let Token::Param(slot) = raw.spelling().semantic_token() else {
             return Ok(InputTopTransition::Delivered(raw));
         };
         let delivering_level = InputLevelId(raw.delivery_coordinate().0);
-        if admitted_identity != Some(delivering_level) {
+        if admitted_identity != delivering_level {
             return Err(());
         }
         match self

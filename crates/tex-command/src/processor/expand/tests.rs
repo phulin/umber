@@ -65,6 +65,155 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
     });
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OrdinaryDeliveryEvidence {
+    slot_initializations: u64,
+    raw_writes: u64,
+    command_clones: u64,
+    token_frame_steps: u64,
+    meaning_lookups: u64,
+    expanded_deliveries: u64,
+    expansions: u64,
+    #[cfg(feature = "profiling")]
+    allocations: u64,
+    #[cfg(feature = "profiling")]
+    allocated_bytes: u64,
+}
+
+fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty definition");
+        let symbol = universe.intern("m").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let terminal = Token::Char {
+            ch: 'Z',
+            cat: Catcode::Letter,
+        };
+        let mut input = Vec::with_capacity((expansions + 1) * 2);
+        for _ in 0..2 {
+            input.resize(input.len() + expansions, Token::Cs(symbol.symbol()));
+            input.push(terminal);
+        }
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, input);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut destination = None;
+
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("warm ordinary expanded delivery"),
+                crate::DeliveryStatus::Command
+            );
+        }
+        assert_eq!(
+            destination
+                .take()
+                .expect("warm terminal command")
+                .spelling()
+                .semantic_token(),
+            terminal
+        );
+        let before_ownership = crate::command::command_ownership_counters();
+        let expansions_before = command.expansion.cumulative_expansions;
+        let work_before = fuel.work();
+
+        #[cfg(feature = "profiling")]
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        #[cfg(feature = "profiling")]
+        let before_allocations =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            #[cfg(feature = "profiling")]
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("ordinary expanded delivery"),
+                crate::DeliveryStatus::Command
+            );
+        }
+        #[cfg(feature = "profiling")]
+        let after_allocations =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+        let delivered = destination.expect("terminal command");
+        assert_eq!(delivered.spelling().semantic_token(), terminal);
+        assert_eq!(
+            delivered.meaning(),
+            Meaning::CharToken {
+                ch: 'Z',
+                cat: Catcode::Letter,
+            }
+        );
+        let after_ownership = crate::command::command_ownership_counters();
+        let work = fuel.work();
+        OrdinaryDeliveryEvidence {
+            slot_initializations: after_ownership.slot_initializations
+                - before_ownership.slot_initializations,
+            raw_writes: after_ownership.raw_writes - before_ownership.raw_writes,
+            command_clones: after_ownership.clones - before_ownership.clones,
+            token_frame_steps: work.token_frame_steps - work_before.token_frame_steps,
+            meaning_lookups: work.meaning_lookups - work_before.meaning_lookups,
+            expanded_deliveries: work.expanded_deliveries - work_before.expanded_deliveries,
+            expansions: command.expansion.cumulative_expansions - expansions_before,
+            #[cfg(feature = "profiling")]
+            allocations: after_allocations.calls - before_allocations.calls,
+            #[cfg(feature = "profiling")]
+            allocated_bytes: after_allocations.requested_bytes - before_allocations.requested_bytes,
+        }
+    })
+}
+
+#[test]
+fn one_and_4096_ordinary_expansions_reuse_one_slot_with_exact_linear_work() {
+    let one = empty_macro_delivery_evidence(1);
+    let many = empty_macro_delivery_evidence(4_096);
+
+    for (expansions, evidence) in [(1, one), (4_096, many)] {
+        assert_eq!(evidence.slot_initializations, 1);
+        assert_eq!(evidence.raw_writes, expansions + 1);
+        assert_eq!(evidence.command_clones, 0);
+        assert_eq!(evidence.token_frame_steps, expansions + 1);
+        assert_eq!(evidence.meaning_lookups, expansions);
+        assert_eq!(evidence.expanded_deliveries, 1);
+        assert_eq!(evidence.expansions, expansions);
+        #[cfg(feature = "profiling")]
+        {
+            assert_eq!(evidence.allocations, 0);
+            assert_eq!(evidence.allocated_bytes, 0);
+        }
+    }
+}
+
 #[test]
 fn noexpand_suppresses_exactly_one_expandable_delivery() {
     crate::test_harness::with_universe(|universe| {

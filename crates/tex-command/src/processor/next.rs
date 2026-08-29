@@ -1615,8 +1615,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
-        *destination = Some(CurrentCommand::empty());
+        // Expanded delivery keeps this same caller-owned value across every
+        // synchronous expansion. Raw input overwrites all delivery facts and
+        // meaning resolution overwrites the prior meaning, so rebuilding an
+        // empty command between tokens would only duplicate state movement.
+        if destination.is_none() {
+            *destination = Some(CurrentCommand::empty());
+        }
         let result = (|| loop {
             if let Some(episode) = self.take_ready_replay_completion() {
                 destination.take();
@@ -1759,7 +1764,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             };
 
-            let meaning_lookup = raw.requires_meaning_lookup();
             let (input_level, position) = raw.delivery_coordinate();
             let delivery_stamp =
                 DeliveryStamp::new(input_level, position, self.next_delivery_sequence);
@@ -1768,7 +1772,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal
             );
-            let resolved = raw.resolve_in_place(delivery_stamp.sequence(), self.state);
+            let (resolved, meaning_lookup) =
+                raw.resolve_in_place(delivery_stamp.sequence(), self.state);
             self.record_raw_delivery(scanner, meaning_lookup);
             if let Err(error) = self.apply_delivery_rules(resolved, delivery_stamp) {
                 destination.take();

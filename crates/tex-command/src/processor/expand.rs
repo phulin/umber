@@ -283,9 +283,9 @@ pub(super) enum UndefinedHandling {
     Preserve,
 }
 
-fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
     match meaning {
-        ResolvedMeaning::Static(meaning) => Some(meaning),
+        ResolvedMeaning::Static(meaning) => Some(*meaning),
         ResolvedMeaning::Macro { .. } => None,
     }
 }
@@ -554,7 +554,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .expect("command status initializes destination");
             if !matches!(
-                static_meaning(command.meaning()),
+                static_meaning(command.meaning_ref()),
                 Some(
                     Meaning::CharToken {
                         cat: Catcode::Space,
@@ -587,7 +587,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .expect("command status initializes destination");
             if !matches!(
-                static_meaning(command.meaning()),
+                static_meaning(command.meaning_ref()),
                 Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
@@ -899,25 +899,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.last_delivery = None;
-        let result = self.delivery_driver_inner(policy, destination);
-        if result.is_err() {
-            // A resource suspension has already moved the exact command into
-            // its typed expansion frame. Every other failure abandons the
-            // delivery. In both cases the caller slot and its DefinitionId
-            // owner must be empty, just as they were before raw delivery
-            // started, and a later episode must mint a fresh delivery proof.
-            destination.take();
-            self.last_delivery = None;
-        }
-        result
-    }
-
-    fn delivery_driver_inner(
-        &mut self,
-        policy: DeliveryPolicy,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        match policy.mode {
+        let result = (|| match policy.mode {
             DeliveryMode::Raw => {
                 debug_assert!(destination.is_none());
                 self.raw_delivery_driver(policy, destination)
@@ -981,7 +963,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command.transient.active_expansion_depth = depth;
                 result
             }
+        })();
+        if result.is_err() {
+            // A resource suspension has already moved the exact command into
+            // its typed expansion frame. Every other failure abandons the
+            // delivery. In both cases the caller slot and its DefinitionId
+            // owner must be empty, just as they were before raw delivery
+            // started, and a later episode must mint a fresh delivery proof.
+            destination.take();
+            self.last_delivery = None;
         }
+        result
     }
 
     fn raw_delivery_driver(
@@ -1037,8 +1029,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
         let mut suppress_first_expansion_trace = resumed_pending;
+        let mut fetch = destination.is_none();
         loop {
-            if destination.is_none() {
+            if fetch {
                 self.last_delivery = None;
                 self.charge_command_action()?;
                 match self.next_command_into(destination)? {
@@ -1059,12 +1052,12 @@ impl<G> CommandProcessor<'_, '_, G> {
 
             if std::mem::take(&mut first)
                 && expanded.first_command == FirstCommandPolicy::MainLoopCharacter
-                && is_main_loop_character(command.meaning())
+                && is_main_loop_character(command.meaning_ref())
             {
                 return Ok(DeliveryStatus::Command);
             }
             if matches!(
-                static_meaning(command.meaning()),
+                static_meaning(command.meaning_ref()),
                 Some(Meaning::ExpandablePrimitive(
                     ExpandablePrimitive::EndTemplate
                 ))
@@ -1089,7 +1082,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                 ) {
                     self.begin_scalar_alignment_v_template(command)?;
-                    *destination = None;
+                    fetch = true;
                     continue;
                 }
                 if expanded.fetch == ExpandedFetch::XToken {
@@ -1097,7 +1090,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // straight to §375, which backs up a `frozen_endv` token
                     // for this loop's own `get_next` to reread.
                     self.insert_frozen_endv()?;
-                    *destination = None;
+                    fetch = true;
                     continue;
                 }
                 destination
@@ -1114,11 +1107,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ));
             }
             if (expanded.undefined == UndefinedHandling::Preserve
-                && matches!(static_meaning(command.meaning()), Some(Meaning::Undefined)))
+                && matches!(
+                    static_meaning(command.meaning_ref()),
+                    Some(Meaning::Undefined)
+                ))
                 || !is_expandable_command(command)
                 || (expanded.protected_macros == ProtectedMacroHandling::Preserve
                     && matches!(
-                        command.meaning(),
+                        command.meaning_ref(),
                         ResolvedMeaning::Macro { flags, .. }
                             if flags.contains(MeaningFlags::PROTECTED)
                     ))
@@ -1134,20 +1130,31 @@ impl<G> CommandProcessor<'_, '_, G> {
             // bookkeeping, then resumes the enclosing expanded-token loop.
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
-            let command = destination
-                .take()
-                .expect("expanded destination contains a command");
-            match self.expand_owned_with_trace(
-                command,
-                !std::mem::take(&mut suppress_first_expansion_trace),
-            ) {
+            let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
+            let expansion = self.expand_with_trace(
+                destination
+                    .as_ref()
+                    .expect("expanded destination contains a command"),
+                report_trace,
+            );
+            let result = match expansion {
+                Ok(()) => Ok(()),
+                Err(failure) if failure.suspended.is_none() => Err(failure.error),
+                Err(failure) => self.finish_expansion_failure(
+                    destination
+                        .take()
+                        .expect("suspension moves the command out of its delivery slot"),
+                    failure,
+                ),
+            };
+            match result {
                 // TeX82 §394 resumes expanded delivery after both an ordinary
                 // runaway paragraph and §23's outer-validity recovery has
                 // aborted a macro match. The latter leaves the recovered
                 // outer token in backup input for its normal reread.
                 Ok(())
                 | Err(CommandError::ParagraphInMacroArgument)
-                | Err(CommandError::OuterInMacroArgument) => {}
+                | Err(CommandError::OuterInMacroArgument) => fetch = true,
                 Err(error) => {
                     return Err(error);
                 }
@@ -1241,17 +1248,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.expand_with_trace(command, true) {
             Ok(()) => Ok(()),
             Err(failure) => self.finish_expansion_failure(command.clone(), failure),
-        }
-    }
-
-    fn expand_owned_with_trace(
-        &mut self,
-        command: CurrentCommand<G>,
-        report_trace: bool,
-    ) -> Result<(), CommandError> {
-        match self.expand_with_trace(&command, report_trace) {
-            Ok(()) => Ok(()),
-            Err(failure) => self.finish_expansion_failure(command, failure),
         }
     }
 
@@ -1379,16 +1375,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Undefined control sequences reach the same branch through §370.
         // Macros and `end_template` take §366's other two branches and do not
         // cross this diagnostic boundary.
+        let traceable = matches!(
+            static_meaning(command.meaning_ref()),
+            Some(Meaning::ExpandablePrimitive(primitive))
+                if primitive != ExpandablePrimitive::EndTemplate
+        ) || matches!(
+            static_meaning(command.meaning_ref()),
+            Some(Meaning::Undefined)
+        );
         if report_trace
+            && traceable
             && self
                 .state
                 .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
                 > 1
-            && (matches!(
-                static_meaning(command.meaning()),
-                Some(Meaning::ExpandablePrimitive(primitive))
-                    if primitive != ExpandablePrimitive::EndTemplate
-            ) || matches!(static_meaning(command.meaning()), Some(Meaning::Undefined)))
         {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
@@ -3681,7 +3681,7 @@ fn inserted_recovery_kind(token: &crate::observation::ObservedToken) -> Recovery
 /// These are exactly the three commands §1034's inner loop can continue on
 /// without expanding, so they are the only ones the lookahead delivers
 /// straight out of `get_next`.
-pub(crate) fn is_main_loop_character<G>(meaning: ResolvedMeaning<G>) -> bool {
+pub(crate) fn is_main_loop_character<G>(meaning: &ResolvedMeaning<G>) -> bool {
     matches!(
         meaning,
         ResolvedMeaning::Static(

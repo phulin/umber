@@ -294,22 +294,30 @@ Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
 `EmptyCommand`, `RawCommand`, and `ResolvedCommand` borrows prove that input,
 resolution, and delivery settlement mutate that one slot in order; nested
-delivery has its own slot. The driver returns only a compact status, and moves
-the command only to its final consumer or the exact typed expansion suspension
-slot. The slot is neither global nor a mailbox and never survives independently
-of its request.
+delivery has its own slot. One fetch/inspect state loop keeps the initialized
+value in place while synchronous expansion mutates input, then raw delivery
+overwrites that same value for the next token; it does not clear the `Option`,
+reconstruct an empty command, or redispatch the prior meaning between
+expansions. The driver returns only a compact status, and moves the command
+only to its final consumer or the exact typed expansion suspension slot. The
+slot is neither global nor a mailbox and never survives independently of its
+request.
 
 An admitted control-sequence spelling indexes and borrows its dense meaning row
-for resolution. Static meanings decode inside that borrow. A macro row acquires
-one `DefinitionId<G>` owner in the final owned `CurrentCommand`; borrowing the
-row itself acquires none. The temporary borrow ends before any command-driven
-mutation, while the final owner survives later assignment, group restoration,
-operation rollback, replay, retry, suspension, and generation retirement. TeX
-assignment level and journal state stay in the bank row and never enter the
-command. Consumers which only inspect a definition borrow its parameter and
-replacement spans through that existing id; they do not clone the id into an
-owning view. In particular, `\ifx` retains its two raw-delivery command slots as
-the sole operand owners while comparing borrowed meanings and definition
+for resolution. The same token classification reports the work ledger's
+meaning-lookup fact; no second spelling decode precedes resolution. Static
+meanings decode inside that borrow. A macro row acquires one `DefinitionId<G>`
+owner in the final owned `CurrentCommand`; borrowing the row itself acquires
+none. Trace eligibility and expanded-loop classification likewise borrow that
+resolved meaning instead of retaining and releasing another definition owner.
+The temporary bank borrow ends before any command-driven mutation, while the
+final owner survives later assignment, group restoration, operation rollback,
+replay, retry, suspension, and generation retirement. TeX assignment level and
+journal state stay in the bank row and never enter the command. Consumers which
+only inspect a definition borrow its parameter and replacement spans through
+that existing id; they do not clone the id into an owning view. In particular,
+`\ifx` retains its two raw-delivery command slots as the sole operand owners
+while comparing borrowed meanings and definition
 spans.
 
 The publisher retains only a monotonic serial for cold format coordinates, and
@@ -597,10 +605,11 @@ rendering only, while the command machine remains the sole input-stack owner.
 Main control likewise owns one call-local `Option<CurrentCommand>` final slot
 for raw preflight, ordinary expansion, main-loop lookahead, alignment bodies,
 prefixes, leader handoff, and `goto reswitch`. Delivery writes the completed
-command there and returns only a compact status. Filler loops clear and reuse
-that slot; a settled command moves directly into dispatch or its exact typed
-suspension owner. No command is cloned merely to cross the delivery API, and
-no settled command is backed up or redelivered across preflight.
+command there and returns only a compact status. Filler loops and the ordinary
+expanded-delivery loop overwrite and reuse that slot; only the final consumer,
+an explicit backup, or an exact typed suspension moves the settled owner out.
+No command is cloned merely to cross the delivery API, and no settled command
+is backed up or redelivered across preflight.
 
 An exhausted alignment V-template is intentionally retained until TeX's
 semantic `endv` transition; it is not stale merely because it has delivered

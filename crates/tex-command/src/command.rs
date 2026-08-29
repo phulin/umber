@@ -330,7 +330,7 @@ impl<G> CurrentCommand<G> {
         state: &CommandContext<'_, G>,
     ) -> Self {
         let mut command = Self::empty();
-        command
+        let _ = command
             .empty_for_raw_delivery()
             .write_raw_delivery(
                 spelling,
@@ -381,19 +381,6 @@ impl<G> CurrentCommand<G> {
         EmptyCommand(self)
     }
 
-    /// Returns whether the raw spelling requires a dense meaning lookup.
-    #[inline(always)]
-    fn raw_requires_meaning_lookup(&self) -> bool {
-        matches!(
-            self.spelling.semantic_token(),
-            Token::Cs(_)
-                | Token::Char {
-                    cat: Catcode::Active,
-                    ..
-                }
-        )
-    }
-
     /// Returns the input coordinate written by raw input before resolution.
     #[inline(always)]
     fn raw_delivery_coordinate(&self) -> (u64, u64) {
@@ -402,13 +389,14 @@ impl<G> CurrentCommand<G> {
 
     /// Resolves the raw spelling already held by this final command slot.
     #[inline(always)]
-    fn resolve_raw_delivery(&mut self, sequence: u64, state: &CommandContext<'_, G>) {
+    fn resolve_raw_delivery(&mut self, sequence: u64, state: &CommandContext<'_, G>) -> bool {
         self.delivery.sequence = sequence;
         let token = self.spelling.semantic_token();
-        match token {
+        let meaning_lookup = match token {
             Token::Cs(symbol) => {
                 self.control_sequence = Some(symbol);
                 self.meaning = state.compact_control_sequence_meaning(symbol);
+                true
             }
             Token::Char {
                 ch,
@@ -419,10 +407,12 @@ impl<G> CurrentCommand<G> {
                 self.meaning = symbol
                     .map(|symbol| state.compact_control_sequence_meaning(symbol))
                     .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined));
+                true
             }
             Token::Char { ch, cat } => {
                 self.control_sequence = None;
                 self.meaning = ResolvedMeaning::Static(Meaning::CharToken { ch, cat });
+                false
             }
             // `out_param` is converted to a literal replay token before
             // meaning resolution (TeX.web, get_next). A stray parameter token
@@ -431,6 +421,7 @@ impl<G> CurrentCommand<G> {
             Token::Param(_) => {
                 self.control_sequence = None;
                 self.meaning = ResolvedMeaning::Static(Meaning::Undefined);
+                false
             }
             // TeX82 §222 keeps `eq_type(undefined_control_sequence)` at
             // `undefined_cs` and `equiv` at `null` for the whole run: the
@@ -438,20 +429,24 @@ impl<G> CurrentCommand<G> {
             Token::Frozen(_) if token.is_undefined_control_sequence() => {
                 self.control_sequence = None;
                 self.meaning = ResolvedMeaning::Static(Meaning::Undefined);
+                false
             }
             Token::Frozen(_) if token.is_frozen_end_template() => {
                 self.control_sequence = None;
                 self.meaning = ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                     tex_state::meaning::ExpandablePrimitive::EndTemplate,
                 ));
+                false
             }
             Token::Frozen(_) if token.is_frozen_endv() => {
                 self.control_sequence = None;
                 self.meaning = ResolvedMeaning::Static(Meaning::EndV);
+                false
             }
             Token::Frozen(_) if token.is_frozen_relax() => {
                 self.control_sequence = None;
                 self.meaning = ResolvedMeaning::Static(Meaning::Relax);
+                false
             }
             // Frozen primitive slots retain their complete registered word.
             // In particular TeX82 §§1369--1371's inaccessible `\endwrite`
@@ -462,9 +457,11 @@ impl<G> CurrentCommand<G> {
                 self.meaning = state
                     .frozen_primitive_resolved(token)
                     .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined));
+                false
             }
-        }
+        };
         self.identity = CommandIdentity::from_meaning(&self.meaning);
+        meaning_lookup
     }
 
     pub(crate) const fn suppresses_expandable_control_sequence(&self) -> bool {
@@ -773,11 +770,6 @@ impl<'slot, G> RawCommand<'slot, G> {
         self.0.raw_delivery_coordinate()
     }
 
-    #[inline(always)]
-    pub(crate) fn requires_meaning_lookup(&self) -> bool {
-        self.0.raw_requires_meaning_lookup()
-    }
-
     /// Completes the same caller-owned slot in place and ends the dense
     /// meaning borrow before delivery policy can mutate command state.
     #[inline(always)]
@@ -785,9 +777,9 @@ impl<'slot, G> RawCommand<'slot, G> {
         self,
         sequence: u64,
         state: &CommandContext<'_, G>,
-    ) -> ResolvedCommand<'slot, G> {
-        self.0.resolve_raw_delivery(sequence, state);
-        ResolvedCommand(self.0)
+    ) -> (ResolvedCommand<'slot, G>, bool) {
+        let meaning_lookup = self.0.resolve_raw_delivery(sequence, state);
+        (ResolvedCommand(self.0), meaning_lookup)
     }
 }
 
