@@ -234,6 +234,40 @@ fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
 }
 
 #[test]
+fn reverse_tail_chunk_work_is_independent_of_list_size() {
+    fn tail_work(size: u32) -> (Vec<u32>, usize, usize) {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..size {
+                builder.push(value).expect("node");
+            }
+            builder.seal().expect("direct root")
+        };
+        let view = arena.list(&pool, root).expect("direct view");
+        let mut nodes = view.iter();
+        let tail = (0..3)
+            .map(|_| *nodes.next_back().expect("three-node tail"))
+            .collect::<Vec<_>>();
+        (
+            tail,
+            nodes.reverse_descriptor_visits(),
+            nodes.reverse_chunk_crossings(),
+        )
+    }
+
+    let short = tail_work(8);
+    let long = tail_work(4_096);
+    assert_eq!(short.0, vec![7, 6, 5]);
+    assert_eq!(long.0, vec![4_095, 4_094, 4_093]);
+    assert_eq!(short.1, 0, "direct roots visit no list descriptors");
+    assert_eq!(long.1, 0, "direct roots visit no list descriptors");
+    assert_eq!(short.2, long.2);
+    assert_eq!(short.2, 2, "three one-node blocks cross two boundaries");
+}
+
+#[test]
 fn one_block_list_stores_its_direct_head_and_tail_cursors() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
