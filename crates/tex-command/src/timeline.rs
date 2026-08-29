@@ -198,7 +198,6 @@ struct LogicalStackFork {
     accepted_top: usize,
 }
 
-#[cfg(any(test, feature = "profiling"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct LogicalStackCounters {
     pub(crate) payload_admissions: u64,
@@ -492,7 +491,6 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             .saturating_add(self.displaced.retained_bytes())
     }
 
-    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn counters(&self) -> LogicalStackCounters {
         let undo = self.undo.counters();
         LogicalStackCounters {

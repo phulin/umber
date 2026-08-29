@@ -725,12 +725,74 @@ fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
     assert_eq!(output.revision, RevisionId::new(1));
 }
 
+#[test]
+fn non_job_start_command_fork_cancels_suspension_and_reuses_accepted_siblings() {
+    let source = "A\\par\n\\font\\tenrm=cmr10 \\tenrm B\\par\nC\\par\\end";
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("accepted font registers");
+    incremental.cold().expect("accepted prior");
+    let edit_position = source.find("\\font").expect("font follows first paragraph");
+    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\relax ");
+
+    let mut suspended = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
+        .expect("non-JobStart font candidate");
+    assert!(matches!(
+        suspended
+            .drive_with_resource_resolvers(&mut DeclineResource, &Cancellation::new())
+            .expect("candidate suspends"),
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Font { .. })
+    ));
+    suspended.reject();
+
+    let mut accepted = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit)
+        .expect("accepted sibling survives suspended rejection");
+    drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
+        .expect("registered resource drives replacement candidate");
+    let accepted = incremental
+        .prepare_revision_candidate(accepted)
+        .expect("resumed candidate prepares");
+    assert_eq!(
+        accepted
+            .reuse()
+            .restart_boundary
+            .expect("resource candidate retained restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    let output = incremental
+        .accept_revision(accepted)
+        .expect("resumed candidate accepts");
+
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
+    let mut cold = session(RevisionId::new(2), &edited);
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font registers");
+    let expected = cold.cold().expect("resource cold comparison");
+    assert_detached_output_eq(&output, &expected);
+}
+
 struct CountingResourceHost(usize);
 
 impl ResourceHost for CountingResourceHost {
     fn fulfill(&mut self, _world: &mut ResourceWorld<'_>, _need: &ResourceNeed) -> ResourceOutcome {
         self.0 += 1;
         ResourceOutcome::Unavailable
+    }
+}
+
+struct DeclineResource;
+
+impl ResourceHost for DeclineResource {
+    fn fulfill(&mut self, _world: &mut ResourceWorld<'_>, _need: &ResourceNeed) -> ResourceOutcome {
+        ResourceOutcome::Declined
     }
 }
 
@@ -1173,6 +1235,142 @@ fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
             .reuse()
             .restart_boundary
             .expect("post-accept restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    sibling.reject();
+}
+
+#[test]
+fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings() {
+    let source = concat!(
+        "A\\par\n",
+        "\\def\\emit#1{[#1]}\n",
+        "\\iftrue\\count0=17\\else\\count0=99\\fi\n",
+        "\\halign{#\\cr X\\cr Y\\cr}\\par\n",
+        "\\emit{B}\\par\n",
+        "C\\par\n",
+        "D\\par\\end",
+    );
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("accepted command-rich prior");
+    let edit_position = source
+        .find("\\def")
+        .expect("suffix follows first paragraph");
+    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\relax ");
+    let before_reject = incremental
+        .command_timeline_counters()
+        .expect("accepted command counters")
+        .expect("accepted generation");
+
+    let mut rejected = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
+        .expect("far non-JobStart rejection candidate");
+    drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
+        .expect("drive command-rich rejection candidate");
+    let mut rejected = incremental
+        .prepare_revision_candidate(rejected)
+        .expect("prepare command-rich rejection");
+    assert_eq!(
+        rejected
+            .reuse()
+            .restart_boundary
+            .expect("retained command restart")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    let before_settle = rejected
+        .command_timeline_counters()
+        .expect("candidate command counters");
+    let selected_delta = before_settle
+        .selected_rewind_records
+        .saturating_sub(before_reject.selected_rewind_records);
+    assert!(
+        selected_delta != 0,
+        "the far accepted command delta rewinds"
+    );
+    rejected.reject();
+
+    let after_reject = incremental
+        .command_timeline_counters()
+        .expect("returned command counters")
+        .expect("returned accepted generation");
+    assert_eq!(
+        after_reject.accepted_redo_records - before_reject.accepted_redo_records,
+        selected_delta,
+        "rejection redoes exactly the selected accepted command delta"
+    );
+    assert!(
+        after_reject.candidate_reject_records > before_reject.candidate_reject_records,
+        "rejection undoes a private candidate command suffix"
+    );
+    assert!(
+        after_reject.candidate_chunks_released > before_reject.candidate_chunks_released,
+        "rejection returns candidate command chunks"
+    );
+    assert_eq!(after_reject.frame_index_searches, 0);
+    assert_eq!(after_reject.frame_keys_copied, 0);
+
+    let before_accept = after_reject;
+    let mut accepted = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit)
+        .expect("rejected command sibling remains seedable");
+    drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
+        .expect("drive accepted command-rich candidate");
+    let accepted = incremental
+        .prepare_revision_candidate(accepted)
+        .expect("prepare command-rich acceptance");
+    let output = incremental
+        .accept_revision(accepted)
+        .expect("accept command-rich candidate");
+    let after_accept = incremental
+        .command_timeline_counters()
+        .expect("accepted command counters")
+        .expect("accepted generation");
+    assert!(
+        after_accept.accepted_chunks_released > before_accept.accepted_chunks_released,
+        "acceptance releases obsolete accepted chunks"
+    );
+    assert_eq!(
+        after_accept.candidate_reject_records, before_accept.candidate_reject_records,
+        "acceptance does not undo candidate history"
+    );
+    assert_eq!(
+        after_accept.accepted_redo_records, before_accept.accepted_redo_records,
+        "acceptance does not replay accepted history"
+    );
+    assert_eq!(after_accept.frame_index_searches, 0);
+    assert_eq!(after_accept.frame_keys_copied, 0);
+
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("command-rich cold comparison");
+    assert_detached_output_eq(&output, &expected);
+
+    let next_position = incremental
+        .source()
+        .find('D')
+        .expect("accepted fourth paragraph remains");
+    let mut sibling = incremental
+        .start_advance_candidate(
+            RevisionId::new(3),
+            edit(&incremental, next_position..next_position, "\\relax "),
+        )
+        .expect("post-accept command sibling candidate");
+    drive_synchronous_candidate(&mut sibling, &mut DirectResourceHost)
+        .expect("drive post-accept command sibling");
+    let sibling = incremental
+        .prepare_revision_candidate(sibling)
+        .expect("prepare post-accept command sibling");
+    assert_eq!(
+        sibling
+            .reuse()
+            .restart_boundary
+            .expect("post-accept command restart")
             .boundary,
         EngineBoundary::OuterParagraphEnd
     );

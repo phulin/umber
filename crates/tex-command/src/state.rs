@@ -1314,7 +1314,6 @@ impl<G> CommandState<G> {
 
     /// Returns structural packed-journal evidence for standalone gates.
     #[doc(hidden)]
-    #[cfg(feature = "profiling")]
     #[must_use]
     pub fn profile_timeline_counters(&self) -> crate::CommandTimelineCounters {
         let mut counters = self.timeline.packed_journal_counters();

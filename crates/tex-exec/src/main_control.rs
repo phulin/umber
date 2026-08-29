@@ -2469,6 +2469,13 @@ impl<G> MainControl<G> {
         self.command.state_mut()
     }
 
+    /// Demand-free command checkpoint ownership and settlement work.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn command_timeline_counters(&self) -> tex_command::CommandTimelineCounters {
+        self.command.state().profile_timeline_counters()
+    }
+
     /// Returns the number of live TeX input levels.
     #[must_use]
     pub fn input_level_count(&self) -> usize {

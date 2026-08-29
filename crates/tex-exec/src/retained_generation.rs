@@ -190,6 +190,22 @@ impl<G> AdmittedEngineGeneration<'_, G> {
         self.universe
     }
 
+    /// Reads the sole parked or live command owner's checkpoint work without
+    /// traversing command payloads or changing candidate state.
+    #[doc(hidden)]
+    pub fn command_timeline_counters(
+        &self,
+    ) -> Result<tex_command::CommandTimelineCounters, RetainedEngineAccessError> {
+        if let Some(command) = self.sidecars.command.as_ref() {
+            return Ok(command.profile_timeline_counters());
+        }
+        self.sidecars
+            .control
+            .as_ref()
+            .map(crate::MainControl::command_timeline_counters)
+            .ok_or(RetainedEngineAccessError::StaleAttachment)
+    }
+
     /// Splits the aggregate state and checkpoint store for an executor loop.
     pub fn parts(
         &mut self,

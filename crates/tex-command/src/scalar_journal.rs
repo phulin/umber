@@ -149,7 +149,6 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
             }))
     }
 
-    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn counters(&self) -> PackedJournalCounters {
         self.counters
     }

@@ -411,7 +411,6 @@ impl<G> CommandTimeline<G> {
         0
     }
 
-    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn packed_journal_counters(&self) -> CommandTimelineCounters {
         let scalar = self.scalars.counters();
         let pending = self.pending_input.counters();

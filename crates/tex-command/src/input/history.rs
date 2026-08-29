@@ -418,7 +418,6 @@ impl<G> InputStack<G> {
             .saturating_add(self.source_owner_states.retained_bytes())
     }
 
-    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn counters(&self) -> crate::timeline::LogicalStackCounters {
         let undo = self.undo.counters();
         crate::timeline::LogicalStackCounters {
