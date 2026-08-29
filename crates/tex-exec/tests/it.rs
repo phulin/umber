@@ -411,6 +411,27 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     }
     assert!(!control.contains("command.clone()"));
     assert!(!cold_scan.contains("command.clone()"));
+    let preflight = control
+        .split_once("fn preflight_replay_delivery(")
+        .and_then(|(_, tail)| tail.split_once("pub const fn job_body_effect_end"))
+        .map(|(body, _)| body)
+        .expect("locate direct preflight delivery");
+    assert!(preflight.contains(".get_next_with_replay_completion_into(&mut frame.command)"));
+    assert!(
+        preflight
+            .contains(".settle_preflight_command_into(self.main_loop_active, &mut frame.command)")
+    );
+    assert!(!preflight.contains("let mut destination = None"));
+    let expansion_settlement = control
+        .split_once("fn settle_preflight_step<")
+        .and_then(|(_, tail)| tail.split_once("fn scan_preflight_command<"))
+        .map(|(body, _)| body)
+        .expect("locate retained preflight settlement");
+    assert!(
+        expansion_settlement
+            .contains(".resume_expansion_into(expansion, main_loop, &mut command.command)")
+    );
+    assert!(!expansion_settlement.contains("let mut destination = None"));
 
     assert!(cold.contains("mod operation;"));
     assert!(cold.contains("mod scan;"));

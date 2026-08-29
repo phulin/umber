@@ -510,9 +510,12 @@ a suspension with `?` while silently abandoning its child.
 
 One singular caller-owned preflight frame holds the sole current command,
 delivery cursor, compact dispatch phase, optional scalar child, and completed
-fixed-sequence operands. Raw, settled, expanding, main-loop, prefix, leader,
-and direct-operation scanning borrow and mutate that frame in place; only an
-actual resource suspension moves it into the retained retry destination. Its
+fixed-sequence operands. Initial raw delivery and resumed expansion write
+directly into that frame's command field; settlement advances only its scalar
+phase instead of transferring the whole command through a temporary slot.
+Raw, settled, expanding, main-loop, prefix, leader, and direct-operation
+scanning borrow and mutate that frame in place; only an actual resource
+suspension moves it into the retained retry destination. Its
 exact operation phases cover register and box-dimension assignments; unary
 integer, dimension, and glue commands; paragraph-shape and penalty arrays;
 fontdimen, font-integer, font-code, font-expansion, and font-only operations;

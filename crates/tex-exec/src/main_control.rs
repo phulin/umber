@@ -1232,24 +1232,12 @@ impl<G> Default for OperationFrame<G> {
 }
 
 impl<G> OperationFrame<G> {
-    fn admit_replay(&mut self, command: tex_command::CurrentCommand<G>) {
-        self.admit_command(command, PreflightCommandPhase::Replay, None);
-    }
-
     fn admit_settled(
         &mut self,
         command: tex_command::CurrentCommand<G>,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     ) {
         self.admit_command(command, PreflightCommandPhase::Settled, cursor);
-    }
-
-    fn admit_raw(
-        &mut self,
-        command: tex_command::CurrentCommand<G>,
-        cursor: Option<tex_command::CommandDeliveryCursor>,
-    ) {
-        self.admit_command(command, PreflightCommandPhase::Raw, cursor);
     }
 
     fn admit_command(
@@ -1264,6 +1252,37 @@ impl<G> OperationFrame<G> {
         self.cursor = cursor;
         self.scanner = None;
         self.operation_scan = None;
+    }
+
+    /// Marks a command which raw delivery already wrote into this frame.
+    ///
+    /// The initial delivery and synchronous expansion paths use the frame's
+    /// `command` field as their destination. Advancing that resident value to
+    /// a new phase must therefore update only the scalar phase facts rather
+    /// than taking and reinserting the whole command.
+    fn mark_resident_command(
+        &mut self,
+        phase: PreflightCommandPhase,
+        cursor: Option<tex_command::CommandDeliveryCursor>,
+    ) {
+        assert!(self.command.is_some());
+        assert!(self.expansion.is_none());
+        assert!(self.phase.replace(phase).is_none());
+        self.cursor = cursor;
+        self.scanner = None;
+        self.operation_scan = None;
+    }
+
+    fn mark_resident_settled(&mut self, cursor: Option<tex_command::CommandDeliveryCursor>) {
+        self.mark_resident_command(PreflightCommandPhase::Settled, cursor);
+    }
+
+    fn mark_resident_raw(&mut self, cursor: Option<tex_command::CommandDeliveryCursor>) {
+        self.mark_resident_command(PreflightCommandPhase::Raw, cursor);
+    }
+
+    fn mark_resident_replay(&mut self) {
+        self.mark_resident_command(PreflightCommandPhase::Replay, None);
     }
 
     fn admit_expanding(
@@ -1284,14 +1303,17 @@ impl<G> OperationFrame<G> {
         self.operation_scan = None;
     }
 
-    fn admit_operation_scan(
+    fn retain_resident_operation_scan(
         &mut self,
-        command: tex_command::CurrentCommand<G>,
         cursor: tex_command::CommandDeliveryCursor,
         phase: PendingOperationScanPhase,
         scanner: tex_command::ScannerFrameKey<G>,
     ) {
-        self.admit_command(command, PreflightCommandPhase::OperationScan, Some(cursor));
+        assert!(self.command.is_some());
+        assert!(self.expansion.is_none());
+        assert!(self.phase.is_none());
+        self.phase = Some(PreflightCommandPhase::OperationScan);
+        self.cursor = Some(cursor);
         self.scanner = Some(scanner);
         self.operation_scan = Some(phase);
     }
@@ -1335,10 +1357,15 @@ impl<G> OperationFrame<G> {
         self.command = Some(command);
     }
 
-    fn settle(&mut self, command: tex_command::CurrentCommand<G>) {
-        self.command = Some(command);
+    fn settle_resident(&mut self) {
+        assert!(self.command.is_some());
+        assert!(self.expansion.is_none());
         self.phase = Some(PreflightCommandPhase::Settled);
         self.operation_scan = None;
+    }
+
+    fn discard_resident_command(&mut self) {
+        self.command = None;
     }
 
     fn retain_scanner(
@@ -8035,14 +8062,7 @@ impl<G> MainControl<G> {
         let innermost_group = context.innermost_group_kind();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
-        let (
-            delivery_status,
-            destination,
-            settled_in_preflight,
-            trace_reported,
-            fused_hot,
-            fused_error,
-        ) = {
+        let (delivery_status, settled_in_preflight, trace_reported, fused_hot, fused_error) = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -8052,17 +8072,13 @@ impl<G> MainControl<G> {
                 &mut context,
             );
             processor.set_output_routine_active(self.boxes.output_routine_active);
-            let mut destination = None;
             let mut delivery_status = processor
-                .get_next_with_replay_completion_into(&mut destination)
+                .get_next_with_replay_completion_into(&mut frame.command)
                 .map_err(command_error)?;
             let mut settled_in_preflight = false;
             if delivery_status == tex_command::DeliveryStatus::Command
                 && matches!(
-                    destination
-                        .as_ref()
-                        .expect("command status initializes destination")
-                        .meaning(),
+                    frame.current().meaning(),
                     ResolvedMeaning::Macro { .. }
                         | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
                         | ResolvedMeaning::Static(Meaning::Undefined | Meaning::Unknown(_))
@@ -8070,7 +8086,7 @@ impl<G> MainControl<G> {
             {
                 prepare_command_trace(&mut processor, mode, self.shown_mode);
                 match processor
-                    .settle_preflight_command_into(self.main_loop_active, &mut destination)
+                    .settle_preflight_command_into(self.main_loop_active, &mut frame.command)
                 {
                     Ok(status) => {
                         settled_in_preflight = true;
@@ -8114,12 +8130,9 @@ impl<G> MainControl<G> {
             // established ordering before command tracing or operand work.
             // The common diagnostic-free path continues in this same borrow.
             if diagnostics.is_empty() && delivery_status == tex_command::DeliveryStatus::Command {
-                let command = destination
-                    .take()
-                    .expect("command status initializes destination");
                 let continues_main_loop = self.main_loop_active
                     && matches!(
-                        command.meaning(),
+                        frame.current().meaning(),
                         ResolvedMeaning::Static(
                             Meaning::CharToken {
                                 cat: Catcode::Letter | Catcode::Other,
@@ -8133,15 +8146,15 @@ impl<G> MainControl<G> {
                     report_main_control_command_trace(
                         &mut processor,
                         mode,
-                        &command,
+                        frame.current(),
                         &self.boxes,
                         &mut self.shown_mode,
                     );
                     trace_reported = true;
                 }
-                if direct_hot_candidate(mode, &self.boxes, innermost_group, &command) {
+                if direct_hot_candidate(mode, &self.boxes, innermost_group, frame.current()) {
                     if !settled_in_preflight {
-                        processor.observe_expanded_delivery(&command);
+                        processor.observe_expanded_delivery(frame.current());
                     }
                     #[cfg(feature = "profiling")]
                     tex_state::measurement::record_hot_core_phase(
@@ -8154,26 +8167,26 @@ impl<G> MainControl<G> {
                     let mut suspended_operation_scan = None;
                     match scan_direct_hot_command(
                         &mut processor,
-                        &command,
+                        frame.current(),
                         innermost_group,
                         &mut suspended_operation_scan,
                     ) {
                         Ok(operation) => {
-                            let meaning = command.meaning();
+                            let meaning = frame.current().meaning();
                             diagnostics.extend(
                                 processor
                                     .take_semantic_diagnostics()
                                     .into_iter()
                                     .map(PendingDiagnostic::Command),
                             );
+                            frame.discard_resident_command();
                             fused_hot = Some((operation, meaning));
                         }
                         Err(error) => {
                             let cursor = processor.delivery_cursor();
                             if execution_error_needs_command_retry(&error) {
                                 if let Some(phase) = suspended_operation_scan {
-                                    frame.admit_operation_scan(
-                                        command,
+                                    frame.retain_resident_operation_scan(
                                         cursor,
                                         phase,
                                         processor.take_scanner_resume().expect(
@@ -8184,27 +8197,27 @@ impl<G> MainControl<G> {
                                     let retry_expansion = processor.take_pending_expansion_work();
                                     let scanner = processor.take_scanner_resume();
                                     if let Some(expansion) = retry_expansion {
+                                        frame.discard_resident_command();
                                         frame.admit_expanding(
                                             expansion,
                                             self.main_loop_active,
                                             cursor,
                                         );
                                     } else {
-                                        frame.admit_settled(command, Some(cursor));
+                                        frame.mark_resident_settled(Some(cursor));
                                         frame.scanner = scanner;
                                     }
                                 }
+                            } else {
+                                frame.discard_resident_command();
                             }
                             fused_error = Some(error);
                         }
                     }
-                } else {
-                    destination = Some(command);
                 }
             }
             (
                 delivery_status,
-                destination,
                 settled_in_preflight,
                 trace_reported,
                 fused_hot,
@@ -8228,8 +8241,9 @@ impl<G> MainControl<G> {
 
         let passive =
             || crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax);
-        let command = match delivery_status {
+        match delivery_status {
             tex_command::DeliveryStatus::End => {
+                debug_assert!(frame.command.is_none());
                 frame.unavailable = Some(ColdOperation::<G>::EndOfInput);
                 return Ok(Some(PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared,
@@ -8239,6 +8253,7 @@ impl<G> MainControl<G> {
                 }));
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
+                debug_assert!(frame.command.is_none());
                 frame.unavailable = Some(ColdOperation::<G>::ReplayCompleted(episode));
                 return Ok(Some(PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared,
@@ -8247,15 +8262,13 @@ impl<G> MainControl<G> {
                     expansion: None,
                 }));
             }
-            tex_command::DeliveryStatus::Command => {
-                destination.expect("command status initializes destination")
-            }
+            tex_command::DeliveryStatus::Command => {}
             _ => unreachable!("raw preflight delivery has no alignment event"),
-        };
+        }
 
         let continues_main_loop = self.main_loop_active
             && matches!(
-                command.meaning(),
+                frame.current().meaning(),
                 ResolvedMeaning::Static(
                     Meaning::CharToken {
                         cat: Catcode::Letter | Catcode::Other,
@@ -8278,7 +8291,7 @@ impl<G> MainControl<G> {
             report_main_control_command_trace(
                 &mut processor,
                 mode,
-                &command,
+                frame.current(),
                 &self.boxes,
                 &mut self.shown_mode,
             );
@@ -8287,7 +8300,7 @@ impl<G> MainControl<G> {
         if self.main_loop_active
             && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
             && matches!(
-                command.meaning(),
+                frame.current().meaning(),
                 ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                     UnexpandablePrimitive::NoBoundary
                 ))
@@ -8297,23 +8310,25 @@ impl<G> MainControl<G> {
             frame.unavailable = Some(ColdOperation::<G>::NoBoundary {
                 suppress_right: true,
             });
+            let capabilities = crate::transaction_protocol::canonical_command_capabilities(
+                frame.current().meaning(),
+            );
+            frame.discard_resident_command();
             return Ok(Some(PreflightDelivery::<G> {
                 delivery: OperationDelivery::<G>::Prepared,
-                capabilities: crate::transaction_protocol::canonical_command_capabilities(
-                    command.meaning(),
-                ),
+                capabilities,
                 scanner: None,
                 expansion: None,
             }));
         }
         let capabilities =
-            crate::transaction_protocol::canonical_command_capabilities(command.meaning());
+            crate::transaction_protocol::canonical_command_capabilities(frame.current().meaning());
         if settled_in_preflight {
-            frame.admit_settled(command, None);
+            frame.mark_resident_settled(None);
         } else if raw_main_loop_delivery && continues_main_loop {
-            frame.admit_raw(command, None);
+            frame.mark_resident_raw(None);
         } else {
-            frame.admit_replay(command);
+            frame.mark_resident_replay();
         }
         Ok(Some(PreflightDelivery::<G> {
             delivery: OperationDelivery::<G>::Command,
@@ -10992,9 +11007,9 @@ fn settle_preflight_step<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
-    let mut destination = None;
+    let expansion = command.take_expansion();
     match processor
-        .resume_expansion_into(command.take_expansion(), main_loop, &mut destination)
+        .resume_expansion_into(expansion, main_loop, &mut command.command)
         .map_err(command_error)?
     {
         tex_command::DeliveryStatus::End => {
@@ -11006,7 +11021,7 @@ fn settle_preflight_step<G>(
         tex_command::DeliveryStatus::Command => {}
         _ => unreachable!("preflight settlement has no alignment event"),
     };
-    command.settle(destination.expect("command status initializes destination"));
+    command.settle_resident();
     // TeX82 §§380 and 473--479 keep operand scanning under the newly settled
     // unexpandable command. Expansion owns the retry only until settlement;
     // after this point a resource failure must re-enter this command before
