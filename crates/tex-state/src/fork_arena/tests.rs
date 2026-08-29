@@ -203,7 +203,6 @@ fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
             builder.seal().expect("source list")
         };
         let before = arena.counters();
-        let started = std::time::Instant::now();
         let mut destination = ActiveListBuilder::vacant();
         arena
             .open_active_list(&pool, &mut destination)
@@ -215,7 +214,6 @@ fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
             .finalize_active_list(&mut pool, &mut destination)
             .expect("finalize copy");
         let copied = destination.take_sealed().expect("copied root");
-        let elapsed = started.elapsed();
         let after = arena.counters();
 
         assert_eq!(copied.len(), size);
@@ -229,8 +227,7 @@ fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
             before.partial_edge_nodes_copied
         );
         eprintln!(
-            "DIRECT_SHARED_COPY_SCALE nodes={size} elapsed_ns={} copied_nodes={}",
-            elapsed.as_nanos(),
+            "DIRECT_SHARED_COPY_SCALE nodes={size} copied_nodes={}",
             after.source_nodes_copied - before.source_nodes_copied
         );
     }

@@ -229,7 +229,6 @@ fn demand_enabled_shared_append_keeps_copied_tail_summary_open_for_generated_suf
 fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six() {
     for size in [1_usize, 64, 4_096] {
         page_arena!(arena, pool, state, 512);
-        let started = std::time::Instant::now();
         let mut list = PageListSpan::empty();
         for value in 0..size {
             let suffix = arena
@@ -239,7 +238,6 @@ fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six
                 .append_unique_to_span(list, suffix)
                 .expect("constant-work unique suffix splice");
         }
-        let elapsed = started.elapsed();
         let counters = arena.counters();
 
         assert_eq!(list.len(), size);
@@ -250,8 +248,7 @@ fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six
         assert_eq!(counters.partial_edge_nodes_copied, 0);
         assert_eq!(counters.overlapping_nodes_copied, 0);
         eprintln!(
-            "DIRECT_UNIQUE_SUFFIX_SCALE nodes={size} elapsed_ns={} blocks={} copies=0",
-            elapsed.as_nanos(),
+            "DIRECT_UNIQUE_SUFFIX_SCALE nodes={size} blocks={} copies=0",
             counters.direct_blocks_allocated
         );
     }
