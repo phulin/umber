@@ -48,7 +48,10 @@ collector (see `src/conditionals.rs`).
   truncates to its absolute mark and returns suffix chunks to a reusable high
   water. A pending child can inherit a retiring parent's earlier reclaim mark,
   and its unpublished suffix may rebase only after the last active ancestor
-  retires. Activations never own a heap buffer or arena scope.
+  retires. Activations never own a heap buffer or arena scope. Suspended
+  `scan_toks` owners occupy their own recyclable typed row lane because they
+  carry a definition builder and attempt scope; every other typed continuation
+  remains in the bounded heterogeneous continuation lane.
 - `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
   `src/expansion_work/tests.rs`: unused current-generation parked-expansion
   foundation. Fixed command and typed control chunks keep stable addresses; one

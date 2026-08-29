@@ -398,9 +398,10 @@ fn outer_group_trim_bounds_macro_trace_and_observation_at_both_ends() {
             .0
             .iter()
             .find_map(|observation| match observation {
-                CommandObservation::Macro(record) if !record.activation => {
-                    Some(record.tokens.clone())
-                }
+                CommandObservation::Macro(crate::observation::MacroRecord::Argument {
+                    tokens,
+                    ..
+                }) => Some(tokens.clone()),
                 _ => None,
             })
             .expect("argument observation");

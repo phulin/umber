@@ -444,12 +444,14 @@ scanning, so a resource failure cannot resume alignment past that command and
 strand its scanner child. Resume consumes the owner; cancellation drops it.
 This keeps exactly the current generation alive, not one owner per token.
 
-Nested scanner and expansion suspension uses the same fixed typed scratch lane
-described above. Its backing vectors grow only when a generation reaches a new
-simultaneous high-water mark; freed slots are reused with a new serial, so a
-stale or double-consumed key is rejected. Scalar continuations such as an
-in-progress `\csname` move their accumulated name into the exact enclosing
-expansion or conditional phase. An expandable
+Nested scanner and expansion suspension uses two fixed typed scratch lanes.
+`PendingScanToks` has a dedicated lane because it owns the definition builder
+and attempt scope, while scalar, expansion, alignment, and structured
+continuations share the bounded heterogeneous lane. Their backing vectors grow
+only when a generation reaches a new simultaneous high-water mark; freed slots
+are reused with a new serial, so a stale or double-consumed key is rejected.
+Scalar continuations such as an in-progress `\csname` move their accumulated
+name into the exact enclosing expansion or conditional phase. An expandable
 `\number` or `\romannumeral` moves its leading/radix/optional-space phase into
 the owning expansion frame, beside that frame's exact scanner child, instead
 of a command-state stack. None may become a general token, boxed-dynamic, or

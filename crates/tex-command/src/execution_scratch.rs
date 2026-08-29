@@ -151,9 +151,23 @@ pub(crate) enum ContinuationFrame<G> {
     StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
 }
 
+// `PendingScanToks` owns the definition builder and its attempt scope. Keep it
+// in a dedicated typed lane so that growing that exact suspension owner cannot
+// inflate every unrelated continuation row.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Eq, PartialEq)]
+enum StoredContinuationFrame<G> {
+    Scalar(crate::scanners::PendingScalarFrame<G>),
+    Expansion(crate::state::PendingExpansion<G>),
+    ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
+    PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
+    AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
+    StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
+}
+
 // Parked expansion controls belong in ExpansionWork's stable chunks. They
 // must not enlarge this existing suspension lane into an 800-byte value.
-const _: () = assert!(core::mem::size_of::<ContinuationFrame<()>>() < 800);
+const _: () = assert!(core::mem::size_of::<StoredContinuationFrame<()>>() < 800);
 
 #[derive(Debug, Eq, PartialEq)]
 struct ResumeFrameSlot<T, G> {
@@ -727,7 +741,8 @@ pub(crate) struct ExecutionScratch<G> {
     next_macro_serial: u64,
     delimiter_head: usize,
     delimiter_words: Vec<TracedTokenWord>,
-    scanner_resumes: ResumeFrameLane<ContinuationFrame<G>, G>,
+    scanner_resumes: ResumeFrameLane<crate::scan_toks::PendingScanToks<G>, G>,
+    continuation_resumes: ResumeFrameLane<StoredContinuationFrame<G>, G>,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
     expansion_work: crate::expansion_work::ExpansionWork<G>,
     _generation: PhantomData<fn(&G) -> &G>,
@@ -758,6 +773,7 @@ impl<G> Default for ExecutionScratch<G> {
             delimiter_head: 0,
             delimiter_words: Vec::new(),
             scanner_resumes: ResumeFrameLane::default(),
+            continuation_resumes: ResumeFrameLane::default(),
             expression_frames: Vec::new(),
             expansion_work: crate::expansion_work::ExpansionWork::default(),
             _generation: PhantomData,
@@ -813,41 +829,64 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         key: ScannerFrameKey<G>,
     ) -> Result<ContinuationFrame<G>, ScratchError> {
-        let frame = self.scanner_resumes.take(key.id)?;
+        if key.is_scanner() {
+            return self
+                .scanner_resumes
+                .take(key.id)
+                .map(ContinuationFrame::Scanner);
+        }
+        let frame = self.continuation_resumes.take(key.id)?;
         let matches_kind = matches!(
             (&frame, key.kind),
-            (ContinuationFrame::Scanner(_), ContinuationKind::Scanner)
-                | (ContinuationFrame::Scalar(_), ContinuationKind::Scalar)
-                | (ContinuationFrame::Expansion(_), ContinuationKind::Expansion)
+            (StoredContinuationFrame::Scalar(_), ContinuationKind::Scalar)
                 | (
-                    ContinuationFrame::ExpandAfter(_),
+                    StoredContinuationFrame::Expansion(_),
+                    ContinuationKind::Expansion
+                )
+                | (
+                    StoredContinuationFrame::ExpandAfter(_),
                     ContinuationKind::ExpandAfter
                 )
                 | (
-                    ContinuationFrame::PdfStringCompare(_),
+                    StoredContinuationFrame::PdfStringCompare(_),
                     ContinuationKind::PdfStringCompare
                 )
                 | (
-                    ContinuationFrame::AlignmentPreamble(_),
+                    StoredContinuationFrame::AlignmentPreamble(_),
                     ContinuationKind::AlignmentPreamble
                 )
                 | (
-                    ContinuationFrame::StructuredScanner(_),
+                    StoredContinuationFrame::StructuredScanner(_),
                     ContinuationKind::StructuredScanner
                 )
         );
         if !matches_kind {
             return Err(ScratchError::InvalidCoordinate);
         }
-        Ok(frame)
+        Ok(match frame {
+            StoredContinuationFrame::Scalar(pending) => ContinuationFrame::Scalar(pending),
+            StoredContinuationFrame::Expansion(pending) => ContinuationFrame::Expansion(pending),
+            StoredContinuationFrame::ExpandAfter(pending) => {
+                ContinuationFrame::ExpandAfter(pending)
+            }
+            StoredContinuationFrame::PdfStringCompare(pending) => {
+                ContinuationFrame::PdfStringCompare(pending)
+            }
+            StoredContinuationFrame::AlignmentPreamble(pending) => {
+                ContinuationFrame::AlignmentPreamble(pending)
+            }
+            StoredContinuationFrame::StructuredScanner(pending) => {
+                ContinuationFrame::StructuredScanner(pending)
+            }
+        })
     }
 
     pub(crate) fn store_scalar_frame(
         &mut self,
         pending: crate::scanners::PendingScalarFrame<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::Scalar(pending))
+        self.continuation_resumes
+            .insert(StoredContinuationFrame::Scalar(pending))
             .map(|id| ScannerFrameKey {
                 id,
                 kind: ContinuationKind::Scalar,
@@ -861,8 +900,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_scalar() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::Scalar(pending) => Ok(pending),
+        match self.continuation_resumes.take(key.id)? {
+            StoredContinuationFrame::Scalar(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -874,8 +913,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_scalar() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.slot_mut(key.id)?.payload.as_mut() {
-            Some(ContinuationFrame::Scalar(pending)) => Ok(pending),
+        match self.continuation_resumes.slot_mut(key.id)?.payload.as_mut() {
+            Some(StoredContinuationFrame::Scalar(pending)) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -899,16 +938,8 @@ impl<G> ExecutionScratch<G> {
                 | InjectedScannerFrameStoreFailure::Serial => ScratchError::CapacityOverflow,
             });
         }
-        let mut frame = pending.take().map(ContinuationFrame::Scanner);
-        let result = self.scanner_resumes.insert_from(&mut frame);
-        if let Err(error) = result {
-            *pending = match frame {
-                Some(ContinuationFrame::Scanner(pending)) => Some(pending),
-                _ => return Err(ScratchError::InvalidCoordinate),
-            };
-            return Err(error);
-        }
-        result.map(|id| ScannerFrameKey {
+        let id = self.scanner_resumes.insert_from(pending)?;
+        Ok(ScannerFrameKey {
             id,
             kind: ContinuationKind::Scanner,
         })
@@ -948,10 +979,7 @@ impl<G> ExecutionScratch<G> {
         if !key.is_scanner() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::Scanner(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
+        self.scanner_resumes.take(key.id)
     }
 
     pub(crate) fn scanner_frame(
@@ -961,18 +989,15 @@ impl<G> ExecutionScratch<G> {
         if !key.is_scanner() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.get(key.id)? {
-            ContinuationFrame::Scanner(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
+        self.scanner_resumes.get(key.id)
     }
 
     pub(crate) fn store_expansion_frame(
         &mut self,
         pending: crate::state::PendingExpansion<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::Expansion(pending))
+        self.continuation_resumes
+            .insert(StoredContinuationFrame::Expansion(pending))
             .map(|id| ScannerFrameKey {
                 id,
                 kind: ContinuationKind::Expansion,
@@ -986,8 +1011,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_expansion() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::Expansion(pending) => Ok(pending),
+        match self.continuation_resumes.take(key.id)? {
+            StoredContinuationFrame::Expansion(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -999,8 +1024,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_expansion() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.get(key.id)? {
-            ContinuationFrame::Expansion(pending) => Ok(pending),
+        match self.continuation_resumes.get(key.id)? {
+            StoredContinuationFrame::Expansion(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1012,8 +1037,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_expansion() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.get_mut(key.id)? {
-            ContinuationFrame::Expansion(pending) => Ok(pending),
+        match self.continuation_resumes.get_mut(key.id)? {
+            StoredContinuationFrame::Expansion(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1029,8 +1054,8 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         pending: crate::processor::expand::PendingExpandAfter<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::ExpandAfter(pending))
+        self.continuation_resumes
+            .insert(StoredContinuationFrame::ExpandAfter(pending))
             .map(|id| ScannerFrameKey {
                 id,
                 kind: ContinuationKind::ExpandAfter,
@@ -1044,8 +1069,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_expandafter() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::ExpandAfter(pending) => Ok(pending),
+        match self.continuation_resumes.take(key.id)? {
+            StoredContinuationFrame::ExpandAfter(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1054,8 +1079,8 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         pending: crate::processor::expand::PendingPdfStringCompare<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::PdfStringCompare(pending))
+        self.continuation_resumes
+            .insert(StoredContinuationFrame::PdfStringCompare(pending))
             .map(|id| ScannerFrameKey {
                 id,
                 kind: ContinuationKind::PdfStringCompare,
@@ -1069,8 +1094,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_pdf_string_compare() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::PdfStringCompare(pending) => Ok(pending),
+        match self.continuation_resumes.take(key.id)? {
+            StoredContinuationFrame::PdfStringCompare(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1079,8 +1104,8 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         pending: crate::scanners::PendingAlignmentPreamble<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::AlignmentPreamble(pending))
+        self.continuation_resumes
+            .insert(StoredContinuationFrame::AlignmentPreamble(pending))
             .map(|id| ScannerFrameKey {
                 id,
                 kind: ContinuationKind::AlignmentPreamble,
@@ -1094,8 +1119,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_alignment_preamble() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
+        match self.continuation_resumes.take(key.id)? {
+            StoredContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1107,8 +1132,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_alignment_preamble() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.get_mut(key.id)? {
-            ContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
+        match self.continuation_resumes.get_mut(key.id)? {
+            StoredContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1124,8 +1149,8 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         pending: crate::scanners::PendingStructuredScanner<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::StructuredScanner(pending))
+        self.continuation_resumes
+            .insert(StoredContinuationFrame::StructuredScanner(pending))
             .map(|id| ScannerFrameKey {
                 id,
                 kind: ContinuationKind::StructuredScanner,
@@ -1139,8 +1164,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_structured_scanner() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.take(key.id)? {
-            ContinuationFrame::StructuredScanner(pending) => Ok(pending),
+        match self.continuation_resumes.take(key.id)? {
+            StoredContinuationFrame::StructuredScanner(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1152,8 +1177,8 @@ impl<G> ExecutionScratch<G> {
         if !key.is_structured_scanner() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        match self.scanner_resumes.get_mut(key.id)? {
-            ContinuationFrame::StructuredScanner(pending) => Ok(pending),
+        match self.continuation_resumes.get_mut(key.id)? {
+            StoredContinuationFrame::StructuredScanner(pending) => Ok(pending),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
@@ -1574,6 +1599,7 @@ impl<G> ExecutionScratch<G> {
             && self.pending_slot().is_err()
             && self.delimiter_prefix_is_empty()
             && self.scanner_resumes.live_len() == 0
+            && self.continuation_resumes.live_len() == 0
             && self.expansion_work.is_quiescent()
     }
 
