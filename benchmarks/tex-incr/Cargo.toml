@@ -9,10 +9,14 @@ publish = false
 [dependencies]
 criterion = "0.5"
 tex-command = { path = "../../crates/tex-command" }
-tex-exec = { path = "../../crates/tex-exec" }
+tex-exec = { path = "../../crates/tex-exec", features = ["profiling"] }
 tex-incr = { path = "../../crates/tex-incr" }
-tex-state = { path = "../../crates/tex-state" }
+tex-state = { path = "../../crates/tex-state", features = ["profiling"] }
 
 [[bench]]
 name = "accepted_edit"
 harness = false
+
+[[bin]]
+name = "candidate-settlement-gate"
+path = "candidate_settlement_gate.rs"

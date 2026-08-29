@@ -33,6 +33,158 @@ pub struct AdmittedEngineGeneration<'a, G> {
     sidecars: &'a mut EngineGenerationSidecars<G>,
 }
 
+/// Temporarily detached runtime and main-control owners for one admitted
+/// candidate episode.
+///
+/// The generation sidecar slots stay exclusively borrowed for the guard's
+/// lifetime. Normal completion calls [`Self::park`]; unwinding runs the same
+/// non-allocating restoration from `Drop`, so aggregate generation rejection
+/// can always reach command, mode, boundary, ledger, state, page, and PDF
+/// ownership in dependency order.
+#[doc(hidden)]
+pub struct AttachedCheckpointControl<'a, G> {
+    generation: u64,
+    universe: &'a mut Universe<G>,
+    sidecars: &'a mut EngineGenerationSidecars<G>,
+    attachment: Option<Box<dyn Any>>,
+    control: Option<crate::MainControl<G>>,
+}
+
+impl<'a, G> AttachedCheckpointControl<'a, G> {
+    /// Mutable control slot used while constructing a fresh candidate runtime.
+    /// Keeping the slot inside this guard makes every initialization unwind
+    /// restore the exact rooted owner before aggregate rejection begins.
+    pub fn control_slot(&mut self) -> &mut Option<crate::MainControl<G>> {
+        &mut self.control
+    }
+
+    pub fn replace_attachment<T: 'static>(&mut self, attachment: T) {
+        self.attachment = Some(Box::new(attachment));
+    }
+
+    pub fn initialization_parts(
+        &mut self,
+    ) -> (
+        &mut Universe<G>,
+        &mut crate::OutputLedger,
+        RetainedCheckpointStore<'_, G>,
+        &mut Option<crate::MainControl<G>>,
+    ) {
+        let sidecars = &mut *self.sidecars;
+        (
+            &mut *self.universe,
+            sidecars
+                .ledger
+                .as_mut()
+                .expect("the admitted generation owns its output ledger"),
+            RetainedCheckpointStore {
+                boundaries: sidecars
+                    .boundaries
+                    .as_mut()
+                    .expect("the admitted generation owns its boundary lane"),
+            },
+            &mut self.control,
+        )
+    }
+
+    pub fn parts<T: 'static>(
+        &mut self,
+    ) -> (
+        &mut Universe<G>,
+        &mut crate::OutputLedger,
+        RetainedCheckpointStore<'_, G>,
+        &mut crate::MainControl<G>,
+        &mut T,
+    ) {
+        let sidecars = &mut *self.sidecars;
+        (
+            &mut *self.universe,
+            sidecars
+                .ledger
+                .as_mut()
+                .expect("the admitted generation owns its output ledger"),
+            RetainedCheckpointStore {
+                boundaries: sidecars
+                    .boundaries
+                    .as_mut()
+                    .expect("the admitted generation owns its boundary lane"),
+            },
+            self.control
+                .as_mut()
+                .expect("the attached episode owns main control"),
+            self.attachment
+                .as_deref_mut()
+                .expect("the attached episode owns its runtime")
+                .downcast_mut::<T>()
+                .expect("the attached episode runtime type was validated"),
+        )
+    }
+
+    pub fn park(mut self) -> RetainedEngineAttachmentKey {
+        self.restore();
+        RetainedEngineAttachmentKey {
+            generation: self.generation,
+        }
+    }
+
+    /// Consumes a rooted live episode into the production aggregate
+    /// settlement shape. Any panic while cancelling a retained attempt occurs
+    /// before control leaves this guard, so `Drop` still parks both owners.
+    pub fn prepare_live_settlement(
+        mut self,
+    ) -> Result<crate::PreparedCheckpointControl, RetainedEngineAccessError> {
+        if self.sidecars.command.is_some() {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        self.control
+            .as_mut()
+            .expect("the attached episode owns main control")
+            .cancel_external_attempt_for_checkpoint_settlement(self.universe);
+        let control = self
+            .control
+            .take()
+            .expect("the attached episode owns main control");
+        let (command, prepared) = control.into_checkpoint_candidate_parts();
+        self.sidecars.command = Some(command);
+        drop(self.attachment.take());
+        Ok(prepared)
+    }
+
+    /// Consumes an independently materialized JobStart episode into its
+    /// command-only parked shape. No rooted mode disposition exists.
+    pub fn park_independent_settlement(mut self) -> Result<(), RetainedEngineAccessError> {
+        if self.sidecars.command.is_some() {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        let control = self
+            .control
+            .take()
+            .expect("the attached episode owns main control");
+        self.sidecars.command = Some(control.into_independent_parked_command());
+        drop(self.attachment.take());
+        Ok(())
+    }
+
+    fn restore(&mut self) {
+        // The guard exclusively borrows both slots, so neither can have been
+        // repopulated behind it. Direct assignment keeps unwind restoration
+        // infallible and avoids a second panic while the original panic is in
+        // flight.
+        if let Some(control) = self.control.take() {
+            self.sidecars.control = Some(control);
+        }
+        if let Some(attachment) = self.attachment.take() {
+            self.sidecars.attachment = Some(attachment);
+        }
+    }
+}
+
+impl<G> Drop for AttachedCheckpointControl<'_, G> {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
 impl<G> AdmittedEngineGeneration<'_, G> {
     pub fn universe(&mut self) -> &mut Universe<G> {
         self.universe
@@ -124,6 +276,33 @@ impl<G> AdmittedEngineGeneration<'_, G> {
             .control
             .take()
             .ok_or(RetainedEngineAccessError::StaleAttachment)
+    }
+
+    /// Borrows the complete live episode through an unwind-safe prepared
+    /// guard. The attachment type is checked before either sidecar slot moves.
+    pub fn prepare_attached_checkpoint_control<T: 'static>(
+        &mut self,
+        key: RetainedEngineAttachmentKey,
+    ) -> Result<AttachedCheckpointControl<'_, G>, RetainedEngineAccessError> {
+        validate_attachment_key(self.generation, &key)?;
+        let attachment = self
+            .sidecars
+            .attachment
+            .as_deref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?;
+        if !attachment.is::<T>() {
+            return Err(RetainedEngineAccessError::AttachmentTypeMismatch);
+        }
+        if self.sidecars.control.is_none() {
+            return Err(RetainedEngineAccessError::StaleAttachment);
+        }
+        Ok(AttachedCheckpointControl {
+            generation: self.generation,
+            universe: self.universe,
+            attachment: self.sidecars.attachment.take(),
+            control: self.sidecars.control.take(),
+            sidecars: self.sidecars,
+        })
     }
 
     /// Parks the sole quiescent command owner in the generation sidecar while

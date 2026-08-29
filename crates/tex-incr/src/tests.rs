@@ -1180,6 +1180,88 @@ fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
 }
 
 #[test]
+fn caught_candidate_run_panic_returns_every_owner_and_keeps_prior_reusable() {
+    let source = "A\\par\nB\\par\nC\\par\\end";
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("accepted prior");
+    let prior = incremental
+        .prior_generation
+        .as_ref()
+        .expect("prior generation")
+        .generation
+        .witness();
+    let prior_checkpoints = incremental.current_retained_checkpoint_count();
+    let edit_position = source.find('C').expect("third paragraph exists");
+    let mut panicking = incremental
+        .start_advance_candidate(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position, "\\relax "),
+        )
+        .expect("rooted candidate");
+    let current = panicking
+        .generation
+        .as_ref()
+        .expect("rooted candidate owns current generation")
+        .witness();
+
+    super::arm_candidate_owner_unwind_for_test();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        panicking.drive_with_resource_resolvers(&mut DirectResourceHost, &Cancellation::new())
+    }));
+    assert!(
+        panic.is_err(),
+        "host panic reaches the caller, got {panic:?}"
+    );
+    assert!(
+        prior.is_live(),
+        "aggregate unwind preserves the prior owner"
+    );
+    assert!(
+        !current.is_live(),
+        "aggregate unwind rejects the complete current owner exactly once"
+    );
+    assert_eq!(incremental.reachability_store.live_generation_count(), 1);
+    assert_eq!(
+        incremental.current_retained_checkpoint_count(),
+        prior_checkpoints,
+        "command, boundary, ledger, mode, state, page, and PDF roots returned to the prior lane"
+    );
+    drop(panicking);
+    assert_eq!(incremental.current_candidate_generation_count(), 0);
+
+    let mut sibling = incremental
+        .start_advance_candidate(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position, "\\relax "),
+        )
+        .expect("returned prior owners seed a sibling candidate");
+    drive_synchronous_candidate(&mut sibling, &mut DirectResourceHost)
+        .expect("sibling drive uses the returned command/state owners");
+    let sibling = incremental
+        .prepare_revision_candidate(sibling)
+        .expect("sibling prepares after unwind");
+    assert_eq!(
+        sibling
+            .reuse()
+            .restart_boundary
+            .expect("sibling reuses the prior boundary")
+            .boundary,
+        EngineBoundary::OuterParagraphEnd
+    );
+    let output = incremental
+        .accept_revision(sibling)
+        .expect("sibling acceptance consumes every returned owner");
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("cold comparison");
+    assert_detached_output_eq(&output, &expected);
+}
+
+#[test]
 fn zero_history_budget_retires_only_complete_old_generations() {
     let mut source = page_source(1);
     let mut incremental = Session::start(

@@ -475,13 +475,9 @@ impl RevisionTransaction<'_> {
     /// Rejects this completed candidate, dropping its current generation and
     /// returning the session's candidate slot for immediate reuse.
     pub fn reject(mut self) {
-        let prepared = prepare_candidate_runtime(&mut self.generation, self.runtime_key.take())
+        let prepared = prepare_candidate_runtime(self.generation, self.runtime_key.take())
             .expect("a completed candidate retains its terminal command/mode owner");
-        if let Some(prepared) = prepared {
-            prepared.reject();
-        }
-        self.generation.prepare_candidate_reject();
-        self.generation.finish_candidate_reject();
+        prepared.reject();
     }
 
     #[must_use]
@@ -501,6 +497,18 @@ impl RevisionTransaction<'_> {
 
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
         dvi_bytes(&self.completion)
+    }
+
+    /// Demand-free page ownership counters on the exact current generation.
+    /// Profiling gates sample this before production settlement; it does not
+    /// traverse page payload or create a detached projection.
+    #[doc(hidden)]
+    pub fn page_material_counters(
+        &mut self,
+    ) -> Result<tex_state::fork_arena::ForkArenaCounters, SessionError> {
+        self.generation
+            .with_admitted(ReadPageMaterialCounters)
+            .map_err(SessionError::RetainedEngine)
     }
 }
 
@@ -634,13 +642,15 @@ impl<'store> RevisionCandidate<'store> {
             return Ok(RevisionCandidateResult::Complete);
         }
         let mut failed_attempt_fuel = 0;
-        let mut generation = match self.generation.take() {
+        let generation = match self.generation.take() {
             Some(generation) => generation,
             None => self.new_retained_generation()?,
         };
         let checkpoint_control_key = self.checkpoint_control_key.take();
         let runtime_key = self.runtime_key.take();
+        let mut generation = OwnedCandidateGeneration::new(generation);
         let result = generation
+            .generation_mut()
             .with_admitted(CandidateRun {
                 candidate: self,
                 host,
@@ -652,7 +662,7 @@ impl<'store> RevisionCandidate<'store> {
             .map_err(SessionError::RetainedEngine)?;
         self.runtime_key = result.runtime_key;
         let result = result.execution;
-        self.generation = Some(generation);
+        self.generation = Some(generation.into_generation());
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -781,14 +791,10 @@ impl<'store> RevisionCandidate<'store> {
     /// Rejects this candidate, dropping any current generation and returning
     /// the session's candidate slot for immediate reuse.
     pub fn reject(mut self) {
-        if let Some(mut generation) = self.generation.take() {
-            let prepared = prepare_candidate_runtime(&mut generation, self.runtime_key.take())
+        if let Some(generation) = self.generation.take() {
+            let prepared = prepare_candidate_runtime(generation, self.runtime_key.take())
                 .expect("a live candidate retains its command/mode owner");
-            if let Some(prepared) = prepared {
-                prepared.reject();
-            }
-            generation.prepare_candidate_reject();
-            generation.finish_candidate_reject();
+            prepared.reject();
         }
     }
 }
@@ -807,6 +813,18 @@ struct CandidateRun<'a, 'store> {
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static PANIC_AFTER_CANDIDATE_OWNERS_DETACH: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
+#[cfg(test)]
+fn arm_candidate_owner_unwind_for_test() {
+    PANIC_AFTER_CANDIDATE_OWNERS_DETACH.with(|armed| armed.set(true));
+}
+
 impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
     type Output = CandidateRunResult;
 
@@ -814,77 +832,113 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
         self,
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
-        let (mut runtime, mut control) = match self.runtime_key {
-            Some(key) => match admitted.take_attachment::<CandidateRuntime>(key) {
-                Ok(runtime) => match admitted.take_checkpoint_control() {
-                    Ok(control) => (runtime, control),
+        let mut attached = match self.runtime_key {
+            Some(key) => {
+                match admitted.prepare_attached_checkpoint_control::<CandidateRuntime>(key) {
+                    Ok(attached) => attached,
                     Err(error) => {
                         return CandidateRunResult {
                             execution: Err(SessionError::RetainedEngine(error)),
                             runtime_key: None,
                         };
                     }
-                },
-                Err(error) => {
-                    return CandidateRunResult {
-                        execution: Err(SessionError::RetainedEngine(error)),
-                        runtime_key: None,
-                    };
-                }
-            },
-            None => {
-                let restored = match self.checkpoint_control_key {
-                    Some(key) => {
-                        match admitted.take_attachment::<tex_exec::RestoredCheckpointRuntime>(key) {
-                            Ok(_runtime) => match admitted.take_checkpoint_control() {
-                                Ok(control) => Some(control),
-                                Err(error) => {
-                                    return CandidateRunResult {
-                                        execution: Err(SessionError::RetainedEngine(error)),
-                                        runtime_key: None,
-                                    };
-                                }
-                            },
-                            Err(error) => {
-                                return CandidateRunResult {
-                                    execution: Err(SessionError::RetainedEngine(error)),
-                                    runtime_key: None,
-                                };
-                            }
-                        }
-                    }
-                    None => None,
-                };
-                match initialize_candidate_runtime(&mut admitted, self.candidate, restored) {
-                    Ok(runtime) => runtime,
-                    Err(failure) => {
-                        if let Some(control) = failure.control {
-                            match admitted.prepare_checkpoint_control(control) {
-                                Ok(prepared) => prepared.reject(),
-                                Err(error) => {
-                                    return CandidateRunResult {
-                                        execution: Err(SessionError::RetainedEngine(error)),
-                                        runtime_key: None,
-                                    };
-                                }
-                            }
-                        }
-                        return CandidateRunResult {
-                            execution: Err(failure.error),
-                            runtime_key: None,
-                        };
-                    }
                 }
             }
+            None => match self.checkpoint_control_key {
+                Some(key) => {
+                    let mut attached = match admitted
+                        .prepare_attached_checkpoint_control::<tex_exec::RestoredCheckpointRuntime>(
+                            key,
+                        ) {
+                        Ok(attached) => attached,
+                        Err(error) => {
+                            return CandidateRunResult {
+                                execution: Err(SessionError::RetainedEngine(error)),
+                                runtime_key: None,
+                            };
+                        }
+                    };
+                    let initialized = {
+                        let (universe, ledger, checkpoints, control) =
+                            attached.initialization_parts();
+                        initialize_candidate_runtime(
+                            universe,
+                            ledger,
+                            checkpoints,
+                            self.candidate,
+                            control,
+                        )
+                    };
+                    let runtime = match initialized {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            return CandidateRunResult {
+                                execution: Err(error),
+                                runtime_key: None,
+                            };
+                        }
+                    };
+                    attached.replace_attachment(runtime);
+                    attached
+                }
+                None => {
+                    let mut control = None;
+                    let initialized = {
+                        let (universe, ledger, checkpoints) = admitted.parts();
+                        initialize_candidate_runtime(
+                            universe,
+                            ledger,
+                            checkpoints,
+                            self.candidate,
+                            &mut control,
+                        )
+                    };
+                    let runtime = match initialized {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            return CandidateRunResult {
+                                execution: Err(error),
+                                runtime_key: None,
+                            };
+                        }
+                    };
+                    let control = control.expect("candidate initialization constructs control");
+                    let key = match admitted.attach_with_checkpoint_control(runtime, control) {
+                        Ok(key) => key,
+                        Err(error) => {
+                            return CandidateRunResult {
+                                execution: Err(SessionError::RetainedEngine(error)),
+                                runtime_key: None,
+                            };
+                        }
+                    };
+                    match admitted.prepare_attached_checkpoint_control::<CandidateRuntime>(key) {
+                        Ok(attached) => attached,
+                        Err(error) => {
+                            return CandidateRunResult {
+                                execution: Err(SessionError::RetainedEngine(error)),
+                                runtime_key: None,
+                            };
+                        }
+                    }
+                }
+            },
         };
+        #[cfg(test)]
+        PANIC_AFTER_CANDIDATE_OWNERS_DETACH.with(|armed| {
+            if armed.replace(false) {
+                panic!("candidate owner unwind test hook");
+            }
+        });
         let execution = {
-            let (universe, ledger, checkpoints) = admitted.parts();
+            let (universe, ledger, checkpoints, control, runtime) =
+                attached.parts::<CandidateRuntime>();
             execute_plan(
                 universe,
                 ledger,
                 checkpoints,
-                &mut control,
-                &mut runtime,
+                control,
+                runtime,
                 self.candidate,
                 self.host,
                 self.cancellation,
@@ -894,15 +948,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
         // Terminal command and mode owners remain attached until the
         // aggregate accept/reject barrier explicitly settles them. Drop is
         // reserved for unwinding before an attachment can be published.
-        let runtime_key = match admitted.attach_with_checkpoint_control(runtime, control) {
-            Ok(key) => Some(key),
-            Err(error) => {
-                return CandidateRunResult {
-                    execution: Err(SessionError::RetainedEngine(error)),
-                    runtime_key: None,
-                };
-            }
-        };
+        let runtime_key = Some(attached.park());
         CandidateRunResult {
             execution,
             runtime_key,
@@ -920,55 +966,144 @@ struct SettleCandidateRuntime {
     independent_job_start: bool,
 }
 
-struct PreparedCandidateRuntime {
-    control: Option<tex_exec::PreparedCheckpointControl>,
-}
+struct ReadPageMaterialCounters;
 
-impl PreparedCandidateRuntime {
-    fn accept(self) {
-        if let Some(control) = self.control {
-            control.accept();
-        }
-    }
-
-    fn reject(self) {
-        if let Some(control) = self.control {
-            control.reject();
-        }
-    }
-}
-
-impl tex_exec::RetainedEngineOperation for SettleCandidateRuntime {
-    type Output = Result<PreparedCandidateRuntime, tex_exec::RetainedEngineAccessError>;
+impl tex_exec::RetainedEngineOperation for ReadPageMaterialCounters {
+    type Output = tex_state::fork_arena::ForkArenaCounters;
 
     fn run<G: 'static>(
         self,
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
-        let _runtime = admitted.take_attachment::<CandidateRuntime>(self.key)?;
-        if self.independent_job_start {
-            admitted.park_independent_checkpoint_control()?;
-            return Ok(PreparedCandidateRuntime { control: None });
+        admitted.universe().page_material_counters()
+    }
+}
+
+struct PreparedCandidateControl {
+    control: Option<tex_exec::PreparedCheckpointControl>,
+}
+
+struct OwnedCandidateGeneration<'store> {
+    generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
+}
+
+impl<'store> OwnedCandidateGeneration<'store> {
+    fn new(generation: tex_exec::RetainedEngineGeneration<'store>) -> Self {
+        Self {
+            generation: Some(generation),
         }
-        Ok(PreparedCandidateRuntime {
-            control: Some(admitted.prepare_live_checkpoint_control()?),
+    }
+
+    fn generation_mut(&mut self) -> &mut tex_exec::RetainedEngineGeneration<'store> {
+        self.generation
+            .as_mut()
+            .expect("the aggregate candidate guard owns its generation")
+    }
+
+    fn into_generation(mut self) -> tex_exec::RetainedEngineGeneration<'store> {
+        self.generation
+            .take()
+            .expect("the aggregate candidate guard owns its generation")
+    }
+
+    fn reject(&mut self) {
+        let Some(mut generation) = self.generation.take() else {
+            return;
+        };
+        generation.prepare_candidate_reject();
+        generation.finish_candidate_reject();
+    }
+}
+
+impl Drop for OwnedCandidateGeneration<'_> {
+    fn drop(&mut self) {
+        self.reject();
+    }
+}
+
+struct PreparedCandidateRuntime<'store> {
+    generation: OwnedCandidateGeneration<'store>,
+    control: Option<tex_exec::PreparedCheckpointControl>,
+}
+
+impl<'store> PreparedCandidateRuntime<'store> {
+    fn accept_control(&mut self) {
+        if let Some(control) = self.control.take() {
+            control.accept();
+        }
+    }
+
+    fn generation_mut(&mut self) -> &mut tex_exec::RetainedEngineGeneration<'store> {
+        self.generation.generation_mut()
+    }
+
+    fn into_generation(mut self) -> tex_exec::RetainedEngineGeneration<'store> {
+        assert!(
+            self.control.is_none(),
+            "mode disposition precedes aggregate candidate publication"
+        );
+        self.generation
+            .generation
+            .take()
+            .expect("the prepared aggregate owns its generation")
+    }
+
+    fn reject(self) {}
+}
+
+impl Drop for PreparedCandidateRuntime<'_> {
+    fn drop(&mut self) {
+        if let Some(control) = self.control.take() {
+            control.reject();
+        }
+        // `OwnedCandidateGeneration` drops immediately after this method and
+        // returns command, boundary, ledger, state, page, and PDF owners.
+    }
+}
+
+impl tex_exec::RetainedEngineOperation for SettleCandidateRuntime {
+    type Output = Result<PreparedCandidateControl, tex_exec::RetainedEngineAccessError>;
+
+    fn run<G: 'static>(
+        self,
+        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
+    ) -> Self::Output {
+        let attached =
+            admitted.prepare_attached_checkpoint_control::<CandidateRuntime>(self.key)?;
+        if self.independent_job_start {
+            attached.park_independent_settlement()?;
+            return Ok(PreparedCandidateControl { control: None });
+        }
+        Ok(PreparedCandidateControl {
+            control: Some(attached.prepare_live_settlement()?),
         })
     }
 }
 
-fn prepare_candidate_runtime(
-    generation: &mut tex_exec::RetainedEngineGeneration<'_>,
+fn prepare_candidate_runtime<'store>(
+    generation: tex_exec::RetainedEngineGeneration<'store>,
     key: Option<tex_exec::RetainedEngineAttachmentKey>,
-) -> Result<Option<PreparedCandidateRuntime>, tex_exec::RetainedEngineAccessError> {
+) -> Result<PreparedCandidateRuntime<'store>, tex_exec::RetainedEngineAccessError> {
+    let mut generation = OwnedCandidateGeneration::new(generation);
     let Some(key) = key else {
-        return Ok(None);
+        return Ok(PreparedCandidateRuntime {
+            generation,
+            control: None,
+        });
     };
-    let independent_job_start = generation.is_independent_job_start_candidate();
-    let prepared = generation.with_admitted(SettleCandidateRuntime {
-        key,
-        independent_job_start,
-    })??;
-    Ok(Some(prepared))
+    let independent_job_start = generation
+        .generation_mut()
+        .is_independent_job_start_candidate();
+    let prepared = generation
+        .generation_mut()
+        .with_admitted(SettleCandidateRuntime {
+            key,
+            independent_job_start,
+        })??;
+    Ok(PreparedCandidateRuntime {
+        generation,
+        control: prepared.control,
+    })
 }
 
 struct CandidateRuntime {
@@ -1258,58 +1393,41 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
     }
 }
 
-struct CandidateInitializationFailure<G> {
-    error: SessionError,
-    control: Option<MainControl<G>>,
-}
-
-#[expect(
-    clippy::result_large_err,
-    reason = "failure returns the exact MainControl owner for explicit settlement without adding heap indirection"
-)]
 fn initialize_candidate_runtime<G: 'static>(
-    admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
+    universe: &mut Universe<G>,
+    ledger: &mut OutputLedger,
+    mut checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
     candidate: &mut RevisionCandidate<'_>,
-    mut restored: Option<MainControl<G>>,
-) -> Result<(CandidateRuntime, MainControl<G>), CandidateInitializationFailure<G>> {
-    let rooted_restart = restored.is_some()
+    control: &mut Option<MainControl<G>>,
+) -> Result<CandidateRuntime, SessionError> {
+    let rooted_restart = control.is_some()
         && candidate
             .plan
             .restart_boundary
             .is_some_and(|key| key.boundary != EngineBoundary::JobStart);
-    let (universe, _ledger, mut checkpoints) = admitted.parts();
-    let rooted = restored.is_some();
+    let rooted = control.is_some();
     let materialized_job_start = candidate.materialized_job_start;
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if !rooted_restart && let Err(error) = universe.begin_retained_session() {
-        return Err(CandidateInitializationFailure {
-            error: error.into(),
-            control: restored.take(),
-        });
+        return Err(error.into());
     }
     // Identity owners must see every job mutation, including fresh profile,
     // registered input, and JobStart setup. Batch execution never selects
     // this demand path and therefore performs none of the added hash work.
     universe.enable_reachable_state_identity();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    if restored.is_none()
+    if !rooted
         && !materialized_job_start
         && let Err(error) = install_plain_catcodes(universe)
     {
-        return Err(CandidateInitializationFailure {
-            error,
-            control: restored.take(),
-        });
+        return Err(error);
     }
     if materialized_job_start {
         register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
         if let Err(error) =
             validate_materialized_font_policy(universe, candidate.required_font_layout_policy)
         {
-            return Err(CandidateInitializationFailure {
-                error,
-                control: restored.take(),
-            });
+            return Err(error);
         }
     }
     for (path, bytes) in &candidate.registered_inputs {
@@ -1317,10 +1435,7 @@ fn initialize_candidate_runtime<G: 'static>(
             .world_mut()
             .set_shared_memory_file(path, Arc::clone(bytes))
         {
-            return Err(CandidateInitializationFailure {
-                error: error.into(),
-                control: restored.take(),
-            });
+            return Err(error.into());
         }
     }
     let options = CandidateControlOptions {
@@ -1337,11 +1452,10 @@ fn initialize_candidate_runtime<G: 'static>(
         root_framing: candidate.root_framing,
         root_framing_name: candidate.root_framing_name.as_deref(),
     };
-    let mut control = candidate_control(universe, &options, restored, materialized_job_start)
-        .map_err(|error| CandidateInitializationFailure {
-            error,
-            control: None,
-        })?;
+    prepare_candidate_control(universe, &options, control, materialized_job_start)?;
+    let control = control
+        .as_mut()
+        .expect("candidate control is installed before runtime initialization");
     control
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
@@ -1352,13 +1466,13 @@ fn initialize_candidate_runtime<G: 'static>(
         debug_assert!(rooted);
         history.inherit_boundary(inherited);
         while let Some(release) = history.take_budget_release(&mut checkpoints) {
-            release.apply(&mut control, universe);
+            release.apply(control, universe);
         }
     }
     if !rooted_restart {
         if !rooted {
-            if let Err(error) = _ledger.commit_job_start(
-                &mut control,
+            if let Err(error) = ledger.commit_job_start(
+                control,
                 universe,
                 &mut LiveHistorySink {
                     state: &mut history,
@@ -1366,20 +1480,14 @@ fn initialize_candidate_runtime<G: 'static>(
                     pending_release: None,
                 },
             ) {
-                return Err(CandidateInitializationFailure {
-                    error: error.into(),
-                    control: Some(control),
-                });
+                return Err(error.into());
             }
             if candidate.job_start_anchor.is_none() {
                 let started = Timer::start();
                 let image = match universe.capture_format_image() {
                     Ok(image) => image,
                     Err(error) => {
-                        return Err(CandidateInitializationFailure {
-                            error: SessionError::Format(error),
-                            control: Some(control),
-                        });
+                        return Err(SessionError::Format(error));
                     }
                 };
                 candidate.job_start_anchor = Some(FrozenJobStartAnchor::captured(
@@ -1389,22 +1497,16 @@ fn initialize_candidate_runtime<G: 'static>(
                 ));
             }
         }
-        if let Err(error) = start_candidate_job(universe, &mut control, options) {
-            return Err(CandidateInitializationFailure {
-                error,
-                control: Some(control),
-            });
+        if let Err(error) = start_candidate_job(universe, control, options) {
+            return Err(error);
         }
     }
-    Ok((
-        CandidateRuntime {
-            history,
-            delivered_commands: 0,
-            answered_needs: Vec::new(),
-            job_start_anchor: candidate.job_start_anchor.clone(),
-        },
-        control,
-    ))
+    Ok(CandidateRuntime {
+        history,
+        delivered_commands: 0,
+        answered_needs: Vec::new(),
+        job_start_anchor: candidate.job_start_anchor.clone(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)] // Candidate execution keeps each mutable subsystem owner explicit.
@@ -1699,13 +1801,13 @@ struct CandidateControlOptions<'a> {
     root_framing_name: Option<&'a str>,
 }
 
-fn candidate_control<G>(
+fn prepare_candidate_control<G>(
     universe: &mut Universe<G>,
     options: &CandidateControlOptions<'_>,
-    restored_control: Option<MainControl<G>>,
+    control: &mut Option<MainControl<G>>,
     materialized_job_start: bool,
-) -> Result<MainControl<G>, SessionError> {
-    if restored_control.is_none() && options.initex && !materialized_job_start {
+) -> Result<(), SessionError> {
+    if control.is_none() && options.initex && !materialized_job_start {
         tex_command::install_tex82_expandable_primitives(universe);
         tex_exec::install_unexpandable_primitives(universe);
         if matches!(
@@ -1724,13 +1826,16 @@ fn candidate_control<G>(
             install_latex_compatibility(universe)?;
         }
     }
-    let mut control = restored_control.unwrap_or_else(|| {
+    control.get_or_insert_with(|| {
         if options.initex {
             MainControl::prepared_initex(options.profile)
         } else {
             MainControl::with_profile(options.profile)
         }
     });
+    let control = control
+        .as_mut()
+        .expect("candidate control was inserted in the owner slot");
     debug_assert_eq!(control.command_profile(), options.profile);
     control.set_initex_mode(options.initex);
     if options.profile.dialect() == tex_command::CommandDialect::Pdftex14029 {
@@ -1745,7 +1850,7 @@ fn candidate_control<G>(
     control
         .capabilities_mut()
         .set_startup_job_name(options.job_name);
-    Ok(control)
+    Ok(())
 }
 
 fn start_candidate_job<G>(
@@ -2254,6 +2359,24 @@ impl<'store> Session<'store> {
             .map_or(0, |generation| generation.checkpoint_count)
     }
 
+    /// Demand-free page ownership counters on the accepted production
+    /// generation. This is intentionally a scalar lifecycle observation, not
+    /// a page-list traversal or detached output request.
+    #[doc(hidden)]
+    pub fn page_material_counters(
+        &mut self,
+    ) -> Result<Option<tex_state::fork_arena::ForkArenaCounters>, SessionError> {
+        self.prior_generation
+            .as_mut()
+            .map(|generation| {
+                generation
+                    .generation
+                    .with_admitted(ReadPageMaterialCounters)
+                    .map_err(SessionError::RetainedEngine)
+            })
+            .transpose()
+    }
+
     pub fn register_input_file(
         &mut self,
         path: &Path,
@@ -2593,18 +2716,14 @@ impl<'store> Session<'store> {
         if transaction.base_content_hash != self.content_hash {
             return Err(SessionError::ContentHashMismatch);
         }
-        let mut generation = transaction.generation;
-        let mut prepared = prepare_candidate_runtime(&mut generation, transaction.runtime_key)
-            .map_err(SessionError::RetainedEngine)?;
-        if let Err(error) = generation.preflight_boundary_lane() {
-            if let Some(prepared) = prepared.take() {
-                prepared.reject();
-            }
-            generation.prepare_candidate_reject();
-            generation.finish_candidate_reject();
+        let mut prepared =
+            prepare_candidate_runtime(transaction.generation, transaction.runtime_key)
+                .map_err(SessionError::RetainedEngine)?;
+        if let Err(error) = prepared.generation_mut().preflight_boundary_lane() {
             return Err(SessionError::RetainedEngine(error));
         }
-        let checkpoint_count = generation
+        let checkpoint_count = prepared
+            .generation_mut()
             .boundary_lane_checkpoint_count()
             .map_err(SessionError::RetainedEngine)?;
         // All fallible current-generation validation and root pruning happens
@@ -2612,22 +2731,25 @@ impl<'store> Session<'store> {
         // current generation was constructed independently under its own
         // HRTB brand, so its checkpoint roots cannot contain a prior id.
         let previous = self.prior_generation.take();
-        if let Some(mut previous) = previous {
-            if let Some(prepared) = prepared.take() {
-                prepared.accept();
-            }
+        let generation = if let Some(mut previous) = previous {
+            prepared.accept_control();
             previous
                 .generation
-                .prepare_candidate_accept(&mut generation);
-            previous.generation.finish_candidate_accept(&mut generation);
+                .prepare_candidate_accept(prepared.generation_mut());
+            previous
+                .generation
+                .finish_candidate_accept(prepared.generation_mut());
+            let generation = prepared.into_generation();
             previous
                 .generation
                 .retire()
                 .map_err(SessionError::Universe)?;
             self.retired_generations = self.retired_generations.saturating_add(1);
-        } else if let Some(prepared) = prepared.take() {
-            prepared.accept();
-        }
+            generation
+        } else {
+            prepared.accept_control();
+            prepared.into_generation()
+        };
         let incoming = RetainedRevisionGeneration {
             revision: transaction.revision,
             generation,

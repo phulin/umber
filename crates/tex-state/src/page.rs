@@ -1322,6 +1322,11 @@ impl PageRegion {
     }
 
     #[must_use]
+    pub(crate) const fn material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
+        self.nodes.counters()
+    }
+
+    #[must_use]
     pub(crate) fn retained_bytes(&self) -> usize {
         self.builder.retained_bytes().saturating_add(
             self.checkpoints

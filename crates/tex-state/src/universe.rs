@@ -2963,6 +2963,12 @@ impl<G> Universe<G> {
         self.page_region.current().counters()
     }
 
+    /// Demand-free page-material ownership counters for lifecycle gates.
+    #[must_use]
+    pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
+        self.page_region.current().material_counters()
+    }
+
     /// Selects every capacity owned by the executable process profile.
     ///
     /// The format boundary identifies its producer profile through the

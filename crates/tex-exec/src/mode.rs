@@ -2213,13 +2213,21 @@ impl ModeNest {
     /// Promotes the current mode owner through the aggregate candidate
     /// barrier. Consuming the candidate makes a second disposition impossible.
     pub(crate) fn accept_checkpoint_candidate(mut self) -> Self {
+        self.accept_checkpoint_candidate_in_place();
+        self
+    }
+
+    /// Promotes the current mode owner without replacing its bounded stack
+    /// storage. This is the production `MainControl` settlement path: the
+    /// stack allocation remains owned by the accepted control instead of
+    /// constructing a default nest merely to move it out and back.
+    pub(crate) fn accept_checkpoint_candidate_in_place(&mut self) {
         assert_eq!(
             self.lifecycle,
             ModeNestLifecycle::CheckpointCandidate,
             "only a rooted mode candidate can be accepted"
         );
         self.lifecycle = ModeNestLifecycle::Independent;
-        self
     }
 
     /// Rejects the candidate-only mode suffix after destination owners have

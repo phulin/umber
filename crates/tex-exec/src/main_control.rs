@@ -2095,10 +2095,14 @@ impl<G> MainControl<G> {
     /// returns the source-side mode ranges.
     #[doc(hidden)]
     pub(crate) fn into_checkpoint_candidate_parts(
-        mut self,
+        self,
     ) -> (CommandState<G>, PreparedCheckpointControl) {
-        let modes = std::mem::take(&mut self.modes);
-        let command = self.command.into_state();
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::GenerationBoundary,
+        );
+        let Self { command, modes, .. } = self;
+        let command = command.into_state();
         (command, PreparedCheckpointControl { modes })
     }
 
@@ -2132,8 +2136,11 @@ impl<G> MainControl<G> {
     /// Settles a quiescent command/mode candidate while returning the live
     /// control owner. The consuming transition cannot run twice.
     pub(crate) fn into_accepted_checkpoint_candidate(mut self) -> Self {
-        let modes = std::mem::take(&mut self.modes);
-        self.modes = modes.accept_checkpoint_candidate();
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::GenerationBoundary,
+        );
+        self.modes.accept_checkpoint_candidate_in_place();
         self.command.state_mut().accept_checkpoint_candidate();
         self
     }
@@ -9782,12 +9789,20 @@ pub struct PreparedCheckpointControl {
 
 impl PreparedCheckpointControl {
     pub fn accept(self) {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::GenerationBoundary,
+        );
         if self.modes.is_checkpoint_candidate() {
             drop(self.modes.accept_checkpoint_candidate());
         }
     }
 
     pub fn reject(self) {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::GenerationBoundary,
+        );
         if self.modes.is_checkpoint_candidate() {
             self.modes.reject_checkpoint_candidate();
         }

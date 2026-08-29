@@ -338,6 +338,10 @@ impl PageMaterialRegion {
         self.durable_transitions
     }
 
+    pub(crate) const fn counters(&self) -> ForkArenaCounters {
+        self.region.pub_arena.counters()
+    }
+
     pub(crate) fn inherit_durable_transition_counters_from(&mut self, source: &Self) {
         self.durable_transitions = source.durable_transitions;
     }

@@ -977,6 +977,7 @@ dependencies = [
  "tex-out",
  "tex-state",
  "tex-typeset",
+ "umber-hash",
 ]
 
 [[package]]
@@ -987,10 +988,10 @@ dependencies = [
  "rustybuzz",
  "self_cell",
  "serde",
- "sha2",
  "subsetter",
  "tex-arith",
  "ttf-parser",
+ "umber-hash",
  "unicode-bidi",
  "unicode-script",
  "woff2-patched",
@@ -1034,6 +1035,7 @@ dependencies = [
  "tex-content",
  "tex-fonts",
  "ttf-parser",
+ "umber-hash",
  "woff2-patched",
 ]
 
@@ -1050,6 +1052,8 @@ dependencies = [
  "tex-arith",
  "tex-content",
  "tex-fonts",
+ "thin-dst",
+ "umber-hot-core-allocator",
  "unicode-width",
 ]
 
@@ -1062,6 +1066,12 @@ dependencies = [
  "tex-fonts",
  "tex-state",
 ]
+
+[[package]]
+name = "thin-dst"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db3c46be180f1af9673ebb27bc1235396f61ef6965b3fe0dbb2e624deb604f0e"
 
 [[package]]
 name = "thiserror"
@@ -1107,6 +1117,14 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "umber-hash"
+version = "0.1.0"
+
+[[package]]
+name = "umber-hot-core-allocator"
+version = "0.0.0"
 
 [[package]]
 name = "unicode-bidi"
