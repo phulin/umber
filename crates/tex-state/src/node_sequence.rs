@@ -95,8 +95,8 @@ impl SemanticSequenceIdentity {
         }
     }
 
-    #[must_use]
-    pub(crate) fn without_prefix(self, prefix: Self) -> Self {
+    #[cfg(test)]
+    fn without_prefix(self, prefix: Self) -> Self {
         assert!(prefix.len <= self.len);
         Self {
             hash: self
@@ -107,8 +107,8 @@ impl SemanticSequenceIdentity {
         }
     }
 
-    #[must_use]
-    pub(crate) fn without_suffix(self, suffix: Self) -> Self {
+    #[cfg(test)]
+    fn without_suffix(self, suffix: Self) -> Self {
         assert!(suffix.len <= self.len);
         let retained_len = self.len - suffix.len;
         Self {
@@ -148,6 +148,7 @@ fn sequence_power(mut exponent: usize) -> u64 {
     power
 }
 
+#[cfg(test)]
 fn sequence_inverse_power(mut exponent: usize) -> u64 {
     let mut base = SEQUENCE_MULTIPLIER_INVERSE;
     let mut power = 1_u64;

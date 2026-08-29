@@ -93,7 +93,10 @@ impl Default for NodePool {
 impl NodePool {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_chunk_bytes(4 * 1024)
+        // Three current `Node<PageListId>` values fit in one block on the
+        // supported 64-bit targets. This keeps tiny TeX lists below a 4 KiB
+        // allocation quantum while retaining coarse packed traversal.
+        Self::with_chunk_bytes(512)
     }
 
     #[must_use]

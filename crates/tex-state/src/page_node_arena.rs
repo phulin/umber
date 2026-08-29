@@ -9,7 +9,7 @@ use core::num::NonZeroU64;
 use std::ops::Range;
 
 use crate::fork_arena::{
-    ActiveListBuilder, ArenaListId, ArenaListView, ArenaRange, CheckpointMark, ForkArenaCounters,
+    ActiveListBuilder, ArenaListId, ArenaListView, CheckpointMark, ForkArenaCounters,
     ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary, ValidatedArenaList,
 };
 use crate::node::Node;
@@ -195,13 +195,13 @@ impl Hash for PageListId {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<PageListId>() <= 32);
+const _: () = assert!(core::mem::size_of::<PageListId>() <= 40);
 
 /// Checked owner-local page-list span for repeated traversal and retention.
 ///
 /// The constructor is private to [`PageMaterialArena`]. A span carries the
-/// descriptor position proven by full list validation and never owns or copies
-/// node payload.
+/// direct-root admission proven by full chain validation and never owns or
+/// copies node payload.
 pub struct PageListSpan {
     list: PageListId,
     coordinate: ValidatedArenaList<PageMaterialLane>,
@@ -276,7 +276,7 @@ const _: () = assert!(core::mem::size_of::<PageListSpan>() <= 64);
 /// enclosing page-region history and is borrowed explicitly for every access.
 pub struct PageMaterialRegion {
     region: NodeRegion<PageRole>,
-    range_scratch: Vec<ArenaRange<PageMaterialLane>>,
+    list_scratch: Vec<()>,
     coordinate_scratch: Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: bool,
     durable_transitions: DurableTransitionCounters,
@@ -310,7 +310,7 @@ pub(crate) struct DurableTransitionCounters {
 pub struct PageMaterialArena<'a> {
     pool: &'a mut NodePool,
     region: &'a mut NodeRegion<PageRole>,
-    range_scratch: &'a mut Vec<ArenaRange<PageMaterialLane>>,
+    list_scratch: &'a mut Vec<()>,
     coordinate_scratch: &'a mut Vec<ArenaListId<PageMaterialLane>>,
     semantic_identity_enabled: &'a mut bool,
     durable_transitions: &'a mut DurableTransitionCounters,
@@ -323,7 +323,7 @@ impl PageMaterialRegion {
             .expect("page-material region identity capacity");
         Self {
             region,
-            range_scratch: Vec::new(),
+            list_scratch: Vec::new(),
             coordinate_scratch: Vec::new(),
             semantic_identity_enabled: false,
             durable_transitions: DurableTransitionCounters::default(),
@@ -442,7 +442,7 @@ impl<'a> PageMaterialArena<'a> {
         Self {
             pool,
             region: &mut state.region,
-            range_scratch: &mut state.range_scratch,
+            list_scratch: &mut state.list_scratch,
             coordinate_scratch: &mut state.coordinate_scratch,
             semantic_identity_enabled: &mut state.semantic_identity_enabled,
             durable_transitions: &mut state.durable_transitions,
@@ -1081,7 +1081,7 @@ impl<'a> PageMaterialArena<'a> {
         let coordinate = self.region.pub_arena.compose_lists(
             &mut self.pool.chunks,
             self.coordinate_scratch,
-            self.range_scratch,
+            self.list_scratch,
         )?;
         if identity.is_some() {
             self.region
@@ -1116,7 +1116,7 @@ impl<'a> PageMaterialArena<'a> {
             spans
                 .iter()
                 .map(|span| (span.list.coordinate(), span.coordinate)),
-            self.range_scratch,
+            self.list_scratch,
         )?;
         if identity.is_some() {
             self.region
@@ -1141,7 +1141,7 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
-                self.range_scratch,
+                self.list_scratch,
                 semantic_node_identity,
             )?;
             self.region.pub_arena.record_identity_work(work);
@@ -1151,7 +1151,7 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
-                self.range_scratch,
+                self.list_scratch,
             )?;
             Ok(PageListId::from_parts(coordinate, None))
         }
@@ -1169,7 +1169,7 @@ impl<'a> PageMaterialArena<'a> {
                     span.list.coordinate(),
                     span.coordinate,
                     selected,
-                    self.range_scratch,
+                    self.list_scratch,
                     semantic_node_identity,
                 )?;
             self.region.pub_arena.record_identity_work(work);
@@ -1180,7 +1180,7 @@ impl<'a> PageMaterialArena<'a> {
                 span.list.coordinate(),
                 span.coordinate,
                 selected,
-                self.range_scratch,
+                self.list_scratch,
             )?;
             PageListId::from_parts(coordinate, None)
         };

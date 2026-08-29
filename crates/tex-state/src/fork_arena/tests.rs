@@ -91,15 +91,17 @@ fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
 }
 
 #[test]
-fn one_range_list_uses_the_same_canonical_descriptor_handle() {
+fn one_block_list_stores_its_direct_head_and_tail_cursors() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let direct = list(&mut arena, &mut pool, [1, 2]);
     let mark = arena.operation_mark(&pool);
 
-    assert_eq!(direct.count, 1);
     assert_eq!(direct.len(), 2);
-    assert_eq!(mark.descriptor_chunks, 1);
+    assert_eq!(direct.head.raw, direct.tail.raw);
+    assert_eq!(direct.head.offset, 0);
+    assert_eq!(direct.tail.offset, 2);
+    assert_eq!(mark.descriptor_chunks, 0);
     assert_eq!(
         arena
             .list(&pool, direct)
@@ -220,8 +222,8 @@ fn released_checkpoint_prefix_reuses_chunks_and_keeps_rebased_reject_exact() {
         arena
             .release_accepted_prefix(&mut pool, floor)
             .expect("accepted prefix releases"),
-        2,
-        "one payload and one descriptor chunk are returned"
+        1,
+        "one direct payload block is returned"
     );
     assert!(!arena.validates_checkpoint(empty));
     assert!(arena.validates_checkpoint(floor));
@@ -403,7 +405,7 @@ fn accepted_restore_prunes_superseded_chunks_without_exposing_a_partial_mark() {
 }
 
 #[test]
-fn canonical_range_sequence_has_indexed_and_sequential_parity() {
+fn direct_chunk_sequence_has_indexed_and_sequential_parity() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let left = list(&mut arena, &mut pool, [1, 2, 3]);
@@ -412,7 +414,7 @@ fn canonical_range_sequence_has_indexed_and_sequential_parity() {
     let composite = arena
         .compose_lists(&mut pool, &[left, right], &mut scratch)
         .expect("range sequence");
-    assert_eq!(composite.count, 2);
+    assert_ne!(composite.head.raw, composite.tail.raw);
     {
         let view = arena.list(&pool, composite).expect("sequence view");
         assert_eq!(view.len(), 5);
@@ -729,7 +731,7 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
 }
 
 #[test]
-fn sequence_summaries_move_atomically_with_promoted_chunks_and_descriptors() {
+fn sequence_summaries_move_atomically_with_promoted_direct_chunks() {
     const CHUNK_VALUES: usize = 8;
     let mut pool =
         ChunkPool::<u64>::with_chunk_bytes(std::mem::size_of::<Option<u64>>() * CHUNK_VALUES);
