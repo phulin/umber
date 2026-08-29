@@ -1036,8 +1036,11 @@ admitted current generation for hot direct indexing and stores branded indices
 plus scalar cursors whenever that borrow ends. Its logical stacks admit each
 immutable frame payload once, journal only compact first-touch execution state
 or stable displaced-payload handles in fixed chunks, and settle exactly one
-current plus one detached accepted suffix. Large source-line state is isolated
-in a reusable stored-state slab so hot token cursor records stay bounded.
+current plus one detached accepted suffix. Stable checkpoint rows carry direct
+predecessor/successor coordinates, so selection detaches that suffix without a
+parallel order vector, position search, or copied key range. Large source-line
+state is isolated in a reusable stored-state slab so hot token cursor records
+stay bounded.
 
 `tex-exec` owns operation boundaries, semantic dispatch, mode/page storage
 selection, node-building lifetimes, resource/effect barriers, shipout

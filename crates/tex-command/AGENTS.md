@@ -383,11 +383,14 @@ collector (see `src/conditionals.rs`).
   JobStart is frozen outside the live owner. Retained-owner clone copies only
   scalar coordinates. Main control
   parks its exclusive physical command owner in the retained generation before
-  candidate fork; the fork detaches the later accepted chunks, restores the
-  named marks in place, and owns the only current suffix. Reject rewinds current
-  cells and redoes the detached prior cells before reattachment; accept prunes
-  that prior suffix. Validation never mutates the runtime, aggregate command
-  roots are not `Clone`, and capture requires quiescent execution scratch.
+  candidate fork. Stable frame rows link accepted order directly; selecting a
+  mark changes a fixed number of links to detach the later accepted rows and
+  opens the only current suffix without a `VecDeque`, position search, or key
+  copy. Reject rewinds current cells, retires candidate rows, redoes detached
+  prior cells, and reattaches their row chain; accept retains candidate rows and
+  retires the detached prior chain. Validation never mutates the runtime,
+  aggregate command roots are not `Clone`, and capture requires quiescent
+  execution scratch.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   and suspended-execution recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped

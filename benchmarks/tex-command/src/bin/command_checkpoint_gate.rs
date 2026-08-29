@@ -57,6 +57,18 @@ struct SourceHistoryCounts {
     cold_ordered_row_reuse: Counts,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SettlementWork {
+    selected_rewind_records: u64,
+    candidate_reject_records: u64,
+    accepted_redo_records: u64,
+    candidate_chunks_released: u64,
+    accepted_chunks_released: u64,
+    frame_index_searches: u64,
+    frame_keys_copied: u64,
+    settlement_allocations: Counts,
+}
+
 fn main() {
     let shallow = run_fixture(1);
     let accumulated = run_fixture(64);
@@ -92,6 +104,24 @@ fn main() {
     assert_eq!(source_history.cold_owner_swap, Counts::ZERO);
     assert_eq!(source_history.lex_ordered_row_reuse, Counts::ZERO);
     assert_eq!(source_history.cold_ordered_row_reuse, Counts::ZERO);
+    let rejected = run_settlement_work(73, 5, false);
+    assert_eq!(rejected.selected_rewind_records, 73);
+    assert_eq!(rejected.candidate_reject_records, 5);
+    assert_eq!(rejected.accepted_redo_records, 73);
+    assert_eq!(rejected.candidate_chunks_released, 5);
+    assert_eq!(rejected.accepted_chunks_released, 0);
+    assert_eq!(rejected.frame_index_searches, 0);
+    assert_eq!(rejected.frame_keys_copied, 0);
+    assert_eq!(rejected.settlement_allocations, Counts::ZERO);
+    let accepted = run_settlement_work(73, 5, true);
+    assert_eq!(accepted.selected_rewind_records, 73);
+    assert_eq!(accepted.candidate_reject_records, 0);
+    assert_eq!(accepted.accepted_redo_records, 0);
+    assert_eq!(accepted.candidate_chunks_released, 0);
+    assert_eq!(accepted.accepted_chunks_released, 73);
+    assert_eq!(accepted.frame_index_searches, 0);
+    assert_eq!(accepted.frame_keys_copied, 0);
+    assert_eq!(accepted.settlement_allocations, Counts::ZERO);
     let prefix_plateau = run_prefix_plateau(10_000_000);
     assert_eq!(prefix_plateau.live_frames, 1);
     assert_eq!(prefix_plateau.frame_capacity, 128);
@@ -100,7 +130,7 @@ fn main() {
         prefix_plateau.boundaries
     );
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} prefix_plateau={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} rejected_settlement={:?} accepted_settlement={:?} prefix_plateau={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -113,8 +143,79 @@ fn main() {
         shallow.repeated_input_level_reuse,
         shallow.logical_history,
         source_history,
+        rejected,
+        accepted,
         prefix_plateau,
     );
+}
+
+fn run_settlement_work(
+    accepted_intervals: usize,
+    candidate_intervals: usize,
+    accept: bool,
+) -> SettlementWork {
+    tex_state::with_universe(budget(), |universe| {
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        let selected = command
+            .publish_summary(universe)
+            .expect("selected settlement summary publishes");
+        let mut accepted_marks = Vec::with_capacity(accepted_intervals);
+        for _ in 0..accepted_intervals {
+            command.profile_repeated_timeline_mutations(1);
+            accepted_marks.push(
+                command
+                    .publish_summary(universe)
+                    .expect("accepted settlement mark publishes"),
+            );
+        }
+        let before = command.profile_timeline_counters();
+        let mut candidate = CommandState::profile_fork_summary(command, &selected, universe)
+            .expect("settlement candidate forks");
+        let mut candidate_marks = Vec::with_capacity(candidate_intervals);
+        for _ in 0..candidate_intervals {
+            candidate.profile_repeated_timeline_mutations(1);
+            candidate_marks.push(
+                candidate
+                    .publish_summary(universe)
+                    .expect("candidate settlement mark publishes"),
+            );
+        }
+        let (_, settlement_allocations) = measure(|| {
+            if accept {
+                candidate.accept_checkpoint_candidate();
+            } else {
+                candidate.reject_checkpoint_candidate();
+            }
+        });
+        let after = candidate.profile_timeline_counters();
+        drop(candidate_marks);
+        drop(accepted_marks);
+        SettlementWork {
+            selected_rewind_records: after
+                .selected_rewind_records
+                .saturating_sub(before.selected_rewind_records),
+            candidate_reject_records: after
+                .candidate_reject_records
+                .saturating_sub(before.candidate_reject_records),
+            accepted_redo_records: after
+                .accepted_redo_records
+                .saturating_sub(before.accepted_redo_records),
+            candidate_chunks_released: after
+                .candidate_chunks_released
+                .saturating_sub(before.candidate_chunks_released),
+            accepted_chunks_released: after
+                .accepted_chunks_released
+                .saturating_sub(before.accepted_chunks_released),
+            frame_index_searches: after
+                .frame_index_searches
+                .saturating_sub(before.frame_index_searches),
+            frame_keys_copied: after
+                .frame_keys_copied
+                .saturating_sub(before.frame_keys_copied),
+            settlement_allocations,
+        }
+    })
+    .expect("settlement gate universe")
 }
 
 fn run_source_history_fixture() -> SourceHistoryCounts {

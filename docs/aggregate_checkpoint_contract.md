@@ -340,6 +340,20 @@ drop returns the exclusive command-root loan; fork restores the selected marks
 and gives the sole current candidate that root. A rejected candidate returns
 the same storage after discarding its current logical suffix.
 
+Command-frame order now lives in the same physical owner as stable reusable
+frame rows. Each row stores its direct predecessor and successor; a rooted
+selection unlinks the selected row's accepted successor in constant work and
+opens a private candidate chain. Rejection retires only candidate rows and
+reattaches the saved chain; acceptance retires the saved rows and leaves the
+candidate chain attached. There is no `VecDeque` order index, position search,
+`split_off`, or copied frame-key suffix. Packed-journal counters separately
+report the exact selected rewind, candidate rejection, accepted redo, candidate
+chunk release, and obsolete accepted chunk release. The enforced gate's
+73-record accepted delta and 5-record candidate delta report `73/5/73` work on
+rejection and `73/0/0` on acceptance, with 5 candidate or 73 accepted chunks
+released respectively, zero frame searches/key copies, and zero settlement
+allocations.
+
 ## Core state, node arena, and primitive ownership target
 
 Dense state remains a direct mutable owner in one accepted lineage. Runtime
