@@ -5350,37 +5350,71 @@ impl World {
 
     /// Visits the page-visible effect interval in canonical prefix order.
     ///
-    /// Building the short block spine is confined to shipout, where effects
-    /// cross into an artifact-owned value. Named checkpoint capture, clone,
+    /// A short block spine is built only when the requested interval actually
+    /// intersects an accepted prefix. Named checkpoint capture, clone,
     /// restore, and fork never materialize or concatenate accepted blocks.
     #[doc(hidden)]
     pub fn visit_pending_page_effects(
         &self,
         pending_live_end: usize,
-        mut visit: impl FnMut(usize, &EffectRecord),
+        visit: impl FnMut(usize, &EffectRecord),
     ) {
         let pending = self.pending_page_effect_range(pending_live_end);
-        let mut blocks = Vec::new();
-        let mut block = self.accepted_effects.as_deref();
-        while let Some(current) = block {
-            blocks.push(current);
-            block = current.parent.as_deref();
-        }
-        let mut index = 0;
-        for block in blocks.into_iter().rev() {
-            for record in block.effects[..block.len].iter() {
-                if pending.contains(&index) {
-                    visit(index, record);
+        self.visit_page_effect_range(pending, visit);
+    }
+
+    /// Visits only the physical records intersecting one absolute page-effect
+    /// interval. The page cursor normally points past every earlier shipout,
+    /// so staging the next page must not revisit the retained output prefix.
+    fn visit_page_effect_range(
+        &self,
+        range: std::ops::Range<usize>,
+        mut visit: impl FnMut(usize, &EffectRecord),
+    ) -> usize {
+        let prefix_len = self.page_effect_prefix_len();
+        let accepted_start = range.start.min(prefix_len);
+        let accepted_end = range.end.min(prefix_len);
+        let mut inspected = 0;
+
+        if accepted_start < accepted_end {
+            let mut intersections = Vec::new();
+            let mut block = self.accepted_effects.as_deref();
+            while let Some(current) = block {
+                let block_end = current.total_len;
+                let block_start = block_end.saturating_sub(current.len);
+                if accepted_start < block_end && accepted_end > block_start {
+                    let start = accepted_start.saturating_sub(block_start);
+                    let end = accepted_end.min(block_end).saturating_sub(block_start);
+                    intersections.push((current, start..end));
                 }
-                index += 1;
+                if accepted_start >= block_start {
+                    break;
+                }
+                block = current.parent.as_deref();
+            }
+            for (block, local) in intersections.into_iter().rev() {
+                let absolute = block.total_len.saturating_sub(block.len) + local.start;
+                for (offset, record) in block.effects[local].iter().enumerate() {
+                    visit(absolute + offset, record);
+                    inspected += 1;
+                }
             }
         }
-        for record in self.effects[..pending_live_end.min(self.effects.len())].iter() {
-            if pending.contains(&index) {
-                visit(index, record);
-            }
-            index += 1;
+
+        let live_start = range
+            .start
+            .saturating_sub(prefix_len)
+            .min(self.effects.len());
+        let live_end = range
+            .end
+            .saturating_sub(prefix_len)
+            .min(self.effects.len())
+            .max(live_start);
+        for (offset, record) in self.effects[live_start..live_end].iter().enumerate() {
+            visit(prefix_len + live_start + offset, record);
+            inspected += 1;
         }
+        inspected
     }
 
     /// Prefix-or-live indices not yet embedded in a committed page, bounded

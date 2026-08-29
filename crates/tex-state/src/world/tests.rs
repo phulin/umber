@@ -204,6 +204,46 @@ fn repeated_checkpoint_forks_share_accepted_effect_blocks_and_isolate_suffixes()
 }
 
 #[test]
+fn pending_page_effect_visit_does_not_revisit_committed_prefixes() {
+    for prefix_len in [1_usize, 64, 4_096] {
+        let mut live = World::memory();
+        live.begin_retained_session()
+            .expect("test World becomes rollback-capable");
+        for value in 0..prefix_len {
+            live.record_special("prior", value.to_le_bytes().to_vec());
+        }
+        live.finish_page_effect_interval();
+        live.record_special("pending", vec![1]);
+
+        let pending = live.pending_page_effect_range(live.effect_records().len());
+        let mut visited = Vec::new();
+        let inspected = live.visit_page_effect_range(pending, |index, effect| {
+            visited.push((index, effect.clone()));
+        });
+        assert_eq!(inspected, 1, "live prefix length {prefix_len}");
+        assert_eq!(visited.len(), 1, "live prefix length {prefix_len}");
+        assert_eq!(visited[0].0, prefix_len, "live prefix length {prefix_len}");
+
+        live.finish_page_effect_interval();
+        let checkpoint = live.snapshot();
+        let mut fork = live.fork_checkpoint(&checkpoint);
+        fork.record_special("fork-pending", vec![2]);
+        let pending = fork.pending_page_effect_range(fork.effect_records().len());
+        let mut visited = Vec::new();
+        let inspected = fork.visit_page_effect_range(pending, |index, effect| {
+            visited.push((index, effect.clone()));
+        });
+        assert_eq!(inspected, 1, "accepted prefix length {prefix_len}");
+        assert_eq!(visited.len(), 1, "accepted prefix length {prefix_len}");
+        assert_eq!(
+            visited[0].0,
+            prefix_len + 1,
+            "accepted prefix length {prefix_len}"
+        );
+    }
+}
+
+#[test]
 fn checkpoint_candidate_rejects_or_promotes_one_flat_world_suffix() {
     let mut world = World::memory();
     world
