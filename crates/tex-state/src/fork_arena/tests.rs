@@ -1,6 +1,7 @@
 use super::{ActiveListBuilder, ChunkPool, ForkArena, ForkArenaError};
 use crate::node::Node;
 use crate::node_arena::NodeCursor;
+use umber_hot_core_allocator::{AllocationMeasurement, scope, thread_measurement};
 
 enum ActiveLane {}
 enum PageLane {}
@@ -463,7 +464,7 @@ fn checkpoint_marks_are_whole_chunk_boundaries_and_rejection_reattaches_prior() 
     };
 
     arena
-        .begin_checkpoint_candidate(early)
+        .begin_checkpoint_candidate(&mut pool, early)
         .expect("select early sibling");
     assert_eq!(arena.list(&pool, first).expect("prefix").get(1), Some(&11));
     assert_eq!(
@@ -495,7 +496,7 @@ fn checkpoint_marks_are_whole_chunk_boundaries_and_rejection_reattaches_prior() 
         ForkArenaError::InvalidRange
     );
     arena
-        .begin_checkpoint_candidate(late)
+        .begin_checkpoint_candidate(&mut pool, late)
         .expect("later sibling remains selectable");
     let settlement = arena
         .seal_boundary(&mut pool)
@@ -544,7 +545,7 @@ fn released_checkpoint_prefix_reuses_chunks_and_keeps_rebased_reject_exact() {
     ));
 
     arena
-        .begin_checkpoint_candidate(floor)
+        .begin_checkpoint_candidate(&mut pool, floor)
         .expect("rebased floor forks");
     let candidate = list(&mut arena, &mut pool, [9]);
     assert_eq!(pool.page_count(), pages, "released chunks are reused");
@@ -600,7 +601,7 @@ fn forked_journal_visitors_preserve_reverse_undo_and_forward_redo_order() {
         .expect("accepted journal rewind");
     assert_eq!(accepted_reverse, [3, 2]);
     arena
-        .begin_checkpoint_candidate(selected)
+        .begin_checkpoint_candidate(&mut pool, selected)
         .expect("candidate fork");
     let candidate = list(&mut arena, &mut pool, [4, 5]);
 
@@ -655,7 +656,7 @@ fn acceptance_prunes_detached_prior_and_keeps_candidate_chunks() {
         .seal_boundary(&mut pool)
         .expect("accepted head boundary");
     arena
-        .begin_checkpoint_candidate(selected)
+        .begin_checkpoint_candidate(&mut pool, selected)
         .expect("candidate fork");
     let candidate = list(&mut arena, &mut pool, [8, 9, 10]);
     let settlement = arena
@@ -972,7 +973,7 @@ fn rejected_candidate_truncates_detached_active_builder_output() {
         arena.checkpoint_mark(boundary).expect("checkpoint")
     };
     arena
-        .begin_checkpoint_candidate(selected)
+        .begin_checkpoint_candidate(&mut pool, selected)
         .expect("candidate fork");
     let mut active = ActiveListBuilder::vacant();
     arena
@@ -1039,6 +1040,135 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
     );
     assert!(page.counters().chunks_promoted > 0);
     assert_eq!(page.counters().source_nodes_copied, 0);
+}
+
+fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasurement {
+    const ALLOCATION_OWNER: usize = 15;
+
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(std::mem::size_of::<Option<u32>>());
+    let mut filler = ForkArena::<u32, ActiveLane>::new();
+    if prefix_chunks != 0 {
+        let mut builder = filler.begin_builder(&mut pool).expect("filler builder");
+        for value in 0..prefix_chunks as u32 {
+            builder.push(value).expect("filler append");
+        }
+        builder.seal().expect("filler root");
+    }
+
+    let mut source = ForkArena::<u32, ActiveLane>::new();
+    let mark = source.begin_batch(&mut pool).expect("transfer boundary");
+    let root = list(&mut source, &mut pool, [41]);
+    let batch = source
+        .seal_batch(&mut pool, mark, vec![root])
+        .expect("sealed transfer batch");
+    let detached = source
+        .detach_batch(&mut pool, batch)
+        .map_err(|failure| failure.error)
+        .expect("detached transfer batch");
+    let mut destination = source.empty_lane::<PageLane>();
+
+    let before = thread_measurement(ALLOCATION_OWNER);
+    let (promoted, scanned) = {
+        let _scope = scope(ALLOCATION_OWNER);
+        source
+            .promote_detached_batch_into(&mut pool, &mut destination, detached)
+            .map_err(|failure| failure.error)
+            .expect("detached batch promotion")
+    };
+    let after = thread_measurement(ALLOCATION_OWNER);
+
+    assert_eq!(scanned, 1, "promotion visits the one moved payload value");
+    assert_eq!(destination.counters().source_nodes_copied, 0);
+    assert_eq!(promoted.len(), 1);
+    assert_eq!(
+        destination
+            .list(&pool, promoted[0])
+            .expect("promoted root")
+            .get(0),
+        Some(&41)
+    );
+    AllocationMeasurement {
+        calls: after.calls.saturating_sub(before.calls),
+        requested_bytes: after.requested_bytes.saturating_sub(before.requested_bytes),
+    }
+}
+
+#[test]
+fn detached_promotion_allocation_is_independent_of_shared_pool_slot_depth() {
+    let low = detached_promotion_allocation_cost(0);
+    let high = detached_promotion_allocation_cost(4_096);
+
+    eprintln!(
+        "DETACHED_PROMOTION_ALLOCATION_SCALE resolver_entry_bytes={} chunk_meta_bytes={} low_calls={} low_bytes={} high_slot=4096 high_calls={} high_bytes={}",
+        std::mem::size_of::<Option<(u32, usize)>>(),
+        std::mem::size_of::<super::ChunkMeta>(),
+        low.calls,
+        low.requested_bytes,
+        high.calls,
+        high.requested_bytes
+    );
+    assert_eq!(high, low, "promotion storage scales with the moved suffix");
+    assert!(
+        high.calls <= 2 && high.requested_bytes <= 256,
+        "one-root promotion owns only its result and destination chunk-key lanes"
+    );
+}
+
+#[test]
+fn failed_high_slot_promotion_reattaches_the_exact_source_suffix() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(std::mem::size_of::<Option<u32>>());
+    let mut filler = ForkArena::<u32, ActiveLane>::new();
+    let mut filler_builder = filler.begin_builder(&mut pool).expect("filler builder");
+    for value in 0..256 {
+        filler_builder.push(value).expect("filler append");
+    }
+    filler_builder.seal().expect("filler root");
+
+    let mut source = ForkArena::<u32, ActiveLane>::new();
+    let mark = source.begin_batch(&mut pool).expect("transfer boundary");
+    let root = list(&mut source, &mut pool, [71, 73]);
+    let batch = source
+        .seal_batch(&mut pool, mark, vec![root])
+        .expect("sealed transfer batch");
+    let detached = source
+        .detach_batch(&mut pool, batch)
+        .map_err(|failure| failure.error)
+        .expect("detached transfer batch");
+
+    let mut foreign_pool = ChunkPool::<u32>::with_chunk_bytes(32);
+    let mut destination = source.empty_lane::<PageLane>();
+    let mut foreign_builder = destination
+        .begin_builder(&mut foreign_pool)
+        .expect("foreign destination builder");
+    foreign_builder.push(99).expect("foreign append");
+    let foreign_root = foreign_builder.seal().expect("foreign root");
+    let failure = source
+        .promote_detached_batch_into(&mut pool, &mut destination, detached)
+        .expect_err("foreign-bound destination rejects the transfer");
+    assert_eq!(failure.error, ForkArenaError::InvalidChunk);
+    assert!(
+        source.reattach_batch(&mut pool, failure.batch).is_ok(),
+        "failed transfer returns its exact suffix"
+    );
+
+    assert_eq!(
+        source
+            .list(&pool, root)
+            .expect("reattached source root")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [71, 73]
+    );
+    assert_eq!(
+        destination
+            .list(&foreign_pool, foreign_root)
+            .expect("foreign destination remains unchanged")
+            .get(0),
+        Some(&99)
+    );
+    assert_eq!(source.counters().source_nodes_copied, 0);
+    assert_eq!(destination.counters().chunks_promoted, 0);
 }
 
 #[test]

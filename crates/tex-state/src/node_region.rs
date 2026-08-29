@@ -365,7 +365,10 @@ impl<Role> NodeRegion<Role> {
                 closure,
             });
         }
-        match self.pub_arena.reattach_batch(&pool.chunks, closure.batch) {
+        match self
+            .pub_arena
+            .reattach_batch(&mut pool.chunks, closure.batch)
+        {
             Ok(()) => {
                 pool.closure_transitions.transient_rollbacks = pool
                     .closure_transitions

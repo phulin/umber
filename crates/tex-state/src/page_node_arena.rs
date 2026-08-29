@@ -1416,7 +1416,9 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         mark: CheckpointMark<PageMaterialLane>,
     ) -> Result<(), ForkArenaError> {
-        self.region.pub_arena.begin_checkpoint_candidate(mark)
+        self.region
+            .pub_arena
+            .begin_checkpoint_candidate(&mut self.pool.chunks, mark)
     }
 
     #[must_use]

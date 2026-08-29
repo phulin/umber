@@ -732,7 +732,7 @@ impl<G> SaveJournal<G> {
         assert!(!self.checkpoint_fork);
         let prior_checkpoint_entries = self.checkpoint_entries;
         self.checkpoint_arena
-            .begin_checkpoint_candidate(cursor.checkpoint_mark())
+            .begin_checkpoint_candidate(&mut self.checkpoint_pool, cursor.checkpoint_mark())
             .expect("validated dense checkpoint begins its sole fork");
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.checkpoint_fork = true;

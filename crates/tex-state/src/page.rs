@@ -2537,7 +2537,7 @@ impl PageBuilderState {
         self.semantic_roots = mark.semantic_roots;
         self.checkpoint_journal
             .inverses
-            .begin_checkpoint_candidate(mark.journal)
+            .begin_checkpoint_candidate(&mut self.checkpoint_journal.inverse_pool, mark.journal)
             .expect("validated page journal opens one accepted/current fork");
         let selected_frame = self
             .checkpoint_journal

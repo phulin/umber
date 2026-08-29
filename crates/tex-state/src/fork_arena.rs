@@ -4,7 +4,9 @@
 //! blocks. Direct roots carry head/tail cursors and length; reverse traversal
 //! follows block metadata without a descriptor lookup. Retained checkpoints
 //! land on sealed whole-block boundaries, while operation marks may name the
-//! private current tail's used cursor.
+//! private current tail's used cursor. Each block's owner-relative position
+//! lives beside that block's pool metadata, so short-lived regions never
+//! materialize sparse indexes up to a process-global pool slot.
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -37,6 +39,9 @@ pub struct RawChunkKey {
 struct ChunkMeta {
     generation: u32,
     arena: u32,
+    // This index has the same lifetime as the chunk incarnation. Transfers
+    // overwrite it in place; detach and release invalidate it in place.
+    arena_position: usize,
     used: u32,
     live: bool,
     sealed: bool,
@@ -44,16 +49,10 @@ struct ChunkMeta {
     previous_in_list: Option<(RawChunkKey, u32)>,
 }
 
+const UNINDEXED_ARENA_POSITION: usize = usize::MAX;
+
 struct ChunkPage<T> {
     slots: Box<[Option<T>]>,
-}
-
-fn unindex_resolved_chunk(resolver: &mut [Option<(u32, usize)>], key: RawChunkKey) {
-    if let Some(entry) = resolver.get_mut(key.slot as usize)
-        && entry.is_some_and(|(generation, _)| generation == key.generation)
-    {
-        *entry = None;
-    }
 }
 
 /// Stable coarse-page storage shared by typed semantic lanes.
@@ -159,6 +158,7 @@ impl<T> ChunkStorage<T> {
         self.chunks.extend((start..end).map(|_| ChunkMeta {
             generation: 1,
             arena: 0,
+            arena_position: UNINDEXED_ARENA_POSITION,
             used: 0,
             live: false,
             sealed: false,
@@ -182,6 +182,7 @@ impl<T> ChunkStorage<T> {
         meta.live = true;
         meta.sealed = false;
         meta.arena = arena;
+        meta.arena_position = UNINDEXED_ARENA_POSITION;
         meta.previous_in_list = None;
         Ok(RawChunkKey {
             slot,
@@ -381,6 +382,7 @@ impl<T> ChunkStorage<T> {
         meta.live = false;
         meta.sealed = false;
         meta.arena = 0;
+        meta.arena_position = UNINDEXED_ARENA_POSITION;
         meta.used = 0;
         meta.sequence_summary = None;
         meta.previous_in_list = None;
@@ -390,6 +392,35 @@ impl<T> ChunkStorage<T> {
             .ok_or(ForkArenaError::CapacityOverflow)?;
         self.free.push(key.slot);
         Ok(used as usize)
+    }
+
+    fn index_in_arena(
+        &mut self,
+        key: RawChunkKey,
+        arena: u32,
+        position: usize,
+    ) -> Result<(), ForkArenaError> {
+        self.validate_mut(key, arena)?.arena_position = position;
+        Ok(())
+    }
+
+    fn unindex_from_arena(&mut self, key: RawChunkKey, arena: u32) {
+        if let Some(meta) = self.chunks.get_mut(key.slot as usize)
+            && meta.live
+            && meta.generation == key.generation
+            && meta.arena == arena
+        {
+            meta.arena_position = UNINDEXED_ARENA_POSITION;
+        }
+    }
+
+    fn arena_position(&self, key: RawChunkKey, arena: u32) -> Option<usize> {
+        let meta = self.chunks.get(key.slot as usize)?;
+        if !meta.live || meta.generation != key.generation || meta.arena != arena {
+            return None;
+        }
+        let position = meta.arena_position;
+        (position != UNINDEXED_ARENA_POSITION).then_some(position)
     }
 
     fn previous_in_list(
@@ -973,8 +1004,6 @@ pub struct ForkArena<T, Lane> {
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
-    payload_resolver: Vec<Option<(u32, usize)>>,
-    descriptor_resolver: Vec<Option<(u32, usize)>>,
     counters: ForkArenaCounters,
     _types: PhantomData<(T, Lane)>,
 }
@@ -1006,8 +1035,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
-            payload_resolver: Vec::new(),
-            descriptor_resolver: Vec::new(),
             counters: ForkArenaCounters::default(),
             _types: PhantomData,
         }
@@ -1025,8 +1052,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
-            payload_resolver: Vec::new(),
-            descriptor_resolver: Vec::new(),
             counters: ForkArenaCounters::default(),
             _types: PhantomData,
         }
@@ -1092,13 +1117,17 @@ impl<T, Lane> ForkArena<T, Lane> {
             let key = self
                 .live_key_at(false, position)
                 .ok_or(ForkArenaError::InvalidChunk)?;
-            pool.payload.validate(key, self.owner)?;
+            if pool.payload.validate(key, self.owner)?.arena_position != position {
+                return Err(ForkArenaError::InvalidChunk);
+            }
         }
         for position in self.base_descriptor_chunks as usize..self.live_descriptor_len() {
             let key = self
                 .live_key_at(true, position)
                 .ok_or(ForkArenaError::InvalidChunk)?;
-            pool.descriptors.validate(key, self.owner)?;
+            if pool.descriptors.validate(key, self.owner)?.arena_position != position {
+                return Err(ForkArenaError::InvalidChunk);
+            }
         }
         Ok(())
     }
@@ -1231,44 +1260,40 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    fn index_chunk(&mut self, descriptor: bool, key: RawChunkKey, position: usize) {
-        let resolver = if descriptor {
-            &mut self.descriptor_resolver
+    fn index_chunk(
+        &self,
+        pool: &mut ChunkPool<T>,
+        descriptor: bool,
+        key: RawChunkKey,
+        position: usize,
+    ) {
+        let result = if descriptor {
+            pool.descriptors.index_in_arena(key, self.owner, position)
         } else {
-            &mut self.payload_resolver
+            pool.payload.index_in_arena(key, self.owner, position)
         };
-        let slot = key.slot as usize;
-        if resolver.len() <= slot {
-            resolver.resize(slot + 1, None);
-        }
-        resolver[slot] = Some((key.generation, position));
+        result.expect("arena index names its live owned chunk");
     }
 
-    fn unindex_chunk(&mut self, descriptor: bool, key: RawChunkKey) {
-        let resolver = if descriptor {
-            &mut self.descriptor_resolver
+    fn unindex_chunk(&self, pool: &mut ChunkPool<T>, descriptor: bool, key: RawChunkKey) {
+        if descriptor {
+            pool.descriptors.unindex_from_arena(key, self.owner);
         } else {
-            &mut self.payload_resolver
-        };
-        if let Some(entry) = resolver.get_mut(key.slot as usize)
-            && entry.is_some_and(|(generation, _)| generation == key.generation)
-        {
-            *entry = None;
+            pool.payload.unindex_from_arena(key, self.owner);
         }
     }
 
-    fn resolved_position(&self, descriptor: bool, key: RawChunkKey) -> Option<usize> {
-        let resolver = if descriptor {
-            &self.descriptor_resolver
+    fn resolved_position(
+        &self,
+        pool: &ChunkPool<T>,
+        descriptor: bool,
+        key: RawChunkKey,
+    ) -> Option<usize> {
+        if descriptor {
+            pool.descriptors.arena_position(key, self.owner)
         } else {
-            &self.payload_resolver
-        };
-        resolver
-            .get(key.slot as usize)
-            .copied()
-            .flatten()
-            .filter(|(generation, _)| *generation == key.generation)
-            .map(|(_, position)| position)
+            pool.payload.arena_position(key, self.owner)
+        }
     }
 
     fn append_payload(
@@ -1306,7 +1331,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 self.counters.direct_blocks_allocated =
                     self.counters.direct_blocks_allocated.saturating_add(1);
                 let position = self.live_payload_len() - 1;
-                self.index_chunk(false, key, position);
+                self.index_chunk(pool, false, key, position);
                 key
             }
         };
@@ -1422,7 +1447,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 };
                 lane.pop().ok_or(ForkArenaError::InvalidOperationMark)?
             };
-            self.unindex_chunk(descriptor, key);
+            self.unindex_chunk(pool, descriptor, key);
             if descriptor {
                 pool.descriptors.release(key, self.owner)?;
             } else {
@@ -2136,14 +2161,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             unreachable!()
         };
         let owner = self.owner;
-        let payload_resolver = &mut self.payload_resolver;
         for key in accepted.payload.drain(..payload_count) {
-            unindex_resolved_chunk(payload_resolver, key);
+            pool.payload.unindex_from_arena(key, owner);
             pool.payload.release(key, owner)?;
         }
-        let descriptor_resolver = &mut self.descriptor_resolver;
         for key in accepted.descriptors.drain(..descriptor_count) {
-            unindex_resolved_chunk(descriptor_resolver, key);
+            pool.descriptors.unindex_from_arena(key, owner);
             pool.descriptors.release(key, owner)?;
         }
         self.base_payload_chunks = mark.payload_chunks;
@@ -2396,6 +2419,7 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     pub fn begin_checkpoint_candidate(
         &mut self,
+        pool: &mut ChunkPool<T>,
         mark: CheckpointMark<Lane>,
     ) -> Result<(), ForkArenaError> {
         if self.active_builder {
@@ -2425,10 +2449,10 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .split_off((mark.descriptor_chunks - self.base_descriptor_chunks) as usize),
         };
         for key in &detached_prior.payload {
-            self.unindex_chunk(false, *key);
+            self.unindex_chunk(pool, false, *key);
         }
         for key in &detached_prior.descriptors {
-            self.unindex_chunk(true, *key);
+            self.unindex_chunk(pool, true, *key);
         }
         self.ownership = ForkOwnership::Forked {
             prefix: accepted,
@@ -2453,7 +2477,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if !self.can_begin_checkpoint_candidate(mark) {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        self.begin_checkpoint_candidate(mark)?;
+        self.begin_checkpoint_candidate(pool, mark)?;
         let boundary = self.seal_boundary(pool)?;
         self.accept_checkpoint_candidate(pool, boundary)
     }
@@ -2533,10 +2557,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         let payload_start = self.base_payload_chunks as usize + prefix.payload.len();
         let descriptor_start = self.base_descriptor_chunks as usize + prefix.descriptors.len();
         for (offset, key) in detached_prior.payload.iter().copied().enumerate() {
-            self.index_chunk(false, key, payload_start + offset);
+            self.index_chunk(pool, false, key, payload_start + offset);
         }
         for (offset, key) in detached_prior.descriptors.iter().copied().enumerate() {
-            self.index_chunk(true, key, descriptor_start + offset);
+            self.index_chunk(pool, true, key, descriptor_start + offset);
         }
         prefix.payload.extend(detached_prior.payload);
         prefix.descriptors.extend(detached_prior.descriptors);
@@ -2597,11 +2621,11 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<usize, ForkArenaError> {
         let count = set.payload.len() + set.descriptors.len();
         for key in set.payload {
-            self.unindex_chunk(false, key);
+            self.unindex_chunk(pool, false, key);
             pool.payload.release(key, self.owner)?;
         }
         for key in set.descriptors {
-            self.unindex_chunk(true, key);
+            self.unindex_chunk(pool, true, key);
             pool.descriptors.release(key, self.owner)?;
         }
         Ok(count)
@@ -2759,10 +2783,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             .detach_suffix(true, batch.descriptor_start as usize)
             .expect("self-contained descriptor suffix was preflighted");
         for key in &payload {
-            self.unindex_chunk(false, *key);
+            self.unindex_chunk(pool, false, *key);
         }
         for key in &descriptors {
-            self.unindex_chunk(true, *key);
+            self.unindex_chunk(pool, true, *key);
         }
         Ok(DetachedBatch {
             arena: batch.arena,
@@ -2781,7 +2805,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn reattach_batch(
         &mut self,
-        pool: &ChunkPool<T>,
+        pool: &mut ChunkPool<T>,
         batch: DetachedBatch<Lane>,
     ) -> Result<(), DetachedBatchTransferError<Lane>> {
         let expected = PendingBatch {
@@ -2815,10 +2839,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(DetachedBatchTransferError { error, batch });
         }
         for (offset, key) in batch.payload.iter().copied().enumerate() {
-            self.index_chunk(false, key, batch.payload_start as usize + offset);
+            self.index_chunk(pool, false, key, batch.payload_start as usize + offset);
         }
         for (offset, key) in batch.descriptors.iter().copied().enumerate() {
-            self.index_chunk(true, key, batch.descriptor_start as usize + offset);
+            self.index_chunk(pool, true, key, batch.descriptor_start as usize + offset);
         }
         {
             let current = self.current_chunks_mut();
@@ -2917,10 +2941,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         let payload_start = destination.live_payload_len();
         let descriptor_start = destination.live_descriptor_len();
         for (offset, key) in batch.payload.iter().copied().enumerate() {
-            destination.index_chunk(false, key, payload_start + offset);
+            destination.index_chunk(pool, false, key, payload_start + offset);
         }
         for (offset, key) in batch.descriptors.iter().copied().enumerate() {
-            destination.index_chunk(true, key, descriptor_start + offset);
+            destination.index_chunk(pool, true, key, descriptor_start + offset);
         }
         let promoted = batch.payload.len() + batch.descriptors.len();
         {
@@ -2998,6 +3022,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             .detach_suffix(true, batch.descriptor_start as usize)
             .expect("batch descriptor detachment was preflighted");
         for key in &payload {
+            self.unindex_chunk(pool, false, *key);
+        }
+        for key in &descriptors {
+            self.unindex_chunk(pool, true, *key);
+        }
+        for key in &payload {
             pool.payload
                 .transfer(*key, self.owner, destination.owner)
                 .expect("batch payload ownership was preflighted");
@@ -3008,19 +3038,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .expect("batch descriptor ownership was preflighted");
         }
         let promoted = payload.len() + descriptors.len();
-        for key in &payload {
-            self.unindex_chunk(false, *key);
-        }
-        for key in &descriptors {
-            self.unindex_chunk(true, *key);
-        }
         let payload_start = destination.live_payload_len();
         let descriptor_start = destination.live_descriptor_len();
         for (offset, key) in payload.iter().copied().enumerate() {
-            destination.index_chunk(false, key, payload_start + offset);
+            destination.index_chunk(pool, false, key, payload_start + offset);
         }
         for (offset, key) in descriptors.iter().copied().enumerate() {
-            destination.index_chunk(true, key, descriptor_start + offset);
+            destination.index_chunk(pool, true, key, descriptor_start + offset);
         }
         {
             let current = destination.current_chunks_mut();
@@ -3353,7 +3377,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut key = list.tail.raw;
         loop {
             if self
-                .resolved_position(false, key)
+                .resolved_position(pool, false, key)
                 .is_none_or(|position| position < payload_start)
             {
                 return Err(ForkArenaError::InvalidRegion);
@@ -3539,8 +3563,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         if list.arena != self.owner {
             return Err(ForkArenaError::ForeignArena);
         }
-        if self.resolved_position(false, list.head.raw).is_none()
-            || self.resolved_position(false, list.tail.raw).is_none()
+        if self.resolved_position(pool, false, list.head.raw).is_none()
+            || self.resolved_position(pool, false, list.tail.raw).is_none()
         {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -3630,7 +3654,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut total = 0_usize;
         let mut crossings = 0_usize;
         loop {
-            if self.resolved_position(false, key).is_none() {
+            if self.resolved_position(pool, false, key).is_none() {
                 return Err(ForkArenaError::InvalidRange);
             }
             let used = pool
