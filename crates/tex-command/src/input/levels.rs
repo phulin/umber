@@ -411,15 +411,11 @@ impl<'a, G> PackedTokenSources<'a, G> {
         let index = position as usize;
         let (word, origin, source_provenance) = match span {
             PackedTokenSpanHandle::Replay { replay, .. } => {
-                let Some((word, provenance)) = self.replay.get(*replay, index) else {
-                    return None;
-                };
+                let (word, provenance) = self.replay.get(*replay, index)?;
                 (word.token_word(), word.origin(), provenance)
             }
             PackedTokenSpanHandle::MacroReplacement { definition, .. } => {
-                let Some(word) = definition.replacement_word(index) else {
-                    return None;
-                };
+                let word = definition.replacement_word(index)?;
                 (word, OriginId::UNKNOWN, None)
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => {
@@ -429,9 +425,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 (word.token_word(), word.origin(), None)
             }
             PackedTokenSpanHandle::DurableList { list, .. } => {
-                let Some(word) = list.word_at(index) else {
-                    return None;
-                };
+                let word = list.word_at(index)?;
                 (word, OriginId::UNKNOWN, None)
             }
         };

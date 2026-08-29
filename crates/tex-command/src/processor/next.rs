@@ -1739,25 +1739,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         RetirementRestart::Completed => continue,
                         RetirementRestart::Continue => continue,
-                        RetirementRestart::EndV(level) => {
-                            let raw = destination
-                                .as_mut()
-                                .expect("next-command pipeline owns its reusable command slot")
-                                .empty_for_raw_delivery()
-                                .write_raw_delivery(
-                                    TracedTokenWord::pack(
-                                        self.state.frozen_end_template_token(),
-                                        OriginId::UNKNOWN,
-                                    ),
-                                    level.0,
-                                    u64::from(index),
-                                    None,
-                                    false,
-                                    None,
-                                    false,
-                                );
-                            raw
-                        }
+                        RetirementRestart::EndV(level) => destination
+                            .as_mut()
+                            .expect("next-command pipeline owns its reusable command slot")
+                            .empty_for_raw_delivery()
+                            .write_raw_delivery(
+                                TracedTokenWord::pack(
+                                    self.state.frozen_end_template_token(),
+                                    OriginId::UNKNOWN,
+                                ),
+                                level.0,
+                                u64::from(index),
+                                None,
+                                false,
+                                None,
+                                false,
+                            ),
                     }
                 }
             };
