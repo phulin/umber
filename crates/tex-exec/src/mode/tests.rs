@@ -1001,12 +1001,20 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
         let rooted = source.summary();
 
         let mut accepted = ModeNest::fork_checkpoint(&checkpoint).expect("accepted fork");
-        assert_eq!(accepted.summary(), rooted, "fork restores every retained scalar");
+        assert_eq!(
+            accepted.summary(),
+            rooted,
+            "fork restores every retained scalar"
+        );
         populate_nested_candidate(&mut accepted, context);
         let expected = accepted.summary();
         let counters_before_accept = context.page_material_counters();
         accepted = accepted.accept_checkpoint_candidate();
-        assert_eq!(accepted.summary(), expected, "accept preserves exact topology");
+        assert_eq!(
+            accepted.summary(),
+            expected,
+            "accept preserves exact topology"
+        );
         assert_eq!(
             context.page_material_counters(),
             counters_before_accept,
@@ -1015,7 +1023,11 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
         drop(accepted);
 
         let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling after accept");
-        assert_eq!(sibling.summary(), rooted, "accepted work does not rewrite the mark");
+        assert_eq!(
+            sibling.summary(),
+            rooted,
+            "accepted work does not rewrite the mark"
+        );
         sibling.reject_checkpoint_candidate();
 
         let mut rejected = ModeNest::fork_checkpoint(&checkpoint).expect("rejected fork");
@@ -1029,7 +1041,11 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
         );
 
         let sibling = ModeNest::fork_checkpoint(&checkpoint).expect("sibling after reject");
-        assert_eq!(sibling.summary(), rooted, "rejection leaves the mark reusable");
+        assert_eq!(
+            sibling.summary(),
+            rooted,
+            "rejection leaves the mark reusable"
+        );
         sibling.reject_checkpoint_candidate();
     });
 }

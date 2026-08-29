@@ -1114,11 +1114,7 @@ fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
     let mut incremental = session(RevisionId::new(1), source);
     incremental.cold().expect("baseline");
     let edit_position = source.find('C').expect("third paragraph exists");
-    let candidate_edit = edit(
-        &incremental,
-        edit_position..edit_position,
-        "\\relax ",
-    );
+    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\relax ");
 
     let mut rejected = incremental
         .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
@@ -1148,7 +1144,11 @@ fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
         .accept_revision(accepted)
         .expect("accept candidate exactly once");
 
-    let edited = format!("{}\\relax {}", &source[..edit_position], &source[edit_position..]);
+    let edited = format!(
+        "{}\\relax {}",
+        &source[..edit_position],
+        &source[edit_position..]
+    );
     let mut cold = session(RevisionId::new(2), &edited);
     let expected = cold.cold().expect("cold comparison");
     assert_detached_output_eq(&output, &expected);
