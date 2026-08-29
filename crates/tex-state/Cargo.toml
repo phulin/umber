@@ -37,3 +37,4 @@ workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
+umber-hot-core-allocator = { path = "profiling-allocator" }

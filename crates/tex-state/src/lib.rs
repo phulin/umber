@@ -112,6 +112,7 @@ pub mod source_fragments;
 pub mod source_map;
 pub(crate) mod state_hash;
 mod stores;
+mod string_pool;
 pub mod token;
 pub mod token_show;
 mod universe;

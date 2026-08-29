@@ -576,6 +576,32 @@ fn csname_creation_observes_hash_occupancy_once_across_group_restore() {
     .expect("universe allocation");
 }
 
+#[cfg(not(feature = "profiling"))]
+#[test]
+fn warmed_control_sequence_interning_allocates_nothing() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("admit episode");
+        let expected = context.intern_hash_control_sequence("warmed-control-sequence");
+        const OWNER: usize = 14;
+        let before = umber_hot_core_allocator::thread_measurement(OWNER);
+        let stable =
+            {
+                let _scope = umber_hot_core_allocator::scope(OWNER);
+                (0..4_096).all(|_| {
+                    std::hint::black_box(context.intern_hash_control_sequence(
+                        std::hint::black_box("warmed-control-sequence"),
+                    )) == expected
+                })
+            };
+        let after = umber_hot_core_allocator::thread_measurement(OWNER);
+
+        assert!(stable);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    })
+    .expect("universe allocation");
+}
+
 /// TeX82 §288: `mag_set` freezes the first prepared magnification, corrects
 /// an incompatible later assignment globally, and belongs to the checkpointed
 /// job session rather than to a reusable format image.

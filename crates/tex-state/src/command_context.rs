@@ -353,7 +353,7 @@ pub(crate) struct EngineUsageRuntime {
     init_pool_ptr: usize,
     max_strings: usize,
     pool_size: usize,
-    recycled: std::collections::BTreeSet<String>,
+    recycled: crate::string_pool::RecycledStringPool,
     memory: MainMemoryRuntime,
 }
 
@@ -369,7 +369,7 @@ impl Default for EngineUsageRuntime {
             init_pool_ptr: TEX82_CHARACTER_BASELINE,
             max_strings: capacities.max_strings,
             pool_size: capacities.pool_size,
-            recycled: std::collections::BTreeSet::new(),
+            recycled: crate::string_pool::RecycledStringPool::default(),
             memory: MainMemoryRuntime::default(),
         }
     }
@@ -383,11 +383,11 @@ impl EngineUsageRuntime {
 
     pub(crate) fn make_string(&mut self, value: &str) {
         self.allocate_strings(1, value.len());
-        self.recycled.insert(value.to_owned());
+        self.recycled.insert(value);
     }
 
     fn slow_make_string(&mut self, value: &str) {
-        if self.recycled.insert(value.to_owned()) {
+        if self.recycled.insert(value) {
             self.allocate_strings(1, value.len());
         }
     }
@@ -431,7 +431,7 @@ impl EngineUsageRuntime {
             characters: self.characters,
             max_strings: self.max_strings,
             pool_size: self.pool_size,
-            recycled: self.recycled.clone(),
+            recycled: self.recycled.to_format_strings(),
             memory: self
                 .memory
                 .capture_format_state(variable_live, dynamic_live),
@@ -485,7 +485,7 @@ impl EngineUsageRuntime {
             init_pool_ptr: state.characters,
             max_strings: state.max_strings,
             pool_size: state.pool_size,
-            recycled: state.recycled.clone(),
+            recycled: crate::string_pool::RecycledStringPool::from_format_strings(&state.recycled),
             memory,
         })
     }
