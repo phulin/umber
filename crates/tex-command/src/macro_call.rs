@@ -59,20 +59,11 @@ pub(crate) struct MacroActivation<G> {
 }
 
 impl<G> crate::timeline::LogicalStackElement for MacroActivation<G> {
-    type InlineState = ();
-    type CompactState = ();
-    type StoredState = ();
+    type State = ();
 
-    fn capture_state(
-        &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
-        crate::timeline::CapturedStackState::Inline(())
-    }
+    fn capture_state(&self) -> Self::State {}
 
-    fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
-    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
-
-    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
+    fn swap_state(&mut self, (): &mut Self::State) {}
 }
 
 /// Private descriptor for one sealed at-most-nine-argument scratch slot.

@@ -69,6 +69,8 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
         .expect("read source tokenizer implementation");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
         .expect("read input checkpoint implementation");
+    let history = fs::read_to_string(manifest_dir.join("src/input/history.rs"))
+        .expect("read dedicated input history implementation");
     let owners = format!("{source}\n{lines}\n{levels}");
 
     for owner in ["SourceCursor", "SourceLineState", "SourceOpenDepths"] {
@@ -99,7 +101,11 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
     }
     assert!(!levels.contains("source.slot.cursor.clone()"));
     assert!(levels.contains("struct SourceLexExecutionState"));
-    assert!(levels.contains("CapturedStackState::Compact"));
+    assert!(levels.contains("InputCapturedState::SourceLex"));
+    assert!(!levels.contains("LogicalStackElement for InputLevel"));
+    assert!(history.contains("enum InputUndo"));
+    assert!(history.contains("pub(crate) struct InputStack"));
+    assert!(!history.contains("LogicalStack<InputLevel"));
 }
 
 #[test]

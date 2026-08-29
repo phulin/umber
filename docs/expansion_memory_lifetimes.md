@@ -539,9 +539,13 @@ row reused in the same interval, the ordered history preserves a row
 replacement before the new occupant becomes eligible for direct reuse. A
 24-byte copy-only lexer cursor is the only ordinary source execution state;
 control-word and `^^` probes copy it without cloning an `Arc`, `Vec`, or `Box`.
-The existing `LogicalStack<InputLevel>` stores compact lexer first touches and
-cold typed owner swaps in its one ordered reversible history, so candidate
-redo restores the exact source owner without a second live representation.
+The generation-tied `InputStack` owns stable source, stored-token, and direct
+macro-argument rows. Its one compact `InputUndo` history orders copy-small
+lexer/frame first touches, cold typed source-owner swaps, row replacement and
+reuse, retirement, rollback/redo, candidate settlement, and prefix release.
+Alternate owners exist only as generation-checked inverse payloads, so
+candidate redo restores the exact authoritative row without a second live
+input representation or the generic logical-stack stored-state machinery.
 Nested source opening installs ancestry as part of the same frame transition
 which updates the singular session-owned TeX82 input-stack maximum; before
 retirement the processor borrows it and returns only copy-small common-prefix

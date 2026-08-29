@@ -199,23 +199,15 @@ pub(crate) struct ConditionFrame {
 }
 
 impl crate::timeline::LogicalStackElement for ConditionFrame {
-    type InlineState = IfLimit;
-    type CompactState = ();
-    type StoredState = ();
+    type State = IfLimit;
 
-    fn capture_state(
-        &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
-        crate::timeline::CapturedStackState::Inline(self.limit)
+    fn capture_state(&self) -> Self::State {
+        self.limit
     }
 
-    fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
+    fn swap_state(&mut self, state: &mut Self::State) {
         std::mem::swap(&mut self.limit, state);
     }
-
-    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
-
-    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
 
 /// One unfinished conditional retired by TeX82 §1335's final cleanup.

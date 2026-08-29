@@ -941,7 +941,7 @@ fn cold_source_owner_swap_then_source_row_reuse_restores_in_order() {
         command
             .input
             .levels
-            .mutate_last_stored(|level| {
+            .mutate_top_source(|level| {
                 let crate::input::InputLevel::Source(source) = level else {
                     panic!("original source remains live");
                 };
@@ -1019,7 +1019,7 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             Some(crate::input::InputLevel::Source(source)) => source.identity(),
             _ => panic!("prior source is live"),
         };
-        command.input.levels.mutate_last_stored(|level| {
+        command.input.levels.mutate_top_source(|level| {
             let crate::input::InputLevel::Source(source) = level else {
                 panic!("prior source is live");
             };
@@ -1046,7 +1046,7 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             Some(crate::input::InputLevel::Source(source)) => source.identity(),
             _ => panic!("candidate source is live"),
         };
-        candidate.input.levels.mutate_last_stored(|level| {
+        candidate.input.levels.mutate_top_source(|level| {
             let crate::input::InputLevel::Source(source) = level else {
                 panic!("candidate source is live");
             };

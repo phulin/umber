@@ -1510,27 +1510,21 @@ impl<G> CommandState<G> {
             .checked_row_count()
             .ok_or(CommandRestoreError::InvalidCursor)?;
         let arenas = cursor.arenas();
-        let matches = self
-            .input
-            .levels
+        let matches = self.input.levels.validates(crate::input::InputStackMark {
+            top: cursor.stacks().input_depth(),
+            undo: arenas.input_rows_mark(),
+        }) && self.parameters.activations.validates(
+            crate::timeline::LogicalStackMark {
+                top: cursor.stacks().parameter_depth(),
+                undo: arenas.input_words_mark(),
+            },
+        ) && self
+            .conditions
+            .frames
             .validates(crate::timeline::LogicalStackMark {
-                top: cursor.stacks().input_depth(),
-                undo: arenas.input_rows_mark(),
+                top: cursor.stacks().condition_depth(),
+                undo: arenas.parameter_words_mark(),
             })
-            && self
-                .parameters
-                .activations
-                .validates(crate::timeline::LogicalStackMark {
-                    top: cursor.stacks().parameter_depth(),
-                    undo: arenas.input_words_mark(),
-                })
-            && self
-                .conditions
-                .frames
-                .validates(crate::timeline::LogicalStackMark {
-                    top: cursor.stacks().condition_depth(),
-                    undo: arenas.parameter_words_mark(),
-                })
             && self
                 .group_payloads
                 .validates(crate::timeline::LogicalStackMark {
@@ -1577,19 +1571,16 @@ impl<G> CommandState<G> {
     fn restore_logical_stacks(&mut self, cursor: CommandSnapshotCursor) -> bool {
         let stacks = cursor.stacks();
         let arenas = cursor.arenas();
-        self.input
-            .levels
+        self.input.levels.restore(crate::input::InputStackMark {
+            top: stacks.input_depth(),
+            undo: arenas.input_rows_mark(),
+        }) && self
+            .parameters
+            .activations
             .restore(crate::timeline::LogicalStackMark {
-                top: stacks.input_depth(),
-                undo: arenas.input_rows_mark(),
+                top: stacks.parameter_depth(),
+                undo: arenas.input_words_mark(),
             })
-            && self
-                .parameters
-                .activations
-                .restore(crate::timeline::LogicalStackMark {
-                    top: stacks.parameter_depth(),
-                    undo: arenas.input_words_mark(),
-                })
             && self
                 .conditions
                 .frames
@@ -1633,7 +1624,7 @@ impl<G> CommandState<G> {
             .begin_checkpoint_candidate(restore.timeline, &mut self.roots);
         self.input
             .levels
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
+            .begin_checkpoint_candidate(crate::input::InputStackMark {
                 top: stacks.input_depth(),
                 undo: arenas.input_rows_mark(),
             });
@@ -1915,10 +1906,14 @@ impl<G> CommandState<G> {
                 );
             };
         }
-        release_stack_prefix!(
-            self.input.levels,
-            stacks.input_depth(),
-            arenas.input_rows_mark()
+        logical_stack_chunks_released = logical_stack_chunks_released.saturating_add(
+            self.input
+                .levels
+                .release_prefix(crate::input::InputStackMark {
+                    top: stacks.input_depth(),
+                    undo: arenas.input_rows_mark(),
+                })
+                .ok_or(CommandRestoreError::InvalidCursor)?,
         );
         release_stack_prefix!(
             self.parameters.activations,

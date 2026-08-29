@@ -78,12 +78,11 @@ collector (see `src/conditionals.rs`).
   format or summary payload. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive rollback without shared synchronization.
-- `src/timeline.rs`: generation-owned reversible stack storage. Immutable frame
-  payloads are admitted once in dense rows; fixed-chunk journals retain only
-  first-touch inline execution state or generation-checked handles into a
-  reusable stored-state/displaced-payload slab. Input source owner swaps move
-  through that same ordered stored-state lane; they are not a separately
-  settled source journal. A row admitted or already replaced after the newest
+- `src/timeline.rs`: generation-owned reversible storage for the remaining
+  copy-small command stacks. Immutable frame payloads are admitted once in
+  dense rows; fixed-chunk journals retain first-touch inline execution state
+  or generation-checked handles to displaced payloads. A row admitted or
+  already replaced after the newest
   observable mark is overwritten directly on pop/push reuse only while its
   current occupant has no compact or stored inverse; partially captured reuse
   first journals a replacement. Only required marked or partially captured
@@ -184,6 +183,12 @@ collector (see `src/conditionals.rs`).
   opening installs it before the frame becomes visible; retirement borrows it
   before pop and carries only copy-small boundary facts afterward. See
   `src/tracing_nesting.rs`.
+- `src/input/history.rs`: the authoritative generation-tied `InputStack`.
+  Stable source, stored-token, and macro-argument rows share one ordered
+  `InputUndo` journal for first-touch advances, cold source-owner swaps,
+  replacement/reuse, retirement, rollback/redo, candidate settlement, and
+  prefix release. Alternate owners live only in checked reusable slabs; there
+  is no generic logical-stack adapter or second input representation.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   the one destination-directed source/token top transition, the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum

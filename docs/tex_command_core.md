@@ -1825,20 +1825,21 @@ Macro replacement, argument-range, durable-list, and attempt-list spans remain
 direct coordinates into their existing owners. They do not enter the replay
 lane, acquire a shared token buffer, or copy their packed words at admission.
 
-Logical input history separates the immutable frame payload from its mutable
-execution phase. A token row owns its span, behavior, trace, and identity once;
+The generation-tied `InputStack` separates each stable row payload from its
+mutable execution phase. A token row owns its span, behavior, trace, and identity once;
 its packed frame and retirement phase form a fixed inline state record. Source
 rows point to one stable, checked `SourceSlot`, which is the sole owner of
 backing, current-line, `everyeof`, reduced-spelling, and nesting payloads. An
 authoritative slot receives a monotonic runtime incarnation which is never
-rolled back with semantic `InputLevelId`; compact and stored inverses validate
+rolled back with semantic `InputLevelId`; compact and owner inverses validate
 that incarnation before changing the row. An ordinary source first touch copies
 only its packed frame, 24-byte lexer cursor,
-and two registration bits into the reusable compact-state slab. Physical-line,
+and two registration bits into the reusable source-state slab. Physical-line,
 replacement-backing, read-line-backing, and `everyeof` transitions move their
-old owners into typed stored states. Both lanes publish records in the same ordered
-`LogicalStack` journal as row replacement, so direct restore and candidate
-reject/redo cannot settle source state separately from its input row. No
+old owners into typed source inverses. Both lanes publish records in the same
+ordered `InputUndo` journal as row replacement, retirement, candidate
+settlement, and prefix release, so direct restore and candidate reject/redo
+cannot settle source state separately from its input row. No
 `SourceCursor`, `SourceLineState`, or `SourceOpenDepths` implements `Clone`.
 The first mutation of one row visible at a legal checkpoint or operation mark
 records the old state; later cursor advances coalesce into that record and the

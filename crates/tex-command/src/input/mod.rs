@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
+mod history;
 mod levels;
 mod lines;
 mod source;
@@ -12,12 +13,14 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use history::{InputStack, InputStackMark};
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroArgumentCursor,
-    PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
-    PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace, RetirementBehavior,
-    SourceLevel, SourceLevelExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot,
-    SourceSlotKey, StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
+    BackedUpToken, BackupTreatment, InputCapturedState, InputLevel, InputLevelId,
+    InputLevelInlineState, MacroArgumentCursor, PackedInputFrame, PackedTokenOwnership,
+    PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayLane, ReplayPayloadId,
+    ReplayTrace, RetirementBehavior, SourceLevel, SourceLevelExecutionState,
+    SourceLexExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey,
+    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -58,7 +61,7 @@ pub(crate) use tokenizer::{
 /// other ownership classes.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
-    pub(crate) levels: crate::timeline::LogicalStack<InputLevel<G>>,
+    pub(crate) levels: InputStack<G>,
     /// Stable coarse-segment replay storage. Input levels carry only compact
     /// coordinates; exact LIFO retirement restores lane cursors in O(1).
     pub(crate) replay: ReplayLane<G>,
@@ -89,7 +92,7 @@ pub(crate) struct InputState<G> {
 impl<G> Default for InputState<G> {
     fn default() -> Self {
         Self {
-            levels: crate::timeline::LogicalStack::default(),
+            levels: InputStack::default(),
             replay: ReplayLane::default(),
             retained_file_line_number: 0,
             terminal_context_line: None,

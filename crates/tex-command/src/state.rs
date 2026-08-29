@@ -488,20 +488,11 @@ impl<G> Clone for CommandPayload<G> {
 impl<G> Copy for CommandPayload<G> {}
 
 impl<G> crate::timeline::LogicalStackElement for CommandPayload<G> {
-    type InlineState = ();
-    type CompactState = ();
-    type StoredState = ();
+    type State = ();
 
-    fn capture_state(
-        &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
-        crate::timeline::CapturedStackState::Inline(())
-    }
+    fn capture_state(&self) -> Self::State {}
 
-    fn swap_inline_state(&mut self, (): &mut Self::InlineState) {}
-    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
-
-    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
+    fn swap_state(&mut self, (): &mut Self::State) {}
 }
 
 impl<G> CommandPayload<G> {
@@ -536,27 +527,16 @@ impl<G> Clone for CommandGroupPayload<G> {
 impl<G> Copy for CommandGroupPayload<G> {}
 
 impl<G> crate::timeline::LogicalStackElement for CommandGroupPayload<G> {
-    type InlineState = (usize, Option<u32>);
-    type CompactState = ();
-    type StoredState = ();
+    type State = (usize, Option<u32>);
 
-    fn capture_state(
-        &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
-        crate::timeline::CapturedStackState::Inline((
-            self.token_top,
-            self.latest_aftergroup_position,
-        ))
+    fn capture_state(&self) -> Self::State {
+        (self.token_top, self.latest_aftergroup_position)
     }
 
-    fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
+    fn swap_state(&mut self, state: &mut Self::State) {
         std::mem::swap(&mut self.token_top, &mut state.0);
         std::mem::swap(&mut self.latest_aftergroup_position, &mut state.1);
     }
-
-    fn swap_compact_state(&mut self, (): &mut Self::CompactState) {}
-
-    fn swap_stored_state(&mut self, (): &mut Self::StoredState) {}
 }
 
 impl<G> CommandGroupPayload<G> {
@@ -1245,7 +1225,7 @@ impl<G> CommandState<G> {
         let loaded = self
             .input
             .levels
-            .mutate_last_stored(|level| {
+            .mutate_top_source(|level| {
                 let crate::input::InputLevel::Source(source) = level else {
                     panic!("profiling fixture keeps a source frame on top");
                 };
@@ -2473,7 +2453,7 @@ impl<G> CommandState<G> {
         );
         self.input
             .levels
-            .mutate_last_stored(|level| {
+            .mutate_top_source(|level| {
                 let InputLevel::Source(active) = level else {
                     unreachable!("the inserted replacement source was just pushed");
                 };
@@ -2523,7 +2503,7 @@ impl<G> CommandState<G> {
             .expect("a source registered above is present");
         self.input
             .levels
-            .mutate_last_stored(|entry| {
+            .mutate_top_source(|entry| {
                 let InputLevel::Source(active) = entry else {
                     unreachable!(
                         "begin_read_line keeps its source level active during acquisition"
@@ -2583,7 +2563,7 @@ impl<G> CommandState<G> {
         let retained_line = self
             .input
             .levels
-            .mutate_last_stored(|entry| {
+            .mutate_top_source(|entry| {
                 let InputLevel::Source(level) = entry else {
                     unreachable!("the checked everyeof source remains on top");
                 };
@@ -2776,7 +2756,7 @@ impl<G> CommandState<G> {
 
     /// Retires the active normalized line so the next physical line may load.
     pub fn finish_source_line(&mut self) {
-        let _ = self.input.levels.mutate_last_stored(|entry| {
+        let _ = self.input.levels.mutate_top_source(|entry| {
             let InputLevel::Source(level) = entry else {
                 unreachable!("finish_source_line requires a source top");
             };

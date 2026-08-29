@@ -463,7 +463,7 @@ impl<G> CommandState<G> {
         let (physical, retained_line) = {
             let usage = &mut self.stack_usage;
             let input = &mut self.roots.input;
-            let Some(result) = input.levels.mutate_last_stored(|level| {
+            let Some(result) = input.levels.mutate_top_source(|level| {
                 let InputLevel::Source(source) = level else {
                     unreachable!("physical acquisition requires a source top");
                 };

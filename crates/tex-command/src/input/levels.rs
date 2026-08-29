@@ -521,6 +521,15 @@ pub(crate) enum SourceLevelExecutionState<G> {
     },
 }
 
+/// The copy-small first-touch inverse selected by one authoritative input row.
+///
+/// Owner-changing source transitions use [`SourceLevelExecutionState`]
+/// instead; both variants are recorded by the dedicated input history.
+pub(crate) enum InputCapturedState {
+    Inline(InputLevelInlineState),
+    SourceLex(SourceLexExecutionState),
+}
+
 impl<G> SourceLevelExecutionState<G> {
     pub(crate) fn cursor(source: &mut SourceLevel<G>) -> Self {
         Self::Cursor {
@@ -551,46 +560,34 @@ impl<G> SourceLevelExecutionState<G> {
     }
 }
 
-impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
-    type InlineState = InputLevelInlineState;
-    type CompactState = SourceLexExecutionState;
-    type StoredState = SourceLevelExecutionState<G>;
-
-    fn capture_state(
-        &self,
-    ) -> crate::timeline::CapturedStackState<Self::InlineState, Self::CompactState> {
+impl<G> InputLevel<G> {
+    pub(crate) fn capture_input_state(&self) -> InputCapturedState {
         match self {
-            Self::Source(source) => {
-                crate::timeline::CapturedStackState::Compact(SourceLexExecutionState {
-                    slot: source.slot.key(),
-                    frame: source.frame,
-                    cursor: source
-                        .slot
-                        .cursor
-                        .line
-                        .as_ref()
-                        .map_or(SourceLexCursor::EMPTY, |line| line.cursor),
-                    line_loaded: source.slot.cursor.line.is_some(),
-                    backing_registered: source.slot.cursor.backing_registered,
-                    line_backing_registered: source.slot.cursor.line_backing_registered,
-                })
-            }
-            Self::Tokens(tokens) => {
-                crate::timeline::CapturedStackState::Inline(InputLevelInlineState {
-                    frame: tokens.frame,
-                    retirement: tokens.retirement,
-                })
-            }
-            Self::MacroArgument(argument) => {
-                crate::timeline::CapturedStackState::Inline(InputLevelInlineState {
-                    frame: argument.frame,
-                    retirement: RetirementBehavior::Pop,
-                })
-            }
+            Self::Source(source) => InputCapturedState::SourceLex(SourceLexExecutionState {
+                slot: source.slot.key(),
+                frame: source.frame,
+                cursor: source
+                    .slot
+                    .cursor
+                    .line
+                    .as_ref()
+                    .map_or(SourceLexCursor::EMPTY, |line| line.cursor),
+                line_loaded: source.slot.cursor.line.is_some(),
+                backing_registered: source.slot.cursor.backing_registered,
+                line_backing_registered: source.slot.cursor.line_backing_registered,
+            }),
+            Self::Tokens(tokens) => InputCapturedState::Inline(InputLevelInlineState {
+                frame: tokens.frame,
+                retirement: tokens.retirement,
+            }),
+            Self::MacroArgument(argument) => InputCapturedState::Inline(InputLevelInlineState {
+                frame: argument.frame,
+                retirement: RetirementBehavior::Pop,
+            }),
         }
     }
 
-    fn swap_inline_state(&mut self, state: &mut Self::InlineState) {
+    pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
             Self::Tokens(tokens) => {
                 std::mem::swap(&mut tokens.frame, &mut state.frame);
@@ -606,7 +603,7 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
         }
     }
 
-    fn swap_compact_state(&mut self, state: &mut Self::CompactState) {
+    pub(crate) fn swap_source_lex_state(&mut self, state: &mut SourceLexExecutionState) {
         let Self::Source(source) = self else {
             unreachable!("only a source row uses compact stored execution state");
         };
@@ -627,7 +624,7 @@ impl<G> crate::timeline::LogicalStackElement for InputLevel<G> {
         }
     }
 
-    fn swap_stored_state(&mut self, state: &mut Self::StoredState) {
+    pub(crate) fn swap_source_execution_state(&mut self, state: &mut SourceLevelExecutionState<G>) {
         match self {
             Self::Source(source) => match state {
                 SourceLevelExecutionState::Cursor {
