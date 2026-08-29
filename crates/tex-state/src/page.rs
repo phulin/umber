@@ -9,7 +9,7 @@ use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
 use crate::node_region::{NodePool, NodeRegionId, PageClosureBuildMark};
 use crate::node_sequence::SemanticSequenceIdentity;
-use crate::page_node_arena::{PageMaterialRegion, PageMaterialView};
+use crate::page_node_arena::{PageListSpan, PageMaterialRegion, PageMaterialView};
 use crate::scaled::Scaled;
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -458,10 +458,10 @@ pub(crate) type PageCurrentIter<'a> = NodeCursorIter<'a>;
 
 /// Snapshot-owned state for TeX.web's page builder.
 pub(crate) struct PageBuilderState {
-    contribution: PageListId,
-    current_page: PageListId,
-    page_discards: PageListId,
-    split_discards: PageListId,
+    contribution: PageListSpan,
+    current_page: PageListSpan,
+    page_discards: PageListSpan,
+    split_discards: PageListSpan,
     page_goal: Scaled,
     page_total: Scaled,
     page_stretch: Scaled,
@@ -512,13 +512,13 @@ pub(crate) struct PageBuilderState {
 #[must_use = "a detached page node must be returned to a page destination or explicitly discarded"]
 #[derive(Debug)]
 pub struct PageNodeCarrier {
-    list: PageListId,
+    list: PageListSpan,
 }
 
 impl PageNodeCarrier {
     #[must_use]
     pub const fn list(&self) -> PageListId {
-        self.list
+        self.list.list()
     }
 }
 
@@ -536,10 +536,10 @@ pub(crate) struct PageCheckpointMark {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct PagePayloadRoots {
-    contribution: PageListId,
-    current_page: PageListId,
-    page_discards: PageListId,
-    split_discards: PageListId,
+    contribution: PageListSpan,
+    current_page: PageListSpan,
+    page_discards: PageListSpan,
+    split_discards: PageListSpan,
     insertion_end: usize,
     mark_end: usize,
 }
@@ -581,10 +581,10 @@ pub(crate) struct AcceptedPageTail {
 enum PageInverse {
     Noop,
     Scalars(PageScalars),
-    Contribution(PageListId),
-    CurrentPage(PageListId),
-    PageDiscards(PageListId),
-    SplitDiscards(PageListId),
+    Contribution(PageListSpan),
+    CurrentPage(PageListSpan),
+    PageDiscards(PageListSpan),
+    SplitDiscards(PageListSpan),
     InsertionsReplace {
         insertions: Vec<PageInsertion>,
         positions: Vec<Option<u16>>,
@@ -1405,7 +1405,10 @@ impl PageRegion {
             roots.page_discards,
             roots.split_discards,
         ] {
-            if !PageMaterialView::new(pool, &self.nodes).contains(root) {
+            if PageMaterialView::new(pool, &self.nodes)
+                .span_list(root)
+                .is_err()
+            {
                 self.counters.cross_region_node_reference_rejections = self
                     .counters
                     .cross_region_node_reference_rejections
@@ -1434,14 +1437,16 @@ impl PageRegion {
                     &mut current.nodes,
                     &mut self.nodes,
                     build,
-                    roots.contribution,
+                    roots.contribution.list(),
                 ) {
                     Ok((contribution, scanned)) => {
+                        let contribution = PageNodeArena::new(pool, &mut current.nodes)
+                            .admit_span(contribution)?;
                         let roots = PagePayloadRoots {
                             contribution,
-                            current_page: PageListId::empty(),
-                            page_discards: PageListId::empty(),
-                            split_discards: PageListId::empty(),
+                            current_page: PageListSpan::empty(),
+                            page_discards: PageListSpan::empty(),
+                            split_discards: PageListSpan::empty(),
                             insertion_end: 0,
                             mark_end: 0,
                         };
@@ -1472,32 +1477,41 @@ impl PageRegion {
                 pool,
                 &mut current.nodes,
                 &self.nodes,
-                roots.contribution,
+                roots.contribution.list(),
             )?;
             let current_page = PageMaterialRegion::copy_closure_between(
                 pool,
                 &mut current.nodes,
                 &self.nodes,
-                roots.current_page,
+                roots.current_page.list(),
             )?;
             let page_discards = PageMaterialRegion::copy_closure_between(
                 pool,
                 &mut current.nodes,
                 &self.nodes,
-                roots.page_discards,
+                roots.page_discards.list(),
             )?;
             let split_discards = PageMaterialRegion::copy_closure_between(
                 pool,
                 &mut current.nodes,
                 &self.nodes,
-                roots.split_discards,
+                roots.split_discards.list(),
             )?;
+            let spans = {
+                let arena = PageNodeArena::new(pool, &mut current.nodes);
+                (
+                    arena.admit_span(contribution.0)?,
+                    arena.admit_span(current_page.0)?,
+                    arena.admit_span(page_discards.0)?,
+                    arena.admit_span(split_discards.0)?,
+                )
+            };
             Ok::<_, ForkArenaError>((
                 PagePayloadRoots {
-                    contribution: contribution.0,
-                    current_page: current_page.0,
-                    page_discards: page_discards.0,
-                    split_discards: split_discards.0,
+                    contribution: spans.0,
+                    current_page: spans.1,
+                    page_discards: spans.2,
+                    split_discards: spans.3,
                     insertion_end: 0,
                     mark_end: 0,
                 },
@@ -1659,10 +1673,10 @@ pub(crate) struct PageMemoState {
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
-            contribution: PageListId::empty(),
-            current_page: PageListId::empty(),
-            page_discards: PageListId::empty(),
-            split_discards: PageListId::empty(),
+            contribution: PageListSpan::empty(),
+            current_page: PageListSpan::empty(),
+            page_discards: PageListSpan::empty(),
+            split_discards: PageListSpan::empty(),
             page_goal: Scaled::from_raw(0),
             page_total: Scaled::from_raw(0),
             page_stretch: Scaled::from_raw(0),
@@ -1818,7 +1832,7 @@ impl PageBuilderState {
     #[must_use]
     #[cfg(test)]
     pub(crate) const fn contribution_root(&self) -> PageListId {
-        self.contribution
+        self.contribution.list()
     }
 
     pub(crate) fn enable_reachable_state_identity(&mut self) {
@@ -2423,7 +2437,7 @@ impl PageBuilderState {
         ] {
             nodes.extend(
                 arena
-                    .node_cursor(root)
+                    .span_node_cursor(root)
                     .expect("memo root belongs to the caller-owned page arena")
                     .iter()
                     .cloned(),
@@ -2528,16 +2542,16 @@ impl PageBuilderState {
             None
         };
         self.contribution = arena
-            .publish_owned(nodes[contribution_range].iter().cloned())
+            .publish_owned_span(nodes[contribution_range].iter().cloned())
             .map_err(|_| crate::MemoValueError::Invalid("invalid contribution page nodes"))?;
         self.current_page = arena
-            .publish_owned(nodes[current_page_range].iter().cloned())
+            .publish_owned_span(nodes[current_page_range].iter().cloned())
             .map_err(|_| crate::MemoValueError::Invalid("invalid current-page nodes"))?;
         self.page_discards = arena
-            .publish_owned(nodes[page_discards_range].iter().cloned())
+            .publish_owned_span(nodes[page_discards_range].iter().cloned())
             .map_err(|_| crate::MemoValueError::Invalid("invalid page discards"))?;
         self.split_discards = arena
-            .publish_owned(nodes[split_discards_range].iter().cloned())
+            .publish_owned_span(nodes[split_discards_range].iter().cloned())
             .map_err(|_| crate::MemoValueError::Invalid("invalid split discards"))?;
         self.refresh_dynamic_memory_words(arena);
         self.page_goal = state.dimensions[0];
@@ -2982,7 +2996,7 @@ impl PageBuilderState {
                 value: None,
             }));
         let current = arena
-            .list(self.current_page)
+            .span_list(self.current_page)
             .expect("current page root belongs to the live arena");
         let released = dynamic_words(current.iter());
         let released_page_roots = current
@@ -3000,7 +3014,7 @@ impl PageBuilderState {
                 positions,
             });
         } else {
-            self.current_page = PageListId::empty();
+            self.current_page = PageListSpan::empty();
             self.insertions.clear();
             self.insertion_positions.clear();
         }
@@ -3088,10 +3102,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned([node])
+            .publish_owned_span([node])
             .expect("page arena accepts contribution");
         self.contribution = arena
-            .compose_sequences(&[self.contribution, node])
+            .compose_spans(&[self.contribution, node])
             .expect("page contribution roots belong to the live arena");
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
@@ -3107,20 +3121,16 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         let removed = arena
-            .slice_sequence(self.contribution, start..end, &mut Vec::new())
+            .slice_span(self.contribution, start..end)
             .expect("removed contribution range belongs to the live arena");
         let prefix = arena
-            .slice_sequence(self.contribution, 0..start, &mut Vec::new())
+            .slice_span(self.contribution, 0..start)
             .expect("contribution prefix belongs to the live arena");
         let suffix = arena
-            .slice_sequence(
-                self.contribution,
-                end..self.contribution.len(),
-                &mut Vec::new(),
-            )
+            .slice_span(self.contribution, end..self.contribution.len())
             .expect("contribution suffix belongs to the live arena");
         let removed_view = arena
-            .list(removed)
+            .span_list(removed)
             .expect("removed contribution remains live");
         let words = dynamic_words(removed_view.iter());
         let roots = removed_view
@@ -3134,7 +3144,7 @@ impl PageBuilderState {
             .checked_sub(roots)
             .expect("released more page roots than were live");
         self.contribution = arena
-            .compose_sequences(&[prefix, suffix])
+            .compose_spans(&[prefix, suffix])
             .expect("remaining contribution ranges compose");
         self.semantic_roots.contribution = list_identity(self.contribution);
         PageNodeCarrier { list: removed }
@@ -3145,10 +3155,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned([node])
+            .publish_owned_span([node])
             .expect("page arena accepts contribution");
         self.contribution = arena
-            .compose_sequences(&[node, self.contribution])
+            .compose_spans(&[node, self.contribution])
             .expect("page contribution roots belong to the live arena");
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
@@ -3156,7 +3166,7 @@ impl PageBuilderState {
     pub(crate) fn contribution<'a>(&self, arena: &'a PageNodeArena) -> PageContributionView<'a> {
         PageContributionView {
             nodes: arena
-                .node_cursor(self.contribution)
+                .span_node_cursor(self.contribution)
                 .expect("page contribution root belongs to the live arena"),
         }
     }
@@ -3176,21 +3186,15 @@ impl PageBuilderState {
         if self.contribution.is_empty() {
             return None;
         }
-        let node = arena.list(self.contribution).ok()?.get(0)?;
+        let node = arena.span_list(self.contribution).ok()?.get(0)?;
         let words = node.tex_memory_words(false).1;
         let etex_words = node.tex_memory_words(true).1;
         let retains_root = node_retains_page_handle(node);
         self.record_scalars();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
-        let removed = arena
-            .slice_sequence(self.contribution, 0..1, &mut Vec::new())
-            .ok()?;
+        let removed = arena.slice_span(self.contribution, 0..1).ok()?;
         self.contribution = arena
-            .slice_sequence(
-                self.contribution,
-                1..self.contribution.len(),
-                &mut Vec::new(),
-            )
+            .slice_span(self.contribution, 1..self.contribution.len())
             .ok()?;
         self.release_dynamic_word_totals((words, etex_words));
         self.page_node_root_count = self
@@ -3207,8 +3211,11 @@ impl PageBuilderState {
         }
         self.record_scalars();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
+        let nodes = arena
+            .admit_span(nodes)
+            .expect("heldover page contribution belongs to the live owner");
         let view = arena
-            .list(nodes)
+            .span_list(nodes)
             .expect("heldover page contribution is live");
         let words = dynamic_words(view.iter());
         let roots = view
@@ -3219,7 +3226,7 @@ impl PageBuilderState {
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.contribution = arena
-            .compose_sequences(&[nodes, self.contribution])
+            .compose_spans(&[nodes, self.contribution])
             .expect("heldover and live contribution roots compose");
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
@@ -3230,7 +3237,12 @@ impl PageBuilderState {
         }
         self.record_scalars();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
-        let view = arena.list(nodes).expect("page contribution list is live");
+        let nodes = arena
+            .admit_span(nodes)
+            .expect("page contribution list belongs to the live owner");
+        let view = arena
+            .span_list(nodes)
+            .expect("page contribution list is live");
         let words = dynamic_words(view.iter());
         let roots = view
             .iter()
@@ -3239,14 +3251,14 @@ impl PageBuilderState {
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.contribution = arena
-            .compose_sequences(&[self.contribution, nodes])
+            .compose_spans(&[self.contribution, nodes])
             .expect("page contribution roots compose");
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
     pub(crate) fn current_page<'a>(&self, arena: &'a PageNodeArena) -> PageCurrentIter<'a> {
         arena
-            .node_cursor(self.current_page)
+            .span_node_cursor(self.current_page)
             .expect("current page root belongs to the live arena")
             .iter()
     }
@@ -3256,10 +3268,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned([node])
+            .publish_owned_span([node])
             .expect("page arena accepts discard");
         self.page_discards = arena
-            .compose_sequences(&[self.page_discards, node])
+            .compose_spans(&[self.page_discards, node])
             .expect("page discard roots compose");
         self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
@@ -3272,7 +3284,7 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.page_discards = arena
-            .compose_sequences(&[self.page_discards, carrier.list])
+            .compose_spans(&[self.page_discards, carrier.list])
             .expect("page discard carrier belongs to the live arena");
         self.allocate_list_dynamic_usage(arena, carrier.list);
         self.semantic_roots.page_discards = list_identity(self.page_discards);
@@ -3284,14 +3296,14 @@ impl PageBuilderState {
         let nodes = std::mem::take(&mut self.page_discards);
         self.release_list_dynamic_usage(arena, nodes);
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
-        nodes
+        nodes.list()
     }
 
     pub(crate) fn clear_page_discards(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.release_list_dynamic_usage(arena, self.page_discards);
-        self.page_discards = PageListId::empty();
+        self.page_discards = PageListSpan::empty();
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
     }
 
@@ -3299,6 +3311,9 @@ impl PageBuilderState {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         self.release_list_dynamic_usage(arena, self.split_discards);
+        let nodes = arena
+            .admit_span(nodes)
+            .expect("split discards belong to the live page owner");
         self.allocate_list_dynamic_usage(arena, nodes);
         self.semantic_roots.split_discards = list_identity(nodes);
         self.split_discards = nodes;
@@ -3310,14 +3325,14 @@ impl PageBuilderState {
         let nodes = std::mem::take(&mut self.split_discards);
         self.release_list_dynamic_usage(arena, nodes);
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
-        nodes
+        nodes.list()
     }
 
     pub(crate) fn clear_split_discards(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         self.release_list_dynamic_usage(arena, self.split_discards);
-        self.split_discards = PageListId::empty();
+        self.split_discards = PageListSpan::empty();
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
     }
 
@@ -3334,10 +3349,10 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         self.allocate_dynamic_node(&node);
         let node = arena
-            .publish_owned([node])
+            .publish_owned_span([node])
             .expect("page arena accepts current node");
         self.current_page = arena
-            .compose_sequences(&[self.current_page, node])
+            .compose_spans(&[self.current_page, node])
             .expect("current page roots compose");
     }
 
@@ -3350,7 +3365,7 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         self.allocate_list_dynamic_usage(arena, carrier.list);
         self.current_page = arena
-            .compose_sequences(&[self.current_page, carrier.list])
+            .compose_spans(&[self.current_page, carrier.list])
             .expect("current page carrier belongs to the live arena");
     }
 
@@ -3360,7 +3375,10 @@ impl PageBuilderState {
         }
         self.record_scalars();
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
-        let view = arena.list(list).expect("current-page list is live");
+        let list = arena
+            .admit_span(list)
+            .expect("current-page list belongs to the live owner");
+        let view = arena.span_list(list).expect("current-page list is live");
         let words = dynamic_words(view.iter());
         let roots = view
             .iter()
@@ -3369,7 +3387,7 @@ impl PageBuilderState {
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.current_page = arena
-            .compose_sequences(&[self.current_page, list])
+            .compose_spans(&[self.current_page, list])
             .expect("current-page roots compose");
     }
 
@@ -3390,15 +3408,13 @@ impl PageBuilderState {
     pub(crate) fn pop_current_page(&mut self, arena: &mut PageNodeArena) -> Option<Node> {
         let len = self.current_page.len();
         let node = arena
-            .list(self.current_page)
+            .span_list(self.current_page)
             .ok()?
             .get(len.checked_sub(1)?)?
             .clone();
         self.record_scalars();
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
-        self.current_page = arena
-            .slice_sequence(self.current_page, 0..len - 1, &mut Vec::new())
-            .ok()?;
+        self.current_page = arena.slice_span(self.current_page, 0..len - 1).ok()?;
         self.release_dynamic_node(&node);
         Some(node)
     }
@@ -3472,17 +3488,13 @@ impl PageBuilderState {
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         let split_index = split_index.min(self.current_page.len());
         let prefix = arena
-            .slice_sequence(self.current_page, 0..split_index, &mut Vec::new())
+            .slice_span(self.current_page, 0..split_index)
             .expect("current-page prefix belongs to the live arena");
         let suffix = arena
-            .slice_sequence(
-                self.current_page,
-                split_index..self.current_page.len(),
-                &mut Vec::new(),
-            )
+            .slice_span(self.current_page, split_index..self.current_page.len())
             .expect("current-page suffix belongs to the live arena");
         let current = arena
-            .list(self.current_page)
+            .span_list(self.current_page)
             .expect("current page belongs to the live arena");
         let words = dynamic_words(current.iter());
         let roots = current
@@ -3490,13 +3502,13 @@ impl PageBuilderState {
             .filter(|node| node_retains_page_handle(node))
             .count();
         let _ = current;
-        self.current_page = PageListId::empty();
+        self.current_page = PageListSpan::empty();
         self.release_dynamic_word_totals(words);
         self.page_node_root_count = self
             .page_node_root_count
             .checked_sub(roots)
             .expect("released more page roots than were live");
-        (prefix, suffix)
+        (prefix.list(), suffix.list())
     }
 
     fn allocate_dynamic_node(&mut self, node: &Node) {
@@ -3541,9 +3553,9 @@ impl PageBuilderState {
             .expect("page dynamic-memory accounting overflow");
     }
 
-    fn allocate_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListId) {
+    fn allocate_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListSpan) {
         let view = arena
-            .list(list)
+            .span_list(list)
             .expect("page list belongs to the live arena");
         self.allocate_dynamic_word_totals(dynamic_words(view.iter()));
         self.page_node_root_count = self
@@ -3556,9 +3568,9 @@ impl PageBuilderState {
             .expect("page root accounting overflow");
     }
 
-    fn release_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListId) {
+    fn release_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListSpan) {
         let view = arena
-            .list(list)
+            .span_list(list)
             .expect("page list belongs to the live arena");
         self.release_dynamic_word_totals(dynamic_words(view.iter()));
         self.page_node_root_count = self
@@ -3593,7 +3605,7 @@ impl PageBuilderState {
         .into_iter()
         .fold((0_usize, 0_usize), |words, root| {
             arena
-                .node_cursor(root)
+                .span_node_cursor(root)
                 .expect("dynamic-memory root belongs to the page arena")
                 .iter()
                 .fold(words, |words, node| {
@@ -3719,7 +3731,24 @@ fn dynamic_words<'a>(nodes: impl Iterator<Item = &'a Node>) -> (usize, usize) {
     })
 }
 
-fn list_identity(list: PageListId) -> SemanticSequenceIdentity {
+trait PageListRoot {
+    fn list_id(self) -> PageListId;
+}
+
+impl PageListRoot for PageListId {
+    fn list_id(self) -> PageListId {
+        self
+    }
+}
+
+impl PageListRoot for PageListSpan {
+    fn list_id(self) -> PageListId {
+        self.list()
+    }
+}
+
+fn list_identity(list: impl PageListRoot) -> SemanticSequenceIdentity {
+    let list = list.list_id();
     SemanticSequenceIdentity::from_raw(list.semantic_identity().unwrap_or(0), list.len())
 }
 

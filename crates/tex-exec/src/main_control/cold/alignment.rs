@@ -372,10 +372,10 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         let mut migration_builder =
             tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
         stores.open_page_active_list(&mut migration_builder);
-        stores.append_page_active_list(&mut migration_builder, active.row_migrations);
+        stores.append_page_active_span(&mut migration_builder, active.row_migrations);
         stores.append_page_active_list(&mut migration_builder, pre_migrated);
         stores.append_page_active_list(&mut migration_builder, migrated);
-        active.row_migrations = stores.finalize_page_active_list(&mut migration_builder);
+        active.row_migrations = stores.finalize_page_active_span(&mut migration_builder);
         retained
     } else {
         cell.list_mutation().take_nodes()
@@ -466,7 +466,7 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     // §799 continues `if cur_head<>cur_tail then begin link(tail):=link(cur_head);
     // tail:=cur_tail end`: the migrated material is spliced immediately after the
     // row, as a plain list splice with no interline glue of its own.
-    let migrations = std::mem::take(&mut active.row_migrations);
+    let migrations = std::mem::take(&mut active.row_migrations).list();
     if crate::vertical::is_outer_vertical(modes) {
         stores.append_page_contributions(migrations);
     } else {

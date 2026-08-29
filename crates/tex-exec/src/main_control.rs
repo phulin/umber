@@ -583,7 +583,7 @@ struct ActiveReplayAlignment<G> {
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
     /// and `\vadjust` contents §796's `hpack` migrated out of this row's
     /// columns, waiting for §799 `fin_row` to append them after the row.
-    row_migrations: tex_state::node_arena::PageListId,
+    row_migrations: tex_state::page_node_arena::PageListSpan,
     cell_span: u16,
     row_open: bool,
     cell_open: bool,
@@ -634,7 +634,7 @@ impl<G> ReplayBoxes<G> {
 
 #[derive(Clone, Debug)]
 struct ActiveDiscretionary {
-    parts: Vec<tex_state::node_arena::PageListId>,
+    parts: Vec<tex_state::page_node_arena::PageListSpan>,
     rejected: bool,
 }
 
@@ -4219,11 +4219,10 @@ impl<G> MainControl<G> {
             });
             let part_len = level.list().nodes(&stores).len();
             let prefix_end = first_forbidden.unwrap_or(part_len);
-            let part = level.list_mutation().take_nodes();
-            let mut slices = Vec::new();
-            let nodes = stores.slice_page_node_sequence(part, 0..prefix_end, &mut slices);
+            let part = level.list_mutation().take_span();
+            let nodes = stores.slice_page_node_span(part, 0..prefix_end);
             let deleted = first_forbidden
-                .map(|index| stores.slice_page_node_sequence(part, index..part_len, &mut slices));
+                .map(|index| stores.slice_page_node_span(part, index..part_len).list());
             let aftergroup = leave_group_payloads(
                 &mut stores,
                 &mut self.command,
@@ -4304,7 +4303,7 @@ impl<G> MainControl<G> {
         if active.rejected {
             return Ok(ReplayStep::Continue);
         }
-        let [pre, post, mut replace]: [tex_state::node_arena::PageListId; 3] = active
+        let [pre, post, mut replace]: [tex_state::page_node_arena::PageListSpan; 3] = active
             .parts
             .try_into()
             .expect("discretionary completes after exactly three parts");
@@ -4331,12 +4330,12 @@ impl<G> MainControl<G> {
                 ],
                 context,
             )?;
-            replace = tex_state::node_arena::PageListId::empty();
+            replace = tex_state::page_node_arena::PageListSpan::empty();
         }
         let physical_replace_count = stores
             .command_context()
             .expect("live generation")
-            .page_node_list(replace)
+            .page_node_span(replace)
             .expect("discretionary replacement is a live page list")
             .len()
             .try_into()
@@ -4345,9 +4344,9 @@ impl<G> MainControl<G> {
             &mut stores.command_context().expect("live generation"),
             Node::Disc {
                 kind: DiscKind::Discretionary,
-                pre,
-                post,
-                replace,
+                pre: pre.list(),
+                post: post.list(),
+                replace: replace.list(),
                 physical_replace_count,
             },
         );
@@ -6814,6 +6813,9 @@ impl<G> MainControl<G> {
                     };
                     let shift = MathShiftContext::EqNo(side);
                     self.active_math_shifts.push(shift);
+                    let display = context
+                        .admit_page_node_span(display)
+                        .expect("equation-number display belongs to the live page owner");
                     self.modes
                         .current_list_mutation()
                         .set_display_eq_no(&context, crate::mode::DisplayEqNo { side, display });
@@ -7158,10 +7160,7 @@ impl<G> MainControl<G> {
         schedule_everymath(&mut self.command, &mut context, true);
         self.modes.current_list_mutation().set_display_interrupt(
             &context,
-            crate::mode::DisplayInterrupt {
-                active_directions: paragraph.active_directions,
-                prototype,
-            },
+            crate::mode::DisplayInterrupt::new(&context, paragraph.active_directions, prototype),
         );
         Ok(())
     }
@@ -7300,7 +7299,7 @@ impl<G> MainControl<G> {
             &mut context,
             aftergroup,
         )?;
-        Ok((eq.display, finished))
+        Ok((eq.display.list(), finished))
     }
 
     fn finish_display_alignment(
@@ -7417,6 +7416,7 @@ impl<G> MainControl<G> {
                 .ok_or(ExecError::MissingToken {
                     context: "display interrupt",
                 })?;
+        let (active_directions, prototype) = interrupt.into_parts();
         let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
         crate::math::display::finish_display_math(
             &mut self.modes,
@@ -7426,7 +7426,7 @@ impl<G> MainControl<G> {
             &diagnostic_context,
             content,
             eq_no,
-            interrupt.prototype,
+            prototype,
             Some(&conversion_error_context),
         )?;
         let aftergroup = leave_group_payloads(
@@ -7445,7 +7445,7 @@ impl<G> MainControl<G> {
             aftergroup,
         )?;
         drop(context);
-        self.resume_display(stores, diagnostic_effects, interrupt.active_directions)
+        self.resume_display(stores, diagnostic_effects, active_directions)
     }
 
     fn resume_display(
@@ -10169,7 +10169,7 @@ fn start_fraction<G>(
     if list.incomplete_fraction().is_some() {
         return false;
     }
-    let numerator = list.take_nodes();
+    let numerator = list.take_span();
     let context = stores.command_context().expect("live generation");
     list.set_incomplete_fraction(
         &context,
@@ -10198,7 +10198,7 @@ fn finish_math_list<G>(
         // only the nodes after that boundary into the numerator, then links
         // the fraction noad immediately after the boundary.
         let numerator_nodes = stores
-            .page_node_list(fraction.numerator)
+            .page_node_span(fraction.numerator)
             .expect("fraction numerator belongs to the live page arena")
             .nodes();
         let boundary = numerator_nodes.iter().rposition(|node| {
@@ -10212,25 +10212,16 @@ fn finish_math_list<G>(
         });
         let numerator_len = numerator_nodes.len();
         let _ = numerator_nodes;
-        let mut slices = Vec::new();
         let (prefix, numerator) = if let Some(boundary) = boundary {
             (
-                Some(stores.slice_page_node_sequence(
-                    fraction.numerator,
-                    0..boundary + 1,
-                    &mut slices,
-                )),
-                stores.slice_page_node_sequence(
-                    fraction.numerator,
-                    boundary + 1..numerator_len,
-                    &mut slices,
-                ),
+                Some(stores.slice_page_node_span(fraction.numerator, 0..boundary + 1)),
+                stores.slice_page_node_span(fraction.numerator, boundary + 1..numerator_len),
             )
         } else {
             (None, fraction.numerator)
         };
         let fraction = Node::FractionNoad(MathFraction {
-            numerator,
+            numerator: numerator.list(),
             denominator,
             thickness: fraction.thickness,
             left_delimiter: fraction.left_delimiter,
@@ -10238,7 +10229,7 @@ fn finish_math_list<G>(
         });
         if let Some(prefix) = prefix {
             let fraction = stores.publish_page_nodes(vec![fraction]);
-            return Ok(stores.compose_page_node_sequences(&[prefix, fraction]));
+            return Ok(stores.compose_page_node_sequences(&[prefix.list(), fraction]));
         }
         return Ok(stores.publish_page_nodes(vec![fraction]));
     }
@@ -10439,7 +10430,7 @@ fn left_group_open<G>(modes: &ModeNest, stores: &mut Universe<G>) -> bool {
             .incomplete_fraction()
             .is_some_and(|fraction| {
                 context
-                    .page_node_list(fraction.numerator)
+                    .page_node_span(fraction.numerator)
                     .ok()
                     .and_then(|list| list.nodes().first())
                     .is_some_and(|node| starts_left_node(Some(node)))

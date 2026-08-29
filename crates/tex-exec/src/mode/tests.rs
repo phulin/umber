@@ -520,7 +520,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
             list.set_incomplete_fraction(
                 context,
                 IncompleteFraction {
-                    numerator: tex_state::node_arena::PageListId::empty(),
+                    numerator: tex_state::page_node_arena::PageListSpan::empty(),
                     thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
                     left_delimiter: Some(5),
                     right_delimiter: Some(6),
@@ -537,7 +537,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
                 context,
                 DisplayEqNo {
                     side: EqNoSide::Right,
-                    display: tex_state::node_arena::PageListId::empty(),
+                    display: tex_state::page_node_arena::PageListSpan::empty(),
                 },
             );
 
@@ -552,7 +552,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
             list.set_incomplete_fraction(
                 context,
                 IncompleteFraction {
-                    numerator: tex_state::node_arena::PageListId::empty(),
+                    numerator: tex_state::page_node_arena::PageListSpan::empty(),
                     thickness: FractionThickness::Default,
                     left_delimiter: None,
                     right_delimiter: None,
@@ -569,7 +569,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
                 context,
                 DisplayEqNo {
                     side: EqNoSide::Left,
-                    display: tex_state::node_arena::PageListId::empty(),
+                    display: tex_state::page_node_arena::PageListSpan::empty(),
                 },
             );
         }
@@ -676,7 +676,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
             list.set_incomplete_fraction(
                 context,
                 IncompleteFraction {
-                    numerator: tex_state::node_arena::PageListId::empty(),
+                    numerator: tex_state::page_node_arena::PageListSpan::empty(),
                     thickness: FractionThickness::Default,
                     left_delimiter: None,
                     right_delimiter: Some(9),
@@ -693,7 +693,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
                 context,
                 DisplayEqNo {
                     side: EqNoSide::Left,
-                    display: tex_state::node_arena::PageListId::empty(),
+                    display: tex_state::page_node_arena::PageListSpan::empty(),
                 },
             );
         }
@@ -1008,21 +1008,19 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
     with_context(|context| {
         let mut nest = ModeNest::new();
         nest.current_list_mutation().push(context, kern(11));
-        let owner = nest.storage.levels[0]
-            .list
-            .page_region
-            .expect("outer list is owner-relative");
+        let owner = context.page_node_region_id();
         let address = context
-            .page_node_address_for_test(nest.current_list().nodes, 0)
+            .page_node_address_for_test(nest.current_list().nodes.list(), 0)
             .expect("outer node address") as usize;
         let counters = context.page_material_counters();
 
         nest.push(Mode::Horizontal).expect("nested horizontal mode");
         nest.current_list_mutation().push(context, kern(17));
-        assert_eq!(
-            nest.storage.levels[1].list.page_region,
-            Some(owner),
-            "nested and parent lists are admitted by the same region"
+        assert_eq!(context.page_node_region_id(), owner);
+        assert!(
+            context
+                .page_node_span(nest.storage.levels[1].list.nodes)
+                .is_ok()
         );
         let mut nested = nest.pop().expect("pop nested mode");
         let nested_nodes = nested.list_mutation().take_nodes();
@@ -1032,7 +1030,7 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
         assert_eq!(nest_nodes(&nest, context), [kern(11), kern(17)]);
         assert_eq!(
             context
-                .page_node_address_for_test(nest.current_list().nodes, 0)
+                .page_node_address_for_test(nest.current_list().nodes.list(), 0)
                 .expect("unchanged outer address") as usize,
             address
         );
@@ -1049,9 +1047,8 @@ fn mode_operation_rollback_restores_owner_relative_root_after_failure() {
     with_context(|context| {
         let mut nest = ModeNest::new();
         nest.current_list_mutation().push(context, kern(23));
-        let owner = nest.storage.levels[0].list.page_region;
         let address = context
-            .page_node_address_for_test(nest.current_list().nodes, 0)
+            .page_node_address_for_test(nest.current_list().nodes.list(), 0)
             .expect("accepted node") as usize;
         let counters = context.page_material_counters();
         nest.reset_journal_for_test();
@@ -1064,11 +1061,15 @@ fn mode_operation_rollback_restores_owner_relative_root_after_failure() {
             .expect("operation failure rolls back exact mode roots");
 
         assert_eq!(nest.depth(), 1);
-        assert_eq!(nest.storage.levels[0].list.page_region, owner);
+        assert!(
+            context
+                .page_node_span(nest.storage.levels[0].list.nodes)
+                .is_ok()
+        );
         assert_eq!(nest_nodes(&nest, context), [kern(23)]);
         assert_eq!(
             context
-                .page_node_address_for_test(nest.current_list().nodes, 0)
+                .page_node_address_for_test(nest.current_list().nodes.list(), 0)
                 .expect("restored accepted node") as usize,
             address
         );
@@ -1080,17 +1081,16 @@ fn mode_operation_rollback_restores_owner_relative_root_after_failure() {
 }
 
 #[test]
-fn foreign_page_region_mode_root_is_rejected_before_succession() {
-    let (foreign_root, foreign_region) = with_context(|context| {
-        (
-            context.publish_page_nodes(vec![kern(31)]),
-            context.page_node_region_id(),
-        )
+fn foreign_cross_generation_mode_span_is_rejected_before_succession() {
+    let foreign_root = with_context(|context| {
+        let root = context.publish_page_nodes(vec![kern(31)]);
+        context
+            .admit_page_node_span(root)
+            .expect("foreign context admits its own root")
     });
     with_context(|context| {
         let mut nest = ModeNest::new();
         nest.storage.levels[0].list.nodes = foreign_root;
-        nest.storage.levels[0].list.page_region = Some(foreign_region);
 
         assert!(
             nest.preflight_page_region_succession(context).is_none(),
@@ -1105,7 +1105,7 @@ fn eligible_checkpoint_has_no_independent_live_mode_list_owner() {
     nest.current_list_mutation().set_prev_graf(7);
     let checkpoint = nest.checkpoint();
 
-    assert!(checkpoint.outer.list.page_region.is_none());
+    assert!(checkpoint.outer.list.nodes.is_empty());
     assert!(checkpoint.outer.list.is_checkpoint_rootless());
     assert!(!checkpoint.retains_page_node_handles());
 }

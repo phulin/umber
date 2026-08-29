@@ -142,7 +142,7 @@ impl PageBuilderState {
             |projection| {
                 hash_nodes(
                     arena
-                        .node_cursor(self.contribution)
+                        .span_node_cursor(self.contribution)
                         .expect("page contribution root belongs to its arena"),
                     projection,
                 )
@@ -154,7 +154,7 @@ impl PageBuilderState {
             |projection| {
                 hash_nodes(
                     arena
-                        .node_cursor(self.current_page)
+                        .span_node_cursor(self.current_page)
                         .expect("current-page root belongs to its arena"),
                     projection,
                 )
@@ -166,7 +166,7 @@ impl PageBuilderState {
             |projection| {
                 hash_nodes(
                     arena
-                        .node_cursor(self.page_discards)
+                        .span_node_cursor(self.page_discards)
                         .expect("page-discard root belongs to its arena"),
                     projection,
                 )
@@ -178,7 +178,7 @@ impl PageBuilderState {
             |projection| {
                 hash_nodes(
                     arena
-                        .node_cursor(self.split_discards)
+                        .span_node_cursor(self.split_discards)
                         .expect("split-discard root belongs to its arena"),
                     projection,
                 )

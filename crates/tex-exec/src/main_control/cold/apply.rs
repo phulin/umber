@@ -3416,7 +3416,7 @@ pub(in crate::main_control) fn apply<G>(
                 captured_cell_count: 0,
                 tabskips: vec![default_tabskip],
                 default_tabskip,
-                row_migrations: tex_state::node_arena::PageListId::empty(),
+                row_migrations: tex_state::page_node_arena::PageListSpan::empty(),
                 cell_span: 1,
                 row_open: false,
                 cell_open: false,

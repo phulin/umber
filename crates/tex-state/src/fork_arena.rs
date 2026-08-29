@@ -526,6 +526,22 @@ pub(crate) struct ValidatedArenaList<Lane> {
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
+impl<Lane> ValidatedArenaList<Lane> {
+    const fn empty(first: RawChunkKey) -> Self {
+        Self {
+            descriptor_first_position: 0,
+            descriptor_last_position: 0,
+            descriptor_last_key: first,
+            descriptor_last_offset: 0,
+            _lane: PhantomData,
+        }
+    }
+
+    pub(crate) const fn empty_for(list: ArenaListId<Lane>) -> Self {
+        Self::empty(list.first)
+    }
+}
+
 impl<Lane> Clone for ValidatedArenaList<Lane> {
     fn clone(&self) -> Self {
         *self
@@ -3152,6 +3168,20 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.compose_ranges(pool, scratch)
     }
 
+    pub(crate) fn compose_validated_lists(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        lists: impl IntoIterator<Item = (ArenaListId<Lane>, ValidatedArenaList<Lane>)>,
+        scratch: &mut Vec<ArenaRange<Lane>>,
+    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        scratch.clear();
+        for (list, validated) in lists {
+            self.validate_checked_list(pool, list, validated)?;
+            self.append_validated_list_ranges(pool, list, validated, scratch)?;
+        }
+        self.compose_ranges(pool, scratch)
+    }
+
     /// Returns the empty canonical list for this arena lane.
     #[must_use]
     pub const fn empty_list(&self) -> ArenaListId<Lane> {
@@ -3181,6 +3211,55 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut prior_end = 0_usize;
         for index in 0..list.count {
             let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let entry_end = entry.cumulative_end as usize;
+            let overlap_start = selected.start.max(prior_end);
+            let overlap_end = selected.end.min(entry_end);
+            if overlap_start < overlap_end {
+                let range = ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
+                        arena: self.owner,
+                        raw: entry.range.first,
+                        _lane: PhantomData,
+                    }),
+                    start: entry.range.start,
+                    len: entry.range.len,
+                    sequence_summary: entry.sequence_summary,
+                };
+                scratch.push(self.slice_range(
+                    pool,
+                    range,
+                    overlap_start - prior_end,
+                    overlap_end - overlap_start,
+                )?);
+            }
+            prior_end = entry_end;
+            if prior_end >= selected.end {
+                break;
+            }
+        }
+        self.compose_ranges(pool, scratch)
+    }
+
+    pub(crate) fn slice_validated_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        validated: ValidatedArenaList<Lane>,
+        selected: Range<usize>,
+        scratch: &mut Vec<ArenaRange<Lane>>,
+    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        self.validate_checked_list(pool, list, validated)?;
+        if selected.start > selected.end || selected.end > list.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        scratch.clear();
+        if selected.is_empty() {
+            return Ok(self.empty_list());
+        }
+        let mut prior_end = 0_usize;
+        for index in 0..list.count {
+            let entry = self.validated_descriptor_entry(pool, list, validated, index)?;
             let entry_end = entry.cumulative_end as usize;
             let overlap_start = selected.start.max(prior_end);
             let overlap_end = selected.end.min(entry_end);
@@ -3243,6 +3322,74 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut work = SequenceSummaryWork::default();
         for index in 0..list.count {
             let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let entry_end = entry.cumulative_end as usize;
+            let overlap_start = selected.start.max(prior_end);
+            let overlap_end = selected.end.min(entry_end);
+            if overlap_start < overlap_end {
+                let range = ArenaRange {
+                    arena: self.owner,
+                    first: Some(ChunkId {
+                        arena: self.owner,
+                        raw: entry.range.first,
+                        _lane: PhantomData,
+                    }),
+                    start: entry.range.start,
+                    len: entry.range.len,
+                    sequence_summary: entry.sequence_summary,
+                };
+                let (range, range_summary, range_work) = self.slice_range_summarized(
+                    pool,
+                    range,
+                    overlap_start - prior_end,
+                    overlap_end - overlap_start,
+                    &mut item_identity,
+                )?;
+                scratch.push(range);
+                summary = summary.concat(range_summary);
+                work.add(range_work);
+            }
+            prior_end = entry_end;
+            if prior_end >= selected.end {
+                break;
+            }
+        }
+        let list = self.compose_ranges(pool, scratch)?;
+        Ok((list, summary, work))
+    }
+
+    pub(crate) fn slice_validated_list_summarized(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        validated: ValidatedArenaList<Lane>,
+        selected: Range<usize>,
+        scratch: &mut Vec<ArenaRange<Lane>>,
+        mut item_identity: impl FnMut(&T) -> u64,
+    ) -> Result<
+        (
+            ArenaListId<Lane>,
+            SemanticSequenceIdentity,
+            SequenceSummaryWork,
+        ),
+        ForkArenaError,
+    > {
+        self.validate_checked_list(pool, list, validated)?;
+        if selected.start > selected.end || selected.end > list.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        scratch.clear();
+        if selected.is_empty() {
+            return Ok((
+                self.empty_list(),
+                SemanticSequenceIdentity::empty(),
+                SequenceSummaryWork::default(),
+            ));
+        }
+        let mut prior_end = 0_usize;
+        let mut summary = SemanticSequenceIdentity::empty();
+        let mut work = SequenceSummaryWork::default();
+        for index in 0..list.count {
+            let entry = self.validated_descriptor_entry(pool, list, validated, index)?;
             let entry_end = entry.cumulative_end as usize;
             let overlap_start = selected.start.max(prior_end);
             let overlap_end = selected.end.min(entry_end);
@@ -3500,13 +3647,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.validate_pool(pool)?;
         if list.is_empty() {
             return (list == ArenaListId::empty())
-                .then_some(ValidatedArenaList {
-                    descriptor_first_position: 0,
-                    descriptor_last_position: 0,
-                    descriptor_last_key: list.first,
-                    descriptor_last_offset: 0,
-                    _lane: PhantomData,
-                })
+                .then_some(ValidatedArenaList::empty(list.first))
                 .ok_or(ForkArenaError::InvalidRange);
         }
         if list.arena != self.owner || list.count == 0 {
@@ -3728,6 +3869,31 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<(), ForkArenaError> {
         for index in 0..list.count {
             let entry = self.descriptor_entry(pool, list.first, list.start, index)?;
+            let raw = entry.range;
+            scratch.push(ArenaRange {
+                arena: self.owner,
+                first: Some(ChunkId {
+                    arena: self.owner,
+                    raw: raw.first,
+                    _lane: PhantomData,
+                }),
+                start: raw.start,
+                len: raw.len,
+                sequence_summary: entry.sequence_summary,
+            });
+        }
+        Ok(())
+    }
+
+    fn append_validated_list_ranges(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        validated: ValidatedArenaList<Lane>,
+        scratch: &mut Vec<ArenaRange<Lane>>,
+    ) -> Result<(), ForkArenaError> {
+        for index in 0..list.count {
+            let entry = self.validated_descriptor_entry(pool, list, validated, index)?;
             let raw = entry.range;
             scratch.push(ArenaRange {
                 arena: self.owner,

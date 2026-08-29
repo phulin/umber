@@ -51,9 +51,9 @@ fn set_split_discards(
     page.set_split_discards(arena, root);
 }
 
-fn list_nodes(arena: &PageMaterialArena, root: PageListId) -> Vec<Node> {
+fn list_nodes(arena: &PageMaterialArena, root: impl super::PageListRoot) -> Vec<Node> {
     arena
-        .node_cursor(root)
+        .node_cursor(root.list_id())
         .expect("test page root remains live")
         .iter()
         .cloned()
@@ -559,7 +559,7 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
     let first_root = region.builder().contribution;
     let first_address = region
         .nodes(&pool)
-        .list(first_root)
+        .span_list(first_root)
         .expect("first contribution")
         .get(0)
         .map(std::ptr::from_ref)
@@ -587,7 +587,7 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
     assert_eq!(
         region
             .nodes(&pool)
-            .list(first_root)
+            .span_list(first_root)
             .expect("unchanged prefix remains live")
             .get(0)
             .map(std::ptr::from_ref),
@@ -613,7 +613,7 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
     let prefix = region.builder().contribution;
     let prefix_address = region
         .nodes(&pool)
-        .list(prefix)
+        .span_list(prefix)
         .expect("selected prefix")
         .get(0)
         .map(std::ptr::from_ref)
@@ -702,7 +702,7 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
     assert_eq!(
         region
             .nodes(&pool)
-            .list(prefix)
+            .span_list(prefix)
             .expect("unchanged prefix survives acceptance")
             .get(0)
             .map(std::ptr::from_ref),
@@ -928,7 +928,7 @@ fn page_history_accept_drops_superseded_later_regions() {
 
     assert!(history.validates_checkpoint(first));
     assert!(!history.validates_checkpoint(superseded));
-    assert!(!history.nodes().contains(superseded_root));
+    assert!(!history.nodes().contains(superseded_root.list()));
 }
 
 #[test]
@@ -1070,7 +1070,7 @@ fn production_heldover_moves_a_self_contained_successor_envelope() {
     assert_eq!(
         history
             .nodes_mut()
-            .list(contribution)
+            .span_list(contribution)
             .expect("moved heldover")
             .get(0)
             .map(std::ptr::from_ref),
@@ -1109,7 +1109,7 @@ fn production_heldover_copies_only_the_interleaved_prefix_closure() {
     assert_ne!(
         history
             .nodes_mut()
-            .list(contribution)
+            .span_list(contribution)
             .expect("copied heldover")
             .get(0)
             .map(std::ptr::from_ref),

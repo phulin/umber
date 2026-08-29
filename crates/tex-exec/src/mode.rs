@@ -7,8 +7,7 @@ use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node, NodeTokenList};
 use tex_state::node_arena::{NodeCursor, PageListId};
-use tex_state::node_region::NodeRegionId;
-use tex_state::page_node_arena::PageMaterialActiveListBuilder;
+use tex_state::page_node_arena::{PageListSpan, PageMaterialActiveListBuilder};
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
 use tex_state::{CommandContext, EngineBoundaryHasher, EngineMode, Universe};
@@ -135,10 +134,7 @@ impl ModeNest {
 /// The list-under-construction owned by one mode level.
 #[derive(Default)]
 pub struct ModeList {
-    /// Region admitting every nonempty raw coordinate below this carrier.
-    /// `None` is valid only while the complete mode-list closure is rootless.
-    page_region: Option<NodeRegionId>,
-    nodes: PageListId,
+    nodes: PageListSpan,
     active: PageMaterialActiveListBuilder,
     align_state: Option<AlignState>,
     incomplete_fraction: Option<IncompleteFraction>,
@@ -162,7 +158,6 @@ impl ModeList {
     fn clone_operation_projection(&self) -> Self {
         assert!(self.active.is_vacant(), "mode clone requires a sealed list");
         Self {
-            page_region: self.page_region,
             nodes: self.nodes,
             active: PageMaterialActiveListBuilder::vacant(),
             align_state: self.align_state.clone(),
@@ -186,7 +181,7 @@ impl ModeList {
 
     fn clone_rootless(&self) -> Self {
         assert!(
-            self.is_checkpoint_rootless() && self.page_region.is_none(),
+            self.is_checkpoint_rootless(),
             "retained mode clones require a rootless list"
         );
         self.clone_operation_projection()
@@ -197,7 +192,6 @@ impl core::fmt::Debug for ModeList {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("ModeList")
-            .field("page_region", &self.page_region)
             .field("nodes", &self.nodes)
             .field("prev_depth", &self.prev_depth)
             .field("prev_graf", &self.prev_graf)
@@ -235,77 +229,62 @@ struct ModeComponentRoots {
 }
 
 impl ModeList {
-    fn node_roots(&self) -> [PageListId; 4] {
-        [
-            self.nodes,
-            self.incomplete_fraction
+    fn has_node_roots(&self) -> bool {
+        !self.nodes.list().is_empty()
+            || self
+                .incomplete_fraction
                 .as_ref()
-                .map_or(PageListId::empty(), |fraction| fraction.numerator),
-            self.display_interrupt
+                .is_some_and(|fraction| !fraction.numerator.list().is_empty())
+            || self
+                .display_interrupt
                 .as_ref()
                 .and_then(|interrupt| interrupt.prototype.as_ref())
-                .map_or(PageListId::empty(), |prototype| prototype.children),
-            self.display_eq_no
+                .is_some_and(|prototype| {
+                    !prototype.children.list().is_empty()
+                        || prototype
+                            .diagnostic_children
+                            .is_some_and(|children| !children.list().is_empty())
+                })
+            || self
+                .display_eq_no
                 .as_ref()
-                .map_or(PageListId::empty(), |eqno| eqno.display),
-        ]
-    }
-
-    fn has_node_roots(&self) -> bool {
-        self.node_roots().into_iter().any(|root| !root.is_empty())
+                .is_some_and(|eqno| !eqno.display.list().is_empty())
     }
 
     fn validate_page_region<G>(&self, stores: &CommandContext<'_, G>) -> bool {
-        let roots = self.node_roots();
-        if roots.into_iter().all(PageListId::is_empty) {
-            return self.page_region.is_none();
-        }
-        self.page_region == Some(stores.page_node_region_id())
-            && roots
-                .into_iter()
-                .all(|root| stores.admits_page_node_closure(root))
+        let admits = |span| stores.page_node_span(span).is_ok();
+        admits(self.nodes)
+            && self
+                .incomplete_fraction
+                .as_ref()
+                .is_none_or(|fraction| admits(fraction.numerator))
+            && self
+                .display_interrupt
+                .as_ref()
+                .and_then(|interrupt| interrupt.prototype.as_ref())
+                .is_none_or(|prototype| {
+                    admits(prototype.children) && prototype.diagnostic_children.is_none_or(admits)
+                })
+            && self
+                .display_eq_no
+                .as_ref()
+                .is_none_or(|eqno| admits(eqno.display))
     }
 
     fn admit_page_region<G>(&mut self, stores: &CommandContext<'_, G>) -> bool {
-        if !self.has_node_roots() {
-            self.page_region = None;
-            return true;
-        }
-        let region = stores.page_node_region_id();
-        match self.page_region {
-            Some(owner) => owner == region,
-            None => {
-                if !self
-                    .node_roots()
-                    .into_iter()
-                    .all(|root| stores.admits_page_node_closure(root))
-                {
-                    return false;
-                }
-                self.page_region = Some(region);
-                true
-            }
-        }
+        self.validate_page_region(stores)
     }
 
-    fn admit_new_root<G>(&mut self, stores: &CommandContext<'_, G>, root: PageListId) -> bool {
-        if root.is_empty() {
-            return self.admit_page_region(stores);
-        }
-        let region = stores.page_node_region_id();
-        if self.page_region.is_some_and(|owner| owner != region)
-            || !stores.admits_page_node_closure(root)
-        {
-            return false;
-        }
-        self.page_region = Some(region);
-        true
-    }
-
-    fn release_page_region_if_rootless(&mut self) {
-        if !self.has_node_roots() {
-            self.page_region = None;
-        }
+    fn admit_new_root<G>(
+        &self,
+        stores: &CommandContext<'_, G>,
+        root: PageListId,
+    ) -> Option<PageListSpan> {
+        stores.admits_page_node_closure(root).then(|| {
+            stores
+                .admit_page_node_span(root)
+                .expect("owner-validated page root admits its checked span")
+        })
     }
 
     fn refresh_semantic_identity_root(&mut self) {
@@ -354,16 +333,8 @@ impl ModeList {
     }
     #[must_use]
     pub fn nodes<'a, G>(&self, stores: &'a CommandContext<'_, G>) -> NodeCursor<'a> {
-        assert!(
-            (!self.has_node_roots() && self.page_region.is_none())
-                || self.page_region == Some(stores.page_node_region_id()),
-            "mode list root belongs to a foreign page region: stored={:?}, current={:?}, admitted={}",
-            self.page_region,
-            stores.page_node_region_id(),
-            stores.admits_page_node_closure(self.nodes),
-        );
         stores
-            .page_nodes(self.nodes)
+            .page_node_span(self.nodes)
             .expect("mode list belongs to the live page arena")
     }
 
@@ -373,9 +344,11 @@ impl ModeList {
     }
 
     pub fn take_nodes(&mut self) -> PageListId {
-        let nodes = std::mem::take(&mut self.nodes);
-        self.release_page_region_if_rootless();
-        nodes
+        self.take_span().list()
+    }
+
+    fn take_span(&mut self) -> PageListSpan {
+        std::mem::take(&mut self.nodes)
     }
 
     #[must_use]
@@ -386,9 +359,9 @@ impl ModeList {
     pub fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
         assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_list(&mut self.active, self.nodes);
+        stores.append_page_active_span(&mut self.active, self.nodes);
         stores.push_page_active_list(&mut self.active, node);
-        self.nodes = stores.finalize_page_active_list(&mut self.active);
+        self.nodes = stores.finalize_page_active_span(&mut self.active);
         assert!(self.admit_page_region(stores));
     }
 
@@ -399,21 +372,23 @@ impl ModeList {
     ) {
         assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_list(&mut self.active, self.nodes);
+        stores.append_page_active_span(&mut self.active, self.nodes);
         for node in nodes {
             stores.push_page_active_list(&mut self.active, node);
         }
-        self.nodes = stores.finalize_page_active_list(&mut self.active);
+        self.nodes = stores.finalize_page_active_span(&mut self.active);
         assert!(self.admit_page_region(stores));
     }
 
     pub fn append_list<G>(&mut self, stores: &mut CommandContext<'_, G>, nodes: PageListId) {
         assert!(self.admit_page_region(stores));
-        assert!(self.admit_new_root(stores, nodes));
+        let nodes = self
+            .admit_new_root(stores, nodes)
+            .expect("appended mode-list root belongs to the live page region");
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_list(&mut self.active, self.nodes);
-        stores.append_page_active_list(&mut self.active, nodes);
-        self.nodes = stores.finalize_page_active_list(&mut self.active);
+        stores.append_page_active_span(&mut self.active, self.nodes);
+        stores.append_page_active_span(&mut self.active, nodes);
+        self.nodes = stores.finalize_page_active_span(&mut self.active);
         assert!(self.admit_page_region(stores));
     }
 
@@ -429,20 +404,20 @@ impl ModeList {
             return None;
         }
         let mut node = stores
-            .page_nodes(self.nodes)
+            .page_node_span(self.nodes)
             .ok()?
             .owned_node(index)?
             .clone();
         let result = mutate(&mut node);
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_list_range(&mut self.active, self.nodes, 0..index);
+        stores.append_page_active_span_range(&mut self.active, self.nodes, 0..index);
         stores.push_page_active_list(&mut self.active, node);
-        stores.append_page_active_list_range(
+        stores.append_page_active_span_range(
             &mut self.active,
             self.nodes,
             index + 1..self.nodes.len(),
         );
-        self.nodes = stores.finalize_page_active_list(&mut self.active);
+        self.nodes = stores.finalize_page_active_span(&mut self.active);
         assert!(self.admit_page_region(stores));
         Some(result)
     }
@@ -455,7 +430,10 @@ impl ModeList {
     ) -> R {
         let mut nodes = self.nodes(stores).iter().cloned().collect::<Vec<_>>();
         let result = mutate(&mut nodes);
-        self.nodes = stores.publish_page_nodes(nodes);
+        let published = stores.publish_page_nodes(nodes);
+        self.nodes = stores
+            .admit_page_node_span(published)
+            .expect("published test mode list admits a checked span");
         result
     }
 
@@ -595,20 +573,18 @@ impl ModeList {
         if !self.admit_page_region(stores) {
             return None;
         }
-        match stores.page_nodes(self.nodes).ok()?.last() {
+        match stores.page_node_span(self.nodes).ok()?.last() {
             Some(Node::HList(_)) | Some(Node::VList(_)) => {}
             _ => return None,
         }
-        let mut node = stores.page_nodes(self.nodes).ok()?.last()?.clone();
-        self.nodes =
-            stores.slice_page_node_sequence(self.nodes, 0..self.nodes.len() - 1, &mut Vec::new());
+        let mut node = stores.page_node_span(self.nodes).ok()?.last()?.clone();
+        self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
         match &mut node {
             Node::HList(box_node) | Node::VList(box_node) => {
                 box_node.shift = Scaled::from_raw(0);
             }
             _ => unreachable!("tail was checked to be a box"),
         }
-        self.release_page_region_if_rootless();
         Some(node)
     }
 
@@ -616,10 +592,8 @@ impl ModeList {
         if !self.admit_page_region(stores) {
             return None;
         }
-        let node = stores.page_nodes(self.nodes).ok()?.last()?.clone();
-        self.nodes =
-            stores.slice_page_node_sequence(self.nodes, 0..self.nodes.len() - 1, &mut Vec::new());
-        self.release_page_region_if_rootless();
+        let node = stores.page_node_span(self.nodes).ok()?.last()?.clone();
+        self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
         Some(node)
     }
 
@@ -631,13 +605,12 @@ impl ModeList {
         assert!(self.admit_page_region(stores));
         let start = *range.start();
         let end = range.end().saturating_add(1);
-        let removed = stores.slice_page_node_sequence(self.nodes, start..end, &mut Vec::new());
+        let removed = stores.slice_page_node_span(self.nodes, start..end);
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_list_range(&mut self.active, self.nodes, 0..start);
-        stores.append_page_active_list_range(&mut self.active, self.nodes, end..self.nodes.len());
-        self.nodes = stores.finalize_page_active_list(&mut self.active);
-        self.release_page_region_if_rootless();
-        removed
+        stores.append_page_active_span_range(&mut self.active, self.nodes, 0..start);
+        stores.append_page_active_span_range(&mut self.active, self.nodes, end..self.nodes.len());
+        self.nodes = stores.finalize_page_active_span(&mut self.active);
+        removed.list()
     }
 
     /// Mutates the tail node without allowing its mutable reference to escape.
@@ -694,7 +667,6 @@ impl ModeList {
     pub fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
         let value = self.incomplete_fraction.take();
         self.component_roots.incomplete_fraction = 0;
-        self.release_page_region_if_rootless();
         value
     }
 
@@ -713,7 +685,6 @@ impl ModeList {
     pub fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
         let value = self.display_interrupt.take();
         self.component_roots.display_interrupt = 0;
-        self.release_page_region_if_rootless();
         value
     }
 
@@ -732,11 +703,10 @@ impl ModeList {
     pub fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
         let value = self.display_eq_no.take();
         self.component_roots.display_eq_no = 0;
-        self.release_page_region_if_rootless();
         value
     }
 
-    fn set_display_alignment(&mut self, nodes: PageListId, prev_depth: Option<Scaled>) {
+    fn set_display_alignment(&mut self, nodes: PageListSpan, prev_depth: Option<Scaled>) {
         // A display alignment owns the whole display-mode list: §1206 permits
         // assignments before the closing `$$`, but no additional material.
         debug_assert!(!self.display_alignment);
@@ -755,7 +725,6 @@ impl ModeList {
             return None;
         }
         let result = (self.take_nodes(), self.prev_depth);
-        self.release_page_region_if_rootless();
         Some(result)
     }
 }
@@ -846,6 +815,11 @@ impl ModeListMutation<'_> {
     pub(crate) fn take_nodes(&mut self) -> PageListId {
         self.record_nodes();
         self.list.take_nodes()
+    }
+
+    pub(crate) fn take_span(&mut self) -> PageListSpan {
+        self.record_nodes();
+        self.list.take_span()
     }
 
     pub(crate) fn pop_last_node<G>(&mut self, stores: &mut CommandContext<'_, G>) -> Option<Node> {
@@ -1092,7 +1066,7 @@ impl ModeListMutation<'_> {
         stores: &CommandContext<'_, G>,
         fraction: IncompleteFraction,
     ) {
-        assert!(self.list.admit_new_root(stores, fraction.numerator));
+        assert!(stores.page_node_span(fraction.numerator).is_ok());
         let old = self.list.take_incomplete_fraction();
         if let Some(mut journal) = self.list_journal() {
             journal.record_incomplete_fraction(old);
@@ -1119,7 +1093,10 @@ impl ModeListMutation<'_> {
         interrupt: DisplayInterrupt,
     ) {
         if let Some(prototype) = &interrupt.prototype {
-            assert!(self.list.admit_new_root(stores, prototype.children));
+            assert!(stores.page_node_span(prototype.children).is_ok());
+            if let Some(diagnostic) = prototype.diagnostic_children {
+                assert!(stores.page_node_span(diagnostic).is_ok());
+            }
         }
         let old = self.list.take_display_interrupt();
         if let Some(mut journal) = self.list_journal() {
@@ -1142,7 +1119,7 @@ impl ModeListMutation<'_> {
         stores: &CommandContext<'_, G>,
         eq_no: DisplayEqNo,
     ) {
-        assert!(self.list.admit_new_root(stores, eq_no.display));
+        assert!(stores.page_node_span(eq_no.display).is_ok());
         let old = self.list.take_display_eq_no();
         if let Some(mut journal) = self.list_journal() {
             journal.record_display_eq_no(old);
@@ -1165,7 +1142,10 @@ impl ModeListMutation<'_> {
         nodes: PageListId,
         prev_depth: Option<Scaled>,
     ) {
-        assert!(self.list.admit_new_root(stores, nodes));
+        let nodes = self
+            .list
+            .admit_new_root(stores, nodes)
+            .expect("display alignment belongs to the live page region");
         self.record_nodes();
         let old_prev_depth = self.list.prev_depth;
         let old_display_alignment = self.list.display_alignment;
@@ -1199,9 +1179,8 @@ impl ModeListMutation<'_> {
                 return;
             }
             let old = self.list.nodes;
-            let old_region = self.list.page_region;
             if let Some(mut journal) = self.list_journal() {
-                journal.record_nodes(old_region, old);
+                journal.record_nodes(old);
             }
         }
     }
@@ -1217,9 +1196,8 @@ impl ModeListMutation<'_> {
             return;
         }
         let old = self.list.nodes;
-        let old_region = self.list.page_region;
         if let Some(mut journal) = self.list_journal() {
-            journal.record_nodes(old_region, old);
+            journal.record_nodes(old);
         }
     }
 }
@@ -1538,7 +1516,7 @@ impl PendingHRunChar {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IncompleteFraction {
-    pub numerator: PageListId,
+    pub numerator: PageListSpan,
     pub thickness: FractionThickness,
     pub left_delimiter: Option<u32>,
     pub right_delimiter: Option<u32>,
@@ -1547,13 +1525,59 @@ pub struct IncompleteFraction {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayInterrupt {
     pub active_directions: Vec<tex_state::node::Direction>,
-    pub prototype: Option<BoxNode>,
+    pub prototype: Option<BoxNode<PageListSpan>>,
+}
+
+impl DisplayInterrupt {
+    pub(crate) fn new<G>(
+        stores: &CommandContext<'_, G>,
+        active_directions: Vec<tex_state::node::Direction>,
+        prototype: Option<BoxNode>,
+    ) -> Self {
+        Self {
+            active_directions,
+            prototype: prototype.map(|prototype| {
+                map_box_lists(prototype, |list| {
+                    stores
+                        .admit_page_node_span(list)
+                        .expect("display prototype belongs to the live page owner")
+                })
+            }),
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<tex_state::node::Direction>, Option<BoxNode>) {
+        (
+            self.active_directions,
+            self.prototype
+                .map(|prototype| map_box_lists(prototype, PageListSpan::list)),
+        )
+    }
+}
+
+fn map_box_lists<Source, Destination>(
+    source: BoxNode<Source>,
+    mut map: impl FnMut(Source) -> Destination,
+) -> BoxNode<Destination> {
+    BoxNode {
+        width: source.width,
+        height: source.height,
+        depth: source.depth,
+        shift: source.shift,
+        box_lr: source.box_lr,
+        glue_set: source.glue_set,
+        glue_sign: source.glue_sign,
+        glue_order: source.glue_order,
+        children: map(source.children),
+        diagnostic_children: source.diagnostic_children.map(map),
+        allocator_high_cell_overlap: source.allocator_high_cell_overlap,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayEqNo {
     pub side: EqNoSide,
-    pub display: PageListId,
+    pub display: PageListSpan,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1712,7 +1736,7 @@ fn hash_mode_list<G>(
 ) {
     projection.nodes_iter(
         universe
-            .page_node_list(list.nodes)
+            .page_node_list(list.nodes.list())
             .expect("mode list belongs to the live page arena")
             .iter(),
     );
@@ -1755,7 +1779,7 @@ fn hash_mode_list<G>(
     match &list.incomplete_fraction {
         Some(fraction) => {
             projection.bool(true);
-            projection.page_node_list(universe, fraction.numerator);
+            projection.page_node_list(universe, fraction.numerator.list());
             match fraction.thickness {
                 FractionThickness::Default => projection.u8(0),
                 FractionThickness::Explicit(size) => {
@@ -1785,7 +1809,7 @@ fn hash_mode_list<G>(
             match &interrupt.prototype {
                 Some(prototype) => {
                     projection.bool(true);
-                    projection.nodes(&[Node::HList(*prototype)]);
+                    projection.nodes(&[Node::HList(map_box_lists(*prototype, PageListSpan::list))]);
                 }
                 None => projection.bool(false),
             }
@@ -1799,7 +1823,7 @@ fn hash_mode_list<G>(
                 EqNoSide::Left => 0,
                 EqNoSide::Right => 1,
             });
-            projection.page_node_list(universe, eq_no.display);
+            projection.page_node_list(universe, eq_no.display.list());
         }
         None => projection.bool(false),
     }
@@ -1975,7 +1999,7 @@ fn display_interrupt_identity(interrupt: &DisplayInterrupt) -> u64 {
     match &interrupt.prototype {
         Some(prototype) => {
             1_u8.hash(&mut hasher);
-            let node = Node::HList(*prototype);
+            let node = Node::HList(map_box_lists(*prototype, PageListSpan::list));
             tex_state::node_sequence::SemanticSequenceIdentity::from_nodes([&node])
                 .raw()
                 .hash(&mut hasher);
@@ -2029,6 +2053,7 @@ fn mode_list_semantic_identity(list: &ModeList) -> u64 {
     let mut hasher = mode_identity_hasher(MODE_LIST_IDENTITY_DOMAIN);
     (list.nodes.len() as u64).hash(&mut hasher);
     list.nodes
+        .list()
         .semantic_identity()
         .unwrap_or(0)
         .hash(&mut hasher);

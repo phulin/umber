@@ -176,6 +176,36 @@ impl<G> DumpListProjection<G, PageDumpStorage> for PageListId {
     }
 }
 
+impl<G> DumpListProjection<G, PageDumpStorage> for tex_state::page_node_arena::PageListSpan {
+    fn is_empty(&self, _stores: &CommandContext<'_, G>) -> bool {
+        tex_state::page_node_arena::PageListSpan::is_empty(*self)
+    }
+
+    fn dump(
+        &self,
+        stores: &CommandContext<'_, G>,
+        config: &DumpConfig,
+        depth: i32,
+        context: ListContext,
+        physical_replacement_spans: bool,
+        out: &mut String,
+    ) {
+        let list = stores
+            .page_node_span(*self)
+            .expect("diagnostic root span belongs to the live page arena");
+        let nodes = list.nodes();
+        dump_nodes::<_, _, _, _, PageDumpStorage>(
+            stores,
+            &nodes,
+            config,
+            depth,
+            context,
+            physical_replacement_spans,
+            out,
+        );
+    }
+}
+
 trait DumpGlueProjection<G>: Copy {
     fn resolve(self, stores: &CommandContext<'_, G>) -> GlueSpec;
 }

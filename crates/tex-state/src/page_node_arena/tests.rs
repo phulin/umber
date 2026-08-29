@@ -281,11 +281,17 @@ fn checked_span_traversal_and_retention_are_allocation_and_copy_free() {
         .append_span_range_to_active_list(&mut retained, span, 7..57)
         .expect("retain checked span");
     let retained = arena
-        .finalize_active_list(&mut retained)
+        .finalize_active_span(&mut retained)
         .expect("finalize retained list");
+    let composed = arena
+        .compose_spans(&[span, retained])
+        .expect("checked roots compose without re-admission");
+    let retained = arena
+        .slice_span(composed, span.len()..composed.len())
+        .expect("checked composite slices without re-admission");
 
     let retained_addresses = arena
-        .node_cursor(retained)
+        .span_node_cursor(retained)
         .expect("retained list")
         .iter()
         .map(std::ptr::from_ref)

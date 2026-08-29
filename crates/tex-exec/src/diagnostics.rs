@@ -673,7 +673,7 @@ fn showlists_level_nodes<'a, G>(
             .get(index + 1)
             .and_then(|inner| inner.list().display_eq_no())
     {
-        return Some(ShowlistsNodes::Page(eq_no.display));
+        return Some(ShowlistsNodes::Page(eq_no.display.list()));
     }
     (!level.list().physical_nodes(stores).is_empty())
         .then(|| ShowlistsNodes::Mode(level.list().physical_nodes(stores)))

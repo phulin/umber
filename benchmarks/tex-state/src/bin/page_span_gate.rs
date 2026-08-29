@@ -67,9 +67,15 @@ fn exercise(arena: &mut PageMaterialArena<'_>, span: tex_state::page_node_arena:
     arena
         .append_span_range_to_active_list(&mut retained, span, 7..57)
         .expect("retain span range");
+    let retained = arena
+        .finalize_active_span(&mut retained)
+        .expect("finalize retained list");
+    let composed = arena
+        .compose_spans(&[span, retained])
+        .expect("compose checked live roots");
     black_box(
         arena
-            .finalize_active_list(&mut retained)
-            .expect("finalize retained list"),
+            .slice_span(composed, span.len()..composed.len())
+            .expect("slice checked composite"),
     );
 }

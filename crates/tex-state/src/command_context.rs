@@ -3277,6 +3277,15 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page active-list builder belongs to its live owner")
     }
 
+    pub fn finalize_page_active_span(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+    ) -> crate::page_node_arena::PageListSpan {
+        self.page_nodes
+            .finalize_active_span(builder)
+            .expect("page active-list builder belongs to its live owner")
+    }
+
     pub fn rollback_page_active_list(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
@@ -3331,6 +3340,18 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes
             .slice_sequence(sequence, range, scratch)
             .expect("page sequence range belongs to the live page arena")
+    }
+
+    /// Borrows an already-admitted logical subrange by publishing descriptors
+    /// only and carries the checked result for its owner-local lifetime.
+    pub fn slice_page_node_span(
+        &mut self,
+        span: crate::page_node_arena::PageListSpan,
+        range: core::ops::Range<usize>,
+    ) -> crate::page_node_arena::PageListSpan {
+        self.page_nodes
+            .slice_span(span, range)
+            .expect("checked page span belongs to the live page arena")
     }
 
     #[must_use]
