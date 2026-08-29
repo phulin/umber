@@ -31,7 +31,9 @@ Those values are not distribution object identities or cache keys.
 
 - Monolithic publisher input schema 2 uses aHash64 object entries.
 - Full root schema 8 and HTML root schema 9 name packed shard payloads.
-- Every production shard is packed schema 1 with magic `UMBRPKS1`.
+- Every newly produced shard is packed schema 2 with magic `UMBRPKS2`.
+  Readers retain explicit schema-1/`UMBRPKS1` compatibility for authenticated
+  roots published before the canonical-table cutover; producers never emit it.
 - Font and legacy-mapping records are schema 2 inside the packed payload.
 - Producer format metadata is schema 3 without an input closure and schema 4
   with a schema-1 input closure.
@@ -77,7 +79,11 @@ and exact section offsets. Sections are contiguous in this order:
 | keys         |  variable | deduplicated canonical request-key bytes                            |
 | strings      |  variable | distribution name, deduplicated paths, and catalogue metadata       |
 
-Object, path, and dependency records are referenced by compact indexes. File
+Object, path, and dependency records are referenced by compact indexes. In
+schema 2, object rows are strictly ordered by numeric aHash64 digest and path
+rows are strictly ordered by raw UTF-8 bytes. The producer builds those final
+canonical tables first and assigns record and dependency references from their
+renumbered indexes. File
 dependencies are strictly key-sorted spans and carry their already-resolved
 object/path hint, so prefetch never loads another index shard. Font and legacy
 mapping metadata use bounded explicit encodings in the same string section.
@@ -89,6 +95,10 @@ the same key again.
 `ValidatedPackedShard` owns the authenticated bytes and checks the complete
 layout in owning table passes: object and path identity, dependency rows,
 strict record order and policy, and bucket coverage and probe reachability.
+Schema-2 object and path admission compares adjacent borrowed rows directly in
+one linear pass, rejecting disorder, duplicates, conflicting object lengths,
+invalid spans, and invalid paths without copying or sorting either table.
+Schema-1 compatibility retains its legacy encounter-order duplicate proof.
 The probe proof unwraps the circular table after one guaranteed empty bucket
 and scans every bucket once; it does not replay a live lookup for every record.
 Successful lookup thereafter borrows already validated key, path, object, and
@@ -148,7 +158,8 @@ root reference, not their engine contents.
 The 2026-03-01 full inventory contains 322,537 canonical requests: 164,643 TeX
 keys and 157,894 TFM keys. The former 256 JSON shards occupied 93,525,476
 bytes. Repartitioning and packing the same publisher-resolved inventory with
-schema 1 produces 73,283,781 bytes, a reduction of 20,241,695 bytes (21.64%).
+schema 2 produces 73,283,781 bytes, a reduction of 20,241,695 bytes (21.64%);
+canonical table ordering changes identity but not section sizes.
 
 The packed total contains 579,584 buckets, 322,537 primary records, 212,109
 dependency rows, 450,131 shard-local deduplicated object rows, and 452,941
@@ -157,8 +168,9 @@ string sections total 24,342,219 bytes. Counts for objects and paths are summed
 across independent physical shards; cross-shard duplication is intentional so
 one selected shard remains self-contained.
 
-The issue-namespaced repack root is schema 8 with aHash64
-`721e833071d92bba`. It is measurement evidence, not a hosted default pin.
+The earlier schema-1 issue-namespaced repack root is schema 8 with aHash64
+`721e833071d92bba`. It is historical measurement evidence, not a schema-2 or
+hosted default pin.
 
 ## Performance evidence
 

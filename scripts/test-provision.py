@@ -23,23 +23,24 @@ SPEC.loader.exec_module(provision)
 
 def packed_fixture_shard(distribution: str, files: dict[str, dict[str, object]]) -> bytes:
     records = sorted(files.items())
-    objects: list[tuple[int, int]] = []
-    object_indexes: dict[tuple[str, int], int] = {}
-    paths: list[str] = []
-    path_indexes: dict[str, int] = {}
+    object_lengths: dict[int, int] = {}
+    for record in files.values():
+        digest = int(str(record["ahash64"]), 16)
+        length = int(record["bytes"])
+        assert digest not in object_lengths or object_lengths[digest] == length
+        object_lengths[digest] = length
+    objects = sorted(object_lengths.items())
+    object_indexes = {digest: index for index, (digest, _) in enumerate(objects)}
+    paths = sorted({str(record["virtualPath"]) for record in files.values()})
+    path_indexes = {path: index for index, path in enumerate(paths)}
     key_blob = bytearray()
     encoded_records: list[tuple[int, int, int, int]] = []
     for key, record in records:
         key_offset = len(key_blob)
         key_blob.extend(key.encode())
-        object_key = (str(record["ahash64"]), int(record["bytes"]))
-        object_index = object_indexes.setdefault(object_key, len(objects))
-        if object_index == len(objects):
-            objects.append((int(object_key[0], 16), object_key[1]))
+        object_index = object_indexes[int(str(record["ahash64"]), 16)]
         path = str(record["virtualPath"])
-        path_index = path_indexes.setdefault(path, len(paths))
-        if path_index == len(paths):
-            paths.append(path)
+        path_index = path_indexes[path]
         encoded_records.append((key_offset, len(key), object_index, path_index))
     bucket_count = 2
     while len(records) * 5 > bucket_count * 4:
@@ -58,12 +59,12 @@ def packed_fixture_shard(distribution: str, files: dict[str, dict[str, object]])
         strings.extend(path.encode())
     total_len = strings_offset + len(strings)
     output = bytearray(total_len)
-    output[:8] = b"UMBRPKS1"
+    output[:8] = b"UMBRPKS2"
     struct.pack_into(
         "<HH17I",
         output,
         8,
-        1,
+        2,
         0,
         3,
         0,
@@ -342,6 +343,33 @@ def main() -> None:
                             "bytes": len(from_texmf),
                         },
             },
+        )
+        assert provision.texlive._packed_shard_files(
+            shard, distribution="fixture-snapshot", index=0, shard_bits=0
+        ).keys() == {"tex:from-object.tex", "tex:from-texmf.tex"}
+        legacy_shard = bytearray(shard)
+        legacy_shard[:8] = b"UMBRPKS1"
+        struct.pack_into("<H", legacy_shard, 8, 1)
+        assert provision.texlive._packed_shard_files(
+            bytes(legacy_shard),
+            distribution="fixture-snapshot",
+            index=0,
+            shard_bits=0,
+        ).keys() == {"tex:from-object.tex", "tex:from-texmf.tex"}
+        objects_offset = struct.unpack_from("<I", shard, 56)[0]
+        unordered_shard = bytearray(shard)
+        first_object = unordered_shard[objects_offset : objects_offset + 16]
+        second_object = unordered_shard[objects_offset + 16 : objects_offset + 32]
+        unordered_shard[objects_offset : objects_offset + 16] = second_object
+        unordered_shard[objects_offset + 16 : objects_offset + 32] = first_object
+        expect_texlive_error(
+            lambda: provision.texlive._packed_shard_files(
+                bytes(unordered_shard),
+                distribution="fixture-snapshot",
+                index=0,
+                shard_bits=0,
+            ),
+            "object table is not strictly sorted",
         )
         shard_digest = provision.texlive.ahash64_bytes(shard)
         (seed_objects / f"ahash64-v1-{shard_digest}").write_bytes(shard)

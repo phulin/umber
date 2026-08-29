@@ -19,8 +19,9 @@ pub use manifest::{
     ManifestShard, NamedFormat, ObjectEntry, SHARDED_ROOT_SCHEMA, ShardFile, ShardedManifestRoot,
 };
 pub use packed::{
-    PACKED_SHARD_SCHEMA, PackedDependency, PackedFileRecord, PackedRecord, PackedRecordKind,
-    PackedShardError, ValidatedPackedShard, pack_shard, unpack_shard,
+    LEGACY_PACKED_SHARD_SCHEMA, PACKED_SHARD_SCHEMA, PackedDependency, PackedFileRecord,
+    PackedRecord, PackedRecordKind, PackedShardError, ValidatedPackedShard, pack_shard,
+    unpack_shard,
 };
 pub use selection::{
     AcquisitionJob, FeatureSetting, FileKind, FileRequestKey, FontRequestContext, FontRequestKey,

@@ -599,6 +599,59 @@ fn packed_shards_are_deterministic_roundtrip_and_probe_exact_keys() {
 }
 
 #[test]
+fn packed_schema_two_canonicalizes_tables_and_retains_schema_one_compatibility() {
+    let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
+    let catalog = shard_manifest(&manifest, 0).expect("one packed shard");
+    let bytes = pack_shard(&catalog.shards[0]).expect("packed shard");
+    assert_eq!(&bytes[..8], b"UMBRPKS2");
+    assert_eq!(
+        u16::from_le_bytes(bytes[8..10].try_into().expect("packed schema")),
+        2
+    );
+
+    let object_count = u32::from_le_bytes(bytes[36..40].try_into().expect("object count"));
+    let objects_offset =
+        u32::from_le_bytes(bytes[56..60].try_into().expect("objects offset")) as usize;
+    let objects = (0..object_count)
+        .map(|index| {
+            let offset = objects_offset + index as usize * 16;
+            u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("object digest"))
+        })
+        .collect::<Vec<_>>();
+    assert!(objects.windows(2).all(|pair| pair[0] < pair[1]));
+
+    let path_count = u32::from_le_bytes(bytes[40..44].try_into().expect("path count"));
+    let paths_offset = u32::from_le_bytes(bytes[60..64].try_into().expect("paths offset")) as usize;
+    let strings_offset =
+        u32::from_le_bytes(bytes[72..76].try_into().expect("strings offset")) as usize;
+    let paths = (0..path_count)
+        .map(|index| {
+            let offset = paths_offset + index as usize * 8;
+            let start =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("path offset"))
+                    as usize;
+            let len = u32::from_le_bytes(
+                bytes[offset + 4..offset + 8]
+                    .try_into()
+                    .expect("path length"),
+            ) as usize;
+            std::str::from_utf8(&bytes[strings_offset + start..strings_offset + start + len])
+                .expect("UTF-8 path")
+        })
+        .collect::<Vec<_>>();
+    assert!(paths.windows(2).all(|pair| pair[0] < pair[1]));
+
+    let mut legacy = bytes.clone();
+    legacy[..8].copy_from_slice(b"UMBRPKS1");
+    legacy[8..10].copy_from_slice(&LEGACY_PACKED_SHARD_SCHEMA.to_le_bytes());
+    ValidatedPackedShard::new(legacy, &catalog.root, 0).expect("legacy packed shard");
+
+    let mut mismatched = bytes;
+    mismatched[..8].copy_from_slice(b"UMBRPKS1");
+    assert!(ValidatedPackedShard::new(mismatched, &catalog.root, 0).is_err());
+}
+
+#[test]
 fn warmed_packed_lookup_allocates_zero_bytes() {
     let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
     let catalog = shard_manifest(&manifest, 0).expect("one packed shard");
@@ -685,12 +738,56 @@ fn packed_validator_rejects_offsets_tables_duplicates_and_wrong_identity() {
     assert!(ValidatedPackedShard::new(duplicate_key, &catalog.root, 0).is_err());
 
     let objects_offset = u32::from_le_bytes(bytes[56..60].try_into().expect("object offset"));
+    let object_count = u32::from_le_bytes(bytes[36..40].try_into().expect("object count"));
+    assert!(object_count >= 2);
+    let mut unordered_objects = bytes.clone();
+    let first_object =
+        unordered_objects[objects_offset as usize..objects_offset as usize + 16].to_vec();
+    let second_object =
+        unordered_objects[objects_offset as usize + 16..objects_offset as usize + 32].to_vec();
+    unordered_objects[objects_offset as usize..objects_offset as usize + 16]
+        .copy_from_slice(&second_object);
+    unordered_objects[objects_offset as usize + 16..objects_offset as usize + 32]
+        .copy_from_slice(&first_object);
+    assert!(ValidatedPackedShard::new(unordered_objects, &catalog.root, 0).is_err());
+
+    let mut duplicate_object = bytes.clone();
+    let first_object =
+        duplicate_object[objects_offset as usize..objects_offset as usize + 16].to_vec();
+    duplicate_object[objects_offset as usize + 16..objects_offset as usize + 32]
+        .copy_from_slice(&first_object);
+    assert!(ValidatedPackedShard::new(duplicate_object, &catalog.root, 0).is_err());
+
+    let mut conflicting_object = bytes.clone();
+    let first_digest =
+        conflicting_object[objects_offset as usize..objects_offset as usize + 8].to_vec();
+    conflicting_object[objects_offset as usize + 16..objects_offset as usize + 24]
+        .copy_from_slice(&first_digest);
+    assert!(ValidatedPackedShard::new(conflicting_object, &catalog.root, 0).is_err());
+
     let mut oversized_object = bytes.clone();
     oversized_object[objects_offset as usize + 8..objects_offset as usize + 16]
         .copy_from_slice(&(128_u64 * 1024 * 1024 + 1).to_le_bytes());
     assert!(ValidatedPackedShard::new(oversized_object, &catalog.root, 0).is_err());
 
     let paths_offset = u32::from_le_bytes(bytes[60..64].try_into().expect("path offset"));
+    let path_count = u32::from_le_bytes(bytes[40..44].try_into().expect("path count"));
+    assert!(path_count >= 2);
+    let mut unordered_paths = bytes.clone();
+    let first_path = unordered_paths[paths_offset as usize..paths_offset as usize + 8].to_vec();
+    let second_path =
+        unordered_paths[paths_offset as usize + 8..paths_offset as usize + 16].to_vec();
+    unordered_paths[paths_offset as usize..paths_offset as usize + 8].copy_from_slice(&second_path);
+    unordered_paths[paths_offset as usize + 8..paths_offset as usize + 16]
+        .copy_from_slice(&first_path);
+    assert!(ValidatedPackedShard::new(unordered_paths, &catalog.root, 0).is_err());
+
+    let mut duplicate_path = bytes.clone();
+    let first_path = duplicate_path[paths_offset as usize..paths_offset as usize + 8].to_vec();
+    duplicate_path[paths_offset as usize + 8..paths_offset as usize + 16]
+        .copy_from_slice(&first_path);
+    assert!(ValidatedPackedShard::new(duplicate_path, &catalog.root, 0).is_err());
+
     let strings_offset = u32::from_le_bytes(bytes[72..76].try_into().expect("strings offset"));
     let first_path_offset = u32::from_le_bytes(
         bytes[paths_offset as usize..paths_offset as usize + 4]
@@ -700,6 +797,16 @@ fn packed_validator_rejects_offsets_tables_duplicates_and_wrong_identity() {
     let mut invalid_path = bytes.clone();
     invalid_path[strings_offset as usize + first_path_offset as usize] = b'x';
     assert!(ValidatedPackedShard::new(invalid_path, &catalog.root, 0).is_err());
+
+    let mut invalid_path_span = bytes.clone();
+    invalid_path_span[paths_offset as usize..paths_offset as usize + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(ValidatedPackedShard::new(invalid_path_span, &catalog.root, 0).is_err());
+
+    let mut invalid_object_reference = bytes.clone();
+    invalid_object_reference[records_offset as usize + 8..records_offset as usize + 12]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(ValidatedPackedShard::new(invalid_object_reference, &catalog.root, 0).is_err());
 
     assert!(ValidatedPackedShard::new(bytes, &catalog.root, 1).is_err());
 }

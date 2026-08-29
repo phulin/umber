@@ -1,6 +1,6 @@
 //! Versioned immutable packed distribution lookup shards.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -10,8 +10,10 @@ use crate::{
     ShardedManifestRoot,
 };
 
-pub const PACKED_SHARD_SCHEMA: u16 = 1;
-const MAGIC: &[u8; 8] = b"UMBRPKS1";
+pub const LEGACY_PACKED_SHARD_SCHEMA: u16 = 1;
+pub const PACKED_SHARD_SCHEMA: u16 = 2;
+const LEGACY_MAGIC: &[u8; 8] = b"UMBRPKS1";
+const MAGIC: &[u8; 8] = b"UMBRPKS2";
 const HEADER_BYTES: usize = 80;
 const BUCKET_BYTES: usize = 16;
 const RECORD_BYTES: usize = 32;
@@ -42,6 +44,7 @@ impl Error for PackedShardError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Header {
+    packed_schema: u16,
     manifest_schema: u32,
     index: u32,
     distribution_offset: u32,
@@ -167,8 +170,13 @@ impl ValidatedPackedShard {
     }
 
     fn validate_records(&self, shard_bits: u8, key_blob: &str) -> Result<(), PackedShardError> {
-        self.validate_object_table()?;
-        self.validate_path_table()?;
+        if self.header.packed_schema == PACKED_SHARD_SCHEMA {
+            self.validate_canonical_object_table()?;
+            self.validate_canonical_path_table()?;
+        } else {
+            self.validate_legacy_object_table()?;
+            self.validate_legacy_path_table()?;
+        }
         self.validate_dependency_table(key_blob)?;
 
         let mut hashes = Vec::with_capacity(self.header.record_count as usize);
@@ -206,13 +214,35 @@ impl ValidatedPackedShard {
         self.validate_bucket_table(&hashes)
     }
 
-    fn validate_object_table(&self) -> Result<(), PackedShardError> {
+    fn validate_canonical_object_table(&self) -> Result<(), PackedShardError> {
+        let mut previous: Option<(u64, u64)> = None;
+        for index in 0..self.header.object_count {
+            let value = self.raw_object(index)?;
+            self.validate_object_length(value.1)?;
+            if let Some(previous) = previous {
+                if previous.0 == value.0 {
+                    return Err(PackedShardError::new(if previous.1 == value.1 {
+                        "packed object table contains a duplicate"
+                    } else {
+                        "packed object digest has conflicting lengths"
+                    }));
+                }
+                if previous.0 > value.0 {
+                    return Err(PackedShardError::new(
+                        "packed object table is not strictly sorted",
+                    ));
+                }
+            }
+            previous = Some(value);
+        }
+        Ok(())
+    }
+
+    fn validate_legacy_object_table(&self) -> Result<(), PackedShardError> {
         let mut object_values = Vec::with_capacity(self.header.object_count as usize);
         for index in 0..self.header.object_count {
             let value = self.raw_object(index)?;
-            if value.1 > 128 * 1024 * 1024 {
-                return Err(PackedShardError::new("packed object length is invalid"));
-            }
+            self.validate_object_length(value.1)?;
             object_values.push(value);
         }
         object_values.sort_unstable();
@@ -228,12 +258,40 @@ impl ValidatedPackedShard {
         Ok(())
     }
 
-    fn validate_path_table(&self) -> Result<(), PackedShardError> {
+    fn validate_object_length(&self, length: u64) -> Result<(), PackedShardError> {
+        if length > 128 * 1024 * 1024 {
+            return Err(PackedShardError::new("packed object length is invalid"));
+        }
+        Ok(())
+    }
+
+    fn validate_canonical_path_table(&self) -> Result<(), PackedShardError> {
+        let mut previous = None;
+        for index in 0..self.header.path_count {
+            let path = self.path(index)?;
+            Self::validate_path(path)?;
+            if let Some(previous) = previous {
+                if previous == path {
+                    return Err(PackedShardError::new(
+                        "packed path table contains a duplicate",
+                    ));
+                }
+                if previous > path {
+                    return Err(PackedShardError::new(
+                        "packed path table is not strictly sorted",
+                    ));
+                }
+            }
+            previous = Some(path);
+        }
+        Ok(())
+    }
+
+    fn validate_legacy_path_table(&self) -> Result<(), PackedShardError> {
         let mut path_values = Vec::with_capacity(self.header.path_count as usize);
         for index in 0..self.header.path_count {
             let path = self.path(index)?;
-            crate::manifest::validate_path(path, "/texlive/", "packed virtual path")
-                .map_err(|error| PackedShardError::new(error.to_string()))?;
+            Self::validate_path(path)?;
             path_values.push(path);
         }
         path_values.sort_unstable();
@@ -243,6 +301,11 @@ impl ValidatedPackedShard {
             ));
         }
         Ok(())
+    }
+
+    fn validate_path(path: &str) -> Result<(), PackedShardError> {
+        crate::manifest::validate_path(path, "/texlive/", "packed virtual path")
+            .map_err(|error| PackedShardError::new(error.to_string()))
     }
 
     fn validate_dependency_table(&self, key_blob: &str) -> Result<(), PackedShardError> {
@@ -691,10 +754,7 @@ pub fn pack_shard(shard: &crate::ManifestShard) -> Result<Vec<u8>, PackedShardEr
         return Err(PackedShardError::new("duplicate packed lookup key"));
     }
 
-    let mut objects = BTreeMap::<(String, u64), u32>::new();
-    let mut object_values = Vec::<(u64, u64)>::new();
-    let mut paths = BTreeMap::<String, u32>::new();
-    let mut path_values = Vec::<String>::new();
+    let (object_values, object_indexes, path_values, path_indexes) = canonical_tables(&records)?;
     let mut keys = BTreeMap::<String, (u32, u16)>::new();
     let mut key_blob = Vec::new();
     let mut strings = Vec::new();
@@ -706,11 +766,11 @@ pub fn pack_shard(shard: &crate::ManifestShard) -> Result<Vec<u8>, PackedShardEr
 
     for record in &records {
         let (key_offset, key_len) = intern_key(&mut keys, &mut key_blob, &record.key)?;
-        let object = intern_object(&mut objects, &mut object_values, &record.object)?;
+        let object = canonical_object_index(&object_indexes, &record.object)?;
         let path = record
             .path
             .as_deref()
-            .map(|value| intern_path(&mut paths, &mut path_values, value))
+            .map(|value| canonical_path_index(&path_indexes, value))
             .transpose()?
             .unwrap_or(EMPTY);
         let dependency_start = u32::try_from(dependencies.len())
@@ -720,8 +780,8 @@ pub fn pack_shard(shard: &crate::ManifestShard) -> Result<Vec<u8>, PackedShardEr
             dependencies.push((
                 offset,
                 len,
-                intern_object(&mut objects, &mut object_values, &dependency.object_entry())?,
-                intern_path(&mut paths, &mut path_values, &dependency.virtual_path)?,
+                canonical_object_index(&object_indexes, &dependency.object_entry())?,
+                canonical_path_index(&path_indexes, &dependency.virtual_path)?,
             ));
         }
         let dependency_len = u16::try_from(record.dependencies.len())
@@ -859,14 +919,18 @@ fn expected_shard_schema(root_schema: u32) -> u32 {
 }
 
 fn parse_header(bytes: &[u8]) -> Result<Header, PackedShardError> {
-    if bytes.len() < HEADER_BYTES
-        || &bytes[..8] != MAGIC
-        || read_u16(bytes, 8)? != PACKED_SHARD_SCHEMA
-        || read_u16(bytes, 10)? != 0
-    {
+    if bytes.len() < HEADER_BYTES || read_u16(bytes, 10)? != 0 {
+        return Err(PackedShardError::new("invalid packed shard header"));
+    }
+    let packed_schema = read_u16(bytes, 8)?;
+    let magic = &bytes[..8];
+    let supported = (magic == LEGACY_MAGIC && packed_schema == LEGACY_PACKED_SHARD_SCHEMA)
+        || (magic == MAGIC && packed_schema == PACKED_SHARD_SCHEMA);
+    if !supported {
         return Err(PackedShardError::new("invalid packed shard header"));
     }
     Ok(Header {
+        packed_schema,
         manifest_schema: read_u32(bytes, 12)?,
         index: read_u32(bytes, 16)?,
         distribution_offset: read_u32(bytes, 20)?,
@@ -948,11 +1012,55 @@ fn intern_key(
     map.insert(key.to_owned(), (offset, len));
     Ok((offset, len))
 }
-fn intern_object(
-    map: &mut BTreeMap<(String, u64), u32>,
-    values: &mut Vec<(u64, u64)>,
-    object: &ObjectEntry,
-) -> Result<u32, PackedShardError> {
+
+type CanonicalTables = (
+    Vec<(u64, u64)>,
+    BTreeMap<u64, u32>,
+    Vec<String>,
+    BTreeMap<String, u32>,
+);
+
+fn canonical_tables(records: &[BuildRecord]) -> Result<CanonicalTables, PackedShardError> {
+    let mut objects = BTreeMap::<u64, u64>::new();
+    let mut paths = BTreeSet::<String>::new();
+    for record in records {
+        collect_object(&mut objects, &record.object)?;
+        if let Some(path) = &record.path {
+            paths.insert(path.clone());
+        }
+        for dependency in &record.dependencies {
+            collect_object(&mut objects, &dependency.object_entry())?;
+            paths.insert(dependency.virtual_path.clone());
+        }
+    }
+
+    let object_values = objects
+        .iter()
+        .map(|(&digest, &bytes)| (digest, bytes))
+        .collect::<Vec<_>>();
+    let object_indexes = object_values
+        .iter()
+        .enumerate()
+        .map(|(index, &(digest, _))| {
+            u32::try_from(index)
+                .map(|index| (digest, index))
+                .map_err(|_| PackedShardError::new("too many packed objects"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let path_values = paths.into_iter().collect::<Vec<_>>();
+    let path_indexes = path_values
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            u32::try_from(index)
+                .map(|index| (path.clone(), index))
+                .map_err(|_| PackedShardError::new("too many packed paths"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok((object_values, object_indexes, path_values, path_indexes))
+}
+
+fn object_digest(object: &ObjectEntry) -> Result<u64, PackedShardError> {
     let digest = u64::from_str_radix(&object.ahash64, 16)
         .map_err(|_| PackedShardError::new("invalid packed object digest"))?;
     if object.object != format!("ahash64-v1-{}", object.ahash64) {
@@ -960,29 +1068,42 @@ fn intern_object(
             "packed object name does not match digest",
         ));
     }
-    let key = (object.ahash64.clone(), object.bytes);
-    if let Some(index) = map.get(&key) {
-        return Ok(*index);
-    }
-    let index = u32::try_from(values.len())
-        .map_err(|_| PackedShardError::new("too many packed objects"))?;
-    values.push((digest, object.bytes));
-    map.insert(key, index);
-    Ok(index)
+    Ok(digest)
 }
-fn intern_path(
-    map: &mut BTreeMap<String, u32>,
-    values: &mut Vec<String>,
+
+fn collect_object(
+    objects: &mut BTreeMap<u64, u64>,
+    object: &ObjectEntry,
+) -> Result<(), PackedShardError> {
+    let digest = object_digest(object)?;
+    if let Some(previous_bytes) = objects.insert(digest, object.bytes)
+        && previous_bytes != object.bytes
+    {
+        return Err(PackedShardError::new(
+            "packed object digest has conflicting lengths",
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_object_index(
+    indexes: &BTreeMap<u64, u32>,
+    object: &ObjectEntry,
+) -> Result<u32, PackedShardError> {
+    indexes
+        .get(&object_digest(object)?)
+        .copied()
+        .ok_or_else(|| PackedShardError::new("packed object is absent from canonical table"))
+}
+
+fn canonical_path_index(
+    indexes: &BTreeMap<String, u32>,
     path: &str,
 ) -> Result<u32, PackedShardError> {
-    if let Some(index) = map.get(path) {
-        return Ok(*index);
-    }
-    let index =
-        u32::try_from(values.len()).map_err(|_| PackedShardError::new("too many packed paths"))?;
-    values.push(path.to_owned());
-    map.insert(path.to_owned(), index);
-    Ok(index)
+    indexes
+        .get(path)
+        .copied()
+        .ok_or_else(|| PackedShardError::new("packed path is absent from canonical table"))
 }
 fn push_bytes(output: &mut Vec<u8>, bytes: &[u8]) -> Result<u32, PackedShardError> {
     let offset = u32::try_from(output.len())

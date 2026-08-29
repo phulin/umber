@@ -196,7 +196,8 @@ cache/session publication. A batch is returned only if every request succeeds.
 Verified peer downloads may still warm the cache when a batch fails, but no
 partial response is exposed to the compile session.
 
-The native resolver treats packed schema-1 index shards as digest-keyed
+The native resolver treats packed schema-2 index shards (and explicitly
+compatible schema-1 predecessors) as digest-keyed
 manifest cache entries. It hashes each canonical request once, selects its one
 physical shard from the high bits, validates that shard's complete immutable
 layout, and uses collision-checked open addressing against exact key bytes. A

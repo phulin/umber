@@ -27,7 +27,7 @@ the current remote resolver vocabulary; Umber-native formats remain separate
 manifest format objects.
 
 The separate `html` publication profile emits root schema 9 and packed shard
-schema 1 containing schema-2 catalogue records. It verifies the complete
+schema 2 containing schema-2 catalogue records. It verifies the complete
 configured roots but selects only explicit runtime keys plus every selected
 format's verified closure. Its TEXMF inputs are limited to `tex/` and TFM;
 WOFF2 and license objects come from an exact schema-2

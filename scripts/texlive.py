@@ -565,10 +565,10 @@ def _packed_shard_files(
     host-only mirror builder independently checks the complete fixed-width
     layout before copying already content-addressed payloads.
     """
-    if len(data) < 80 or data[:8] != b"UMBRPKS1":
+    if len(data) < 80:
         raise TexliveError(f"packed shard {index} has an invalid header")
     schema, reserved = struct.unpack_from("<HH", data, 8)
-    if schema != 1 or reserved != 0:
+    if (data[:8], schema) not in ((b"UMBRPKS1", 1), (b"UMBRPKS2", 2)) or reserved != 0:
         raise TexliveError(f"packed shard {index} has an unsupported schema")
     (
         manifest_schema,
@@ -632,6 +632,7 @@ def _packed_shard_files(
 
     objects: list[tuple[str, int]] = []
     seen_digests: dict[str, int] = {}
+    previous_digest: str | None = None
     for object_index in range(object_count):
         digest, length = struct.unpack_from(
             "<QQ", data, objects_offset + object_index * 16
@@ -639,12 +640,18 @@ def _packed_shard_files(
         digest_text = f"{digest:016x}"
         if length > 128 * 1024 * 1024:
             raise TexliveError(f"packed shard {index} object length is invalid")
+        if schema == 2 and previous_digest is not None and previous_digest >= digest_text:
+            raise TexliveError(
+                f"packed shard {index} object table is not strictly sorted"
+            )
         if digest_text in seen_digests:
             raise TexliveError(f"packed shard {index} object table is not deduplicated")
         seen_digests[digest_text] = length
         objects.append((digest_text, length))
+        previous_digest = digest_text
 
     paths: list[str] = []
+    previous_path: str | None = None
     for path_index in range(path_count):
         offset, length = struct.unpack_from(
             "<II", data, paths_offset + path_index * 8
@@ -653,13 +660,19 @@ def _packed_shard_files(
             path = span(strings_offset, offset, length, total_len).decode("utf-8")
         except UnicodeDecodeError as error:
             raise TexliveError(f"packed shard {index} path is not UTF-8") from error
-        if path in paths or not path.startswith("/texlive/"):
+        if (
+            path in paths
+            or (schema == 2 and previous_path is not None and previous_path >= path)
+            or not path.startswith("/texlive/")
+        ):
             raise TexliveError(f"packed shard {index} path table is invalid")
         _safe_relative(path.removeprefix("/texlive/"), label="packed virtual path")
         paths.append(path)
+        previous_path = path
 
     records: list[tuple[str, int, int, int, int, int]] = []
     files: dict[str, dict[str, object]] = {}
+    previous_record_key: str | None = None
     for record_index in range(record_count):
         offset = records_offset + record_index * 32
         (
@@ -691,6 +704,7 @@ def _packed_shard_files(
             or not key.startswith(("tex:", "tfm:"))
             or _shard_index(key, shard_bits) != index
             or key in files
+            or (previous_record_key is not None and previous_record_key >= key)
         ):
             raise TexliveError(f"packed shard {index} file record is invalid")
         digest, length = objects[object_index]
@@ -710,6 +724,7 @@ def _packed_shard_files(
                 dependency_len,
             )
         )
+        previous_record_key = key
 
     for record in records:
         previous_key: str | None = None
