@@ -288,6 +288,46 @@ fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ni
 }
 
 #[test]
+fn direct_chunk_visit_is_linear_and_allocation_free_at_one_sixty_four_and_four_thousand_ninety_six_chunks()
+ {
+    for chunks in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..chunks {
+                builder.push(value).expect("one-node direct block");
+            }
+            builder.seal().expect("direct root")
+        };
+        let view = arena.list(&pool, root).expect("admitted view");
+        let bytes_before = pool.allocated_heap_bytes();
+        let validations_before = pool.payload.validation_reads();
+        let links_before = pool.payload.previous_link_reads();
+        let mut values = 0_u32;
+        let mut visits = 0_u32;
+        view.visit_chunks(|chunk| {
+            visits += 1;
+            for value in chunk.iter() {
+                assert_eq!(*value, values);
+                values += 1;
+            }
+        });
+        let validations = pool.payload.validation_reads() - validations_before;
+        let links = pool.payload.previous_link_reads() - links_before;
+
+        assert_eq!(values, chunks);
+        assert_eq!(visits, chunks);
+        assert_eq!(validations, u64::from(chunks) * 2 - 1);
+        assert_eq!(links, u64::from(chunks) - 1);
+        assert_eq!(pool.allocated_heap_bytes(), bytes_before);
+        eprintln!(
+            "DIRECT_CHUNK_VISIT_SCALE chunks={chunks} visits={visits} validations={validations} predecessor_reads={links} allocation_bytes=0"
+        );
+    }
+}
+
+#[test]
 fn exhaustive_test_audit_rejects_unconstructible_length_and_chain_roots() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

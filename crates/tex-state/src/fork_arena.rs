@@ -286,6 +286,24 @@ impl<T> ChunkStorage<T> {
         self.pages[page].slots[index].as_ref()
     }
 
+    fn slice(&self, key: RawChunkKey, arena: u32, range: Range<u32>) -> Option<&[Option<T>]> {
+        let meta = self.validate(key, arena).ok()?;
+        if range.start > range.end || range.end > meta.used {
+            return None;
+        }
+        let (start_page, start) = self.slot_index(key, range.start as usize).ok()?;
+        let end = if range.is_empty() {
+            start
+        } else {
+            let (end_page, end) = self.slot_index(key, (range.end - 1) as usize).ok()?;
+            if end_page != start_page {
+                return None;
+            }
+            end + 1
+        };
+        self.pages.get(start_page)?.slots.get(start..end)
+    }
+
     fn get_mut(&mut self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&mut T> {
         let meta = self.validate(key, arena).ok()?;
         if offset >= meta.used {
@@ -3749,6 +3767,34 @@ pub struct ArenaListView<'a, T, Lane> {
     list: ArenaListId<Lane>,
 }
 
+/// One borrowed contiguous payload run from a direct list chain.
+///
+/// Chunk cells are admitted once before this value is constructed. Iteration
+/// therefore reads the payload slice directly, without repeating arena-owner,
+/// incarnation, or logical-index resolution for each value.
+#[derive(Clone, Copy)]
+pub struct ArenaChunkSlice<'a, T> {
+    cells: &'a [Option<T>],
+}
+
+impl<'a, T> ArenaChunkSlice<'a, T> {
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    pub fn iter(self) -> impl DoubleEndedIterator<Item = &'a T> + ExactSizeIterator + 'a {
+        self.cells
+            .iter()
+            .map(|cell| cell.as_ref().expect("admitted chunk range is initialized"))
+    }
+}
+
 impl<T, Lane> Clone for ArenaListView<'_, T, Lane> {
     fn clone(&self) -> Self {
         *self
@@ -3799,6 +3845,55 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             back_cursor: (!self.is_empty()).then_some(self.list.tail),
             chunk_crossings: 0,
         }
+    }
+
+    /// Visits the authoritative chunk slices in logical list order.
+    ///
+    /// The root was admitted in constant time when this view was created.
+    /// This walk follows the sole persistent predecessor chain once and calls
+    /// `visit` while that walk unwinds, so forward consumers perform no
+    /// per-value index resolution and allocate no traversal sidecar.
+    pub fn visit_chunks(&self, mut visit: impl FnMut(ArenaChunkSlice<'a, T>)) {
+        if self.is_empty() {
+            return;
+        }
+        self.visit_chunk_prefix(self.list.tail.raw, self.list.tail.offset, &mut visit)
+            .expect("an admitted direct list remains valid during its immutable borrow");
+    }
+
+    fn visit_chunk_prefix(
+        &self,
+        key: RawChunkKey,
+        end: u32,
+        visit: &mut impl FnMut(ArenaChunkSlice<'a, T>),
+    ) -> Result<(), ForkArenaError> {
+        let start = if key == self.list.head.raw {
+            self.list.head.offset
+        } else {
+            let previous = self
+                .pool
+                .payload
+                .previous_in_list(key, self.arena.owner)?
+                .ok_or(ForkArenaError::InvalidRange)?;
+            self.visit_chunk_prefix(previous.0, previous.1, visit)?;
+            0
+        };
+        let cells = self
+            .pool
+            .payload
+            .slice(key, self.arena.owner, start..end)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        visit(ArenaChunkSlice { cells });
+        Ok(())
+    }
+
+    /// Visits every value in logical order through direct chunk slices.
+    pub fn for_each(&self, mut visit: impl FnMut(&'a T)) {
+        self.visit_chunks(|chunk| {
+            for value in chunk.iter() {
+                visit(value);
+            }
+        });
     }
 }
 

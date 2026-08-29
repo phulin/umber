@@ -431,16 +431,15 @@ fn append_direction_evidence<G>(
     source: tex_state::page_node_arena::PageListSpan,
     active: &mut Vec<Direction>,
 ) {
-    for node in stores
+    stores
         .page_node_span(source)
         .expect("paragraph branch remains live")
         .nodes()
-        .iter()
-    {
-        if let Node::Direction(direction) = node {
-            update_direction(*direction, active);
-        }
-    }
+        .for_each(|node| {
+            if let Node::Direction(direction) = node {
+                update_direction(*direction, active);
+            }
+        });
 }
 
 fn update_direction(direction: Direction, active: &mut Vec<Direction>) {
@@ -475,7 +474,8 @@ fn extend_frozen_lineages<G>(
         .page_node_span(span)
         .expect("frozen discretionary branch remains live")
         .nodes();
-    for (row, node) in nodes.iter().enumerate() {
+    let mut row = 0_usize;
+    nodes.for_each(|node| {
         let count = match node {
             Node::Char { .. } => 1,
             Node::Lig { orig, .. } => orig.len(),
@@ -489,7 +489,8 @@ fn extend_frozen_lineages<G>(
                 role,
             });
         }
-    }
+        row += 1;
+    });
 }
 
 fn post_line_discardable(node: &Node) -> bool {
@@ -1300,20 +1301,18 @@ fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensio
 
 fn active_text_directions(nodes: tex_state::node_arena::NodeCursor<'_>) -> Vec<Direction> {
     let mut active = Vec::new();
-    for node in nodes {
-        match node {
-            Node::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
-                active.push(*direction);
-            }
-            Node::Direction(Direction::EndL) if active.last() == Some(&Direction::BeginL) => {
-                let _ = active.pop();
-            }
-            Node::Direction(Direction::EndR) if active.last() == Some(&Direction::BeginR) => {
-                let _ = active.pop();
-            }
-            _ => {}
+    nodes.for_each(|node| match node {
+        Node::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
+            active.push(*direction);
         }
-    }
+        Node::Direction(Direction::EndL) if active.last() == Some(&Direction::BeginL) => {
+            let _ = active.pop();
+        }
+        Node::Direction(Direction::EndR) if active.last() == Some(&Direction::BeginR) => {
+            let _ = active.pop();
+        }
+        _ => {}
+    });
     active
 }
 

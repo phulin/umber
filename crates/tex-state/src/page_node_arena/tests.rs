@@ -469,6 +469,17 @@ fn long_direct_span_survives_checkpoint_rejection_and_operation_rollback_stales_
         arena.span_list(retained_span).expect("retained span").len(),
         4_096
     );
+    let bytes_before_visit = arena.allocated_heap_bytes();
+    let mut expected = 0_i32;
+    arena
+        .span_node_cursor(retained_span)
+        .expect("retained span cursor")
+        .for_each(|node| {
+            assert_eq!(node, &Node::Penalty(expected));
+            expected += 1;
+        });
+    assert_eq!(expected, 4_096);
+    assert_eq!(arena.allocated_heap_bytes(), bytes_before_visit);
     assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 

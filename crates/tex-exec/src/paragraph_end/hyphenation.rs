@@ -374,13 +374,13 @@ fn compacted_physical_boundaries<G>(
     let mut boundary = 0usize;
     let mut boundaries = Vec::with_capacity(nodes.len() + 1);
     boundaries.push(0);
-    for node in nodes {
+    nodes.nodes().for_each(|node| {
         boundary = boundary.saturating_add(match node {
             Node::Lig { orig, .. } => orig.len().max(1),
             _ => 1,
         });
         boundaries.push(boundary.min(physical_len));
-    }
+    });
     if let Some(last) = boundaries.last_mut() {
         *last = physical_len;
     }

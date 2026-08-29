@@ -3085,6 +3085,18 @@ impl<'a> NodeCursor<'a> {
             NodeCursorSource::Fork(view) => NodeCursorIter::Fork(view.iter()),
         }
     }
+
+    /// Visits sequential nodes through their authoritative borrowed storage.
+    ///
+    /// Arena-backed inputs use the direct chunk traversal rather than
+    /// resolving each logical index independently. Slice-backed inputs retain
+    /// their ordinary contiguous walk.
+    pub fn for_each(&self, mut visit: impl FnMut(&'a Node)) {
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.iter().for_each(visit),
+            NodeCursorSource::Fork(view) => view.for_each(&mut visit),
+        }
+    }
 }
 
 impl<'a> IntoIterator for NodeCursor<'a> {

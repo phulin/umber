@@ -1,7 +1,7 @@
 //! Paired semantic and TeX-physical node sequences.
 
 use crate::node::Node;
-use crate::node_arena::PageListId;
+use crate::node_arena::{NodeCursor, PageListId};
 use ahash::RandomState;
 use smallvec::SmallVec;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -378,6 +378,22 @@ pub fn borrowed_mirrored_high_cell_lineages_from<'a>(
             )
         })
         .collect()
+}
+
+/// Builds allocator lineage scratch through the authoritative sequential
+/// cursor traversal. Arena-backed sources therefore admit and visit chunks
+/// directly instead of resolving every logical row independently.
+#[must_use]
+pub fn borrowed_mirrored_high_cell_lineages_cursor(
+    nodes: NodeCursor<'_>,
+) -> Vec<DirectHighCellLineages> {
+    let mut lineages = Vec::with_capacity(nodes.len());
+    let mut row = 0_u32;
+    nodes.for_each(|node| {
+        lineages.push(direct_high_cell_lineages(node, row));
+        row = row.checked_add(1).expect("node sequence exceeds u32 rows");
+    });
+    lineages
 }
 
 /// Counts exact direct-cell allocation identities shared by two projections.

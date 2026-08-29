@@ -873,11 +873,9 @@ fn copy_list_recursive<Source, Destination>(
     if stack.contains(&list) {
         return Err(ForkArenaError::InvalidRegion);
     }
-    let nodes = source
-        .list(pool, list.coordinate())?
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let source_view = source.list(pool, list.coordinate())?;
+    let mut nodes = Vec::with_capacity(source_view.len());
+    source_view.for_each(|node| nodes.push(node.clone()));
     stack.push(list);
     let mut copied_nodes = Vec::with_capacity(nodes.len());
     let mut copied_count = nodes.len();

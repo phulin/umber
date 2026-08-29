@@ -91,6 +91,39 @@ fn params(width: i32) -> LineBreakParams {
 }
 
 #[test]
+fn direct_page_chunk_analysis_matches_explicit_indexed_layout_semantics() {
+    let mut universe = TestState::new();
+    let mut nodes = Vec::new();
+    for index in 0..128 {
+        nodes.push(Node::Kern {
+            amount: sp(index),
+            kind: KernKind::Explicit,
+        });
+        nodes.push(Node::Glue {
+            spec: GlueSpec {
+                width: sp(1),
+                ..GlueSpec::ZERO
+            },
+            kind: GlueKind::Normal,
+            leader: None,
+        });
+        nodes.push(Node::Penalty((index % 17) - 8));
+    }
+    let list = universe.publish_page_nodes(&nodes);
+    let cursor = universe.page_nodes(list);
+    let params = params(1_000);
+
+    let mut direct = LegalBreakpoints::new(&universe, cursor, &params);
+    let direct_breakpoints = direct.collect_direct_with(|site| site);
+    let direct_materialization = direct.materialization;
+    let mut indexed = LegalBreakpoints::new(&universe, cursor, &params);
+    let indexed_breakpoints = indexed.by_ref().collect::<Vec<_>>();
+
+    assert_eq!(direct_breakpoints, indexed_breakpoints);
+    assert_eq!(direct_materialization, indexed.materialization);
+}
+
+#[test]
 fn single_line_break_retains_ordered_allocator_phases() {
     let universe = TestState::new();
     let nodes = vec![rule(10), Node::Penalty(EJECT_PENALTY)];

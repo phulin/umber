@@ -259,21 +259,18 @@ impl ParagraphTape<'static> {
         let nodes = sequence.semantic();
         let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer
-            .by_ref()
-            .map(|site| {
-                let display_end = trace_display_end(state, nodes, site);
-                BreakSite {
-                    breakpoint: site,
-                    trace: TraceSpan {
-                        display_end,
-                        next_start: trace_display_next_start(state, nodes, site, display_end),
-                        display_suffix: trace_display_suffix(nodes, site),
-                        breakpoint: trace_breakpoint(nodes, site),
-                    },
-                }
-            })
-            .collect();
+        let break_sites = analyzer.collect_direct_with(|site| {
+            let display_end = trace_display_end(state, nodes, site);
+            BreakSite {
+                breakpoint: site,
+                trace: TraceSpan {
+                    display_end,
+                    next_start: trace_display_next_start(state, nodes, site, display_end),
+                    display_suffix: trace_display_suffix(nodes, site),
+                    breakpoint: trace_breakpoint(nodes, site),
+                },
+            }
+        });
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::Owned(sequence),
@@ -321,34 +318,30 @@ impl ParagraphTape<'static> {
             .page_node_sequence(semantic)
             .expect("paragraph sequence belongs to the typesetting page arena");
         let semantic_high_cell_lineages =
-            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(view.iter());
+            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_cursor(view);
         let physical_high_cell_lineages = if semantic == physical {
             semantic_high_cell_lineages.clone()
         } else {
-            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(
+            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_cursor(
                 state
                     .page_node_sequence(physical)
-                    .expect("physical paragraph sequence belongs to the page arena")
-                    .iter(),
+                    .expect("physical paragraph sequence belongs to the page arena"),
             )
         };
         let nodes = view;
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer
-            .by_ref()
-            .map(|site| {
-                let display_end = trace_display_end(state, nodes, site);
-                BreakSite {
-                    breakpoint: site,
-                    trace: TraceSpan {
-                        display_end,
-                        next_start: trace_display_next_start(state, nodes, site, display_end),
-                        display_suffix: trace_display_suffix(nodes, site),
-                        breakpoint: trace_breakpoint(nodes, site),
-                    },
-                }
-            })
-            .collect();
+        let break_sites = analyzer.collect_direct_with(|site| {
+            let display_end = trace_display_end(state, nodes, site);
+            BreakSite {
+                breakpoint: site,
+                trace: TraceSpan {
+                    display_end,
+                    next_start: trace_display_next_start(state, nodes, site, display_end),
+                    display_suffix: trace_display_suffix(nodes, site),
+                    breakpoint: trace_breakpoint(nodes, site),
+                },
+            }
+        });
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::ArenaId {
@@ -379,21 +372,18 @@ impl<'a> ParagraphTape<'a> {
         let source = nodes;
         let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer
-            .by_ref()
-            .map(|site| {
-                let display_end = trace_display_end(state, nodes, site);
-                BreakSite {
-                    breakpoint: site,
-                    trace: TraceSpan {
-                        display_end,
-                        next_start: trace_display_next_start(state, nodes, site, display_end),
-                        display_suffix: trace_display_suffix(nodes, site),
-                        breakpoint: trace_breakpoint(nodes, site),
-                    },
-                }
-            })
-            .collect();
+        let break_sites = analyzer.collect_direct_with(|site| {
+            let display_end = trace_display_end(state, nodes, site);
+            BreakSite {
+                breakpoint: site,
+                trace: TraceSpan {
+                    display_end,
+                    next_start: trace_display_next_start(state, nodes, site, display_end),
+                    display_suffix: trace_display_suffix(nodes, site),
+                    breakpoint: trace_breakpoint(nodes, site),
+                },
+            }
+        });
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::BorrowedMirrored(source),
@@ -413,21 +403,18 @@ impl<'a> ParagraphTape<'a> {
     ) -> Self {
         let nodes = sequence;
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer
-            .by_ref()
-            .map(|site| {
-                let display_end = trace_display_end(state, nodes, site);
-                BreakSite {
-                    breakpoint: site,
-                    trace: TraceSpan {
-                        display_end,
-                        next_start: trace_display_next_start(state, nodes, site, display_end),
-                        display_suffix: trace_display_suffix(nodes, site),
-                        breakpoint: trace_breakpoint(nodes, site),
-                    },
-                }
-            })
-            .collect();
+        let break_sites = analyzer.collect_direct_with(|site| {
+            let display_end = trace_display_end(state, nodes, site);
+            BreakSite {
+                breakpoint: site,
+                trace: TraceSpan {
+                    display_end,
+                    next_start: trace_display_next_start(state, nodes, site, display_end),
+                    display_suffix: trace_display_suffix(nodes, site),
+                    breakpoint: trace_breakpoint(nodes, site),
+                },
+            }
+        });
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::BorrowedArena(sequence),
@@ -493,7 +480,11 @@ impl<'a> ParagraphTape<'a> {
         match self.source {
             ParagraphSource::Owned(sequence) => sequence.into_semantic(),
             ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
-            ParagraphSource::BorrowedArena(sequence) => sequence.iter().cloned().collect(),
+            ParagraphSource::BorrowedArena(sequence) => {
+                let mut nodes = Vec::with_capacity(sequence.len());
+                sequence.for_each(|node| nodes.push(node.clone()));
+                nodes
+            }
             ParagraphSource::ArenaId { semantic, .. } => state
                 .page_node_sequence(semantic)
                 .expect("paragraph sequence remains live while its tape is consumed")
@@ -771,7 +762,10 @@ pub use post::{LineMaterializer, line_penalty_after, post_line_break, post_line_
 
 #[cfg(test)]
 use widths::line_widths_nodes;
-use widths::{Widths, add_node_width_source, line_badness, line_widths_cursor, line_widths_view};
+use widths::{
+    Widths, add_node_width_source, add_node_width_value, line_badness, line_widths_cursor,
+    line_widths_view,
+};
 
 /// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
 ///
@@ -791,11 +785,17 @@ fn observe_expansion_fonts<S: TypesetState>(
     nodes: NodeCursor<'_>,
     paragraph: &mut crate::expansion::ParagraphExpansion,
 ) -> Result<(), crate::expansion::FontExpansionError> {
-    for node in nodes.iter() {
+    let mut error = None;
+    nodes.for_each(|node| {
+        if error.is_some() {
+            return;
+        }
         match node {
             Node::Char { font, .. } | Node::Lig { font, .. } => {
                 if let Some(spec) = state.font_expansion_spec(*font) {
-                    paragraph.observe(spec)?;
+                    if let Err(found) = paragraph.observe(spec) {
+                        error = Some(found);
+                    }
                 }
             }
             Node::Disc {
@@ -803,13 +803,18 @@ fn observe_expansion_fonts<S: TypesetState>(
             } => {
                 for list in [pre, post, replace] {
                     let owned = state.page_nodes(*list).iter().cloned().collect::<Vec<_>>();
-                    observe_expansion_fonts(state, NodeCursor::owned(&owned), paragraph)?;
+                    if let Err(found) =
+                        observe_expansion_fonts(state, NodeCursor::owned(&owned), paragraph)
+                    {
+                        error = Some(found);
+                        break;
+                    }
                 }
             }
             _ => {}
         }
-    }
-    Ok(())
+    });
+    error.map_or(Ok(()), Err)
 }
 
 /// Plans pdfTeX's normalized signed expansion ratio for one finalized line.
@@ -1867,6 +1872,143 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             next_width,
         }
     }
+
+    fn collect_direct_with<R>(&mut self, mut map: impl FnMut(Breakpoint) -> R) -> Vec<R> {
+        let nodes = self.nodes;
+        let mut output = Vec::new();
+        let mut previous = None;
+        let mut pending = None;
+        let mut index = 0_usize;
+        nodes.for_each(|node| {
+            if let Some((pending_index, pending_node, pending_previous)) = pending.take()
+                && let Some(site) =
+                    self.observe_node(pending_index, pending_node, pending_previous, Some(node))
+            {
+                output.push(map(site));
+            }
+            pending = Some((index, node, previous));
+            previous = Some(node);
+            index += 1;
+        });
+        if let Some((pending_index, pending_node, pending_previous)) = pending
+            && let Some(site) =
+                self.observe_node(pending_index, pending_node, pending_previous, None)
+        {
+            output.push(map(site));
+        }
+        if let Some(terminal) = self.terminal_breakpoint() {
+            output.push(map(terminal));
+        }
+        output
+    }
+
+    fn observe_node(
+        &mut self,
+        index: usize,
+        node: &Node,
+        previous: Option<&Node>,
+        next: Option<&Node>,
+    ) -> Option<Breakpoint> {
+        let before = self.prefix;
+        add_node_width_value(
+            &mut self.prefix,
+            self.state,
+            node,
+            previous,
+            next,
+            self.include_font_expansion,
+        );
+        self.index = index + 1;
+
+        let definition = match node {
+            Node::Glue { .. }
+                if self.auto_breaking
+                    && index > 0
+                    && previous.is_some_and(|node| !is_discardable(node)) =>
+            {
+                Some((index + 1, index, 0, false, Widths::zero(), before))
+            }
+            Node::Kern {
+                kind: KernKind::Explicit,
+                ..
+            } if self.auto_breaking && matches!(next, Some(Node::Glue { .. })) => {
+                Some((index + 1, index, 0, false, Widths::zero(), before))
+            }
+            Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
+                index + 1,
+                index,
+                (*penalty).max(EJECT_PENALTY),
+                false,
+                Widths::zero(),
+                before,
+            )),
+            Node::Disc { pre, .. } => Some((
+                index + 1,
+                index,
+                discretionary_penalty(pre.is_empty(), self.params),
+                true,
+                line_widths_view(
+                    self.state,
+                    pre,
+                    0,
+                    self.state.page_nodes(*pre).len(),
+                    self.include_font_expansion,
+                ),
+                before,
+            )),
+            Node::MathOff(_) if matches!(next, Some(Node::Glue { .. })) => {
+                self.auto_breaking = true;
+                Some((index + 1, index, 0, false, Widths::zero(), before))
+            }
+            Node::MathOn(_) => {
+                self.auto_breaking = false;
+                None
+            }
+            Node::MathOff(_) => {
+                self.auto_breaking = true;
+                None
+            }
+            _ => None,
+        };
+        self.materialization.push(match node {
+            Node::Disc { .. } => MaterializationAction::Discretionary,
+            Node::Glue { .. } if definition.is_some() => MaterializationAction::BreakDiscardable,
+            Node::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
+            _ => MaterializationAction::Copy,
+        });
+        definition.map(
+            |(position, width_position, penalty, hyphenated, add_width, line_width)| {
+                self.last_position = Some(position);
+                self.breakpoint(
+                    position,
+                    width_position,
+                    penalty,
+                    hyphenated,
+                    add_width,
+                    line_width,
+                )
+            },
+        )
+    }
+
+    fn terminal_breakpoint(&mut self) -> Option<Breakpoint> {
+        if self.terminal_emitted
+            || self
+                .last_position
+                .is_some_and(|position| position >= self.nodes.len())
+        {
+            return None;
+        }
+        self.terminal_emitted = true;
+        Some(self.breakpoint(
+            self.nodes.len(),
+            self.nodes.len(),
+            EJECT_PENALTY,
+            false,
+            Widths::zero(),
+            self.prefix,
+        ))
+    }
 }
 
 impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
@@ -1875,124 +2017,19 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.index < self.nodes.len() {
             let i = self.index;
-            let before = self.prefix;
-            add_node_width_source(
-                &mut self.prefix,
-                self.state,
-                self.nodes,
-                i,
-                self.include_font_expansion,
-            );
-            self.index += 1;
-
             let node = self
                 .nodes
                 .owned_node(i)
                 .expect("legal-break index belongs to paragraph");
-            let definition = match node {
-                Node::Glue { .. }
-                    if self.auto_breaking
-                        && i > 0
-                        && !is_discardable(
-                            self.nodes
-                                .owned_node(i - 1)
-                                .expect("prior legal-break index belongs to paragraph"),
-                        ) =>
-                {
-                    Some((i + 1, i, 0, false, Widths::zero(), before))
-                }
-                Node::Kern {
-                    kind: KernKind::Explicit,
-                    ..
-                } if self.auto_breaking
-                    && i + 1 < self.nodes.len()
-                    && matches!(self.nodes.owned_node(i + 1), Some(Node::Glue { .. })) =>
-                {
-                    // TeX82 §866's `kern_break` calls `try_break` before
-                    // adding the kern width; §822 then removes that
-                    // discardable kern from the next line's saved prefix.
-                    Some((i + 1, i, 0, false, Widths::zero(), before))
-                }
-                Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
-                    i + 1,
-                    i,
-                    (*penalty).max(EJECT_PENALTY),
-                    false,
-                    Widths::zero(),
-                    before,
-                )),
-                Node::Disc { pre, .. } => Some((
-                    i + 1,
-                    i,
-                    discretionary_penalty(pre.is_empty(), self.params),
-                    true,
-                    line_widths_view(
-                        self.state,
-                        pre,
-                        0,
-                        self.state.page_nodes(*pre).len(),
-                        self.include_font_expansion,
-                    ),
-                    before,
-                )),
-                Node::MathOff(_)
-                    if matches!(self.nodes.owned_node(i + 1), Some(Node::Glue { .. })) =>
-                {
-                    self.auto_breaking = true;
-                    // The same §866 `kern_break` ordering applies to an
-                    // after-math node: its math-surround width belongs to an
-                    // unbroken line, but not to the line ending here.
-                    Some((i + 1, i, 0, false, Widths::zero(), before))
-                }
-                Node::MathOn(_) => {
-                    self.auto_breaking = false;
-                    None
-                }
-                Node::MathOff(_) => {
-                    self.auto_breaking = true;
-                    None
-                }
-                _ => None,
-            };
-            self.materialization.push(match node {
-                Node::Disc { .. } => MaterializationAction::Discretionary,
-                Node::Glue { .. } if definition.is_some() => {
-                    MaterializationAction::BreakDiscardable
-                }
-                Node::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
-                _ => MaterializationAction::Copy,
-            });
-            if let Some((position, width_position, penalty, hyphenated, add_width, line_width)) =
-                definition
-            {
-                self.last_position = Some(position);
-                return Some(self.breakpoint(
-                    position,
-                    width_position,
-                    penalty,
-                    hyphenated,
-                    add_width,
-                    line_width,
-                ));
+            let previous = i
+                .checked_sub(1)
+                .and_then(|index| self.nodes.owned_node(index));
+            let next = self.nodes.owned_node(i + 1);
+            if let Some(site) = self.observe_node(i, node, previous, next) {
+                return Some(site);
             }
         }
-
-        if !self.terminal_emitted
-            && self
-                .last_position
-                .is_none_or(|position| position < self.nodes.len())
-        {
-            self.terminal_emitted = true;
-            return Some(self.breakpoint(
-                self.nodes.len(),
-                self.nodes.len(),
-                EJECT_PENALTY,
-                false,
-                Widths::zero(),
-                self.prefix,
-            ));
-        }
-        None
+        self.terminal_breakpoint()
     }
 }
 
@@ -2002,7 +2039,7 @@ fn legal_breakpoints<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> Vec<Breakpoint> {
-    LegalBreakpoints::new(state, NodeCursor::owned(nodes), params).collect()
+    LegalBreakpoints::new(state, NodeCursor::owned(nodes), params).collect_direct_with(|site| site)
 }
 
 fn is_discardable(node: &Node) -> bool {
