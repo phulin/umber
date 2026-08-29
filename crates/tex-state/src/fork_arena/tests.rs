@@ -319,11 +319,58 @@ fn direct_chunk_visit_is_linear_and_allocation_free_at_one_sixty_four_and_four_t
 
         assert_eq!(values, chunks);
         assert_eq!(visits, chunks);
-        assert_eq!(validations, u64::from(chunks) * 2 - 1);
-        assert_eq!(links, u64::from(chunks) - 1);
+        assert_eq!(validations, 0);
+        assert_eq!(links, 0);
         assert_eq!(pool.allocated_heap_bytes(), bytes_before);
         eprintln!(
             "DIRECT_CHUNK_VISIT_SCALE chunks={chunks} visits={visits} validations={validations} predecessor_reads={links} allocation_bytes=0"
+        );
+    }
+}
+
+#[test]
+fn admitted_index_lookup_is_allocation_free_and_repeats_no_owner_validation_at_required_sizes() {
+    const ALLOCATION_OWNER: usize = 15;
+
+    for chunks in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..chunks {
+                builder.push(value).expect("one-node direct block");
+            }
+            builder.seal().expect("direct root")
+        };
+        let view = arena.list(&pool, root).expect("admitted view");
+        let validations_before = pool.payload.validation_reads();
+        let links_before = pool.payload.previous_link_reads();
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        let checksum = {
+            let _scope = scope(ALLOCATION_OWNER);
+            (0..chunks as usize)
+                .map(|index| *view.get(index).expect("admitted indexed node"))
+                .fold(0_u64, |sum, value| sum + u64::from(value))
+        };
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
+        let allocation = AllocationMeasurement {
+            calls: allocation_after
+                .calls
+                .saturating_sub(allocation_before.calls),
+            requested_bytes: allocation_after
+                .requested_bytes
+                .saturating_sub(allocation_before.requested_bytes),
+        };
+        let validations = pool.payload.validation_reads() - validations_before;
+        let links = pool.payload.previous_link_reads() - links_before;
+
+        assert_eq!(checksum, u64::from(chunks) * u64::from(chunks - 1) / 2);
+        assert_eq!(validations, 0);
+        assert_eq!(links, 0);
+        assert_eq!(allocation, AllocationMeasurement::default());
+        eprintln!(
+            "ADMITTED_INDEX_LOOKUP_SCALE chunks={chunks} lookups={chunks} owner_validations={validations} checked_predecessor_reads={links} allocation_calls={} allocation_bytes={}",
+            allocation.calls, allocation.requested_bytes
         );
     }
 }

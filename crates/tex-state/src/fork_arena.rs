@@ -287,24 +287,6 @@ impl<T> ChunkStorage<T> {
         self.pages[page].slots[index].as_ref()
     }
 
-    fn slice(&self, key: RawChunkKey, arena: u32, range: Range<u32>) -> Option<&[Option<T>]> {
-        let meta = self.validate(key, arena).ok()?;
-        if range.start > range.end || range.end > meta.used {
-            return None;
-        }
-        let (start_page, start) = self.slot_index(key, range.start as usize).ok()?;
-        let end = if range.is_empty() {
-            start
-        } else {
-            let (end_page, end) = self.slot_index(key, (range.end - 1) as usize).ok()?;
-            if end_page != start_page {
-                return None;
-            }
-            end + 1
-        };
-        self.pages.get(start_page)?.slots.get(start..end)
-    }
-
     fn get_mut(&mut self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&mut T> {
         let meta = self.validate(key, arena).ok()?;
         if offset >= meta.used {
@@ -421,6 +403,52 @@ impl<T> ChunkStorage<T> {
         }
         let position = meta.arena_position;
         (position != UNINDEXED_ARENA_POSITION).then_some(position)
+    }
+
+    /// Reads topology already admitted through an immutable arena view.
+    ///
+    /// The opaque root and its owner-relative endpoint positions were checked
+    /// before the view was constructed. The shared `&ChunkPool` borrow then
+    /// excludes release, transfer, rollback, and incarnation reuse for the
+    /// lifetime of the view, so ordinary traversal need not repeat those
+    /// ownership checks at every block crossing.
+    fn admitted_previous_position(&self, key: RawChunkKey) -> Option<(usize, u32)> {
+        let meta = self.chunks.get(key.slot as usize)?;
+        debug_assert!(meta.live && meta.generation == key.generation);
+        let (previous_key, end) = meta.previous_in_list?;
+        let previous = self.chunks.get(previous_key.slot as usize)?;
+        debug_assert!(previous.live && previous.generation == previous_key.generation);
+        (previous.arena_position != UNINDEXED_ARENA_POSITION)
+            .then_some((previous.arena_position, end))
+    }
+
+    fn admitted_get(&self, key: RawChunkKey, offset: u32) -> Option<&T> {
+        let meta = self.chunks.get(key.slot as usize)?;
+        debug_assert!(meta.live && meta.generation == key.generation);
+        if offset >= meta.used {
+            return None;
+        }
+        let (page, index) = self.slot_index(key, offset as usize).ok()?;
+        self.pages.get(page)?.slots.get(index)?.as_ref()
+    }
+
+    fn admitted_slice(&self, key: RawChunkKey, range: Range<u32>) -> Option<&[Option<T>]> {
+        let meta = self.chunks.get(key.slot as usize)?;
+        debug_assert!(meta.live && meta.generation == key.generation);
+        if range.start > range.end || range.end > meta.used {
+            return None;
+        }
+        let (start_page, start) = self.slot_index(key, range.start as usize).ok()?;
+        let end = if range.is_empty() {
+            start
+        } else {
+            let (end_page, end) = self.slot_index(key, (range.end - 1) as usize).ok()?;
+            if end_page != start_page {
+                return None;
+            }
+            end + 1
+        };
+        self.pages.get(start_page)?.slots.get(start..end)
     }
 
     fn previous_in_list(
@@ -3526,11 +3554,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &'a ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<ArenaListView<'a, T, Lane>, ForkArenaError> {
-        self.validate_list(pool, list)?;
+        let root = self.admit_owned_root(pool, list)?;
         Ok(ArenaListView {
             arena: self,
             pool,
             list,
+            root,
         })
     }
 
@@ -3554,20 +3583,32 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<(), ForkArenaError> {
+        self.admit_owned_root(pool, list).map(drop)
+    }
+
+    fn admit_owned_root(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+    ) -> Result<AdmittedListRoot<Lane>, ForkArenaError> {
         self.validate_pool(pool)?;
         if list.is_empty() {
             return (list == ArenaListId::empty())
-                .then_some(())
+                .then_some(AdmittedListRoot {
+                    head: AdmittedChunkCursor::EMPTY,
+                    tail: AdmittedChunkCursor::EMPTY,
+                })
                 .ok_or(ForkArenaError::InvalidRange);
         }
         if list.arena != self.owner {
             return Err(ForkArenaError::ForeignArena);
         }
-        if self.resolved_position(pool, false, list.head.raw).is_none()
-            || self.resolved_position(pool, false, list.tail.raw).is_none()
-        {
-            return Err(ForkArenaError::InvalidRange);
-        }
+        let head_position = self
+            .resolved_position(pool, false, list.head.raw)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let tail_position = self
+            .resolved_position(pool, false, list.tail.raw)
+            .ok_or(ForkArenaError::InvalidRange)?;
         let head = pool
             .payload
             .validate(list.head.raw, self.owner)
@@ -3583,7 +3624,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         {
             return Err(ForkArenaError::InvalidRange);
         }
-        Ok(())
+        Ok(AdmittedListRoot {
+            head: AdmittedChunkCursor::new(head_position, list.head.offset),
+            tail: AdmittedChunkCursor::new(tail_position, list.tail.offset),
+        })
     }
 
     pub(crate) fn validated_list<'a>(
@@ -3591,11 +3635,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &'a ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<ArenaListView<'a, T, Lane>, ForkArenaError> {
-        self.validate_list(pool, list)?;
+        let root = self.admit_owned_root(pool, list)?;
         Ok(ArenaListView {
             arena: self,
             pool,
             list,
+            root,
         })
     }
 
@@ -3789,7 +3834,56 @@ pub struct ArenaListView<'a, T, Lane> {
     arena: &'a ForkArena<T, Lane>,
     pool: &'a ChunkPool<T>,
     list: ArenaListId<Lane>,
+    root: AdmittedListRoot<Lane>,
 }
+
+/// Owner-relative cursor valid for one immutable admitted view.
+///
+/// It deliberately carries no pool-global slot or incarnation. Those are
+/// checked once at root admission and resolved from the arena's sole chunk
+/// ownership lane while the immutable pool borrow prevents lifecycle change.
+struct AdmittedChunkCursor<Lane> {
+    position: usize,
+    offset: u32,
+    _lane: PhantomData<fn(Lane) -> Lane>,
+}
+
+impl<Lane> Clone for AdmittedChunkCursor<Lane> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Lane> Copy for AdmittedChunkCursor<Lane> {}
+
+impl<Lane> AdmittedChunkCursor<Lane> {
+    const EMPTY: Self = Self {
+        position: 0,
+        offset: 0,
+        _lane: PhantomData,
+    };
+
+    const fn new(position: usize, offset: u32) -> Self {
+        Self {
+            position,
+            offset,
+            _lane: PhantomData,
+        }
+    }
+}
+
+struct AdmittedListRoot<Lane> {
+    head: AdmittedChunkCursor<Lane>,
+    tail: AdmittedChunkCursor<Lane>,
+}
+
+impl<Lane> Clone for AdmittedListRoot<Lane> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Lane> Copy for AdmittedListRoot<Lane> {}
 
 /// One borrowed contiguous payload run from a direct list chain.
 ///
@@ -3852,13 +3946,8 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
 
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&'a T> {
-        let cursor = self
-            .arena
-            .cursor_at_node(self.pool, self.list, index)
-            .ok()?;
-        self.pool
-            .payload
-            .get(cursor.raw, self.arena.owner, cursor.offset)
+        let cursor = self.cursor_at_node(index)?;
+        self.get_cursor(cursor)
     }
 
     pub fn iter(&self) -> ArenaListIter<'a, T, Lane> {
@@ -3866,8 +3955,51 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             view: *self,
             front: 0,
             back: self.len(),
-            back_cursor: (!self.is_empty()).then_some(self.list.tail),
+            back_cursor: (!self.is_empty()).then_some(self.root.tail),
             chunk_crossings: 0,
+        }
+    }
+
+    fn key_at(&self, cursor: AdmittedChunkCursor<Lane>) -> Option<RawChunkKey> {
+        self.arena.live_key_at(false, cursor.position)
+    }
+
+    fn get_cursor(&self, cursor: AdmittedChunkCursor<Lane>) -> Option<&'a T> {
+        let key = self.key_at(cursor)?;
+        self.pool.payload.admitted_get(key, cursor.offset)
+    }
+
+    fn previous_cursor(
+        &self,
+        cursor: AdmittedChunkCursor<Lane>,
+    ) -> Option<AdmittedChunkCursor<Lane>> {
+        let key = self.key_at(cursor)?;
+        let (position, end) = self.pool.payload.admitted_previous_position(key)?;
+        Some(AdmittedChunkCursor::new(position, end))
+    }
+
+    fn cursor_at_node(&self, index: usize) -> Option<AdmittedChunkCursor<Lane>> {
+        if index >= self.len() || self.is_empty() {
+            return None;
+        }
+        let mut cursor = self.root.tail;
+        let mut remaining = self.len() - index;
+        loop {
+            let start = if cursor.position == self.root.head.position {
+                self.root.head.offset
+            } else {
+                0
+            };
+            if cursor.offset < start {
+                return None;
+            }
+            let available = (cursor.offset - start) as usize;
+            if remaining <= available {
+                cursor.offset -= remaining as u32;
+                return Some(cursor);
+            }
+            remaining -= available;
+            cursor = self.previous_cursor(cursor)?;
         }
     }
 
@@ -3881,31 +4013,29 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         if self.is_empty() {
             return;
         }
-        self.visit_chunk_prefix(self.list.tail.raw, self.list.tail.offset, &mut visit)
+        self.visit_chunk_prefix(self.root.tail, &mut visit)
             .expect("an admitted direct list remains valid during its immutable borrow");
     }
 
     fn visit_chunk_prefix(
         &self,
-        key: RawChunkKey,
-        end: u32,
+        cursor: AdmittedChunkCursor<Lane>,
         visit: &mut impl FnMut(ArenaChunkSlice<'a, T>),
     ) -> Result<(), ForkArenaError> {
-        let start = if key == self.list.head.raw {
-            self.list.head.offset
+        let start = if cursor.position == self.root.head.position {
+            self.root.head.offset
         } else {
             let previous = self
-                .pool
-                .payload
-                .previous_in_list(key, self.arena.owner)?
+                .previous_cursor(cursor)
                 .ok_or(ForkArenaError::InvalidRange)?;
-            self.visit_chunk_prefix(previous.0, previous.1, visit)?;
+            self.visit_chunk_prefix(previous, visit)?;
             0
         };
+        let key = self.key_at(cursor).ok_or(ForkArenaError::InvalidRange)?;
         let cells = self
             .pool
             .payload
-            .slice(key, self.arena.owner, start..end)
+            .admitted_slice(key, start..cursor.offset)
             .ok_or(ForkArenaError::InvalidRange)?;
         visit(ArenaChunkSlice { cells });
         Ok(())
@@ -3925,7 +4055,7 @@ pub struct ArenaListIter<'arena, T, Lane> {
     view: ArenaListView<'arena, T, Lane>,
     front: usize,
     back: usize,
-    back_cursor: Option<ChunkCursor<Lane>>,
+    back_cursor: Option<AdmittedChunkCursor<Lane>>,
     chunk_crossings: usize,
 }
 
@@ -3969,27 +4099,18 @@ impl<'arena, T, Lane> DoubleEndedIterator for ArenaListIter<'arena, T, Lane> {
         }
         self.back -= 1;
         let mut cursor = self.back_cursor?;
-        let block_start = if cursor.raw == self.view.list.head.raw {
-            self.view.list.head.offset
+        let block_start = if cursor.position == self.view.root.head.position {
+            self.view.root.head.offset
         } else {
             0
         };
         if cursor.offset == block_start {
-            let previous = self
-                .view
-                .pool
-                .payload
-                .previous_in_list(cursor.raw, self.view.arena.owner)
-                .ok()??;
-            cursor = ChunkCursor::new(previous.0, previous.1);
+            cursor = self.view.previous_cursor(cursor)?;
             self.chunk_crossings = self.chunk_crossings.saturating_add(1);
         }
         cursor.offset = cursor.offset.checked_sub(1)?;
         self.back_cursor = Some(cursor);
-        self.view
-            .pool
-            .payload
-            .get(cursor.raw, self.view.arena.owner, cursor.offset)
+        self.view.get_cursor(cursor)
     }
 }
 

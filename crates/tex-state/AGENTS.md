@@ -92,12 +92,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
   fixed-byte-chunk coarse page pools, coordinate-only typed semantic-lane
   arenas, pool-chunk-local owner-relative positions without per-region sparse
   resolver prefixes, move-only detached active-list builders with explicit
-  pool mutation, stable direct borrowed views, constant-time opaque-root
-  admission, allocation-free logical-order chunk-slice visitation over the
-  sole predecessor chain, explicit cold structural audits, and reverse
-  `ChunkCursor` traversal, canonical nonrecursive range lists, partial
-  operation rollback, whole-chunk retained marks, exclusive batch promotion,
-  and exactly accepted-versus-forked settlement.
+  pool mutation, constant-time opaque-root admission into stable borrowed
+  views whose ordinary reads carry owner-relative chunk/offset cursors without
+  repeating owner or incarnation validation, allocation-free logical-order
+  chunk-slice visitation over the sole predecessor chain, explicit cold
+  structural audits, and reverse `ChunkCursor` traversal, canonical
+  nonrecursive range lists, partial operation rollback, whole-chunk retained
+  marks, exclusive batch promotion, and exactly accepted-versus-forked
+  settlement.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
   format staging, decoded-row draining into final owners, and infallible atomic
   publication after complete validation.
