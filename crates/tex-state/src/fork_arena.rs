@@ -67,6 +67,10 @@ struct ChunkStorage<T> {
     pages: Vec<ChunkPage<T>>,
     chunks: Vec<ChunkMeta>,
     free: Vec<u32>,
+    #[cfg(test)]
+    validation_reads: core::cell::Cell<u64>,
+    #[cfg(test)]
+    previous_link_reads: core::cell::Cell<u64>,
 }
 
 impl<T> ChunkStorage<T> {
@@ -83,7 +87,21 @@ impl<T> ChunkStorage<T> {
             pages: Vec::new(),
             chunks: Vec::new(),
             free: Vec::new(),
+            #[cfg(test)]
+            validation_reads: core::cell::Cell::new(0),
+            #[cfg(test)]
+            previous_link_reads: core::cell::Cell::new(0),
         }
+    }
+
+    #[cfg(test)]
+    fn validation_reads(&self) -> u64 {
+        self.validation_reads.get()
+    }
+
+    #[cfg(test)]
+    fn previous_link_reads(&self) -> u64 {
+        self.previous_link_reads.get()
     }
 
     #[must_use]
@@ -182,6 +200,9 @@ impl<T> ChunkStorage<T> {
     }
 
     fn validate(&self, key: RawChunkKey, arena: u32) -> Result<&ChunkMeta, ForkArenaError> {
+        #[cfg(test)]
+        self.validation_reads
+            .set(self.validation_reads.get().saturating_add(1));
         let meta = self
             .chunks
             .get(key.slot as usize)
@@ -358,6 +379,9 @@ impl<T> ChunkStorage<T> {
         key: RawChunkKey,
         arena: u32,
     ) -> Result<Option<(RawChunkKey, u32)>, ForkArenaError> {
+        #[cfg(test)]
+        self.previous_link_reads
+            .set(self.previous_link_reads.get().saturating_add(1));
         Ok(self.validate(key, arena)?.previous_in_list)
     }
 
@@ -550,33 +574,6 @@ impl<Lane> UniqueArenaList<Lane> {
     }
 }
 
-/// Structurally checked direct root for repeated owner-local traversal.
-pub(crate) struct ValidatedArenaList<Lane> {
-    arena: u32,
-    _lane: PhantomData<fn(Lane) -> Lane>,
-}
-
-impl<Lane> ValidatedArenaList<Lane> {
-    const fn empty() -> Self {
-        Self {
-            arena: 0,
-            _lane: PhantomData,
-        }
-    }
-
-    pub(crate) const fn empty_for(_list: ArenaListId<Lane>) -> Self {
-        Self::empty()
-    }
-}
-
-impl<Lane> Clone for ValidatedArenaList<Lane> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Lane> Copy for ValidatedArenaList<Lane> {}
-
 impl<Lane> Clone for ArenaListId<Lane> {
     fn clone(&self) -> Self {
         *self
@@ -647,6 +644,14 @@ impl<Lane> ArenaListId<Lane> {
         tail: ChunkCursor<Lane>,
         len: u32,
     ) -> Self {
+        debug_assert!(arena != 0);
+        debug_assert!(len != 0);
+        debug_assert!(head.raw.generation != 0 && tail.raw.generation != 0);
+        debug_assert!(
+            head.raw.slot != tail.raw.slot
+                || head.raw.generation != tail.raw.generation
+                || head.offset < tail.offset
+        );
         Self {
             arena,
             head,
@@ -1526,13 +1531,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
     ) -> Result<(), ForkArenaError>
     where
         T: Clone,
     {
         self.active_list_open_mut(builder)?;
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         let root = self.active_list_open_mut(builder)?.root;
         let root = self.copy_shared_then_splice(pool, root, list)?;
         self.active_list_open_mut(builder)?.root = root;
@@ -1563,18 +1567,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         left: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
         right: UniqueArenaList<Lane>,
-    ) -> Result<(ArenaListId<Lane>, ValidatedArenaList<Lane>), ForkArenaError> {
-        self.validate_checked_list(pool, left, validated)?;
-        let root = self.splice_unique_direct_root(pool, left, right)?;
-        Ok((
-            root,
-            ValidatedArenaList {
-                arena: self.owner,
-                _lane: PhantomData,
-            },
-        ))
+    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        self.validate_list(pool, left)?;
+        self.splice_unique_direct_root(pool, left, right)
     }
 
     /// Reclaims move authority from a semantically consumed admitted root.
@@ -1586,9 +1582,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
     ) -> Result<UniqueArenaList<Lane>, ForkArenaError> {
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         if !list.is_empty()
             && (list.head.offset != 0
                 || pool
@@ -1614,8 +1609,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: Clone,
     {
-        let validated = self.validate_list(pool, list)?;
-        self.append_validated_active_list(pool, builder, list, validated)
+        self.append_validated_active_list(pool, builder, list)
     }
 
     /// Copies one logical subrange into the active private suffix.
@@ -1629,8 +1623,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: Clone,
     {
-        let validated = self.validate_list(pool, list)?;
-        self.append_validated_active_list_range(pool, builder, list, validated, selected)
+        self.append_validated_active_list_range(pool, builder, list, selected)
     }
 
     pub(crate) fn append_validated_active_list_range(
@@ -1638,14 +1631,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
         selected: Range<usize>,
     ) -> Result<(), ForkArenaError>
     where
         T: Clone,
     {
         self.active_list_open_mut(builder)?;
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         if selected.start > selected.end || selected.end > list.len() {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -1667,7 +1659,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
         selected: Range<usize>,
         mut item_identity: impl FnMut(&T) -> u64,
     ) -> Result<(SemanticSequenceIdentity, SequenceSummaryWork), ForkArenaError>
@@ -1675,7 +1666,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         T: Clone,
     {
         self.active_list_open_mut(builder)?;
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         if selected.start > selected.end || selected.end > list.len() {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -3337,6 +3328,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         _descriptor_start: usize,
     ) -> Result<(), ForkArenaError> {
         self.validate_list(pool, list)?;
+        self.audit_direct_chain(pool, list)?;
         if list.is_empty() {
             return Ok(());
         }
@@ -3389,7 +3381,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub(crate) fn compose_validated_lists(
         &mut self,
         pool: &mut ChunkPool<T>,
-        lists: impl IntoIterator<Item = (ArenaListId<Lane>, ValidatedArenaList<Lane>)>,
+        lists: impl IntoIterator<Item = ArenaListId<Lane>>,
         scratch: &mut Vec<()>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
@@ -3397,8 +3389,8 @@ impl<T, Lane> ForkArena<T, Lane> {
     {
         scratch.clear();
         let mut root = ArenaListId::empty();
-        for (list, validated) in lists {
-            self.validate_checked_list(pool, list, validated)?;
+        for list in lists {
+            self.validate_list(pool, list)?;
             root = if root.is_empty() {
                 list
             } else {
@@ -3434,11 +3426,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
         selected: Range<usize>,
         scratch: &mut Vec<()>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         scratch.clear();
         self.slice_direct_root(pool, list, selected)
     }
@@ -3469,7 +3460,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
         selected: Range<usize>,
         scratch: &mut Vec<()>,
         mut item_identity: impl FnMut(&T) -> u64,
@@ -3481,7 +3471,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         ),
         ForkArenaError,
     > {
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         scratch.clear();
         let selected_root = self.slice_direct_root(pool, list, selected)?;
         let (summary, work) =
@@ -3494,29 +3484,38 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &'a ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<ArenaListView<'a, T, Lane>, ForkArenaError> {
-        let validated = self.validate_list(pool, list)?;
-        self.validated_list(pool, list, validated)
+        self.validate_list(pool, list)?;
+        Ok(ArenaListView {
+            arena: self,
+            pool,
+            list,
+        })
     }
 
     pub(crate) fn admit_list(
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
-    ) -> Result<ValidatedArenaList<Lane>, ForkArenaError> {
+    ) -> Result<(), ForkArenaError> {
         self.validate_list(pool, list)
     }
 
-    /// Admits one owner-local direct root. Endpoint generations and the full
-    /// previous-block chain are checked once at this opaque boundary.
+    /// Admits one owner-local direct root in constant time.
+    ///
+    /// `ArenaListId` is opaque: its ordering, chain continuity, and exact
+    /// length are established only by append, slice, splice, or checked
+    /// transfer. Ordinary admission therefore checks the pool/arena owners,
+    /// endpoint incarnations, and endpoint offsets without replaying the
+    /// accumulated predecessor chain.
     pub(crate) fn admit_owned_list(
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
-    ) -> Result<ValidatedArenaList<Lane>, ForkArenaError> {
+    ) -> Result<(), ForkArenaError> {
         self.validate_pool(pool)?;
         if list.is_empty() {
             return (list == ArenaListId::empty())
-                .then_some(ValidatedArenaList::empty())
+                .then_some(())
                 .ok_or(ForkArenaError::InvalidRange);
         }
         if list.arena != self.owner {
@@ -3524,26 +3523,33 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         if self.resolved_position(false, list.head.raw).is_none()
             || self.resolved_position(false, list.tail.raw).is_none()
-            || pool.payload.validate(list.head.raw, self.owner).is_err()
-            || pool.payload.validate(list.tail.raw, self.owner).is_err()
         {
             return Err(ForkArenaError::InvalidRange);
         }
-        let validated = ValidatedArenaList {
-            arena: list.arena,
-            _lane: PhantomData,
-        };
-        self.validate_direct_chain(pool, list)?;
-        Ok(validated)
+        let head = pool
+            .payload
+            .validate(list.head.raw, self.owner)
+            .map_err(|_| ForkArenaError::InvalidRange)?;
+        let tail = pool
+            .payload
+            .validate(list.tail.raw, self.owner)
+            .map_err(|_| ForkArenaError::InvalidRange)?;
+        if list.head.offset >= head.used
+            || list.tail.offset == 0
+            || list.tail.offset > tail.used
+            || (list.head.raw == list.tail.raw && list.head.offset >= list.tail.offset)
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        Ok(())
     }
 
     pub(crate) fn validated_list<'a>(
         &'a self,
         pool: &'a ChunkPool<T>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
     ) -> Result<ArenaListView<'a, T, Lane>, ForkArenaError> {
-        self.validate_checked_list(pool, list, validated)?;
+        self.validate_list(pool, list)?;
         Ok(ArenaListView {
             arena: self,
             pool,
@@ -3575,45 +3581,23 @@ impl<T, Lane> ForkArena<T, Lane> {
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
-    ) -> Result<ValidatedArenaList<Lane>, ForkArenaError> {
+    ) -> Result<(), ForkArenaError> {
         self.admit_owned_list(pool, list)
     }
 
-    fn validate_checked_list(
+    /// Exhaustive structural audit reserved for cold ingress and tests.
+    /// Ordinary reads use [`Self::admit_owned_list`] instead.
+    #[cfg(test)]
+    fn audit_owned_list(
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
-        validated: ValidatedArenaList<Lane>,
     ) -> Result<(), ForkArenaError> {
-        self.validate_pool(pool)?;
-        if list.is_empty() {
-            return (list == ArenaListId::empty())
-                .then_some(())
-                .ok_or(ForkArenaError::InvalidRange);
-        }
-        if list.arena != self.owner || validated.arena != list.arena {
-            return Err(ForkArenaError::ForeignArena);
-        }
-        if self.resolved_position(false, list.head.raw).is_none()
-            || self.resolved_position(false, list.tail.raw).is_none()
-        {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        let head = pool
-            .payload
-            .validate(list.head.raw, self.owner)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
-        let tail = pool
-            .payload
-            .validate(list.tail.raw, self.owner)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
-        if list.head.offset >= head.used || list.tail.offset == 0 || list.tail.offset > tail.used {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        Ok(())
+        self.admit_owned_list(pool, list)?;
+        self.audit_direct_chain(pool, list)
     }
 
-    fn validate_direct_chain(
+    fn audit_direct_chain(
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,

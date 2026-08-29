@@ -234,6 +234,100 @@ fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
 }
 
 #[test]
+fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ninety_six_chunks() {
+    let mut observed = Vec::new();
+    for chunks in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..chunks {
+                builder.push(value).expect("one-node direct block");
+            }
+            builder.seal().expect("direct root")
+        };
+        assert_eq!(arena.counters().direct_blocks_allocated, u64::from(chunks));
+
+        let validations_before = pool.payload.validation_reads();
+        let links_before = pool.payload.previous_link_reads();
+        arena
+            .admit_owned_list(&pool, root)
+            .expect("constant-time admission");
+        let admission_validations = pool.payload.validation_reads() - validations_before;
+        let admission_links = pool.payload.previous_link_reads() - links_before;
+
+        let validations_before = pool.payload.validation_reads();
+        let links_before = pool.payload.previous_link_reads();
+        let view = arena
+            .validated_list(&pool, root)
+            .expect("constant-time admitted-root validation");
+        let checked_validations = pool.payload.validation_reads() - validations_before;
+        let checked_links = pool.payload.previous_link_reads() - links_before;
+
+        let validations_before = pool.payload.validation_reads();
+        let links_before = pool.payload.previous_link_reads();
+        assert_eq!(
+            arena.list(&pool, root).expect("ordinary view").len(),
+            chunks as usize
+        );
+        let view_validations = pool.payload.validation_reads() - validations_before;
+        let view_links = pool.payload.previous_link_reads() - links_before;
+
+        assert_eq!(view.len(), chunks as usize);
+        assert_eq!(admission_links, 0);
+        assert_eq!(checked_links, 0);
+        assert_eq!(view_links, 0);
+        observed.push((admission_validations, checked_validations, view_validations));
+        eprintln!(
+            "DIRECT_ROOT_ADMISSION_SCALE chunks={chunks} admission_validations={admission_validations} checked_validations={checked_validations} view_validations={view_validations} predecessor_reads=0"
+        );
+    }
+
+    assert!(observed.windows(2).all(|pair| pair[0] == pair[1]));
+    assert_eq!(observed[0], (2, 2, 2));
+}
+
+#[test]
+fn exhaustive_test_audit_rejects_unconstructible_length_and_chain_roots() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let root = list(&mut arena, &mut pool, [1, 2, 3]);
+
+    let mut wrong_length = root;
+    wrong_length.len += 1;
+    assert_eq!(
+        arena.audit_owned_list(&pool, wrong_length),
+        Err(ForkArenaError::InvalidRange)
+    );
+
+    let previous = pool
+        .payload
+        .previous_in_list(root.tail.raw, arena.owner)
+        .expect("tail metadata")
+        .expect("middle block");
+    pool.payload
+        .validate_mut(previous.0, arena.owner)
+        .expect("middle metadata")
+        .previous_in_list = None;
+    assert_eq!(
+        arena.audit_owned_list(&pool, root),
+        Err(ForkArenaError::InvalidRange)
+    );
+
+    let mut ingress_pool = ChunkPool::<u32>::with_chunk_bytes(1);
+    let mut ingress_arena = ForkArena::<u32, ActiveLane>::new();
+    let batch = ingress_arena
+        .begin_batch(&mut ingress_pool)
+        .expect("cold ingress boundary");
+    let mut malformed = list(&mut ingress_arena, &mut ingress_pool, [4, 5, 6]);
+    malformed.len += 1;
+    assert!(matches!(
+        ingress_arena.seal_batch(&mut ingress_pool, batch, vec![malformed]),
+        Err(ForkArenaError::InvalidRange)
+    ));
+}
+
+#[test]
 fn reverse_tail_chunk_work_is_independent_of_list_size() {
     fn tail_work(size: u32) -> (Vec<u32>, usize, usize) {
         let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);

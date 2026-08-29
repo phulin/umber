@@ -423,6 +423,56 @@ fn checked_span_rejects_stale_descriptor_after_operation_rollback() {
 }
 
 #[test]
+fn long_direct_span_survives_checkpoint_rejection_and_operation_rollback_stales_only_the_suffix() {
+    page_arena!(arena, pool, state, 1);
+    let retained = arena
+        .publish_owned(penalties(&(0..4_096).collect::<Vec<_>>()))
+        .expect("long retained root");
+    let retained_span = arena.admit_span(retained).expect("admit long root");
+    let checkpoint = arena
+        .seal_boundary()
+        .and_then(|boundary| arena.checkpoint_mark(boundary))
+        .expect("retained checkpoint");
+    let prior = arena
+        .publish_owned(penalties(&[5_000, 5_001]))
+        .expect("accepted suffix");
+
+    arena
+        .begin_checkpoint_candidate(checkpoint)
+        .expect("begin candidate");
+    let rejected = arena
+        .publish_owned(penalties(&[9_000]))
+        .expect("candidate suffix");
+    let settlement = arena.seal_boundary().expect("candidate boundary");
+    arena
+        .reject_checkpoint_candidate(settlement)
+        .expect("restore accepted suffix");
+
+    assert_eq!(
+        arena.span_list(retained_span).expect("retained span").len(),
+        4_096
+    );
+    assert!(arena.contains(prior));
+    assert!(!arena.contains(rejected));
+
+    let operation = arena.operation_mark();
+    let temporary = arena
+        .publish_owned(penalties(&[7_000, 7_001]))
+        .expect("operation suffix");
+    let temporary_span = arena.admit_span(temporary).expect("admit operation suffix");
+    arena
+        .restore_operation(operation)
+        .expect("rollback operation suffix");
+
+    assert!(arena.span_list(temporary_span).is_err());
+    assert_eq!(
+        arena.span_list(retained_span).expect("retained span").len(),
+        4_096
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
 fn active_list_concatenates_maintained_semantic_identity() {
     page_arena!(arena, pool, state, 32);
     arena.enable_semantic_identity();

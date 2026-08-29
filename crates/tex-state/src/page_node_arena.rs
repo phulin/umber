@@ -11,7 +11,6 @@ use std::ops::Range;
 use crate::fork_arena::{
     ActiveListBuilder, ArenaListId, ArenaListView, CheckpointMark, ForkArenaCounters,
     ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary, UniqueArenaList,
-    ValidatedArenaList,
 };
 use crate::node::Node;
 use crate::node_region::{
@@ -221,11 +220,11 @@ const _: () = assert!(core::mem::size_of::<PageListId>() <= 40);
 /// Checked owner-local page-list span for repeated traversal and retention.
 ///
 /// The constructor is private to [`PageMaterialArena`]. A span carries the
-/// direct-root admission proven by full chain validation and never owns or
-/// copies node payload.
+/// constant-time direct-root admission proven from its opaque construction
+/// facts and never owns or copies node payload. Full chain audits remain at
+/// cold region-transfer and test ingress seams.
 pub struct PageListSpan {
     list: PageListId,
-    coordinate: ValidatedArenaList<PageMaterialLane>,
 }
 
 impl Clone for PageListSpan {
@@ -248,10 +247,8 @@ impl core::fmt::Debug for PageListSpan {
 impl PageListSpan {
     #[must_use]
     pub const fn empty() -> Self {
-        let list = PageListId::empty();
         Self {
-            list,
-            coordinate: ValidatedArenaList::empty_for(list.coordinate()),
+            list: PageListId::empty(),
         }
     }
 
@@ -980,7 +977,6 @@ impl<'a> PageMaterialArena<'a> {
                     &mut self.pool.chunks,
                     &mut builder.inner,
                     span.list.coordinate(),
-                    span.coordinate,
                     0..span.len(),
                     semantic_node_identity,
                 )?;
@@ -998,7 +994,6 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 &mut builder.inner,
                 span.list.coordinate(),
-                span.coordinate,
             )?;
         }
         Ok(())
@@ -1052,7 +1047,6 @@ impl<'a> PageMaterialArena<'a> {
                     &mut self.pool.chunks,
                     &mut builder.inner,
                     span.list.coordinate(),
-                    span.coordinate,
                     selected,
                     semantic_node_identity,
                 )?;
@@ -1070,7 +1064,6 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 &mut builder.inner,
                 span.list.coordinate(),
-                span.coordinate,
                 selected,
             )?;
             None
@@ -1200,10 +1193,9 @@ impl<'a> PageMaterialArena<'a> {
             ),
             false => None,
         };
-        let (coordinate, validated) = self.region.pub_arena.append_unique_to_validated_list(
+        let coordinate = self.region.pub_arena.append_unique_to_validated_list(
             &mut self.pool.chunks,
             left.list.coordinate(),
-            left.coordinate,
             right_coordinate,
         )?;
         if identity.is_some() {
@@ -1216,7 +1208,6 @@ impl<'a> PageMaterialArena<'a> {
         }
         Ok(PageListSpan {
             list: PageListId::from_parts(coordinate, identity),
-            coordinate: validated,
         })
     }
 
@@ -1226,11 +1217,10 @@ impl<'a> PageMaterialArena<'a> {
         &self,
         span: PageListSpan,
     ) -> Result<UniquePageList, ForkArenaError> {
-        let coordinate = self.region.pub_arena.reclaim_unlinked_validated_list(
-            &self.pool.chunks,
-            span.list.coordinate(),
-            span.coordinate,
-        )?;
+        let coordinate = self
+            .region
+            .pub_arena
+            .reclaim_unlinked_validated_list(&self.pool.chunks, span.list.coordinate())?;
         Ok(UniquePageList {
             coordinate,
             identity: span.list.sequence_identity(),
@@ -1256,9 +1246,7 @@ impl<'a> PageMaterialArena<'a> {
         };
         let coordinate = self.region.pub_arena.compose_validated_lists(
             &mut self.pool.chunks,
-            spans
-                .iter()
-                .map(|span| (span.list.coordinate(), span.coordinate)),
+            spans.iter().map(|span| span.list.coordinate()),
             self.list_scratch,
         )?;
         if identity.is_some() {
@@ -1310,7 +1298,6 @@ impl<'a> PageMaterialArena<'a> {
                 self.region.pub_arena.slice_validated_list_summarized(
                     &mut self.pool.chunks,
                     span.list.coordinate(),
-                    span.coordinate,
                     selected,
                     self.list_scratch,
                     semantic_node_identity,
@@ -1321,7 +1308,6 @@ impl<'a> PageMaterialArena<'a> {
             let coordinate = self.region.pub_arena.slice_validated_list(
                 &mut self.pool.chunks,
                 span.list.coordinate(),
-                span.coordinate,
                 selected,
                 self.list_scratch,
             )?;
@@ -1340,22 +1326,19 @@ impl<'a> PageMaterialArena<'a> {
     }
 
     pub fn admit_span(&self, list: PageListId) -> Result<PageListSpan, ForkArenaError> {
-        let coordinate = self
-            .region
+        self.region
             .pub_arena
             .admit_owned_list(&self.pool.chunks, list.coordinate())?;
-        Ok(PageListSpan { list, coordinate })
+        Ok(PageListSpan { list })
     }
 
     pub fn span_list(
         &self,
         span: PageListSpan,
     ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.region.pub_arena.validated_list(
-            &self.pool.chunks,
-            span.list.coordinate(),
-            span.coordinate,
-        )
+        self.region
+            .pub_arena
+            .validated_list(&self.pool.chunks, span.list.coordinate())
     }
 
     pub fn get(
@@ -1544,11 +1527,10 @@ impl<'a> PageMaterialView<'a> {
         &self,
         span: PageListSpan,
     ) -> Result<ArenaListView<'a, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.state.region.pub_arena.validated_list(
-            &self.pool.chunks,
-            span.list.coordinate(),
-            span.coordinate,
-        )
+        self.state
+            .region
+            .pub_arena
+            .validated_list(&self.pool.chunks, span.list.coordinate())
     }
 
     pub fn get(
@@ -1562,15 +1544,10 @@ impl<'a> PageMaterialView<'a> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_arena::NodeCursor<'a>, ForkArenaError> {
-        let validated = self
-            .state
-            .region
-            .pub_arena
-            .admit_owned_list(&self.pool.chunks, list.coordinate())?;
         self.state
             .region
             .pub_arena
-            .validated_list(&self.pool.chunks, list.coordinate(), validated)
+            .validated_list(&self.pool.chunks, list.coordinate())
             .map(crate::node_arena::NodeCursor::fork_arena)
     }
 
@@ -1581,7 +1558,7 @@ impl<'a> PageMaterialView<'a> {
         self.state
             .region
             .pub_arena
-            .validated_list(&self.pool.chunks, span.list.coordinate(), span.coordinate)
+            .validated_list(&self.pool.chunks, span.list.coordinate())
             .map(crate::node_arena::NodeCursor::fork_arena)
     }
 

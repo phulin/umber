@@ -91,7 +91,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena.rs` and `src/fork_arena/tests.rs`: Safe caller-owned
   fixed-byte-chunk coarse page pools, coordinate-only typed semantic-lane
   arenas, move-only detached active-list builders with explicit pool mutation,
-  stable direct borrowed views and reverse `ChunkCursor` traversal, canonical
+  stable direct borrowed views, constant-time opaque-root admission, explicit
+  cold structural audits, and reverse `ChunkCursor` traversal, canonical
   nonrecursive range lists, partial
   operation rollback, whole-chunk retained marks, exclusive batch promotion,
   and exactly accepted-versus-forked settlement.
