@@ -95,6 +95,12 @@ the same key again.
 `ValidatedPackedShard` owns the authenticated bytes and checks the complete
 layout in owning table passes: object and path identity, dependency rows,
 strict record order and policy, and bucket coverage and probe reachability.
+Before any table pass or table-sized scratch allocation, it computes every
+fixed-section end without narrowing and proves that the end fits the packed
+`u32` address space, the declared total length, and the authenticated byte
+slice. Validation scratch uses fallible reserves after those bounds are
+established, so malformed counts return a packed-shard error rather than
+requesting an attacker-sized allocation.
 Schema-2 object and path admission compares adjacent borrowed rows directly in
 one linear pass, rejecting disorder, duplicates, conflicting object lengths,
 invalid spans, and invalid paths without copying or sorting either table.

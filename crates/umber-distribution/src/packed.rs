@@ -106,6 +106,7 @@ impl ValidatedPackedShard {
                 "packed shard {expected_index} identity does not match root manifest"
             )));
         }
+        validate_sections(&bytes, header)?;
         let distribution = string_span(
             &bytes,
             header.strings_offset,
@@ -117,7 +118,6 @@ impl ValidatedPackedShard {
                 "packed shard {expected_index} distribution does not match root manifest"
             )));
         }
-        validate_sections(&bytes, header)?;
         let shard = Self { bytes, header };
         let key_blob = std::str::from_utf8(
             &shard.bytes[shard.header.keys_offset as usize..shard.header.strings_offset as usize],
@@ -179,7 +179,7 @@ impl ValidatedPackedShard {
         }
         self.validate_dependency_table(key_blob)?;
 
-        let mut hashes = Vec::with_capacity(self.header.record_count as usize);
+        let mut hashes = validation_vec(self.header.record_count)?;
         let mut previous_key = None;
         for index in 0..self.header.record_count {
             let record = self.record(index)?;
@@ -239,7 +239,7 @@ impl ValidatedPackedShard {
     }
 
     fn validate_legacy_object_table(&self) -> Result<(), PackedShardError> {
-        let mut object_values = Vec::with_capacity(self.header.object_count as usize);
+        let mut object_values = validation_vec(self.header.object_count)?;
         for index in 0..self.header.object_count {
             let value = self.raw_object(index)?;
             self.validate_object_length(value.1)?;
@@ -288,7 +288,7 @@ impl ValidatedPackedShard {
     }
 
     fn validate_legacy_path_table(&self) -> Result<(), PackedShardError> {
-        let mut path_values = Vec::with_capacity(self.header.path_count as usize);
+        let mut path_values = validation_vec(self.header.path_count)?;
         for index in 0..self.header.path_count {
             let path = self.path(index)?;
             Self::validate_path(path)?;
@@ -329,7 +329,8 @@ impl ValidatedPackedShard {
 
     fn validate_bucket_table(&self, record_hashes: &[u64]) -> Result<(), PackedShardError> {
         let mut occupied = 0_u32;
-        let mut seen = vec![false; self.header.record_count as usize];
+        let mut seen = validation_vec(self.header.record_count)?;
+        seen.resize(record_hashes.len(), false);
         let mut empty_bucket = None;
         for bucket in 0..self.header.bucket_count {
             let offset = self.header.buckets_offset as usize + bucket as usize * BUCKET_BYTES;
@@ -954,23 +955,45 @@ fn parse_header(bytes: &[u8]) -> Result<Header, PackedShardError> {
 fn validate_sections(bytes: &[u8], h: Header) -> Result<(), PackedShardError> {
     if h.bucket_count < 2
         || !h.bucket_count.is_power_of_two()
-        || h.record_count.saturating_mul(5) > h.bucket_count.saturating_mul(4)
+        || u64::from(h.record_count) * 5 > u64::from(h.bucket_count) * 4
     {
         return Err(PackedShardError::new("invalid packed shard table size"));
     }
-    let expected_records =
-        checked_section(h.buckets_offset as usize, h.bucket_count, BUCKET_BYTES)? as u32;
-    let expected_objects =
-        checked_section(h.records_offset as usize, h.record_count, RECORD_BYTES)? as u32;
-    let expected_paths =
-        checked_section(h.objects_offset as usize, h.object_count, OBJECT_BYTES)? as u32;
-    let expected_dependencies =
-        checked_section(h.paths_offset as usize, h.path_count, SPAN_BYTES)? as u32;
-    let expected_keys = checked_section(
-        h.dependencies_offset as usize,
+    let expected_records = validated_section_end(
+        bytes.len(),
+        h.total_len,
+        h.buckets_offset,
+        h.bucket_count,
+        BUCKET_BYTES,
+    )?;
+    let expected_objects = validated_section_end(
+        bytes.len(),
+        h.total_len,
+        h.records_offset,
+        h.record_count,
+        RECORD_BYTES,
+    )?;
+    let expected_paths = validated_section_end(
+        bytes.len(),
+        h.total_len,
+        h.objects_offset,
+        h.object_count,
+        OBJECT_BYTES,
+    )?;
+    let expected_dependencies = validated_section_end(
+        bytes.len(),
+        h.total_len,
+        h.paths_offset,
+        h.path_count,
+        SPAN_BYTES,
+    )?;
+    let expected_keys = validated_section_end(
+        bytes.len(),
+        h.total_len,
+        h.dependencies_offset,
         h.dependency_count,
         DEPENDENCY_BYTES,
-    )? as u32;
+    )?;
     if h.buckets_offset != HEADER_BYTES as u32
         || h.records_offset != expected_records
         || h.objects_offset != expected_objects
@@ -986,6 +1009,40 @@ fn validate_sections(bytes: &[u8], h: Header) -> Result<(), PackedShardError> {
         ));
     }
     Ok(())
+}
+
+fn validated_section_end(
+    bytes_len: usize,
+    total_len: u32,
+    start: u32,
+    count: u32,
+    width: usize,
+) -> Result<u32, PackedShardError> {
+    let end = u64::from(start)
+        .checked_add(
+            u64::from(count)
+                .checked_mul(width as u64)
+                .ok_or_else(|| PackedShardError::new("packed shard section overflows"))?,
+        )
+        .ok_or_else(|| PackedShardError::new("packed shard section overflows"))?;
+    let bytes_len = u64::try_from(bytes_len)
+        .map_err(|_| PackedShardError::new("packed shard byte length is invalid"))?;
+    if end > u64::from(u32::MAX) || end > u64::from(total_len) || end > bytes_len {
+        return Err(PackedShardError::new(
+            "packed shard section is out of bounds",
+        ));
+    }
+    u32::try_from(end).map_err(|_| PackedShardError::new("packed shard section overflows"))
+}
+
+fn validation_vec<T>(count: u32) -> Result<Vec<T>, PackedShardError> {
+    let capacity = usize::try_from(count)
+        .map_err(|_| PackedShardError::new("packed shard table is too large"))?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(capacity)
+        .map_err(|_| PackedShardError::new("packed shard table allocation failed"))?;
+    Ok(values)
 }
 
 fn checked_section(start: usize, count: u32, width: usize) -> Result<usize, PackedShardError> {

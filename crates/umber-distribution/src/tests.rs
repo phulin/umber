@@ -651,6 +651,83 @@ fn packed_schema_two_canonicalizes_tables_and_retains_schema_one_compatibility()
     assert!(ValidatedPackedShard::new(mismatched, &catalog.root, 0).is_err());
 }
 
+fn synthetic_packed_header(
+    packed_schema: u16,
+    total_len: u32,
+    counts: [u32; 5],
+    offsets: [u32; 7],
+) -> Vec<u8> {
+    let mut bytes = vec![0; total_len as usize];
+    bytes[..8].copy_from_slice(if packed_schema == LEGACY_PACKED_SHARD_SCHEMA {
+        b"UMBRPKS1"
+    } else {
+        b"UMBRPKS2"
+    });
+    bytes[8..10].copy_from_slice(&packed_schema.to_le_bytes());
+    bytes[12..16].copy_from_slice(&INDEX_SHARD_SCHEMA.to_le_bytes());
+    for (offset, value) in [28, 32, 36, 40, 44].into_iter().zip(counts) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (offset, value) in [48, 52, 56, 60, 64, 68, 72].into_iter().zip(offsets) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes[76..80].copy_from_slice(&total_len.to_le_bytes());
+    bytes
+}
+
+fn empty_packed_root() -> ShardedManifestRoot {
+    ShardedManifestRoot {
+        schema: SHARDED_ROOT_SCHEMA,
+        distribution: String::new(),
+        objects_base_url: "https://example.invalid/objects/".to_owned(),
+        shard_bits: 0,
+        shard_count: 1,
+        shards: vec!["0".repeat(16)],
+        formats: Default::default(),
+    }
+}
+
+#[test]
+fn packed_validator_rejects_wrapped_sections_before_allocating_tables() {
+    let root = empty_packed_root();
+
+    // The object section ends at 112 + u32::MAX * 16. Narrowing that end to
+    // u32 used to wrap it to 96 and admit a roughly 64-GiB legacy reserve.
+    let legacy = synthetic_packed_header(
+        LEGACY_PACKED_SHARD_SCHEMA,
+        112,
+        [2, 0, u32::MAX, 0, 0],
+        [80, 112, 112, 96, 96, 96, 96],
+    );
+    let error = ValidatedPackedShard::new(legacy, &root, 0).expect_err("wrapped legacy section");
+    assert_eq!(error.to_string(), "packed shard section is out of bounds");
+
+    // Both bucket and record section sizes are multiples of 2^32. Their old
+    // narrowed ends returned to offset 80 before a multi-gigabyte hash reserve.
+    let canonical = synthetic_packed_header(
+        PACKED_SHARD_SCHEMA,
+        80,
+        [1 << 31, 1 << 30, 0, 0, 0],
+        [80, 80, 80, 80, 80, 80, 80],
+    );
+    let error =
+        ValidatedPackedShard::new(canonical, &root, 0).expect_err("wrapped canonical sections");
+    assert_eq!(error.to_string(), "packed shard section is out of bounds");
+}
+
+#[test]
+fn packed_validator_uses_exact_table_load_arithmetic() {
+    let saturated_load = synthetic_packed_header(
+        PACKED_SHARD_SCHEMA,
+        80,
+        [1 << 31, u32::MAX, 0, 0, 0],
+        [80, 80, 48, 48, 48, 48, 48],
+    );
+    let error = ValidatedPackedShard::new(saturated_load, &empty_packed_root(), 0)
+        .expect_err("saturated packed table load");
+    assert_eq!(error.to_string(), "invalid packed shard table size");
+}
+
 #[test]
 fn warmed_packed_lookup_allocates_zero_bytes() {
     let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
