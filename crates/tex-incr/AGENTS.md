@@ -35,9 +35,16 @@ long-lived editor-session strategy over executor-named checkpoints.
   slots across rejection, acceptance, and suspension; the admitted generation
   sidecar, not the revision runtime or retained checkpoint, owns the singular
   output chunk pool.
+- Candidate driving holds the current generation in an owned aggregate guard;
+  an attached-control guard restores temporarily detached runtime/control
+  owners before unwind rejection, and prepared settlement rejects mode,
+  command, boundary, ledger, state, page, and PDF ownership in dependency
+  order from `Drop` unless Session consumes acceptance explicitly.
 - `src/trace.rs`: derived ordered leaf/parent trace summaries, dependency reduction, and atomic replay.
 - `src/trace/tests.rs`: parent composition, leaf-equivalence, ordering, and atomic-miss coverage.
 - `src/tests.rs`: synthetic edit, convergence, retention, and cold-parity tests.
+  It includes a caught-panic production regression at the exact detached-owner
+  interval and proves prior-boundary sibling reuse after aggregate rejection.
 - `src/tests/long_session.rs`: routine accepted/rejected revision, resource
   retry, checkpoint, effect, artifact, and cold-DVI equivalence coverage plus
   the explicit 2,048-cycle semantic stress tier.

@@ -121,6 +121,12 @@ consumes that receipt before aggregate state acceptance or rejection. Candidate
 acceptance preserves the already-built topology and current roots without
 replay, while rejection discards only that candidate topology. The fixed mark
 and accepted page owner remain unchanged, so sibling marks stay seedable.
+While CandidateRun temporarily detaches its runtime and MainControl, an owned
+attached-control guard keeps their sidecar slots exclusively borrowed and
+parks both owners from `Drop` during unwind. The outer owned generation guard
+then performs the same complete dependency-ordered rejection as an explicit
+Session rejection; it never relies on ModeNest suppressing an unresolved-drop
+assertion during a panic.
 
 ## Mode marks
 

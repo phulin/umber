@@ -458,6 +458,14 @@ prefix publication, rejection discards only candidate topology, and an
 unresolved normal drop is an invariant failure. The accepted fixed mark and its
 sibling marks are never rewritten by either transition.
 
+CandidateRun's detached runtime/MainControl interval is guarded explicitly.
+Unwind first parks those two typed owners without allocation or a second panic;
+the enclosing owned generation guard then rejects mode, command, boundary,
+output ledger, state, page, and PDF owners in their normal aggregate order.
+Normal settlement still requires one consuming accept or reject, and the
+production MainControl-to-prepared transitions move the existing ModeNest
+storage without constructing a default replacement.
+
 ## Promotion thresholds
 
 Later ownership-family children must retain this baseline and meet these final

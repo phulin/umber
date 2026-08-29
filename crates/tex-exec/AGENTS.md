@@ -139,7 +139,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   packed reusable-row boundary lane whose cells pair detached evidence with an
   optional move-only checkpoint root, stale-safe private owner-relative keys,
   typed cross-owner release transactions, and exact transfer of the sole output
-  pool between accepted/current sidecars.
+  pool between accepted/current sidecars. An attached checkpoint-control guard
+  restores runtime and MainControl sidecars without allocation or panic during
+  unwind so the outer aggregate rejection can always reach every owner.
 - `src/typeset_context.rs`: crate-private pure-kernel trait adapter over one
   already-admitted `CommandContext`; it owns no state, owner, or arena root.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,

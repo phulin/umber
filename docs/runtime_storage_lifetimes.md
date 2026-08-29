@@ -513,6 +513,12 @@ mode capability into a prepared settlement receipt instead of disposing it;
 Session consumes the receipt before the prior/current state slots settle. The
 retained mode mark remains the fixed rootless outer level, while all nested
 topology and mode roots belong solely to the live candidate.
+Candidate execution borrows temporarily detached runtime and MainControl owners
+through a prepared guard whose unwind path parks both sidecars infallibly. An
+outer owned generation guard then performs complete aggregate rejection before
+the current slot retires. MainControl preparation consumes its existing mode
+storage directly, and acceptance changes the candidate label in place, so
+neither production disposition constructs a default mode stack.
 
 Capacity growth happens only as coarse slab or lane allocation. Once the
 bounded workload is warmed, macro entry/return, scanner entry/return, argument
