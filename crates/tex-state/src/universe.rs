@@ -2969,6 +2969,14 @@ impl<G> Universe<G> {
         self.page_region.current().material_counters()
     }
 
+    /// Demand-free PageBuilder publication and candidate-settlement work.
+    #[must_use]
+    pub fn page_candidate_settlement_counters(
+        &self,
+    ) -> crate::page::PageCandidateSettlementCounters {
+        self.page_region.candidate_settlement_counters()
+    }
+
     /// Selects every capacity owned by the executable process profile.
     ///
     /// The format boundary identifies its producer profile through the

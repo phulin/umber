@@ -3,7 +3,9 @@
 #[cfg(test)]
 mod state_hash;
 
-use crate::fork_arena::{CheckpointMark, ForkArenaError, PageMaterialLane};
+use crate::fork_arena::{
+    CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane,
+};
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
@@ -109,19 +111,6 @@ impl PageMark {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MarkClassState {
     marks: [Option<NodeTokenList>; 5],
-}
-
-#[derive(Clone, Copy, Debug)]
-struct InsertionLaneRecord {
-    class: u16,
-    value: Option<PageInsertion>,
-}
-
-#[derive(Clone, Debug)]
-struct MarkLaneRecord {
-    class: u16,
-    mark: PageMark,
-    value: Option<NodeTokenList>,
 }
 
 impl Default for MarkClassState {
@@ -491,8 +480,6 @@ pub(crate) struct PageBuilderState {
     split_bot_mark: Option<NodeTokenList>,
     mark_classes: Vec<(u16, MarkClassState)>,
     mark_class_positions: Vec<Option<u16>>,
-    insertion_lane: Vec<InsertionLaneRecord>,
-    mark_lane: Vec<MarkLaneRecord>,
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
     page_node_root_count: usize,
@@ -528,6 +515,7 @@ pub(crate) struct PageCheckpointMark {
     timeline: u64,
     frame: u64,
     cursor: usize,
+    journal: CheckpointMark<PageBuilderJournalLane>,
     scalars: PageScalars,
     roots: PagePayloadRoots,
     semantic_roots: PageSemanticRoots,
@@ -540,8 +528,6 @@ struct PagePayloadRoots {
     current_page: PageListSpan,
     page_discards: PageListSpan,
     split_discards: PageListSpan,
-    insertion_end: usize,
-    mark_end: usize,
 }
 
 struct PageCheckpointFrame {
@@ -553,7 +539,8 @@ struct PageCheckpointJournal {
     timeline: u64,
     next_frame: u64,
     frames: Vec<PageCheckpointFrame>,
-    inverses: Vec<PageInverse>,
+    inverse_pool: ChunkPool<PageInverse>,
+    inverses: ForkArena<PageInverse, PageBuilderJournalLane>,
     applied: usize,
     candidate_root_frame: Option<u64>,
     replay_work: u64,
@@ -561,6 +548,10 @@ struct PageCheckpointJournal {
     accepted_redo_work: u64,
     accepted_rewind_transitions: u64,
     accepted_redo_transitions: u64,
+    checkpoint_captures: u64,
+    candidate_acceptances: u64,
+    candidate_rejections: u64,
+    candidate_rewind_work: u64,
 }
 
 pub(crate) struct AcceptedPageTail {
@@ -568,15 +559,13 @@ pub(crate) struct AcceptedPageTail {
     selected: usize,
     prefix_frames: usize,
     accepted_rewind_work: u64,
-    future: Vec<PageInverse>,
     future_frames: Vec<PageCheckpointFrame>,
     origin_scalars: PageScalars,
     origin_semantic_roots: PageSemanticRoots,
-    insertion_root: usize,
-    mark_root: usize,
-    insertion_lane_after: Vec<InsertionLaneRecord>,
-    mark_lane_after: Vec<MarkLaneRecord>,
+    journal: CheckpointMark<PageBuilderJournalLane>,
 }
+
+enum PageBuilderJournalLane {}
 
 enum PageInverse {
     Noop,
@@ -618,6 +607,237 @@ struct PageScalars {
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
     page_node_root_count: usize,
+}
+
+/// Borrowed mutable projection of the canonical values changed by one page
+/// inverse. Keeping this projection disjoint from `PageCheckpointJournal`
+/// lets the chunk-owned journal swap values in place without moving the
+/// journal out of `PageBuilderState` or creating a second canonical state.
+struct PageInverseTarget<'a> {
+    roots: [&'a mut PageListSpan; 4],
+    dimensions: [&'a mut Scaled; 9],
+    contents: &'a mut PageContents,
+    last_glue: &'a mut Option<GlueSpec>,
+    last_penalty: &'a mut i32,
+    last_kern: &'a mut Scaled,
+    last_node_type: &'a mut i32,
+    insert_penalties: &'a mut i32,
+    dead_cycles: &'a mut i32,
+    least_page_cost: &'a mut i32,
+    best_page_break: &'a mut Option<PageBreak>,
+    best_size: &'a mut Scaled,
+    fire_up: &'a mut Option<PageFireUp>,
+    tex82_dynamic_words: &'a mut usize,
+    etex_dynamic_words: &'a mut usize,
+    page_node_root_count: &'a mut usize,
+    insertions: &'a mut Vec<PageInsertion>,
+    insertion_positions: &'a mut Vec<Option<u16>>,
+    marks: [&'a mut Option<NodeTokenList>; 5],
+    mark_classes: &'a mut Vec<(u16, MarkClassState)>,
+    mark_class_positions: &'a mut Vec<Option<u16>>,
+}
+
+impl PageInverseTarget<'_> {
+    fn scalar_snapshot(&self) -> PageScalars {
+        PageScalars {
+            dimensions: [
+                *self.dimensions[0],
+                *self.dimensions[1],
+                *self.dimensions[2],
+                *self.dimensions[3],
+                *self.dimensions[4],
+                *self.dimensions[5],
+                *self.dimensions[6],
+                *self.dimensions[7],
+            ],
+            page_max_depth: *self.dimensions[8],
+            contents: *self.contents,
+            last_glue: *self.last_glue,
+            last_penalty: *self.last_penalty,
+            last_kern: *self.last_kern,
+            last_node_type: *self.last_node_type,
+            insert_penalties: *self.insert_penalties,
+            dead_cycles: *self.dead_cycles,
+            least_page_cost: *self.least_page_cost,
+            best_page_break: *self.best_page_break,
+            best_size: *self.best_size,
+            fire_up: *self.fire_up,
+            tex82_dynamic_words: *self.tex82_dynamic_words,
+            etex_dynamic_words: *self.etex_dynamic_words,
+            page_node_root_count: *self.page_node_root_count,
+        }
+    }
+
+    fn restore_scalars(&mut self, old: PageScalars) {
+        for (destination, value) in self.dimensions.iter_mut().take(8).zip(old.dimensions) {
+            **destination = value;
+        }
+        *self.dimensions[8] = old.page_max_depth;
+        *self.contents = old.contents;
+        *self.last_glue = old.last_glue;
+        *self.last_penalty = old.last_penalty;
+        *self.last_kern = old.last_kern;
+        *self.last_node_type = old.last_node_type;
+        *self.insert_penalties = old.insert_penalties;
+        *self.dead_cycles = old.dead_cycles;
+        *self.least_page_cost = old.least_page_cost;
+        *self.best_page_break = old.best_page_break;
+        *self.best_size = old.best_size;
+        *self.fire_up = old.fire_up;
+        *self.tex82_dynamic_words = old.tex82_dynamic_words;
+        *self.etex_dynamic_words = old.etex_dynamic_words;
+        *self.page_node_root_count = old.page_node_root_count;
+    }
+
+    fn page_insertion(&self, class: u16) -> Option<PageInsertion> {
+        self.insertion_positions
+            .get(usize::from(class))
+            .copied()
+            .flatten()
+            .map(|index| self.insertions[usize::from(index)])
+    }
+
+    fn restore_insertion(&mut self, class: u16, old: Option<PageInsertion>) {
+        let current = self
+            .insertion_positions
+            .get(usize::from(class))
+            .copied()
+            .flatten()
+            .map(usize::from);
+        match (current, old) {
+            (Some(position), Some(insertion)) => self.insertions[position] = insertion,
+            (Some(position), None) => {
+                self.insertions.remove(position);
+                self.insertion_positions[usize::from(class)] = None;
+                for (shifted, insertion) in self.insertions[position..].iter().enumerate() {
+                    self.insertion_positions[usize::from(insertion.class())] = Some(
+                        u16::try_from(position + shifted)
+                            .expect("active insertion-class count fits u16"),
+                    );
+                }
+            }
+            (None, Some(insertion)) => {
+                let position = self
+                    .insertions
+                    .binary_search_by_key(&class, PageInsertion::class)
+                    .unwrap_or_else(|position| position);
+                self.insertions.insert(position, insertion);
+                if self.insertion_positions.len() <= usize::from(class) {
+                    self.insertion_positions
+                        .resize(usize::from(class).saturating_add(1), None);
+                }
+                for (shifted, insertion) in self.insertions[position..].iter().enumerate() {
+                    self.insertion_positions[usize::from(insertion.class())] = Some(
+                        u16::try_from(position + shifted)
+                            .expect("active insertion-class count fits u16"),
+                    );
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    fn mark_class_position(&self, class: u16) -> Option<usize> {
+        self.mark_class_positions
+            .get(usize::from(class))
+            .copied()
+            .flatten()
+            .map(usize::from)
+    }
+
+    fn swap_mark_class(&mut self, class: u16, old: &mut Option<MarkClassState>) {
+        let current = self.mark_class_position(class);
+        match (current, old.as_mut()) {
+            (Some(position), Some(state)) => {
+                std::mem::swap(&mut self.mark_classes[position].1, state);
+            }
+            (Some(position), None) => {
+                let (_, state) = self.mark_classes.remove(position);
+                *old = Some(state);
+                self.mark_class_positions[usize::from(class)] = None;
+                for (shifted, (class, _)) in self.mark_classes[position..].iter().enumerate() {
+                    self.mark_class_positions[usize::from(*class)] = Some(
+                        u16::try_from(position + shifted)
+                            .expect("active mark-class count fits u16"),
+                    );
+                }
+            }
+            (None, Some(_)) => {
+                let position = self
+                    .mark_classes
+                    .binary_search_by_key(&class, |(active, _)| *active)
+                    .unwrap_or_else(|position| position);
+                let state = old.take().expect("matched a retained mark class");
+                self.mark_classes.insert(position, (class, state));
+                if self.mark_class_positions.len() <= usize::from(class) {
+                    self.mark_class_positions
+                        .resize(usize::from(class).saturating_add(1), None);
+                }
+                for (shifted, (class, _)) in self.mark_classes[position..].iter().enumerate() {
+                    self.mark_class_positions[usize::from(*class)] = Some(
+                        u16::try_from(position + shifted)
+                            .expect("active mark-class count fits u16"),
+                    );
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    fn toggle(&mut self, inverse: &mut PageInverse) {
+        let old = std::mem::replace(inverse, PageInverse::Noop);
+        *inverse = match old {
+            PageInverse::Noop => unreachable!("page inverse slot is occupied"),
+            PageInverse::Scalars(old) => {
+                let current = self.scalar_snapshot();
+                self.restore_scalars(old);
+                PageInverse::Scalars(current)
+            }
+            PageInverse::Contribution(mut old) => {
+                std::mem::swap(self.roots[0], &mut old);
+                PageInverse::Contribution(old)
+            }
+            PageInverse::CurrentPage(mut old) => {
+                std::mem::swap(self.roots[1], &mut old);
+                PageInverse::CurrentPage(old)
+            }
+            PageInverse::PageDiscards(mut old) => {
+                std::mem::swap(self.roots[2], &mut old);
+                PageInverse::PageDiscards(old)
+            }
+            PageInverse::SplitDiscards(mut old) => {
+                std::mem::swap(self.roots[3], &mut old);
+                PageInverse::SplitDiscards(old)
+            }
+            PageInverse::InsertionsReplace {
+                mut insertions,
+                mut positions,
+            } => {
+                std::mem::swap(self.insertions, &mut insertions);
+                std::mem::swap(self.insertion_positions, &mut positions);
+                PageInverse::InsertionsReplace {
+                    insertions,
+                    positions,
+                }
+            }
+            PageInverse::InsertionUpsert { class, mut old } => {
+                let current = self.page_insertion(class);
+                self.restore_insertion(class, old);
+                old = current;
+                PageInverse::InsertionUpsert { class, old }
+            }
+            PageInverse::Marks(mut old) => {
+                for (destination, retained) in self.marks.iter_mut().zip(old.iter_mut()) {
+                    std::mem::swap(*destination, retained);
+                }
+                PageInverse::Marks(old)
+            }
+            PageInverse::MarkClass { class, mut old } => {
+                self.swap_mark_class(class, &mut old);
+                PageInverse::MarkClass { class, old }
+            }
+        };
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -681,6 +901,26 @@ pub struct PageRegionCounters {
     pub checkpoint_rows_released: u64,
 }
 
+/// Exact work attributed to PageBuilder checkpoint publication and candidate
+/// settlement. Zero-valued scan/copy fields are explicit regression guards:
+/// they describe forbidden whole-lane work rather than omitted measurement.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PageCandidateSettlementCounters {
+    pub checkpoint_captures: u64,
+    pub checkpoint_capture_records_scanned: u64,
+    pub candidate_selections: u64,
+    pub selected_journal_records_rewound: u64,
+    pub candidate_acceptances: u64,
+    pub acceptance_payload_records_scanned: u64,
+    pub candidate_rejections: u64,
+    pub rejected_candidate_records_rewound: u64,
+    pub rejected_prior_records_redone: u64,
+    pub canonical_lane_records_scanned: u64,
+    pub canonical_values_copied: u64,
+    pub prior_journal_chunks_released: u64,
+    pub candidate_journal_chunks_released: u64,
+}
+
 /// Work and remaining storage after releasing one private page checkpoint row.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PageRegionReleaseReceipt {
@@ -720,6 +960,7 @@ pub(crate) struct PageRegionHistory {
     pool: NodePool,
     regions: Vec<PageRegion>,
     pending_successor: Option<PreparedPageRegionSuccessor>,
+    candidate_counters: PageCandidateSettlementCounters,
 }
 
 pub(crate) struct AcceptedPageRegionHistoryTail {
@@ -761,6 +1002,7 @@ impl Default for PageRegionHistory {
             pool,
             regions: vec![current],
             pending_successor: None,
+            candidate_counters: PageCandidateSettlementCounters::default(),
         }
     }
 }
@@ -818,7 +1060,12 @@ impl PageRegionHistory {
             .regions
             .last_mut()
             .expect("page history always has a current region");
-        current.seal_checkpoint(&mut self.pool)
+        let key = current.seal_checkpoint(&mut self.pool)?;
+        self.candidate_counters.checkpoint_captures = self
+            .candidate_counters
+            .checkpoint_captures
+            .saturating_add(1);
+        Ok(key)
     }
 
     pub(crate) fn validates_checkpoint(&self, key: PageRegionCheckpointKey) -> bool {
@@ -916,6 +1163,7 @@ impl PageRegionHistory {
         &mut self,
         key: PageRegionCheckpointKey,
     ) -> Result<AcceptedPageRegionHistoryTail, ForkArenaError> {
+        let before = self.current().builder.candidate_settlement_counters();
         let selected = self
             .regions
             .iter()
@@ -933,6 +1181,17 @@ impl PageRegionHistory {
             .last_mut()
             .expect("page history always has a current region")
             .begin_checkpoint_candidate(&mut self.pool, key)?;
+        let after = self.current().builder.candidate_settlement_counters();
+        self.candidate_counters.candidate_selections = self
+            .candidate_counters
+            .candidate_selections
+            .saturating_add(after.candidate_selections - before.candidate_selections);
+        self.candidate_counters.selected_journal_records_rewound = self
+            .candidate_counters
+            .selected_journal_records_rewound
+            .saturating_add(
+                after.selected_journal_records_rewound - before.selected_journal_records_rewound,
+            );
         Ok(AcceptedPageRegionHistoryTail {
             selected,
             later_regions,
@@ -950,10 +1209,45 @@ impl PageRegionHistory {
             .position(|region| region.id() == tail.selected_region)
             .ok_or(ForkArenaError::InvalidRegion)?;
         self.regions.truncate(selected.saturating_add(1));
+        let before = self
+            .regions
+            .last()
+            .expect("selected page region remains current")
+            .builder
+            .candidate_settlement_counters();
         self.regions
             .last_mut()
             .expect("page history always has a current region")
             .reject_checkpoint_candidate(&mut self.pool, tail.selected)?;
+        let after = self
+            .regions
+            .last()
+            .expect("selected page region remains current")
+            .builder
+            .candidate_settlement_counters();
+        self.candidate_counters.candidate_rejections = self
+            .candidate_counters
+            .candidate_rejections
+            .saturating_add(after.candidate_rejections - before.candidate_rejections);
+        self.candidate_counters.rejected_candidate_records_rewound = self
+            .candidate_counters
+            .rejected_candidate_records_rewound
+            .saturating_add(
+                after.rejected_candidate_records_rewound
+                    - before.rejected_candidate_records_rewound,
+            );
+        self.candidate_counters.rejected_prior_records_redone = self
+            .candidate_counters
+            .rejected_prior_records_redone
+            .saturating_add(
+                after.rejected_prior_records_redone - before.rejected_prior_records_redone,
+            );
+        self.candidate_counters.candidate_journal_chunks_released = self
+            .candidate_counters
+            .candidate_journal_chunks_released
+            .saturating_add(
+                after.candidate_journal_chunks_released - before.candidate_journal_chunks_released,
+            );
         self.regions.append(&mut tail.later_regions);
         Ok(())
     }
@@ -967,7 +1261,19 @@ impl PageRegionHistory {
             .iter_mut()
             .find(|region| region.id() == tail.selected_region)
             .ok_or(ForkArenaError::InvalidRegion)?;
+        let before = selected.builder.candidate_settlement_counters();
         selected.accept_checkpoint_candidate(&mut self.pool, tail.selected)?;
+        let after = selected.builder.candidate_settlement_counters();
+        self.candidate_counters.candidate_acceptances = self
+            .candidate_counters
+            .candidate_acceptances
+            .saturating_add(after.candidate_acceptances - before.candidate_acceptances);
+        self.candidate_counters.prior_journal_chunks_released = self
+            .candidate_counters
+            .prior_journal_chunks_released
+            .saturating_add(
+                after.prior_journal_chunks_released - before.prior_journal_chunks_released,
+            );
         for region in tail.later_regions.drain(..) {
             region
                 .retire(&mut self.pool)
@@ -1005,6 +1311,11 @@ impl PageRegionHistory {
 
     pub(crate) fn retained_bytes(&self) -> usize {
         self.regions.iter().map(PageRegion::retained_bytes).sum()
+    }
+
+    #[must_use]
+    pub(crate) const fn candidate_settlement_counters(&self) -> PageCandidateSettlementCounters {
+        self.candidate_counters
     }
 
     #[cfg(test)]
@@ -1452,8 +1763,6 @@ impl PageRegion {
                             current_page: PageListSpan::empty(),
                             page_discards: PageListSpan::empty(),
                             split_discards: PageListSpan::empty(),
-                            insertion_end: 0,
-                            mark_end: 0,
                         };
                         current.builder = self.builder.successor_with_roots(roots);
                         current.counters = self.counters;
@@ -1517,8 +1826,6 @@ impl PageRegion {
                     current_page: spans.1,
                     page_discards: spans.2,
                     split_discards: spans.3,
-                    insertion_end: 0,
-                    mark_end: 0,
                 },
                 contribution
                     .1
@@ -1711,8 +2018,6 @@ impl Default for PageBuilderState {
             split_bot_mark: None,
             mark_classes: Vec::new(),
             mark_class_positions: Vec::new(),
-            insertion_lane: Vec::new(),
-            mark_lane: Vec::new(),
             tex82_dynamic_words: 0,
             etex_dynamic_words: 0,
             page_node_root_count: 0,
@@ -1722,11 +2027,8 @@ impl Default for PageBuilderState {
                 timeline: NEXT_PAGE_TIMELINE.fetch_add(1, Ordering::Relaxed),
                 next_frame: 1,
                 frames: Vec::with_capacity(64),
-                // Page inverses include move-only list carriers and are much
-                // larger than the journal's scalar records.  Grow this lane
-                // on demand instead of charging every page builder for a
-                // payload-sized speculative reserve.
-                inverses: Vec::new(),
+                inverse_pool: ChunkPool::default(),
+                inverses: ForkArena::new(),
                 applied: 0,
                 candidate_root_frame: None,
                 replay_work: 0,
@@ -1734,6 +2036,10 @@ impl Default for PageBuilderState {
                 accepted_redo_work: 0,
                 accepted_rewind_transitions: 0,
                 accepted_redo_transitions: 0,
+                checkpoint_captures: 0,
+                candidate_acceptances: 0,
+                candidate_rejections: 0,
+                candidate_rewind_work: 0,
             },
             output_successor_build: None,
         }
@@ -1741,6 +2047,93 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    fn journal_and_inverse_target(
+        &mut self,
+    ) -> (&mut PageCheckpointJournal, PageInverseTarget<'_>) {
+        let Self {
+            contribution,
+            current_page,
+            page_discards,
+            split_discards,
+            page_goal,
+            page_total,
+            page_stretch,
+            page_fil_stretch,
+            page_fill_stretch,
+            page_filll_stretch,
+            page_shrink,
+            page_depth,
+            page_max_depth,
+            contents,
+            last_glue,
+            last_penalty,
+            last_kern,
+            last_node_type,
+            insert_penalties,
+            dead_cycles,
+            least_page_cost,
+            best_page_break,
+            best_size,
+            fire_up,
+            insertions,
+            insertion_positions,
+            top_mark,
+            first_mark,
+            bot_mark,
+            split_first_mark,
+            split_bot_mark,
+            mark_classes,
+            mark_class_positions,
+            tex82_dynamic_words,
+            etex_dynamic_words,
+            page_node_root_count,
+            checkpoint_journal,
+            ..
+        } = self;
+        (
+            checkpoint_journal,
+            PageInverseTarget {
+                roots: [contribution, current_page, page_discards, split_discards],
+                dimensions: [
+                    page_goal,
+                    page_total,
+                    page_stretch,
+                    page_fil_stretch,
+                    page_fill_stretch,
+                    page_filll_stretch,
+                    page_shrink,
+                    page_depth,
+                    page_max_depth,
+                ],
+                contents,
+                last_glue,
+                last_penalty,
+                last_kern,
+                last_node_type,
+                insert_penalties,
+                dead_cycles,
+                least_page_cost,
+                best_page_break,
+                best_size,
+                fire_up,
+                tex82_dynamic_words,
+                etex_dynamic_words,
+                page_node_root_count,
+                insertions,
+                insertion_positions,
+                marks: [
+                    top_mark,
+                    first_mark,
+                    bot_mark,
+                    split_first_mark,
+                    split_bot_mark,
+                ],
+                mark_classes,
+                mark_class_positions,
+            },
+        )
+    }
+
     pub(crate) fn arm_output_successor_build(&mut self, mark: PageClosureBuildMark) {
         assert!(
             self.output_successor_build.replace(mark).is_none(),
@@ -1758,8 +2151,6 @@ impl PageBuilderState {
             current_page: self.current_page,
             page_discards: self.page_discards,
             split_discards: self.split_discards,
-            insertion_end: self.insertion_lane.len(),
-            mark_end: self.mark_lane.len(),
         }
     }
 
@@ -1785,47 +2176,6 @@ impl PageBuilderState {
         successor.split_bot_mark = self.split_bot_mark.clone();
         successor.mark_classes = self.mark_classes.clone();
         successor.mark_class_positions = self.mark_class_positions.clone();
-        successor.insertion_lane = successor
-            .insertions
-            .iter()
-            .copied()
-            .map(|value| InsertionLaneRecord {
-                class: value.class(),
-                value: Some(value),
-            })
-            .collect();
-        for (mark, value) in [
-            (PageMark::Top, successor.top_mark.clone()),
-            (PageMark::First, successor.first_mark.clone()),
-            (PageMark::Bot, successor.bot_mark.clone()),
-            (PageMark::SplitFirst, successor.split_first_mark.clone()),
-            (PageMark::SplitBot, successor.split_bot_mark.clone()),
-        ] {
-            if let Some(value) = value {
-                successor.mark_lane.push(MarkLaneRecord {
-                    class: 0,
-                    mark,
-                    value: Some(value),
-                });
-            }
-        }
-        for (class, state) in &successor.mark_classes {
-            for mark in [
-                PageMark::Top,
-                PageMark::First,
-                PageMark::Bot,
-                PageMark::SplitFirst,
-                PageMark::SplitBot,
-            ] {
-                if let Some(value) = state.get(mark) {
-                    successor.mark_lane.push(MarkLaneRecord {
-                        class: *class,
-                        mark,
-                        value: Some(value.clone()),
-                    });
-                }
-            }
-        }
         successor.identity_enabled = self.identity_enabled;
         successor.semantic_roots = self.semantic_roots;
         successor.semantic_roots.contribution = list_identity(roots.contribution);
@@ -1932,6 +2282,20 @@ impl PageBuilderState {
     }
 
     pub(crate) fn checkpoint_mark(&mut self) -> PageCheckpointMark {
+        let boundary = self
+            .checkpoint_journal
+            .inverses
+            .seal_boundary(&mut self.checkpoint_journal.inverse_pool)
+            .expect("page checkpoint seals its reversible journal");
+        let journal = self
+            .checkpoint_journal
+            .inverses
+            .checkpoint_mark(boundary)
+            .expect("page journal boundary becomes a fixed checkpoint mark");
+        self.checkpoint_journal.checkpoint_captures = self
+            .checkpoint_journal
+            .checkpoint_captures
+            .saturating_add(1);
         let frame = self.checkpoint_journal.next_frame;
         self.checkpoint_journal.next_frame = self
             .checkpoint_journal
@@ -1945,8 +2309,6 @@ impl PageBuilderState {
             current_page: self.current_page,
             page_discards: self.page_discards,
             split_discards: self.split_discards,
-            insertion_end: self.insertion_lane.len(),
-            mark_end: self.mark_lane.len(),
         };
         self.checkpoint_journal
             .frames
@@ -1955,6 +2317,7 @@ impl PageBuilderState {
             timeline: self.checkpoint_journal.timeline,
             frame,
             cursor,
+            journal,
             scalars,
             roots: direct_roots,
             semantic_roots: self.semantic_roots,
@@ -1968,27 +2331,43 @@ impl PageBuilderState {
             .frames
             .retain(|frame| frame.id != mark.frame);
         if self.checkpoint_journal.frames.is_empty() {
-            self.checkpoint_journal.inverses.clear();
-            self.checkpoint_journal.applied = 0;
+            let boundary = self
+                .checkpoint_journal
+                .inverses
+                .seal_boundary(&mut self.checkpoint_journal.inverse_pool)
+                .expect("quiescent page journal seals before prefix release");
+            let head = self
+                .checkpoint_journal
+                .inverses
+                .checkpoint_mark(boundary)
+                .expect("sealed page journal head is a fixed mark");
+            self.checkpoint_journal
+                .inverses
+                .release_accepted_prefix(&mut self.checkpoint_journal.inverse_pool, head)
+                .expect("unrooted page journal releases whole prefix chunks");
         }
     }
 
     pub(crate) fn rollback_transaction(&mut self, mark: PageCheckpointMark) {
         self.restore_checkpoint_mark(mark);
-        self.checkpoint_journal.inverses.truncate(mark.cursor);
-        self.checkpoint_journal.applied = mark.cursor;
         self.checkpoint_journal
             .frames
             .retain(|frame| frame.id != mark.frame);
         if self.checkpoint_journal.frames.is_empty() {
-            self.checkpoint_journal.inverses.clear();
-            self.checkpoint_journal.applied = 0;
+            self.checkpoint_journal
+                .inverses
+                .release_accepted_prefix(&mut self.checkpoint_journal.inverse_pool, mark.journal)
+                .expect("rolled-back unrooted page journal releases whole prefix chunks");
         }
     }
 
     pub(crate) fn validates_checkpoint_mark(&self, mark: PageCheckpointMark) -> bool {
         mark.timeline == self.checkpoint_journal.timeline
-            && mark.cursor <= self.checkpoint_journal.inverses.len()
+            && mark.cursor <= self.checkpoint_journal.applied
+            && self
+                .checkpoint_journal
+                .inverses
+                .validates_checkpoint(mark.journal)
             && mark.frame != 0
             && mark.frame < self.checkpoint_journal.next_frame
             && self
@@ -2000,14 +2379,21 @@ impl PageBuilderState {
 
     pub(crate) fn restore_checkpoint_mark(&mut self, mark: PageCheckpointMark) {
         debug_assert!(self.validates_checkpoint_mark(mark));
-        while self.checkpoint_journal.applied > mark.cursor {
-            self.checkpoint_journal.applied -= 1;
-            self.toggle_page_inverse(self.checkpoint_journal.applied);
-        }
-        while self.checkpoint_journal.applied < mark.cursor {
-            let index = self.checkpoint_journal.applied;
-            self.toggle_page_inverse(index);
-            self.checkpoint_journal.applied += 1;
+        if self.checkpoint_journal.candidate_root_frame.is_some() {
+            self.rewind_current_page_journal(mark);
+            self.checkpoint_journal
+                .inverses
+                .restore_current_checkpoint(&mut self.checkpoint_journal.inverse_pool, mark.journal)
+                .expect("candidate-local page restore truncates only current chunks");
+        } else {
+            self.rewind_accepted_page_journal(mark);
+            self.checkpoint_journal
+                .inverses
+                .restore_accepted_checkpoint(
+                    &mut self.checkpoint_journal.inverse_pool,
+                    mark.journal,
+                )
+                .expect("validated same-generation page restore prunes its journal suffix");
         }
         self.semantic_roots = mark.semantic_roots;
     }
@@ -2022,7 +2408,7 @@ impl PageBuilderState {
         let origin_scalars = self.scalar_snapshot();
         let origin_semantic_roots = self.semantic_roots;
         let rewind_before = self.checkpoint_journal.replay_work;
-        self.restore_checkpoint_mark(mark);
+        self.rewind_accepted_page_journal(mark);
         let accepted_rewind_work = self
             .checkpoint_journal
             .replay_work
@@ -2039,12 +2425,12 @@ impl PageBuilderState {
         self.current_page = mark.roots.current_page;
         self.page_discards = mark.roots.page_discards;
         self.split_discards = mark.roots.split_discards;
-        let insertion_lane_after = self.insertion_lane.split_off(mark.roots.insertion_end);
-        let mark_lane_after = self.mark_lane.split_off(mark.roots.mark_end);
-        self.rebuild_canonical_lane_values();
         self.restore_scalars(mark.scalars);
         self.semantic_roots = mark.semantic_roots;
-        let future = self.checkpoint_journal.inverses.split_off(mark.cursor);
+        self.checkpoint_journal
+            .inverses
+            .begin_checkpoint_candidate(mark.journal)
+            .expect("validated page journal opens one accepted/current fork");
         let selected_frame = self
             .checkpoint_journal
             .frames
@@ -2070,51 +2456,67 @@ impl PageBuilderState {
             selected: mark.cursor,
             prefix_frames,
             accepted_rewind_work,
-            future,
             future_frames,
             origin_scalars,
             origin_semantic_roots,
-            insertion_root: mark.roots.insertion_end,
-            mark_root: mark.roots.mark_end,
-            insertion_lane_after,
-            mark_lane_after,
+            journal: mark.journal,
         }
     }
 
     /// Rewinds candidate roots and drops every current-lineage inverse before
     /// the page-material arena releases candidate chunks.
     pub(crate) fn prepare_checkpoint_candidate_rejection(&mut self, tail: &AcceptedPageTail) {
-        while self.checkpoint_journal.applied > tail.selected {
-            self.checkpoint_journal.applied -= 1;
-            self.toggle_page_inverse(self.checkpoint_journal.applied);
-        }
+        let (journal, mut target) = self.journal_and_inverse_target();
+        let replay_work = &mut journal.replay_work;
+        let mut candidate_rewind_work = 0_u64;
+        journal
+            .inverses
+            .visit_current_checkpoint_suffix_mut_reverse(
+                &mut journal.inverse_pool,
+                tail.journal,
+                |inverse| {
+                    target.toggle(inverse);
+                    *replay_work = replay_work.saturating_add(1);
+                    candidate_rewind_work = candidate_rewind_work.saturating_add(1);
+                },
+            )
+            .expect("candidate page journal suffix rewinds in place");
+        journal.applied = tail.selected;
+        journal.candidate_rewind_work = journal
+            .candidate_rewind_work
+            .saturating_add(candidate_rewind_work);
         self.checkpoint_journal.candidate_root_frame = None;
-        self.checkpoint_journal.inverses.truncate(tail.selected);
         self.checkpoint_journal.frames.truncate(tail.prefix_frames);
-        self.insertion_lane.truncate(tail.insertion_root);
-        self.mark_lane.truncate(tail.mark_root);
     }
 
     /// Reattaches the accepted journal and redoes its roots only after the
     /// page-material arena has reattached the detached accepted chunks.
     pub(crate) fn finish_checkpoint_candidate_rejection(&mut self, mut tail: AcceptedPageTail) {
-        debug_assert_eq!(self.checkpoint_journal.inverses.len(), tail.selected);
         debug_assert_eq!(self.checkpoint_journal.frames.len(), tail.prefix_frames);
         debug_assert_eq!(self.checkpoint_journal.applied, tail.selected);
-        self.insertion_lane.append(&mut tail.insertion_lane_after);
-        self.mark_lane.append(&mut tail.mark_lane_after);
-        self.rebuild_canonical_lane_values();
-        self.checkpoint_journal.inverses.append(&mut tail.future);
         self.checkpoint_journal
             .frames
             .append(&mut tail.future_frames);
-        self.checkpoint_journal.applied = tail.selected;
         let redo_before = self.checkpoint_journal.replay_work;
-        while self.checkpoint_journal.applied < tail.origin {
-            let index = self.checkpoint_journal.applied;
-            self.toggle_page_inverse(index);
-            self.checkpoint_journal.applied += 1;
-        }
+        let (journal, mut target) = self.journal_and_inverse_target();
+        let replay_work = &mut journal.replay_work;
+        journal
+            .inverses
+            .visit_detached_checkpoint_suffix_mut(&mut journal.inverse_pool, |inverse| {
+                target.toggle(inverse);
+                *replay_work = replay_work.saturating_add(1);
+            })
+            .expect("detached accepted page journal redoes in place");
+        let boundary = journal
+            .inverses
+            .seal_boundary(&mut journal.inverse_pool)
+            .expect("candidate page journal seals before rejection");
+        journal
+            .inverses
+            .reject_checkpoint_candidate(&mut journal.inverse_pool, boundary)
+            .expect("page rejection drops current chunks and reattaches prior chunks");
+        journal.applied = tail.origin;
+        journal.candidate_rejections = journal.candidate_rejections.saturating_add(1);
         let accepted_redo_work = self
             .checkpoint_journal
             .replay_work
@@ -2143,65 +2545,77 @@ impl PageBuilderState {
             .candidate_root_frame
             .take()
             .expect("candidate page timeline owns one root frame");
+        let root_index = tail.prefix_frames;
+        let removed = self.checkpoint_journal.frames.remove(root_index);
+        assert_eq!(
+            removed.id, root,
+            "candidate root frame remains at its fixed mark"
+        );
+        let boundary = self
+            .checkpoint_journal
+            .inverses
+            .seal_boundary(&mut self.checkpoint_journal.inverse_pool)
+            .expect("candidate page journal seals before acceptance");
         self.checkpoint_journal
-            .frames
-            .retain(|frame| frame.id != root);
+            .inverses
+            .accept_checkpoint_candidate(&mut self.checkpoint_journal.inverse_pool, boundary)
+            .expect("page acceptance retires superseded prior chunks");
+        self.checkpoint_journal.candidate_acceptances = self
+            .checkpoint_journal
+            .candidate_acceptances
+            .saturating_add(1);
         drop(tail);
-    }
-
-    fn rebuild_canonical_lane_values(&mut self) {
-        let mut insertions = std::collections::BTreeMap::new();
-        for record in &self.insertion_lane {
-            if let Some(value) = record.value {
-                insertions.insert(record.class, value);
-            } else {
-                insertions.remove(&record.class);
-            }
-        }
-        self.insertions = insertions.into_values().collect();
-        self.rebuild_insertion_positions();
-
-        self.top_mark = None;
-        self.first_mark = None;
-        self.bot_mark = None;
-        self.split_first_mark = None;
-        self.split_bot_mark = None;
-        self.mark_classes.clear();
-        self.mark_class_positions.clear();
-        let records = self.mark_lane.clone();
-        for record in records {
-            if record.class == 0 {
-                *match record.mark {
-                    PageMark::Top => &mut self.top_mark,
-                    PageMark::First => &mut self.first_mark,
-                    PageMark::Bot => &mut self.bot_mark,
-                    PageMark::SplitFirst => &mut self.split_first_mark,
-                    PageMark::SplitBot => &mut self.split_bot_mark,
-                } = record.value;
-            } else if let Some(value) = record.value {
-                self.ensure_mark_class(record.class).set(record.mark, value);
-            } else if let Some(position) = self.mark_class_position(record.class) {
-                self.mark_classes[position].1.clear(record.mark);
-                if self.mark_classes[position].1.is_empty() {
-                    self.remove_mark_class(record.class, position);
-                }
-            }
-        }
     }
 
     fn record_page_inverse(&mut self, inverse: PageInverse) {
         if !self.checkpoint_journal.frames.is_empty() {
-            if self.checkpoint_journal.applied < self.checkpoint_journal.inverses.len() {
-                self.checkpoint_journal
-                    .inverses
-                    .truncate(self.checkpoint_journal.applied);
-                self.checkpoint_journal
-                    .frames
-                    .retain(|frame| frame.cursor <= self.checkpoint_journal.applied);
-            }
-            self.checkpoint_journal.inverses.push(inverse);
+            let mut builder = self
+                .checkpoint_journal
+                .inverses
+                .begin_builder(&mut self.checkpoint_journal.inverse_pool)
+                .expect("page journal owns the sole active builder");
+            builder
+                .push(inverse)
+                .expect("one page inverse fits its fixed-chunk journal");
+            let _ = builder
+                .seal()
+                .expect("page inverse publishes without materialization");
             self.checkpoint_journal.applied += 1;
         }
+    }
+
+    fn rewind_accepted_page_journal(&mut self, mark: PageCheckpointMark) {
+        let (journal, mut target) = self.journal_and_inverse_target();
+        let replay_work = &mut journal.replay_work;
+        journal
+            .inverses
+            .visit_accepted_checkpoint_suffix_mut_reverse(
+                &mut journal.inverse_pool,
+                mark.journal,
+                |inverse| {
+                    target.toggle(inverse);
+                    *replay_work = replay_work.saturating_add(1);
+                },
+            )
+            .expect("validated accepted page journal rewinds to its fixed mark");
+        journal.applied = mark.cursor;
+    }
+
+    fn rewind_current_page_journal(&mut self, mark: PageCheckpointMark) {
+        let (journal, mut target) = self.journal_and_inverse_target();
+        let replay_work = &mut journal.replay_work;
+        journal
+            .inverses
+            .visit_current_checkpoint_suffix_mut_reverse(
+                &mut journal.inverse_pool,
+                mark.journal,
+                |inverse| {
+                    target.toggle(inverse);
+                    *replay_work = replay_work.saturating_add(1);
+                },
+            )
+            .expect("validated candidate page journal rewinds to its fixed mark");
+        journal.applied = mark.cursor;
     }
 
     fn scalar_snapshot(&self) -> PageScalars {
@@ -2241,82 +2655,6 @@ impl PageBuilderState {
         }
     }
 
-    fn toggle_page_inverse(&mut self, index: usize) {
-        self.checkpoint_journal.replay_work = self.checkpoint_journal.replay_work.saturating_add(1);
-        let inverse = std::mem::replace(
-            &mut self.checkpoint_journal.inverses[index],
-            PageInverse::Noop,
-        );
-        let inverse = match inverse {
-            PageInverse::Noop => unreachable!("page inverse slot is occupied"),
-            PageInverse::Scalars(old) => {
-                let current = self.scalar_snapshot();
-                self.restore_scalars(old);
-                PageInverse::Scalars(current)
-            }
-            PageInverse::Contribution(mut old) => {
-                std::mem::swap(&mut self.contribution, &mut old);
-                PageInverse::Contribution(old)
-            }
-            PageInverse::CurrentPage(mut old) => {
-                std::mem::swap(&mut self.current_page, &mut old);
-                PageInverse::CurrentPage(old)
-            }
-            PageInverse::PageDiscards(mut old) => {
-                std::mem::swap(&mut self.page_discards, &mut old);
-                PageInverse::PageDiscards(old)
-            }
-            PageInverse::SplitDiscards(mut old) => {
-                std::mem::swap(&mut self.split_discards, &mut old);
-                PageInverse::SplitDiscards(old)
-            }
-            PageInverse::InsertionsReplace {
-                mut insertions,
-                mut positions,
-            } => {
-                std::mem::swap(&mut self.insertions, &mut insertions);
-                std::mem::swap(&mut self.insertion_positions, &mut positions);
-                PageInverse::InsertionsReplace {
-                    insertions,
-                    positions,
-                }
-            }
-            PageInverse::InsertionUpsert { class, mut old } => {
-                let current = self.page_insertion(class);
-                self.restore_insertion(class, old);
-                old = current;
-                PageInverse::InsertionUpsert { class, old }
-            }
-            PageInverse::Marks(mut old) => {
-                let current = [
-                    self.top_mark.clone(),
-                    self.first_mark.clone(),
-                    self.bot_mark.clone(),
-                    self.split_first_mark.clone(),
-                    self.split_bot_mark.clone(),
-                ];
-                [
-                    self.top_mark,
-                    self.first_mark,
-                    self.bot_mark,
-                    self.split_first_mark,
-                    self.split_bot_mark,
-                ] = old;
-                old = current;
-                PageInverse::Marks(old)
-            }
-            PageInverse::MarkClass { class, mut old } => {
-                let current = self
-                    .mark_class_position(class)
-                    .map(|position| self.mark_classes[position].1.clone());
-                self.restore_mark_class(class, old);
-                old = current;
-                PageInverse::MarkClass { class, old }
-            }
-        };
-        self.checkpoint_journal.inverses[index] = inverse;
-    }
-
     fn restore_scalars(&mut self, old: PageScalars) {
         self.page_goal = old.dimensions[0];
         self.page_total = old.dimensions[1];
@@ -2348,6 +2686,30 @@ impl PageBuilderState {
         self.checkpoint_journal.replay_work
     }
 
+    #[must_use]
+    fn candidate_settlement_counters(&self) -> PageCandidateSettlementCounters {
+        let ForkArenaCounters {
+            candidate_chunks_truncated,
+            obsolete_chunks_pruned,
+            ..
+        } = self.checkpoint_journal.inverses.counters();
+        PageCandidateSettlementCounters {
+            checkpoint_captures: self.checkpoint_journal.checkpoint_captures,
+            checkpoint_capture_records_scanned: 0,
+            candidate_selections: self.checkpoint_journal.accepted_rewind_transitions,
+            selected_journal_records_rewound: self.checkpoint_journal.accepted_rewind_work,
+            candidate_acceptances: self.checkpoint_journal.candidate_acceptances,
+            acceptance_payload_records_scanned: 0,
+            candidate_rejections: self.checkpoint_journal.candidate_rejections,
+            rejected_candidate_records_rewound: self.checkpoint_journal.candidate_rewind_work,
+            rejected_prior_records_redone: self.checkpoint_journal.accepted_redo_work,
+            canonical_lane_records_scanned: 0,
+            canonical_values_copied: 0,
+            prior_journal_chunks_released: obsolete_chunks_pruned,
+            candidate_journal_chunks_released: candidate_chunks_truncated,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) const fn accepted_replay_work(&self) -> [u64; 4] {
         [
@@ -2358,62 +2720,6 @@ impl PageBuilderState {
         ]
     }
 
-    fn restore_insertion(&mut self, class: u16, old: Option<PageInsertion>) {
-        if let Some(position) = self.page_insertion_position(class) {
-            self.insertions.remove(position);
-        }
-        if let Some(insertion) = old {
-            self.insertions.push(insertion);
-            self.insertions.sort_by_key(PageInsertion::class);
-        }
-        self.rebuild_insertion_positions();
-    }
-
-    fn page_insertion_position(&self, class: u16) -> Option<usize> {
-        self.insertion_positions
-            .get(usize::from(class))
-            .copied()
-            .flatten()
-            .map(usize::from)
-    }
-
-    fn rebuild_insertion_positions(&mut self) {
-        self.insertion_positions.fill(None);
-        for (position, insertion) in self.insertions.iter().enumerate() {
-            let class = usize::from(insertion.class());
-            if self.insertion_positions.len() <= class {
-                self.insertion_positions.resize(class + 1, None);
-            }
-            self.insertion_positions[class] =
-                Some(u16::try_from(position).expect("active insertion-class count fits u16"));
-        }
-    }
-
-    fn restore_mark_class(&mut self, class: u16, old: Option<MarkClassState>) {
-        if let Some(position) = self.mark_class_position(class) {
-            self.remove_mark_class(class, position);
-        }
-        if let Some(state) = old {
-            let position = self
-                .mark_classes
-                .binary_search_by_key(&class, |(active, _)| *active)
-                .unwrap_or_else(|position| position);
-            self.mark_classes.insert(position, (class, state));
-            self.rebuild_mark_class_positions();
-        }
-    }
-
-    fn rebuild_mark_class_positions(&mut self) {
-        self.mark_class_positions.fill(None);
-        for (position, (class, _)) in self.mark_classes.iter().enumerate() {
-            let class = usize::from(*class);
-            if self.mark_class_positions.len() <= class {
-                self.mark_class_positions.resize(class + 1, None);
-            }
-            self.mark_class_positions[class] =
-                Some(u16::try_from(position).expect("active mark-class count fits u16"));
-        }
-    }
     /// Whether this checkpointable page state explicitly carries any live
     /// page-arena coordinate. A rootless state contributes no retained-prefix
     /// demand merely because the arena cursor has advanced.
@@ -2651,6 +2957,13 @@ impl PageBuilderState {
                     .capacity()
                     .saturating_mul(std::mem::size_of::<Option<u16>>()),
             )
+            .saturating_add(self.checkpoint_journal.inverse_pool.allocated_heap_bytes())
+            .saturating_add(
+                self.checkpoint_journal
+                    .frames
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<PageCheckpointFrame>()),
+            )
     }
 
     pub(crate) fn is_format_empty(&self) -> bool {
@@ -2777,11 +3090,6 @@ impl PageBuilderState {
                 self.split_bot_mark.clone(),
             ]));
         }
-        self.mark_lane.push(MarkLaneRecord {
-            class: 0,
-            mark,
-            value: Some(value.clone()),
-        });
         *match mark {
             PageMark::Top => &mut self.top_mark,
             PageMark::First => &mut self.first_mark,
@@ -2806,11 +3114,6 @@ impl PageBuilderState {
                 self.split_bot_mark.clone(),
             ]));
         }
-        self.mark_lane.push(MarkLaneRecord {
-            class: 0,
-            mark,
-            value: None,
-        });
         *match mark {
             PageMark::Top => &mut self.top_mark,
             PageMark::First => &mut self.first_mark,
@@ -2852,11 +3155,6 @@ impl PageBuilderState {
                 .map(|position| self.mark_classes[position].1.clone());
             self.record_page_inverse(PageInverse::MarkClass { class, old });
         }
-        self.mark_lane.push(MarkLaneRecord {
-            class,
-            mark,
-            value: Some(value.clone()),
-        });
         self.ensure_mark_class(class).set(mark, value);
     }
 
@@ -2879,11 +3177,6 @@ impl PageBuilderState {
                 old: Some(self.mark_classes[position].1.clone()),
             });
         }
-        self.mark_lane.push(MarkLaneRecord {
-            class,
-            mark,
-            value: None,
-        });
         self.mark_classes[position].1.clear(mark);
         if self.mark_classes[position].1.is_empty() {
             self.remove_mark_class(class, position);
@@ -2995,11 +3288,6 @@ impl PageBuilderState {
     /// freezes the next page's specifications.
     pub(crate) fn start_page_after_output(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
-        self.insertion_lane
-            .extend(self.insertions.iter().map(|insertion| InsertionLaneRecord {
-                class: insertion.class(),
-                value: None,
-            }));
         let current = arena
             .span_list(self.current_page)
             .expect("current page root belongs to the live arena");
@@ -3447,10 +3735,6 @@ impl PageBuilderState {
         let old = (!self.checkpoint_journal.frames.is_empty())
             .then(|| self.page_insertion(class))
             .flatten();
-        self.insertion_lane.push(InsertionLaneRecord {
-            class,
-            value: Some(insertion),
-        });
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::InsertionUpsert { class, old });
         }

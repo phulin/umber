@@ -2288,6 +2288,51 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.accept_checkpoint_candidate(pool, boundary)
     }
 
+    /// Destructively restores only the current suffix of an already-forked
+    /// arena while leaving its detached accepted suffix parked. This is the
+    /// candidate-local transaction rollback counterpart of
+    /// [`Self::restore_accepted_checkpoint`].
+    pub(crate) fn restore_current_checkpoint(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.bind_pool(pool)?;
+        if self.active_builder
+            || self.pending_batch.is_some()
+            || !matches!(self.ownership, ForkOwnership::Forked { .. })
+            || !self.validates_checkpoint(mark)
+        {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        let payload_tail_used = match mark.payload_tail {
+            Some(key) => pool.payload.used(key, self.owner)?,
+            None => 0,
+        };
+        let payload_tail_summary = match mark.payload_tail {
+            Some(key) => pool.payload.sequence_summary(key, self.owner)?,
+            None => None,
+        };
+        let descriptor_tail_used = match mark.descriptor_tail {
+            Some(key) => pool.descriptors.used(key, self.owner)?,
+            None => 0,
+        };
+        self.truncate_lane(
+            pool,
+            false,
+            mark.payload_chunks as usize,
+            payload_tail_used,
+            payload_tail_summary,
+        )?;
+        self.truncate_lane(
+            pool,
+            true,
+            mark.descriptor_chunks as usize,
+            descriptor_tail_used,
+            None,
+        )
+    }
+
     pub fn reject_checkpoint_candidate(
         &mut self,
         pool: &mut ChunkPool<T>,

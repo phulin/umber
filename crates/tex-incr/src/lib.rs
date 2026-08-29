@@ -510,6 +510,24 @@ impl RevisionTransaction<'_> {
             .with_admitted(ReadPageMaterialCounters)
             .map_err(SessionError::RetainedEngine)
     }
+
+    /// Demand-free PageBuilder publication and candidate settlement work.
+    #[doc(hidden)]
+    pub fn page_candidate_settlement_counters(
+        &mut self,
+    ) -> Result<tex_state::PageCandidateSettlementCounters, SessionError> {
+        self.generation
+            .with_admitted(ReadPageCandidateSettlementCounters)
+            .map_err(SessionError::RetainedEngine)
+    }
+
+    /// Demand-free page-region lifecycle counters on the candidate.
+    #[doc(hidden)]
+    pub fn page_region_counters(&mut self) -> Result<tex_state::PageRegionCounters, SessionError> {
+        self.generation
+            .with_admitted(ReadPageRegionCounters)
+            .map_err(SessionError::RetainedEngine)
+    }
 }
 
 struct CandidatePlan {
@@ -976,6 +994,32 @@ impl tex_exec::RetainedEngineOperation for ReadPageMaterialCounters {
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
         admitted.universe().page_material_counters()
+    }
+}
+
+struct ReadPageCandidateSettlementCounters;
+
+impl tex_exec::RetainedEngineOperation for ReadPageCandidateSettlementCounters {
+    type Output = tex_state::PageCandidateSettlementCounters;
+
+    fn run<G: 'static>(
+        self,
+        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
+    ) -> Self::Output {
+        admitted.universe().page_candidate_settlement_counters()
+    }
+}
+
+struct ReadPageRegionCounters;
+
+impl tex_exec::RetainedEngineOperation for ReadPageRegionCounters {
+    type Output = tex_state::PageRegionCounters;
+
+    fn run<G: 'static>(
+        self,
+        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
+    ) -> Self::Output {
+        admitted.universe().page_region_counters()
     }
 }
 
@@ -2366,6 +2410,39 @@ impl<'store> Session<'store> {
                 generation
                     .generation
                     .with_admitted(ReadPageMaterialCounters)
+                    .map_err(SessionError::RetainedEngine)
+            })
+            .transpose()
+    }
+
+    /// Demand-free page-region lifecycle counters on the accepted generation.
+    #[doc(hidden)]
+    pub fn page_region_counters(
+        &mut self,
+    ) -> Result<Option<tex_state::PageRegionCounters>, SessionError> {
+        self.prior_generation
+            .as_mut()
+            .map(|generation| {
+                generation
+                    .generation
+                    .with_admitted(ReadPageRegionCounters)
+                    .map_err(SessionError::RetainedEngine)
+            })
+            .transpose()
+    }
+
+    /// Demand-free PageBuilder candidate-settlement work on the accepted
+    /// production generation.
+    #[doc(hidden)]
+    pub fn page_candidate_settlement_counters(
+        &mut self,
+    ) -> Result<Option<tex_state::PageCandidateSettlementCounters>, SessionError> {
+        self.prior_generation
+            .as_mut()
+            .map(|generation| {
+                generation
+                    .generation
+                    .with_admitted(ReadPageCandidateSettlementCounters)
                     .map_err(SessionError::RetainedEngine)
             })
             .transpose()
