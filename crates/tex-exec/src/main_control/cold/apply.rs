@@ -69,7 +69,6 @@ pub(in crate::main_control) fn apply<G>(
     active_math_left_boundaries: &[bool],
     active_math_shifts: &[MathShiftContext],
     prepared_dvi_pages: &mut PreparedDviPages,
-    end_job_ejection_pending: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
     let mut stores = LinearCommandContext::new(stores);
     let stores = &mut stores;
@@ -209,6 +208,9 @@ pub(in crate::main_control) fn apply<G>(
             dump,
             incomplete_conditions: _,
         } => {
+            // TeX82 §1054 has accepted `its_all_over`; the page-builder-owned
+            // replay fence must not enter terminal or INITEX format state.
+            stores.finish_end_job();
             // §1335's final_cleanup tail -- closing every still-open paren,
             // reporting `incomplete_conditions`, the "(see the transcript
             // file..." note, and this same `dump` flag's
@@ -2944,15 +2946,6 @@ pub(in crate::main_control) fn apply<G>(
                 output_level.list_mutation().take_nodes(),
                 crate::diagnostics::ExecutionDiagnosticContext::source_free(context),
             )?;
-            // TeX82 §§1026/1054 resume the same `build_page` invocation that
-            // the backed-up final stop started. Once that continuation has
-            // consumed the contribution suffix, the next stop retry must be
-            // allowed to append a fresh end-job trio. Keeping Umber's
-            // deferred-invocation marker set here makes that retry call an
-            // empty `build_page`, skipping §1025's next output-text push.
-            if stores.page_contributions().is_empty() {
-                *end_job_ejection_pending = false;
-            }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::EjectResidualPage => {
@@ -2962,27 +2955,27 @@ pub(in crate::main_control) fn apply<G>(
             // `@<Check if node p is a new champion breakpoint...@>` decides
             // whether the `-'10000000000` penalty fires §1012's `fire_up`,
             // and §1025 alone ever starts `\output`.
-            // A default output can return with the suffix after its chosen
-            // breakpoint still waiting in the contribution list. TeX82
-            // §§1014--1015 resumes `build_page` synchronously after shipout,
-            // before §1054 can retry the backed-up stop. Our shipout is
-            // deferred to the command-step tail, so complete that pending
-            // builder invocation before publishing another end-job trio.
-            // This matters when an insertion split contributes `-10000`:
-            // the filler glue can become the chosen breakpoint and leave the
-            // forced penalty queued.
-            if !*end_job_ejection_pending {
-                crate::page_output::append_end_job_contributions(stores);
-                *end_job_ejection_pending = true;
-            }
+            // Each canonical retry appends a fresh trio. The page builder owns
+            // the retry fence because only its journaled transition position
+            // can distinguish a legitimate retry after default output, an
+            // explicit routine, insertion heldovers, or a dead cycle from an
+            // identical-state replay. The old executor boolean stayed set
+            // after a prior trio had been consumed and could therefore leave
+            // a terminal kern alone forever.
+            let progress = stores
+                .begin_end_job_ejection()
+                .map_err(|_| ExecError::Fatal(FatalError::confusion("end job page progress")))?;
+            crate::page_output::append_end_job_contributions(stores);
             let error_context = command.state.output_open_context(&**stores);
             crate::page_builder::build_page_with_error_context(
                 stores,
                 command.diagnostic_effects,
                 &error_context,
             )?;
-            if stores.page_contributions().is_empty() {
-                *end_job_ejection_pending = false;
+            if !stores.complete_end_job_ejection(progress) {
+                return Err(ExecError::Fatal(FatalError::confusion(
+                    "end job page progress",
+                )));
             }
             Ok(ReplayStep::Continue)
         }

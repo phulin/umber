@@ -3861,6 +3861,40 @@ impl<'a, G> CommandContext<'a, G> {
         self.page.fire_up()
     }
 
+    /// Begins TeX82 §1054's next end-job ejection at a page-builder
+    /// position different from the preceding attempt.
+    pub fn begin_end_job_ejection(
+        &mut self,
+    ) -> Result<crate::page::PageBuilderProgressToken, crate::page::PageBuilderProgressToken> {
+        self.page.begin_end_job_ejection()
+    }
+
+    /// Reports whether the bracketed §994 builder invocation changed the
+    /// canonical page-builder position.
+    #[must_use]
+    pub fn complete_end_job_ejection(
+        &mut self,
+        started: crate::page::PageBuilderProgressToken,
+    ) -> bool {
+        self.page.complete_end_job_ejection(started)
+    }
+
+    /// Retires the page-owned replay fence once §1054 accepts the final stop.
+    pub fn finish_end_job(&mut self) {
+        self.page.finish_end_job();
+    }
+
+    #[must_use]
+    pub fn page_builder_resume_after_output_pending(&self) -> bool {
+        self.page.resume_after_output_pending()
+    }
+
+    /// Consumes TeX82 §1012's continuation back into the same §994
+    /// `build_page` invocation.
+    pub fn take_page_builder_resume_after_output(&mut self) -> bool {
+        self.page.take_resume_after_output()
+    }
+
     pub fn start_page_after_output(&mut self) {
         self.page.start_page_after_output(&self.page_nodes);
     }

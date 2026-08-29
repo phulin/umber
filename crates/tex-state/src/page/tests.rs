@@ -1248,6 +1248,84 @@ fn production_succession_transfers_complete_page_builder_owner() {
 }
 
 #[test]
+fn end_job_progress_fence_rejects_identical_replay_and_survives_rollback_and_succession() {
+    // TeX82 §§1054/994/1012: a backed-up stop may run again only after
+    // the page builder has consumed material, fired a page, or completed an
+    // output transition. Merely appending material is not builder progress.
+    page_arena!(arena, pool, state);
+    let mut page = PageBuilderState::default();
+    let first = page
+        .begin_end_job_ejection()
+        .expect("first ejection has no predecessor");
+    page.push_contribution(&mut arena, kern(1));
+    assert_eq!(page.begin_end_job_ejection(), Err(first));
+    let carrier = page
+        .pop_contribution_front(&mut arena)
+        .expect("builder consumes the contribution");
+    page.discard_carrier(carrier);
+    assert!(page.complete_end_job_ejection(first));
+    let after_contribution = page
+        .begin_end_job_ejection()
+        .expect("consumption permits one retry");
+    assert_ne!(after_contribution, first);
+
+    page.start_page_after_output(&arena);
+    assert!(page.resume_after_output_pending());
+    assert!(page.take_resume_after_output());
+    assert!(!page.resume_after_output_pending());
+    assert!(
+        page.begin_end_job_ejection()
+            .is_ok_and(|position| position != after_contribution)
+    );
+
+    page.finish_end_job();
+    let mark = page.checkpoint_mark();
+    let checkpoint_position = page.progress_token();
+    let attempt = page
+        .begin_end_job_ejection()
+        .expect("checkpointed attempt starts");
+    page.push_contribution(&mut arena, kern(2));
+    let carrier = page
+        .pop_contribution_front(&mut arena)
+        .expect("candidate builder progresses");
+    page.discard_carrier(carrier);
+    assert!(page.complete_end_job_ejection(attempt));
+    page.rollback_transaction(mark);
+    assert_eq!(page.progress_token(), checkpoint_position);
+    assert_eq!(
+        page.begin_end_job_ejection(),
+        Ok(checkpoint_position),
+        "rollback restores both the page position and replay fence"
+    );
+
+    let mut history = PageRegionHistory::default();
+    let before_successor = {
+        let (nodes, builder) = history.parts_mut();
+        let first = builder
+            .begin_end_job_ejection()
+            .expect("successor case starts");
+        builder.start_page_after_output(&nodes);
+        assert!(builder.complete_end_job_ejection(first));
+        assert!(builder.take_resume_after_output());
+        builder
+            .begin_end_job_ejection()
+            .expect("output progress permits retry")
+    };
+    history.arm_output_successor_build();
+    history
+        .prepare_production_shipout()
+        .expect("pending successor preflights");
+    history
+        .commit_prepared_shipout()
+        .expect("pending successor commits");
+    assert_eq!(
+        history.builder_mut().begin_end_job_ejection(),
+        Err(before_successor),
+        "successor ownership cannot erase an identical End state"
+    );
+}
+
+#[test]
 fn production_uncheckpointed_pages_reuse_pool_at_a_fixed_high_water() {
     let mut history = PageRegionHistory::default();
     let mut warmed_pages = None;

@@ -207,6 +207,17 @@ pub struct PageFireUp {
     trigger: PageBreak,
 }
 
+/// Opaque page-builder position bracketing one TeX82 §1054 end-job
+/// ejection.
+///
+/// This is a semantic state coordinate, not a wall-clock or retry count. It
+/// advances only when §994 consumes a contribution or §1012 changes the
+/// current page/output state, and it is restored with the page-builder
+/// journal. A caller may therefore prove that a backed-up `\end` reached a
+/// different page-builder state before it is delivered again.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageBuilderProgressToken(u64);
+
 impl PageFireUp {
     #[must_use]
     pub const fn new(best_break: PageBreak, best_size: Scaled, trigger: PageBreak) -> Self {
@@ -471,6 +482,9 @@ pub(crate) struct PageBuilderState {
     best_page_break: Option<PageBreak>,
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
+    progress: PageBuilderProgressToken,
+    end_job_ejection: Option<PageBuilderProgressToken>,
+    resume_after_output: bool,
     insertions: Vec<PageInsertion>,
     insertion_positions: Vec<Option<u16>>,
     top_mark: Option<NodeTokenList>,
@@ -604,6 +618,9 @@ struct PageScalars {
     best_page_break: Option<PageBreak>,
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
+    progress: PageBuilderProgressToken,
+    end_job_ejection: Option<PageBuilderProgressToken>,
+    resume_after_output: bool,
     tex82_dynamic_words: usize,
     etex_dynamic_words: usize,
     page_node_root_count: usize,
@@ -627,6 +644,9 @@ struct PageInverseTarget<'a> {
     best_page_break: &'a mut Option<PageBreak>,
     best_size: &'a mut Scaled,
     fire_up: &'a mut Option<PageFireUp>,
+    progress: &'a mut PageBuilderProgressToken,
+    end_job_ejection: &'a mut Option<PageBuilderProgressToken>,
+    resume_after_output: &'a mut bool,
     tex82_dynamic_words: &'a mut usize,
     etex_dynamic_words: &'a mut usize,
     page_node_root_count: &'a mut usize,
@@ -662,6 +682,9 @@ impl PageInverseTarget<'_> {
             best_page_break: *self.best_page_break,
             best_size: *self.best_size,
             fire_up: *self.fire_up,
+            progress: *self.progress,
+            end_job_ejection: *self.end_job_ejection,
+            resume_after_output: *self.resume_after_output,
             tex82_dynamic_words: *self.tex82_dynamic_words,
             etex_dynamic_words: *self.etex_dynamic_words,
             page_node_root_count: *self.page_node_root_count,
@@ -684,6 +707,9 @@ impl PageInverseTarget<'_> {
         *self.best_page_break = old.best_page_break;
         *self.best_size = old.best_size;
         *self.fire_up = old.fire_up;
+        *self.progress = old.progress;
+        *self.end_job_ejection = old.end_job_ejection;
+        *self.resume_after_output = old.resume_after_output;
         *self.tex82_dynamic_words = old.tex82_dynamic_words;
         *self.etex_dynamic_words = old.etex_dynamic_words;
         *self.page_node_root_count = old.page_node_root_count;
@@ -2011,6 +2037,9 @@ impl Default for PageBuilderState {
             best_page_break: None,
             best_size: Scaled::from_raw(0),
             fire_up: None,
+            progress: PageBuilderProgressToken(0),
+            end_job_ejection: None,
+            resume_after_output: false,
             insertions: Vec::new(),
             insertion_positions: Vec::new(),
             top_mark: None,
@@ -2077,6 +2106,9 @@ impl PageBuilderState {
             best_page_break,
             best_size,
             fire_up,
+            progress,
+            end_job_ejection,
+            resume_after_output,
             insertions,
             insertion_positions,
             top_mark,
@@ -2118,6 +2150,9 @@ impl PageBuilderState {
                 best_page_break,
                 best_size,
                 fire_up,
+                progress,
+                end_job_ejection,
+                resume_after_output,
                 tex82_dynamic_words,
                 etex_dynamic_words,
                 page_node_root_count,
@@ -2134,6 +2169,77 @@ impl PageBuilderState {
                 mark_class_positions,
             },
         )
+    }
+
+    fn advance_progress(&mut self) {
+        self.progress.0 = self
+            .progress
+            .0
+            .checked_add(1)
+            .expect("page-builder progress space exhausted");
+    }
+
+    /// Starts one TeX82 §1054 ejection only after the preceding attempt made
+    /// canonical page-builder progress.
+    pub(crate) fn begin_end_job_ejection(
+        &mut self,
+    ) -> Result<PageBuilderProgressToken, PageBuilderProgressToken> {
+        let position = self.progress;
+        if self.end_job_ejection == Some(position) {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_hot_core_page_builder_transition(
+                crate::measurement::HotCorePageBuilderTransition::EndJobIdenticalState,
+            );
+            return Err(position);
+        }
+        self.record_scalars();
+        self.end_job_ejection = Some(position);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_page_builder_transition(
+            crate::measurement::HotCorePageBuilderTransition::EndJobEjectionStarted,
+        );
+        Ok(position)
+    }
+
+    pub(crate) fn complete_end_job_ejection(&mut self, started: PageBuilderProgressToken) -> bool {
+        let progressed = self.progress.0 != started.0;
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_page_builder_transition(if progressed {
+            crate::measurement::HotCorePageBuilderTransition::EndJobEjectionProgressed
+        } else {
+            crate::measurement::HotCorePageBuilderTransition::EndJobIdenticalState
+        });
+        progressed
+    }
+
+    pub(crate) fn finish_end_job(&mut self) {
+        if self.end_job_ejection.is_some() || self.resume_after_output {
+            self.record_scalars();
+            self.end_job_ejection = None;
+            self.resume_after_output = false;
+        }
+    }
+
+    pub(crate) const fn resume_after_output_pending(&self) -> bool {
+        self.resume_after_output
+    }
+
+    pub(crate) fn take_resume_after_output(&mut self) -> bool {
+        if !self.resume_after_output {
+            return false;
+        }
+        self.record_scalars();
+        self.resume_after_output = false;
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_page_builder_transition(
+            crate::measurement::HotCorePageBuilderTransition::OutputBuilderResumed,
+        );
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn progress_token(&self) -> PageBuilderProgressToken {
+        self.progress
     }
 
     pub(crate) fn arm_output_successor_build(&mut self, mark: PageClosureBuildMark) {
@@ -2644,6 +2750,9 @@ impl PageBuilderState {
             best_page_break: self.best_page_break,
             best_size: self.best_size,
             fire_up: self.fire_up,
+            progress: self.progress,
+            end_job_ejection: self.end_job_ejection,
+            resume_after_output: self.resume_after_output,
             tex82_dynamic_words: self.tex82_dynamic_words,
             etex_dynamic_words: self.etex_dynamic_words,
             page_node_root_count: self.page_node_root_count,
@@ -2678,6 +2787,9 @@ impl PageBuilderState {
         self.best_page_break = old.best_page_break;
         self.best_size = old.best_size;
         self.fire_up = old.fire_up;
+        self.progress = old.progress;
+        self.end_job_ejection = old.end_job_ejection;
+        self.resume_after_output = old.resume_after_output;
         self.tex82_dynamic_words = old.tex82_dynamic_words;
         self.etex_dynamic_words = old.etex_dynamic_words;
         self.page_node_root_count = old.page_node_root_count;
@@ -3276,6 +3388,9 @@ impl PageBuilderState {
 
     pub(crate) fn start_new_page(&mut self, arena: &PageNodeArena) {
         self.start_page_after_output(arena);
+        // This reset is used by INITEX terminal cleanup, not by §1012's
+        // return into a live `build_page` invocation.
+        self.resume_after_output = false;
         self.page_goal = Scaled::from_raw(0);
         self.page_total = Scaled::from_raw(0);
         self.page_stretch = Scaled::from_raw(0);
@@ -3290,6 +3405,8 @@ impl PageBuilderState {
     /// freezes the next page's specifications.
     pub(crate) fn start_page_after_output(&mut self, arena: &PageNodeArena) {
         self.record_scalars();
+        self.advance_progress();
+        self.resume_after_output = true;
         let current = arena
             .span_list(self.current_page)
             .expect("current page root belongs to the live arena");
@@ -3378,6 +3495,7 @@ impl PageBuilderState {
 
     pub(crate) fn record_fire_up(&mut self, trigger_index: usize) {
         self.record_scalars();
+        self.advance_progress();
         let best_break = self
             .best_page_break
             .unwrap_or_else(|| PageBreak::new(trigger_index));
@@ -3486,6 +3604,7 @@ impl PageBuilderState {
         let etex_words = node.tex_memory_words(true).1;
         let retains_root = node_retains_page_handle(node);
         self.record_scalars();
+        self.advance_progress();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         let removed = arena.slice_span(self.contribution, 0..1).ok()?;
         self.contribution = arena

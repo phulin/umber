@@ -263,7 +263,7 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
         }
     }
 
-    let mut output = String::from("{\"schema\":2,\"allocations\":{");
+    let mut output = String::from("{\"schema\":3,\"allocations\":{");
     let mut first = true;
     for (name, measurement) in tex_state::measurement::HotCoreAllocationOwner::NAMES
         .into_iter()
@@ -338,6 +338,15 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
     for (name, count) in tex_state::measurement::HotCoreMaterialization::NAMES
         .into_iter()
         .zip(census.materializations)
+    {
+        separator(&mut output, &mut first);
+        write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
+    }
+    output.push_str("},\"page_builder_transitions\":{");
+    first = true;
+    for (name, count) in tex_state::measurement::HotCorePageBuilderTransition::NAMES
+        .into_iter()
+        .zip(census.page_builder_transitions)
     {
         separator(&mut output, &mut first);
         write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");

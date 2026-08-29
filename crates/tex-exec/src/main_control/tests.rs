@@ -12830,6 +12830,162 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
 }
 
 #[test]
+fn end_job_transition_census_covers_output_and_residual_paths() {
+    // TeX82 §§1054/994--1026: every expanded stop after the initial
+    // ejection must follow a completed page-builder/output transition. The
+    // page builder resumes default output itself; End delivery is never its
+    // scheduler.
+    for (name, source, expected_stops, expected_pages) in [
+        ("default-output", br"\hrule\end".as_slice(), 5, 1),
+        ("terminal-kern", br"\kern1pt\end".as_slice(), 3, 1),
+        (
+            "explicit-output",
+            br"\output={\shipout\box255}\hrule\end".as_slice(),
+            5,
+            1,
+        ),
+        (
+            "dead-cycle",
+            br"\maxdeadcycles=1\output={}\hrule\end".as_slice(),
+            5,
+            1,
+        ),
+        (
+            "split-insertion",
+            br"\vsize=10pt\count0=1000\dimen0=5pt\skip0=0pt\insert0{\hrule height20pt}\hrule height20pt\end"
+                .as_slice(),
+            6,
+            2,
+        ),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source);
+            let mut observations = ObservationRecorder::default();
+            let mut terminal = None;
+            for step in 1..=128 {
+                let result = control
+                    .step_with_observer(stores, &mut observations)
+                    .unwrap_or_else(|error| panic!("{name} step {step}: {error}"));
+                if matches!(result, MainControlStep::End | MainControlStep::EndOfInput) {
+                    terminal = Some((step, result));
+                    break;
+                }
+            }
+            let stop_positions = observations
+                .0
+                .iter()
+                .enumerate()
+                .filter_map(|(index, observation)| {
+                    matches!(
+                        observation,
+                        CommandObservation::Command(command)
+                            if command.boundary == CommandDeliveryBoundary::Expanded
+                                && command.command == "stop"
+                    )
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            let shipout_positions = observations
+                .0
+                .iter()
+                .enumerate()
+                .filter_map(|(index, observation)| {
+                    matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == ObservationEffectKind::Shipout
+                    )
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            let termination = observations
+                .0
+                .iter()
+                .position(|observation| {
+                    matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == ObservationEffectKind::Terminate
+                    )
+                })
+                .expect("terminating stop publishes its effect");
+            assert!(terminal.is_some(), "{name} did not terminate");
+            assert_eq!(stop_positions.len(), expected_stops, "{name}");
+            assert_eq!(shipout_positions.len(), expected_pages, "{name}");
+            assert_eq!(
+                stores.world().artifact_commits().len(),
+                expected_pages,
+                "{name}"
+            );
+            assert!(
+                stop_positions.first() < shipout_positions.first(),
+                "{name}: ejection stop precedes output"
+            );
+            assert!(
+                shipout_positions.last() < stop_positions.last(),
+                "{name}: accepted stop follows completed output"
+            );
+            assert!(
+                stop_positions.last().is_some_and(|last| *last < termination),
+                "{name}: termination follows its accepted stop"
+            );
+        });
+    }
+}
+
+#[test]
+fn suspended_output_resume_preserves_end_job_progress_and_observation_order() {
+    // TeX82 §§1025--1026/1054: immutable input acquisition inside an
+    // explicit output routine may suspend the host episode, but it cannot
+    // publish or roll back the page-builder progress that admitted that
+    // routine. Resumption must match a run where the resource was present
+    // from the start, including the stop/shipout/termination order.
+    let source = br"\output={\input child\shipout\box255}\hrule\end";
+    let child =
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..]));
+
+    crate::test_harness::with_nonstop_plain_universe(|retried_stores| {
+        let mut retried_control = MainControl::tex82_initex(retried_stores);
+        register_source(&mut retried_control, source);
+        let mut retried = ObservationRecorder::default();
+        for _ in 0..3 {
+            loop {
+                match retried_control
+                    .advance_with_observer(retried_stores, &mut retried)
+                    .expect("output routine advances to its input resource")
+                {
+                    StepResult::Suspended(ResourceNeed::Input { name, .. }) => {
+                        assert_eq!(name, "child.tex");
+                        break;
+                    }
+                    StepResult::Progress(ReplayStep::Continue) => {}
+                    other => panic!("output resource reached {other:?}"),
+                }
+            }
+        }
+        retried_control
+            .capabilities_mut()
+            .register_input("child.tex", child.clone());
+        run_to_end_observed(&mut retried_control, retried_stores, &mut retried);
+
+        crate::test_harness::with_nonstop_plain_universe(|direct_stores| {
+            let mut direct_control = MainControl::tex82_initex(direct_stores);
+            direct_control
+                .capabilities_mut()
+                .register_input("child.tex", child);
+            register_source(&mut direct_control, source);
+            let mut direct = ObservationRecorder::default();
+            run_to_end_observed(&mut direct_control, direct_stores, &mut direct);
+
+            assert_eq!(retried.0, direct.0);
+            assert_eq!(retried_stores.world().artifact_commits().len(), 1);
+            assert_eq!(direct_stores.world().artifact_commits().len(), 1);
+        });
+    });
+}
+
+#[test]
 fn illegal_case_command_spelling_uses_live_escapechar() {
     // TeX82 §§63, 298, and 1049: `you_cant` renders the rejected command
     // through `print_cmd_chr`; its primitive cases use `print_esc`, whose

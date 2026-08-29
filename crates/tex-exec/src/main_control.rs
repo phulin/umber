@@ -268,15 +268,6 @@ pub struct MainControl<G> {
     /// step, so the prologue is carried as a one-shot on the first step rather
     /// than by a distinct entry call every driver would have to remember.
     main_control_entered: bool,
-    /// True while TeX82 §1054's end-job material is still queued for §994's
-    /// page builder.
-    ///
-    /// A nonempty contribution list does not imply that the end-job trio has
-    /// already been appended: it may be the residual material that made
-    /// `its_all_over` false in the first place. Keep this continuation
-    /// explicit across command-sized steps so a suffix resumed after
-    /// shipout is not given a duplicate trio either.
-    end_job_ejection_pending: bool,
     /// tex.web's `init`/`tini` compile-time split as a session flag.
     ///
     /// tex.web builds INITEX and production TeX from the same source with
@@ -2010,7 +2001,6 @@ impl<G> Default for MainControl<G> {
             set_box_forbidden_depth: 0,
             shown_mode: None,
             main_control_entered: false,
-            end_job_ejection_pending: false,
             initex: false,
             preloaded_format: None,
             engine_binary: None,
@@ -2563,7 +2553,6 @@ impl<G> MainControl<G> {
             || !self.active_math_shifts.is_empty()
             || self.main_loop_active
             || self.set_box_forbidden_depth != 0
-            || self.end_job_ejection_pending
             || self.operation_observations.is_some()
             || self.operation_receipt_start.is_some()
             || self.suspended_operation_observation.is_some()
@@ -4952,13 +4941,12 @@ impl<G> MainControl<G> {
             // operation still owns a rollback-restorable mode root. Resume
             // that builder continuation in its own journaled operation before
             // delivering another TeX command.
-            let resumes_page_output = !self.page_region_succession_pending
-                && !self.boxes.output_routine_active
-                && stores
-                    .command_context()
-                    .expect("live generation")
-                    .page_fire_up()
-                    .is_some();
+            let resumes_page_output =
+                !self.page_region_succession_pending && !self.boxes.output_routine_active && {
+                    let context = stores.command_context().expect("live generation");
+                    context.page_fire_up().is_some()
+                        || context.page_builder_resume_after_output_pending()
+                };
             if resumes_page_output {
                 let applied = self
                     .fire_pending_page_output(stores, &mut diagnostic_effects)
@@ -6214,6 +6202,23 @@ impl<G> MainControl<G> {
             return Ok(());
         }
         while !self.boxes.output_routine_active {
+            // TeX82 §§1012/1014--1015 returns from default `ship_out`
+            // to the same §994 `build_page` invocation. Page-region
+            // succession can defer that return until the contributing
+            // operation's mode journal commits, so the page builder owns an
+            // exact rollback-coupled continuation instead of borrowing the
+            // backed-up command as a scheduler.
+            {
+                let mut context = stores.command_context().expect("live generation");
+                if context.take_page_builder_resume_after_output() {
+                    let error_context = self.command.output_open_context(&context);
+                    crate::page_builder::build_page_with_error_context(
+                        &mut context,
+                        diagnostic_effects,
+                        &error_context,
+                    )?;
+                }
+            }
             let mut context = stores.command_context().expect("live generation");
             let selected = {
                 let Some(fire_up) = context.page_fire_up() else {
@@ -6273,7 +6278,10 @@ impl<G> MainControl<G> {
                     if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
-                    break;
+                    if self.page_region_succession_pending {
+                        break;
+                    }
+                    continue;
                 }
                 crate::page_output::SelectedPageOutput::UserRoutine => {
                     let enclosing = self.operation_observations.take();
@@ -9333,7 +9341,6 @@ impl<G> MainControl<G> {
                     &self.active_math_left_boundaries,
                     &self.active_math_shifts,
                     &mut self.prepared_dvi_pages,
-                    &mut self.end_job_ejection_pending,
                 )
             }
         };

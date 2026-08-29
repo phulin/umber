@@ -96,6 +96,10 @@ pub(crate) fn resume_page_builder_after_output<G>(
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes, false);
+    assert!(
+        stores.take_page_builder_resume_after_output(),
+        "one explicit output completion resumes one page-builder invocation"
+    );
     crate::page_builder::build_page_with_diagnostic_context(
         stores,
         diagnostic_effects,

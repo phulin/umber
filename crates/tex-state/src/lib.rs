@@ -211,7 +211,8 @@ pub use memo::{
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageCandidateSettlementCounters,
-    PageContents, PageDimension, PageFireUp, PageInteger, PageRegionCounters,
+    PageBuilderProgressToken, PageContents, PageDimension, PageFireUp, PageInteger,
+    PageRegionCounters,
 };
 pub use primitive::PrimitiveHandle;
 pub use provenance::{ProvenanceBudgets, ProvenanceDemand};

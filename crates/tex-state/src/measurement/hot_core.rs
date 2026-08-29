@@ -156,6 +156,30 @@ pub enum HotCoreMaterialization {
     PreparedOperation,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum HotCorePageBuilderTransition {
+    EndJobEjectionStarted,
+    EndJobEjectionProgressed,
+    EndJobIdenticalState,
+    OutputBuilderResumed,
+}
+
+impl HotCorePageBuilderTransition {
+    pub const COUNT: usize = 4;
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub const NAMES: [&'static str; Self::COUNT] = [
+        "end_job_ejection_started",
+        "end_job_ejection_progressed",
+        "end_job_identical_state",
+        "output_builder_resumed",
+    ];
+}
+
 impl HotCoreMaterialization {
     pub const COUNT: usize = 3;
 
@@ -192,6 +216,7 @@ pub struct HotCoreCensus {
     pub macro_expansions: u64,
     pub unexpandable_opcodes: [u64; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT],
     pub materializations: [u64; HotCoreMaterialization::COUNT],
+    pub page_builder_transitions: [u64; HotCorePageBuilderTransition::COUNT],
     pub interpreter_constructions: u64,
     pub interpreter_operation_entries: u64,
     pub phase_boundaries: [u64; HotCorePhase::COUNT],
@@ -354,6 +379,7 @@ impl Default for HotCoreCensus {
             macro_expansions: 0,
             unexpandable_opcodes: [0; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT],
             materializations: [0; HotCoreMaterialization::COUNT],
+            page_builder_transitions: [0; HotCorePageBuilderTransition::COUNT],
             interpreter_constructions: 0,
             interpreter_operation_entries: 0,
             phase_boundaries: [0; HotCorePhase::COUNT],
@@ -395,6 +421,10 @@ impl HotCoreCensus {
             materializations: core::array::from_fn(|index| {
                 self.materializations[index].saturating_sub(baseline.materializations[index])
             }),
+            page_builder_transitions: core::array::from_fn(|index| {
+                self.page_builder_transitions[index]
+                    .saturating_sub(baseline.page_builder_transitions[index])
+            }),
             interpreter_constructions: self
                 .interpreter_constructions
                 .saturating_sub(baseline.interpreter_constructions),
@@ -420,6 +450,8 @@ static UNEXPANDABLE_OPCODES: [AtomicU64; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT] =
     [const { AtomicU64::new(0) }; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT];
 static MATERIALIZATIONS: [AtomicU64; HotCoreMaterialization::COUNT] =
     [const { AtomicU64::new(0) }; HotCoreMaterialization::COUNT];
+static PAGE_BUILDER_TRANSITIONS: [AtomicU64; HotCorePageBuilderTransition::COUNT] =
+    [const { AtomicU64::new(0) }; HotCorePageBuilderTransition::COUNT];
 static INTERPRETER_CONSTRUCTIONS: AtomicU64 = AtomicU64::new(0);
 static INTERPRETER_OPERATION_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static PHASE_BOUNDARIES: [AtomicU64; HotCorePhase::COUNT] =
@@ -542,6 +574,10 @@ pub fn record_hot_core_unexpandable_opcode(operand: usize) {
 
 pub fn record_hot_core_materialization(materialization: HotCoreMaterialization) {
     MATERIALIZATIONS[materialization.index()].fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_page_builder_transition(transition: HotCorePageBuilderTransition) {
+    PAGE_BUILDER_TRANSITIONS[transition.index()].fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_hot_core_interpreter_construction() {
@@ -722,6 +758,9 @@ pub fn hot_core_census() -> HotCoreCensus {
         }),
         materializations: core::array::from_fn(|index| {
             MATERIALIZATIONS[index].load(Ordering::Relaxed)
+        }),
+        page_builder_transitions: core::array::from_fn(|index| {
+            PAGE_BUILDER_TRANSITIONS[index].load(Ordering::Relaxed)
         }),
         interpreter_constructions: INTERPRETER_CONSTRUCTIONS.load(Ordering::Relaxed),
         interpreter_operation_entries: INTERPRETER_OPERATION_ENTRIES.load(Ordering::Relaxed),
