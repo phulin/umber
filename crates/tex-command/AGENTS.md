@@ -217,7 +217,10 @@ collector (see `src/conditionals.rs`).
   has ended. The loops share canonical token-to-current-meaning delivery;
   creation permission exists only at source tokenization and is absent from
   delivery policy. The loops do not test a raw-versus-expanded mode on every
-  token.
+  token. Internal steps return a compact status or zero-sized failure marker;
+  one request-local cold error slot carries a real error to the public boundary.
+  Expanded delivery classifies each resolved meaning once as return, expand, or
+  end-template handling.
   The facade also resumes an executor-retained settled delivery and settles a
   raw preflight command without backing it up or delivering it twice.
   `status.rs` owns the one processor-level scanner episode mechanism for

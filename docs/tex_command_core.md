@@ -192,10 +192,14 @@ The driver is destination-directed. Its caller provides the one final
 facts, resolution completes the same address, and delivery policy settles it
 once. The return is only a compact `DeliveryStatus` naming end of input,
 command completion, replay completion, pending observation, or an alignment
-boundary. A command moves out of this slot only into its final consumer or the
-one typed expansion suspension slot at a real resource barrier. There is no
-process-global slot, mailbox, destination inference, nested-request reuse, or
-second raw representation.
+boundary. Internal delivery steps pair that status with a zero-sized failure
+marker and move a real `CommandError` into one caller-owned cold slot. Only the
+public boundary constructs the rich `Result`, once per request; the successful
+per-token loop never reconstructs or copies its error envelope. A command moves
+out of its destination slot only into its final consumer or the one typed
+expansion suspension slot at a real resource barrier. There is no process-global
+slot, mailbox, destination inference, nested-request reuse, or second raw
+representation.
 
 The input side writes into that same final command value. The top input level
 keeps its packed frame position, backing handle, source cursor,
@@ -242,9 +246,12 @@ delivery settlement then applies `\noexpand`, outer-validity recovery,
 alignment classification, and optional observation in canonical order.
 Alignment classification writes its exact `AlignmentDeliveryAdjustment` into
 the same command before raw observation; backup later consumes that recorded
-adjustment rather than reclassifying the spelling. Internal ErrorStop deletion,
-math-shift lookahead, and recovery-list draining likewise provide their
-discard-or-backup slot directly to the driver.
+adjustment rather than reclassifying the spelling. Expanded delivery then
+matches the resolved meaning once to choose return, expansion, or
+`end_template` handling; protected and undefined policies are branches of that
+same classification. Internal ErrorStop deletion, math-shift lookahead, and
+recovery-list draining likewise provide their discard-or-backup slot directly
+to the driver.
 
 The value-returning entry points are conveniences over the same destination
 driver; the executor hot loop and destination-aware callers use

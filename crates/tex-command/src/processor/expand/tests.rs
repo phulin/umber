@@ -69,6 +69,7 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
 struct OrdinaryDeliveryEvidence {
     slot_initializations: u64,
     raw_writes: u64,
+    expanded_classifications: u64,
     command_clones: u64,
     token_frame_steps: u64,
     meaning_lookups: u64,
@@ -136,6 +137,7 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             terminal
         );
         let before_ownership = crate::command::command_ownership_counters();
+        let classifications_before = super::expanded_classifications();
         let expansions_before = command.expansion.cumulative_expansions;
         let work_before = fuel.work();
 
@@ -180,6 +182,7 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             slot_initializations: after_ownership.slot_initializations
                 - before_ownership.slot_initializations,
             raw_writes: after_ownership.raw_writes - before_ownership.raw_writes,
+            expanded_classifications: super::expanded_classifications() - classifications_before,
             command_clones: after_ownership.clones - before_ownership.clones,
             token_frame_steps: work.token_frame_steps - work_before.token_frame_steps,
             meaning_lookups: work.meaning_lookups - work_before.meaning_lookups,
@@ -201,6 +204,7 @@ fn one_and_4096_ordinary_expansions_reuse_one_slot_with_exact_linear_work() {
     for (expansions, evidence) in [(1, one), (4_096, many)] {
         assert_eq!(evidence.slot_initializations, 1);
         assert_eq!(evidence.raw_writes, expansions + 1);
+        assert_eq!(evidence.expanded_classifications, expansions + 1);
         assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.token_frame_steps, expansions + 1);
         assert_eq!(evidence.meaning_lookups, expansions);
@@ -212,6 +216,14 @@ fn one_and_4096_ordinary_expansions_reuse_one_slot_with_exact_linear_work() {
             assert_eq!(evidence.allocated_bytes, 0);
         }
     }
+}
+
+#[test]
+fn internal_delivery_result_does_not_carry_the_rich_error_envelope() {
+    let internal = size_of::<Result<crate::DeliveryStatus, crate::processor::DeliveryFailed>>();
+    let public = size_of::<Result<crate::DeliveryStatus, crate::CommandError>>();
+
+    assert!(internal < public, "internal={internal}, public={public}");
 }
 
 #[test]

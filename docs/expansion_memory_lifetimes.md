@@ -300,8 +300,12 @@ overwrites that same value for the next token; it does not clear the `Option`,
 reconstruct an empty command, or redispatch the prior meaning between
 expansions. The driver returns only a compact status, and moves the command
 only to its final consumer or the exact typed expansion suspension slot. The
-slot is neither global nor a mailbox and never survives independently of its
-request.
+request also owns one stack-local cold error slot. Internal delivery transitions
+return a zero-sized failure marker; a real failure moves its `CommandError` into
+that slot, and only the public boundary constructs the rich `Result`. Thus an
+ordinary successful token neither copies nor reconstructs the error envelope.
+The command slot is neither global nor a mailbox and never survives
+independently of its request.
 
 An admitted control-sequence spelling indexes and borrows its dense meaning row
 for resolution. The same token classification reports the work ledger's
@@ -310,6 +314,8 @@ meanings decode inside that borrow. A macro row acquires one `DefinitionId<G>`
 owner in the final owned `CurrentCommand`; borrowing the row itself acquires
 none. Trace eligibility and expanded-loop classification likewise borrow that
 resolved meaning instead of retaining and releasing another definition owner.
+The expanded loop classifies that meaning once into return, expand, or
+`end_template`; policy handling does not repeat meaning matches.
 The temporary bank borrow ends before any command-driven mutation, while the
 final owner survives later assignment, group restoration, operation rollback,
 replay, retry, suspension, and generation retirement. TeX assignment level and

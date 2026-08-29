@@ -26,9 +26,9 @@ use crate::{
 };
 
 use super::{
-    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryMode,
-    DeliveryPolicy, DeliveryStatus, ExpandedDeliveryPolicy, ExpandedObservationPolicy,
-    FirstCommandPolicy, ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryErrorSlot,
+    DeliveryFailed, DeliveryMode, DeliveryPolicy, DeliveryStatus, ExpandedDeliveryPolicy,
+    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 use crate::observation::{
@@ -287,6 +287,59 @@ fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
     match meaning {
         ResolvedMeaning::Static(meaning) => Some(*meaning),
         ResolvedMeaning::Macro { .. } => None,
+    }
+}
+
+/// The one decision TeX.web §380 makes after raw delivery has resolved the
+/// current meaning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExpandedCommandAction {
+    Return,
+    Expand,
+    EndTemplate,
+}
+
+#[cfg(test)]
+thread_local! {
+    static EXPANDED_CLASSIFICATIONS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn expanded_classifications() -> u64 {
+    EXPANDED_CLASSIFICATIONS.with(core::cell::Cell::get)
+}
+
+#[inline(always)]
+fn classify_expanded_command<G>(
+    command: &CurrentCommand<G>,
+    protected: ProtectedMacroHandling,
+    undefined: UndefinedHandling,
+) -> ExpandedCommandAction {
+    #[cfg(test)]
+    EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
+
+    match command.meaning_ref() {
+        ResolvedMeaning::Macro { flags, .. }
+            if protected == ProtectedMacroHandling::Preserve
+                && flags.contains(MeaningFlags::PROTECTED) =>
+        {
+            ExpandedCommandAction::Return
+        }
+        ResolvedMeaning::Macro { .. } => ExpandedCommandAction::Expand,
+        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)) => {
+            ExpandedCommandAction::EndTemplate
+        }
+        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)) => {
+            ExpandedCommandAction::Return
+        }
+        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_)) => ExpandedCommandAction::Expand,
+        ResolvedMeaning::Static(Meaning::Undefined)
+            if undefined == UndefinedHandling::Diagnose
+                && !matches!(command.spelling().semantic_token(), Token::Param(_)) =>
+        {
+            ExpandedCommandAction::Expand
+        }
+        ResolvedMeaning::Static(_) => ExpandedCommandAction::Return,
     }
 }
 
@@ -897,80 +950,98 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.last_delivery = None;
-        let result = (|| match policy.mode {
+        let mut error = DeliveryErrorSlot::empty();
+        let result = match policy.mode {
             DeliveryMode::Raw => {
                 debug_assert!(destination.is_none());
-                self.raw_delivery_driver(policy, destination)
+                self.raw_delivery_driver(policy, destination, &mut error)
             }
             DeliveryMode::Expanded(expanded) => {
-                let key = self.expansion_resume.take().or_else(|| {
-                    self.scanner_resume
-                        .as_ref()
-                        .is_some_and(crate::ScannerFrameKey::is_expansion)
-                        .then(|| {
-                            let wrapper = self
-                                .scanner_resume
-                                .take()
-                                .expect("matched expansion wrapper");
-                            self.command
-                                .scratch
-                                .take_expansion_key(wrapper)
-                                .expect("live wrapper owns expansion work")
-                        })
-                });
-                let resumed_pending = key.is_some();
-                if let Some(key) = key {
-                    let mut retained = self
-                        .command
-                        .scratch
-                        .resume_expansion(key)
-                        .map_err(crate::scan_toks::scratch_command_error)?;
-                    if destination
-                        .as_ref()
-                        .is_some_and(|command| command != &retained.command)
-                    {
-                        if let Some(child) = retained.take_child() {
-                            self.abort_continuation(child)?;
-                        }
-                        return Err(CommandError::input_invariant());
-                    }
-                    if let Some(child) = retained.child.take() {
-                        let (key, destination) = child.restore();
-                        if destination != crate::state::PendingExpansionChildDestination::Dispatch {
-                            return Err(CommandError::input_invariant());
-                        }
-                        self.scanner_resume = Some(key);
-                    }
-                    self.resumed_expansion = Some(retained.resume);
-                    *destination = Some(retained.command);
-                }
-                if resumed_pending && let Some(command) = &destination {
-                    self.resume_current_command(command);
-                }
-                let depth = self.command.transient.active_expansion_depth;
-                self.command.transient.active_expansion_depth = depth
-                    .checked_add(1)
-                    .ok_or_else(|| CommandError::input_invariant())?;
-                let result =
-                    self.expanded_delivery_driver(policy, expanded, resumed_pending, destination);
-                assert_eq!(
-                    self.command.transient.active_expansion_depth,
-                    depth + 1,
-                    "nested delivery must balance expansion depth"
-                );
-                self.command.transient.active_expansion_depth = depth;
-                result
+                self.expanded_delivery_entry(policy, expanded, destination, &mut error)
             }
-        })();
-        if result.is_err() {
-            // A resource suspension has already moved the exact command into
-            // its typed expansion frame. Every other failure abandons the
-            // delivery. In both cases the caller slot and its DefinitionId
-            // owner must be empty, just as they were before raw delivery
-            // started, and a later episode must mint a fresh delivery proof.
-            destination.take();
-            self.last_delivery = None;
+        };
+        match result {
+            Ok(status) => Ok(status),
+            Err(failure) => {
+                // A resource suspension has already moved the exact command
+                // into its typed expansion frame. Every other failure abandons
+                // the delivery. In both cases the caller slot and its
+                // DefinitionId owner must be empty, just as they were before
+                // raw delivery started, and a later episode must mint a fresh
+                // delivery proof.
+                destination.take();
+                self.last_delivery = None;
+                Err(error.take(failure))
+            }
         }
+    }
+
+    fn expanded_delivery_entry(
+        &mut self,
+        policy: DeliveryPolicy,
+        expanded: ExpandedDeliveryPolicy,
+        destination: &mut Option<CurrentCommand<G>>,
+        error: &mut DeliveryErrorSlot,
+    ) -> Result<DeliveryStatus, DeliveryFailed> {
+        let key = self.expansion_resume.take().or_else(|| {
+            self.scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_expansion)
+                .then(|| {
+                    let wrapper = self
+                        .scanner_resume
+                        .take()
+                        .expect("matched expansion wrapper");
+                    self.command
+                        .scratch
+                        .take_expansion_key(wrapper)
+                        .expect("live wrapper owns expansion work")
+                })
+        });
+        let resumed_pending = key.is_some();
+        if let Some(key) = key {
+            let mut retained = match self.command.scratch.resume_expansion(key) {
+                Ok(retained) => retained,
+                Err(failure) => {
+                    return error.fail(crate::scan_toks::scratch_command_error(failure));
+                }
+            };
+            if destination
+                .as_ref()
+                .is_some_and(|command| command != &retained.command)
+            {
+                if let Some(child) = retained.take_child()
+                    && let Err(failure) = self.abort_continuation(child)
+                {
+                    return error.fail(failure);
+                }
+                return error.fail(CommandError::input_invariant());
+            }
+            if let Some(child) = retained.child.take() {
+                let (key, child_destination) = child.restore();
+                if child_destination != crate::state::PendingExpansionChildDestination::Dispatch {
+                    return error.fail(CommandError::input_invariant());
+                }
+                self.scanner_resume = Some(key);
+            }
+            self.resumed_expansion = Some(retained.resume);
+            *destination = Some(retained.command);
+        }
+        if resumed_pending && let Some(command) = &destination {
+            self.resume_current_command(command);
+        }
+        let depth = self.command.transient.active_expansion_depth;
+        let Some(active_depth) = depth.checked_add(1) else {
+            return error.fail(CommandError::input_invariant());
+        };
+        self.command.transient.active_expansion_depth = active_depth;
+        let result =
+            self.expanded_delivery_driver(policy, expanded, resumed_pending, destination, error);
+        assert_eq!(
+            self.command.transient.active_expansion_depth, active_depth,
+            "nested delivery must balance expansion depth"
+        );
+        self.command.transient.active_expansion_depth = depth;
         result
     }
 
@@ -978,12 +1049,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         policy: DeliveryPolicy,
         destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
+        error: &mut DeliveryErrorSlot,
+    ) -> Result<DeliveryStatus, DeliveryFailed> {
         loop {
             if destination.is_none() {
                 self.last_delivery = None;
-                self.charge_command_action()?;
-                match self.next_command_into(destination)? {
+                if let Err(failure) = self.charge_command_action() {
+                    return error.fail(failure);
+                }
+                match self.next_command_into(destination, error)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
@@ -1005,11 +1079,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                 )
             {
-                self.begin_scalar_alignment_v_template(
+                if let Err(failure) = self.begin_scalar_alignment_v_template(
                     destination
                         .as_ref()
                         .expect("raw destination contains a command"),
-                )?;
+                ) {
+                    return error.fail(failure);
+                }
                 *destination = None;
                 continue;
             }
@@ -1023,7 +1099,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         expanded: ExpandedDeliveryPolicy,
         resumed_pending: bool,
         destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
+        error: &mut DeliveryErrorSlot,
+    ) -> Result<DeliveryStatus, DeliveryFailed> {
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
         let mut suppress_first_expansion_trace = resumed_pending;
@@ -1031,8 +1108,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             if fetch {
                 self.last_delivery = None;
-                self.charge_command_action()?;
-                match self.next_command_into(destination)? {
+                if let Err(failure) = self.charge_command_action() {
+                    return error.fail(failure);
+                }
+                match self.next_command_into(destination, error)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
@@ -1054,75 +1133,66 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 return Ok(DeliveryStatus::Command);
             }
-            if matches!(
-                static_meaning(command.meaning_ref()),
-                Some(Meaning::ExpandablePrimitive(
-                    ExpandablePrimitive::EndTemplate
-                ))
-            ) {
-                if policy.alignment_interception == AlignmentInterceptionPolicy::Surface
-                    && matches!(
+            match classify_expanded_command(command, expanded.protected_macros, expanded.undefined)
+            {
+                ExpandedCommandAction::EndTemplate => {
+                    if policy.alignment_interception == AlignmentInterceptionPolicy::Surface
+                        && matches!(
+                            command.alignment_adjustment(),
+                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                        )
+                    {
+                        return Ok(DeliveryStatus::AlignmentEndTemplate);
+                    }
+                    // This loop's raw fetch is `get_next_with_replay_completion`,
+                    // which is §341's body without §342's tail, so §342's
+                    // consequence runs here through the same single helper
+                    // `get_next` and `get_token` use. `Ok(None)` is §789's
+                    // `goto restart`: the ⟨v_j⟩ template is live and no reader
+                    // ever sees the delimiter. Only frozen end-template input
+                    // from v-template exhaustion falls through to §380 below.
+                    if matches!(
                         command.alignment_adjustment(),
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    )
-                {
-                    return Ok(DeliveryStatus::AlignmentEndTemplate);
-                }
-                // This loop's raw fetch is `get_next_with_replay_completion`,
-                // which is §341's body without §342's tail, so §342's
-                // consequence runs here through the same single helper
-                // `get_next` and `get_token` use. `Ok(None)` is §789's
-                // `goto restart`: the ⟨v_j⟩ template is live and no reader
-                // ever sees the delimiter. Only frozen end-template input
-                // from v-template exhaustion falls through to §380 below.
-                if matches!(
-                    command.alignment_adjustment(),
-                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                ) {
-                    self.begin_scalar_alignment_v_template(command)?;
-                    fetch = true;
-                    continue;
-                }
-                if expanded.fetch == ExpandedFetch::XToken {
-                    // §366 `expand` has no `end_template` shortcut: it routes
-                    // straight to §375, which backs up a `frozen_endv` token
-                    // for this loop's own `get_next` to reread.
-                    self.insert_frozen_endv()?;
-                    fetch = true;
-                    continue;
-                }
-                destination
-                    .as_mut()
-                    .expect("expanded destination contains a command")
-                    .convert_end_template_to_endv(self.state.frozen_endv_token());
-                return Ok(self.finish_expanded_delivery(
+                    ) {
+                        if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
+                            return error.fail(failure);
+                        }
+                        fetch = true;
+                        continue;
+                    }
+                    if expanded.fetch == ExpandedFetch::XToken {
+                        // §366 `expand` has no `end_template` shortcut: it routes
+                        // straight to §375, which backs up a `frozen_endv` token
+                        // for this loop's own `get_next` to reread.
+                        if let Err(failure) = self.insert_frozen_endv() {
+                            return error.fail(failure);
+                        }
+                        fetch = true;
+                        continue;
+                    }
                     destination
-                        .as_ref()
-                        .expect("expanded destination contains a command"),
-                    expanded,
-                    expansions_before,
-                    policy.alignment_interception,
-                ));
-            }
-            if (expanded.undefined == UndefinedHandling::Preserve
-                && matches!(
-                    static_meaning(command.meaning_ref()),
-                    Some(Meaning::Undefined)
-                ))
-                || !is_expandable_command(command)
-                || (expanded.protected_macros == ProtectedMacroHandling::Preserve
-                    && matches!(
-                        command.meaning_ref(),
-                        ResolvedMeaning::Macro { flags, .. }
-                            if flags.contains(MeaningFlags::PROTECTED)
-                    ))
-            {
-                return Ok(self.finish_expanded_delivery(
-                    command,
-                    expanded,
-                    expansions_before,
-                    policy.alignment_interception,
-                ));
+                        .as_mut()
+                        .expect("expanded destination contains a command")
+                        .convert_end_template_to_endv(self.state.frozen_endv_token());
+                    return Ok(self.finish_expanded_delivery(
+                        destination
+                            .as_ref()
+                            .expect("expanded destination contains a command"),
+                        expanded,
+                        expansions_before,
+                        policy.alignment_interception,
+                    ));
+                }
+                ExpandedCommandAction::Return => {
+                    return Ok(self.finish_expanded_delivery(
+                        command,
+                        expanded,
+                        expansions_before,
+                        policy.alignment_interception,
+                    ));
+                }
+                ExpandedCommandAction::Expand => {}
             }
             // TeX82 §394 aborts a non-`\long` macro call after its recovery
             // bookkeeping, then resumes the enclosing expanded-token loop.
@@ -1135,27 +1205,32 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .expect("expanded destination contains a command"),
                 report_trace,
             );
-            let result = match expansion {
-                Ok(()) => Ok(()),
-                Err(failure) if failure.suspended.is_none() => Err(failure.error),
-                Err(failure) => self.finish_expansion_failure(
+            let failure = match expansion {
+                Ok(()) => {
+                    fetch = true;
+                    continue;
+                }
+                Err(failure) => failure,
+            };
+            let failure = if failure.suspended.is_none() {
+                failure.error
+            } else {
+                self.finish_expansion_failure(
                     destination
                         .take()
                         .expect("suspension moves the command out of its delivery slot"),
                     failure,
-                ),
+                )
             };
-            match result {
-                // TeX82 §394 resumes expanded delivery after both an ordinary
-                // runaway paragraph and §23's outer-validity recovery has
-                // aborted a macro match. The latter leaves the recovered
-                // outer token in backup input for its normal reread.
-                Ok(())
-                | Err(CommandError::ParagraphInMacroArgument)
-                | Err(CommandError::OuterInMacroArgument) => fetch = true,
-                Err(error) => {
-                    return Err(error);
+            // TeX82 §394 resumes expanded delivery after both an ordinary
+            // runaway paragraph and §23's outer-validity recovery has aborted
+            // a macro match. The latter leaves the recovered outer token in
+            // backup input for its normal reread.
+            match failure {
+                CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument => {
+                    fetch = true;
                 }
+                failure => return error.fail(failure),
             }
         }
     }
@@ -1245,7 +1320,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn expand(&mut self, command: &CurrentCommand<G>) -> Result<(), CommandError> {
         match self.expand_with_trace(command, true) {
             Ok(()) => Ok(()),
-            Err(failure) => self.finish_expansion_failure(command.clone(), failure),
+            Err(failure) => Err(self.finish_expansion_failure(command.clone(), failure)),
         }
     }
 
@@ -1253,9 +1328,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: CurrentCommand<G>,
         failure: ExpansionFailure<G>,
-    ) -> Result<(), CommandError> {
+    ) -> CommandError {
         let Some(suspended) = failure.suspended else {
-            return Err(failure.error);
+            return failure.error;
         };
         let pending = crate::state::PendingExpansion {
             command,
@@ -1265,13 +1340,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.command.scratch.store_expansion_frame(pending) {
             Ok(key) => {
                 self.scanner_resume = Some(key);
-                Err(failure.error)
+                failure.error
             }
             Err((store_error, mut pending)) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
+                if let Some(child) = pending.take_child()
+                    && let Err(failure) = self.abort_continuation(child)
+                {
+                    return failure;
                 }
-                Err(crate::scan_toks::scratch_command_error(store_error))
+                crate::scan_toks::scratch_command_error(store_error)
             }
         }
     }

@@ -23,8 +23,8 @@ use super::CommandProcessor;
 use super::expand::{ExpandedFetch, ProtectedMacroHandling, UndefinedHandling};
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 use super::{
-    AlignmentInterceptionPolicy, DeliveryMode, DeliveryPolicy, ExpandedDeliveryPolicy,
-    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, DeliveryErrorSlot, DeliveryFailed, DeliveryMode, DeliveryPolicy,
+    ExpandedDeliveryPolicy, ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 /// TeX82 §336's `Incomplete \if...; all text was ignored after line N`.
@@ -1614,7 +1614,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn next_command_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<super::DeliveryStatus, CommandError> {
+        error: &mut DeliveryErrorSlot,
+    ) -> Result<super::DeliveryStatus, DeliveryFailed> {
         // Expanded delivery keeps this same caller-owned value across every
         // synchronous expansion. Raw input overwrites all delivery facts and
         // meaning resolution overwrites the prior meaning, so rebuilding an
@@ -1622,7 +1623,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if destination.is_none() {
             *destination = Some(CurrentCommand::empty());
         }
-        let result = (|| loop {
+        loop {
             if let Some(episode) = self.take_ready_replay_completion() {
                 destination.take();
                 return Ok(super::DeliveryStatus::ReplayCompleted(episode));
@@ -1640,9 +1641,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(|()| CommandError::input_invariant());
             let transition = match transition {
                 Ok(transition) => transition,
-                Err(error) => {
+                Err(failure) => {
                     destination.take();
-                    return Err(error);
+                    return error.fail(failure);
                 }
             };
             let raw = match transition {
@@ -1658,7 +1659,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             position: 0,
                         }),
                     );
-                    if self.raw_end_restarts()? {
+                    let restarts = match self.raw_end_restarts() {
+                        Ok(restarts) => restarts,
+                        Err(failure) => return error.fail(failure),
+                    };
+                    if restarts {
                         continue;
                     }
                     destination.take();
@@ -1691,13 +1696,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                     continue;
                 }
                 InputTopTransition::NeedLine(identity) => {
-                    if self.acquire_source_line(true)?.is_none()
-                        && matches!(
-                            self.finish_exhausted_source(identity)?,
-                            SourceExhaustionStatus::End
-                        )
-                    {
-                        if self.raw_end_restarts()? {
+                    let line = match self.acquire_source_line(true) {
+                        Ok(line) => line,
+                        Err(failure) => return error.fail(failure),
+                    };
+                    let exhausted = if line.is_none() {
+                        match self.finish_exhausted_source(identity) {
+                            Ok(status) => matches!(status, SourceExhaustionStatus::End),
+                            Err(failure) => return error.fail(failure),
+                        }
+                    } else {
+                        false
+                    };
+                    if exhausted {
+                        let restarts = match self.raw_end_restarts() {
+                            Ok(restarts) => restarts,
+                            Err(failure) => return error.fail(failure),
+                        };
+                        if restarts {
                             continue;
                         }
                         destination.take();
@@ -1706,11 +1722,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                     continue;
                 }
                 InputTopTransition::SourceExhausted(identity) => {
-                    if matches!(
-                        self.finish_exhausted_source(identity)?,
-                        SourceExhaustionStatus::End
-                    ) {
-                        if self.raw_end_restarts()? {
+                    let exhausted = match self.finish_exhausted_source(identity) {
+                        Ok(status) => matches!(status, SourceExhaustionStatus::End),
+                        Err(failure) => return error.fail(failure),
+                    };
+                    if exhausted {
+                        let restarts = match self.raw_end_restarts() {
+                            Ok(restarts) => restarts,
+                            Err(failure) => return error.fail(failure),
+                        };
+                        if restarts {
                             continue;
                         }
                         destination.take();
@@ -1719,24 +1740,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                     continue;
                 }
                 InputTopTransition::TokenExhausted(identity) => {
-                    let index = self
-                        .command
-                        .input
-                        .levels
-                        .last()
-                        .and_then(|level| match level {
-                            InputLevel::Tokens(cursor) if cursor.identity() == identity => {
-                                Some(cursor.frame.position())
-                            }
-                            InputLevel::MacroArgument(cursor) if cursor.identity() == identity => {
-                                Some(cursor.frame.position())
-                            }
-                            _ => None,
-                        })
-                        .ok_or_else(CommandError::input_invariant)?;
-                    match self.retire_input_top(identity)? {
+                    let Some(index) =
+                        self.command
+                            .input
+                            .levels
+                            .last()
+                            .and_then(|level| match level {
+                                InputLevel::Tokens(cursor) if cursor.identity() == identity => {
+                                    Some(cursor.frame.position())
+                                }
+                                InputLevel::MacroArgument(cursor)
+                                    if cursor.identity() == identity =>
+                                {
+                                    Some(cursor.frame.position())
+                                }
+                                _ => None,
+                            })
+                    else {
+                        return error.fail(CommandError::input_invariant());
+                    };
+                    let handoff = match self.retire_input_top(identity) {
+                        Ok(handoff) => handoff,
+                        Err(failure) => return error.fail(failure),
+                    };
+                    match handoff {
                         RetirementHandoff::Stop => {
-                            if self.raw_end_restarts()? {
+                            let restarts = match self.raw_end_restarts() {
+                                Ok(restarts) => restarts,
+                                Err(failure) => return error.fail(failure),
+                            };
+                            if restarts {
                                 continue;
                             }
                             destination.take();
@@ -1775,16 +1808,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             let (resolved, meaning_lookup) =
                 raw.resolve_in_place(delivery_stamp.sequence(), self.state);
             self.record_raw_delivery(scanner, meaning_lookup);
-            if let Err(error) = self.apply_delivery_rules(resolved, delivery_stamp) {
+            if let Err(failure) = self.apply_delivery_rules(resolved, delivery_stamp) {
                 destination.take();
-                return Err(error);
+                return error.fail(failure);
             }
             return Ok(super::DeliveryStatus::Command);
-        })();
-        if result.is_err() {
-            destination.take();
         }
-        result
     }
 
     /// Settles an input-end transition after every raw typestate borrow has
