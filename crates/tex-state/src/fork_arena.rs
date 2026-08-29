@@ -499,6 +499,33 @@ pub struct ArenaListId<Lane> {
     len: u32,
 }
 
+/// Move-only authority to attach one whole unpublished list chain.
+///
+/// The coordinate is deliberately not exposed while this capability is live:
+/// consuming it is the proof that the root block's predecessor is still
+/// available for its one permitted write. Converting it to a shared root
+/// publishes the chain and permanently gives up zero-copy concatenation.
+pub struct UniqueArenaList<Lane> {
+    root: ArenaListId<Lane>,
+}
+
+impl<Lane> UniqueArenaList<Lane> {
+    #[must_use]
+    pub const fn publish(self) -> ArenaListId<Lane> {
+        self.root
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.root.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.root.is_empty()
+    }
+}
+
 /// Structurally checked direct root for repeated owner-local traversal.
 pub(crate) struct ValidatedArenaList<Lane> {
     arena: u32,
@@ -834,7 +861,7 @@ pub struct ActiveListBuilder<T, Lane> {
 enum ActiveListBuilderState<Lane> {
     Vacant,
     Open(OpenActiveList<Lane>),
-    Sealed(ArenaListId<Lane>),
+    Sealed(UniqueArenaList<Lane>),
 }
 
 struct OpenActiveList<Lane> {
@@ -875,10 +902,16 @@ impl<T, Lane> ActiveListBuilder<T, Lane> {
     /// Takes the sealed coordinate and returns the builder to its vacant
     /// state without touching arena storage.
     pub fn take_sealed(&mut self) -> Result<ArenaListId<Lane>, ForkArenaError> {
-        let ActiveListBuilderState::Sealed(list) = self.state else {
+        Ok(self.take_unique_sealed()?.publish())
+    }
+
+    /// Takes the sealed move capability without publishing a copyable root.
+    pub fn take_unique_sealed(&mut self) -> Result<UniqueArenaList<Lane>, ForkArenaError> {
+        let state = core::mem::replace(&mut self.state, ActiveListBuilderState::Vacant);
+        let ActiveListBuilderState::Sealed(list) = state else {
+            self.state = state;
             return Err(ForkArenaError::InvalidActiveListBuilder);
         };
-        self.state = ActiveListBuilderState::Vacant;
         Ok(list)
     }
 }
@@ -1213,8 +1246,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             Some(key) => key,
             None => {
                 self.bind_pool(pool)?;
-                let previous =
-                    (!root.is_empty()).then_some((root.tail.raw, root.tail.offset));
+                let previous = (!root.is_empty()).then_some((root.tail.raw, root.tail.offset));
                 let key = pool.payload.allocate_list_block(self.owner, previous)?;
                 self.current_chunks_mut().payload.push(key);
                 self.counters.direct_blocks_allocated =
@@ -1471,12 +1503,32 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.active_list_open_mut(builder)?;
         self.validate_checked_list(pool, list, validated)?;
         let root = self.active_list_open_mut(builder)?.root;
-        let root = self.concat_direct_roots(pool, root, list)?;
+        let root = self.copy_shared_then_splice(pool, root, list)?;
         self.active_list_open_mut(builder)?.root = root;
         Ok(())
     }
 
-    /// Appends an existing immutable list by coordinates only.
+    /// Consumes one unpublished whole-list chain into the active suffix.
+    ///
+    /// Unlike [`Self::append_active_list`], this is an O(1) topology operation
+    /// and performs no payload copies.
+    pub fn append_unique_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        list: UniqueArenaList<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.active_list_open_mut(builder)?;
+        let root = self.active_list_open_mut(builder)?.root;
+        let root = self.splice_unique_direct_root(pool, root, list)?;
+        self.active_list_open_mut(builder)?.root = root;
+        Ok(())
+    }
+
+    /// Copies an existing immutable list into the active private suffix.
+    ///
+    /// Shared roots cannot donate their write-once head predecessor. Callers
+    /// that own a whole chain should use [`Self::append_unique_active_list`].
     pub fn append_active_list(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -1490,10 +1542,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.append_validated_active_list(pool, builder, list, validated)
     }
 
-    /// Appends one logical subrange of an immutable list by coordinates only.
-    ///
-    /// The selected direct-root view is linked without publishing a second
-    /// range representation or copying payload.
+    /// Copies one logical subrange into the active private suffix.
     pub fn append_active_list_range(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -1529,7 +1578,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         let selected_root = self.slice_direct_root(pool, list, selected)?;
         let root = self.active_list_open_mut(builder)?.root;
-        let root = self.concat_direct_roots(pool, root, selected_root)?;
+        let root = self.copy_shared_then_splice(pool, root, selected_root)?;
         self.active_list_open_mut(builder)?.root = root;
         Ok(())
     }
@@ -1574,7 +1623,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.seal_direct_tail(pool, list)?;
         self.validate_list(pool, list)?;
         self.active_builder = false;
-        builder.state = ActiveListBuilderState::Sealed(list);
+        builder.state = ActiveListBuilderState::Sealed(UniqueArenaList { root: list });
         Ok(())
     }
 
@@ -1746,15 +1795,17 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok((summary, work))
     }
 
-    fn concat_direct_roots(
+    /// Splices a whole uniquely owned right chain in O(1).
+    ///
+    /// `right` is consumed because its head predecessor is write-once. Shared
+    /// coordinates and slices must use the separately named copy path below.
+    fn splice_unique_direct_root(
         &mut self,
         pool: &mut ChunkPool<T>,
         left: ArenaListId<Lane>,
-        right: ArenaListId<Lane>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError>
-    where
-        T: Clone,
-    {
+        right: UniqueArenaList<Lane>,
+    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        let right = right.root;
         self.validate_list(pool, left)?;
         self.validate_list(pool, right)?;
         if left.is_empty() {
@@ -1763,150 +1814,29 @@ impl<T, Lane> ForkArena<T, Lane> {
         if right.is_empty() {
             return Ok(left);
         }
-        if self.direct_roots_overlap(pool, left, right)? {
-            return self.copy_then_concat(pool, left, right);
+        if right.head.offset != 0
+            || pool
+                .payload
+                .previous_in_list(right.head.raw, self.owner)?
+                .is_some()
+        {
+            return Err(ForkArenaError::InvalidRange);
         }
-        let right = self.normalize_direct_head(pool, right)?;
-        if left.tail.raw == right.head.raw {
-            if left.tail.offset == right.head.offset {
-                let root = ArenaListId::from_root(
-                    self.owner,
-                    left.head,
-                    right.tail,
-                    left.len
-                        .checked_add(right.len)
-                        .ok_or(ForkArenaError::CapacityOverflow)?,
-                );
-                self.validate_list(pool, root)?;
-                return Ok(root);
-            }
-            return self.copy_then_concat(pool, left, right);
-        }
-        let prior = pool
-            .payload
-            .validate(right.head.raw, self.owner)?
-            .previous_in_list;
-        pool.payload.validate_mut(right.head.raw, self.owner)?.previous_in_list =
-            Some((left.tail.raw, left.tail.offset));
+        pool.payload
+            .validate_mut(right.head.raw, self.owner)?
+            .previous_in_list = Some((left.tail.raw, left.tail.offset));
         let len = left
             .len
             .checked_add(right.len)
             .ok_or(ForkArenaError::CapacityOverflow)?;
         let root = ArenaListId::from_root(self.owner, left.head, right.tail, len);
-        match self.validate_list(pool, root) {
-            Ok(_) => Ok(root),
-            Err(_) => {
-                pool.payload
-                    .validate_mut(right.head.raw, self.owner)?
-                    .previous_in_list = prior;
-                self.copy_then_concat(pool, left, right)
-            }
-        }
+        self.validate_list(pool, root)?;
+        Ok(root)
     }
 
-    fn direct_roots_overlap(
-        &self,
-        pool: &ChunkPool<T>,
-        left: ArenaListId<Lane>,
-        right: ArenaListId<Lane>,
-    ) -> Result<bool, ForkArenaError> {
-        if left.is_empty() || right.is_empty() {
-            return Ok(false);
-        }
-        let mut right_key = right.tail.raw;
-        loop {
-            let mut left_key = left.tail.raw;
-            loop {
-                if left_key == right_key {
-                    return Ok(true);
-                }
-                if left_key == left.head.raw {
-                    break;
-                }
-                left_key = pool
-                    .payload
-                    .previous_in_list(left_key, self.owner)?
-                    .ok_or(ForkArenaError::InvalidRange)?
-                    .0;
-            }
-            if right_key == right.head.raw {
-                break;
-            }
-            right_key = pool
-                .payload
-                .previous_in_list(right_key, self.owner)?
-                .ok_or(ForkArenaError::InvalidRange)?
-                .0;
-        }
-        Ok(false)
-    }
-
-    fn normalize_direct_head(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        root: ArenaListId<Lane>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError>
-    where
-        T: Clone,
-    {
-        if root.is_empty() || root.head.offset == 0 {
-            return Ok(root);
-        }
-        let (head_end, successor) = if root.head.raw == root.tail.raw {
-            (root.tail.offset, None)
-        } else {
-            let mut child = root.tail.raw;
-            loop {
-                let previous = pool
-                    .payload
-                    .previous_in_list(child, self.owner)?
-                    .ok_or(ForkArenaError::InvalidRange)?;
-                if previous.0 == root.head.raw {
-                    break (previous.1, Some(child));
-                }
-                child = previous.0;
-            }
-        };
-        if head_end <= root.head.offset {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        let copied = (head_end - root.head.offset) as usize;
-        let mut replacement = ArenaListId::empty();
-        for offset in root.head.offset..head_end {
-            let value = pool
-                .payload
-                .get(root.head.raw, self.owner, offset)
-                .cloned()
-                .ok_or(ForkArenaError::InvalidRange)?;
-            self.append_payload(pool, &mut replacement, value, None)?;
-        }
-        self.counters.new_semantic_nodes = self
-            .counters
-            .new_semantic_nodes
-            .saturating_sub(copied as u64);
-        self.record_source_nodes_copied(copied);
-        self.counters.partial_edge_nodes_copied = self
-            .counters
-            .partial_edge_nodes_copied
-            .saturating_add(copied as u64);
-        self.seal_direct_tail(pool, replacement)?;
-        match successor {
-            Some(successor) => {
-                pool.payload
-                    .validate_mut(successor, self.owner)?
-                    .previous_in_list = Some((replacement.tail.raw, replacement.tail.offset));
-                Ok(ArenaListId::from_root(
-                    self.owner,
-                    replacement.head,
-                    root.tail,
-                    root.len,
-                ))
-            }
-            None => Ok(replacement),
-        }
-    }
-
-    fn copy_then_concat(
+    /// Copies an explicitly shared coordinate into fresh unique blocks, then
+    /// consumes those blocks in one direct splice.
+    fn copy_shared_then_splice(
         &mut self,
         pool: &mut ChunkPool<T>,
         left: ArenaListId<Lane>,
@@ -1929,23 +1859,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .new_semantic_nodes
             .saturating_sub(right.len as u64);
         self.record_source_nodes_copied(right.len());
-        self.counters.overlapping_nodes_copied = self
-            .counters
-            .overlapping_nodes_copied
-            .saturating_add(right.len as u64);
-        if copy.is_empty() {
-            return Ok(left);
-        }
-        pool.payload.validate_mut(copy.head.raw, self.owner)?.previous_in_list =
-            Some((left.tail.raw, left.tail.offset));
-        Ok(ArenaListId::from_root(
-            self.owner,
-            left.head,
-            copy.tail,
-            left.len
-                .checked_add(copy.len)
-                .ok_or(ForkArenaError::CapacityOverflow)?,
-        ))
+        self.splice_unique_direct_root(pool, left, UniqueArenaList { root: copy })
     }
 
     fn seal_direct_tail(
@@ -3314,10 +3228,13 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: Clone,
     {
+        // This compatibility surface is intentionally implemented in terms of
+        // the explicitly named shared-copy primitive. Production ownership
+        // seams should consume `UniqueArenaList` instead.
         scratch.clear();
         let mut root = ArenaListId::empty();
         for list in lists.iter().copied() {
-            root = self.concat_direct_roots(pool, root, list)?;
+            root = self.copy_shared_then_splice(pool, root, list)?;
         }
         Ok(root)
     }
@@ -3335,7 +3252,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut root = ArenaListId::empty();
         for (list, validated) in lists {
             self.validate_checked_list(pool, list, validated)?;
-            root = self.concat_direct_roots(pool, root, list)?;
+            root = self.copy_shared_then_splice(pool, root, list)?;
         }
         Ok(root)
     }
@@ -3522,9 +3439,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .then_some(())
                 .ok_or(ForkArenaError::InvalidRange);
         }
-        if list.arena != self.owner
-            || validated.arena != list.arena
-        {
+        if list.arena != self.owner || validated.arena != list.arena {
             return Err(ForkArenaError::ForeignArena);
         }
         if self.resolved_position(false, list.head.raw).is_none()
@@ -3658,13 +3573,18 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         Ok(())
     }
 
-    pub fn seal(mut self) -> Result<ArenaListId<Lane>, ForkArenaError> {
+    pub fn seal_unique(mut self) -> Result<UniqueArenaList<Lane>, ForkArenaError> {
         self.arena.seal_direct_tail(self.pool, self.root)?;
         self.arena.validate_list(self.pool, self.root)?;
         let list = self.root;
         self.arena.active_builder = false;
         self.finished = true;
-        Ok(list)
+        Ok(UniqueArenaList { root: list })
+    }
+
+    /// Seals and publishes a copyable shared root.
+    pub fn seal(self) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        Ok(self.seal_unique()?.publish())
     }
 
     pub fn discard(mut self) -> Result<(), ForkArenaError> {

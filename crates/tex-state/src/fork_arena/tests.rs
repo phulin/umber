@@ -91,6 +91,85 @@ fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
 }
 
 #[test]
+fn unique_whole_list_capability_splices_once_without_copying_payload() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let right = {
+        let mut builder = arena.begin_builder(&mut pool).expect("right builder");
+        builder.push(2).expect("right node");
+        builder.push(3).expect("right node");
+        builder.seal_unique().expect("unique right chain")
+    };
+    let right_root = right.root;
+    let right_address = arena
+        .list(&pool, right_root)
+        .expect("right view")
+        .get(0)
+        .expect("right node") as *const u32;
+
+    let mut destination = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut destination)
+        .expect("destination builder");
+    arena
+        .push_active_list(&mut pool, &mut destination, 1)
+        .expect("left node");
+    arena
+        .append_unique_active_list(&mut pool, &mut destination, right)
+        .expect("consume unique chain");
+    arena
+        .finalize_active_list(&mut pool, &mut destination)
+        .expect("finalize destination");
+    let combined = destination.take_sealed().expect("combined root");
+    let view = arena.list(&pool, combined).expect("combined view");
+
+    assert_eq!(view.iter().copied().collect::<Vec<_>>(), [1, 2, 3]);
+    assert_eq!(
+        view.get(1).expect("moved right node") as *const u32,
+        right_address
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn copying_a_shared_right_root_never_rewrites_an_earlier_composite() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let first = list(&mut arena, &mut pool, [1]);
+    let shared = list(&mut arena, &mut pool, [2, 3]);
+    let other = list(&mut arena, &mut pool, [9]);
+    let mut scratch = Vec::new();
+    let earlier = arena
+        .compose_lists(&mut pool, &[first, shared], &mut scratch)
+        .expect("first composite");
+    let later = arena
+        .compose_lists(&mut pool, &[other, shared], &mut scratch)
+        .expect("second composite");
+
+    assert_eq!(
+        arena
+            .list(&pool, earlier)
+            .expect("earlier root remains valid")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert_eq!(
+        arena
+            .list(&pool, later)
+            .expect("later root")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [9, 2, 3]
+    );
+    // Each explicitly shared input, including the first root in each result,
+    // is copied so the returned chain retains a unique write-once head.
+    assert_eq!(arena.counters().source_nodes_copied, 6);
+}
+
+#[test]
 fn one_block_list_stores_its_direct_head_and_tail_cursors() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
