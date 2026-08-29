@@ -2399,7 +2399,10 @@ an input level and are immediately translated back into mutation.
 `ExecutionScratch` also contains an unused `ExpansionWork` foundation for the
 later structural-nesting and suspension cutover. Its fixed chunks provide
 stable parked-command slots, compact variant-specific controls, a chunked name
-lane, complete logical marks, and 32-byte move-only owner/ABA keys. It is not a
+lane, complete logical marks, and 32-byte move-only owner/ABA root keys. Each
+command and control coordinate is stamped with the issuing work owner before
+lane access, while a name coordinate carries that owner and the live root
+serial so abort/reuse cannot alias new bytes at the same offset. It is not a
 second expanded-delivery interpreter: the ordinary synchronous path above
 continues to own its final `CurrentCommand` directly and does not enter these
 lanes. Completion or abort truncates the three logical lanes to the invocation

@@ -27,7 +27,9 @@ fn duplicate_key<G>(key: &ExpansionWorkKey<G>) -> ExpansionWorkKey<G> {
 fn reviewed_layout_bounds_are_compile_time_invariants() {
     assert_eq!(core::mem::size_of::<ExpansionWorkKey<()>>(), 32);
     assert!(core::mem::size_of::<ExpansionControl<()>>() <= 128);
-    assert!(core::mem::size_of::<ExpansionCommandSlot<()>>() <= 8);
+    assert!(core::mem::size_of::<ExpansionCommandSlot<()>>() <= 16);
+    assert!(core::mem::size_of::<ExpansionControlSlot<()>>() <= 16);
+    assert!(core::mem::size_of::<ExpansionNameMark>() <= 16);
 }
 
 #[test]
@@ -48,8 +50,8 @@ fn command_slots_keep_one_address_across_chunk_growth_and_reuse() {
 
     let replacement = work.begin_dispatch(empty_command()).expect("replacement");
     let replacement_slot = root_command(&work, &replacement);
-    assert_eq!(replacement_slot.0.index(), root.0.index());
-    assert_ne!(replacement_slot.0.serial(), root.0.serial());
+    assert_eq!(replacement_slot.lane.index(), root.lane.index());
+    assert_ne!(replacement_slot.lane.serial(), root.lane.serial());
     assert_eq!(
         core::ptr::from_ref(work.command(replacement_slot).expect("reused address")),
         address
@@ -62,7 +64,7 @@ fn complete_marks_abort_nested_controls_commands_and_name_bytes_deepest_first() 
     let mut work = ExpansionWork::<()>::default();
     let key = work.begin_dispatch(empty_command()).expect("root");
     let opener = root_command(&work, &key);
-    let name = work.name_mark();
+    let name = work.name_mark().expect("name mark");
     for byte in b"control-sequence-name" {
         work.push_name_byte(*byte).expect("name byte");
     }
@@ -131,6 +133,139 @@ fn stale_aba_and_foreign_work_keys_are_rejected_without_harming_live_work() {
 }
 
 #[test]
+fn same_generation_foreign_lane_coordinates_are_rejected_before_access() {
+    let mut first = ExpansionWork::<()>::default();
+    let mut second = ExpansionWork::<()>::default();
+    let first_key = first.begin_dispatch(empty_command()).expect("first root");
+    let second_key = second.begin_dispatch(empty_command()).expect("second root");
+    let first_command = root_command(&first, &first_key);
+    let second_command = root_command(&second, &second_key);
+    let first_control = first
+        .push_control(ExpansionControl::Dispatch {
+            command: first_command,
+            trace: TraceState::Unseen,
+        })
+        .expect("first child control");
+    let second_control = second
+        .push_control(ExpansionControl::Dispatch {
+            command: second_command,
+            trace: TraceState::Unseen,
+        })
+        .expect("second child control");
+    let first_name = first.name_mark().expect("first name mark");
+    let second_name = second.name_mark().expect("second name mark");
+    first.push_name_byte(b'a').expect("first name byte");
+    second.push_name_byte(b'b').expect("second name byte");
+
+    assert_eq!(first_command.lane, second_command.lane);
+    assert_eq!(first_control.lane, second_control.lane);
+    assert_eq!(first_name.offset, second_name.offset);
+    assert_eq!(first_name.root_serial, second_name.root_serial);
+    assert_ne!(first_name.owner, second_name.owner);
+
+    assert!(matches!(
+        second.command(first_command),
+        Err(ScratchError::InvalidCoordinate)
+    ));
+    assert_eq!(
+        second.take_command(first_command),
+        Err(ScratchError::InvalidCoordinate)
+    );
+    assert!(matches!(
+        second.control_mut(first_control),
+        Err(ScratchError::InvalidCoordinate)
+    ));
+    assert_eq!(
+        second.pop_control(first_control),
+        Err(ScratchError::InvalidCoordinate)
+    );
+    assert!(matches!(
+        second.name_bytes(first_name),
+        Err(ScratchError::InvalidCoordinate)
+    ));
+
+    assert!(second.command(second_command).is_ok());
+    assert!(second.control_mut(second_control).is_ok());
+    assert_eq!(
+        second
+            .name_bytes(second_name)
+            .expect("second name remains live")
+            .collect::<Vec<_>>(),
+        b"b"
+    );
+    assert_eq!(first.commands.len(), 1);
+    assert_eq!(first.controls.len(), 2);
+    assert_eq!(first.names.len, 1);
+
+    first.abort(first_key).expect("first abort");
+    second.abort(second_key).expect("second abort");
+}
+
+#[test]
+fn stale_lane_and_name_coordinates_are_rejected_after_abort_and_reuse() {
+    let mut work = ExpansionWork::<()>::default();
+    let first_key = work.begin_dispatch(empty_command()).expect("first root");
+    let stale_command = root_command(&work, &first_key);
+    let stale_control = work
+        .push_control(ExpansionControl::Dispatch {
+            command: stale_command,
+            trace: TraceState::Unseen,
+        })
+        .expect("first child control");
+    let stale_name = work.name_mark().expect("first name mark");
+    work.push_name_byte(b'a').expect("first name byte");
+    work.abort(first_key).expect("first abort");
+
+    let replacement = work
+        .begin_dispatch(empty_command())
+        .expect("replacement root");
+    let replacement_command = root_command(&work, &replacement);
+    let replacement_control = work
+        .push_control(ExpansionControl::Dispatch {
+            command: replacement_command,
+            trace: TraceState::Complete,
+        })
+        .expect("replacement child control");
+    let replacement_name = work.name_mark().expect("replacement name mark");
+    work.push_name_byte(b'b').expect("replacement name byte");
+
+    assert_eq!(stale_command.lane.index(), replacement_command.lane.index());
+    assert_eq!(stale_control.lane.index(), replacement_control.lane.index());
+    assert_eq!(stale_name.offset, replacement_name.offset);
+    assert_ne!(stale_name.root_serial, replacement_name.root_serial);
+    assert!(matches!(
+        work.command(stale_command),
+        Err(ScratchError::InvalidCoordinate)
+    ));
+    assert_eq!(
+        work.take_command(stale_command),
+        Err(ScratchError::InvalidCoordinate)
+    );
+    assert!(matches!(
+        work.control_mut(stale_control),
+        Err(ScratchError::InvalidCoordinate)
+    ));
+    assert_eq!(
+        work.pop_control(stale_control),
+        Err(ScratchError::InvalidCoordinate)
+    );
+    assert!(matches!(
+        work.name_bytes(stale_name),
+        Err(ScratchError::InvalidCoordinate)
+    ));
+
+    assert!(work.command(replacement_command).is_ok());
+    assert!(work.control_mut(replacement_control).is_ok());
+    assert_eq!(
+        work.name_bytes(replacement_name)
+            .expect("replacement name remains live")
+            .collect::<Vec<_>>(),
+        b"b"
+    );
+    work.abort(replacement).expect("replacement abort");
+}
+
+#[test]
 fn move_only_external_destination_restores_the_exact_key_and_route() {
     #[derive(Debug, Eq, PartialEq)]
     struct CollectorOrdinary;
@@ -190,7 +325,7 @@ fn name_lane_crosses_chunks_and_reuses_retained_capacity() {
     let mut work = ExpansionWork::<()>::default();
     let run = |work: &mut ExpansionWork<()>| {
         let key = work.begin_dispatch(empty_command()).expect("root");
-        let mark = work.name_mark();
+        let mark = work.name_mark().expect("name mark");
         for index in 0..(NAME_BYTES_PER_CHUNK * 3 + 7) {
             work.push_name_byte((index % 251) as u8).expect("name byte");
         }

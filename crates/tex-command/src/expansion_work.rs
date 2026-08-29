@@ -232,10 +232,6 @@ struct ExpansionNameLane {
 }
 
 impl ExpansionNameLane {
-    fn mark(&self) -> ExpansionNameMark {
-        ExpansionNameMark(self.len)
-    }
-
     fn push(&mut self, byte: u8) -> Result<(), ScratchError> {
         if self.len == u32::MAX {
             return Err(ScratchError::CapacityOverflow);
@@ -261,13 +257,13 @@ impl ExpansionNameLane {
         Ok(())
     }
 
-    fn bytes_from(&self, mark: ExpansionNameMark) -> Result<NameBytes<'_>, ScratchError> {
-        if mark.0 > self.len {
+    fn bytes_from(&self, mark: u32) -> Result<NameBytes<'_>, ScratchError> {
+        if mark > self.len {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(NameBytes {
             lane: self,
-            position: mark.0,
+            position: mark,
         })
     }
 
@@ -300,10 +296,17 @@ impl Iterator for NameBytes<'_> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionNameMark(u32);
+pub(crate) struct ExpansionNameMark {
+    owner: NonZeroU64,
+    root_serial: u32,
+    offset: u32,
+}
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionCommandSlot<G>(LaneId<G>);
+pub(crate) struct ExpansionCommandSlot<G> {
+    owner: NonZeroU64,
+    lane: LaneId<G>,
+}
 
 impl<G> Copy for ExpansionCommandSlot<G> {}
 impl<G> Clone for ExpansionCommandSlot<G> {
@@ -313,7 +316,10 @@ impl<G> Clone for ExpansionCommandSlot<G> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionControlSlot<G>(LaneId<G>);
+pub(crate) struct ExpansionControlSlot<G> {
+    owner: NonZeroU64,
+    lane: LaneId<G>,
+}
 
 impl<G> Copy for ExpansionControlSlot<G> {}
 impl<G> Clone for ExpansionControlSlot<G> {
@@ -373,6 +379,9 @@ pub(crate) struct ExpansionWorkKey<G> {
 // heterogeneous continuation value.
 const _: () = {
     assert!(core::mem::size_of::<ExpansionWorkKey<()>>() <= 32);
+    assert!(core::mem::size_of::<ExpansionCommandSlot<()>>() <= 16);
+    assert!(core::mem::size_of::<ExpansionControlSlot<()>>() <= 16);
+    assert!(core::mem::size_of::<ExpansionNameMark>() <= 16);
     assert!(core::mem::size_of::<ExpansionControl<()>>() <= 128);
 };
 
@@ -451,10 +460,10 @@ impl<G> ExpansionWork<G> {
                 return Err(error);
             }
         };
-        self.active_root = Some(root.0);
+        self.active_root = Some(root.lane);
         Ok(ExpansionWorkKey {
             owner: self.owner,
-            root: root.0,
+            root: root.lane,
             mark,
         })
     }
@@ -467,14 +476,17 @@ impl<G> ExpansionWork<G> {
         crate::command::record_expansion_command_move_in();
         self.counters.command_moves_in = self.counters.command_moves_in.saturating_add(1);
         self.counters.max_command_depth = self.counters.max_command_depth.max(self.commands.len());
-        Ok(ExpansionCommandSlot(id))
+        Ok(ExpansionCommandSlot {
+            owner: self.owner,
+            lane: id,
+        })
     }
 
     pub(crate) fn take_command(
         &mut self,
         slot: ExpansionCommandSlot<G>,
     ) -> Result<CurrentCommand<G>, ScratchError> {
-        let command = self.commands.take_top(slot.0)?;
+        let command = self.commands.take_top(self.validate_command_slot(slot)?)?;
         crate::command::record_expansion_command_move_out();
         self.counters.command_moves_out = self.counters.command_moves_out.saturating_add(1);
         Ok(command)
@@ -484,7 +496,7 @@ impl<G> ExpansionWork<G> {
         &self,
         slot: ExpansionCommandSlot<G>,
     ) -> Result<&CurrentCommand<G>, ScratchError> {
-        self.commands.get(slot.0)
+        self.commands.get(self.validate_command_slot(slot)?)
     }
 
     pub(crate) fn push_control(
@@ -494,25 +506,35 @@ impl<G> ExpansionWork<G> {
         let id = self.controls.push(control)?;
         self.counters.control_pushes = self.counters.control_pushes.saturating_add(1);
         self.counters.max_control_depth = self.counters.max_control_depth.max(self.controls.len());
-        Ok(ExpansionControlSlot(id))
+        Ok(ExpansionControlSlot {
+            owner: self.owner,
+            lane: id,
+        })
     }
 
     pub(crate) fn control_mut(
         &mut self,
         slot: ExpansionControlSlot<G>,
     ) -> Result<&mut ExpansionControl<G>, ScratchError> {
-        self.controls.get_mut(slot.0)
+        let id = self.validate_control_slot(slot)?;
+        self.controls.get_mut(id)
     }
 
     pub(crate) fn pop_control(
         &mut self,
         slot: ExpansionControlSlot<G>,
     ) -> Result<ExpansionControl<G>, ScratchError> {
-        self.controls.take_top(slot.0)
+        let id = self.validate_control_slot(slot)?;
+        self.controls.take_top(id)
     }
 
-    pub(crate) fn name_mark(&self) -> ExpansionNameMark {
-        self.names.mark()
+    pub(crate) fn name_mark(&self) -> Result<ExpansionNameMark, ScratchError> {
+        let root = self.active_root.ok_or(ScratchError::InvalidCoordinate)?;
+        Ok(ExpansionNameMark {
+            owner: self.owner,
+            root_serial: root.serial(),
+            offset: self.names.len,
+        })
     }
 
     pub(crate) fn push_name_byte(&mut self, byte: u8) -> Result<(), ScratchError> {
@@ -525,7 +547,11 @@ impl<G> ExpansionWork<G> {
         &self,
         mark: ExpansionNameMark,
     ) -> Result<NameBytes<'_>, ScratchError> {
-        self.names.bytes_from(mark)
+        let root = self.active_root.ok_or(ScratchError::InvalidCoordinate)?;
+        if mark.owner != self.owner || mark.root_serial != root.serial() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.names.bytes_from(mark.offset)
     }
 
     pub(crate) fn finish(&mut self, key: ExpansionWorkKey<G>) -> Result<(), ScratchError> {
@@ -578,6 +604,26 @@ impl<G> ExpansionWork<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(())
+    }
+
+    fn validate_command_slot(
+        &self,
+        slot: ExpansionCommandSlot<G>,
+    ) -> Result<LaneId<G>, ScratchError> {
+        if slot.owner != self.owner {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        Ok(slot.lane)
+    }
+
+    fn validate_control_slot(
+        &self,
+        slot: ExpansionControlSlot<G>,
+    ) -> Result<LaneId<G>, ScratchError> {
+        if slot.owner != self.owner {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        Ok(slot.lane)
     }
 
     fn truncate_to(&mut self, mark: ExpansionMark) -> Result<(), ScratchError> {

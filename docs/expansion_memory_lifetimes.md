@@ -108,15 +108,19 @@ does not authorize a smaller hidden arena.
 
 `ExecutionScratch` now also owns an unused parked-expansion foundation.
 `ExpansionWork` stores stable `CurrentCommand` slots, variant-specific controls,
-and control-sequence name bytes in fixed chunks. One 32-byte move-only key
-carries the complete logical marks plus owner and ABA serial identity;
-completion or abort retires controls deepest-first and then truncates command
-and name lanes to those marks. The retained chunks are current-generation
-capacity and never checkpoint payload. Ordinary synchronous expansion remains
-in its caller-owned command slot, so this foundation currently changes no
-delivery, expansion, suspension, or rollback behavior. Test/profiling counters
-measure command clones, definition retains, ownership moves, lane high water,
-whole-control copies, and warmed allocations independently.
+and control-sequence name bytes in fixed chunks. Command and control
+coordinates carry both the issuing work owner and their lane serial; name
+marks carry that owner, the live root serial, and the byte offset. Access
+validates the owner before indexing, and the root serial rejects a mark after
+abort and byte reuse. One 32-byte move-only root key carries the complete
+logical marks plus owner and ABA serial identity; completion or abort retires
+controls deepest-first and then truncates command and name lanes to those
+marks. The retained chunks are current-generation capacity and never
+checkpoint payload. Ordinary synchronous expansion remains in its caller-owned
+command slot, so this foundation currently changes no delivery, expansion,
+suspension, or rollback behavior. Test/profiling counters measure command
+clones, definition retains, ownership moves, lane high water, whole-control
+copies, and warmed allocations independently.
 
 `PageMaterialArena` owns one `ChunkPool<Node>` and one coordinate-only
 `ForkArena`. Fixed payload chunks own each `Node` once. An `ArenaList` is the
