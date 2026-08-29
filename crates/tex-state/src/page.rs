@@ -1163,12 +1163,14 @@ impl PageRegionHistory {
         &mut self,
         key: PageRegionCheckpointKey,
     ) -> Result<AcceptedPageRegionHistoryTail, ForkArenaError> {
-        let before = self.current().builder.candidate_settlement_counters();
         let selected = self
             .regions
             .iter()
             .position(|region| region.validates_checkpoint(&self.pool, key))
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        let before = self.regions[selected]
+            .builder
+            .candidate_settlement_counters();
         let later_regions = self.regions.split_off(selected.saturating_add(1));
         let selected_region = self.current().id();
         self.current_mut().counters.later_page_regions_detached = self

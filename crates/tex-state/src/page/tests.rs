@@ -1000,6 +1000,147 @@ fn page_history_reject_restores_detached_later_regions_wholesale() {
     assert!(history.validates_checkpoint(later));
 }
 
+fn repeated_cross_region_production_selection_work(
+    newer_region_updates: usize,
+    newer_region_selections: usize,
+) {
+    let mut history = PageRegionHistory::default();
+    let selected = history.seal_checkpoint().expect("old-page checkpoint");
+    for value in 1..=5 {
+        history
+            .builder_mut()
+            .set_integer(PageInteger::DeadCycles, value);
+    }
+    let selected_journal_distance = {
+        let region = history
+            .region(selected)
+            .expect("selected page region remains retained");
+        let checkpoint = region
+            .checkpoint(selected)
+            .expect("selected checkpoint row remains retained");
+        region
+            .builder
+            .checkpoint_journal
+            .applied
+            .checked_sub(checkpoint.builder.cursor)
+            .expect("selected journal cursor precedes its accepted head") as u64
+    };
+    assert_eq!(selected_journal_distance, 5);
+
+    history
+        .prepare_production_shipout()
+        .expect("selected page owner preflights its production successor");
+    history
+        .commit_prepared_shipout()
+        .expect("selected page production succession commits");
+
+    for page in 0..2 {
+        history
+            .seal_checkpoint()
+            .expect("successor-retaining checkpoint");
+        for update in 0..newer_region_updates {
+            let value = i32::try_from(page * newer_region_updates + update + 100)
+                .expect("test update fits i32");
+            history
+                .builder_mut()
+                .set_integer(PageInteger::DeadCycles, value);
+        }
+        history
+            .prepare_production_shipout()
+            .expect("complete production page owner preflights");
+        history
+            .commit_prepared_shipout()
+            .expect("production page succession commits");
+    }
+
+    let newer = history
+        .seal_checkpoint()
+        .expect("latest production page checkpoint");
+    for update in 0..newer_region_updates {
+        let value = i32::try_from(update + 10_000).expect("test update fits i32");
+        history
+            .builder_mut()
+            .set_integer(PageInteger::DeadCycles, value);
+    }
+    for attempt in 0..newer_region_selections {
+        let tail = history
+            .begin_checkpoint_candidate(newer)
+            .expect("latest production page opens a candidate");
+        history.builder_mut().set_integer(
+            PageInteger::DeadCycles,
+            i32::try_from(attempt + 20_000).expect("test attempt fits i32"),
+        );
+        history
+            .reject_checkpoint_candidate(tail)
+            .expect("latest production page candidate rejects");
+    }
+
+    let before = history.candidate_settlement_counters();
+    for attempt in 0..2 {
+        let before_selection = history.candidate_settlement_counters();
+        let tail = history
+            .begin_checkpoint_candidate(selected)
+            .expect("selected old production page opens a candidate");
+        let after_selection = history.candidate_settlement_counters();
+        assert_eq!(
+            after_selection.candidate_selections - before_selection.candidate_selections,
+            1
+        );
+        assert_eq!(
+            after_selection.selected_journal_records_rewound
+                - before_selection.selected_journal_records_rewound,
+            selected_journal_distance,
+            "each repeated selection reports only the selected builder's explicit journal distance"
+        );
+
+        history
+            .builder_mut()
+            .set_integer(PageInteger::DeadCycles, attempt + 900);
+        let before_rejection = history.candidate_settlement_counters();
+        history
+            .reject_checkpoint_candidate(tail)
+            .expect("rejection restores detached successor regions");
+        let after_rejection = history.candidate_settlement_counters();
+        assert_eq!(
+            after_rejection.rejected_prior_records_redone
+                - before_rejection.rejected_prior_records_redone,
+            selected_journal_distance,
+            "rejection redoes exactly the detached selected-builder distance"
+        );
+        assert_eq!(
+            after_rejection.rejected_candidate_records_rewound
+                - before_rejection.rejected_candidate_records_rewound,
+            1
+        );
+    }
+
+    let after = history.candidate_settlement_counters();
+    assert_eq!(after.candidate_selections - before.candidate_selections, 2);
+    assert_eq!(
+        after.selected_journal_records_rewound - before.selected_journal_records_rewound,
+        2 * selected_journal_distance
+    );
+    assert_eq!(after.candidate_rejections - before.candidate_rejections, 2);
+    assert_eq!(
+        after.rejected_candidate_records_rewound - before.rejected_candidate_records_rewound,
+        2
+    );
+    assert_eq!(
+        after.rejected_prior_records_redone - before.rejected_prior_records_redone,
+        2 * selected_journal_distance
+    );
+    assert_eq!(after.checkpoint_capture_records_scanned, 0);
+    assert_eq!(after.acceptance_payload_records_scanned, 0);
+    assert_eq!(after.canonical_lane_records_scanned, 0);
+    assert_eq!(after.canonical_values_copied, 0);
+}
+
+#[test]
+fn repeated_cross_region_production_selection_uses_selected_builder_counter_domain() {
+    repeated_cross_region_production_selection_work(1, 0);
+    repeated_cross_region_production_selection_work(97, 3);
+}
+
 #[test]
 fn page_history_accept_drops_superseded_later_regions() {
     let mut history = PageRegionHistory::default();
