@@ -2396,6 +2396,15 @@ Expansion may:
 There are no `Dispatch::Push` or `Dispatch::PushTransient` values that mirror
 an input level and are immediately translated back into mutation.
 
+`ExecutionScratch` also contains an unused `ExpansionWork` foundation for the
+later structural-nesting and suspension cutover. Its fixed chunks provide
+stable parked-command slots, compact variant-specific controls, a chunked name
+lane, complete logical marks, and 32-byte move-only owner/ABA keys. It is not a
+second expanded-delivery interpreter: the ordinary synchronous path above
+continues to own its final `CurrentCommand` directly and does not enter these
+lanes. Completion or abort truncates the three logical lanes to the invocation
+mark while retaining only reusable generation-local capacity.
+
 Expandable primitive dispatch is a statically compiled match over a closed
 opcode enum. Pure heavyweight helpers such as regex, MD5, or numeric formatting
 remain isolated functions outside the token-delivery loop.

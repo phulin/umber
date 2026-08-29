@@ -50,6 +50,7 @@ pub use conditionals::{ActiveCondition, IncompleteCondition};
 mod error;
 mod execution_scratch;
 pub use execution_scratch::ScannerFrameKey;
+mod expansion_work;
 mod fatal;
 mod fuel;
 mod host;

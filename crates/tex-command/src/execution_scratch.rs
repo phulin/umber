@@ -132,6 +132,10 @@ pub(crate) enum ContinuationFrame<G> {
     StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
 }
 
+// Parked expansion controls belong in ExpansionWork's stable chunks. They
+// must not enlarge this existing suspension lane into an 800-byte value.
+const _: () = assert!(core::mem::size_of::<ContinuationFrame<()>>() < 800);
+
 #[derive(Debug, Eq, PartialEq)]
 struct ResumeFrameSlot<T, G> {
     serial: u64,
@@ -673,6 +677,7 @@ pub(crate) struct ExecutionScratch<G> {
     delimiter_words: Vec<TracedTokenWord>,
     scanner_resumes: ResumeFrameLane<ContinuationFrame<G>, G>,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
+    expansion_work: crate::expansion_work::ExpansionWork<G>,
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
     physical_macro_word_copies: u64,
@@ -698,6 +703,7 @@ impl<G> Default for ExecutionScratch<G> {
             delimiter_words: Vec::new(),
             scanner_resumes: ResumeFrameLane::default(),
             expression_frames: Vec::new(),
+            expansion_work: crate::expansion_work::ExpansionWork::default(),
             _generation: PhantomData,
             #[cfg(test)]
             physical_macro_word_copies: 0,
@@ -1466,6 +1472,7 @@ impl<G> ExecutionScratch<G> {
             && self.pending_slot().is_err()
             && self.delimiter_prefix_is_empty()
             && self.scanner_resumes.live_len() == 0
+            && self.expansion_work.is_quiescent()
     }
 
     #[cfg(test)]

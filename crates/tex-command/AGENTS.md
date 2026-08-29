@@ -49,6 +49,13 @@ collector (see `src/conditionals.rs`).
   water. A pending child can inherit a retiring parent's earlier reclaim mark,
   and its unpublished suffix may rebase only after the last active ancestor
   retires. Activations never own a heap buffer or arena scope.
+- `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
+  `src/expansion_work/tests.rs`: unused current-generation parked-expansion
+  foundation. Fixed command and typed control chunks keep stable addresses; one
+  chunked name lane and complete logical marks support exact abort and reuse;
+  move-only owner/serial keys reject foreign and ABA-stale access. Ordinary
+  synchronous expansion does not enter these lanes before the separately
+  reviewed production cutover.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
