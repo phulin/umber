@@ -256,6 +256,10 @@ These four sections are decoded into validated dense immutable prefixes with
 their canonical record indices. Kind 257 holds the name index; the token-list
 and glue indexes follow the canonical word and record regions inside kinds 272
 and 304. Fresh generation-tagged runtime identities are attached in bulk.
+Name validation reuses kind 257 as its destination-directed uniqueness proof:
+the lookup decoder requires one unique canonical key and one unique dense
+target per name row, then each row must resolve to its own target. The loader
+does not build a second ordered set of borrowed name keys.
 After complete validation, admission consumes the detached image. It releases
 the encoded container before destination construction and drains definition,
 token-list, glue, font, and node rows into their final owners in canonical
@@ -408,6 +412,14 @@ base. Their existing write barrier owns all later local/global assignment,
 save-stack journaling, grouping, snapshot, and rollback behavior. The retained
 base cells are immutable and shared across environment clones; job mutation
 changes only overlay storage.
+
+Duplicate environment cells are rejected through one compact destination
+bitmap rather than an ordered key index. Each admitted meaning, register,
+parameter, current-font, math-family, or box row sets the bit for the exact
+dense destination it will occupy. Code-table rows retain their required
+canonical `(kind, scalar)` order and need only the previous coordinate. This
+validation is complete before destination publication and preserves the
+historical schema-12 row order without copying logical keys.
 
 The schema-12 frozen encoder and decoder are the only store format path.
 Store-level round-trip tests call `encode_frozen_format` and

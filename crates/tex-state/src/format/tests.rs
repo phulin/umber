@@ -626,6 +626,82 @@ fn malformed_sections_cross_references_graphs_and_pdf_reject_before_staging() {
 }
 
 #[test]
+fn canonical_name_lookup_rejects_duplicate_dense_names() {
+    let image = with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command context");
+        context.intern_hash_control_sequence("first-name");
+        context.intern_hash_control_sequence("second-name");
+        drop(context);
+        universe.capture_format_image().expect("capture format")
+    })
+    .expect("source universe");
+    let container = crate::format_container::decode(image.as_bytes()).expect("source container");
+    let mut names: VersionedRows<Vec<super::schema::FormatName>> =
+        bincode::deserialize(&container.section(256).expect("names section").bytes)
+            .expect("names rows");
+    let first = names
+        .rows
+        .iter()
+        .position(|row| row.text == "first-name")
+        .expect("first name row");
+    let second = names
+        .rows
+        .iter()
+        .position(|row| row.text == "second-name")
+        .expect("second name row");
+    names.rows[second].text = names.rows[first].text.clone();
+
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(replace_section(
+            &image,
+            256,
+            bincode::serialize(&names).expect("duplicate names section"),
+        ))
+        .expect_err("the canonical lookup must reject duplicate dense names"),
+        FormatError::InvalidState("format name lookup does not match names".to_owned())
+    );
+}
+
+#[test]
+fn environment_cell_admission_rejects_duplicates_and_backward_code_rows() {
+    let image = image();
+    let encode_cells =
+        |rows| bincode::serialize(&VersionedRows { version: 1, rows }).expect("cell rows");
+    let duplicate = replace_section(
+        &image,
+        528,
+        encode_cells(vec![FormatCell::Count(7, 1), FormatCell::Count(7, 2)]),
+    );
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(duplicate)
+            .expect_err("duplicate destination cell must reject"),
+        FormatError::InvalidState("duplicate format environment cell".to_owned())
+    );
+
+    let backward = replace_section(
+        &image,
+        528,
+        encode_cells(vec![
+            FormatCell::Code {
+                kind: 1,
+                scalar: 7,
+                value: 1,
+            },
+            FormatCell::Code {
+                kind: 0,
+                scalar: 8,
+                value: 2,
+            },
+        ]),
+    );
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(backward)
+            .expect_err("backward destination cell must reject"),
+        FormatError::InvalidState("non-canonical format code-table order".to_owned())
+    );
+}
+
+#[test]
 fn validated_bytes_materialize_as_isolated_fresh_jobs() {
     let image = image();
     let first_clock = JobClock {
@@ -977,8 +1053,15 @@ fn format_stage_rejects_malformed_macro_program_without_panicking() {
         parameter_text: vec![TokenWord::pack(Token::param(1)).raw(); 10],
         replacement_text: Vec::new(),
     });
+    let container = crate::format_container::decode(image.as_bytes()).expect("source container");
+    let names_lookup = crate::frozen_lookup::decode(
+        &container.section(257).expect("name lookup section").bytes,
+        image.decoded.names.len(),
+    )
+    .expect("name lookup");
     let rows = super::LogicalRows {
         names: &image.decoded.names,
+        names_lookup: &names_lookup,
         token_lists: &image.decoded.token_lists,
         definitions: &image.decoded.definitions,
         glue: &image.decoded.glue,

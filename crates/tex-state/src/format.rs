@@ -595,13 +595,6 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
     let names_lookup =
         crate::frozen_lookup::decode(&required_section(&container, 257)?.bytes, names.len())
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-    for (slot, name) in names.iter().enumerate() {
-        if names_lookup.get_prefixed(name.kind, name.text.as_bytes()) != Some(slot as u32) {
-            return Err(FormatError::InvalidState(
-                "format name lookup does not match names".to_owned(),
-            ));
-        }
-    }
     let token_lists: Vec<Vec<u32>> = decode_rows(required_section(&container, 272)?)?;
     let definitions: Vec<FormatDefinition> = decode_rows(required_section(&container, 288)?)?;
     let glue: Vec<FormatGlue> = decode_rows(required_section(&container, 304)?)?;
@@ -623,6 +616,7 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
     validate_logical_rows(
         LogicalRows {
             names: &names,
+            names_lookup: &names_lookup,
             token_lists: &token_lists,
             definitions: &definitions,
             glue: &glue,
@@ -683,6 +677,7 @@ fn decode_rows<T: for<'de> Deserialize<'de>>(
 
 struct LogicalRows<'a> {
     names: &'a [FormatName],
+    names_lookup: &'a crate::frozen_lookup::FrozenLookup,
     token_lists: &'a [Vec<u32>],
     definitions: &'a [FormatDefinition],
     glue: &'a [FormatGlue],
@@ -691,13 +686,96 @@ struct LogicalRows<'a> {
     cells: &'a [FormatCell],
 }
 
+struct FormatCellAdmission {
+    name_slots: usize,
+    occupied: Vec<u64>,
+    previous_code: Option<(u8, u32)>,
+}
+
+impl FormatCellAdmission {
+    // The bitmap mirrors the final dense destinations, so validation records
+    // one bit rather than copying each logical key into a temporary index.
+    // Code rows are already canonical on the wire and need only a cursor.
+    const REGISTER_LANES: usize = 6;
+    const REGISTER_SLOTS: usize = 1 << u16::BITS;
+    const PARAMETER_LANES: usize = 4;
+    const PARAMETER_SLOTS: usize = 128;
+    const MATH_FAMILY_SLOTS: usize = 48;
+
+    fn new(name_slots: usize) -> Self {
+        let bits = name_slots
+            + Self::REGISTER_LANES * Self::REGISTER_SLOTS
+            + Self::PARAMETER_LANES * Self::PARAMETER_SLOTS
+            + 1
+            + Self::MATH_FAMILY_SLOTS;
+        Self {
+            name_slots,
+            occupied: vec![0; bits.div_ceil(u64::BITS as usize)],
+            previous_code: None,
+        }
+    }
+
+    fn admit_meaning(&mut self, index: u32) -> Result<(), FormatError> {
+        self.admit(index as usize)
+    }
+
+    fn admit_register(&mut self, lane: usize, index: u16) -> Result<(), FormatError> {
+        self.admit(self.name_slots + lane * Self::REGISTER_SLOTS + usize::from(index))
+    }
+
+    fn admit_parameter(&mut self, lane: usize, index: u16) -> Result<(), FormatError> {
+        let registers = Self::REGISTER_LANES * Self::REGISTER_SLOTS;
+        self.admit(self.name_slots + registers + lane * Self::PARAMETER_SLOTS + usize::from(index))
+    }
+
+    fn admit_current_font(&mut self) -> Result<(), FormatError> {
+        let registers = Self::REGISTER_LANES * Self::REGISTER_SLOTS;
+        let parameters = Self::PARAMETER_LANES * Self::PARAMETER_SLOTS;
+        self.admit(self.name_slots + registers + parameters)
+    }
+
+    fn admit_math_family(&mut self, index: u8) -> Result<(), FormatError> {
+        let registers = Self::REGISTER_LANES * Self::REGISTER_SLOTS;
+        let parameters = Self::PARAMETER_LANES * Self::PARAMETER_SLOTS;
+        self.admit(self.name_slots + registers + parameters + 1 + usize::from(index))
+    }
+
+    fn admit(&mut self, slot: usize) -> Result<(), FormatError> {
+        let word = slot / u64::BITS as usize;
+        let mask = 1_u64 << (slot % u64::BITS as usize);
+        if self.occupied[word] & mask != 0 {
+            return Err(FormatError::InvalidState(
+                "duplicate format environment cell".to_owned(),
+            ));
+        }
+        self.occupied[word] |= mask;
+        Ok(())
+    }
+
+    fn admit_code(&mut self, kind: u8, scalar: u32) -> Result<(), FormatError> {
+        let code = (kind, scalar);
+        if self.previous_code == Some(code) {
+            return Err(FormatError::InvalidState(
+                "duplicate format environment cell".to_owned(),
+            ));
+        }
+        if self.previous_code.is_some_and(|previous| previous > code) {
+            return Err(FormatError::InvalidState(
+                "non-canonical format code-table order".to_owned(),
+            ));
+        }
+        self.previous_code = Some(code);
+        Ok(())
+    }
+}
+
 fn validate_logical_rows(
     rows: LogicalRows<'_>,
     capacity_profile: crate::EngineCapacityProfile,
 ) -> Result<(), FormatError> {
-    use std::collections::BTreeSet;
     let LogicalRows {
         names,
+        names_lookup,
         token_lists,
         definitions,
         glue,
@@ -706,12 +784,16 @@ fn validate_logical_rows(
         cells,
     } = rows;
     let capacities = capacity_profile.configuration();
-    let mut distinct_names = BTreeSet::new();
     let mut hash_entries = 0_usize;
-    for name in names {
-        if name.kind > 5 || !distinct_names.insert((name.kind, name.text.as_str())) {
+    for (slot, name) in names.iter().enumerate() {
+        if name.kind > 5 {
             return Err(FormatError::InvalidState(
                 "duplicate or unknown format name".to_owned(),
+            ));
+        }
+        if names_lookup.get_prefixed(name.kind, name.text.as_bytes()) != Some(slot as u32) {
+            return Err(FormatError::InvalidState(
+                "format name lookup does not match names".to_owned(),
             ));
         }
         if name.kind == 3 && name.text.chars().count() != 1 {
@@ -848,9 +930,9 @@ fn validate_logical_rows(
         )));
     }
     validate_node_rows(names, token_lists, glue, fonts, node_lists)?;
-    let mut keys = BTreeSet::new();
+    let mut admission = FormatCellAdmission::new(names.len());
     for &cell in cells {
-        let (key, reference) = match cell {
+        let reference = match cell {
             FormatCell::Meaning(index, meaning) => {
                 if names.get(index as usize).is_none_or(|name| name.kind == 5) {
                     return Err(FormatError::InvalidState(
@@ -872,39 +954,67 @@ fn validate_logical_rows(
                     }
                     _ => {}
                 }
-                ((0, index), None)
+                admission.admit_meaning(index)?;
+                None
             }
-            FormatCell::Count(index, _) => ((1, u32::from(index)), None),
-            FormatCell::Dimension(index, _) => ((2, u32::from(index)), None),
-            FormatCell::TokenRegister(index, row) => ((3, u32::from(index)), Some((true, row))),
-            FormatCell::GlueRegister(index, row) => ((4, u32::from(index)), Some((false, row))),
-            FormatCell::MuGlueRegister(index, row) => ((5, u32::from(index)), Some((false, row))),
+            FormatCell::Count(index, _) => {
+                admission.admit_register(0, index)?;
+                None
+            }
+            FormatCell::Dimension(index, _) => {
+                admission.admit_register(1, index)?;
+                None
+            }
+            FormatCell::TokenRegister(index, row) => {
+                admission.admit_register(2, index)?;
+                Some((true, row))
+            }
+            FormatCell::GlueRegister(index, row) => {
+                admission.admit_register(3, index)?;
+                Some((false, row))
+            }
+            FormatCell::MuGlueRegister(index, row) => {
+                admission.admit_register(4, index)?;
+                Some((false, row))
+            }
             FormatCell::BoxRegister(index, row) => {
                 if row == 0 || row as usize > node_lists.len() {
                     return Err(FormatError::InvalidState(
                         "format box node reference is out of range".to_owned(),
                     ));
                 }
-                ((18, u32::from(index)), None)
+                admission.admit_register(5, index)?;
+                None
             }
-            FormatCell::IntegerParameter(index, _) if index < 128 => ((6, u32::from(index)), None),
+            FormatCell::IntegerParameter(index, _) if index < 128 => {
+                admission.admit_parameter(0, index)?;
+                None
+            }
             FormatCell::DimensionParameter(index, _) if index < 128 => {
-                ((7, u32::from(index)), None)
+                admission.admit_parameter(1, index)?;
+                None
             }
             FormatCell::TokenParameter(index, row) if index < 128 => {
-                ((8, u32::from(index)), Some((true, row)))
+                admission.admit_parameter(2, index)?;
+                Some((true, row))
             }
             FormatCell::GlueParameter(index, row) if index < 128 => {
-                ((9, u32::from(index)), Some((false, row)))
+                admission.admit_parameter(3, index)?;
+                Some((false, row))
             }
-            FormatCell::CurrentFont(font) if (font as usize) < fonts.len() => ((10, 0), None),
+            FormatCell::CurrentFont(font) if (font as usize) < fonts.len() => {
+                admission.admit_current_font()?;
+                None
+            }
             FormatCell::MathFamilyFont(index, font)
                 if index < 48 && (font as usize) < fonts.len() =>
             {
-                ((11, u32::from(index)), None)
+                admission.admit_math_family(index)?;
+                None
             }
             FormatCell::Code { kind, scalar, .. } if kind < 6 && scalar <= 0x10ffff => {
-                ((12 + u32::from(kind), scalar), None)
+                admission.admit_code(kind, scalar)?;
+                None
             }
             _ => {
                 return Err(FormatError::InvalidState(
@@ -912,11 +1022,6 @@ fn validate_logical_rows(
                 ));
             }
         };
-        if !keys.insert(key) {
-            return Err(FormatError::InvalidState(
-                "duplicate format environment cell".to_owned(),
-            ));
-        }
         if let Some((tokens, row)) = reference {
             let len = if tokens {
                 token_lists.len()
