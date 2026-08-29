@@ -129,7 +129,8 @@ impl OutputLedger {
             return Err(tex_state::fork_arena::ForkArenaError::InvalidCheckpoint);
         }
         let accepted_head_count = self.prepared_page_count;
-        self.pages.begin_checkpoint_candidate(checkpoint.mark)?;
+        self.pages
+            .begin_checkpoint_candidate(&mut self.pool, checkpoint.mark)?;
         self.accepted_head_count = Some(accepted_head_count);
         self.prepared_page_count = checkpoint.prepared_page_count;
         self.job_start_committed = true;
