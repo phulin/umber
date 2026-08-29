@@ -1263,6 +1263,10 @@ struct CandidateInitializationFailure<G> {
     control: Option<MainControl<G>>,
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "failure returns the exact MainControl owner for explicit settlement without adding heap indirection"
+)]
 fn initialize_candidate_runtime<G: 'static>(
     admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
     candidate: &mut RevisionCandidate<'_>,
@@ -1277,26 +1281,25 @@ fn initialize_candidate_runtime<G: 'static>(
     let rooted = restored.is_some();
     let materialized_job_start = candidate.materialized_job_start;
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
-    if !rooted_restart {
-        if let Err(error) = universe.begin_retained_session() {
-            return Err(CandidateInitializationFailure {
-                error: error.into(),
-                control: restored.take(),
-            });
-        }
+    if !rooted_restart && let Err(error) = universe.begin_retained_session() {
+        return Err(CandidateInitializationFailure {
+            error: error.into(),
+            control: restored.take(),
+        });
     }
     // Identity owners must see every job mutation, including fresh profile,
     // registered input, and JobStart setup. Batch execution never selects
     // this demand path and therefore performs none of the added hash work.
     universe.enable_reachable_state_identity();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    if restored.is_none() && !materialized_job_start {
-        if let Err(error) = install_plain_catcodes(universe) {
-            return Err(CandidateInitializationFailure {
-                error,
-                control: restored.take(),
-            });
-        }
+    if restored.is_none()
+        && !materialized_job_start
+        && let Err(error) = install_plain_catcodes(universe)
+    {
+        return Err(CandidateInitializationFailure {
+            error,
+            control: restored.take(),
+        });
     }
     if materialized_job_start {
         register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
