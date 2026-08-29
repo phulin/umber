@@ -219,6 +219,14 @@ delivery. Source retirement restores the enclosing source's line immediately;
 token-list push and pop leave it unchanged. Exact per-token provenance still
 comes from the tokenizer and is copied into the same command value.
 
+An exhausted input row advances that same delivery loop through one compact
+retirement phase. The exact top identity is validated before mutation;
+source-only nesting ancestry is borrowed from that top row directly, while an
+ordinary token or macro retirement performs no enclosing-stack search. The
+retirement receipt carries only copy-small semantic facts and never clones the
+row's replay explanation. It neither clears nor reconstructs the caller-owned
+`CurrentCommand` slot.
+
 Control-sequence resolution borrows the already-admitted dense meaning row
 through the live `CommandContext`. Static words decode during that borrow; a
 macro meaning clones its generation-branded definition owner exactly once into

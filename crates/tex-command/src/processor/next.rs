@@ -121,9 +121,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// following source token must remain untouched (§53).
     pub(crate) fn retire_last_delivery_level(&mut self) -> Result<(), CommandError> {
         let stamp = self.last_delivery.ok_or(CommandError::input_invariant())?;
-        match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
-            RetirementRestart::Continue | RetirementRestart::Completed => Ok(()),
-            RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+        match self.retire_input_top(InputLevelId(stamp.input_level()))? {
+            RetirementHandoff::Continue | RetirementHandoff::Completed => Ok(()),
+            RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                 Err(CommandError::input_invariant())
             }
         }
@@ -138,12 +138,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         level: InputLevelId,
     ) -> Result<(), CommandError> {
-        match self.retire_and_restart(level)? {
-            RetirementRestart::Stop if std::mem::take(&mut self.read_line_ended) => Ok(()),
-            RetirementRestart::Continue
-            | RetirementRestart::Completed
-            | RetirementRestart::Stop
-            | RetirementRestart::EndV(_) => Err(CommandError::input_invariant()),
+        match self.retire_input_top(level)? {
+            RetirementHandoff::Stop if std::mem::take(&mut self.read_line_ended) => Ok(()),
+            RetirementHandoff::Continue
+            | RetirementHandoff::Completed
+            | RetirementHandoff::Stop
+            | RetirementHandoff::EndV(_) => Err(CommandError::input_invariant()),
         }
     }
 
@@ -160,9 +160,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(());
             }
             let reached = top == level;
-            match self.retire_and_restart(top)? {
-                RetirementRestart::Continue | RetirementRestart::Completed => {}
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+            match self.retire_input_top(top)? {
+                RetirementHandoff::Continue | RetirementHandoff::Completed => {}
+                RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                     return Err(CommandError::input_invariant());
                 }
             }
@@ -207,11 +207,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             else {
                 return Ok(retired);
             };
-            match self.retire_and_restart(identity)? {
-                RetirementRestart::Continue | RetirementRestart::Completed => {
+            match self.retire_input_top(identity)? {
+                RetirementHandoff::Continue | RetirementHandoff::Completed => {
                     retired = retired.saturating_add(1);
                 }
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                     return Err(CommandError::input_invariant());
                 }
             }
@@ -1323,9 +1323,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return Ok(());
         }
-        match self.retire_and_restart(cursor.identity())? {
-            RetirementRestart::Continue => Ok(()),
-            RetirementRestart::Stop | RetirementRestart::EndV(_) | RetirementRestart::Completed => {
+        match self.retire_input_top(cursor.identity())? {
+            RetirementHandoff::Continue => Ok(()),
+            RetirementHandoff::Stop | RetirementHandoff::EndV(_) | RetirementHandoff::Completed => {
                 Err(CommandError::input_invariant())
             }
         }
@@ -1729,17 +1729,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                             _ => None,
                         })
                         .ok_or_else(CommandError::input_invariant)?;
-                    match self.retire_and_restart(identity)? {
-                        RetirementRestart::Stop => {
+                    match self.retire_input_top(identity)? {
+                        RetirementHandoff::Stop => {
                             if self.raw_end_restarts()? {
                                 continue;
                             }
                             destination.take();
                             return Ok(super::DeliveryStatus::End);
                         }
-                        RetirementRestart::Completed => continue,
-                        RetirementRestart::Continue => continue,
-                        RetirementRestart::EndV(level) => destination
+                        RetirementHandoff::Completed => continue,
+                        RetirementHandoff::Continue => continue,
+                        RetirementHandoff::EndV(level) => destination
                             .as_mut()
                             .expect("next-command pipeline owns its reusable command slot")
                             .empty_for_raw_delivery()
@@ -1899,14 +1899,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             };
             self.pending_file_warning_context = Some((identity, context));
         }
-        match self.retire_and_restart(identity)? {
-            RetirementRestart::Stop => Ok(SourceExhaustionStatus::End),
-            RetirementRestart::Completed => Ok(SourceExhaustionStatus::Continue),
-            RetirementRestart::Continue => {
+        match self.retire_input_top(identity)? {
+            RetirementHandoff::Stop => Ok(SourceExhaustionStatus::End),
+            RetirementHandoff::Completed => Ok(SourceExhaustionStatus::Continue),
+            RetirementHandoff::Continue => {
                 let _ = self.recover_runaway_eof()?;
                 Ok(SourceExhaustionStatus::Continue)
             }
-            RetirementRestart::EndV(_) => Err(CommandError::input_invariant()),
+            RetirementHandoff::EndV(_) => Err(CommandError::input_invariant()),
         }
     }
 
@@ -1936,10 +1936,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.take_ready_replay_completion()
     }
 
-    fn retire_and_restart(
+    /// Retires the validated top input row and returns only the scalar phase
+    /// the caller's existing delivery loop must advance to. The caller-owned
+    /// command destination remains in place; retirement does not reconstruct
+    /// or redispatch a command.
+    fn retire_input_top(
         &mut self,
         identity: InputLevelId,
-    ) -> Result<RetirementRestart, CommandError> {
+    ) -> Result<RetirementHandoff, CommandError> {
         let nesting_context = self
             .pending_file_warning_context
             .take()
@@ -2015,16 +2019,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             // §360's `\read` line end is `cur_cmd:=cur_chr:=0; return`: the
             // level is gone and delivery stops, rather than resuming whatever
             // §483's `begin_file_reading` buried.
-            InputRetirementAction::TerminalStop => Ok(RetirementRestart::Stop),
+            InputRetirementAction::TerminalStop => Ok(RetirementHandoff::Stop),
             InputRetirementAction::ReadLineEnded => {
                 self.read_line_ended = true;
-                Ok(RetirementRestart::Stop)
+                Ok(RetirementHandoff::Stop)
             }
             InputRetirementAction::VTemplateRetained => {
                 // The exhausted frame remains live while `get_next` delivers
                 // frozen end-template. Its expanded `endv` is then handled by
                 // typed `do_endv`, which retires this exact frame.
-                Ok(RetirementRestart::EndV(identity))
+                Ok(RetirementHandoff::EndV(identity))
             }
             InputRetirementAction::SourcePopped
             | InputRetirementAction::TokenListPopped
@@ -2049,9 +2053,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                 }
                 if self.command.complete_replay(identity).is_some() {
-                    Ok(RetirementRestart::Completed)
+                    Ok(RetirementHandoff::Completed)
                 } else {
-                    Ok(RetirementRestart::Continue)
+                    Ok(RetirementHandoff::Continue)
                 }
             }
         }
@@ -2105,14 +2109,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             let Some(identity) = depleted else {
                 return Ok(());
             };
-            let retirement = self.retire_and_restart(identity)?;
+            let retirement = self.retire_input_top(identity)?;
             match retirement {
                 // Finished stored replay episodes queue their completion in
                 // command state. Draining continues so the whole depleted run
                 // is cleaned off; delivery surfaces each ready ownership
                 // boundary before any enclosing source.
-                RetirementRestart::Continue | RetirementRestart::Completed => {}
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                RetirementHandoff::Continue | RetirementHandoff::Completed => {}
+                RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                     return Err(CommandError::input_invariant());
                 }
             }
@@ -2652,7 +2656,7 @@ enum SourceExhaustionStatus {
     End,
 }
 
-enum RetirementRestart {
+enum RetirementHandoff {
     Stop,
     Continue,
     EndV(InputLevelId),

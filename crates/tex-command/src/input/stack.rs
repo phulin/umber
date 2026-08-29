@@ -75,7 +75,6 @@ pub(crate) struct InputRetirement {
     /// §307's token-list levels have no `name` classification at all.
     pub(crate) name_class: Option<SourceNameClass>,
     pub(crate) source: Option<tex_state::SourceId>,
-    pub(crate) trace: Option<ReplayTrace>,
     /// Copy-only result of comparing the still-borrowed source ancestry with
     /// current group and conditional stacks before the row is popped.
     pub(crate) file_warning_boundary: Option<FileWarningBoundary>,
@@ -101,7 +100,7 @@ enum RetiredInputLevel<G> {
         identity: InputLevelId,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
-        trace: ReplayTrace,
+        reason: InputRetirementReason,
         replay: Option<super::ReplayPayloadId<G>>,
     },
 }
@@ -120,7 +119,7 @@ impl<G> RetiredInputLevel<G> {
                 identity: cursor.identity(),
                 behavior: cursor.behavior,
                 retirement: cursor.retirement,
-                trace: cursor.trace.clone(),
+                reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
                 replay: match &cursor.span {
                     PackedTokenSpanHandle::Replay { replay, .. } => Some(*replay),
                     _ => None,
@@ -130,7 +129,7 @@ impl<G> RetiredInputLevel<G> {
                 identity: cursor.identity(),
                 behavior: TokenBehavior::Parameter,
                 retirement: RetirementBehavior::Pop,
-                trace: ReplayTrace::MacroParameter { slot: cursor.slot },
+                reason: InputRetirementReason::Parameter,
                 replay: None,
             },
         }
@@ -148,21 +147,24 @@ impl<G> RetiredInputLevel<G> {
                     framed,
                 }
             }
-            InputLevel::Tokens(cursor) => Self::Tokens {
-                identity: cursor.identity(),
-                behavior: cursor.behavior,
-                retirement: cursor.retirement,
-                trace: cursor.trace,
-                replay: match cursor.span {
-                    PackedTokenSpanHandle::Replay { replay, .. } => Some(replay),
-                    _ => None,
-                },
-            },
+            InputLevel::Tokens(cursor) => {
+                let reason = input_retirement_reason(&cursor.behavior, &cursor.trace);
+                Self::Tokens {
+                    identity: cursor.identity(),
+                    behavior: cursor.behavior,
+                    retirement: cursor.retirement,
+                    reason,
+                    replay: match cursor.span {
+                        PackedTokenSpanHandle::Replay { replay, .. } => Some(replay),
+                        _ => None,
+                    },
+                }
+            }
             InputLevel::MacroArgument(cursor) => Self::Tokens {
                 identity: cursor.identity(),
                 behavior: TokenBehavior::Parameter,
                 retirement: RetirementBehavior::Pop,
-                trace: ReplayTrace::MacroParameter { slot: cursor.slot },
+                reason: InputRetirementReason::Parameter,
                 replay: None,
             },
         }
@@ -860,12 +862,7 @@ impl<G> CommandState<G> {
         }
 
         if matches!(level, InputLevel::MacroArgument(_)) {
-            let RetiredInputLevel::Tokens {
-                behavior,
-                trace,
-                replay,
-                ..
-            } = self
+            let RetiredInputLevel::Tokens { reason, replay, .. } = self
                 .pop_retired_input_level()
                 .expect("the inspected macro-argument level remains live")
             else {
@@ -875,10 +872,9 @@ impl<G> CommandState<G> {
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::TokenListPopped,
-                reason: input_retirement_reason(&behavior, &trace),
+                reason,
                 name_class: None,
                 source: None,
-                trace: Some(trace),
                 file_warning_boundary: None,
                 closes_file_frame: false,
             });
@@ -927,7 +923,6 @@ impl<G> CommandState<G> {
                 reason: InputRetirementReason::Source,
                 name_class: Some(name_class),
                 source: Some(source_id),
-                trace: None,
                 file_warning_boundary,
                 closes_file_frame: framed,
             });
@@ -936,7 +931,7 @@ impl<G> CommandState<G> {
             if !matches!(cursor.behavior, TokenBehavior::VTemplate) {
                 return Err(InputRetirementError::NotRetainedVTemplate);
             }
-            let trace = cursor.trace.clone();
+            let reason = input_retirement_reason(&cursor.behavior, &cursor.trace);
             let InputLevel::Tokens(cursor) = self
                 .input
                 .levels
@@ -952,10 +947,9 @@ impl<G> CommandState<G> {
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,
-                reason: input_retirement_reason(&cursor.behavior, &trace),
+                reason,
                 name_class: None,
                 source: None,
-                trace: Some(trace),
                 file_warning_boundary: None,
                 closes_file_frame: false,
             });
@@ -965,7 +959,7 @@ impl<G> CommandState<G> {
         let RetiredInputLevel::Tokens {
             behavior,
             retirement,
-            trace,
+            reason,
             replay,
             ..
         } = self
@@ -998,10 +992,9 @@ impl<G> CommandState<G> {
         Ok(InputRetirement {
             identity: expected,
             action,
-            reason: input_retirement_reason(&behavior, &trace),
+            reason,
             name_class: None,
             source: None,
-            trace: Some(trace),
             file_warning_boundary: None,
             closes_file_frame: false,
         })
@@ -1023,7 +1016,7 @@ impl<G> CommandState<G> {
             identity,
             behavior,
             retirement,
-            trace,
+            reason,
             replay,
         } = level
         else {
@@ -1045,7 +1038,6 @@ impl<G> CommandState<G> {
                 reason: InputRetirementReason::Source,
                 name_class: Some(name_class),
                 source: Some(source),
-                trace: None,
                 file_warning_boundary: None,
                 closes_file_frame: false,
             });
@@ -1069,10 +1061,9 @@ impl<G> CommandState<G> {
         Some(InputRetirement {
             identity,
             action,
-            reason: input_retirement_reason(&behavior, &trace),
+            reason,
             name_class: None,
             source: None,
-            trace: Some(trace),
             file_warning_boundary: None,
             closes_file_frame: false,
         })

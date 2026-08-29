@@ -35,13 +35,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         identity: InputLevelId,
     ) -> Option<FileWarningBoundary> {
-        let open_depths = self.command.source_open_depths(identity)?;
-        let current_group_lineages = self.state.group_lineages();
+        let open_depths = self.command.top_source_open_depths(identity)?;
         let group_start = open_depths
             .group_lineages
             .iter()
-            .zip(&current_group_lineages)
-            .take_while(|(saved, current)| saved == current)
+            .zip(self.state.group_frames())
+            .take_while(|(saved, current)| **saved == current.lineage())
             .count();
         let condition_start = open_depths
             .conditional_identities

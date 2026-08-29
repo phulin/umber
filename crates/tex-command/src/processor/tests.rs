@@ -1,7 +1,10 @@
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::input::InputLevel;
+use crate::input::{
+    InputLevel, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior,
+};
 use crate::{
     AlignmentIdentity, CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation,
     CommandObserver, CommandState, DeliveryStatus, InputReason, InputTransition,
@@ -16,6 +19,195 @@ impl CommandObserver for RecordingObserver {
     fn committed(&mut self, observation: CommandObservation) {
         self.observations.push(observation);
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RetirementHandoffEvidence {
+    top_source_checks: u64,
+    slot_initializations: u64,
+    raw_writes: u64,
+    command_clones: u64,
+    backup_copies: u64,
+    expansion_moves_in: u64,
+    expansion_moves_out: u64,
+}
+
+fn retirement_handoff_evidence(empty_levels: usize) -> RetirementHandoffEvidence {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        for _ in 0..empty_levels {
+            command.push_token_level(
+                PackedTokenSpanHandle::transient([]),
+                TokenBehavior::Ordinary,
+                RetirementBehavior::Pop,
+                ReplayTrace::Inserted,
+            );
+        }
+        let before_checks = crate::state::retirement_top_source_checks();
+        let before_ownership = crate::command::command_ownership_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        #[cfg(feature = "profiling")]
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        #[cfg(feature = "profiling")]
+        let before_allocations =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let status = {
+            #[cfg(feature = "profiling")]
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            processor
+                .get_next_into(&mut destination)
+                .expect("delivery through exhausted levels")
+        };
+        #[cfg(feature = "profiling")]
+        let after_allocations =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+        assert_eq!(status, DeliveryStatus::Command);
+        assert_eq!(
+            destination
+                .as_ref()
+                .expect("final caller slot")
+                .spelling()
+                .semantic_token(),
+            token
+        );
+        #[cfg(feature = "profiling")]
+        {
+            assert_eq!(after_allocations.calls - before_allocations.calls, 0);
+            assert_eq!(
+                after_allocations.requested_bytes - before_allocations.requested_bytes,
+                0
+            );
+        }
+
+        let after_ownership = crate::command::command_ownership_counters();
+        RetirementHandoffEvidence {
+            top_source_checks: crate::state::retirement_top_source_checks() - before_checks,
+            slot_initializations: after_ownership.slot_initializations
+                - before_ownership.slot_initializations,
+            raw_writes: after_ownership.raw_writes - before_ownership.raw_writes,
+            command_clones: after_ownership.clones - before_ownership.clones,
+            backup_copies: after_ownership.backup_copies - before_ownership.backup_copies,
+            expansion_moves_in: after_ownership.expansion_moves_in
+                - before_ownership.expansion_moves_in,
+            expansion_moves_out: after_ownership.expansion_moves_out
+                - before_ownership.expansion_moves_out,
+        }
+    })
+}
+
+#[test]
+fn one_and_4096_retirements_reuse_one_command_slot_with_linear_scalar_work() {
+    let one = retirement_handoff_evidence(1);
+    let many = retirement_handoff_evidence(4_096);
+
+    assert_eq!(one.top_source_checks, 1);
+    assert_eq!(many.top_source_checks, 4_096);
+    for evidence in [one, many] {
+        assert_eq!(evidence.slot_initializations, 1);
+        assert_eq!(evidence.raw_writes, 1);
+        assert_eq!(evidence.command_clones, 0);
+        assert_eq!(evidence.backup_copies, 0);
+        assert_eq!(evidence.expansion_moves_in, 0);
+        assert_eq!(evidence.expansion_moves_out, 0);
+    }
+}
+
+#[test]
+fn in_place_retirement_preserves_semantic_transition_order() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        command.push_token_level(
+            PackedTokenSpanHandle::transient([]),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(StoredReplayReason::EveryPar),
+        );
+        command.push_token_level(
+            PackedTokenSpanHandle::transient([]),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        command.push_token_level(
+            PackedTokenSpanHandle::transient([]),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Inserted,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let mut context = universe.command_context().expect("command context");
+        let mut destination = None;
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            )
+            .with_observer(&mut observer);
+            assert_eq!(
+                processor
+                    .get_next_into(&mut destination)
+                    .expect("delivery after retirements"),
+                DeliveryStatus::Command
+            );
+        }
+
+        let reasons = observer
+            .observations
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Retire =>
+                {
+                    Some(record.reason)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reasons,
+            [
+                InputReason::Recovery,
+                InputReason::Backup,
+                InputReason::EveryPar
+            ]
+        );
+        assert_eq!(
+            destination
+                .expect("delivered command")
+                .spelling()
+                .semantic_token(),
+            token
+        );
+    });
 }
 
 #[test]

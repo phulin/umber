@@ -6,6 +6,14 @@ use crate::input::{
 };
 
 #[test]
+fn retirement_receipt_is_copy_small_and_owns_no_replay_trace() {
+    assert!(std::mem::size_of::<super::InputRetirement>() <= 64);
+    assert!(std::mem::size_of::<InputRetirementReason>() <= 2);
+    assert!(std::mem::size_of::<ReplayTrace>() <= 2);
+    assert!(!std::mem::needs_drop::<ReplayTrace>());
+}
+
+#[test]
 fn one_exhausted_token_level_retires_once_with_its_semantic_reason() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();

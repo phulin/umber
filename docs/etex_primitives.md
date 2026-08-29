@@ -116,7 +116,7 @@ does not apply the SyncTeX layer.
 `\tracingnesting` renders `etex.ch` [23.328]'s `file_warning`: a source level
 receives the live group and conditional ancestry in its canonical opening
 transition (`open_registered_input`), and its retirement
-(`crates/tex-command/src/processor/next.rs`'s `retire_and_restart`) compares
+(`crates/tex-command/src/processor/next.rs`'s `retire_input_top`) compares
 the moved frame-owned recording against the live depth, printing a "Warning: end of file when
 ... is incomplete" line for each group and conditional still open
 (`crates/tex-command/src/tracing_nesting.rs`). Unlike the other

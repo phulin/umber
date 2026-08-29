@@ -18,6 +18,8 @@ pub(crate) struct CommandOwnershipCounters {
     pub(crate) backup_copies: u64,
     pub(crate) expansion_moves_in: u64,
     pub(crate) expansion_moves_out: u64,
+    pub(crate) slot_initializations: u64,
+    pub(crate) raw_writes: u64,
 }
 
 #[cfg(any(test, feature = "profiling"))]
@@ -28,10 +30,12 @@ thread_local! {
             backup_copies: 0,
             expansion_moves_in: 0,
             expansion_moves_out: 0,
+            slot_initializations: 0,
+            raw_writes: 0,
         }) };
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 pub(crate) fn command_ownership_counters() -> CommandOwnershipCounters {
     COMMAND_OWNERSHIP_COUNTERS.with(core::cell::Cell::get)
 }
@@ -126,7 +130,7 @@ impl CommandDeliveryFlags {
 
 impl<G> Clone for CurrentCommand<G> {
     fn clone(&self) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.clones = counters.clones.saturating_add(1);
         });
@@ -348,6 +352,10 @@ impl<G> CurrentCommand<G> {
     /// partial initialization while adding no second command representation.
     #[inline(always)]
     pub(crate) fn empty() -> Self {
+        #[cfg(test)]
+        update_command_ownership_counters(|counters| {
+            counters.slot_initializations = counters.slot_initializations.saturating_add(1);
+        });
         Self {
             spelling: TracedTokenWord::pack(
                 Token::Char {
@@ -732,6 +740,10 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
     ) -> RawCommand<'slot, G> {
+        #[cfg(any(test, feature = "profiling"))]
+        update_command_ownership_counters(|counters| {
+            counters.raw_writes = counters.raw_writes.saturating_add(1);
+        });
         let command = self.0;
         command.spelling = spelling;
         command.delivery = DeliveryStamp::new(input_level, position, 0);

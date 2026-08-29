@@ -311,8 +311,10 @@ collector (see `src/conditionals.rs`).
   `file_warning` -- "Warning: end of file when ... is incomplete" for every
   group and conditional still open at a source level's natural EOF, compared
   against the depth `state.rs`'s `record_source_open_depths` recorded when
-  that level opened. Called from `processor/next.rs`'s `retire_and_restart`,
-  the one choke point every input-level retirement passes through. Prints
+  that level opened. Called from `processor/next.rs`'s `retire_input_top`,
+  the one choke point every input-level retirement passes through. The
+  source-only boundary probe checks the validated top row directly; ordinary
+  token and macro retirement never searches the enclosing input stack. Prints
   through the ambient selector (`CommandContext::printer`), not
   `begin_diagnostic`'s `\tracingonline` redirect: unlike
   `\tracingassigns`/`\tracinggroups`/`\tracingifs`, `file_warning` is not

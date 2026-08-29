@@ -30,6 +30,16 @@ use crate::profile::{
     CommandProfileMismatch,
 };
 
+#[cfg(test)]
+thread_local! {
+    static RETIREMENT_TOP_SOURCE_CHECKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn retirement_top_source_checks() -> u64 {
+    RETIREMENT_TOP_SOURCE_CHECKS.with(std::cell::Cell::get)
+}
+
 fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
     match reason {
         StoredReplayReason::EveryPar => "everypar",
@@ -2651,22 +2661,22 @@ impl<G> CommandState<G> {
             })
     }
 
-    pub(crate) fn source_open_depths(
+    /// Borrows opening ancestry only when `identity` names the current top
+    /// source. Input retirement has already validated this same top identity;
+    /// ordinary token and macro retirement must not search through their
+    /// enclosing input stack for source-only state.
+    pub(crate) fn top_source_open_depths(
         &self,
         identity: InputLevelId,
     ) -> Option<&crate::input::SourceOpenDepths> {
-        self.input
-            .levels
-            .iter()
-            .rev()
-            .find_map(|entry| match entry {
-                InputLevel::Source(source) if source.identity() == identity => {
-                    source.slot.open_depths.as_deref()
-                }
-                InputLevel::Source(_) | InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => {
-                    None
-                }
-            })
+        #[cfg(test)]
+        RETIREMENT_TOP_SOURCE_CHECKS.with(|checks| checks.set(checks.get().saturating_add(1)));
+        self.input.levels.last().and_then(|entry| match entry {
+            InputLevel::Source(source) if source.identity() == identity => {
+                source.slot.open_depths.as_deref()
+            }
+            InputLevel::Source(_) | InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
+        })
     }
 
     /// Applies TeX's `\endinput` retirement request to the active physical

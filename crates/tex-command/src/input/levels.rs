@@ -1561,7 +1561,7 @@ pub(crate) enum RetirementBehavior {
 ///
 /// This value is diagnostic/provenance state. It cannot select expansion,
 /// parameter substitution, backup treatment, or retirement.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ReplayTrace {
     /// TeX82 §307's `inserted` token type: the level TeX82 §323's `ins_list`
     /// installs.
