@@ -466,13 +466,13 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     // §799 continues `if cur_head<>cur_tail then begin link(tail):=link(cur_head);
     // tail:=cur_tail end`: the migrated material is spliced immediately after the
     // row, as a plain list splice with no interline glue of its own.
-    let migrations = std::mem::take(&mut active.row_migrations).list();
+    let migrations = stores.reclaim_unique_page_nodes(std::mem::take(&mut active.row_migrations));
     if crate::vertical::is_outer_vertical(modes) {
-        stores.append_page_contributions(migrations);
+        stores.append_unique_page_contributions(migrations);
     } else {
         modes
             .current_list_mutation()
-            .append_list(stores, migrations);
+            .append_unique_list(stores, migrations);
     }
     active.row_open = false;
     Ok(())

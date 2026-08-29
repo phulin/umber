@@ -1,4 +1,6 @@
-use super::{PageListId, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion};
+use super::{
+    PageListId, PageListSpan, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion,
+};
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_region::NodePool;
@@ -197,6 +199,65 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
 }
 
 #[test]
+fn demand_enabled_shared_append_keeps_copied_tail_summary_open_for_generated_suffix() {
+    page_arena!(arena, pool, state, 32);
+    arena.enable_semantic_identity();
+    let source = arena.publish_owned(penalties(&[10, 20])).expect("source");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .append_to_active_list(&mut builder, source)
+        .expect("copy summarized source");
+    arena
+        .push_active_list(&mut builder, Node::Penalty(30))
+        .expect("generated suffix extends a summarized copied block");
+    let composed = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize builder");
+
+    let expected = penalties(&[10, 20, 30]);
+    assert_eq!(resolved(&arena, composed), expected);
+    assert_eq!(
+        composed.semantic_identity(),
+        Some(identity(&expected).raw())
+    );
+    assert_eq!(arena.counters().source_nodes_copied, 2);
+}
+
+#[test]
+fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six() {
+    for size in [1_usize, 64, 4_096] {
+        page_arena!(arena, pool, state, 512);
+        let started = std::time::Instant::now();
+        let mut list = PageListSpan::empty();
+        for value in 0..size {
+            let suffix = arena
+                .publish_owned_unique([Node::Penalty(value as i32)])
+                .expect("fresh unique suffix");
+            list = arena
+                .append_unique_to_span(list, suffix)
+                .expect("constant-work unique suffix splice");
+        }
+        let elapsed = started.elapsed();
+        let counters = arena.counters();
+
+        assert_eq!(list.len(), size);
+        assert_eq!(arena.list(list.list()).expect("direct list").len(), size);
+        assert_eq!(counters.new_semantic_nodes, size as u64);
+        assert_eq!(counters.direct_blocks_allocated, size as u64);
+        assert_eq!(counters.source_nodes_copied, 0);
+        assert_eq!(counters.partial_edge_nodes_copied, 0);
+        assert_eq!(counters.overlapping_nodes_copied, 0);
+        eprintln!(
+            "DIRECT_UNIQUE_SUFFIX_SCALE nodes={size} elapsed_ns={} blocks={} copies=0",
+            elapsed.as_nanos(),
+            counters.direct_blocks_allocated
+        );
+    }
+}
+
+#[test]
 fn source_copy_counter_has_a_real_negative_control() {
     page_arena!(arena, pool, state, 32);
     let source = arena.publish_owned(penalties(&[4, 5])).expect("source");
@@ -390,7 +451,11 @@ fn active_list_concatenates_maintained_semantic_identity() {
         result.semantic_identity(),
         Some(identity(&expected_nodes).raw())
     );
-    assert_eq!(arena.semantic_hash_work(), 3);
+    assert_eq!(
+        arena.semantic_hash_work(),
+        5,
+        "the two generated source copies are each hashed once before the new suffix"
+    );
     assert_eq!(arena.counters().source_nodes_copied, 2);
 }
 
@@ -422,7 +487,7 @@ fn identity_is_preserved_across_build_split_and_compose() {
 }
 
 #[test]
-fn long_middle_subrange_hashes_only_two_bounded_chunk_edges() {
+fn long_middle_slice_uses_summaries_and_explicit_copy_hashes_each_node_once() {
     const CHUNK_VALUES: usize = 8;
     page_arena!(
         arena,
@@ -466,11 +531,16 @@ fn long_middle_subrange_hashes_only_two_bounded_chunk_edges() {
         .finalize_active_list(&mut builder)
         .expect("finalize retained range");
     assert_eq!(appended.semantic_identity(), middle.semantic_identity());
-    assert!(
-        arena.semantic_hash_work() - append_hash_before <= (2 * CHUNK_VALUES) as u64,
-        "active range append may hash only its boundary chunks"
+    assert_eq!(
+        arena.semantic_hash_work() - append_hash_before,
+        appended.len() as u64,
+        "explicit shared copying hashes each copied node once and never revisits a prefix"
     );
-    assert!(arena.semantic_summary_work() > append_summaries_before);
+    assert_eq!(
+        arena.semantic_summary_work(),
+        append_summaries_before,
+        "the explicit copy builds summarized destination blocks from its one-pass hashes"
+    );
 
     let compose_hash_before = arena.semantic_hash_work();
     let doubled = arena

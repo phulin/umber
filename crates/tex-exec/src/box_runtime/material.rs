@@ -97,10 +97,12 @@ pub(crate) fn execute_scanned_saved_vertical_discards<G>(
         _ => unreachable!("caller restricts saved vertical-discard primitives"),
     };
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
+    let nodes = stores.reclaim_unique_page_list(nodes);
     if is_outer_vertical(nest) {
-        stores.append_page_contributions(nodes);
+        stores.append_unique_page_contributions(nodes);
     } else {
-        nest.current_list_mutation().append_list(stores, nodes);
+        nest.current_list_mutation()
+            .append_unique_list(stores, nodes);
     }
     Ok(())
 }
@@ -304,10 +306,12 @@ fn append_migration_list<G>(
     if nodes.is_empty() {
         return;
     }
+    let nodes = stores.reclaim_unique_page_list(nodes);
     if is_outer_vertical(nest) {
-        stores.append_page_contributions(nodes);
+        stores.append_unique_page_contributions(nodes);
     } else {
-        nest.current_list_mutation().append_list(stores, nodes);
+        nest.current_list_mutation()
+            .append_unique_list(stores, nodes);
     }
 }
 
@@ -409,10 +413,12 @@ fn append_unboxed<G>(
         }
     }
     let retained = stores.finalize_page_active_list(&mut retained);
+    let retained = stores.reclaim_unique_page_list(retained);
     if is_outer_vertical(nest) {
-        stores.append_page_contributions(retained);
+        stores.append_unique_page_contributions(retained);
     } else {
-        nest.current_list_mutation().append_list(stores, retained);
+        nest.current_list_mutation()
+            .append_unique_list(stores, retained);
     }
     Ok(())
 }

@@ -972,20 +972,34 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         span: PageListSpan,
     ) -> Result<(), ForkArenaError> {
-        self.region.pub_arena.append_validated_active_list(
-            &mut self.pool.chunks,
-            &mut builder.inner,
-            span.list.coordinate(),
-            span.coordinate,
-        )?;
         if let Some(identity) = &mut builder.identity {
-            *identity = identity.concat(
-                span.list
-                    .sequence_identity()
-                    .expect("demand-enabled page span carries identity"),
-            );
-            builder.identity_work.combined_summaries =
-                builder.identity_work.combined_summaries.saturating_add(1);
+            let (appended, work) = self
+                .region
+                .pub_arena
+                .append_validated_active_list_range_summarized(
+                    &mut self.pool.chunks,
+                    &mut builder.inner,
+                    span.list.coordinate(),
+                    span.coordinate,
+                    0..span.len(),
+                    semantic_node_identity,
+                )?;
+            *identity = identity.concat(appended);
+            builder.identity_work.hashed_values = builder
+                .identity_work
+                .hashed_values
+                .saturating_add(work.hashed_values);
+            builder.identity_work.combined_summaries = builder
+                .identity_work
+                .combined_summaries
+                .saturating_add(work.combined_summaries.saturating_add(1));
+        } else {
+            self.region.pub_arena.append_validated_active_list(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                span.list.coordinate(),
+                span.coordinate,
+            )?;
         }
         Ok(())
     }

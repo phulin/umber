@@ -206,6 +206,9 @@ Ordinary list processing is packed-block movement plus append-only output:
 - a genuinely generated or rewritten node is appended exactly once;
 - a shared slice uses an explicitly named counted-copy path until its semantic
   owner is migrated to the move-only handoff;
+- page and mode accumulation, saved-discard and unbox insertion, alignment row
+  and display completion, math lowering, migrated line material, and the plain
+  post-line path consume move-only whole roots at their semantic handoffs;
 - packing, line breaking, paragraph post-processing, alignment setting, math
   lowering, and page breaking borrow short-lived `ArenaListView` or
   `NodeCursor` views; and

@@ -970,10 +970,12 @@ fn append_migrated_contributions<G>(
     if nodes.is_empty() {
         return;
     }
+    let nodes = stores.reclaim_unique_page_list(nodes);
     if crate::vertical::is_outer_vertical(nest) {
-        stores.append_page_contributions(nodes);
+        stores.append_unique_page_contributions(nodes);
     } else {
-        nest.current_list_mutation().append_list(stores, nodes);
+        nest.current_list_mutation()
+            .append_unique_list(stores, nodes);
     }
 }
 

@@ -524,10 +524,12 @@ fn append_display_list<G>(
     stores: &mut CommandContext<'_, G>,
     nodes: tex_state::node_arena::PageListId,
 ) {
+    let nodes = stores.reclaim_unique_page_list(nodes);
     if crate::vertical::is_outer_vertical(nest) {
-        stores.append_page_contributions(nodes);
+        stores.append_unique_page_contributions(nodes);
     } else {
-        nest.current_list_mutation().append_list(stores, nodes);
+        nest.current_list_mutation()
+            .append_unique_list(stores, nodes);
     }
 }
 

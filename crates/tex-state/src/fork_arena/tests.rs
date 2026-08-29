@@ -191,6 +191,52 @@ fn copying_a_shared_right_root_never_rewrites_an_earlier_composite() {
 }
 
 #[test]
+fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
+    for size in [1_usize, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(512);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let source = {
+            let mut builder = arena.begin_builder(&mut pool).expect("source builder");
+            for value in 0..size {
+                builder.push(value as u32).expect("source node");
+            }
+            builder.seal().expect("source list")
+        };
+        let before = arena.counters();
+        let started = std::time::Instant::now();
+        let mut destination = ActiveListBuilder::vacant();
+        arena
+            .open_active_list(&pool, &mut destination)
+            .expect("destination builder");
+        arena
+            .append_active_list(&mut pool, &mut destination, source)
+            .expect("explicit shared copy");
+        arena
+            .finalize_active_list(&mut pool, &mut destination)
+            .expect("finalize copy");
+        let copied = destination.take_sealed().expect("copied root");
+        let elapsed = started.elapsed();
+        let after = arena.counters();
+
+        assert_eq!(copied.len(), size);
+        assert_eq!(
+            after.source_nodes_copied - before.source_nodes_copied,
+            size as u64
+        );
+        assert_eq!(after.new_semantic_nodes, before.new_semantic_nodes);
+        assert_eq!(
+            after.partial_edge_nodes_copied,
+            before.partial_edge_nodes_copied
+        );
+        eprintln!(
+            "DIRECT_SHARED_COPY_SCALE nodes={size} elapsed_ns={} copied_nodes={}",
+            elapsed.as_nanos(),
+            after.source_nodes_copied - before.source_nodes_copied
+        );
+    }
+}
+
+#[test]
 fn one_block_list_stores_its_direct_head_and_tail_cursors() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

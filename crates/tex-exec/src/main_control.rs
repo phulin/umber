@@ -7229,9 +7229,10 @@ impl<G> MainControl<G> {
             insert_penalties,
             conversion_error_context,
         );
+        let nodes = context.reclaim_unique_page_list(nodes);
         self.modes
             .current_list_mutation()
-            .append_list(&mut context, nodes);
+            .append_unique_list(&mut context, nodes);
         self.modes.current_list_mutation().set_space_factor(1000);
         let aftergroup = leave_group_payloads(
             &mut context,
@@ -7693,8 +7694,9 @@ impl<G> MainControl<G> {
                             .unwrap_or(i32::MAX),
                     )?;
                     self.active_math_left_boundaries.push(true);
+                    let content = context.reclaim_unique_page_list(content);
                     let mut list = self.modes.current_list_mutation();
-                    list.append_list(&mut context, content);
+                    list.append_unique_list(&mut context, content);
                     list.push(
                         &mut context,
                         Node::MathNoad(MathNoad::new(

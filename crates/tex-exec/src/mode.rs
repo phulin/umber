@@ -377,18 +377,6 @@ impl ModeList {
         assert!(self.admit_page_region(stores));
     }
 
-    pub fn append_list<G>(&mut self, stores: &mut CommandContext<'_, G>, nodes: PageListId) {
-        assert!(self.admit_page_region(stores));
-        let nodes = self
-            .admit_new_root(stores, nodes)
-            .expect("appended mode-list root belongs to the live page region");
-        stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_span(&mut self.active, self.nodes);
-        stores.append_page_active_span(&mut self.active, nodes);
-        self.nodes = stores.finalize_page_active_span(&mut self.active);
-        assert!(self.admit_page_region(stores));
-    }
-
     pub fn append_unique_list<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
@@ -812,11 +800,6 @@ impl ModeListMutation<'_> {
     ) {
         self.record_nodes();
         self.list.append(stores, nodes);
-    }
-
-    pub(crate) fn append_list<G>(&mut self, stores: &mut CommandContext<'_, G>, nodes: PageListId) {
-        self.record_nodes();
-        self.list.append_list(stores, nodes);
     }
 
     pub(crate) fn take_nodes(&mut self) -> PageListId {

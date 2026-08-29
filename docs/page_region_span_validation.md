@@ -72,6 +72,17 @@ Page and mode append-heavy owners retain checked left roots and consume fresh
 O(nodes inspected + actual block crossings), with no descriptor lookup or
 binary search. Shared and sliced transforms increment `source_nodes_copied`
 exactly; they are not permitted to hide a whole-list copy behind generic
-concatenation. Physical pages contain sixteen logical blocks, so many small
-lists share one bump allocation. The pool reports payload capacity and block
-metadata separately, while `unused_sealed_bytes` records exact tail slack.
+concatenation. The counted fallback collects one reverse traversal and replays
+it once, so it visits and hashes every copied node exactly once and never
+revisits an accumulated prefix. Demand-enabled copies maintain summaries on
+their destination blocks before a generated suffix can extend the tail.
+Physical pages contain sixteen logical blocks, so many small lists share one
+bump allocation. The pool reports payload capacity and block metadata
+separately, while `unused_sealed_bytes` records exact tail slack.
+
+The parameterized direct-root gates exercise 1, 64, and 4,096 nodes. Unique
+suffix construction allocates exactly one logical block per deliberately
+single-node suffix and copies zero nodes at every size. The explicit shared
+fallback reports exactly 1, 64, and 4,096 copied nodes respectively. These
+deterministic counters, rather than a wall-clock threshold, prove that neither
+path recopies an accumulated prefix.

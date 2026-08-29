@@ -1685,10 +1685,14 @@ impl<T, Lane> ForkArena<T, Lane> {
                 SequenceSummaryWork::default(),
             ));
         }
-        let selected_root = self.slice_direct_root(pool, list, selected.clone())?;
-        let (summary, work) =
-            self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
-        self.append_validated_active_list_range(pool, builder, list, validated, selected)?;
+        let selected_root = self.slice_direct_root(pool, list, selected)?;
+        if selected_root.len() != list.len() {
+            self.record_partial_edge_nodes_copied(selected_root.len());
+        }
+        let root = self.active_list_open_mut(builder)?.root;
+        let (root, summary, work) =
+            self.copy_shared_then_splice_summarized(pool, root, selected_root, &mut item_identity)?;
+        self.active_list_open_mut(builder)?.root = root;
         Ok((summary, work))
     }
 
@@ -1949,6 +1953,54 @@ impl<T, Lane> ForkArena<T, Lane> {
             .saturating_sub(right.len as u64);
         self.record_source_nodes_copied(right.len());
         self.splice_unique_direct_root(pool, left, UniqueArenaList { root: copy })
+    }
+
+    /// Copies a shared coordinate while maintaining summaries on every new
+    /// physical block. This is required when a demand-enabled active builder
+    /// appends generated nodes after the copied range.
+    fn copy_shared_then_splice_summarized(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        left: ArenaListId<Lane>,
+        right: ArenaListId<Lane>,
+        item_identity: &mut impl FnMut(&T) -> u64,
+    ) -> Result<
+        (
+            ArenaListId<Lane>,
+            SemanticSequenceIdentity,
+            SequenceSummaryWork,
+        ),
+        ForkArenaError,
+    >
+    where
+        T: Clone,
+    {
+        let mut copy = ArenaListId::empty();
+        let reverse = self
+            .list(pool, right)?
+            .iter()
+            .rev()
+            .map(|value| (value.clone(), item_identity(value)))
+            .collect::<Vec<_>>();
+        let mut summary = SemanticSequenceIdentity::empty();
+        for (value, identity) in reverse.into_iter().rev() {
+            self.append_payload(pool, &mut copy, value, Some(identity))?;
+            summary.push_back(identity);
+        }
+        self.counters.new_semantic_nodes = self
+            .counters
+            .new_semantic_nodes
+            .saturating_sub(right.len as u64);
+        self.record_source_nodes_copied(right.len());
+        let root = self.splice_unique_direct_root(pool, left, UniqueArenaList { root: copy })?;
+        Ok((
+            root,
+            summary,
+            SequenceSummaryWork {
+                hashed_values: right.len as u64,
+                combined_summaries: 0,
+            },
+        ))
     }
 
     fn seal_direct_tail(
