@@ -280,6 +280,17 @@ capability. Construction occurs only after the complete immutable value is
 ready. Equal definitions published twice remain distinct allocations and
 distinct identities.
 
+One recyclable, attempt-local `DefinitionBuilder` constructs semantic words in
+monotonic parameter and replacement phases. It incrementally maintains the
+checked parameter program and the destination generation's optional framed
+identity. Macro scanning and `read_toks` retain that exact row through
+suspension and recycle it on cancellation; it is never part of checkpoint
+state. Ordinary allocation, memo import, and format restore use the same
+checked metadata path, so malformed parameter numbering or replacement
+references fail before publication. The final `ThinRc` construction traverses
+the builder once. This is deliberately not a claim that the thin-DST allocator
+performs only one physical copy internally.
+
 ```rust
 pub struct DefinitionId<G> {
     allocation: ThinRc<DefinitionHeader, TokenWord>,

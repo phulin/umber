@@ -622,6 +622,8 @@ pub(crate) struct FormatPromotionReceipt<G> {
 pub enum PromotionError {
     CapacityOverflow,
     AllocationFailed,
+    InvalidDefinition,
+    IdentityPolicyMismatch,
     Retired,
     GenerationInUse,
 }
@@ -631,6 +633,19 @@ impl From<DefinitionAllocationError> for PromotionError {
         match error {
             DefinitionAllocationError::CapacityOverflow => Self::CapacityOverflow,
             DefinitionAllocationError::AllocationFailed => Self::AllocationFailed,
+            DefinitionAllocationError::InvalidDefinition => Self::InvalidDefinition,
+            DefinitionAllocationError::IdentityPolicyMismatch => Self::IdentityPolicyMismatch,
+        }
+    }
+}
+
+impl From<crate::DefinitionBuildError> for PromotionError {
+    fn from(error: crate::DefinitionBuildError) -> Self {
+        match error {
+            crate::DefinitionBuildError::AllocationFailed => Self::AllocationFailed,
+            crate::DefinitionBuildError::CapacityOverflow => Self::CapacityOverflow,
+            crate::DefinitionBuildError::InvalidPhase
+            | crate::DefinitionBuildError::InvalidProgram(_) => Self::InvalidDefinition,
         }
     }
 }
@@ -1900,8 +1915,8 @@ impl<G> Universe<G> {
         replacement_text: Replacement,
     ) -> Result<DefinitionId<G>, PromotionError>
     where
-        Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
-        Replacement: Clone + ExactSizeIterator<Item = TokenWord>,
+        Parameters: ExactSizeIterator<Item = TokenWord>,
+        Replacement: ExactSizeIterator<Item = TokenWord>,
     {
         let parameter_words = parameter_text.len();
         let replacement_words = replacement_text.len();
@@ -1923,6 +1938,39 @@ impl<G> Universe<G> {
                 .saturating_add(2),
         );
         Ok(id)
+    }
+
+    /// Publishes one scanner-owned sealed definition into its admitted
+    /// destination generation. Policy mismatch is validated before
+    /// accounting or publisher serial changes.
+    pub fn promote_definition_builder(
+        &mut self,
+        builder: &crate::DefinitionBuilder,
+    ) -> Result<DefinitionId<G>, PromotionError> {
+        let word_len = builder.words().len();
+        let id = self
+            .core
+            .as_mut()
+            .ok_or(PromotionError::Retired)?
+            .admit_mut()
+            .map_err(|error| match error {
+                StateError::GenerationInUse => PromotionError::GenerationInUse,
+                _ => PromotionError::AllocationFailed,
+            })?
+            .publish_definition_builder(builder)
+            .map_err(PromotionError::from)?;
+        self.engine_usage
+            .observe_transient_memory(0, word_len.saturating_add(2));
+        Ok(id)
+    }
+
+    #[must_use]
+    pub fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
+        self.core
+            .as_ref()
+            .expect("live universe")
+            .admit()
+            .definition_identity_policy()
     }
 
     pub(crate) fn glue_value(&self, id: GlueId<G>) -> GlueSpec {

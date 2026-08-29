@@ -783,8 +783,6 @@ pub struct ScannedMacroDefinition {
     /// parameter/replacement scan.
     pub target: Symbol,
     pub definition: AttemptDefinitionId,
-    pub parameter_text: AttemptTokenListId,
-    pub replacement_text: AttemptTokenListId,
     pub provenance: StructuredProvenance,
 }
 
@@ -1666,10 +1664,9 @@ pub enum InputStreamRequest {
         /// Effective TeX82 §1214 scope selected by `prefixed_command`
         /// before §1225 enters `read_toks`.
         global: bool,
-        tokens: AttemptTokenListId,
-        /// Parameterless macro definition allocated in the same command
-        /// attempt as `tokens`; both roots are promoted atomically before
-        /// semantic apply.
+        /// The parameterless macro definition is the sole mutable attempt
+        /// root. Its replacement slice supplies read observation after
+        /// publication; no duplicate durable token list is created.
         definition: AttemptDefinitionId,
     },
 }
@@ -5344,25 +5341,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // §482's `read_toks(n,r)` on the spot. The collector needs
                 // live input levels, category codes, `align_state`, and
                 // `scanner_status`, all of which are the command core's.
-                let tokens =
+                let definition =
                     self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
-                let parameter_text = self
-                    .command
-                    .attempt
-                    .arena_mut()
-                    .allocate_token_list([])
-                    .map_err(crate::scan_toks::attempt_command_error)?;
-                let definition = self
-                    .command
-                    .attempt
-                    .arena_mut()
-                    .allocate_definition(parameter_text, tokens)
-                    .map_err(crate::scan_toks::attempt_command_error)?;
                 Ok(InputStreamRequest::Read {
                     stream,
                     target,
                     global: read_global,
-                    tokens,
                     definition,
                 })
             }
@@ -8353,17 +8337,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         let provenance = StructuredProvenance {
             primary: scanned.primary,
         };
-        let definition = self
-            .command
-            .attempt
-            .arena_mut()
-            .allocate_definition(scanned.parameter_text, scanned.replacement_text)
-            .map_err(|_| CommandError::input_invariant())?;
+        let definition = scanned
+            .definition()
+            .ok_or(CommandError::input_invariant())?;
         Ok(ScannedMacroDefinition {
             target,
             definition,
-            parameter_text: scanned.parameter_text,
-            replacement_text: scanned.replacement_text,
             provenance,
         })
     }

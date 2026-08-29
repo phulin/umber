@@ -755,6 +755,33 @@ fn validate_logical_rows(
     for definition in definitions {
         validate_words(&definition.parameter_text)?;
         validate_words(&definition.replacement_text)?;
+        let mut builder = crate::DefinitionBuilder::new(crate::DefinitionIdentityPolicy::Disabled);
+        for &raw in &definition.parameter_text {
+            builder
+                .push_parameter(crate::token::TokenWord::from_raw(raw))
+                .map_err(|_| {
+                    FormatError::InvalidState(
+                        "invalid macro parameter program in format definition".to_owned(),
+                    )
+                })?;
+        }
+        builder.finish_parameters().map_err(|_| {
+            FormatError::InvalidState(
+                "invalid macro parameter boundary in format definition".to_owned(),
+            )
+        })?;
+        for &raw in &definition.replacement_text {
+            builder
+                .push_replacement(crate::token::TokenWord::from_raw(raw))
+                .map_err(|_| {
+                    FormatError::InvalidState(
+                        "invalid macro replacement program in format definition".to_owned(),
+                    )
+                })?;
+        }
+        builder.seal().map_err(|_| {
+            FormatError::InvalidState("invalid macro definition in format image".to_owned())
+        })?;
     }
     for value in glue {
         if value.stretch_order > 3 || value.shrink_order > 3 {

@@ -2143,19 +2143,22 @@ pub fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec
             CommandObservation::Macro(record)
                 if projection.kinds.contains(&ObservationKind::Macro) =>
             {
-                Some(format!(
-                    "macro:{}:{}:{}:{}",
-                    if record.activation {
-                        "activate"
-                    } else {
-                        "argument"
-                    },
-                    record.control_sequence.as_deref().unwrap_or("-"),
-                    record
-                        .argument
-                        .map_or_else(|| "-".into(), |slot| slot.to_string()),
-                    observed_tokens_text(&record.tokens)
-                ))
+                Some(match record {
+                    tex_command::MacroRecord::Activation {
+                        control_sequence,
+                        argument_count,
+                        ..
+                    } => format!("macro:activate:{control_sequence}:{argument_count}:"),
+                    tex_command::MacroRecord::Argument {
+                        control_sequence,
+                        parameter,
+                        tokens,
+                        ..
+                    } => format!(
+                        "macro:argument:{control_sequence}:{parameter}:{}",
+                        observed_tokens_text(tokens)
+                    ),
+                })
             }
             CommandObservation::Scanner(record)
                 if projection.kinds.contains(&ObservationKind::Scanner) =>

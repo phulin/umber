@@ -1,7 +1,5 @@
 //! Private canonical scalar macro-call state machine.
 #![allow(dead_code)] // expansion dispatch is the next ordered integration slice
-use std::hash::{Hash, Hasher};
-
 use tex_state::DefinitionId;
 use tex_state::env::banks::IntParam;
 use tex_state::interner::Symbol;
@@ -300,14 +298,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let paragraph_token = self.state.symbol("par").map(Token::Cs);
         let scanned_arguments = self.macro_call_scalar(
             &matching,
+            macro_name,
             definition.clone(),
             *flags,
             pattern,
             parameter_len,
-            paragraph_token,
         );
         match scanned_arguments {
             Ok(()) => {}
@@ -380,13 +377,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         observe!(
             self,
-            CommandObservation::Macro(MacroRecord {
-                activation: true,
-                definition: self.definition_observation_operand(definition.clone()),
-                control_sequence: Some(self.state.resolve(macro_name).to_owned()),
-                argument: Some(pattern.parameter_count() as u8),
+            CommandObservation::Macro(MacroRecord::Activation {
+                control_sequence: self.state.resolve(macro_name).to_owned(),
+                argument_count: pattern.parameter_count() as u8,
                 token_count: self.argument_token_count(arguments) as u64,
-                tokens: Vec::new(),
             }),
         );
         if let Some(episode) = episode {
@@ -398,12 +392,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn macro_call_scalar(
         &mut self,
         matching: &MacroMatch<G>,
+        macro_name: tex_state::interner::Symbol,
         definition: DefinitionId<G>,
         flags: MeaningFlags,
         pattern: MacroParameterPattern,
         parameter_len: usize,
-        paragraph_token: Option<Token>,
     ) -> Result<(), CommandError> {
+        let paragraph_token = self.state.symbol("par").map(Token::Cs);
         let mut delivered = None;
         for index in 0..pattern.leading_end(parameter_len) {
             let expected = self.macro_parameter_token(definition.clone(), index)?;
@@ -479,11 +474,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
             observe!(
                 self,
-                CommandObservation::Macro(MacroRecord {
-                    activation: false,
-                    definition: self.definition_observation_operand(definition.clone()),
-                    control_sequence: None,
-                    argument: Some((parameter + 1) as u8),
+                CommandObservation::Macro(MacroRecord::Argument {
+                    control_sequence: self.state.resolve(macro_name).to_owned(),
+                    parameter: (parameter + 1) as u8,
                     token_count: argument_token_count as u64,
                     tokens: self
                         .command
@@ -1124,14 +1117,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             })
             .map(|range| range.len() as usize)
             .sum()
-    }
-
-    fn definition_observation_operand(&self, definition: DefinitionId<G>) -> u64 {
-        let definition = self.state.definition(definition);
-        let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
-        definition.parameter_text().hash(&mut fingerprint);
-        definition.replacement_text().hash(&mut fingerprint);
-        fingerprint.finish()
     }
 }
 

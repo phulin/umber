@@ -75,7 +75,15 @@ pub(crate) fn translate_observation(
             ObservedEvent::new(translate_status(record), format!("source={source}"))
         }
         CommandObservation::Macro(record) => {
-            let context = format!("source={source}; definition={}", record.definition);
+            let name = match &record {
+                MacroRecord::Activation {
+                    control_sequence, ..
+                }
+                | MacroRecord::Argument {
+                    control_sequence, ..
+                } => control_sequence,
+            };
+            let context = format!("source={source}; macro={name}");
             ObservedEvent::new(translate_macro(record), context)
         }
         CommandObservation::Condition(record) => {
@@ -384,18 +392,21 @@ pub(crate) fn scanner_status(status: &str) -> ScannerStatus {
     }
 }
 pub(crate) fn translate_macro(record: MacroRecord) -> Event {
-    if record.activation {
-        Event::Macro(MacroEvent::Activation {
-            control_sequence: record
-                .control_sequence
-                .unwrap_or_else(|| format!("definition-{}", record.definition)),
-            argument_count: record.argument.unwrap_or(0).into(),
-        })
-    } else {
-        Event::Macro(MacroEvent::Argument {
-            parameter: record.argument.unwrap_or(0).into(),
-            tokens: record.tokens.into_iter().map(oracle_token).collect(),
-        })
+    match record {
+        MacroRecord::Activation {
+            control_sequence,
+            argument_count,
+            ..
+        } => Event::Macro(MacroEvent::Activation {
+            control_sequence,
+            argument_count: argument_count.into(),
+        }),
+        MacroRecord::Argument {
+            parameter, tokens, ..
+        } => Event::Macro(MacroEvent::Argument {
+            parameter: parameter.into(),
+            tokens: tokens.into_iter().map(oracle_token).collect(),
+        }),
     }
 }
 pub(crate) fn translate_condition(record: ConditionRecord) -> Event {

@@ -1476,7 +1476,6 @@ pub(in crate::main_control) fn apply<G>(
                 RootedInputStreamRequest::Read {
                     target,
                     global,
-                    tokens,
                     definition,
                     ..
                 } => {
@@ -1485,7 +1484,8 @@ pub(in crate::main_control) fn apply<G>(
                     // [17.687-750] traces the same pre/post eqtb write as a
                     // `\def`, immediately after collection and before the
                     // next command is fetched.
-                    let observed = ObservationValue::Tokens(observed_read_body(tokens, stores));
+                    let observed =
+                        ObservationValue::Tokens(observed_read_body(&definition, stores));
                     let record = MutationRecord {
                         target: MutationTarget::Meaning,
                         key: ObservationValue::Name(stores.resolve(target).to_owned()),

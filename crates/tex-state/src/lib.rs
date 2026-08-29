@@ -175,7 +175,10 @@ pub use command_context::{
 };
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
 pub use definition_arena::definition_retain_count;
-pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
+pub use definition_arena::{
+    DefinitionAllocationError, DefinitionBuildError, DefinitionBuildPhase, DefinitionBuilder,
+    DefinitionId, DefinitionIdentityPolicy, DefinitionView,
+};
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
     DependencyPageField, DependencyRegion, DependencyRegionError, DependencyRegionToken,

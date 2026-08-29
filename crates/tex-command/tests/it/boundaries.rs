@@ -424,7 +424,8 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         splice.contains("self.get_x_token_into(target)?"),
         "\\the must retain its expanded internal-value target before selecting a token list"
     );
-    assert!(splice.contains("self.push_attempt_token(output, token)?"));
+    assert!(splice.contains("self.push_scan_toks_word(output, token)?"));
+    assert!(scanner.contains("arena.push_definition_replacement(definition, word.token_word())"));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"

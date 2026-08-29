@@ -2,6 +2,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::InternerBudget;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{DefinitionBuildError, DefinitionIdentityPolicy};
 
 use super::{
     AttemptArena, AttemptError, AttemptEscapeRoots, AttemptResumePoint, AttemptScopeSerial,
@@ -313,6 +314,139 @@ fn warmed_parent_owned_scanner_results_allocate_zero_heap() {
         let result = attempt.finish_token_buffer(buffer).expect("scanner result");
         assert_eq!(attempt.token_words(result), Ok(&[word('x')][..]));
         attempt.truncate(mark).expect("scanner scope retires");
+    };
+    for _ in 0..64 {
+        run(&mut attempt);
+    }
+    let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    for _ in 0..8_192 {
+        run(&mut attempt);
+    }
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+}
+
+#[test]
+fn retired_definition_builder_reuses_its_word_allocation() {
+    let mut attempt = AttemptArena::<()>::default();
+    let mark = attempt.mark();
+    let definition = attempt
+        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .expect("definition builder");
+    attempt
+        .finish_definition_parameters(definition)
+        .expect("parameter boundary");
+    for _ in 0..32 {
+        attempt
+            .push_definition_replacement(definition, word('x').token_word())
+            .expect("replacement word");
+    }
+    attempt
+        .finish_definition(definition)
+        .expect("complete definition");
+    let storage = attempt
+        .definition_builder(definition)
+        .expect("live builder")
+        .words()
+        .as_ptr();
+
+    attempt.truncate(mark).expect("retire definition");
+    let recycled = attempt
+        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .expect("recycled builder");
+    assert_eq!(
+        attempt
+            .definition_builder(recycled)
+            .expect("live recycled builder")
+            .words()
+            .as_ptr(),
+        storage
+    );
+    assert_eq!(
+        attempt
+            .definition_builder(recycled)
+            .expect("live recycled builder")
+            .capacity(),
+        32
+    );
+}
+
+#[test]
+fn definition_builder_ids_reject_foreign_stale_and_double_finish_without_mutation() {
+    let mut first = AttemptArena::<()>::default();
+    let definition = first
+        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .expect("definition builder");
+    let mut foreign = AttemptArena::<()>::default();
+    let foreign_mark = foreign.mark();
+    assert_eq!(
+        foreign.push_definition_parameter(definition, word('x').token_word()),
+        Err(AttemptError::ForeignAttempt)
+    );
+    assert_eq!(foreign.mark(), foreign_mark);
+
+    first
+        .finish_definition_parameters(definition)
+        .expect("parameter boundary");
+    first
+        .push_definition_replacement(definition, word('x').token_word())
+        .expect("replacement word");
+    first.finish_definition(definition).expect("first finish");
+    let words = first
+        .definition_builder(definition)
+        .expect("sealed builder")
+        .words()
+        .to_vec();
+    let capacity = first
+        .definition_builder(definition)
+        .expect("sealed builder")
+        .capacity();
+    assert_eq!(
+        first.finish_definition(definition),
+        Err(AttemptError::Definition(DefinitionBuildError::InvalidPhase))
+    );
+    let unchanged = first
+        .definition_builder(definition)
+        .expect("failed double finish retains builder");
+    assert_eq!(unchanged.words(), words);
+    assert_eq!(unchanged.capacity(), capacity);
+
+    let stale_mark = first.mark();
+    let stale = first
+        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .expect("stale candidate");
+    first.truncate(stale_mark).expect("retire candidate");
+    let after_retirement = first.mark();
+    assert_eq!(
+        first.push_definition_parameter(stale, word('y').token_word()),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(first.mark(), after_retirement);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_definition_builder_attempts_allocate_zero_heap() {
+    let mut attempt = AttemptArena::<()>::default();
+    let run = |attempt: &mut AttemptArena<()>| {
+        let mark = attempt.mark();
+        let definition = attempt
+            .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+            .expect("definition builder");
+        attempt
+            .finish_definition_parameters(definition)
+            .expect("parameter boundary");
+        for _ in 0..32 {
+            attempt
+                .push_definition_replacement(definition, word('x').token_word())
+                .expect("replacement word");
+        }
+        attempt
+            .finish_definition(definition)
+            .expect("complete definition");
+        attempt.truncate(mark).expect("retire definition");
     };
     for _ in 0..64 {
         run(&mut attempt);

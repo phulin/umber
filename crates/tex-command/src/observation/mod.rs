@@ -551,14 +551,24 @@ pub struct ScannerStatusRecord {
 }
 
 /// A completed scalar macro-match milestone.
+///
+/// Every variant carries the required macro name. Definition allocation or
+/// content identity is deliberately absent: separately allocated equal
+/// definitions remain distinct engine owners but produce the same portable
+/// TeX observation when invoked through the same control sequence.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MacroRecord {
-    pub activation: bool,
-    pub definition: u64,
-    pub control_sequence: Option<String>,
-    pub argument: Option<u8>,
-    pub token_count: u64,
-    pub tokens: Vec<ObservedToken>,
+pub enum MacroRecord {
+    Activation {
+        control_sequence: String,
+        argument_count: u8,
+        token_count: u64,
+    },
+    Argument {
+        control_sequence: String,
+        parameter: u8,
+        token_count: u64,
+        tokens: Vec<ObservedToken>,
+    },
 }
 
 /// A committed condition-stack transition.

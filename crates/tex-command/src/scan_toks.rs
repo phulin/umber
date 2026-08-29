@@ -10,9 +10,9 @@
 
 use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::attempt::{AttemptError, AttemptTokenBufferId, AttemptTokenListId};
+use crate::attempt::{AttemptDefinitionId, AttemptError, AttemptTokenBufferId, AttemptTokenListId};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
@@ -140,8 +140,42 @@ struct ScanToksConfig {
 /// retirement therefore never captures either parent sink.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ScanToksSinks {
-    parameter_text: AttemptTokenBufferId,
-    replacement_text: AttemptTokenBufferId,
+    parameter_text: ScanToksSink,
+    replacement_text: ScanToksSink,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanToksSink {
+    Tokens(AttemptTokenBufferId),
+    DefinitionParameters(AttemptDefinitionId),
+    DefinitionReplacement(AttemptDefinitionId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScannedToksPart {
+    Tokens(AttemptTokenListId),
+    Definition(AttemptDefinitionId),
+}
+
+enum ScannedWords<'a> {
+    Traced(&'a [TracedTokenWord]),
+    Semantic(&'a [TokenWord]),
+}
+
+impl ScannedWords<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Traced(words) => words.len(),
+            Self::Semantic(words) => words.len(),
+        }
+    }
+
+    fn token(&self, index: usize) -> Option<Token> {
+        match self {
+            Self::Traced(words) => words.get(index).map(|word| word.semantic_token()),
+            Self::Semantic(words) => words.get(index).map(|word| word.semantic_token()),
+        }
+    }
 }
 
 /// Exact command-owned continuation of one host-suspended token collector.
@@ -205,7 +239,7 @@ enum PendingScanToksPhase<G> {
         child: Option<crate::execution_scratch::ChildContinuation<G, ScanToksChildDestination>>,
     },
     Replacement {
-        parameter_text: AttemptTokenListId,
+        parameter_text: ScannedToksPart,
         macro_parameters: Option<(u8, Option<Symbol>)>,
         hash_brace: Option<TracedTokenWord>,
         primary: OriginId,
@@ -240,14 +274,14 @@ impl<G> PendingScanToksPhase<G> {
 
 #[derive(Debug, Eq, PartialEq)]
 struct ReplacementProgress<G> {
-    output: AttemptTokenBufferId,
+    output: ScanToksSink,
     depth: u32,
     pending_parameter: Option<(TracedTokenWord, u8, Option<Symbol>)>,
     pending_expansion: Option<PendingCollectorExpansion<G>>,
 }
 
 impl<G> ReplacementProgress<G> {
-    fn new(output: AttemptTokenBufferId) -> Self {
+    fn new(output: ScanToksSink) -> Self {
         Self {
             output,
             depth: 1,
@@ -304,7 +338,7 @@ impl<G> From<CommandError> for ScanToksFailure<G> {
 
 fn replacement_failure<G>(
     error: CommandError,
-    output: AttemptTokenBufferId,
+    output: ScanToksSink,
     depth: u32,
     pending_parameter: &mut Option<(TracedTokenWord, u8, Option<Symbol>)>,
     pending_expansion: Option<PendingCollectorExpansion<G>>,
@@ -424,10 +458,23 @@ pub(crate) struct ScannedToks {
 /// Scanner-completed buffers before an owning publication policy is chosen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ScannedToksBuffers {
-    pub(crate) parameter_text: AttemptTokenListId,
-    pub(crate) replacement_text: AttemptTokenListId,
+    parameter_text: ScannedToksPart,
+    replacement_text: ScannedToksPart,
     pub(crate) primary: OriginId,
     pub(crate) malformed_parameter: bool,
+}
+
+impl ScannedToksBuffers {
+    pub(crate) fn definition(self) -> Option<AttemptDefinitionId> {
+        match (self.parameter_text, self.replacement_text) {
+            (ScannedToksPart::Definition(parameter), ScannedToksPart::Definition(replacement))
+                if parameter == replacement =>
+            {
+                Some(parameter)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// TeX82 §403's result after a mandatory left-brace scan.
@@ -452,7 +499,7 @@ impl<G> ScannedLeftBrace<G> {
 }
 
 struct ScannedParameterText {
-    tokens: AttemptTokenListId,
+    tokens: ScannedToksPart,
     highest_parameter: u8,
     hash_brace: Option<TracedTokenWord>,
     primary: OriginId,
@@ -570,6 +617,24 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(attempt_command_error)
     }
 
+    fn push_scan_toks_word(
+        &mut self,
+        sink: ScanToksSink,
+        word: TracedTokenWord,
+    ) -> Result<(), CommandError> {
+        let arena = self.command.attempt.arena_mut();
+        match sink {
+            ScanToksSink::Tokens(buffer) => arena.push_buffer_token(buffer, word),
+            ScanToksSink::DefinitionParameters(definition) => {
+                arena.push_definition_parameter(definition, word.token_word())
+            }
+            ScanToksSink::DefinitionReplacement(definition) => {
+                arena.push_definition_replacement(definition, word.token_word())
+            }
+        }
+        .map_err(attempt_command_error)
+    }
+
     fn finish_attempt_token_list(
         &mut self,
         buffer: AttemptTokenBufferId,
@@ -579,6 +644,59 @@ impl<G> CommandProcessor<'_, '_, G> {
             .arena_mut()
             .finish_token_buffer(buffer)
             .map_err(attempt_command_error)
+    }
+
+    fn finish_scan_toks_sink(
+        &mut self,
+        sink: ScanToksSink,
+    ) -> Result<ScannedToksPart, CommandError> {
+        let arena = self.command.attempt.arena_mut();
+        match sink {
+            ScanToksSink::Tokens(buffer) => arena
+                .finish_token_buffer(buffer)
+                .map(ScannedToksPart::Tokens),
+            ScanToksSink::DefinitionParameters(definition) => arena
+                .finish_definition_parameters(definition)
+                .map(|()| ScannedToksPart::Definition(definition)),
+            ScanToksSink::DefinitionReplacement(definition) => arena
+                .finish_definition(definition)
+                .map(|()| ScannedToksPart::Definition(definition)),
+        }
+        .map_err(attempt_command_error)
+    }
+
+    fn scanned_parameter_words(
+        &self,
+        part: ScannedToksPart,
+    ) -> Result<ScannedWords<'_>, CommandError> {
+        let arena = self.command.attempt.arena();
+        match part {
+            ScannedToksPart::Tokens(tokens) => arena
+                .token_words(tokens)
+                .map(ScannedWords::Traced)
+                .map_err(attempt_command_error),
+            ScannedToksPart::Definition(definition) => arena
+                .definition_parameter_words(definition)
+                .map(ScannedWords::Semantic)
+                .map_err(attempt_command_error),
+        }
+    }
+
+    fn scanned_replacement_words(
+        &self,
+        part: ScannedToksPart,
+    ) -> Result<ScannedWords<'_>, CommandError> {
+        let arena = self.command.attempt.arena();
+        match part {
+            ScannedToksPart::Tokens(tokens) => arena
+                .token_words(tokens)
+                .map(ScannedWords::Traced)
+                .map_err(attempt_command_error),
+            ScannedToksPart::Definition(definition) => arena
+                .definition_replacement_words(definition)
+                .map(ScannedWords::Semantic)
+                .map_err(attempt_command_error),
+        }
     }
 
     fn attempt_words(&self, list: AttemptTokenListId) -> Result<&[TracedTokenWord], CommandError> {
@@ -597,9 +715,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// to retire an inserted replay level.
     pub(crate) fn scan_toks(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
         let result = self.scan_toks_buffers(mode)?;
+        let (ScannedToksPart::Tokens(parameter_text), ScannedToksPart::Tokens(replacement_text)) =
+            (result.parameter_text, result.replacement_text)
+        else {
+            return Err(CommandError::input_invariant());
+        };
         Ok(ScannedToks {
-            parameter_text: result.parameter_text,
-            replacement_text: result.replacement_text,
+            parameter_text,
+            replacement_text,
             primary: result.primary,
             malformed_parameter: result.malformed_parameter,
         })
@@ -642,9 +765,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // scanner's scratch child. Returning a synchronous child to a
                 // still-live macro can therefore truncate its suffix without
                 // copying or invalidating either completed result.
-                let sinks = ScanToksSinks {
-                    parameter_text: self.begin_attempt_token_list()?,
-                    replacement_text: self.begin_attempt_token_list()?,
+                let sinks = match config.grammar {
+                    ScanToksGrammar::General => ScanToksSinks {
+                        parameter_text: ScanToksSink::Tokens(self.begin_attempt_token_list()?),
+                        replacement_text: ScanToksSink::Tokens(self.begin_attempt_token_list()?),
+                    },
+                    ScanToksGrammar::MacroDefinition => {
+                        let definition = self
+                            .command
+                            .attempt
+                            .arena_mut()
+                            .allocate_definition_builder(self.state.definition_identity_policy())
+                            .map_err(attempt_command_error)?;
+                        ScanToksSinks {
+                            parameter_text: ScanToksSink::DefinitionParameters(definition),
+                            replacement_text: ScanToksSink::DefinitionReplacement(definition),
+                        }
+                    }
                 };
                 let scope = self
                     .command
@@ -722,10 +859,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let completed_tokens = if !self.is_observed() {
             Vec::new()
         } else if config.purpose.renders_detokenized_result() {
-            let semantic_tokens = self
-                .attempt_words(result.replacement_text)?
-                .iter()
-                .map(|word| word.semantic_token())
+            let words = self.scanned_replacement_words(result.replacement_text)?;
+            let semantic_tokens = (0..words.len())
+                .filter_map(|index| words.token(index))
                 .collect::<Vec<_>>();
             crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens)
                 .chars()
@@ -744,14 +880,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 })
                 .collect()
         } else {
-            self.attempt_words(result.replacement_text)?
-                .iter()
-                .map(|word| {
-                    self.observed_token(TracedTokenWord::pack(
-                        word.semantic_token(),
-                        OriginId::UNKNOWN,
-                    ))
-                })
+            let words = self.scanned_replacement_words(result.replacement_text)?;
+            (0..words.len())
+                .filter_map(|index| words.token(index))
+                .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
                 .collect()
         };
         observe!(
@@ -810,19 +942,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         RUNAWAY_RENDER_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
         let parameter_text = matches!(config.grammar, ScanToksGrammar::MacroDefinition)
-            .then(|| self.attempt_words(result.parameter_text))
+            .then(|| self.scanned_parameter_words(result.parameter_text))
             .transpose()?;
-        let replacement_text = self.attempt_words(result.replacement_text)?;
+        let replacement_text = self.scanned_replacement_words(result.replacement_text)?;
         let mut partial = String::new();
         let mut match_marker = '#';
         if let Some(parameter_text) = parameter_text {
-            append_runaway_words(self.state, parameter_text, &mut match_marker, &mut partial);
+            append_runaway_words(self.state, &parameter_text, &mut match_marker, &mut partial);
             append_runaway_character(self.state, '-', &mut partial);
             append_runaway_character(self.state, '>', &mut partial);
         }
         append_runaway_words(
             self.state,
-            replacement_text,
+            &replacement_text,
             &mut match_marker,
             &mut partial,
         );
@@ -897,8 +1029,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     continuation: PendingScanToksPhase::Opening { child: None },
                                 })?;
                         let primary = opening.origin();
-                        let parameter_text =
-                            self.finish_attempt_token_list(sinks.parameter_text)?;
+                        let parameter_text = self.finish_scan_toks_sink(sinks.parameter_text)?;
                         (
                             parameter_text,
                             None,
@@ -946,8 +1077,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             });
                         }
                         self.observe_expanded_delivery(&opening);
-                        let parameter_text =
-                            self.finish_attempt_token_list(sinks.parameter_text)?;
+                        let parameter_text = self.finish_scan_toks_sink(sinks.parameter_text)?;
                         (
                             parameter_text,
                             None,
@@ -1014,9 +1144,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         // delimiter and appends the same saved brace after the replacement
         // text (TeX.web §476).
         if let Some(brace) = hash_brace {
-            self.push_attempt_token(replacement, brace)?;
+            self.push_scan_toks_word(replacement, brace)?;
         }
-        let replacement_text = self.finish_attempt_token_list(replacement)?;
+        let replacement_text = self.finish_scan_toks_sink(replacement)?;
         Ok(ScannedToksBuffers {
             parameter_text,
             replacement_text,
@@ -1105,7 +1235,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// representation; doubled hashes remain literal parameter characters.
     fn scan_parameter_text(
         &mut self,
-        output: AttemptTokenBufferId,
+        output: ScanToksSink,
     ) -> Result<ScannedParameterText, CommandError> {
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
@@ -1167,7 +1297,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
             }
             if !is_parameter(token) {
-                self.push_attempt_token(output, command.spelling())?;
+                self.push_scan_toks_word(output, command.spelling())?;
                 continue;
             }
             if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
@@ -1178,7 +1308,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .expect("command status initializes destination");
             let follower_token = follower.spelling().semantic_token();
             if is_begin_group(follower_token) {
-                self.push_attempt_token(output, follower.spelling())?;
+                self.push_scan_toks_word(output, follower.spelling())?;
                 return Ok(ScannedParameterText {
                     tokens: self.finish_active_scan_toks_output(output)?,
                     highest_parameter: next_parameter - 1,
@@ -1201,9 +1331,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // TeX82 §476's match token retains `cur_chr`, i.e. the
                     // actual parameter-character code. Keep that spelling
                     // beside the compact slot token when it is not `#`.
-                    self.push_attempt_token(output, command.spelling())?;
+                    self.push_scan_toks_word(output, command.spelling())?;
                 }
-                self.push_attempt_token(
+                self.push_scan_toks_word(
                     output,
                     TracedTokenWord::pack(Token::Param(number), follower.origin()),
                 )?;
@@ -1231,7 +1361,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber)?;
             malformed_parameter = true;
             if next_parameter <= 9 {
-                self.push_attempt_token(
+                self.push_scan_toks_word(
                     output,
                     TracedTokenWord::pack(Token::Param(next_parameter), command.origin()),
                 )?;
@@ -1242,9 +1372,9 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn finish_active_scan_toks_output(
         &mut self,
-        output: AttemptTokenBufferId,
-    ) -> Result<AttemptTokenListId, CommandError> {
-        self.finish_attempt_token_list(output)
+        output: ScanToksSink,
+    ) -> Result<ScannedToksPart, CommandError> {
+        self.finish_scan_toks_sink(output)
     }
 
     /// TeX82 §477, "Scan and build the body of the token list".
@@ -1262,7 +1392,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         macro_parameters: Option<(u8, Option<Symbol>)>,
         episode: &ScannerEpisode,
         progress: ReplacementProgress<G>,
-    ) -> Result<AttemptTokenBufferId, ReplacementFailure<G>> {
+    ) -> Result<ScanToksSink, ReplacementFailure<G>> {
         let ReplacementProgress {
             output,
             mut depth,
@@ -1595,12 +1725,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[allow(clippy::result_large_err)]
     fn push_replacement_token(
         &mut self,
-        output: AttemptTokenBufferId,
+        output: ScanToksSink,
         word: TracedTokenWord,
         depth: u32,
         pending_parameter: &mut Option<(TracedTokenWord, u8, Option<Symbol>)>,
     ) -> Result<(), ReplacementFailure<G>> {
-        self.push_attempt_token(output, word)
+        self.push_scan_toks_word(output, word)
             .map_err(|error| replacement_failure(error, output, depth, pending_parameter, None))
     }
 
@@ -1687,7 +1817,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The target alone is read; no input from after that target is examined.
     fn append_direct_the_toks(
         &mut self,
-        output: AttemptTokenBufferId,
+        output: ScanToksSink,
         target: &mut Option<crate::CurrentCommand<G>>,
     ) -> Result<bool, CommandError> {
         if target.is_none() && self.get_x_token_into(target)? != crate::DeliveryStatus::Command {
@@ -1750,7 +1880,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Vec::new()
         };
         for token in tokens {
-            self.push_attempt_token(output, token)?;
+            self.push_scan_toks_word(output, token)?;
         }
         self.command
             .timeline
@@ -1779,7 +1909,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// e-TeX `\unexpanded` uses the same direct-splice rule.  Its balanced
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
-    fn append_unexpanded(&mut self, output: AttemptTokenBufferId) -> Result<(), CommandError> {
+    fn append_unexpanded(&mut self, output: ScanToksSink) -> Result<(), CommandError> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "unexpanded",
         })?;
@@ -1790,7 +1920,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map(|token| self.observed_token(token))
             .collect::<Vec<_>>();
         for token in raw {
-            self.push_attempt_token(output, token)?;
+            self.push_scan_toks_word(output, token)?;
         }
         self.command
             .timeline
@@ -1820,7 +1950,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// attached directly, just like §478's ordinary `\the` result. It must
     /// not become a §470 `conv_toks` inserted input level whose characters
     /// are fetched again one by one.
-    fn append_detokenize(&mut self, output: AttemptTokenBufferId) -> Result<(), CommandError> {
+    fn append_detokenize(&mut self, output: ScanToksSink) -> Result<(), CommandError> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
@@ -1852,7 +1982,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map(|token| self.observed_token(token))
             .collect::<Vec<_>>();
         for token in tokens {
-            self.push_attempt_token(output, token)?;
+            self.push_scan_toks_word(output, token)?;
         }
         self.command
             .timeline
@@ -1888,19 +2018,20 @@ impl<G> CommandProcessor<'_, '_, G> {
 
 fn append_runaway_words<G>(
     state: &tex_state::CommandContext<'_, G>,
-    tokens: &[TracedTokenWord],
+    tokens: &ScannedWords<'_>,
     match_marker: &mut char,
     partial: &mut String,
 ) {
     let mut index = 0;
     while index < tokens.len() {
-        let token = tokens[index].semantic_token();
+        let token = tokens
+            .token(index)
+            .expect("runaway index is inside scanned words");
         if let Token::Char {
             ch,
             cat: Catcode::Parameter,
         } = token
-            && let Some(Token::Param(slot)) =
-                tokens.get(index + 1).map(|word| word.semantic_token())
+            && let Some(Token::Param(slot)) = tokens.token(index + 1)
         {
             *match_marker = ch;
             append_runaway_character(state, ch, partial);
@@ -1949,11 +2080,18 @@ fn reset_runaway_render_count() {
 
 pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
     match error {
-        AttemptError::CapacityOverflow | AttemptError::AllocationFailed => CommandError::Fatal(
-            crate::FatalError::overflow("scanner token storage", i32::MAX),
-        ),
+        AttemptError::CapacityOverflow
+        | AttemptError::AllocationFailed
+        | AttemptError::Definition(
+            tex_state::DefinitionBuildError::AllocationFailed
+            | tex_state::DefinitionBuildError::CapacityOverflow,
+        ) => CommandError::Fatal(crate::FatalError::overflow(
+            "scanner token storage",
+            i32::MAX,
+        )),
         AttemptError::ForeignAttempt
         | AttemptError::InvalidCoordinate
+        | AttemptError::Definition(_)
         | AttemptError::Promotion(_) => CommandError::input_invariant(),
     }
 }
@@ -2040,7 +2178,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         stream: i32,
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
-    ) -> Result<AttemptTokenListId, CommandError> {
+    ) -> Result<AttemptDefinitionId, CommandError> {
         let scope = self
             .command
             .begin_attempt_scanner_scope()
@@ -2060,12 +2198,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         let saved_align_state = self.command.alignment.align_state;
         self.command.record_alignment_phase();
         self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
-        let result = self.read_toks_lines(stream, target, raw_catcodes);
+        let definition = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_definition_builder(self.state.definition_identity_policy())
+            .map_err(attempt_command_error)?;
+        self.command
+            .attempt
+            .arena_mut()
+            .finish_definition_parameters(definition)
+            .map_err(attempt_command_error)?;
+        let output = ScanToksSink::DefinitionReplacement(definition);
+        let result = self.read_toks_lines(stream, target, raw_catcodes, output);
         self.command.record_alignment_phase();
         self.command.alignment.align_state = saved_align_state;
         self.finish_scanner_episode(episode);
-        let tokens = match result {
-            Ok(tokens) => tokens,
+        match result {
+            Ok(()) => {}
             Err(error) => {
                 self.command
                     .discard_attempt_scope_suffix(scope)
@@ -2079,13 +2229,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // token-list assignment. The committed observation is §1225's
         // meaning mutation, whose macro body includes §482's leading
         // `end_match_token`.
-        match self.finish_attempt_token_list(tokens) {
-            Ok(tokens) => {
+        match self.finish_scan_toks_sink(output) {
+            Ok(ScannedToksPart::Definition(completed)) if completed == definition => {
                 self.command
                     .defer_attempt_scope_retirement(scope)
                     .map_err(attempt_command_error)?;
-                Ok(tokens)
+                Ok(definition)
             }
+            Ok(_) => Err(CommandError::input_invariant()),
             Err(error) => {
                 self.command
                     .discard_attempt_scope_suffix(scope)
@@ -2102,14 +2253,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         stream: i32,
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
-    ) -> Result<AttemptTokenBufferId, CommandError> {
+        tokens: ScanToksSink,
+    ) -> Result<(), CommandError> {
         // §482: `if (n<0)or(n>15) then m:=16 else m:=n`. Stream 16 is never
         // open, so §483 always takes §484's terminal branch for it.
         let slot = u8::try_from(stream)
             .ok()
             .filter(|slot| *slot < tex_state::world::STREAM_SLOT_COUNT as u8)
             .map(tex_state::world::StreamSlot::new);
-        let tokens = self.begin_attempt_token_list()?;
         // §484's own `n`, which decides whether the user is prompted at all:
         // a negative stream is prompted with the empty string, so `\read-1 to
         // \x` never prints `\x=`. §484 then assigns `n:=-1` after prompting,
@@ -2119,7 +2270,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             self.read_toks_line(slot, target, raw_catcodes, &mut prompt_number, tokens)?;
             if self.command.alignment.align_state == TEMPLATE_ALIGN_STATE {
-                return Ok(tokens);
+                return Ok(());
             }
         }
     }
@@ -2131,7 +2282,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
         prompt_number: &mut i32,
-        tokens: AttemptTokenBufferId,
+        tokens: ScanToksSink,
     ) -> Result<(), CommandError> {
         // §483 calls `begin_file_reading` before §484-§486 acquire the line.
         // §328 establishes that new level with `name:=0`; the selected
@@ -2180,15 +2331,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     OriginId::UNKNOWN,
                 ),
             ];
-            partial.extend(
-                self.command
-                    .attempt
-                    .arena()
-                    .token_buffer(tokens)
-                    .map_err(attempt_command_error)?
-                    .iter()
-                    .copied(),
-            );
+            partial.extend(self.read_runaway_words(tokens)?);
             let context = self.command.output_open_context(self.state);
             self.command
                 .semantic_diagnostics
@@ -2268,15 +2411,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         OriginId::UNKNOWN,
                     ),
                 ];
-                runaway.extend(
-                    self.command
-                        .attempt
-                        .arena()
-                        .token_buffer(tokens)
-                        .map_err(attempt_command_error)?
-                        .iter()
-                        .copied(),
-                );
+                runaway.extend(self.read_runaway_words(tokens)?);
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &runaway);
             }
             if self.command.alignment.align_state < TEMPLATE_ALIGN_STATE {
@@ -2295,7 +2430,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
                 return Ok(());
             }
-            self.push_attempt_token(tokens, command.spelling())?;
+            self.push_scan_toks_word(tokens, command.spelling())?;
         }
         Ok(())
     }
@@ -2311,7 +2446,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn collect_read_line_verbatim(
         &mut self,
         level: crate::input::InputLevelId,
-        tokens: AttemptTokenBufferId,
+        tokens: ScanToksSink,
     ) -> Result<(), CommandError> {
         self.acquire_source_line(false)?;
         while let Some(character) = self.command.next_source_character() {
@@ -2326,13 +2461,44 @@ impl<G> CommandProcessor<'_, '_, G> {
             } else {
                 Catcode::Other
             };
-            self.push_attempt_token(
+            self.push_scan_toks_word(
                 tokens,
                 TracedTokenWord::pack(Token::Char { ch, cat }, origin),
             )?;
         }
         self.retire_read_line_level(level)?;
         Ok(())
+    }
+
+    fn read_runaway_words(
+        &self,
+        tokens: ScanToksSink,
+    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+        let definition = match tokens {
+            ScanToksSink::DefinitionReplacement(definition) => definition,
+            ScanToksSink::Tokens(buffer) => {
+                return self
+                    .command
+                    .attempt
+                    .arena()
+                    .token_buffer(buffer)
+                    .map(|words| words.to_vec())
+                    .map_err(attempt_command_error);
+            }
+            ScanToksSink::DefinitionParameters(_) => {
+                return Err(CommandError::input_invariant());
+            }
+        };
+        Ok(self
+            .command
+            .attempt
+            .arena()
+            .definition_replacement_words(definition)
+            .map_err(attempt_command_error)?
+            .iter()
+            .copied()
+            .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
+            .collect())
     }
 
     /// §483's line acquisition: §484's terminal, or §485/§486's stream.

@@ -1915,14 +1915,16 @@ pub(in crate::main_control) fn observed_macro_body<G>(
 
 /// §482 constructs a parameterless macro body for §1225's `define`.
 pub(in crate::main_control) fn observed_read_body<G>(
-    replacement_text: tex_state::TokenListId<G>,
+    definition: &tex_state::DefinitionId<G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
     let mut tokens = vec![ObservedToken::MacroEndMatch];
     tokens.extend(
         stores
-            .token_list(replacement_text)
+            .definition(definition.clone())
+            .replacement_text()
             .iter()
+            .copied()
             .map(|word| observed_macro_token(word.semantic_token(), stores)),
     );
     tokens

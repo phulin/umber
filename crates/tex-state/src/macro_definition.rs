@@ -8,6 +8,21 @@ mod tests;
 
 const MACRO_PARAMETER_SLOTS: usize = 9;
 
+/// A malformed immutable macro parameter program.
+///
+/// These errors are detected while a definition is still mutable attempt or
+/// staging data. They must never escape as a panic from immutable
+/// publication, including when a checksummed format contains a semantically
+/// invalid row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MacroParameterProgramError {
+    InvalidToken,
+    TooManyParameters,
+    NonSequentialParameter { expected: u8, found: u8 },
+    InvalidReplacementParameter { highest: u8, found: u8 },
+    CapacityOverflow,
+}
+
 /// Allocation-free index of parameter markers in macro parameter text.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroParameterPattern {
@@ -17,49 +32,21 @@ pub struct MacroParameterPattern {
 }
 
 impl MacroParameterPattern {
-    pub fn from_tokens(tokens: &[Token]) -> Self {
-        Self::from_token_iter(tokens.iter().copied())
+    pub fn from_tokens(tokens: &[Token]) -> Result<Self, MacroParameterProgramError> {
+        let mut builder = MacroParameterPatternBuilder::new();
+        for token in tokens.iter().copied() {
+            builder.push_parameter_token(token)?;
+        }
+        Ok(builder.finish())
     }
 
     #[cfg(test)]
-    pub(crate) fn from_words(words: &[TokenWord]) -> Self {
-        Self::from_word_iter(words.iter().copied())
-    }
-
-    pub(crate) fn from_word_iter(words: impl Iterator<Item = TokenWord>) -> Self {
-        Self::from_token_iter(words.map(|word| word.semantic_token()))
-    }
-
-    fn from_token_iter(tokens: impl Iterator<Item = Token>) -> Self {
-        let mut offsets = [0; MACRO_PARAMETER_SLOTS];
-        let mut widths = [0; MACRO_PARAMETER_SLOTS];
-        let mut count = 0_usize;
-        let mut previous = None;
-        for (index, token) in tokens.enumerate() {
-            if matches!(token, Token::Param(_)) {
-                assert!(
-                    count < MACRO_PARAMETER_SLOTS,
-                    "macro has more than nine parameters"
-                );
-                let has_spelled_marker = matches!(
-                    previous,
-                    Some(Token::Char {
-                        cat: crate::token::Catcode::Parameter,
-                        ..
-                    })
-                );
-                offsets[count] = u32::try_from(index - usize::from(has_spelled_marker))
-                    .expect("token list length exceeds u32");
-                widths[count] = if has_spelled_marker { 2 } else { 1 };
-                count += 1;
-            }
-            previous = Some(token);
+    pub(crate) fn from_words(words: &[TokenWord]) -> Result<Self, MacroParameterProgramError> {
+        let mut builder = MacroParameterPatternBuilder::new();
+        for word in words.iter().copied() {
+            builder.push_parameter(word)?;
         }
-        Self {
-            offsets,
-            widths,
-            count: count as u8,
-        }
+        Ok(builder.finish())
     }
 
     #[must_use]
@@ -96,5 +83,96 @@ impl MacroParameterPattern {
         } else {
             None
         }
+    }
+}
+
+/// Checked, allocation-free incremental construction of one parameter plan.
+///
+/// The scanner, ordinary allocation, memo import, and format staging all use
+/// this accumulator. A successful push changes it once; validation can be
+/// performed on a copy before the caller commits a corresponding token word.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MacroParameterPatternBuilder {
+    pattern: MacroParameterPattern,
+    previous: Option<Token>,
+    word_len: u32,
+}
+
+impl MacroParameterPatternBuilder {
+    pub(crate) const fn new() -> Self {
+        Self {
+            pattern: MacroParameterPattern {
+                offsets: [0; MACRO_PARAMETER_SLOTS],
+                widths: [0; MACRO_PARAMETER_SLOTS],
+                count: 0,
+            },
+            previous: None,
+            word_len: 0,
+        }
+    }
+
+    pub(crate) fn push_parameter(
+        &mut self,
+        word: TokenWord,
+    ) -> Result<(), MacroParameterProgramError> {
+        let token = word
+            .token()
+            .ok_or(MacroParameterProgramError::InvalidToken)?;
+        self.push_parameter_token(token)
+    }
+
+    fn push_parameter_token(&mut self, token: Token) -> Result<(), MacroParameterProgramError> {
+        let next_len = self
+            .word_len
+            .checked_add(1)
+            .ok_or(MacroParameterProgramError::CapacityOverflow)?;
+        if let Token::Param(slot) = token {
+            let count = self.pattern.count as usize;
+            if count == MACRO_PARAMETER_SLOTS {
+                return Err(MacroParameterProgramError::TooManyParameters);
+            }
+            let expected = self.pattern.count + 1;
+            if slot != expected {
+                return Err(MacroParameterProgramError::NonSequentialParameter {
+                    expected,
+                    found: slot,
+                });
+            }
+            let has_spelled_marker = matches!(
+                self.previous,
+                Some(Token::Char {
+                    cat: crate::token::Catcode::Parameter,
+                    ..
+                })
+            );
+            self.pattern.offsets[count] = self.word_len - u32::from(has_spelled_marker);
+            self.pattern.widths[count] = if has_spelled_marker { 2 } else { 1 };
+            self.pattern.count = expected;
+        }
+        self.previous = Some(token);
+        self.word_len = next_len;
+        Ok(())
+    }
+
+    pub(crate) fn validate_replacement(
+        &self,
+        word: TokenWord,
+    ) -> Result<(), MacroParameterProgramError> {
+        let token = word
+            .token()
+            .ok_or(MacroParameterProgramError::InvalidToken)?;
+        if let Token::Param(slot) = token
+            && slot > self.pattern.count
+        {
+            return Err(MacroParameterProgramError::InvalidReplacementParameter {
+                highest: self.pattern.count,
+                found: slot,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn finish(self) -> MacroParameterPattern {
+        self.pattern
     }
 }

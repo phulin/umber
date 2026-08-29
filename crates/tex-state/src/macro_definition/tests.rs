@@ -25,7 +25,7 @@ fn packed_words_preserve_parameter_program_boundaries() {
     ];
     let words = tokens.map(TokenWord::pack);
 
-    let pattern = MacroParameterPattern::from_words(&words);
+    let pattern = MacroParameterPattern::from_words(&words).expect("valid parameter program");
 
     assert_eq!(pattern.parameter_count(), 2);
     assert_eq!(pattern.leading_end(words.len()), 1);

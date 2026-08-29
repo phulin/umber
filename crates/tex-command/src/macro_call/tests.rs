@@ -502,6 +502,89 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
 }
 
 #[test]
+fn delimited_argument_preserves_a_failed_overlapping_prefix() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_macro(
+            universe,
+            "overlap",
+            &[Token::Param(1), other('a'), other('b'), other('a')],
+        );
+        let expected = [letter('x'), other('a'), other('b'), letter('x')];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                macro_token,
+                expected[0],
+                expected[1],
+                expected[2],
+                expected[3],
+                other('a'),
+                other('b'),
+                other('a'),
+                letter('z'),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("macro delivery"),
+            DeliveryStatus::Command
+        );
+        let call = destination.take().expect("macro command");
+
+        assert_eq!(
+            processor.macro_call(&call).expect("macro call"),
+            MacroCallOutcome::Activated
+        );
+        assert_eq!(active_argument_tokens(processor.command), expected);
+        for expected_token in expected {
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("argument replay"),
+                DeliveryStatus::Command
+            );
+            assert_eq!(
+                destination
+                    .take()
+                    .expect("argument token")
+                    .spelling()
+                    .semantic_token(),
+                expected_token
+            );
+        }
+        assert_eq!(
+            processor
+                .get_x_token_into(&mut destination)
+                .expect("following source"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("following token")
+                .spelling()
+                .semantic_token(),
+            letter('z')
+        );
+    });
+}
+
+#[test]
 fn delimited_argument_ignores_delimiters_inside_literal_braces() {
     crate::test_harness::with_universe(|universe| {
         let macro_token = install_macro(universe, "m", &[Token::Param(1), other(',')]);

@@ -99,6 +99,73 @@ fn macro_materialization_stages_then_publishes_one_definition() {
 }
 
 #[test]
+fn malformed_macro_program_rejects_without_publishing_or_panicking() {
+    let staged = StagedMemoMacro {
+        value: DetachedMacro {
+            flags: 0,
+            parameter_text: vec![DetachedToken::Param(2)],
+            replacement_text: vec![],
+        },
+    };
+
+    with_universe(budget(), |destination| {
+        let core = destination.core.as_ref().expect("live state");
+        let cursor = core.generation_cursor();
+        let accounting = core.memory_accounting().words(false);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            destination.publish_memo_macro(staged)
+        }));
+        assert_eq!(
+            result.expect("malformed memo macro must not panic"),
+            Err(MemoValueError::Publication(
+                PromotionError::InvalidDefinition
+            ))
+        );
+        let core = destination.core.as_ref().expect("live state");
+        assert_eq!(core.generation_cursor(), cursor);
+        assert_eq!(core.memory_accounting().words(false), accounting);
+    })
+    .expect("test fixture is valid");
+}
+
+#[test]
+fn memo_publication_uses_destination_definition_identity_policy() {
+    let detached = with_universe(budget(), |source| {
+        let parameter = [TokenWord::pack(Token::param(1))];
+        let replacement = [TokenWord::pack(Token::param(1))];
+        let definition = source
+            .allocate_definition(&parameter, &replacement)
+            .expect("source definition");
+        source
+            .detach_macro_meaning(MeaningFlags::EMPTY, definition)
+            .expect("detached macro")
+    })
+    .expect("test fixture is valid");
+
+    with_universe(budget(), |destination| {
+        assert!(destination.enable_reachable_state_identity());
+        let parameter = [TokenWord::pack(Token::param(1))];
+        let replacement = [TokenWord::pack(Token::param(1))];
+        let direct = destination
+            .allocate_definition(&parameter, &replacement)
+            .expect("direct definition");
+        let imported = destination
+            .import_memo_macro_meaning(&detached, MemoValueLimits::default())
+            .expect("imported macro")
+            .resolve();
+        let crate::meaning::ResolvedMeaning::Macro {
+            definition: imported,
+            ..
+        } = imported
+        else {
+            panic!("macro meaning")
+        };
+        assert_eq!(direct.semantic_identity(), imported.semantic_identity());
+    })
+    .expect("test fixture is valid");
+}
+
+#[test]
 fn glue_round_trip_is_handle_free_and_semantic() {
     let value = GlueSpec {
         width: Scaled::from_raw(10),

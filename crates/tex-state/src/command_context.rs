@@ -814,6 +814,14 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.definition(id)
     }
 
+    /// Identity policy fixed by this command context's admitted destination
+    /// generation. Attempt builders capture it once and publication rejects a
+    /// builder from a differently configured generation.
+    #[inline(always)]
+    pub fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
+        self.admitted.definition_identity_policy()
+    }
+
     #[inline(always)]
     pub fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.admitted.token_list(id)

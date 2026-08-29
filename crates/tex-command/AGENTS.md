@@ -297,8 +297,11 @@ collector (see `src/conditionals.rs`).
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses
-  the scanner word/builder lanes, while a surviving token list is built and
-  sealed directly in its final current-generation destination. Nested macros
+  the scanner word/builder lanes. Macro `\def`/`\edef` and `read_toks`
+  collect semantic words into one attempt-local recyclable definition builder;
+  successful publication traverses that checked row once into its final
+  current-generation `DefinitionId`, while general token-list scans retain
+  their dedicated token buffers. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their
   scratch with scanner output. A suspended scan carries branded frame indices
   under the same exclusive current-generation lease. Its semantic

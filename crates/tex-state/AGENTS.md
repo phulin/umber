@@ -41,9 +41,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
 - `src/definition_arena.rs`: Private generation-branded non-atomic shared
-  macro-definition owners, single-allocation immutable token payloads, and the
-  exact publisher cursor which returns a rejected checkpoint loan to its
-  private suffix mark without retaining released bodies.
+  macro-definition owners, the checked destination-policy definition builder,
+  one explicit publication traversal into a contiguous immutable token
+  payload, and the exact publisher cursor which returns a rejected checkpoint
+  loan to its private suffix mark without retaining released bodies.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and

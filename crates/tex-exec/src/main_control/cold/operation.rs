@@ -199,7 +199,7 @@ pub(in crate::main_control) enum RootedPdfNavigationRequest<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::main_control) enum RootedInputStreamRequest<T, D = (), S = Symbol> {
+pub(in crate::main_control) enum RootedInputStreamRequest<D = (), S = Symbol> {
     Open {
         stream: i32,
         scanned: i32,
@@ -215,7 +215,6 @@ pub(in crate::main_control) enum RootedInputStreamRequest<T, D = (), S = Symbol>
         stream: i32,
         target: S,
         global: bool,
-        tokens: T,
         definition: D,
     },
 }
@@ -435,7 +434,7 @@ impl From<tex_command::PdfNavigationRequest>
 }
 
 impl From<tex_command::InputStreamRequest>
-    for RootedInputStreamRequest<tex_command::AttemptTokenListId, tex_command::AttemptDefinitionId>
+    for RootedInputStreamRequest<tex_command::AttemptDefinitionId>
 {
     fn from(request: tex_command::InputStreamRequest) -> Self {
         match request {
@@ -463,13 +462,11 @@ impl From<tex_command::InputStreamRequest>
                 stream,
                 target,
                 global,
-                tokens,
                 definition,
             } => Self::Read {
                 stream,
                 target,
                 global,
-                tokens,
                 definition,
             },
         }
@@ -848,7 +845,7 @@ pub(in crate::main_control) enum ColdOperation<
         global: bool,
     },
     InputStream {
-        request: RootedInputStreamRequest<T, D>,
+        request: RootedInputStreamRequest<D>,
         resource: Option<SourceRegistration>,
     },
     PdfXImage {
@@ -1911,16 +1908,13 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
                     stream,
                     target,
                     global,
-                    tokens: _,
                     definition: _,
                 } => {
-                    let tokens = cursor.token()?;
                     let definition = definition_cursor.token()?;
                     RootedInputStreamRequest::Read {
                         stream,
                         target,
                         global,
-                        tokens,
                         definition,
                     }
                 }
@@ -2259,7 +2253,7 @@ impl<G> ColdOperation<G> {
                 roots.extend(first);
                 roots.extend(second);
             }
-            Self::InputStream { request, .. } => input_stream_attempt_roots(request, roots),
+            Self::InputStream { .. } => {}
             Self::PdfXImage { request, .. } => {
                 roots.extend(request.attr);
             }
@@ -2420,17 +2414,8 @@ fn immediate_extension_attempt_roots<T: Copy>(
     }
 }
 
-fn input_stream_attempt_roots<T: Copy, D, S>(
-    request: &RootedInputStreamRequest<T, D, S>,
-    roots: &mut Vec<T>,
-) {
-    if let RootedInputStreamRequest::Read { tokens, .. } = request {
-        roots.push(*tokens);
-    }
-}
-
-fn input_stream_attempt_definition_roots<T, D: Copy, S>(
-    request: &RootedInputStreamRequest<T, D, S>,
+fn input_stream_attempt_definition_roots<D: Copy, S>(
+    request: &RootedInputStreamRequest<D, S>,
     roots: &mut Vec<D>,
 ) {
     if let RootedInputStreamRequest::Read { definition, .. } = request {
@@ -2501,13 +2486,11 @@ mod preparation_tests {
             stream: 3,
             target: (),
             global: false,
-            tokens: 8,
             definition: 9,
         };
         let mut roots = Vec::new();
         immediate_extension_attempt_roots(&immediate, &mut roots);
-        input_stream_attempt_roots(&input, &mut roots);
-        assert_eq!(roots, [6, 7, 8]);
+        assert_eq!(roots, [6, 7]);
         let mut definitions = Vec::new();
         input_stream_attempt_definition_roots(&input, &mut definitions);
         assert_eq!(definitions, [9]);

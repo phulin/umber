@@ -12,8 +12,9 @@ use tex_state::glue::GlueSpec;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{TokenWord, TracedTokenWord};
 use tex_state::{
-    DefinitionId, DefinitionPromotion, GenerationOwner, GlueId, PromotionError, ProvenanceId,
-    TokenListId, TokenListPromotion, Universe,
+    DefinitionBuildError, DefinitionBuilder, DefinitionId, DefinitionIdentityPolicy,
+    DefinitionPromotion, GenerationOwner, GlueId, PromotionError, ProvenanceId, TokenListId,
+    TokenListPromotion, Universe,
 };
 
 #[cfg(test)]
@@ -380,7 +381,14 @@ pub enum AttemptError {
     InvalidCoordinate,
     CapacityOverflow,
     AllocationFailed,
+    Definition(DefinitionBuildError),
     Promotion(PromotionError),
+}
+
+impl From<DefinitionBuildError> for AttemptError {
+    fn from(error: DefinitionBuildError) -> Self {
+        Self::Definition(error)
+    }
 }
 
 /// Failure to move one live attempt across an in-process resource boundary.
@@ -455,10 +463,8 @@ impl AttemptRange {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AttemptDefinition {
-    parameter_text: AttemptTokenListId,
-    replacement_text: AttemptTokenListId,
+    builder: DefinitionBuilder,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -496,6 +502,7 @@ pub(crate) struct AttemptArena<G> {
     token_lists: Vec<AttemptRow<AttemptTokenStorage>>,
     glue_values: Vec<AttemptRow<GlueSpec>>,
     definitions: Vec<AttemptRow<AttemptDefinition>>,
+    recycled_definition_builders: Vec<DefinitionBuilder>,
     token_buffers: Vec<AttemptRow<AttemptTokenBuffer>>,
     recycled_token_buffers: Vec<Vec<TracedTokenWord>>,
     #[cfg(test)]
@@ -522,6 +529,7 @@ impl<G> Default for AttemptArena<G> {
             token_lists: Vec::new(),
             glue_values: Vec::new(),
             definitions: Vec::new(),
+            recycled_definition_builders: Vec::new(),
             token_buffers: Vec::new(),
             recycled_token_buffers: Vec::new(),
             #[cfg(test)]
@@ -700,7 +708,15 @@ impl<G> AttemptArena<G> {
                 self.recycled_token_buffers.push(buffer);
             }
         }
-        self.definitions.truncate(mark.definitions as usize);
+        while self.definitions.len() > mark.definitions as usize {
+            let builder = self
+                .definitions
+                .pop()
+                .expect("attempt definition suffix is nonempty")
+                .value
+                .builder;
+            self.recycled_definition_builders.push(builder);
+        }
         self.glue_values.truncate(mark.glue_values as usize);
         self.token_lists.truncate(mark.token_lists as usize);
         self.token_builders.truncate(mark.token_builders as usize);
@@ -958,6 +974,7 @@ impl<G> AttemptArena<G> {
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
+    #[cfg(test)]
     pub(crate) fn allocate_definition(
         &mut self,
         parameter_text: AttemptTokenListId,
@@ -967,20 +984,134 @@ impl<G> AttemptArena<G> {
         let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
         );
-        self.token_words(parameter_text)?;
-        self.token_words(replacement_text)?;
+        let parameter_text = self.semantic_words(parameter_text)?;
+        let replacement_text = self.semantic_words(replacement_text)?;
+        let mut builder = self
+            .recycled_definition_builders
+            .pop()
+            .unwrap_or_else(|| DefinitionBuilder::new(DefinitionIdentityPolicy::Disabled));
+        builder.reset(DefinitionIdentityPolicy::Disabled);
+        for word in parameter_text {
+            builder.push_parameter(word)?;
+        }
+        builder.finish_parameters()?;
+        for word in replacement_text {
+            builder.push_replacement(word)?;
+        }
+        builder.seal()?;
         let id = AttemptDefinitionId::new(self.key, self.definitions.len())?;
         self.definitions
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
         self.definitions.push(AttemptRow {
             serial: id.serial,
-            value: AttemptDefinition {
-                parameter_text,
-                replacement_text,
-            },
+            value: AttemptDefinition { builder },
         });
         Ok(id)
+    }
+
+    pub(crate) fn allocate_definition_builder(
+        &mut self,
+        policy: DefinitionIdentityPolicy,
+    ) -> Result<AttemptDefinitionId, AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
+        let id = AttemptDefinitionId::new(self.key, self.definitions.len())?;
+        self.definitions
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        let mut builder = self
+            .recycled_definition_builders
+            .pop()
+            .unwrap_or_else(|| DefinitionBuilder::new(policy));
+        builder.reset(policy);
+        self.definitions.push(AttemptRow {
+            serial: id.serial,
+            value: AttemptDefinition { builder },
+        });
+        Ok(id)
+    }
+
+    fn definition_builder(
+        &self,
+        id: AttemptDefinitionId,
+    ) -> Result<&DefinitionBuilder, AttemptError> {
+        self.validate_key(id.key)?;
+        self.definitions
+            .get(id.index())
+            .filter(|row| row.serial == id.serial)
+            .map(|row| &row.value.builder)
+            .ok_or(AttemptError::InvalidCoordinate)
+    }
+
+    fn definition_builder_mut(
+        &mut self,
+        id: AttemptDefinitionId,
+    ) -> Result<&mut DefinitionBuilder, AttemptError> {
+        self.validate_key(id.key)?;
+        self.definitions
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial)
+            .map(|row| &mut row.value.builder)
+            .ok_or(AttemptError::InvalidCoordinate)
+    }
+
+    pub(crate) fn push_definition_parameter(
+        &mut self,
+        id: AttemptDefinitionId,
+        word: TokenWord,
+    ) -> Result<(), AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
+        self.definition_builder_mut(id)?.push_parameter(word)?;
+        Ok(())
+    }
+
+    pub(crate) fn finish_definition_parameters(
+        &mut self,
+        id: AttemptDefinitionId,
+    ) -> Result<(), AttemptError> {
+        self.definition_builder_mut(id)?.finish_parameters()?;
+        Ok(())
+    }
+
+    pub(crate) fn push_definition_replacement(
+        &mut self,
+        id: AttemptDefinitionId,
+        word: TokenWord,
+    ) -> Result<(), AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
+        self.definition_builder_mut(id)?.push_replacement(word)?;
+        Ok(())
+    }
+
+    pub(crate) fn finish_definition(
+        &mut self,
+        id: AttemptDefinitionId,
+    ) -> Result<(), AttemptError> {
+        self.definition_builder_mut(id)?.seal()?;
+        Ok(())
+    }
+
+    pub(crate) fn definition_parameter_words(
+        &self,
+        id: AttemptDefinitionId,
+    ) -> Result<&[TokenWord], AttemptError> {
+        Ok(self.definition_builder(id)?.parameter_text())
+    }
+
+    pub(crate) fn definition_replacement_words(
+        &self,
+        id: AttemptDefinitionId,
+    ) -> Result<&[TokenWord], AttemptError> {
+        Ok(self.definition_builder(id)?.replacement_text())
     }
 
     /// Allocates one mutable scanner buffer owned by this attempt.
@@ -1153,7 +1284,6 @@ impl<G> AttemptArena<G> {
             let row = self
                 .definitions
                 .get(id.index())
-                .copied()
                 .filter(|row| row.serial == id.serial)
                 .ok_or(AttemptError::InvalidCoordinate)?;
             if definition_sources
@@ -1162,12 +1292,8 @@ impl<G> AttemptArena<G> {
             {
                 continue;
             }
-            let definition = row.value;
-            // The two token ranges are schema-declared children. Definition
-            // text is copied into DefinitionArena directly, not published as
-            // independent durable token-list rows unless separately rooted.
-            let parameter_text = self.semantic_words(definition.parameter_text)?;
-            let replacement_text = self.semantic_words(definition.replacement_text)?;
+            let parameter_text = row.value.builder.parameter_text().to_vec();
+            let replacement_text = row.value.builder.replacement_text().to_vec();
             definition_sources.push((id, parameter_text, replacement_text));
         }
         for &id in roots.provenance {
@@ -1261,23 +1387,10 @@ impl<G> AttemptArena<G> {
         let definition = self
             .definitions
             .get(id.index())
-            .copied()
             .filter(|row| row.serial == id.serial)
-            .ok_or(AttemptError::InvalidCoordinate)?
-            .value;
-        let parameter_text = self.token_words(definition.parameter_text)?;
-        let replacement_text = self.token_words(definition.replacement_text)?;
+            .ok_or(AttemptError::InvalidCoordinate)?;
         universe
-            .promote_definition_from_words(
-                parameter_text
-                    .iter()
-                    .copied()
-                    .map(TracedTokenWord::token_word),
-                replacement_text
-                    .iter()
-                    .copied()
-                    .map(TracedTokenWord::token_word),
-            )
+            .promote_definition_builder(&definition.value.builder)
             .map_err(AttemptError::from)
     }
 

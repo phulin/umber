@@ -170,7 +170,7 @@ fn eof_recovery_streams_macro_parameter_and_replacement_slices_once() {
         );
 
         processor
-            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("EOF recovery closes the definition");
         assert_eq!(
             runaway_partial(&processor.command.semantic_diagnostics),
@@ -399,24 +399,148 @@ fn macro_definition_scan_keeps_parameter_and_replacement_lists_separate() {
             &mut diagnostic_effects,
         );
         let scanned = processor
-            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("definition scan");
         assert!(!scanned.malformed_parameter);
+        let definition = scanned.definition().expect("definition builder result");
         assert!(
             !processor
                 .command
-                .attempt_token_words(scanned.parameter_text)
+                .attempt
+                .arena()
+                .definition_parameter_words(definition)
                 .expect("parameter words")
                 .is_empty()
         );
         assert_eq!(
             processor
                 .command
-                .attempt_token_words(scanned.replacement_text)
+                .attempt
+                .arena()
+                .definition_replacement_words(definition)
                 .expect("replacement words")
                 .last()
                 .map(|word| word.semantic_token()),
             Some(Token::Param(1))
+        );
+    });
+}
+
+#[test]
+fn macro_definition_hash_brace_shares_one_checked_builder_boundary() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                token('#', Catcode::Parameter),
+                token('{', Catcode::BeginGroup),
+                token('x', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let scanned = processor
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("hash-brace definition scan");
+        let definition = scanned.definition().expect("definition builder result");
+        assert_eq!(
+            processor
+                .command
+                .attempt
+                .arena()
+                .definition_parameter_words(definition)
+                .expect("parameter words")
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>(),
+            [token('{', Catcode::BeginGroup)]
+        );
+        assert_eq!(
+            processor
+                .command
+                .attempt
+                .arena()
+                .definition_replacement_words(definition)
+                .expect("replacement words")
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>(),
+            [token('x', Catcode::Letter), token('{', Catcode::BeginGroup),]
+        );
+    });
+}
+
+#[test]
+fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let expansion = token('a', Catcode::Letter);
+        let nested_definition = universe
+            .allocate_definition(&[], &[TokenWord::pack(expansion)])
+            .expect("nested macro definition");
+        let nested = universe.intern("nesteddefscan").expect("nested macro name");
+        universe
+            .assign_meaning(
+                nested,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, nested_definition),
+                AssignmentScope::Global,
+            )
+            .expect("nested macro meaning");
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                token('{', Catcode::BeginGroup),
+                Token::Cs(nested.symbol()),
+                token('}', Catcode::EndGroup),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let scanned = processor
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: true })
+            .expect("expanded definition scan");
+        let definition = scanned.definition().expect("definition builder result");
+        assert!(
+            processor
+                .command
+                .attempt
+                .arena()
+                .definition_parameter_words(definition)
+                .expect("parameter words")
+                .is_empty()
+        );
+        assert_eq!(
+            processor
+                .command
+                .attempt
+                .arena()
+                .definition_replacement_words(definition)
+                .expect("replacement words"),
+            [TokenWord::pack(expansion)]
         );
     });
 }

@@ -256,6 +256,10 @@ impl<'a, G> AdmittedState<'a, G> {
         self.generation.glue().get(id)
     }
 
+    pub(crate) fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
+        self.generation.definitions().identity_policy()
+    }
+
     #[cfg(test)]
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
@@ -317,12 +321,23 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         replacement_text: Replacement,
     ) -> Result<DefinitionId<G>, DefinitionAllocationError>
     where
-        Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
-        Replacement: Clone + ExactSizeIterator<Item = TokenWord>,
+        Parameters: ExactSizeIterator<Item = TokenWord>,
+        Replacement: ExactSizeIterator<Item = TokenWord>,
     {
         self.generation
             .definitions_mut()
             .allocate_from_iter(parameter_text, replacement_text)
+    }
+
+    pub(crate) fn publish_definition_builder(
+        &mut self,
+        builder: &crate::DefinitionBuilder,
+    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+        self.generation.definitions_mut().publish(builder)
+    }
+
+    pub(crate) fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
+        self.generation.definitions().identity_policy()
     }
 
     pub(crate) fn allocate_token_list(
@@ -400,6 +415,19 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             return Err(crate::universe::PromotionError::CapacityOverflow);
         };
 
+        let policy = self.generation.definitions().identity_policy();
+        let mut definition_builders = Vec::new();
+        definition_builders
+            .try_reserve_exact(definitions.len())
+            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+        for definition in definitions {
+            definition_builders.push(crate::DefinitionBuilder::from_slices(
+                policy,
+                definition.parameter_text,
+                definition.replacement_text,
+            )?);
+        }
+
         // Reserve every destination before the first logical length changes.
         // Once these calls succeed, the individual arena allocators cannot
         // allocate or fail for this validated batch.
@@ -433,12 +461,12 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(provenance.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for definition in definitions {
+        for definition in &definition_builders {
             promoted_definitions.push(
                 self.generation
                     .definitions_mut()
-                    .allocate(definition.parameter_text, definition.replacement_text)
-                    .expect("the complete definition promotion batch was reserved"),
+                    .publish(definition)
+                    .expect("validated destination-policy definition publication"),
             );
         }
         for list in token_lists {
@@ -505,6 +533,28 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_fold(0usize, |total, words| total.checked_add(words.len()))
             .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
 
+        let policy = self.generation.definitions().identity_policy();
+        let mut definition_builders = Vec::new();
+        definition_builders
+            .try_reserve_exact(definitions.len())
+            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+        for (definition, live) in definitions.iter().zip(&live_definitions) {
+            definition_builders.push(if *live {
+                let mut builder = crate::DefinitionBuilder::new(policy);
+                for &word in &definition.parameter_text {
+                    builder.push_parameter(TokenWord::from_raw(word))?;
+                }
+                builder.finish_parameters()?;
+                for &word in &definition.replacement_text {
+                    builder.push_replacement(TokenWord::from_raw(word))?;
+                }
+                builder.seal()?;
+                Some(builder)
+            } else {
+                None
+            });
+        }
+
         self.generation
             .definitions_mut()
             .reserve_batch(definition_rows, definition_words)?;
@@ -529,24 +579,15 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(glue_values.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for (row, definition) in definitions.into_iter().enumerate() {
+        for (row, definition) in definition_builders.iter().enumerate() {
             if !live_definitions[row] {
                 continue;
             }
             let id = self
                 .generation
                 .definitions_mut()
-                .allocate_from_iter(
-                    definition
-                        .parameter_text
-                        .into_iter()
-                        .map(TokenWord::from_raw),
-                    definition
-                        .replacement_text
-                        .into_iter()
-                        .map(TokenWord::from_raw),
-                )
-                .expect("the complete format definition batch was reserved");
+                .publish(definition.as_ref().expect("live builder was staged"))
+                .expect("validated destination-policy format publication");
             promoted_definitions[row] = Some(id);
         }
         for words in token_lists {

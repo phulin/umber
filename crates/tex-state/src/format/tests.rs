@@ -8,7 +8,10 @@ use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::node::Node;
 use crate::token::{Catcode, Token, TokenWord};
 use crate::world::{JobClock, World};
-use crate::{AssignmentScope, CodeTableKind, InteractionMode, with_universe};
+use crate::{
+    AssignmentScope, CodeTableKind, InteractionMode, ReachabilityStore, RetainedStateAdmission,
+    RetainedStateGeneration, RetainedStateOperation, with_universe,
+};
 use tex_arith::Scaled;
 use tex_fonts::{FontMetrics, LoadedFont};
 
@@ -887,6 +890,110 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
         },
     )
     .expect("materialized format");
+}
+
+#[test]
+fn format_materialization_rebuilds_definition_and_state_identity() {
+    let (image, source_definition_identity) = with_universe(budget(), |universe| {
+        assert!(universe.enable_reachable_state_identity());
+        let command = universe.intern("identitymacro").expect("command name");
+        let parameter = [TokenWord::pack(Token::frozen_relax())];
+        let replacement = [TokenWord::pack(Token::Char {
+            ch: 'b',
+            cat: Catcode::Letter,
+        })];
+        let definition = universe
+            .allocate_definition(&parameter, &replacement)
+            .expect("source definition");
+        let definition_identity = definition.semantic_identity();
+        universe
+            .assign_meaning(
+                command,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("source meaning");
+        (
+            universe.capture_format_image().expect("capture format"),
+            definition_identity,
+        )
+    })
+    .expect("source universe");
+
+    struct ReadLoadedIdentity;
+
+    impl RetainedStateOperation for ReadLoadedIdentity {
+        type Output = (Option<u64>, Option<u64>);
+
+        fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
+            let universe = admitted.universe();
+            let command = universe
+                .intern("identitymacro")
+                .expect("loaded command name");
+            let ResolvedMeaning::Macro { definition, .. } = universe
+                .meaning(command.symbol())
+                .expect("loaded macro meaning")
+            else {
+                panic!("loaded macro meaning");
+            };
+            let core_identity = universe
+                .runtime_checkpoint_with_page_roots_and_identity(false, true)
+                .expect("loaded identity checkpoint")
+                .reachable_state_identity_roots()
+                .core();
+            (definition.semantic_identity(), core_identity)
+        }
+    }
+
+    let store = ReachabilityStore::new(budget());
+    let mut loaded = RetainedStateGeneration::from_format_owned_with_page_node_identity_demand(
+        store,
+        World::memory(),
+        validated_copy(&image),
+        true,
+    )
+    .expect("identity-enabled format materialization");
+    let (loaded_definition_identity, loaded_core_identity) =
+        loaded.with_admitted(ReadLoadedIdentity);
+    let second_store = ReachabilityStore::new(budget());
+    let mut second = RetainedStateGeneration::from_format_owned_with_page_node_identity_demand(
+        second_store,
+        World::memory(),
+        validated_copy(&image),
+        true,
+    )
+    .expect("second identity-enabled format materialization");
+    let (second_definition_identity, second_core_identity) =
+        second.with_admitted(ReadLoadedIdentity);
+    assert_eq!(loaded_definition_identity, source_definition_identity);
+    assert_eq!(second_definition_identity, source_definition_identity);
+    assert_eq!(second_core_identity, loaded_core_identity);
+}
+
+#[test]
+fn format_stage_rejects_malformed_macro_program_without_panicking() {
+    let mut image = image();
+    image.decoded.definitions.push(FormatDefinition {
+        parameter_text: vec![TokenWord::pack(Token::param(1)).raw(); 10],
+        replacement_text: Vec::new(),
+    });
+    let rows = super::LogicalRows {
+        names: &image.decoded.names,
+        token_lists: &image.decoded.token_lists,
+        definitions: &image.decoded.definitions,
+        glue: &image.decoded.glue,
+        fonts: &image.decoded.fonts,
+        node_lists: &image.decoded.node_lists,
+        cells: &image.decoded.cells,
+    };
+    let result = std::panic::catch_unwind(|| {
+        super::validate_logical_rows(rows, crate::EngineCapacityProfile::Tex82Etex)
+    });
+    assert!(matches!(
+        result.expect("malformed row is a validation error"),
+        Err(FormatError::InvalidState(message))
+            if message.contains("macro parameter program")
+    ));
 }
 
 #[test]
