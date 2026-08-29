@@ -137,6 +137,16 @@ pub(crate) enum ExpansionControl<G> {
         command: ExpansionCommandSlot<G>,
         trace: TraceState,
     },
+    Suspended {
+        command: ExpansionCommandSlot<G>,
+        resume: crate::state::PendingExpansionResume,
+        child: Option<
+            crate::execution_scratch::ChildContinuation<
+                G,
+                crate::state::PendingExpansionChildDestination,
+            >,
+        >,
+    },
     ExpandAfter(ExpandAfterControl<G>),
     Primitive(PrimitiveControl<G>),
 }

@@ -51,6 +51,30 @@ enum PendingExpandAfterDestination {
     ExpandingSecond,
 }
 
+struct SuspendedExpansion<G> {
+    resume: crate::state::PendingExpansionResume,
+    child: Option<
+        crate::execution_scratch::ChildContinuation<
+            G,
+            crate::state::PendingExpansionChildDestination,
+        >,
+    >,
+}
+
+struct ExpansionFailure<G> {
+    error: CommandError,
+    suspended: Option<SuspendedExpansion<G>>,
+}
+
+impl<G> From<CommandError> for ExpansionFailure<G> {
+    fn from(error: CommandError) -> Self {
+        Self {
+            error,
+            suspended: None,
+        }
+    }
+}
+
 impl<G> PendingExpandAfter<G> {
     pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
         self.child.take().map(|child| child.restore().0)
@@ -778,6 +802,38 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
+    /// Resumes one genuinely suspended expansion from its stable parked root.
+    /// The key is the executor's only command-related retry owner; consuming
+    /// it moves the command once into `destination` before scalar expansion
+    /// continues at the retained typed phase.
+    pub fn resume_expansion_into(
+        &mut self,
+        key: crate::ExpansionWorkKey<G>,
+        main_loop: bool,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
+        self.install_expansion_resume(key);
+        self.delivery_driver(
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::XToken,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Diagnose,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: if main_loop {
+                        FirstCommandPolicy::MainLoopCharacter
+                    } else {
+                        FirstCommandPolicy::Ordinary
+                    },
+                }),
+                replay_completion: ReplayCompletionPolicy::Surface,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+            destination,
+        )
+    }
+
     /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
     ///
     /// `main_control`'s inner character loop (§1034) never returns to
@@ -867,31 +923,46 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.raw_delivery_driver(policy, destination)
             }
             DeliveryMode::Expanded(expanded) => {
-                let mut resumed_pending = false;
-                if self
-                    .scanner_resume
-                    .as_ref()
-                    .is_some_and(crate::ScannerFrameKey::is_expansion)
-                {
-                    let retained = self
+                let key = self.expansion_resume.take().or_else(|| {
+                    self.scanner_resume
+                        .as_ref()
+                        .is_some_and(crate::ScannerFrameKey::is_expansion)
+                        .then(|| {
+                            let wrapper = self
+                                .scanner_resume
+                                .take()
+                                .expect("matched expansion wrapper");
+                            self.command
+                                .scratch
+                                .take_expansion_key(wrapper)
+                                .expect("live wrapper owns expansion work")
+                        })
+                });
+                let resumed_pending = key.is_some();
+                if let Some(key) = key {
+                    let mut retained = self
                         .command
                         .scratch
-                        .expansion_frame(
-                            self.scanner_resume
-                                .as_ref()
-                                .expect("matched expansion frame"),
-                        )
+                        .resume_expansion(key)
                         .map_err(crate::scan_toks::scratch_command_error)?;
                     if destination
                         .as_ref()
                         .is_some_and(|command| command != &retained.command)
                     {
-                        let key = self.scanner_resume.take().expect("matched expansion frame");
-                        self.abort_continuation(key)?;
+                        if let Some(child) = retained.take_child() {
+                            self.abort_continuation(child)?;
+                        }
                         return Err(CommandError::input_invariant());
                     }
-                    *destination = Some(retained.command.clone());
-                    resumed_pending = true;
+                    if let Some(child) = retained.child.take() {
+                        let (key, destination) = child.restore();
+                        if destination != crate::state::PendingExpansionChildDestination::Dispatch {
+                            return Err(CommandError::input_invariant());
+                        }
+                        self.scanner_resume = Some(key);
+                    }
+                    self.resumed_expansion = Some(retained.resume);
+                    *destination = Some(retained.command);
                 }
                 if resumed_pending && let Some(command) = &destination {
                     self.resume_current_command(command);
@@ -1063,7 +1134,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             // bookkeeping, then resumes the enclosing expanded-token loop.
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
-            match self.expand_with_trace(
+            let command = destination
+                .take()
+                .expect("expanded destination contains a command");
+            match self.expand_owned_with_trace(
                 command,
                 !std::mem::take(&mut suppress_first_expansion_trace),
             ) {
@@ -1078,7 +1152,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(error);
                 }
             }
-            *destination = None;
         }
     }
 
@@ -1165,47 +1238,105 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
     pub(crate) fn expand(&mut self, command: &CurrentCommand<G>) -> Result<(), CommandError> {
-        self.expand_with_trace(command, true)
+        match self.expand_with_trace(command, true) {
+            Ok(()) => Ok(()),
+            Err(failure) => self.finish_expansion_failure(command.clone(), failure),
+        }
+    }
+
+    fn expand_owned_with_trace(
+        &mut self,
+        command: CurrentCommand<G>,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        match self.expand_with_trace(&command, report_trace) {
+            Ok(()) => Ok(()),
+            Err(failure) => self.finish_expansion_failure(command, failure),
+        }
+    }
+
+    fn finish_expansion_failure(
+        &mut self,
+        command: CurrentCommand<G>,
+        failure: ExpansionFailure<G>,
+    ) -> Result<(), CommandError> {
+        let Some(suspended) = failure.suspended else {
+            return Err(failure.error);
+        };
+        let pending = crate::state::PendingExpansion {
+            command,
+            resume: suspended.resume,
+            child: suspended.child,
+        };
+        match self.command.scratch.store_expansion_frame(pending) {
+            Ok(key) => {
+                self.scanner_resume = Some(key);
+                Err(failure.error)
+            }
+            Err((store_error, mut pending)) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                Err(crate::scan_toks::scratch_command_error(store_error))
+            }
+        }
     }
 
     /// Continues one expansion attempt while preserving §367's already
     /// emitted trace across an immutable-resource suspension.
+    // Suspension returns its move-only typed child inline; boxing this cold
+    // edge would add a heap owner solely to satisfy representation linting.
+    #[allow(clippy::result_large_err)]
     fn expand_with_trace(
         &mut self,
         command: &CurrentCommand<G>,
         mut report_trace: bool,
-    ) -> Result<(), CommandError> {
-        let mut expansion_resume = crate::state::PendingExpansionResume::Dispatch;
-        if self.scanner_resume.is_some()
+    ) -> Result<(), ExpansionFailure<G>> {
+        let resumed_here = self.resumed_expansion.is_some();
+        let mut expansion_resume = self
+            .resumed_expansion
+            .take()
+            .unwrap_or(crate::state::PendingExpansionResume::Dispatch);
+        if !resumed_here
+            && self.scanner_resume.is_some()
             && !self
                 .scanner_resume
                 .as_ref()
                 .is_some_and(crate::ScannerFrameKey::is_expansion)
         {
-            return Err(CommandError::input_invariant());
+            return Err(CommandError::input_invariant().into());
         }
-        if self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_expansion)
+        if !resumed_here
+            && self
+                .scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_expansion)
         {
-            let key = self.scanner_resume.take().expect("matched expansion frame");
+            let wrapper = self
+                .scanner_resume
+                .take()
+                .expect("matched expansion wrapper");
+            let key = self
+                .command
+                .scratch
+                .take_expansion_key(wrapper)
+                .map_err(crate::scan_toks::scratch_command_error)?;
             let mut retained = self
                 .command
                 .scratch
-                .take_expansion_frame(key)
+                .resume_expansion(key)
                 .map_err(crate::scan_toks::scratch_command_error)?;
             if retained.command != *command {
                 if let Some(child) = retained.take_child() {
                     self.abort_continuation(child)?;
                 }
-                return Err(CommandError::input_invariant());
+                return Err(CommandError::input_invariant().into());
             }
             expansion_resume = retained.resume;
             if let Some(child) = retained.child.take() {
                 let (key, destination) = child.restore();
                 if destination != crate::state::PendingExpansionChildDestination::Dispatch {
-                    return Err(CommandError::input_invariant());
+                    return Err(CommandError::input_invariant().into());
                 }
                 self.scanner_resume = Some(key);
             }
@@ -1585,55 +1716,26 @@ impl<G> CommandProcessor<'_, '_, G> {
             .as_ref()
             .is_err_and(CommandError::is_resource_suspension)
         {
-            let key =
-                match self
-                    .command
-                    .scratch
-                    .store_expansion_frame(crate::state::PendingExpansion {
-                        command: command.clone(),
-                        resume: suspended_resume
-                            .take()
-                            .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
-                        child: None,
-                    }) {
-                    Ok(key) => key,
-                    Err(store_error) => {
-                        if let Some(child) = self.scanner_resume.take() {
-                            self.abort_continuation(child)?;
-                        }
-                        return Err(crate::scan_toks::scratch_command_error(store_error));
-                    }
-                };
             let child = crate::execution_scratch::ChildContinuation::capture(
                 &mut self.scanner_resume,
                 crate::state::PendingExpansionChildDestination::Dispatch,
             );
-            match self.command.scratch.expansion_frame_mut(&key) {
-                Ok(pending) => pending.child = child,
-                Err(store_error) => {
-                    let abort_result = if let Some(child) = child {
-                        self.abort_continuation(child.restore().0)
-                    } else {
-                        Ok(())
-                    };
-                    let discard_result = self
-                        .command
-                        .scratch
-                        .discard_expansion_frame(key)
-                        .map_err(crate::scan_toks::scratch_command_error);
-                    abort_result?;
-                    discard_result?;
-                    return Err(crate::scan_toks::scratch_command_error(store_error));
-                }
-            }
-            self.scanner_resume = Some(key);
+            return Err(ExpansionFailure {
+                error: result.expect_err("matched resource suspension"),
+                suspended: Some(SuspendedExpansion {
+                    resume: suspended_resume
+                        .take()
+                        .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
+                    child,
+                }),
+            });
         } else if let Some(child) = self.scanner_resume.take() {
             self.abort_continuation(child)?;
             if result.is_ok() {
-                return Err(CommandError::input_invariant());
+                return Err(CommandError::input_invariant().into());
             }
         }
-        result
+        result.map_err(Into::into)
     }
 
     /// e-TeX 2.6 etex.ch §53a `pseudo_start`.

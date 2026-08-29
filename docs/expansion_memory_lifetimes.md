@@ -106,9 +106,9 @@ does not authorize a smaller hidden arena.
 | Pure memo and render caches                                                                           | Session/executor cache owner; `PureMemoRuntime` and editor render-map cache enforce entry/byte budgets                                                                                | Reusable and evictable, not semantic nesting                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Eviction, explicit clear, or session drop                                                                                                                                                     | Yes / yes only as handle-free validated results                                                       | Bounded heap retention is allowed; cache identity cannot provide runtime liveness                                                                                                                                                                                                                                                                   |
 | Format image and format construction                                                                  | `DetachedFormatImage` transiently owns bytes plus decoded handle-free rows; admission consumes it into a fresh destination generation                                                 | Complete validation precedes admission; construction then drains decoded rows in canonical dependency order                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Encoded bytes drop before destination construction; each decoded payload drops or moves when its final column is installed; runtime rows end with the generation                              | N/A / yes, via handle-free schema                                                                     | Cold decode allocation and DTO-local relocation are allowed. Admission does not retain duplicate decoded/live payloads. Live ids, chunks, and generation owners are forbidden on the wire                                                                                                                                                           |
 
-`ExecutionScratch` now also owns an unused parked-expansion foundation.
-`ExpansionWork` stores stable `CurrentCommand` slots, variant-specific controls,
-and control-sequence name bytes in fixed chunks. Command and control
+`ExecutionScratch` now also owns the production parked-expansion suspension
+lane. `ExpansionWork` stores stable `CurrentCommand` slots, variant-specific
+controls, and control-sequence name bytes in fixed chunks. Command and control
 coordinates carry both the issuing work owner and their lane serial; name
 marks carry that owner, the live root serial, and the byte offset. Access
 validates the owner before indexing, and the root serial rejects a mark after
@@ -117,10 +117,17 @@ logical marks plus owner and ABA serial identity; completion or abort retires
 controls deepest-first and then truncates command and name lanes to those
 marks. The retained chunks are current-generation capacity and never
 checkpoint payload. Ordinary synchronous expansion remains in its caller-owned
-command slot, so this foundation currently changes no delivery, expansion,
-suspension, or rollback behavior. Test/profiling counters measure command
-clones, definition retains, ownership moves, lane high water, whole-control
-copies, and warmed allocations independently.
+command slot and enters none of these lanes. At an actual immutable-resource
+suspension, the driver moves that sole command owner and its exact typed resume
+state into one stable root. Main control retains only the move-only root key;
+resume consumes the command once into the caller destination, and resuspension
+parks that same owner again. Nested roots are strict LIFO, and owner/serial
+validation rejects foreign, stale, or out-of-order keys before mutation.
+Failed park returns the complete command, typed phase, and child to the direct
+caller. Structural `expandafter`, `csname`/name-lane, `scan_toks` wrapper, and
+PDF string-compare migrations remain later reviewed stages. Test/profiling
+counters measure command clones, definition retains, ownership moves, lane
+high water, whole-control copies, and warmed allocations independently.
 
 `PageMaterialArena` owns one `ChunkPool<Node>` and one coordinate-only
 `ForkArena`. Fixed payload chunks own each `Node` once. An `ArenaList` is the
@@ -446,10 +453,12 @@ This keeps exactly the current generation alive, not one owner per token.
 
 Nested scanner and expansion suspension uses two fixed typed scratch lanes.
 `PendingScanToks` has a dedicated lane because it owns the definition builder
-and attempt scope, while scalar, expansion, alignment, and structured
-continuations share the bounded heterogeneous lane. Their backing vectors grow
-only when a generation reaches a new simultaneous high-water mark; freed slots
-are reused with a new serial, so a stale or double-consumed key is rejected.
+and attempt scope, while scalar, alignment, and structured continuations share
+the bounded heterogeneous lane. Its lightweight expansion wrapper carries
+only an `ExpansionWork` key when a nested scanner still owns the caller route.
+Their backing vectors grow only when a generation reaches a new simultaneous
+high-water mark; freed slots are reused with a new serial, so a stale or
+double-consumed key is rejected.
 Scalar continuations such as an in-progress `\csname` move their accumulated
 name into the exact enclosing expansion or conditional phase. An expandable
 `\number` or `\romannumeral` moves its leading/radix/optional-space phase into

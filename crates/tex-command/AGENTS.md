@@ -53,12 +53,14 @@ collector (see `src/conditionals.rs`).
   carry a definition builder and attempt scope; every other typed continuation
   remains in the bounded heterogeneous continuation lane.
 - `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
-  `src/expansion_work/tests.rs`: unused current-generation parked-expansion
-  foundation. Fixed command and typed control chunks keep stable addresses; one
-  chunked name lane and complete logical marks support exact abort and reuse;
-  move-only owner/serial keys reject foreign and ABA-stale access. Ordinary
-  synchronous expansion does not enter these lanes before the separately
-  reviewed production cutover.
+  `src/expansion_work/tests.rs`: current-generation parked-expansion owner used
+  only after a real immutable-resource suspension. Fixed command and typed
+  control chunks keep stable addresses; one chunked name lane and complete
+  logical marks support exact abort and reuse; move-only owner/serial keys
+  reject foreign and ABA-stale access. Ordinary synchronous expansion stays in
+  the caller-owned command slot. Structural `expandafter`, `csname`, name-lane,
+  `scan_toks` wrapper, and PDF string-compare migrations remain separate
+  reviewed cutovers.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine

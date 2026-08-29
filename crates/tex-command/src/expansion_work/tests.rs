@@ -365,6 +365,74 @@ fn capacity_failure_rolls_back_partially_parked_root_atomically() {
 }
 
 #[test]
+fn failed_production_park_restores_the_exact_pending_owner() {
+    let mut work = ExpansionWork::<()>::default();
+    work.controls.next_serial = u32::MAX;
+    let ownership_before = crate::command::command_ownership_counters();
+    let pending = crate::state::PendingExpansion {
+        command: empty_command(),
+        resume: crate::state::PendingExpansionResume::PdfInsertHeight,
+        child: None,
+    };
+    let (error, pending) = work
+        .park_suspension(pending)
+        .expect_err("exhausted control serial rejects park");
+    assert_eq!(error, ScratchError::CapacityOverflow);
+    assert_eq!(
+        pending.resume,
+        crate::state::PendingExpansionResume::PdfInsertHeight
+    );
+    assert!(pending.child.is_none());
+    assert_eq!(pending.command, empty_command());
+    assert!(work.is_quiescent());
+    let ownership_after = crate::command::command_ownership_counters();
+    assert_eq!(ownership_after.clones - ownership_before.clones, 0);
+    assert_eq!(
+        ownership_after.expansion_moves_in - ownership_before.expansion_moves_in,
+        1
+    );
+    assert_eq!(
+        ownership_after.expansion_moves_out - ownership_before.expansion_moves_out,
+        1
+    );
+}
+
+#[test]
+fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation() {
+    let mut work = ExpansionWork::<()>::default();
+    let outer = work
+        .park_suspension(crate::state::PendingExpansion {
+            command: empty_command(),
+            resume: crate::state::PendingExpansionResume::The,
+            child: None,
+        })
+        .expect("outer suspension");
+    let outer_duplicate = duplicate_key(&outer);
+    let inner = work
+        .park_suspension(crate::state::PendingExpansion {
+            command: empty_command(),
+            resume: crate::state::PendingExpansionResume::PdfInsertHeight,
+            child: None,
+        })
+        .expect("inner suspension");
+
+    assert_eq!(
+        work.resume_suspension(outer_duplicate),
+        Err(ScratchError::InvalidCoordinate)
+    );
+    assert_eq!(work.active_roots.len(), 2);
+    let inner = work.resume_suspension(inner).expect("inner resumes first");
+    assert_eq!(
+        inner.resume,
+        crate::state::PendingExpansionResume::PdfInsertHeight
+    );
+    let outer = work.resume_suspension(outer).expect("outer resumes second");
+    assert_eq!(outer.resume, crate::state::PendingExpansionResume::The);
+    assert!(work.is_quiescent());
+    assert_eq!(work.counters().stale_key_rejections, 1);
+}
+
+#[test]
 fn parking_and_consuming_macro_command_clones_no_command_or_definition_owner() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe

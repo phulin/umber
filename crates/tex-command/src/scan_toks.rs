@@ -561,7 +561,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Ok(())
             }
-            crate::execution_scratch::ContinuationFrame::Expansion(mut pending) => {
+            crate::execution_scratch::ContinuationFrame::Expansion(key) => {
+                let mut pending = self
+                    .command
+                    .scratch
+                    .cancel_expansion(key)
+                    .map_err(scratch_command_error)?;
                 if let Some(child) = pending.take_child() {
                     self.abort_continuation(child)?;
                 }

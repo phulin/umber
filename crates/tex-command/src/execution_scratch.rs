@@ -144,7 +144,7 @@ impl<G, D: Copy> ChildContinuation<G, D> {
 pub(crate) enum ContinuationFrame<G> {
     Scanner(crate::scan_toks::PendingScanToks<G>),
     Scalar(crate::scanners::PendingScalarFrame<G>),
-    Expansion(crate::state::PendingExpansion<G>),
+    Expansion(crate::ExpansionWorkKey<G>),
     ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
     PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
     AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
@@ -158,7 +158,7 @@ pub(crate) enum ContinuationFrame<G> {
 #[derive(Debug, Eq, PartialEq)]
 enum StoredContinuationFrame<G> {
     Scalar(crate::scanners::PendingScalarFrame<G>),
-    Expansion(crate::state::PendingExpansion<G>),
+    Expansion(crate::ExpansionWorkKey<G>),
     ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
     PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
     AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
@@ -992,62 +992,60 @@ impl<G> ExecutionScratch<G> {
         self.scanner_resumes.get(key.id)
     }
 
+    // Failed wrapper admission returns the sole parked owner without boxing
+    // or allocating on this already-cold recovery edge.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn store_expansion_frame(
         &mut self,
         pending: crate::state::PendingExpansion<G>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.continuation_resumes
-            .insert(StoredContinuationFrame::Expansion(pending))
-            .map(|id| ScannerFrameKey {
+    ) -> Result<ScannerFrameKey<G>, (ScratchError, crate::state::PendingExpansion<G>)> {
+        let key = self.expansion_work.park_suspension(pending)?;
+        let mut frame = Some(StoredContinuationFrame::Expansion(key));
+        match self.continuation_resumes.insert_from(&mut frame) {
+            Ok(id) => Ok(ScannerFrameKey {
                 id,
                 kind: ContinuationKind::Expansion,
-            })
+            }),
+            Err(error) => {
+                let StoredContinuationFrame::Expansion(key) =
+                    frame.expect("failed wrapper store preserves expansion key")
+                else {
+                    unreachable!("production wrapper contains one expansion key")
+                };
+                let pending = self
+                    .expansion_work
+                    .resume_suspension(key)
+                    .expect("failed wrapper store restores just-parked expansion");
+                Err((error, pending))
+            }
+        }
     }
 
-    pub(crate) fn take_expansion_frame(
+    pub(crate) fn take_expansion_key(
         &mut self,
         key: ScannerFrameKey<G>,
-    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
+    ) -> Result<crate::ExpansionWorkKey<G>, ScratchError> {
         if !key.is_expansion() {
             return Err(ScratchError::InvalidCoordinate);
         }
         match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::Expansion(pending) => Ok(pending),
+            StoredContinuationFrame::Expansion(key) => Ok(key),
             _ => Err(ScratchError::InvalidCoordinate),
         }
     }
 
-    pub(crate) fn expansion_frame(
-        &self,
-        key: &ScannerFrameKey<G>,
-    ) -> Result<&crate::state::PendingExpansion<G>, ScratchError> {
-        if !key.is_expansion() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.get(key.id)? {
-            StoredContinuationFrame::Expansion(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn expansion_frame_mut(
+    pub(crate) fn resume_expansion(
         &mut self,
-        key: &ScannerFrameKey<G>,
-    ) -> Result<&mut crate::state::PendingExpansion<G>, ScratchError> {
-        if !key.is_expansion() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.get_mut(key.id)? {
-            StoredContinuationFrame::Expansion(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
+        key: crate::ExpansionWorkKey<G>,
+    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
+        self.expansion_work.resume_suspension(key)
     }
 
-    pub(crate) fn discard_expansion_frame(
+    pub(crate) fn cancel_expansion(
         &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<(), ScratchError> {
-        self.take_expansion_frame(key).map(drop)
+        key: crate::ExpansionWorkKey<G>,
+    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
+        self.expansion_work.cancel_suspension(key)
     }
 
     pub(crate) fn store_expandafter_frame(

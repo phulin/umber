@@ -7406,11 +7406,15 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
             matches!(
                 retried_control.pending_direct_operation.as_ref(),
                 Some(PendingDirectOperation::Retained {
-                    destination: PendingDirectDestination::Alignment(pending),
+                    destination: PendingDirectDestination::Alignment(PendingAlignmentDelivery {
+                        scanner: None,
+                        expansion: Some(_),
+                        ..
+                    }),
                     ..
-                }) if pending.scanner.is_some()
+                })
             ),
-            "alignment retry must own its exact expanded child"
+            "alignment retry must own only its exact parked expansion key"
         );
         retried_control
             .capabilities_mut()

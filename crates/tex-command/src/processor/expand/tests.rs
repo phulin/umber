@@ -124,6 +124,7 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
 #[test]
 fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix() {
     crate::test_harness::with_universe(|universe| {
+        let ownership_before = crate::command::command_ownership_counters();
         let input = install_static(
             universe,
             "input",
@@ -166,13 +167,58 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 crate::CommandError::MissingInput { ref name, .. } if name == "child.tex"
             ));
             assert!(destination.is_none());
-            assert!(processor.scanner_resume.is_some());
             let delivery_cursor = processor.delivery_cursor();
             let resume = processor
-                .take_scanner_resume()
-                .expect("typed expansion suspension");
+                .take_pending_expansion_work()
+                .expect("typed parked expansion suspension");
+            assert!(processor.scanner_resume.is_none());
             (resume, delivery_cursor)
         };
+        let ownership_after_first = crate::command::command_ownership_counters();
+        assert_eq!(ownership_after_first.clones - ownership_before.clones, 0);
+        assert_eq!(
+            ownership_after_first.expansion_moves_in - ownership_before.expansion_moves_in,
+            1
+        );
+        assert_eq!(
+            ownership_after_first.expansion_moves_out - ownership_before.expansion_moves_out,
+            0
+        );
+
+        let resume = {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            processor.resume_delivery_cursor(delivery_cursor);
+            processor.install_expansion_resume(resume);
+            let mut destination = None;
+            let error = processor
+                .get_x_token_into(&mut destination)
+                .expect_err("unfulfilled retry resuspends");
+            assert!(matches!(
+                error,
+                crate::CommandError::MissingInput { ref name, .. } if name == "child.tex"
+            ));
+            assert!(destination.is_none());
+            processor
+                .take_pending_expansion_work()
+                .expect("second suspension parks the same sole owner")
+        };
+        let ownership_after_second = crate::command::command_ownership_counters();
+        assert_eq!(ownership_after_second.clones - ownership_before.clones, 0);
+        assert_eq!(
+            ownership_after_second.expansion_moves_in - ownership_before.expansion_moves_in,
+            2
+        );
+        assert_eq!(
+            ownership_after_second.expansion_moves_out - ownership_before.expansion_moves_out,
+            1
+        );
         capabilities.register_input(
             "child.tex",
             crate::SourceRegistration::new(crate::RegisteredSourceKind::Generated, &b"Q"[..])
@@ -188,7 +234,7 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 &mut diagnostic_effects,
             );
             processor.resume_delivery_cursor(delivery_cursor);
-            processor.install_scanner_resume(Some(resume));
+            processor.install_expansion_resume(resume);
             let mut destination = None;
             assert_eq!(
                 processor
@@ -209,6 +255,16 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
             );
             assert!(processor.scanner_resume.is_none());
         }
+        let ownership_after_resume = crate::command::command_ownership_counters();
+        assert_eq!(ownership_after_resume.clones - ownership_before.clones, 0);
+        assert_eq!(
+            ownership_after_resume.expansion_moves_in - ownership_before.expansion_moves_in,
+            2
+        );
+        assert_eq!(
+            ownership_after_resume.expansion_moves_out - ownership_before.expansion_moves_out,
+            2
+        );
 
         command
             .rollback(&snapshot, universe)

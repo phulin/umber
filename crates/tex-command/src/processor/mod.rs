@@ -153,6 +153,11 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// Move-only scanner capability temporarily carried by the exact caller
     /// continuation while a fresh processor borrow performs its retry.
     pub(crate) scanner_resume: Option<crate::execution_scratch::ScannerFrameKey<G>>,
+    /// Exact parked-command root supplied only by an executor expansion
+    /// retry. Nested scanner owners continue to carry their existing typed
+    /// wrapper around the same move-only root.
+    expansion_resume: Option<crate::ExpansionWorkKey<G>>,
+    resumed_expansion: Option<crate::state::PendingExpansionResume>,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
     /// tex.web §360 has just ended a `\\read` pseudo-file's only line.
@@ -268,15 +273,37 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.scanner_resume = key;
     }
 
-    /// Returns the outermost expandable command retained by a nested resource
-    /// suspension. The executor uses this exact command, rather than the
-    /// command that originally entered settlement, as its typed retry seam.
+    /// Moves the outermost parked expansion root to its executor retry owner.
+    /// The command and exact typed continuation remain in generation-owned
+    /// stable lanes; no command projection or definition retain crosses the
+    /// boundary.
     #[must_use]
-    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand<G>> {
-        self.scanner_resume
+    pub fn take_pending_expansion_work(&mut self) -> Option<crate::ExpansionWorkKey<G>> {
+        if !self
+            .scanner_resume
             .as_ref()
-            .and_then(|key| self.command.scratch.expansion_frame(key).ok())
-            .map(|pending| &pending.command)
+            .is_some_and(crate::ScannerFrameKey::is_expansion)
+        {
+            return None;
+        }
+        let wrapper = self
+            .scanner_resume
+            .take()
+            .expect("matched expansion wrapper");
+        Some(
+            self.command
+                .scratch
+                .take_expansion_key(wrapper)
+                .expect("live expansion wrapper owns its parked root"),
+        )
+    }
+
+    pub fn install_expansion_resume(&mut self, key: crate::ExpansionWorkKey<G>) {
+        assert!(
+            self.expansion_resume.is_none() && self.resumed_expansion.is_none(),
+            "an expansion retry accepts exactly one parked root"
+        );
+        self.expansion_resume = Some(key);
     }
 
     /// Captures TeX82 §82's `show_context` while this processor still owns
@@ -481,6 +508,8 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             scanner_resume: None,
+            expansion_resume: None,
+            resumed_expansion: None,
             read_line_ended: false,
             outer_recovered_while_matching: false,
             outer_recovered_while_absorbing: false,

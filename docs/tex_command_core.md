@@ -2397,17 +2397,22 @@ Expansion may:
 There are no `Dispatch::Push` or `Dispatch::PushTransient` values that mirror
 an input level and are immediately translated back into mutation.
 
-`ExecutionScratch` also contains an unused `ExpansionWork` foundation for the
-later structural-nesting and suspension cutover. Its fixed chunks provide
-stable parked-command slots, compact variant-specific controls, a chunked name
-lane, complete logical marks, and 32-byte move-only owner/ABA root keys. Each
-command and control coordinate is stamped with the issuing work owner before
-lane access, while a name coordinate carries that owner and the live root
-serial so abort/reuse cannot alias new bytes at the same offset. It is not a
-second expanded-delivery interpreter: the ordinary synchronous path above
-continues to own its final `CurrentCommand` directly and does not enter these
-lanes. Completion or abort truncates the three logical lanes to the invocation
-mark while retaining only reusable generation-local capacity.
+`ExecutionScratch` also contains the production `ExpansionWork` suspension
+owner. Its fixed chunks provide stable parked-command slots, compact
+variant-specific controls, a chunked name lane, complete logical marks, and
+32-byte move-only owner/ABA root keys. Each command and control coordinate is
+stamped with the issuing work owner before lane access, while a name coordinate
+carries that owner and the live root serial so abort/reuse cannot alias new
+bytes at the same offset. It is not a second expanded-delivery interpreter:
+the ordinary synchronous path above consumes its caller-owned `CurrentCommand`
+directly and enters no work lane. Only an actual immutable-resource suspension
+moves that sole owner into a stable slot. Main control retains only the root
+key; retry consumes the parked command once into its caller destination, and a
+resuspension parks that same owner again. Completion or abort truncates the
+logical lanes to the invocation mark while retaining only reusable
+generation-local capacity. The reviewed structural controls and name lane
+remain staged for separate `expandafter`, `csname`, `scan_toks`, and PDF
+string-compare migrations.
 
 Expandable primitive dispatch is a statically compiled match over a closed
 opcode enum. Pure heavyweight helpers such as regex, MD5, or numeric formatting
