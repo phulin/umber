@@ -82,6 +82,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `docs/expansion_memory_lifetimes.md`: implementation map and retention audit
   for expansion generations, durable values, scratch, scanners, suspension,
   input, effects, and format ownership.
+- `docs/page_region_span_validation.md`: ownership-boundary validation map for
+  page-list coordinates, checked traversal spans, rollback, succession,
+  shipout, and retirement.
 - `docs/node_region_ownership.md`: authoritative exclusive node-region design
   for exact paragraph checkpoints, page succession, TeX move/copy semantics,
   and whole-region reclamation.
