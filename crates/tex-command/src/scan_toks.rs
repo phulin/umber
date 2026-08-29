@@ -162,7 +162,7 @@ enum ScannedToksPart {
 }
 
 enum ScannedWords<'a> {
-    Traced(&'a [TracedTokenWord]),
+    Traced(crate::attempt::AttemptTokenListView<'a>),
     Semantic(&'a [TokenWord]),
 }
 
@@ -709,7 +709,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn attempt_words(&self, list: AttemptTokenListId) -> Result<&[TracedTokenWord], CommandError> {
+    fn attempt_words(
+        &self,
+        list: AttemptTokenListId,
+    ) -> Result<crate::attempt::AttemptTokenListView<'_>, CommandError> {
         self.command
             .attempt
             .arena()
@@ -1937,7 +1940,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .attempt_token_words(tokens)
                 .map_err(crate::scan_toks::attempt_command_error)?
                 .iter()
-                .copied()
                 .map(|token| TracedTokenWord::pack(token.semantic_token(), OriginId::UNKNOWN))
                 .collect::<Vec<_>>(),
             value => crate::processor::render_the_value(&value)

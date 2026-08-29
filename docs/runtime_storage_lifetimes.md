@@ -418,7 +418,7 @@ struct ExecutionScratch<G> {
     macro_frames: Vec<PackedMacroFrame<G>>,
     macro_words: FixedChunkLifoLane<TracedTokenWord, 4096>,
     scanner_frames: Vec<PackedScannerFrame<G>>,
-    scanner_words: Vec<TracedTokenWord>,
+    scanner_words: FixedChunkForkLane<TracedTokenWord, 64>,
     scanner_builders: Vec<PackedScannerBuilder<G>>,
     expansion_frames: Vec<PackedExpansionFrame<G>>,
     render_bytes: Vec<u8>,
@@ -457,8 +457,10 @@ the last active ancestor has retired; sealed ranges and admitted cursors never
 move. Rebase is an explicit forward copy of every word in that unpublished
 suffix, and exact test accounting distinguishes it from the no-copy ordinary
 seal/replay/retire route.
-A scanner frame records the opening lengths of its
-temporary-word and builder lanes. No push creates an arena,
+A scanner frame records the opening lengths of its temporary-word and builder
+lanes. A token-list destination is one branch coordinate in the shared
+fixed-chunk scanner lane: nested destinations fork without moving the parent,
+sealing publishes the same branch, and rollback returns its whole chunks. No push creates an arena,
 scope capability, ownership token, loan, mailbox, watermark row, or parent
 graph. Fixed synchronous state stays in ordinary Rust stack locals. State that
 can suspend or become too deep for the Rust stack uses explicit packed frames

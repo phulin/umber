@@ -358,7 +358,7 @@ fn nested_builders_keep_outer_and_inner_scratch_disjoint() {
 }
 
 #[test]
-fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
+fn scanner_destinations_share_fixed_chunks_and_are_mark_bounded() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
         let mark = attempt.mark();
@@ -375,7 +375,7 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             attempt.token_buffer(buffer).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
-        let buffer_storage = attempt.token_buffers[buffer.index()].value.words.as_ptr();
+        let retained_chunks = attempt.token_lane.retained_chunks();
         let frozen = attempt
             .finish_token_buffer(buffer)
             .expect("test fixture is valid");
@@ -388,25 +388,27 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             panic!("finished scanner result addresses its parent sink")
         };
         assert_eq!(frozen_buffer, buffer);
-        assert_eq!(
-            attempt.token_words(frozen).expect("frozen words").as_ptr(),
-            buffer_storage
-        );
+        assert_eq!(attempt.token_lane.retained_chunks(), retained_chunks);
 
         attempt.truncate(mark).expect("test fixture is valid");
         let recycled = attempt
             .allocate_token_buffer()
             .expect("test fixture is valid");
         assert_eq!(
-            attempt.token_buffers[recycled.index()].value.words.as_ptr(),
-            buffer_storage,
-            "retiring the scanner result returns its backing to the attempt pool"
+            attempt.token_lane.retained_chunks(),
+            retained_chunks,
+            "retiring the scanner result returns its chunks to the shared attempt lane"
         );
         assert_eq!(
             attempt.token_buffer(buffer),
             Err(AttemptError::InvalidCoordinate)
         );
-        assert_eq!(attempt.token_buffer(recycled), Ok(&[][..]));
+        assert!(
+            attempt
+                .token_buffer(recycled)
+                .expect("recycled sink")
+                .is_empty()
+        );
         assert_eq!(
             attempt.token_words(frozen),
             Err(AttemptError::InvalidCoordinate)
@@ -420,31 +422,114 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
     .expect("test fixture is valid");
 }
 
+#[test]
+fn nested_scanner_suffix_truncation_preserves_the_parent_destination() {
+    let mut attempt = AttemptArena::<()>::default();
+    let outer = attempt
+        .allocate_token_buffer()
+        .expect("outer scanner destination");
+    for _ in 0..65 {
+        attempt
+            .push_buffer_token(outer, word('a'))
+            .expect("outer scanner word");
+    }
+
+    let child_opening = attempt.mark();
+    let child = attempt
+        .allocate_token_buffer()
+        .expect("child scanner destination");
+    for _ in 0..65 {
+        attempt
+            .push_buffer_token(child, word('x'))
+            .expect("child scanner word");
+    }
+    attempt
+        .truncate(child_opening)
+        .expect("child scanner suffix truncates");
+
+    attempt
+        .push_buffer_token(outer, word('b'))
+        .expect("outer destination continues in place");
+    let outer = attempt
+        .finish_token_buffer(outer)
+        .expect("outer scanner result");
+    let words = attempt.token_words(outer).expect("outer scanner words");
+    assert_eq!(words.len(), 66);
+    assert!(words.iter().take(65).all(|entry| *entry == word('a')));
+    assert_eq!(words.get(65).copied(), Some(word('b')));
+    assert_eq!(
+        attempt.token_buffer(child),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(attempt.token_lane.retained_chunks(), 4);
+}
+
 #[cfg(feature = "profiling")]
 #[test]
-fn warmed_parent_owned_scanner_results_allocate_zero_heap() {
-    let mut attempt = AttemptArena::<()>::default();
-    let run = |attempt: &mut AttemptArena<()>| {
+fn one_and_4096_parent_owned_scans_reuse_chunks_without_allocation_or_transfer() {
+    fn run(attempt: &mut AttemptArena<()>) {
         let mark = attempt.mark();
         let buffer = attempt.allocate_token_buffer().expect("scanner buffer");
-        attempt
-            .push_buffer_token(buffer, word('x'))
-            .expect("scanner word");
+        for _ in 0..65 {
+            attempt
+                .push_buffer_token(buffer, word('x'))
+                .expect("scanner word");
+        }
+        let before_finish = attempt.token_lane.counters();
         let result = attempt.finish_token_buffer(buffer).expect("scanner result");
-        assert_eq!(attempt.token_words(result), Ok(&[word('x')][..]));
+        assert_eq!(
+            attempt.token_lane.counters(),
+            before_finish,
+            "finalization only publishes the existing sink coordinate"
+        );
+        let words = attempt.token_words(result).expect("scanner words");
+        assert_eq!(words.len(), 65);
+        assert_eq!(words.first().copied(), Some(word('x')));
+        assert_eq!(words.get(64).copied(), Some(word('x')));
         attempt.truncate(mark).expect("scanner scope retires");
-    };
-    for _ in 0..64 {
-        run(&mut attempt);
     }
-    let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
-    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    for _ in 0..8_192 {
+
+    fn evidence(scans: u64) {
+        let mut attempt = AttemptArena::<()>::default();
         run(&mut attempt);
+        assert_eq!(attempt.token_lane.retained_chunks(), 2);
+        let counters_before = attempt.token_lane.counters();
+        let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
+        let allocations_before =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        for _ in 0..scans {
+            run(&mut attempt);
+        }
+        let allocations_after =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let counters_after = attempt.token_lane.counters();
+        assert_eq!(
+            counters_after.chunk_allocations - counters_before.chunk_allocations,
+            0
+        );
+        assert_eq!(
+            counters_after.chunk_reuses - counters_before.chunk_reuses,
+            scans * 2
+        );
+        assert_eq!(
+            counters_after.words_appended - counters_before.words_appended,
+            scans * 65
+        );
+        assert_eq!(
+            counters_after.chunks_released - counters_before.chunks_released,
+            scans * 2
+        );
+        assert_eq!(allocations_after.calls - allocations_before.calls, 0);
+        assert_eq!(
+            allocations_after.requested_bytes - allocations_before.requested_bytes,
+            0
+        );
+        assert_eq!(attempt.token_lane.retained_chunks(), 2);
     }
-    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    assert_eq!(after.calls - before.calls, 0);
-    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+
+    for scans in [1, 4_096] {
+        evidence(scans);
+    }
 }
 
 #[test]
@@ -737,7 +822,10 @@ fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
         attempt.validate_top_owner(&parent),
         Err(AttemptError::InvalidCoordinate)
     );
-    assert_eq!(attempt.token_words(child_value), Ok(&[word('b')][..]));
+    assert_eq!(
+        attempt.token_words(child_value).expect("child words"),
+        &[word('b')]
+    );
     attempt
         .close_owned_scope(child)
         .expect("child closes first");
@@ -745,11 +833,17 @@ fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
         attempt.token_words(child_value),
         Err(AttemptError::InvalidCoordinate)
     );
-    assert_eq!(attempt.token_words(parent_value), Ok(&[word('a')][..]));
+    assert_eq!(
+        attempt.token_words(parent_value).expect("parent words"),
+        &[word('a')]
+    );
     attempt
         .close_owned_scope(parent)
         .expect("parent closes second");
-    assert_eq!(attempt.token_words(retained), Ok(&[word('p')][..]));
+    assert_eq!(
+        attempt.token_words(retained).expect("retained words"),
+        &[word('p')]
+    );
 }
 
 #[test]
@@ -760,7 +854,10 @@ fn lexical_scope_truncates_its_branded_child_id() {
             let child = scope
                 .allocate_token_list([word('x')])
                 .expect("child allocation");
-            assert_eq!(scope.token_words(&child), Ok(&[word('x')][..]));
+            assert_eq!(
+                scope.token_words(&child).expect("child words"),
+                &[word('x')]
+            );
         })
         .expect("lexical scope");
     assert!(attempt.mark().is_empty());
@@ -817,7 +914,10 @@ fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
         .close_owned_scope(macro_child)
         .expect("younger macro retires immediately");
 
-    assert_eq!(attempt.token_words(result), Ok(&[word('s')][..]));
+    assert_eq!(
+        attempt.token_words(result).expect("result words"),
+        &[word('s')]
+    );
     assert_eq!(
         attempt.token_words(scratch),
         Err(AttemptError::InvalidCoordinate)
@@ -880,7 +980,12 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
     attempt
         .close_owned_scope(rejected_retry)
         .expect("retry suffix rolls back");
-    assert_eq!(attempt.token_buffer(output), Ok(&[][..]));
+    assert!(
+        attempt
+            .token_buffer(output)
+            .expect("output sink")
+            .is_empty()
+    );
     assert_eq!(
         attempt.token_words(rejected),
         Err(AttemptError::InvalidCoordinate)
@@ -896,7 +1001,10 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
     attempt
         .handoff_owned_parent(scanner, &mut completed_retry)
         .expect("result survives through retry commit");
-    assert_eq!(attempt.token_words(result), Ok(&[word('r')][..]));
+    assert_eq!(
+        attempt.token_words(result).expect("result words"),
+        &[word('r')]
+    );
     attempt
         .close_owned_scope(completed_retry)
         .expect("completed retry closes the whole retired suffix");

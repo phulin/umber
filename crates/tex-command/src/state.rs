@@ -769,7 +769,7 @@ impl<G> CommandState<G> {
     pub fn attempt_token_words(
         &self,
         id: crate::AttemptTokenListId,
-    ) -> Result<&[tex_state::token::TracedTokenWord], crate::AttemptError> {
+    ) -> Result<crate::attempt::AttemptTokenListView<'_>, crate::AttemptError> {
         self.attempt.arena().token_words(id)
     }
 

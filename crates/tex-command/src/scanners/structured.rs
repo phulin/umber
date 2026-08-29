@@ -6491,7 +6491,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .arena()
                         .token_words(tokens)
                         .map_err(|_| CommandError::input_invariant())?;
-                    for word in words {
+                    for word in words.iter() {
                         crate::processor::expand::append_token_list_token_text(
                             self.state,
                             word.semantic_token(),

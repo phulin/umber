@@ -123,7 +123,10 @@ fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
         .arena_mut()
         .allocate_token_list([word('x')])
         .expect("child scratch");
-    assert_eq!(state.attempt_token_words(scratch), Ok(&[word('x')][..]));
+    assert_eq!(
+        state.attempt_token_words(scratch).expect("scratch words"),
+        &[word('x')]
+    );
 
     state
         .close_attempt_child_scope(child)
@@ -344,7 +347,10 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
         state
             .rollback_attempt_operation(mark)
             .expect("operation rolls back");
-        assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
+        assert_eq!(
+            state.attempt_token_words(retained).expect("retained words"),
+            &[word('a')]
+        );
         assert!(state.attempt_token_words(rejected).is_err());
     });
 }
@@ -475,7 +481,10 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
         state
             .rollback_attempt_operation(restored_opening)
             .expect("resumed operation rolls back");
-        assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
+        assert_eq!(
+            state.attempt_token_words(retained).expect("retained words"),
+            &[word('a')]
+        );
         assert!(state.attempt_token_words(rejected).is_err());
     });
 }
@@ -507,7 +516,10 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
             .ok()
             .expect("nested scopes resume into the same state");
         assert_eq!(resumed.coordinate(), coordinate);
-        assert_eq!(state.attempt_token_words(child_value), Ok(&[word('x')][..]));
+        assert_eq!(
+            state.attempt_token_words(child_value).expect("child words"),
+            &[word('x')]
+        );
         state
             .discard_attempt_scope_suffix(scanner_child)
             .expect("top scanner child retires");
@@ -548,7 +560,10 @@ fn failed_resource_suspension_keeps_the_live_attempt_installed() {
         };
         let (opening, error) = failure.into_parts();
         assert!(matches!(error, crate::AttemptSuspendError::Generation(_)));
-        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+        assert_eq!(
+            state.attempt_token_words(retained).expect("retained words"),
+            &[word('x')]
+        );
         state
             .commit_attempt_operation(opening)
             .expect("rejected suspension returns the live operation owner");
@@ -589,7 +604,10 @@ fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
             error,
             crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate)
         ));
-        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+        assert_eq!(
+            state.attempt_token_words(retained).expect("retained words"),
+            &[word('x')]
+        );
     });
 }
 
@@ -615,7 +633,10 @@ fn resource_resume_rejects_a_nonempty_live_attempt_without_mutation() {
         let pending = state
             .resume_attempt(universe, pending)
             .expect_err("a pending arena cannot overwrite live attempt state");
-        assert_eq!(state.attempt_token_words(live), Ok(&[word('z')][..]));
+        assert_eq!(
+            state.attempt_token_words(live).expect("live words"),
+            &[word('z')]
+        );
 
         state.attempt = crate::CommandAttempt::default();
         let (_, _, request) = state

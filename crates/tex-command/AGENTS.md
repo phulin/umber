@@ -38,9 +38,12 @@ collector (see `src/conditionals.rs`).
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
-- `src/attempt.rs` and `src/attempt/tests.rs`: transitional scanner/operation
-  scratch, including scanner-owned sinks, promotion, and suspension scope
-  capabilities. Macro invocation storage does not use this arena.
+- `src/attempt.rs`, `src/attempt/token_lane.rs`, and `src/attempt/tests.rs`:
+  transitional scanner/operation scratch, including one attempt-owned
+  fixed-chunk token lane, promotion, and suspension scope capabilities. Each
+  scanner carries only a typed branch coordinate into that lane; finalization
+  publishes the same words and truncation returns whole chunks. Macro
+  invocation storage does not use this arena.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
   The admitted macro frame's fixed nine-slot metadata owns the current argument
   cursor and first-scan facts while words append to one logically contiguous
@@ -335,8 +338,9 @@ collector (see `src/conditionals.rs`).
   it never copies the parameter/replacement slices or reconstructs a second
   builder. Read setup and finalization share one cleanup transaction which
   restores `align_state` and scanner status and truncates the exact child scope
-  on every error. General token-list scans retain their dedicated token
-  buffers. Nested macros
+  on every error. General token-list scans append directly to independent
+  branches in the attempt's shared fixed-chunk lane; they never own or recycle
+  a per-scan word vector, and sealing is a metadata-only publication. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their
   scratch with scanner output. A suspended scan carries branded frame indices
   under the same exclusive current-generation lease. Scratch-frame insertion

@@ -19,9 +19,10 @@ accept/reject. The following properties are required together:
 - Durable definitions, token lists, glue, nodes, and mutable font state resolve
   by packed/direct arena coordinates. Their values carry no per-value `Arc`,
   `Weak`, owner, registry entry, or forwarding pointer.
-- Attempt token buffers retain their backing capacity in the operation arena's
-  recycled scratch pool. Rejection truncates coordinates and returns buffers
-  to that pool instead of cloning the token graph.
+- Attempt token scans append to typed branches in one operation-owned
+  fixed-chunk lane. Sealing publishes the same branch without moving words;
+  rejection truncates coordinates and returns complete chunks to the lane's
+  reusable high water instead of cloning the token graph.
 - Page insertion-class reads use a dense class-to-position index. The one-time
   activation edge keeps the separate iteration vector in canonical class order;
   ordinary reads and updates perform no binary search.

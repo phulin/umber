@@ -498,12 +498,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             OriginId::UNKNOWN,
         ));
-        tokens.extend_from_slice(
+        tokens.extend(
             self.command
                 .attempt
                 .arena()
                 .token_words(collected)
-                .map_err(crate::scan_toks::attempt_command_error)?,
+                .map_err(crate::scan_toks::attempt_command_error)?
+                .iter()
+                .copied(),
         );
         tokens.push(TracedTokenWord::pack(
             Token::Char {

@@ -39,9 +39,9 @@ pub(crate) use attempt::CommandAttemptMark;
 pub use attempt::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptPromotionReceipt,
     AttemptPromotionRoots, AttemptProvenanceId, AttemptResumePoint, AttemptScope,
-    AttemptSuspendError, AttemptSuspendFailure, AttemptTokenListId, CommandAttempt,
-    CommandAttemptChildScope, CommandAttemptOperation, PendingCommandAttempt,
-    ScopedAttemptTokenListId,
+    AttemptSuspendError, AttemptSuspendFailure, AttemptTokenListId, AttemptTokenListIter,
+    AttemptTokenListView, CommandAttempt, CommandAttemptChildScope, CommandAttemptOperation,
+    PendingCommandAttempt, ScopedAttemptTokenListId,
 };
 mod command;
 mod conditionals;

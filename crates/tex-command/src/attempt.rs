@@ -17,6 +17,10 @@ use tex_state::{
     TokenListPromotion, Universe,
 };
 
+mod token_lane;
+
+use token_lane::{TokenLane, TokenLaneView, TokenSink};
+
 #[cfg(test)]
 #[path = "attempt/tests.rs"]
 mod tests;
@@ -135,7 +139,7 @@ impl<'scope, G> AttemptScope<'_, 'scope, G> {
     pub fn token_words(
         &self,
         id: &ScopedAttemptTokenListId<'scope>,
-    ) -> Result<&[TracedTokenWord], AttemptError> {
+    ) -> Result<AttemptTokenListView<'_>, AttemptError> {
         if self
             .owner
             .as_ref()
@@ -467,6 +471,139 @@ struct AttemptDefinition {
     builder: Option<DefinitionBuilder>,
 }
 
+/// Borrowed words from one operation-local token list.
+///
+/// The representation is deliberately opaque: ordinary attempt lists are
+/// contiguous, while scanner destinations are fixed-chunk branches in the
+/// attempt's shared lane. Consumers iterate or index without materializing a
+/// second list.
+#[derive(Clone, Copy)]
+pub struct AttemptTokenListView<'arena> {
+    storage: AttemptTokenListViewStorage<'arena>,
+}
+
+#[derive(Clone, Copy)]
+enum AttemptTokenListViewStorage<'arena> {
+    Contiguous(&'arena [TracedTokenWord]),
+    Scanner(TokenLaneView<'arena>),
+}
+
+impl<'arena> AttemptTokenListView<'arena> {
+    #[must_use]
+    pub fn len(self) -> usize {
+        match self.storage {
+            AttemptTokenListViewStorage::Contiguous(words) => words.len(),
+            AttemptTokenListViewStorage::Scanner(words) => words.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<&'arena TracedTokenWord> {
+        match self.storage {
+            AttemptTokenListViewStorage::Contiguous(words) => words.get(index),
+            AttemptTokenListViewStorage::Scanner(words) => words.get(index),
+        }
+    }
+
+    #[must_use]
+    pub fn first(self) -> Option<&'arena TracedTokenWord> {
+        self.get(0)
+    }
+
+    pub fn iter(self) -> AttemptTokenListIter<'arena> {
+        AttemptTokenListIter {
+            storage: match self.storage {
+                AttemptTokenListViewStorage::Contiguous(words) => {
+                    AttemptTokenListIterStorage::Contiguous(words.iter())
+                }
+                AttemptTokenListViewStorage::Scanner(words) => {
+                    AttemptTokenListIterStorage::Scanner(words.iter())
+                }
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn to_vec(self) -> Vec<TracedTokenWord> {
+        self.iter().copied().collect()
+    }
+}
+
+enum AttemptTokenListIterStorage<'arena> {
+    Contiguous(core::slice::Iter<'arena, TracedTokenWord>),
+    Scanner(token_lane::TokenLaneIter<'arena>),
+}
+
+pub struct AttemptTokenListIter<'arena> {
+    storage: AttemptTokenListIterStorage<'arena>,
+}
+
+impl<'arena> Iterator for AttemptTokenListIter<'arena> {
+    type Item = &'arena TracedTokenWord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.storage {
+            AttemptTokenListIterStorage::Contiguous(words) => words.next(),
+            AttemptTokenListIterStorage::Scanner(words) => words.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.storage {
+            AttemptTokenListIterStorage::Contiguous(words) => words.size_hint(),
+            AttemptTokenListIterStorage::Scanner(words) => words.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for AttemptTokenListIter<'_> {}
+
+impl<'arena> IntoIterator for AttemptTokenListView<'arena> {
+    type Item = &'arena TracedTokenWord;
+    type IntoIter = AttemptTokenListIter<'arena>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl core::fmt::Debug for AttemptTokenListView<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl PartialEq for AttemptTokenListView<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for AttemptTokenListView<'_> {}
+
+impl PartialEq<&[TracedTokenWord]> for AttemptTokenListView<'_> {
+    fn eq(&self, other: &&[TracedTokenWord]) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl<const N: usize> PartialEq<&[TracedTokenWord; N]> for AttemptTokenListView<'_> {
+    fn eq(&self, other: &&[TracedTokenWord; N]) -> bool {
+        self.len() == N && self.iter().eq(other.iter())
+    }
+}
+
+impl PartialEq<AttemptTokenListView<'_>> for &[TracedTokenWord] {
+    fn eq(&self, other: &AttemptTokenListView<'_>) -> bool {
+        other == self
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AttemptTokenStorage {
     Range(AttemptRange),
@@ -479,7 +616,7 @@ enum AttemptTokenStorage {
 
 #[derive(Debug, Eq, PartialEq)]
 struct AttemptTokenBuffer {
-    words: Vec<TracedTokenWord>,
+    sink: TokenSink,
     result: AttemptTokenListId,
 }
 
@@ -507,8 +644,8 @@ pub(crate) struct AttemptArena<G> {
     fail_next_definition_builder_allocation: bool,
     #[cfg(test)]
     fail_next_definition_finalization: bool,
+    token_lane: TokenLane,
     token_buffers: Vec<AttemptRow<AttemptTokenBuffer>>,
-    recycled_token_buffers: Vec<Vec<TracedTokenWord>>,
     #[cfg(test)]
     name_bytes: Vec<u8>,
     #[cfg(test)]
@@ -538,8 +675,8 @@ impl<G> Default for AttemptArena<G> {
             fail_next_definition_builder_allocation: false,
             #[cfg(test)]
             fail_next_definition_finalization: false,
+            token_lane: TokenLane::default(),
             token_buffers: Vec::new(),
-            recycled_token_buffers: Vec::new(),
             #[cfg(test)]
             name_bytes: Vec::new(),
             #[cfg(test)]
@@ -698,23 +835,22 @@ impl<G> AttemptArena<G> {
         Ok(())
     }
 
-    /// Rejects a suffix in constant time per table. No value is inspected.
+    /// Rejects a suffix by truncating tables and returning whole scanner chunks.
+    ///
+    /// Work is constant per table plus the number of retired scanner chunks;
+    /// packed token words are never visited, copied, or dropped individually.
     pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
         self.validate_mark(mark)?;
         #[cfg(test)]
         self.names.truncate(mark.names as usize);
         self.provenance.truncate(mark.provenance as usize);
         while self.token_buffers.len() > mark.token_buffers as usize {
-            let mut buffer = self
+            let buffer = self
                 .token_buffers
                 .pop()
                 .expect("attempt token-buffer suffix is nonempty")
-                .value
-                .words;
-            buffer.clear();
-            if buffer.capacity() != 0 {
-                self.recycled_token_buffers.push(buffer);
-            }
+                .value;
+            self.token_lane.release(buffer.sink)?;
         }
         while self.definitions.len() > mark.definitions as usize {
             let builder = self
@@ -875,7 +1011,7 @@ impl<G> AttemptArena<G> {
     pub(crate) fn token_words(
         &self,
         id: AttemptTokenListId,
-    ) -> Result<&[TracedTokenWord], AttemptError> {
+    ) -> Result<AttemptTokenListView<'_>, AttemptError> {
         self.validate_key(id.key)?;
         let row = self
             .token_lists
@@ -883,7 +1019,13 @@ impl<G> AttemptArena<G> {
             .filter(|row| row.serial == id.serial)
             .ok_or(AttemptError::InvalidCoordinate)?;
         match &row.value {
-            AttemptTokenStorage::Range(range) => range.resolve(&self.traced_words),
+            AttemptTokenStorage::Range(range) => {
+                range
+                    .resolve(&self.traced_words)
+                    .map(|words| AttemptTokenListView {
+                        storage: AttemptTokenListViewStorage::Contiguous(words),
+                    })
+            }
             AttemptTokenStorage::Buffer(buffer) => self.token_buffer(*buffer),
             AttemptTokenStorage::PendingBuffer => Err(AttemptError::InvalidCoordinate),
         }
@@ -1129,7 +1271,7 @@ impl<G> AttemptArena<G> {
         self.token_buffers.push(AttemptRow {
             serial: id.serial,
             value: AttemptTokenBuffer {
-                words: self.recycled_token_buffers.pop().unwrap_or_default(),
+                sink: TokenSink::default(),
                 result,
             },
         });
@@ -1139,25 +1281,18 @@ impl<G> AttemptArena<G> {
     pub(crate) fn token_buffer(
         &self,
         id: AttemptTokenBufferId,
-    ) -> Result<&[TracedTokenWord], AttemptError> {
+    ) -> Result<AttemptTokenListView<'_>, AttemptError> {
         self.validate_key(id.key)?;
-        self.token_buffers
+        let sink = &self
+            .token_buffers
             .get(id.index())
             .filter(|row| row.serial == id.serial)
-            .map(|row| row.value.words.as_slice())
-            .ok_or(AttemptError::InvalidCoordinate)
-    }
-
-    fn token_buffer_mut(
-        &mut self,
-        id: AttemptTokenBufferId,
-    ) -> Result<&mut Vec<TracedTokenWord>, AttemptError> {
-        self.validate_key(id.key)?;
-        self.token_buffers
-            .get_mut(id.index())
-            .filter(|row| row.serial == id.serial)
-            .map(|row| &mut row.value.words)
-            .ok_or(AttemptError::InvalidCoordinate)
+            .ok_or(AttemptError::InvalidCoordinate)?
+            .value
+            .sink;
+        Ok(AttemptTokenListView {
+            storage: AttemptTokenListViewStorage::Scanner(self.token_lane.view(sink)),
+        })
     }
 
     pub(crate) fn push_buffer_token(
@@ -1169,11 +1304,19 @@ impl<G> AttemptArena<G> {
         let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
         );
-        self.token_buffer_mut(id)?
-            .try_reserve(1)
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        self.token_buffer_mut(id)?.push(word);
-        Ok(())
+        self.validate_key(id.key)?;
+        let Self {
+            token_lane,
+            token_buffers,
+            ..
+        } = self;
+        let sink = &mut token_buffers
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?
+            .value
+            .sink;
+        token_lane.push(sink, word)
     }
 
     pub(crate) fn finish_token_buffer(
