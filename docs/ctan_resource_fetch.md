@@ -280,6 +280,12 @@ to `target/texlive-snapshot` and the root digest committed in
 builder engine runs offline against that path, so publication cannot bootstrap
 from a hosted default or an unlabelled warm cache.
 
+New full snapshots and focused LaTeX bundles default to the measured 12-bit
+packed partition. The policy changes only root and shard identities: exact
+selection, misses, format objects, payload objects, and offline cache behavior
+remain unchanged. Existing hosted roots and release pins are immutable and are
+not rewritten by this generation default.
+
 Publication hands the completed staging directory to `rclone` configured for
 R2. Object upload uses bounded transfers and an immutable snapshot prefix;
 re-running the command is the supported resumable, idempotent recovery path.

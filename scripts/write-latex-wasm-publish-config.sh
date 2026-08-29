@@ -17,8 +17,8 @@ metadata_path="$7"
 input_identities_path="$8"
 
 # Keep the focused LaTeX bundle on the measured production distribution layout.
-# docs/distribution_manifest.md records the 256-shard selection evidence.
-shard_bits=8
+# docs/distribution_manifest.md records the exact 4,096-shard admission evidence.
+shard_bits=12
 
 cat > "$output" <<EOF
 {

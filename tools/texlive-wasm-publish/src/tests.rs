@@ -292,7 +292,7 @@ fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
 
     let config: PublishConfig = serde_json::from_slice(&fs::read(output)?)?;
     assert_eq!(config.schema, super::sharded::ROOT_SCHEMA);
-    assert_eq!(config.shard_bits, 8);
+    assert_eq!(config.shard_bits, 12);
     assert_eq!(config.roots.len(), 1);
     assert_eq!(config.formats.len(), 1);
     assert_eq!(

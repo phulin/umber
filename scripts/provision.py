@@ -502,7 +502,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     snapshot.add_argument("--format-distribution-ahash64")
     snapshot.add_argument("--output-dir", type=Path, default=Path("target/texlive-snapshot"))
     snapshot.add_argument("--objects-base-url", default="https://example.invalid/umber/texlive/objects/")
-    snapshot.add_argument("--shard-bits", type=int, choices=range(17), default=8)
+    snapshot.add_argument("--shard-bits", type=int, choices=range(17), default=12)
     return parser.parse_args(arguments)
 
 

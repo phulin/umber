@@ -163,20 +163,57 @@ root reference, not their engine contents.
 
 The 2026-03-01 full inventory contains 322,537 canonical requests: 164,643 TeX
 keys and 157,894 TFM keys. The former 256 JSON shards occupied 93,525,476
-bytes. Repartitioning and packing the same publisher-resolved inventory with
-schema 2 produces 73,283,781 bytes, a reduction of 20,241,695 bytes (21.64%);
-canonical table ordering changes identity but not section sizes.
+bytes. The schema-2 8-bit packed baseline occupies 73,283,781 bytes, a
+reduction of 20,241,695 bytes (21.64%). The canonical publication policy is now
+12 bits: 4,096 self-contained shards occupy 79,302,720 bytes, and the root is
+80,947 bytes. The finer partition intentionally spends 6,018,939 inventory
+bytes and 72,962 root bytes to bound exact runtime admission.
 
-The packed total contains 579,584 buckets, 322,537 primary records, 212,109
-dependency rows, 450,131 shard-local deduplicated object rows, and 452,941
-shard-local deduplicated path rows. Key sections total 15,107,186 bytes and
-string sections total 24,342,219 bytes. Counts for objects and paths are summed
-across independent physical shards; cross-shard duplication is intentional so
-one selected shard remains self-contained.
+The 8-bit packed total contains 579,584 buckets, 322,537 primary records,
+212,109 dependency rows, 450,131 shard-local deduplicated object rows, and
+452,941 shard-local deduplicated path rows. Key sections total 15,107,186 bytes
+and string sections total 24,342,219 bytes. Counts for objects and paths are
+summed across independent physical shards; cross-shard duplication is
+intentional so one selected shard remains self-contained.
 
 The earlier schema-1 issue-namespaced repack root is schema 8 with aHash64
 `721e833071d92bba`. It is historical measurement evidence, not a schema-2 or
 hosted default pin.
+
+## Exact partition choice
+
+The immutable arXiv `2606.12566` control uses 123 positive closure keys plus
+the same observed authoritative probes and fallbacks. Its positive keys occupy
+103 8-bit prefixes and 121 12-bit prefixes. Every row below preserves the
+ordered selections, authoritative misses, 124 acquired resources, and the 10M
+work vector
+`(10000000,9999815,926177,2917745,8911073,1094)`:
+
+| Shard bits | Root bytes | Catalogue requests | Touched shard bytes | Validation scratch | Peak shard | Full shard inventory |
+| ---------: | ---------: | -----------------: | ------------------: | -----------------: | ---------: | -------------------: |
+|          8 |      7,985 |                141 |          40,708,643 |          1,612,962 |    569,064 |           73,283,781 |
+|          9 |     12,849 |                165 |          24,312,712 |            947,295 |    354,063 |           74,800,866 |
+|         10 |     22,579 |                181 |          13,884,746 |            531,360 |    181,827 |           76,407,827 |
+|         11 |     42,035 |                186 |           7,384,154 |            276,903 |     95,047 |           77,935,152 |
+|         12 |     80,947 |                190 |           3,859,523 |            142,515 |     52,697 |           79,302,720 |
+
+Catalogue requests count one root plus every touched shard; payload requests
+are unchanged. Native local/cache reads and browser HTTP transport therefore
+pay 49 additional small catalogue requests at 12 bits, while touched bytes
+fall 90.52%, validation scratch requested bytes fall 91.16%, and peak shard
+size falls 90.74%. The same 10M controls recorded 91,836 KiB versus 58,620 KiB
+peak RSS. The 12-bit root is aHash64 `218d7e6d43a798a6`, with SHA-256
+`6b665f2bc2254286b55c88f6b81cde55d7de293cdf62a770afc56246dae07846`;
+it remains issue-namespaced evidence rather than a hosted default pin.
+
+Finer sharding overlaps the separate one-pass path/key-validator idea. The
+8-bit control admitted 179,218 primary records, 251,665 path rows, and 118,340
+dependency rows; 12 bits admits 15,835, 24,989, and 10,268 respectively, a
+90.70% reduction before such a pass could run. In the matched high-sample
+capture, complete packed validation fell from 5.84% to 0.70% of weighted
+cycles. The disjoint path-table and file-key families together retain only
+29,659,619 cycles, 0.415% of the run, so a combined validator change is not
+currently justified.
 
 ## Performance evidence
 
@@ -196,3 +233,22 @@ removed work but does not attribute unrelated intervening engine changes to
 the packed representation. Warmed lookup borrows the retained bytes and the
 allocator-instrumented 20,000-probe gate records zero calls and zero requested
 bytes.
+
+The 12-bit 10M high-sample capture contains 13,370 samples, zero lost samples,
+and 7,142,546,267 weighted cycles. Distribution resolution accounts for
+140,511,466 cycles (1.97%), complete shard validation 50,190,454 (0.70%), and
+cache-envelope shard loading 5,045,313 (0.07%); no retained-shard lookup leaf
+was sampled. The 50M authority reaches the existing semantic stop before fuel
+under every partition:
+
+| Shard bits | Wall seconds | User seconds | Peak RSS KiB |
+| ---------: | -----------: | -----------: | -----------: |
+|          8 |         5.85 |         4.67 |      115,724 |
+|          9 |         5.73 |         4.56 |       99,132 |
+|         10 |         5.64 |         4.48 |       86,652 |
+|         11 |         5.45 |         4.36 |       79,740 |
+|         12 |         5.45 |         4.47 |       74,556 |
+
+The stop is
+`page construction contains only live page-arena children: ActiveBuilder` at
+`crates/tex-state/src/command_context.rs:3287`.

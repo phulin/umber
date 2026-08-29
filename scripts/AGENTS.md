@@ -80,7 +80,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
 - `build-html-r2.sh`: deterministic two-build staging for the immutable contract-v1 HTML-only R2 profile and curated font catalog.
-- `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
+- `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 12-bit shard policy.
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
   only; font catalogs and font payload fixtures stay outside the package.
 - `build-wasm-plain-format.sh`: reproducibly rebuilds and verifies the packaged

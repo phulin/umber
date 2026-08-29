@@ -138,6 +138,8 @@ def expect_texlive_error(action, fragment: str) -> None:
 
 
 def main() -> None:
+    snapshot_defaults = provision.parse_args(["snapshot", "--texmf-dist", "/fixture"])
+    assert snapshot_defaults.shard_bits == 12
     with tempfile.TemporaryDirectory() as raw_directory:
         root = Path(raw_directory)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
