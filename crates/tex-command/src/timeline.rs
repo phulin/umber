@@ -210,6 +210,11 @@ pub(crate) struct LogicalStackCounters {
     pub(crate) displaced_reuses: u64,
     pub(crate) stored_state_captures: u64,
     pub(crate) owner_swaps: u64,
+    pub(crate) selected_rewind_records: u64,
+    pub(crate) candidate_reject_records: u64,
+    pub(crate) accepted_redo_records: u64,
+    pub(crate) candidate_chunks_released: u64,
+    pub(crate) accepted_chunks_released: u64,
 }
 
 impl<T: LogicalStackElement> Default for LogicalStack<T> {
@@ -500,6 +505,11 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             displaced_reuses: self.displaced.reuses,
             stored_state_captures: 0,
             owner_swaps: 0,
+            selected_rewind_records: undo.selected_rewind_records,
+            candidate_reject_records: undo.candidate_reject_records,
+            accepted_redo_records: undo.accepted_redo_records,
+            candidate_chunks_released: undo.candidate_chunks_released,
+            accepted_chunks_released: undo.accepted_chunks_released,
         }
     }
 

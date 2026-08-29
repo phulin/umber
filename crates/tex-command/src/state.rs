@@ -1352,6 +1352,21 @@ impl<G> CommandState<G> {
             counters.displaced_reuses = counters
                 .displaced_reuses
                 .saturating_add(stack.displaced_reuses);
+            counters.selected_rewind_records = counters
+                .selected_rewind_records
+                .saturating_add(stack.selected_rewind_records);
+            counters.candidate_reject_records = counters
+                .candidate_reject_records
+                .saturating_add(stack.candidate_reject_records);
+            counters.accepted_redo_records = counters
+                .accepted_redo_records
+                .saturating_add(stack.accepted_redo_records);
+            counters.candidate_chunks_released = counters
+                .candidate_chunks_released
+                .saturating_add(stack.candidate_chunks_released);
+            counters.accepted_chunks_released = counters
+                .accepted_chunks_released
+                .saturating_add(stack.accepted_chunks_released);
         }
         counters
     }

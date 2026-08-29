@@ -8,7 +8,6 @@
 
 use core::fmt;
 use core::marker::PhantomData;
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tex_state::{GenerationOwner, Universe};
@@ -70,7 +69,9 @@ pub(crate) struct CommandTimeline<G> {
     next_serial: u32,
     frame_pages: Vec<CommandFramePage>,
     free_frames: Vec<CommandFrameKey>,
-    accepted_frames: VecDeque<CommandFrameKey>,
+    frame_head: Option<CommandFrameKey>,
+    frame_tail: Option<CommandFrameKey>,
+    live_frames: usize,
     scalars: PackedJournal<CommandRootUndo<G>, 128>,
     pending_input: PackedJournal<PendingInputUndo, 8>,
     touched_scalars: u16,
@@ -93,6 +94,8 @@ struct CommandFrameKey {
 struct CommandFrameSlot {
     generation: u32,
     frame: Option<CommandTimelineFrame>,
+    previous: Option<CommandFrameKey>,
+    next: Option<CommandFrameKey>,
 }
 
 struct CommandFramePage {
@@ -114,8 +117,10 @@ struct CommandTimelineMark {
 }
 
 struct CommandTimelineFork {
-    prefix_len: usize,
-    detached: VecDeque<CommandFrameKey>,
+    prefix_tail: CommandFrameKey,
+    detached_head: Option<CommandFrameKey>,
+    detached_tail: Option<CommandFrameKey>,
+    candidate_head: Option<CommandFrameKey>,
 }
 
 enum CommandRootUndo<G> {
@@ -188,7 +193,9 @@ impl<G> Default for CommandTimeline<G> {
             owner: NEXT_COMMAND_TIMELINE_OWNER.fetch_add(1, Ordering::Relaxed),
             frame_pages: Vec::new(),
             free_frames: Vec::new(),
-            accepted_frames: VecDeque::new(),
+            frame_head: None,
+            frame_tail: None,
+            live_frames: 0,
             scalars: PackedJournal::default(),
             pending_input: PackedJournal::default(),
             touched_scalars: 0,
@@ -222,6 +229,8 @@ impl<G> CommandTimeline<G> {
         let slots = std::iter::repeat_with(|| CommandFrameSlot {
             generation: 1,
             frame: None,
+            previous: None,
+            next: None,
         })
         .take(COMMAND_FRAMES_PER_PAGE)
         .collect::<Box<[_]>>();
@@ -245,6 +254,17 @@ impl<G> CommandTimeline<G> {
         self.frame_slot(key)?.frame.as_ref()
     }
 
+    fn frame_slot_mut(&mut self, key: CommandFrameKey) -> Option<&mut CommandFrameSlot> {
+        let slot = key.slot as usize;
+        let page = self.frame_pages.get_mut(slot / COMMAND_FRAMES_PER_PAGE)?;
+        let slot = page.slots.get_mut(slot % COMMAND_FRAMES_PER_PAGE)?;
+        (slot.generation == key.generation && slot.frame.is_some()).then_some(slot)
+    }
+
+    fn next_frame(&self, key: CommandFrameKey) -> Option<CommandFrameKey> {
+        self.frame_slot(key).and_then(|slot| slot.next)
+    }
+
     fn allocate_frame(
         &mut self,
         frame: CommandTimelineFrame,
@@ -264,10 +284,26 @@ impl<G> CommandTimeline<G> {
         debug_assert_eq!(slot.generation, key.generation);
         debug_assert!(slot.frame.is_none());
         slot.frame = Some(frame);
+        slot.previous = self.frame_tail;
+        slot.next = None;
+        if let Some(tail) = self.frame_tail {
+            self.frame_slot_mut(tail)
+                .expect("command frame tail remains live")
+                .next = Some(key);
+        } else {
+            self.frame_head = Some(key);
+        }
+        self.frame_tail = Some(key);
+        self.live_frames = self.live_frames.saturating_add(1);
+        if let Some(fork) = &mut self.fork
+            && fork.candidate_head.is_none()
+        {
+            fork.candidate_head = Some(key);
+        }
         Ok(key)
     }
 
-    fn retire_frame(&mut self, key: CommandFrameKey) {
+    fn retire_unlinked_frame(&mut self, key: CommandFrameKey) {
         let index = key.slot as usize;
         let page = &mut self.frame_pages[index / COMMAND_FRAMES_PER_PAGE];
         let slot = &mut page.slots[index % COMMAND_FRAMES_PER_PAGE];
@@ -276,33 +312,52 @@ impl<G> CommandTimeline<G> {
             "retiring a live command frame"
         );
         assert!(slot.frame.take().is_some(), "retiring a live command frame");
+        slot.previous = None;
+        slot.next = None;
         slot.generation = slot.generation.wrapping_add(1).max(1);
         self.free_frames.push(CommandFrameKey {
             slot: key.slot,
             generation: slot.generation,
         });
+        self.live_frames = self.live_frames.saturating_sub(1);
         self.frames_released = self.frames_released.saturating_add(1);
     }
 
-    fn frame_position(&self, key: CommandFrameKey) -> Option<usize> {
-        self.frame(key)?;
-        self.accepted_frames
-            .iter()
-            .position(|candidate| *candidate == key)
+    fn retire_chain(&mut self, mut cursor: Option<CommandFrameKey>) -> usize {
+        let mut released = 0usize;
+        while let Some(key) = cursor {
+            cursor = self.next_frame(key);
+            self.retire_unlinked_frame(key);
+            released = released.saturating_add(1);
+        }
+        released
     }
 
     fn release_frame(&mut self, mark: CommandTimelineMark) -> bool {
-        if self.fork.is_some() {
+        if self.fork.is_some() || self.frame(mark.frame).is_none() {
             return false;
         }
-        let Some(position) = self.frame_position(mark.frame) else {
-            return false;
+        let (previous, next) = {
+            let slot = self
+                .frame_slot(mark.frame)
+                .expect("validated command frame remains live");
+            (slot.previous, slot.next)
         };
-        let key = self
-            .accepted_frames
-            .remove(position)
-            .expect("validated frame position exists");
-        self.retire_frame(key);
+        if let Some(previous) = previous {
+            self.frame_slot_mut(previous)
+                .expect("released frame predecessor remains live")
+                .next = next;
+        } else {
+            self.frame_head = next;
+        }
+        if let Some(next) = next {
+            self.frame_slot_mut(next)
+                .expect("released frame successor remains live")
+                .previous = previous;
+        } else {
+            self.frame_tail = previous;
+        }
+        self.retire_unlinked_frame(mark.frame);
         true
     }
 
@@ -337,17 +392,12 @@ impl<G> CommandTimeline<G> {
                     .capacity()
                     .saturating_mul(std::mem::size_of::<CommandFrameKey>()),
             )
-            .saturating_add(
-                self.accepted_frames
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<CommandFrameKey>()),
-            )
             .saturating_add(self.scalars.retained_bytes())
             .saturating_add(self.pending_input.retained_bytes())
     }
 
     fn live_frame_count(&self) -> usize {
-        self.accepted_frames.len()
+        self.live_frames
     }
 
     fn frame_capacity(&self) -> usize {
@@ -375,6 +425,21 @@ impl<G> CommandTimeline<G> {
                 .chunks_acquired
                 .saturating_add(pending.chunks_acquired),
             chunks_reused: scalar.chunks_reused.saturating_add(pending.chunks_reused),
+            selected_rewind_records: scalar
+                .selected_rewind_records
+                .saturating_add(pending.selected_rewind_records),
+            candidate_reject_records: scalar
+                .candidate_reject_records
+                .saturating_add(pending.candidate_reject_records),
+            accepted_redo_records: scalar
+                .accepted_redo_records
+                .saturating_add(pending.accepted_redo_records),
+            candidate_chunks_released: scalar
+                .candidate_chunks_released
+                .saturating_add(pending.candidate_chunks_released),
+            accepted_chunks_released: scalar
+                .accepted_chunks_released
+                .saturating_add(pending.accepted_chunks_released),
             ..CommandTimelineCounters::default()
         }
     }
@@ -413,7 +478,6 @@ impl<G> CommandTimeline<G> {
             cursor,
             attempt,
         })?;
-        self.accepted_frames.push_back(frame);
         Ok((
             cursor,
             CommandTimelineMark {
@@ -438,7 +502,7 @@ impl<G> CommandTimeline<G> {
     }
 
     fn has_live_frame(&self) -> bool {
-        !self.accepted_frames.is_empty()
+        self.frame_head.is_some()
     }
 
     fn record_scalar(&mut self, slot: CommandScalarSlot, undo: CommandRootUndo<G>) {
@@ -535,9 +599,9 @@ impl<G> CommandTimeline<G> {
         mark: CommandTimelineMark,
         roots: &mut CommandStateRoots<G>,
     ) -> bool {
-        let Some(position) = self.frame_position(mark.frame) else {
+        if self.frame(mark.frame).is_none() {
             return false;
-        };
+        }
         if self.fork.is_some()
             || !self.scalars.validates(mark.scalars)
             || !self.pending_input.validates(mark.pending_input)
@@ -549,10 +613,17 @@ impl<G> CommandTimeline<G> {
         self.pending_input.restore(mark.pending_input, |inverse| {
             std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
         });
-        let mut suffix = self.accepted_frames.split_off(position + 1);
-        while let Some(frame) = suffix.pop_front() {
-            self.retire_frame(frame);
+        let suffix = self.next_frame(mark.frame);
+        self.frame_slot_mut(mark.frame)
+            .expect("restored command frame remains live")
+            .next = None;
+        self.frame_tail = Some(mark.frame);
+        if let Some(head) = suffix {
+            self.frame_slot_mut(head)
+                .expect("restored command suffix remains live")
+                .previous = None;
         }
+        self.retire_chain(suffix);
         self.touched_scalars = 0;
         self.pending_input_touched = false;
         true
@@ -560,7 +631,7 @@ impl<G> CommandTimeline<G> {
 
     fn can_begin_checkpoint_candidate(&self, mark: CommandTimelineMark) -> bool {
         self.fork.is_none()
-            && self.frame_position(mark.frame).is_some()
+            && self.frame(mark.frame).is_some()
             && self.scalars.validates(mark.scalars)
             && self.pending_input.validates(mark.pending_input)
     }
@@ -580,13 +651,22 @@ impl<G> CommandTimeline<G> {
             .begin_checkpoint_candidate(mark.pending_input, |inverse| {
                 std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
             });
-        let position = self
-            .frame_position(mark.frame)
-            .expect("prevalidated command mark begins the sole fork");
-        let detached = self.accepted_frames.split_off(position + 1);
+        let detached_head = self.next_frame(mark.frame);
+        let detached_tail = detached_head.and(self.frame_tail);
+        self.frame_slot_mut(mark.frame)
+            .expect("prevalidated command mark begins the sole fork")
+            .next = None;
+        if let Some(head) = detached_head {
+            self.frame_slot_mut(head)
+                .expect("detached command suffix remains live")
+                .previous = None;
+        }
+        self.frame_tail = Some(mark.frame);
         self.fork = Some(CommandTimelineFork {
-            prefix_len: position + 1,
-            detached,
+            prefix_tail: mark.frame,
+            detached_head,
+            detached_tail,
+            candidate_head: None,
         });
         self.touched_scalars = 0;
         self.pending_input_touched = false;
@@ -602,25 +682,36 @@ impl<G> CommandTimeline<G> {
         self.pending_input.reject_checkpoint_candidate(|inverse| {
             std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
         });
-        let mut candidate = self.accepted_frames.split_off(fork.prefix_len);
-        while let Some(frame) = candidate.pop_front() {
-            self.retire_frame(frame);
+        self.frame_slot_mut(fork.prefix_tail)
+            .expect("candidate prefix tail remains live")
+            .next = None;
+        if let Some(head) = fork.candidate_head {
+            self.frame_slot_mut(head)
+                .expect("candidate command suffix remains live")
+                .previous = None;
         }
-        self.accepted_frames.extend(fork.detached);
+        self.retire_chain(fork.candidate_head);
+        if let Some(head) = fork.detached_head {
+            self.frame_slot_mut(fork.prefix_tail)
+                .expect("candidate prefix tail remains live")
+                .next = Some(head);
+            self.frame_slot_mut(head)
+                .expect("detached command suffix remains live")
+                .previous = Some(fork.prefix_tail);
+        }
+        self.frame_tail = fork.detached_tail.or(Some(fork.prefix_tail));
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
 
     fn accept_checkpoint_candidate(&mut self) {
-        let mut fork = self
+        let fork = self
             .fork
             .take()
             .expect("command acceptance requires a candidate fork");
         self.scalars.accept_checkpoint_candidate();
         self.pending_input.accept_checkpoint_candidate();
-        while let Some(frame) = fork.detached.pop_front() {
-            self.retire_frame(frame);
-        }
+        self.retire_chain(fork.detached_head);
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
@@ -637,6 +728,13 @@ pub struct CommandTimelineCounters {
     pub ordered_events: u64,
     pub chunks_acquired: u64,
     pub chunks_reused: u64,
+    pub selected_rewind_records: u64,
+    pub candidate_reject_records: u64,
+    pub accepted_redo_records: u64,
+    pub candidate_chunks_released: u64,
+    pub accepted_chunks_released: u64,
+    pub frame_index_searches: u64,
+    pub frame_keys_copied: u64,
     pub logical_payload_admissions: u64,
     pub full_frame_history_clones: u64,
     pub logical_records: u64,

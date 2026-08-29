@@ -34,6 +34,11 @@ pub(crate) struct PackedJournalCounters {
     pub(crate) record_bytes: u64,
     pub(crate) chunks_acquired: u64,
     pub(crate) chunks_reused: u64,
+    pub(crate) selected_rewind_records: u64,
+    pub(crate) candidate_reject_records: u64,
+    pub(crate) accepted_redo_records: u64,
+    pub(crate) candidate_chunks_released: u64,
+    pub(crate) accepted_chunks_released: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -292,6 +297,10 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
     ) {
         assert!(self.fork.is_none() && self.validates(mark));
         debug_assert!(self.detached_head.is_none());
+        self.counters.selected_rewind_records = self
+            .counters
+            .selected_rewind_records
+            .saturating_add(self.records.saturating_sub(mark.records));
         self.visit_current_suffix_reverse(mark, &mut swap);
         let prior_tail = self.tail;
         let prior_chunks = self.chunks;
@@ -352,6 +361,18 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
             .fork
             .take()
             .expect("journal rejection requires a candidate fork");
+        self.counters.candidate_reject_records = self
+            .counters
+            .candidate_reject_records
+            .saturating_add(self.records.saturating_sub(fork.selected.records));
+        self.counters.candidate_chunks_released = self
+            .counters
+            .candidate_chunks_released
+            .saturating_add(u64::from(self.chunks.saturating_sub(fork.selected.chunks)));
+        self.counters.accepted_redo_records = self
+            .counters
+            .accepted_redo_records
+            .saturating_add(fork.prior_records.saturating_sub(fork.selected.records));
         self.visit_current_suffix_reverse(fork.selected, &mut |value| swap(value, context));
         self.release_current_suffix(fork.selected, &mut |value| release(value, context));
         self.visit_detached_forward(&mut |value| swap(value, context));
@@ -392,9 +413,16 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         context: &mut C,
         mut release: impl FnMut(T, &mut C),
     ) {
-        self.fork
+        let fork = self
+            .fork
             .take()
             .expect("journal acceptance requires a candidate fork");
+        self.counters.accepted_chunks_released = self
+            .counters
+            .accepted_chunks_released
+            .saturating_add(u64::from(
+                fork.prior_chunks.saturating_sub(fork.selected.chunks),
+            ));
         self.release_detached(&mut |value| release(value, context));
         self.interval_tail_open = false;
     }

@@ -45,6 +45,68 @@ fn forward_redo_preserves_noncoalesced_record_order() {
 }
 
 #[test]
+fn settlement_counters_report_only_the_selected_and_candidate_deltas() {
+    let mut journal = PackedJournal::<u32, 2>::default();
+    let root = journal.mark();
+    for value in 0..6 {
+        journal.append(value);
+    }
+    let selected = journal.mark();
+    for value in 6..14 {
+        journal.append(value);
+    }
+
+    let before_reject = journal.counters();
+    journal.begin_checkpoint_candidate(selected, |_| {});
+    journal.append(20);
+    journal.append(21);
+    journal.append(22);
+    journal.reject_checkpoint_candidate(|_| {});
+    let after_reject = journal.counters();
+    assert_eq!(
+        after_reject.selected_rewind_records - before_reject.selected_rewind_records,
+        8
+    );
+    assert_eq!(
+        after_reject.candidate_reject_records - before_reject.candidate_reject_records,
+        3
+    );
+    assert_eq!(
+        after_reject.accepted_redo_records - before_reject.accepted_redo_records,
+        8
+    );
+    assert_eq!(
+        after_reject.candidate_chunks_released - before_reject.candidate_chunks_released,
+        2
+    );
+
+    let before_accept = journal.counters();
+    journal.begin_checkpoint_candidate(selected, |_| {});
+    journal.append(30);
+    journal.accept_checkpoint_candidate();
+    let after_accept = journal.counters();
+    assert_eq!(
+        after_accept.selected_rewind_records - before_accept.selected_rewind_records,
+        8
+    );
+    assert_eq!(
+        after_accept.accepted_chunks_released - before_accept.accepted_chunks_released,
+        4
+    );
+    assert_eq!(
+        after_accept.candidate_reject_records,
+        before_accept.candidate_reject_records
+    );
+    assert_eq!(
+        after_accept.accepted_redo_records,
+        before_accept.accepted_redo_records
+    );
+
+    assert!(journal.validates(root));
+    assert!(journal.validates(selected));
+}
+
+#[test]
 fn released_prefix_becomes_a_keyless_base_and_reuses_its_chunks() {
     let mut journal = PackedJournal::<u32, 2>::default();
     journal.warm_first_page();

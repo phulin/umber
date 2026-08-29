@@ -431,6 +431,11 @@ impl<G> InputStack<G> {
             displaced_reuses: self.displaced_rows.reuses,
             stored_state_captures: self.source_lex_captures,
             owner_swaps: self.source_owner_swaps,
+            selected_rewind_records: undo.selected_rewind_records,
+            candidate_reject_records: undo.candidate_reject_records,
+            accepted_redo_records: undo.accepted_redo_records,
+            candidate_chunks_released: undo.candidate_chunks_released,
+            accepted_chunks_released: undo.accepted_chunks_released,
         }
     }
 

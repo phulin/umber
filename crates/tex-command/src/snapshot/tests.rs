@@ -1438,6 +1438,82 @@ fn command_fork_reject_and_accept_preserve_prefix_marks_without_copying_history(
     });
 }
 
+#[test]
+fn far_from_head_command_fork_preserves_rejected_siblings_and_accepted_candidate_marks() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let root = command
+            .publish_summary(universe)
+            .expect("root summary publishes");
+        let mut accepted = Vec::new();
+        for _ in 0..64 {
+            command.begin_file_name().expect("accepted scalar mutates");
+            let summary = command
+                .publish_summary(universe)
+                .expect("accepted summary publishes");
+            command.end_file_name();
+            accepted.push(summary);
+        }
+        let selected = accepted[7].clone();
+        let later_sibling = accepted[47].clone();
+
+        let before_reject = command.timeline.packed_journal_counters();
+        let mut rejected =
+            crate::CommandState::fork_summary(command, &selected, universe, universe)
+                .expect("far accepted suffix detaches");
+        rejected.end_file_name();
+        let rejected_candidate_mark = rejected
+            .publish_summary(universe)
+            .expect("candidate mark publishes");
+        rejected
+            .begin_file_name()
+            .expect("candidate scalar mutates");
+        rejected.reject_checkpoint_candidate();
+        let after_reject = rejected.timeline.packed_journal_counters();
+
+        rejected
+            .prepare_summary_restore(&later_sibling, universe)
+            .expect("later accepted sibling reattaches after rejection");
+        assert!(matches!(
+            rejected.prepare_summary_restore(&rejected_candidate_mark, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert!(after_reject.selected_rewind_records > before_reject.selected_rewind_records);
+        assert!(after_reject.candidate_reject_records > before_reject.candidate_reject_records);
+        assert_eq!(
+            after_reject.accepted_redo_records - before_reject.accepted_redo_records,
+            after_reject.selected_rewind_records - before_reject.selected_rewind_records
+        );
+        assert_eq!(after_reject.frame_index_searches, 0);
+        assert_eq!(after_reject.frame_keys_copied, 0);
+
+        let before_accept = rejected.timeline.packed_journal_counters();
+        let mut accepted_command =
+            crate::CommandState::fork_summary(rejected, &selected, universe, universe)
+                .expect("same far prefix forks after rejection");
+        accepted_command.end_file_name();
+        let accepted_candidate_mark = accepted_command
+            .publish_summary(universe)
+            .expect("replacement candidate mark publishes");
+        accepted_command.accept_checkpoint_candidate();
+        let after_accept = accepted_command.timeline.packed_journal_counters();
+
+        accepted_command
+            .prepare_summary_restore(&root, universe)
+            .expect("unchanged prefix root remains valid");
+        accepted_command
+            .prepare_summary_restore(&accepted_candidate_mark, universe)
+            .expect("post-accept candidate mark remains valid");
+        assert!(matches!(
+            accepted_command.prepare_summary_restore(&later_sibling, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert!(after_accept.accepted_chunks_released > before_accept.accepted_chunks_released);
+        assert_eq!(after_accept.frame_index_searches, 0);
+        assert_eq!(after_accept.frame_keys_copied, 0);
+    });
+}
+
 #[cfg(feature = "profiling")]
 #[test]
 fn packed_8192_capture_cycles_append_fixed_marks_without_copying_roots() {
