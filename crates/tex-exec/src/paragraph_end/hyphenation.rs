@@ -84,6 +84,9 @@ fn hyphenated_hlist_with_projections<G>(
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
+    let source = stores
+        .admit_page_node_span(source)
+        .expect("hyphenation source crosses one live page-region boundary");
     let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut out);
     let mut out_segments = Vec::new();
@@ -98,7 +101,7 @@ fn hyphenated_hlist_with_projections<G>(
     while index < source.len() {
         let is_glue = {
             let node = stores
-                .page_nodes(source)
+                .page_node_span(source)
                 .expect("hyphenation source belongs to the live page arena")
                 .owned_node(index)
                 .expect("hyphenation cursor remains in range");
@@ -110,7 +113,7 @@ fn hyphenated_hlist_with_projections<G>(
             }
             matches!(node, Node::Glue { .. })
         };
-        stores.append_page_active_list_range(&mut out, source, index..index + 1);
+        stores.append_page_active_span_range(&mut out, source, index..index + 1);
         output_len += 1;
         index += 1;
 
@@ -207,6 +210,9 @@ fn project_physical_hlist<G>(
     post_overrides: &[(usize, tex_state::node_arena::PageListId)],
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    let semantic = stores
+        .admit_page_node_span(semantic)
+        .expect("hyphenated paragraph crosses one live page-region boundary");
     let mut physical = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut physical);
     let mut physical_segments = Vec::new();
@@ -242,7 +248,7 @@ fn project_physical_hlist<G>(
             };
         if post_override.is_some() || pre_projection.is_some() {
             let mut replacement = stores
-                .page_nodes(semantic)
+                .page_node_span(semantic)
                 .expect("hyphenated paragraph belongs to the live page arena")
                 .owned_node(index)
                 .expect("hyphenated paragraph cursor remains in range")
@@ -259,7 +265,7 @@ fn project_physical_hlist<G>(
             }
             stores.push_page_active_list(&mut physical, replacement);
         } else {
-            stores.append_page_active_list_range(&mut physical, semantic, index..index + 1);
+            stores.append_page_active_span_range(&mut physical, semantic, index..index + 1);
         }
     }
     let tail = stores.finalize_page_active_list(&mut physical);
@@ -275,7 +281,7 @@ fn project_physical_hlist<G>(
 
 fn physical_pre_break_pending<G>(
     stores: &CommandContext<'_, G>,
-    semantic: tex_state::node_arena::PageListId,
+    semantic: tex_state::page_node_arena::PageListSpan,
     index: usize,
 ) -> Option<Vec<PendingHChar>> {
     if index == 0 {
@@ -283,7 +289,7 @@ fn physical_pre_break_pending<G>(
     }
     let qualifies = {
         let nodes = stores
-            .page_nodes(semantic)
+            .page_node_span(semantic)
             .expect("hyphenated paragraph belongs to the live page arena");
         let Some(Node::Disc {
             kind: DiscKind::AutomaticHyphen,
@@ -311,7 +317,7 @@ fn physical_pre_break_pending<G>(
     }
     let (font, mut pending) = {
         let nodes = stores
-            .page_nodes(semantic)
+            .page_node_span(semantic)
             .expect("hyphenated paragraph belongs to the live page arena");
         match nodes.owned_node(index - 1) {
             Some(Node::Char { font, ch, origin }) => (
@@ -359,8 +365,11 @@ fn compacted_physical_boundaries<G>(
     semantic: tex_state::node_arena::PageListId,
     physical_len: usize,
 ) -> Vec<usize> {
+    let semantic = stores
+        .admit_page_node_span(semantic)
+        .expect("shaped paragraph crosses one live page-region boundary");
     let nodes = stores
-        .page_nodes(semantic)
+        .page_node_span(semantic)
         .expect("shaped paragraph belongs to the live page arena");
     let mut boundary = 0usize;
     let mut boundaries = Vec::with_capacity(nodes.len() + 1);
@@ -395,7 +404,7 @@ fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, 
 fn hyphenate_after_glue<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    source: tex_state::node_arena::PageListId,
+    source: tex_state::page_node_arena::PageListSpan,
     start: usize,
     context: (u8, usize, usize),
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
@@ -420,15 +429,15 @@ fn hyphenate_after_glue<G>(
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
     let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
     if positions.is_empty() {
-        stores.append_page_active_list_range(out, source, start..index);
+        stores.append_page_active_span_range(out, source, start..index);
         *output_len += index - start;
         return Ok(Some(index));
     }
 
-    stores.append_page_active_list_range(out, source, start..word_start);
+    stores.append_page_active_span_range(out, source, start..word_start);
     *output_len += word_start - start;
     let trailing_font_kern = stores
-        .page_nodes(source)
+        .page_node_span(source)
         .expect("hyphenation source belongs to the live page arena")
         .owned_node(index - 1)
         .is_some_and(|node| {
@@ -442,7 +451,7 @@ fn hyphenate_after_glue<G>(
         });
     let no_left_boundary = word_start != 0
         && stores
-            .page_nodes(source)
+            .page_node_span(source)
             .expect("hyphenation source belongs to the live page arena")
             .owned_node(word_start - 1)
             .is_some_and(|node| {
@@ -479,7 +488,7 @@ fn hyphenate_after_glue<G>(
         stores.push_page_active_list(out, node);
     }
     if trailing_font_kern {
-        stores.append_page_active_list_range(out, source, index - 1..index);
+        stores.append_page_active_span_range(out, source, index - 1..index);
         *output_len += 1;
     }
     Ok(Some(index))
@@ -498,11 +507,11 @@ struct HyphenationCandidate {
 /// potentially hyphenatable part begins through the same-font letter span.
 fn find_hyphenation_candidate<G>(
     stores: &CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
+    source: tex_state::page_node_arena::PageListSpan,
     start: usize,
     context: (u8, usize, usize),
 ) -> Option<HyphenationCandidate> {
-    let nodes = stores.page_nodes(source).ok()?;
+    let nodes = stores.page_node_span(source).ok()?;
     let (mut language, mut left, mut right) = context;
     let mut index = start;
     let (word_start, font) = loop {
@@ -1142,6 +1151,9 @@ mod tests {
         nodes: &[Node],
     ) -> Option<HyphenationCandidate> {
         let source = stores.publish_page_nodes(nodes.to_vec());
+        let source = stores
+            .admit_page_node_span(source)
+            .expect("test paragraph source remains live");
         find_hyphenation_candidate(stores, source, 0, (0, 1, 1))
     }
 

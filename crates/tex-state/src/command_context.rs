@@ -3236,6 +3236,16 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page active-list source belongs to its live owner");
     }
 
+    pub fn append_page_active_span(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        span: crate::page_node_arena::PageListSpan,
+    ) {
+        self.page_nodes
+            .append_span_to_active_list(builder, span)
+            .expect("checked page active-list span remains in its live owner");
+    }
+
     pub fn append_page_active_list_range(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
@@ -3245,6 +3255,17 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes
             .append_range_to_active_list(builder, list, selected)
             .expect("page active-list source range belongs to its live owner");
+    }
+
+    pub fn append_page_active_span_range(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        span: crate::page_node_arena::PageListSpan,
+        selected: core::ops::Range<usize>,
+    ) {
+        self.page_nodes
+            .append_span_range_to_active_list(builder, span, selected)
+            .expect("checked page active-list span range remains in its live owner");
     }
 
     pub fn finalize_page_active_list(
@@ -3415,6 +3436,26 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
         self.page_nodes
             .node_cursor(list)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
+    /// Validates one transport coordinate at a semantic ownership boundary.
+    pub fn admit_page_node_span(
+        &self,
+        list: PageListId,
+    ) -> Result<crate::page_node_arena::PageListSpan, NodeArenaError> {
+        self.page_nodes
+            .admit_span(list)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
+    /// Resolves a previously admitted span without rescanning its topology.
+    pub fn page_node_span(
+        &self,
+        span: crate::page_node_arena::PageListSpan,
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .span_node_cursor(span)
             .map_err(|_| NodeArenaError::InvalidList)
     }
 

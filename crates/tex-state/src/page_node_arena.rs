@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use crate::fork_arena::{
     ActiveListBuilder, ArenaListId, ArenaListView, ArenaRange, CheckpointMark, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
+    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary, ValidatedArenaList,
 };
 use crate::node::Node;
 use crate::node_region::{
@@ -27,6 +27,7 @@ type PageMaterialNode = Node<PageListId>;
 pub struct PageMaterialActiveListBuilder {
     inner: ActiveListBuilder<PageMaterialNode, PageMaterialLane>,
     identity: Option<SemanticSequenceIdentity>,
+    identity_work: crate::fork_arena::SequenceSummaryWork,
 }
 
 impl Default for PageMaterialActiveListBuilder {
@@ -40,6 +41,10 @@ impl PageMaterialActiveListBuilder {
         Self {
             inner: ActiveListBuilder::vacant(),
             identity: None,
+            identity_work: crate::fork_arena::SequenceSummaryWork {
+                hashed_values: 0,
+                combined_summaries: 0,
+            },
         }
     }
 
@@ -191,6 +196,52 @@ impl Hash for PageListId {
 }
 
 const _: () = assert!(core::mem::size_of::<PageListId>() <= 32);
+
+/// Checked owner-local page-list span for repeated traversal and retention.
+///
+/// The constructor is private to [`PageMaterialArena`]. A span carries the
+/// descriptor position proven by full list validation and never owns or copies
+/// node payload.
+pub struct PageListSpan {
+    list: PageListId,
+    coordinate: ValidatedArenaList<PageMaterialLane>,
+}
+
+impl Clone for PageListSpan {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl Copy for PageListSpan {}
+
+impl core::fmt::Debug for PageListSpan {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("PageListSpan")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PageListSpan {
+    #[must_use]
+    pub const fn list(self) -> PageListId {
+        self.list
+    }
+
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.list.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.list.is_empty()
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<PageListSpan>() <= 64);
 
 /// Region-local page payload state. The physical pool is owned once by the
 /// enclosing page-region history and is borrowed explicitly for every access.
@@ -413,35 +464,25 @@ impl<'a> PageMaterialArena<'a> {
         self.region.pub_arena.live_payload_values(&self.pool.chunks)
     }
 
+    #[cfg(test)]
+    pub(crate) fn allocated_heap_bytes(&self) -> usize {
+        self.pool.chunks.allocated_heap_bytes()
+    }
+
     pub fn publish_owned(
         &mut self,
         nodes: impl IntoIterator<Item = PageMaterialNode>,
     ) -> Result<PageListId, ForkArenaError> {
-        let mut identity = (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
-        let arena = self.region.pub_arena.region_identity();
-        let mut builder = self.region.pub_arena.begin_builder(&mut self.pool.chunks)?;
+        let mut builder = PageMaterialActiveListBuilder::vacant();
+        self.open_active_list(&mut builder)?;
         for node in nodes {
-            if !node_children_belong_to_arena(&node, arena) {
-                return Err(ForkArenaError::InvalidRegion);
-            }
-            if let Some(identity) = &mut identity {
-                let item_identity = semantic_node_identity(&node);
-                identity.push_back(item_identity);
-                builder.push_summarized(node, item_identity)?;
-            } else {
-                builder.push(node)?;
+            if let Err(error) = self.push_active_list(&mut builder, node) {
+                self.rollback_active_list(&mut builder)
+                    .expect("failed page publication returns its exact suffix");
+                return Err(error);
             }
         }
-        let coordinate = builder.seal()?;
-        if let Some(identity) = identity {
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    hashed_values: identity.len() as u64,
-                    ..crate::fork_arena::SequenceSummaryWork::default()
-                });
-        }
-        Ok(PageListId::from_parts(coordinate, identity))
+        self.finalize_active_list(&mut builder)
     }
 
     /// Test-only negative control for the source-copy counter. Production
@@ -815,6 +856,7 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .open_active_list(&self.pool.chunks, &mut builder.inner)?;
         builder.identity = (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
+        builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
         Ok(())
     }
 
@@ -823,7 +865,7 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         node: PageMaterialNode,
     ) -> Result<(), ForkArenaError> {
-        if !node_children_belong_to_arena(&node, self.region.pub_arena.region_identity()) {
+        if !node_children_are_live(&self.region.pub_arena, &self.pool.chunks, &node) {
             return Err(ForkArenaError::InvalidRegion);
         }
         if let Some(identity) = &mut builder.identity {
@@ -836,12 +878,8 @@ impl<'a> PageMaterialArena<'a> {
                 item_identity,
             );
             if result.is_ok() {
-                self.region.pub_arena.record_identity_work(
-                    crate::fork_arena::SequenceSummaryWork {
-                        hashed_values: 1,
-                        ..crate::fork_arena::SequenceSummaryWork::default()
-                    },
-                );
+                builder.identity_work.hashed_values =
+                    builder.identity_work.hashed_values.saturating_add(1);
             }
             result
         } else {
@@ -866,12 +904,31 @@ impl<'a> PageMaterialArena<'a> {
                 list.sequence_identity()
                     .expect("demand-enabled page list carries identity"),
             );
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    combined_summaries: 1,
-                    ..crate::fork_arena::SequenceSummaryWork::default()
-                });
+            builder.identity_work.combined_summaries =
+                builder.identity_work.combined_summaries.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    pub fn append_span_to_active_list(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+        span: PageListSpan,
+    ) -> Result<(), ForkArenaError> {
+        self.region.pub_arena.append_validated_active_list(
+            &mut self.pool.chunks,
+            &mut builder.inner,
+            span.list.coordinate(),
+            span.coordinate,
+        )?;
+        if let Some(identity) = &mut builder.identity {
+            *identity = identity.concat(
+                span.list
+                    .sequence_identity()
+                    .expect("demand-enabled page span carries identity"),
+            );
+            builder.identity_work.combined_summaries =
+                builder.identity_work.combined_summaries.saturating_add(1);
         }
         Ok(())
     }
@@ -890,13 +947,65 @@ impl<'a> PageMaterialArena<'a> {
                 selected,
                 semantic_node_identity,
             )?;
-            self.region.pub_arena.record_identity_work(work);
+            builder.identity_work.hashed_values = builder
+                .identity_work
+                .hashed_values
+                .saturating_add(work.hashed_values);
+            builder.identity_work.combined_summaries = builder
+                .identity_work
+                .combined_summaries
+                .saturating_add(work.combined_summaries);
             Some(identity)
         } else {
             self.region.pub_arena.append_active_list_range(
                 &mut self.pool.chunks,
                 &mut builder.inner,
                 list.coordinate(),
+                selected,
+            )?;
+            None
+        };
+        if let (Some(identity), Some(selected_identity)) =
+            (&mut builder.identity, selected_identity)
+        {
+            *identity = identity.concat(selected_identity);
+        }
+        Ok(())
+    }
+
+    pub fn append_span_range_to_active_list(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+        span: PageListSpan,
+        selected: Range<usize>,
+    ) -> Result<(), ForkArenaError> {
+        let selected_identity = if *self.semantic_identity_enabled {
+            let (identity, work) = self
+                .region
+                .pub_arena
+                .append_validated_active_list_range_summarized(
+                    &mut self.pool.chunks,
+                    &mut builder.inner,
+                    span.list.coordinate(),
+                    span.coordinate,
+                    selected,
+                    semantic_node_identity,
+                )?;
+            builder.identity_work.hashed_values = builder
+                .identity_work
+                .hashed_values
+                .saturating_add(work.hashed_values);
+            builder.identity_work.combined_summaries = builder
+                .identity_work
+                .combined_summaries
+                .saturating_add(work.combined_summaries);
+            Some(identity)
+        } else {
+            self.region.pub_arena.append_validated_active_list_range(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                span.list.coordinate(),
+                span.coordinate,
                 selected,
             )?;
             None
@@ -917,6 +1026,10 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .finalize_active_list(&mut self.pool.chunks, &mut builder.inner)?;
         let coordinate = builder.inner.take_sealed()?;
+        self.region
+            .pub_arena
+            .record_identity_work(builder.identity_work);
+        builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
         Ok(PageListId::from_parts(coordinate, builder.identity.take()))
     }
 
@@ -928,6 +1041,7 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .rollback_active_list(&mut self.pool.chunks, &mut builder.inner)?;
         builder.identity = None;
+        builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
         Ok(())
     }
 
@@ -1009,6 +1123,25 @@ impl<'a> PageMaterialArena<'a> {
             .list(&self.pool.chunks, list.coordinate())
     }
 
+    pub fn admit_span(&self, list: PageListId) -> Result<PageListSpan, ForkArenaError> {
+        let coordinate = self
+            .region
+            .pub_arena
+            .admit_list(&self.pool.chunks, list.coordinate())?;
+        Ok(PageListSpan { list, coordinate })
+    }
+
+    pub fn span_list(
+        &self,
+        span: PageListSpan,
+    ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
+        self.region.pub_arena.validated_list(
+            &self.pool.chunks,
+            span.list.coordinate(),
+            span.coordinate,
+        )
+    }
+
     pub fn get(
         &self,
         list: PageListId,
@@ -1021,6 +1154,14 @@ impl<'a> PageMaterialArena<'a> {
         list: PageListId,
     ) -> Result<crate::node_arena::NodeCursor<'_>, ForkArenaError> {
         self.list(list)
+            .map(crate::node_arena::NodeCursor::fork_arena)
+    }
+
+    pub fn span_node_cursor(
+        &self,
+        span: PageListSpan,
+    ) -> Result<crate::node_arena::NodeCursor<'_>, ForkArenaError> {
+        self.span_list(span)
             .map(crate::node_arena::NodeCursor::fork_arena)
     }
 
@@ -1117,9 +1258,16 @@ impl<'a> PageMaterialArena<'a> {
     }
 }
 
-fn node_children_belong_to_arena(node: &PageMaterialNode, arena: u32) -> bool {
+fn node_children_are_live(
+    arena: &crate::fork_arena::ForkArena<PageMaterialNode, PageMaterialLane>,
+    pool: &crate::fork_arena::ChunkPool<PageMaterialNode>,
+    node: &PageMaterialNode,
+) -> bool {
     let mut valid = true;
-    node.visit_node_lists(|child| valid &= child.belongs_to_arena(arena));
+    node.visit_node_lists(|child| {
+        valid &= child.belongs_to_arena(arena.region_identity())
+            && arena.admit_list(pool, child.coordinate()).is_ok();
+    });
     valid
 }
 

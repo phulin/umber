@@ -53,6 +53,7 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
             &line_params,
         );
         let mut materializer = ArenaPostLineMaterializer::new(
+            &stores,
             tape,
             vec![tex_typeset::linebreak::BreakDecision {
                 position: source.len(),

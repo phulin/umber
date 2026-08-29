@@ -91,6 +91,42 @@ fn parent_nodes_reject_foreign_region_children_without_partial_publication() {
 }
 
 #[test]
+fn parent_nodes_reject_stale_same_region_children_without_partial_publication() {
+    page_arena!(arena, pool, state, 32);
+    arena.enable_semantic_identity();
+    let boundary = arena.operation_mark();
+    let stale_child = arena
+        .publish_owned(penalties(&[91]))
+        .expect("temporary child");
+    arena
+        .restore_operation(boundary)
+        .expect("retire temporary child");
+    let before = arena.counters();
+
+    let result = arena.publish_owned([
+        Node::Penalty(1),
+        Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: stale_child,
+            post: PageListId::empty(),
+            replace: PageListId::empty(),
+            physical_replace_count: 0,
+        },
+    ]);
+
+    assert_eq!(
+        result,
+        Err(crate::fork_arena::ForkArenaError::InvalidRegion)
+    );
+    assert_eq!(arena.len(), 0);
+    assert_eq!(
+        arena.counters().source_nodes_copied,
+        before.source_nodes_copied
+    );
+    assert_eq!(arena.semantic_hash_work(), before.identity_nodes_hashed);
+}
+
+#[test]
 fn disabled_demand_keeps_range_and_composition_identity_work_at_zero() {
     page_arena!(
         arena,
@@ -215,6 +251,115 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
     );
     assert_eq!(arena.counters().source_nodes_copied, 0);
     assert_eq!(arena.counters().new_semantic_nodes, 5);
+}
+
+#[test]
+fn checked_span_traversal_and_retention_are_allocation_and_copy_free() {
+    page_arena!(arena, pool, state, 4096);
+    let source = arena
+        .publish_owned(penalties(&(0..64).collect::<Vec<_>>()))
+        .expect("source");
+    let span = arena.admit_span(source).expect("admit source once");
+    let selected_addresses = (7..57)
+        .map(|index| {
+            arena
+                .span_node_cursor(span)
+                .expect("checked source remains live")
+                .owned_node(index)
+                .map(std::ptr::from_ref)
+                .expect("selected node")
+        })
+        .collect::<Vec<_>>();
+    let bytes_before = arena.allocated_heap_bytes();
+    let copies_before = arena.counters().source_nodes_copied;
+
+    let mut retained = PageMaterialActiveListBuilder::vacant();
+    arena
+        .open_active_list(&mut retained)
+        .expect("open retained list");
+    arena
+        .append_span_range_to_active_list(&mut retained, span, 7..57)
+        .expect("retain checked span");
+    let retained = arena
+        .finalize_active_list(&mut retained)
+        .expect("finalize retained list");
+
+    let retained_addresses = arena
+        .node_cursor(retained)
+        .expect("retained list")
+        .iter()
+        .map(std::ptr::from_ref)
+        .collect::<Vec<_>>();
+    assert_eq!(retained_addresses, selected_addresses);
+    assert_eq!(arena.counters().source_nodes_copied, copies_before);
+    assert_eq!(
+        arena.allocated_heap_bytes(),
+        bytes_before,
+        "warmed checked-span traversal and descriptor retention allocate no pool pages"
+    );
+}
+
+#[test]
+fn checked_span_rejects_foreign_owner_before_publishing_a_range() {
+    page_arena!(source, source_pool, source_state, 64);
+    let list = source.publish_owned(penalties(&[1, 2])).expect("source");
+    let span = source.admit_span(list).expect("checked source");
+
+    page_arena!(foreign, foreign_pool, foreign_state, 64);
+    assert!(foreign.span_node_cursor(span).is_err());
+    let before = foreign.counters();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    foreign
+        .open_active_list(&mut builder)
+        .expect("open builder");
+    assert!(
+        foreign
+            .append_span_range_to_active_list(&mut builder, span, 0..1)
+            .is_err()
+    );
+    foreign
+        .rollback_active_list(&mut builder)
+        .expect("failed foreign append rolls back an empty suffix");
+    assert_eq!(
+        foreign.counters().new_semantic_nodes,
+        before.new_semantic_nodes
+    );
+    assert_eq!(
+        foreign.counters().source_nodes_copied,
+        before.source_nodes_copied
+    );
+}
+
+#[test]
+fn checked_span_rejects_stale_descriptor_after_operation_rollback() {
+    page_arena!(arena, pool, state, 64);
+    let boundary = arena.operation_mark();
+    let list = arena.publish_owned(penalties(&[1, 2])).expect("source");
+    let span = arena.admit_span(list).expect("checked source");
+    arena
+        .restore_operation(boundary)
+        .expect("discard checked source suffix");
+
+    assert!(arena.span_node_cursor(span).is_err());
+    let before = arena.counters();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    assert!(
+        arena
+            .append_span_range_to_active_list(&mut builder, span, 0..1)
+            .is_err()
+    );
+    arena
+        .rollback_active_list(&mut builder)
+        .expect("failed stale append rolls back an empty suffix");
+    assert_eq!(
+        arena.counters().new_semantic_nodes,
+        before.new_semantic_nodes
+    );
+    assert_eq!(
+        arena.counters().source_nodes_copied,
+        before.source_nodes_copied
+    );
 }
 
 #[test]
