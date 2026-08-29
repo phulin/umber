@@ -449,6 +449,15 @@ and the large owned pending-filename slot has a separate fixed-chunk lane.
 Rollback visits current records backward, rejection redoes the detached prior
 suffix forward, and acceptance returns obsolete chunks to the same owner pool.
 
+Mode completion is likewise explicit even though its legal retained mark is
+rootless. Forking labels the restored `ModeNest` as the sole current candidate;
+MainControl completion parks that capability rather than dropping it. Session
+then consumes exactly one accept or reject transition in the aggregate owner
+order. Acceptance keeps the constructed candidate topology without replay or
+prefix publication, rejection discards only candidate topology, and an
+unresolved normal drop is an invariant failure. The accepted fixed mark and its
+sibling marks are never rewritten by either transition.
+
 ## Promotion thresholds
 
 Later ownership-family children must retain this baseline and meet these final

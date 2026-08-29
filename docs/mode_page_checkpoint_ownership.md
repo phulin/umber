@@ -111,6 +111,17 @@ the saved accepted moves, and finally the page/layout owners reinstall those
 accepted ranges. The reachability store is the sole phase coordinator; a
 rooted component cannot use a one-shot accept/reject API or settle itself.
 
+The retained mode mark is rootless, but the live mode owner still has a typed
+candidate lifecycle. Fork construction labels the restored nest as a candidate;
+accept and reject each consume that capability and make a second disposition
+impossible. A normally dropped unresolved candidate is an invariant failure,
+not an implicit rejection path. Main-control completion parks the live command
+owner and moves the mode capability into `PreparedCheckpointControl`; Session
+consumes that receipt before aggregate state acceptance or rejection. Candidate
+acceptance preserves the already-built topology and current roots without
+replay, while rejection discards only that candidate topology. The fixed mark
+and accepted page owner remain unchanged, so sibling marks stay seedable.
+
 ## Mode marks
 
 A live `ModeList` pairs every nonempty page-list coordinate it carries with the
@@ -143,6 +154,14 @@ back.
 Append-only list changes restore by resetting span ends. A mutation which
 cannot be expressed as range movement records exactly one first-before value in
 the active semantic interval. It does not clone an accumulated node prefix.
+
+The candidate restored from that mark starts with exactly the stored outer
+level and a fresh operation journal. Nested levels, pending characters,
+alignment, fraction, display, scalar, and page-list state created afterward
+belong only to its current suffix. Accepting does no mode-journal replay or page
+publication; rejecting never visits an accepted mode prefix. Page-region
+settlement remains the owner of candidate chunk reclamation and runs before the
+mode capability is consumed.
 
 After shipout has consumed all live and rollback-restorable mode-list roots,
 the executor issues a move-only same-region preflight receipt which `Universe`

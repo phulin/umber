@@ -505,6 +505,15 @@ is live, and no suspension owns the candidate lease. Acceptance then drops the
 prior accepted generation wholesale and changes the current generation's role
 to prior. It does not move or rewrite current-generation values.
 
+Executor mode settlement follows the same explicit barrier. A checkpoint fork
+creates one candidate-labelled `ModeNest`; accepting or rejecting consumes that
+label exactly once. Ordinary `Drop` performs no mode rollback and an unresolved
+normal drop is an invariant failure. Terminal MainControl completion moves the
+mode capability into a prepared settlement receipt instead of disposing it;
+Session consumes the receipt before the prior/current state slots settle. The
+retained mode mark remains the fixed rootless outer level, while all nested
+topology and mode roots belong solely to the live candidate.
+
 Capacity growth happens only as coarse slab or lane allocation. Once the
 bounded workload is warmed, macro entry/return, scanner entry/return, argument
 capture, value construction, and direct indexed reads allocate zero heap.

@@ -120,9 +120,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   same-region operation-local rollback journal. Restart
   eligibility proves a sole empty outer vertical level, so a named boundary
   stores that fixed scalar level directly and candidate forks retain no shared
-  mode tail or transient mode payload. The move-only mode succession receipt is
-  composed with state only after all exact roots are consumed. Alignment brace
-  depth belongs only to `tex-command`.
+  mode tail or transient mode payload. Candidate accept/reject consume one
+  explicit lifecycle capability; normal drop cannot choose rejection, and
+  terminal MainControl parking preserves the capability until Session settles
+  the aggregate. The move-only mode succession receipt is composed with state
+  only after all exact roots are consumed. Alignment brace depth belongs only
+  to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.
