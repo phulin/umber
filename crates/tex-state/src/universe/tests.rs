@@ -1160,6 +1160,77 @@ fn nested_shipout_scratch_resets_suffixes_and_reuses_high_water() {
 }
 
 #[test]
+fn nested_shipout_engine_usage_accept_and_reject_restore_exact_membership() {
+    with_universe(budget(), |universe| {
+        {
+            let mut context = universe.command_context().expect("context");
+            context.slow_make_string_pool_string("retained");
+        }
+        let baseline = universe
+            .command_context()
+            .expect("baseline context")
+            .detach_engine_usage_statistics();
+
+        {
+            let mut outer = universe.begin_shipout();
+            outer
+                .command_context()
+                .expect("outer context")
+                .slow_make_string_pool_string("outer-speculative");
+            {
+                let mut inner = outer.begin_shipout();
+                inner
+                    .command_context()
+                    .expect("inner context")
+                    .slow_make_string_pool_string("inner-accepted");
+                inner.commit_for_test();
+            }
+            let nested = outer
+                .command_context()
+                .expect("nested context")
+                .detach_engine_usage_statistics();
+            assert_eq!(nested.strings, baseline.strings + 2);
+        }
+
+        let mut context = universe.command_context().expect("restored context");
+        assert_eq!(context.detach_engine_usage_statistics(), baseline);
+        context.slow_make_string_pool_string("outer-speculative");
+        context.slow_make_string_pool_string("inner-accepted");
+        assert_eq!(
+            context.detach_engine_usage_statistics().strings,
+            baseline.strings + 2,
+            "outer rejection removes its own and nested accepted membership suffixes"
+        );
+        drop(context);
+
+        let before_accept = universe
+            .command_context()
+            .expect("pre-accept context")
+            .detach_engine_usage_statistics();
+        {
+            let mut accepted = universe.begin_shipout();
+            accepted
+                .command_context()
+                .expect("accepted context")
+                .slow_make_string_pool_string("top-level-accepted");
+            accepted.commit_for_test();
+        }
+        let mut context = universe.command_context().expect("committed context");
+        assert_eq!(
+            context.detach_engine_usage_statistics().strings,
+            before_accept.strings + 1
+        );
+        context.slow_make_string_pool_string("top-level-accepted");
+        assert_eq!(
+            context.detach_engine_usage_statistics().strings,
+            before_accept.strings + 1,
+            "accepted membership remains visible after the transaction mark settles"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn malformed_aggregate_restore_does_not_touch_dense_state() {
     with_universe(budget(), |universe| {
         let before_page = universe.page_node_cursor();

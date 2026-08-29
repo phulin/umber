@@ -173,3 +173,48 @@ fn clone_preserves_a_rollback_prefix_with_independent_suffixes() {
     assert_eq!(current.len(), 2);
     assert_eq!(current.character_len(), "retainedreplacement".len());
 }
+
+#[test]
+fn suffix_rollback_restores_membership_without_moving_warmed_storage() {
+    let mut pool = RecycledStringPool::default();
+    pool.reserve(8, 128);
+    assert!(pool.insert("retained"));
+    let storage = (
+        pool.bytes.as_ptr(),
+        pool.ends.as_ptr(),
+        pool.buckets.as_ptr(),
+    );
+    let capacities = (
+        pool.bytes.capacity(),
+        pool.ends.capacity(),
+        pool.buckets.capacity(),
+    );
+    let outer = pool.mark();
+    assert!(pool.insert("outer-speculative"));
+    let inner = pool.mark();
+    assert!(pool.insert("inner-speculative"));
+
+    pool.rollback_to(inner);
+    assert!(!pool.insert("outer-speculative"));
+    assert!(pool.insert("inner-speculative"));
+    pool.rollback_to(outer);
+    assert!(!pool.insert("retained"));
+    assert!(pool.insert("outer-speculative"));
+    assert!(pool.insert("inner-speculative"));
+    assert_eq!(
+        (
+            pool.bytes.as_ptr(),
+            pool.ends.as_ptr(),
+            pool.buckets.as_ptr(),
+        ),
+        storage
+    );
+    assert_eq!(
+        (
+            pool.bytes.capacity(),
+            pool.ends.capacity(),
+            pool.buckets.capacity(),
+        ),
+        capacities
+    );
+}

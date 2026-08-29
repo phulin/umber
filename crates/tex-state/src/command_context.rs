@@ -182,7 +182,7 @@ const TEX82_STATIC_DYNAMIC_WORDS: usize = 14;
 const TEX82_INITIAL_LOW_EXTENT: usize = 1_021;
 const TEX82_LOW_GROWTH_WORDS: usize = 1_000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct MainMemoryRuntime {
     variable_live: usize,
     dynamic_live: usize,
@@ -344,6 +344,20 @@ mod main_memory_tests {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EngineUsageOperationMark {
+    profile: crate::EngineCapacityProfile,
+    strings: usize,
+    characters: usize,
+    init_str_ptr: usize,
+    init_pool_ptr: usize,
+    max_strings: usize,
+    pool_size: usize,
+    recycled: crate::string_pool::RecycledStringPoolMark,
+    operation_depth: usize,
+    memory: MainMemoryRuntime,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct EngineUsageRuntime {
     profile: crate::EngineCapacityProfile,
@@ -354,6 +368,7 @@ pub(crate) struct EngineUsageRuntime {
     max_strings: usize,
     pool_size: usize,
     recycled: crate::string_pool::RecycledStringPool,
+    operation_depth: usize,
     memory: MainMemoryRuntime,
 }
 
@@ -370,6 +385,7 @@ impl Default for EngineUsageRuntime {
             max_strings: capacities.max_strings,
             pool_size: capacities.pool_size,
             recycled: crate::string_pool::RecycledStringPool::default(),
+            operation_depth: 0,
             memory: MainMemoryRuntime::default(),
         }
     }
@@ -390,6 +406,54 @@ impl EngineUsageRuntime {
         if self.recycled.insert(value) {
             self.allocate_strings(1, value.len());
         }
+    }
+
+    pub(crate) fn begin_operation(&mut self) -> EngineUsageOperationMark {
+        let mark = EngineUsageOperationMark {
+            profile: self.profile,
+            strings: self.strings,
+            characters: self.characters,
+            init_str_ptr: self.init_str_ptr,
+            init_pool_ptr: self.init_pool_ptr,
+            max_strings: self.max_strings,
+            pool_size: self.pool_size,
+            recycled: self.recycled.mark(),
+            operation_depth: self.operation_depth,
+            memory: self.memory,
+        };
+        self.operation_depth = self
+            .operation_depth
+            .checked_add(1)
+            .expect("engine-usage operation nesting overflow");
+        mark
+    }
+
+    fn validate_operation(&self, mark: EngineUsageOperationMark) {
+        assert_eq!(
+            self.operation_depth,
+            mark.operation_depth + 1,
+            "engine-usage operations settle in strict nesting order"
+        );
+        self.recycled.assert_contains_mark(mark.recycled);
+    }
+
+    pub(crate) fn commit_operation(&mut self, mark: EngineUsageOperationMark) {
+        self.validate_operation(mark);
+        self.operation_depth = mark.operation_depth;
+    }
+
+    pub(crate) fn rollback_operation(&mut self, mark: EngineUsageOperationMark) {
+        self.validate_operation(mark);
+        self.recycled.rollback_to(mark.recycled);
+        self.profile = mark.profile;
+        self.strings = mark.strings;
+        self.characters = mark.characters;
+        self.init_str_ptr = mark.init_str_ptr;
+        self.init_pool_ptr = mark.init_pool_ptr;
+        self.max_strings = mark.max_strings;
+        self.pool_size = mark.pool_size;
+        self.memory = mark.memory;
+        self.operation_depth = mark.operation_depth;
     }
 
     pub(crate) fn select_etex26_profile(&mut self) {
@@ -486,6 +550,7 @@ impl EngineUsageRuntime {
             max_strings: state.max_strings,
             pool_size: state.pool_size,
             recycled: crate::string_pool::RecycledStringPool::from_format_strings(&state.recycled),
+            operation_depth: 0,
             memory,
         })
     }

@@ -298,8 +298,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/tests.rs`: Direct arena resolution, generation-id bank
   installation, and coarse retirement tests.
 - `src/string_pool.rs` and `src/string_pool/tests.rs`: Dense append-only UTF-8
-  ownership, compact end-offset/open-addressed recycling index, cold format
-  projection, and layout, allocation-reuse, collision, and rollback tests.
+  ownership, compact end-offset/open-addressed recycling index, O(1) nested
+  operation marks with cold in-place suffix rollback, cold format projection,
+  and layout, allocation-reuse, collision, and rollback tests.
 - `src/tests.rs`: Crate-level semantic unit tests and module test wiring.
 - `src/tests/node_semantics.rs`: Canonical node equality/hash coverage proving
   diagnostic provenance, physical topology, and allocator sidecars do not

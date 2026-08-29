@@ -12,6 +12,13 @@ use std::hash::{Hash, Hasher};
 const EMPTY_BUCKET: u32 = u32::MAX;
 const MIN_BUCKETS: usize = 8;
 
+/// Opaque suffix coordinate for one speculative string-pool operation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RecycledStringPoolMark {
+    bytes: usize,
+    entries: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RecycledStringPool {
     /// One retained byte per byte of each distinct UTF-8 spelling.
@@ -50,6 +57,48 @@ impl RecycledStringPool {
         );
         self.insert_index(index, hash);
         true
+    }
+
+    /// Captures the append-only owner frontier without copying membership.
+    pub(crate) fn mark(&self) -> RecycledStringPoolMark {
+        RecycledStringPoolMark {
+            bytes: self.bytes.len(),
+            entries: self.ends.len(),
+        }
+    }
+
+    /// Validates that `mark` still names an exact prefix of this pool.
+    pub(crate) fn assert_contains_mark(&self, mark: RecycledStringPoolMark) {
+        let byte_boundary = mark.entries.checked_sub(1).map_or(0, |index| {
+            self.ends.get(index).copied().unwrap_or(u32::MAX) as usize
+        });
+        assert!(
+            mark.entries <= self.ends.len()
+                && mark.bytes <= self.bytes.len()
+                && byte_boundary == mark.bytes,
+            "string-pool rollback mark belongs to the active suffix"
+        );
+    }
+
+    /// Removes a speculative suffix while retaining every warmed allocation.
+    ///
+    /// Most rejected operations append no new spelling and return in constant
+    /// time. A rejection that did append rebuilds the sole membership index in
+    /// place; speculative rollback is the cold boundary that pays this scan.
+    pub(crate) fn rollback_to(&mut self, mark: RecycledStringPoolMark) {
+        self.assert_contains_mark(mark);
+        if mark.entries == self.ends.len() {
+            return;
+        }
+        self.bytes.truncate(mark.bytes);
+        self.ends.truncate(mark.entries);
+        self.buckets.fill(EMPTY_BUCKET);
+        for index in 0..self.ends.len() {
+            let index = u32::try_from(index)
+                .expect("TeX string-pool entry count fits its executable capacity");
+            let hash = string_hash(self.value(index));
+            insert_bucket(&mut self.buckets, index, hash);
+        }
     }
 
     pub(crate) fn to_format_strings(&self) -> BTreeSet<String> {

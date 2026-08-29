@@ -185,7 +185,7 @@ struct ShipoutRollback<G> {
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
     prepared_mag: Option<i32>,
-    engine_usage: crate::command_context::EngineUsageRuntime,
+    engine_usage: crate::command_context::EngineUsageOperationMark,
 }
 
 struct PrimitiveRegistry<G> {
@@ -550,7 +550,9 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
                 .truncate(&mut self.universe.page_region.nodes_mut(), form_count);
             self.universe.world.rollback(&rollback.world);
             self.universe.prepared_mag = rollback.prepared_mag;
-            self.universe.engine_usage = rollback.engine_usage;
+            self.universe
+                .engine_usage
+                .rollback_operation(rollback.engine_usage);
             self.universe
                 .restore_state(rollback.state)
                 .expect("validated shipout rollback remains restorable");
@@ -2781,6 +2783,7 @@ impl<G> Universe<G> {
     /// Begins one exclusive, rollback-capable artifact publication.
     #[must_use]
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_, G> {
+        let engine_usage = self.engine_usage.begin_operation();
         let rollback = ShipoutRollback {
             state: self
                 .begin_state_operation()
@@ -2790,7 +2793,7 @@ impl<G> Universe<G> {
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
             prepared_mag: self.prepared_mag,
-            engine_usage: self.engine_usage.clone(),
+            engine_usage,
         };
         let empty_tokens = self
             .allocate_token_list(&[])
@@ -3110,6 +3113,14 @@ impl<G> ShipoutTransaction<'_, G> {
             .page_region
             .builder_mut()
             .commit_transaction(rollback.page);
+        self.universe
+            .engine_usage
+            .commit_operation(rollback.engine_usage);
+    }
+
+    #[cfg(test)]
+    fn commit_for_test(mut self) {
+        self.commit_state_operation();
     }
 
     /// Atomically commits the staged artifact, effect prefix, and fixed PDF
