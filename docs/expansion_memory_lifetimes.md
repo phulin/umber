@@ -780,10 +780,15 @@ direct accepted-order links. Root selection detaches its later accepted chain
 without searching or copying a key index, candidate publication links only a
 private current chain, rejection cancels any retained `ExpansionWork` before
 undoing that chain and redoing the detached prior journals, and acceptance
-releases obsolete journal chunks while retaining candidate marks. Production
+releases obsolete journal chunks while retaining candidate marks. Either
+settlement moves the discarded frame chain's existing head, tail, and length
+to one reusable-chain owner in constant work. It visits no discarded row and
+manufactures no row key; the next publication takes one row lazily and assigns
+its fresh incarnation then. Production
 non-JobStart coverage crosses input, macro-definition, scanner, condition,
 alignment, mode/page, suspension, and cancellation boundaries; the standalone
-gate exposes exact delta work and zero frame-search/key-copy counters.
+gate exposes exact delta work, identical one-versus-4,096 settlement counters,
+zero settlement allocations, and the single lazy reuse visit/incarnation.
 
 The external reachability-store prerequisite, append-only command-timeline
 inconsistency, and aliasable immutable payload retention are resolved.

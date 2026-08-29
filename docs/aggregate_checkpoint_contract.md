@@ -345,14 +345,22 @@ frame rows. Each row stores its direct predecessor and successor; a rooted
 selection unlinks the selected row's accepted successor in constant work and
 opens a private candidate chain. Rejection retires only candidate rows and
 reattaches the saved chain; acceptance retires the saved rows and leaves the
-candidate chain attached. There is no `VecDeque` order index, position search,
-`split_off`, or copied frame-key suffix. Packed-journal counters separately
+candidate chain attached. Retirement moves the discarded chain's existing
+head, tail, and length into one reusable-chain owner without visiting a row or
+manufacturing a free-list key. Publication later consumes one row from that
+owner, drops its obsolete frame payload, and assigns a fresh incarnation at
+the reuse point, so an ABA-stale mark fails while settlement remains constant.
+There is no `VecDeque` order index, position search, `split_off`, or copied
+frame-key suffix. Packed-journal counters separately
 report the exact selected rewind, candidate rejection, accepted redo, candidate
 chunk release, and obsolete accepted chunk release. The enforced gate's
 73-record accepted delta and 5-record candidate delta report `73/5/73` work on
 rejection and `73/0/0` on acceptance, with 5 candidate or 73 accepted chunks
-released respectively, zero frame searches/key copies, and zero settlement
-allocations.
+released respectively, one frame-chain transfer, zero settlement row visits,
+zero reuse/incarnation work during settlement, and zero settlement allocations.
+The size gate reports those same values for both one and 4,096 discarded rows,
+then exactly one row visit and one incarnation assignment on the next
+publication.
 
 ## Core state, node arena, and primitive ownership target
 

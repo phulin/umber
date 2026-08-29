@@ -64,9 +64,22 @@ struct SettlementWork {
     accepted_redo_records: u64,
     candidate_chunks_released: u64,
     accepted_chunks_released: u64,
-    frame_index_searches: u64,
-    frame_keys_copied: u64,
+    frame_chain_transfers: u64,
+    frame_reuse_link_visits: u64,
+    frame_reuse_visits: u64,
+    frame_reuse_incarnations: u64,
     settlement_allocations: Counts,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FrameDiscardWork {
+    chain_transfers: u64,
+    settlement_visits: u64,
+    settlement_reuse_visits: u64,
+    settlement_reuse_incarnations: u64,
+    settlement_allocations: Counts,
+    lazy_reuse_visits: u64,
+    lazy_reuse_incarnations: u64,
 }
 
 fn main() {
@@ -110,8 +123,10 @@ fn main() {
     assert_eq!(rejected.accepted_redo_records, 73);
     assert_eq!(rejected.candidate_chunks_released, 5);
     assert_eq!(rejected.accepted_chunks_released, 0);
-    assert_eq!(rejected.frame_index_searches, 0);
-    assert_eq!(rejected.frame_keys_copied, 0);
+    assert_eq!(rejected.frame_chain_transfers, 1);
+    assert_eq!(rejected.frame_reuse_link_visits, 0);
+    assert_eq!(rejected.frame_reuse_visits, 0);
+    assert_eq!(rejected.frame_reuse_incarnations, 0);
     assert_eq!(rejected.settlement_allocations, Counts::ZERO);
     let accepted = run_settlement_work(73, 5, true);
     assert_eq!(accepted.selected_rewind_records, 73);
@@ -119,9 +134,26 @@ fn main() {
     assert_eq!(accepted.accepted_redo_records, 0);
     assert_eq!(accepted.candidate_chunks_released, 0);
     assert_eq!(accepted.accepted_chunks_released, 73);
-    assert_eq!(accepted.frame_index_searches, 0);
-    assert_eq!(accepted.frame_keys_copied, 0);
+    assert_eq!(accepted.frame_chain_transfers, 1);
+    assert_eq!(accepted.frame_reuse_link_visits, 0);
+    assert_eq!(accepted.frame_reuse_visits, 0);
+    assert_eq!(accepted.frame_reuse_incarnations, 0);
     assert_eq!(accepted.settlement_allocations, Counts::ZERO);
+    let rejected_one = run_frame_discard_work(1, false);
+    let rejected_many = run_frame_discard_work(4_096, false);
+    assert_eq!(rejected_one, rejected_many);
+    let accepted_one = run_frame_discard_work(1, true);
+    let accepted_many = run_frame_discard_work(4_096, true);
+    assert_eq!(accepted_one, accepted_many);
+    for work in [rejected_one, accepted_one] {
+        assert_eq!(work.chain_transfers, 1);
+        assert_eq!(work.settlement_visits, 0);
+        assert_eq!(work.settlement_reuse_visits, 0);
+        assert_eq!(work.settlement_reuse_incarnations, 0);
+        assert_eq!(work.settlement_allocations, Counts::ZERO);
+        assert_eq!(work.lazy_reuse_visits, 1);
+        assert_eq!(work.lazy_reuse_incarnations, 1);
+    }
     let prefix_plateau = run_prefix_plateau(10_000_000);
     assert_eq!(prefix_plateau.live_frames, 1);
     assert_eq!(prefix_plateau.frame_capacity, 128);
@@ -130,7 +162,7 @@ fn main() {
         prefix_plateau.boundaries
     );
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} rejected_settlement={:?} accepted_settlement={:?} prefix_plateau={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} rejected_settlement={:?} accepted_settlement={:?} rejected_frame_discard={:?} accepted_frame_discard={:?} prefix_plateau={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -145,6 +177,8 @@ fn main() {
         source_history,
         rejected,
         accepted,
+        rejected_one,
+        accepted_one,
         prefix_plateau,
     );
 }
@@ -180,6 +214,7 @@ fn run_settlement_work(
                     .expect("candidate settlement mark publishes"),
             );
         }
+        let before_settlement = candidate.profile_timeline_counters();
         let (_, settlement_allocations) = measure(|| {
             if accept {
                 candidate.accept_checkpoint_candidate();
@@ -206,16 +241,90 @@ fn run_settlement_work(
             accepted_chunks_released: after
                 .accepted_chunks_released
                 .saturating_sub(before.accepted_chunks_released),
-            frame_index_searches: after
-                .frame_index_searches
-                .saturating_sub(before.frame_index_searches),
-            frame_keys_copied: after
-                .frame_keys_copied
-                .saturating_sub(before.frame_keys_copied),
+            frame_chain_transfers: after
+                .frame_chain_transfers
+                .saturating_sub(before_settlement.frame_chain_transfers),
+            frame_reuse_link_visits: after
+                .frame_reuse_link_visits
+                .saturating_sub(before_settlement.frame_reuse_link_visits),
+            frame_reuse_visits: after
+                .frame_reuse_visits
+                .saturating_sub(before_settlement.frame_reuse_visits),
+            frame_reuse_incarnations: after
+                .frame_reuse_incarnations
+                .saturating_sub(before_settlement.frame_reuse_incarnations),
             settlement_allocations,
         }
     })
     .expect("settlement gate universe")
+}
+
+fn run_frame_discard_work(discarded_frames: usize, accept: bool) -> FrameDiscardWork {
+    tex_state::with_universe(budget(), |universe| {
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        let selected = command
+            .publish_summary(universe)
+            .expect("frame-discard selected summary publishes");
+        let mut accepted_marks = Vec::with_capacity(discarded_frames);
+        for _ in 0..discarded_frames {
+            accepted_marks.push(
+                command
+                    .publish_summary(universe)
+                    .expect("frame-discard accepted summary publishes"),
+            );
+        }
+        let mut candidate = CommandState::profile_fork_summary(command, &selected, universe)
+            .expect("frame-discard selected prefix forks");
+        let candidate_frames = if accept { 1 } else { discarded_frames };
+        let mut candidate_marks = Vec::with_capacity(candidate_frames);
+        for _ in 0..candidate_frames {
+            candidate_marks.push(
+                candidate
+                    .publish_summary(universe)
+                    .expect("frame-discard candidate summary publishes"),
+            );
+        }
+
+        let before = candidate.profile_timeline_counters();
+        let (_, settlement_allocations) = measure(|| {
+            if accept {
+                candidate.accept_checkpoint_candidate();
+            } else {
+                candidate.reject_checkpoint_candidate();
+            }
+        });
+        let settled = candidate.profile_timeline_counters();
+        let before_reuse = settled;
+        let _reused = candidate
+            .publish_summary(universe)
+            .expect("frame-discard row reuses lazily");
+        let after_reuse = candidate.profile_timeline_counters();
+        drop(candidate_marks);
+        drop(accepted_marks);
+
+        FrameDiscardWork {
+            chain_transfers: settled
+                .frame_chain_transfers
+                .saturating_sub(before.frame_chain_transfers),
+            settlement_visits: settled
+                .frame_reuse_link_visits
+                .saturating_sub(before.frame_reuse_link_visits),
+            settlement_reuse_visits: settled
+                .frame_reuse_visits
+                .saturating_sub(before.frame_reuse_visits),
+            settlement_reuse_incarnations: settled
+                .frame_reuse_incarnations
+                .saturating_sub(before.frame_reuse_incarnations),
+            settlement_allocations,
+            lazy_reuse_visits: after_reuse
+                .frame_reuse_visits
+                .saturating_sub(before_reuse.frame_reuse_visits),
+            lazy_reuse_incarnations: after_reuse
+                .frame_reuse_incarnations
+                .saturating_sub(before_reuse.frame_reuse_incarnations),
+        }
+    })
+    .expect("frame-discard gate universe")
 }
 
 fn run_source_history_fixture() -> SourceHistoryCounts {

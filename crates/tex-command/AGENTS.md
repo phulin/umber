@@ -386,9 +386,13 @@ collector (see `src/conditionals.rs`).
   candidate fork. Stable frame rows link accepted order directly; selecting a
   mark changes a fixed number of links to detach the later accepted rows and
   opens the only current suffix without a `VecDeque`, position search, or key
-  copy. Reject rewinds current cells, retires candidate rows, redoes detached
-  prior cells, and reattaches their row chain; accept retains candidate rows and
-  retires the detached prior chain. Validation never mutates the runtime,
+  copy. Reject rewinds current cells, transfers the whole candidate chain to
+  the reusable-chain owner, redoes detached prior cells, and reattaches their
+  row chain; accept retains candidate rows and transfers the detached prior
+  chain. Settlement never visits a discarded row or manufactures a free-list
+  key. Later publication takes one reusable row, drops its obsolete payload,
+  and assigns the fresh incarnation that rejects its ABA-stale mark.
+  Validation never mutates the runtime,
   aggregate command roots are not `Clone`, and capture requires quiescent
   execution scratch.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary

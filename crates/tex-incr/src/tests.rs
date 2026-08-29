@@ -1308,8 +1308,14 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
         after_reject.candidate_chunks_released > before_reject.candidate_chunks_released,
         "rejection returns candidate command chunks"
     );
-    assert_eq!(after_reject.frame_index_searches, 0);
-    assert_eq!(after_reject.frame_keys_copied, 0);
+    assert_eq!(
+        after_reject.frame_reuse_visits, before_settle.frame_reuse_visits,
+        "rejection does not visit discarded command-frame rows"
+    );
+    assert_eq!(
+        after_reject.frame_reuse_incarnations, before_settle.frame_reuse_incarnations,
+        "rejection does not regenerate command-frame keys"
+    );
 
     let before_accept = after_reject;
     let mut accepted = incremental
@@ -1317,9 +1323,12 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
         .expect("rejected command sibling remains seedable");
     drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
         .expect("drive accepted command-rich candidate");
-    let accepted = incremental
+    let mut accepted = incremental
         .prepare_revision_candidate(accepted)
         .expect("prepare command-rich acceptance");
+    let before_accept_settle = accepted
+        .command_timeline_counters()
+        .expect("prepared acceptance command counters");
     let output = incremental
         .accept_revision(accepted)
         .expect("accept command-rich candidate");
@@ -1339,8 +1348,18 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
         after_accept.accepted_redo_records, before_accept.accepted_redo_records,
         "acceptance does not replay accepted history"
     );
-    assert_eq!(after_accept.frame_index_searches, 0);
-    assert_eq!(after_accept.frame_keys_copied, 0);
+    assert!(
+        after_accept.frame_chain_transfers > before_accept_settle.frame_chain_transfers,
+        "acceptance transfers the obsolete accepted command-frame chain"
+    );
+    assert_eq!(
+        after_accept.frame_reuse_visits, before_accept_settle.frame_reuse_visits,
+        "acceptance does not visit discarded command-frame rows"
+    );
+    assert_eq!(
+        after_accept.frame_reuse_incarnations, before_accept_settle.frame_reuse_incarnations,
+        "acceptance does not regenerate command-frame keys"
+    );
 
     let edited = format!(
         "{}\\relax {}",

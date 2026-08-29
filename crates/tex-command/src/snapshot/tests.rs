@@ -1468,6 +1468,7 @@ fn far_from_head_command_fork_preserves_rejected_siblings_and_accepted_candidate
         rejected
             .begin_file_name()
             .expect("candidate scalar mutates");
+        let before_reject_settle = rejected.timeline.packed_journal_counters();
         rejected.reject_checkpoint_candidate();
         let after_reject = rejected.timeline.packed_journal_counters();
 
@@ -1484,8 +1485,11 @@ fn far_from_head_command_fork_preserves_rejected_siblings_and_accepted_candidate
             after_reject.accepted_redo_records - before_reject.accepted_redo_records,
             after_reject.selected_rewind_records - before_reject.selected_rewind_records
         );
-        assert_eq!(after_reject.frame_index_searches, 0);
-        assert_eq!(after_reject.frame_keys_copied, 0);
+        assert!(after_reject.frame_chain_transfers > before_reject_settle.frame_chain_transfers);
+        assert_eq!(
+            after_reject.frame_reuse_link_visits - before_reject_settle.frame_reuse_link_visits,
+            0
+        );
 
         let before_accept = rejected.timeline.packed_journal_counters();
         let mut accepted_command =
@@ -1495,6 +1499,7 @@ fn far_from_head_command_fork_preserves_rejected_siblings_and_accepted_candidate
         let accepted_candidate_mark = accepted_command
             .publish_summary(universe)
             .expect("replacement candidate mark publishes");
+        let before_accept_settle = accepted_command.timeline.packed_journal_counters();
         accepted_command.accept_checkpoint_candidate();
         let after_accept = accepted_command.timeline.packed_journal_counters();
 
@@ -1509,8 +1514,149 @@ fn far_from_head_command_fork_preserves_rejected_siblings_and_accepted_candidate
             Err(CommandRestoreError::InvalidCursor)
         ));
         assert!(after_accept.accepted_chunks_released > before_accept.accepted_chunks_released);
-        assert_eq!(after_accept.frame_index_searches, 0);
-        assert_eq!(after_accept.frame_keys_copied, 0);
+        assert!(after_accept.frame_chain_transfers > before_accept_settle.frame_chain_transfers);
+        assert_eq!(
+            after_accept.frame_reuse_link_visits - before_accept_settle.frame_reuse_link_visits,
+            0
+        );
+    });
+}
+
+#[test]
+fn retired_command_frame_rows_receive_a_fresh_incarnation_only_when_reused() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let selected = command
+            .publish_summary(universe)
+            .expect("selected summary publishes");
+        let stale = command
+            .publish_summary(universe)
+            .expect("obsolete sibling publishes");
+        let stale_key = stale.generation.timeline.frame;
+
+        let mut command = crate::CommandState::fork_summary(command, &selected, universe, universe)
+            .expect("selected prefix forks");
+        let candidate = command
+            .publish_summary(universe)
+            .expect("candidate summary publishes");
+        command.accept_checkpoint_candidate();
+
+        let after_settlement = command.timeline.packed_journal_counters();
+        assert_eq!(after_settlement.frame_chain_transfers, 1);
+        assert_eq!(after_settlement.frame_reuse_visits, 0);
+        assert_eq!(after_settlement.frame_reuse_incarnations, 0);
+
+        let reused = command
+            .publish_summary(universe)
+            .expect("retired row is reused lazily");
+        let reused_key = reused.generation.timeline.frame;
+        let after_reuse = command.timeline.packed_journal_counters();
+        assert_eq!(reused_key.slot, stale_key.slot);
+        assert_ne!(reused_key.generation, stale_key.generation);
+        assert_eq!(after_reuse.frame_reuse_visits, 1);
+        assert_eq!(after_reuse.frame_reuse_incarnations, 1);
+        assert!(command.timeline.frame(stale_key).is_none());
+        assert!(matches!(
+            command.prepare_summary_restore(&stale, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        command
+            .prepare_summary_restore(&candidate, universe)
+            .expect("accepted candidate mark remains valid");
+    });
+}
+
+#[test]
+fn rejected_candidate_frame_row_reuse_rejects_its_aba_stale_mark() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let selected = command
+            .publish_summary(universe)
+            .expect("selected summary publishes");
+        let mut command = crate::CommandState::fork_summary(command, &selected, universe, universe)
+            .expect("selected prefix forks");
+        let stale = command
+            .publish_summary(universe)
+            .expect("candidate summary publishes");
+        let stale_key = stale.generation.timeline.frame;
+        command.reject_checkpoint_candidate();
+
+        let settled = command.timeline.packed_journal_counters();
+        assert_eq!(settled.frame_chain_transfers, 1);
+        assert_eq!(settled.frame_reuse_incarnations, 0);
+        let reused = command
+            .publish_summary(universe)
+            .expect("rejected candidate row reuses lazily");
+        let reused_key = reused.generation.timeline.frame;
+        assert_eq!(reused_key.slot, stale_key.slot);
+        assert_ne!(reused_key.generation, stale_key.generation);
+        assert!(matches!(
+            command.prepare_summary_restore(&stale, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+    });
+}
+
+#[test]
+fn reusable_frame_chain_owner_drains_newer_then_older_retired_chains() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let root = command
+            .publish_summary(universe)
+            .expect("root summary publishes");
+        let obsolete = (0..3)
+            .map(|_| {
+                command
+                    .publish_summary(universe)
+                    .expect("obsolete summary publishes")
+            })
+            .collect::<Vec<_>>();
+        let obsolete_keys = obsolete
+            .iter()
+            .map(|summary| summary.generation.timeline.frame)
+            .collect::<Vec<_>>();
+        let capacity = command.timeline.frame_capacity();
+
+        let mut command = crate::CommandState::fork_summary(command, &root, universe, universe)
+            .expect("root prefix forks");
+        let accepted = command
+            .publish_summary(universe)
+            .expect("replacement summary publishes");
+        command.accept_checkpoint_candidate();
+        let first_old_reuse = command
+            .publish_summary(universe)
+            .expect("first old row reuses");
+        assert_eq!(
+            first_old_reuse.generation.timeline.frame.slot,
+            obsolete_keys[0].slot
+        );
+
+        let mut command = crate::CommandState::fork_summary(command, &accepted, universe, universe)
+            .expect("replacement prefix forks");
+        let rejected = command
+            .publish_summary(universe)
+            .expect("candidate consumes the second old row");
+        let rejected_key = rejected.generation.timeline.frame;
+        assert_eq!(rejected_key.slot, obsolete_keys[1].slot);
+        command.reject_checkpoint_candidate();
+
+        let newer = command
+            .publish_summary(universe)
+            .expect("newer retired chain drains first");
+        let older = command
+            .publish_summary(universe)
+            .expect("older retired chain remains linked");
+        assert_eq!(newer.generation.timeline.frame.slot, rejected_key.slot);
+        assert_ne!(
+            newer.generation.timeline.frame.generation,
+            rejected_key.generation
+        );
+        assert_eq!(older.generation.timeline.frame.slot, obsolete_keys[2].slot);
+        assert_ne!(
+            older.generation.timeline.frame.generation,
+            obsolete_keys[2].generation
+        );
+        assert_eq!(command.timeline.frame_capacity(), capacity);
     });
 }
 

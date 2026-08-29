@@ -68,10 +68,12 @@ pub(crate) struct CommandTimeline<G> {
     owner: u64,
     next_serial: u32,
     frame_pages: Vec<CommandFramePage>,
-    free_frames: Vec<CommandFrameKey>,
+    fresh_frames: Vec<CommandFrameKey>,
+    /// Newest whole retired chain. Its tail names the next older chain.
+    reusable_frames: Option<CommandFrameChain>,
     frame_head: Option<CommandFrameKey>,
     frame_tail: Option<CommandFrameKey>,
-    live_frames: usize,
+    occupied_frames: usize,
     scalars: PackedJournal<CommandRootUndo<G>, 128>,
     pending_input: PackedJournal<PendingInputUndo, 8>,
     touched_scalars: u16,
@@ -81,6 +83,10 @@ pub(crate) struct CommandTimeline<G> {
     fork: Option<CommandTimelineFork>,
     frames_released: u64,
     frames_reused: u64,
+    frame_chain_transfers: u64,
+    frame_reuse_link_visits: u64,
+    frame_reuse_visits: u64,
+    frame_reuse_incarnations: u64,
 }
 
 const COMMAND_FRAMES_PER_PAGE: usize = 128;
@@ -96,6 +102,9 @@ struct CommandFrameSlot {
     frame: Option<CommandTimelineFrame>,
     previous: Option<CommandFrameKey>,
     next: Option<CommandFrameKey>,
+    /// Installed while this row is a prospective chain tail, before the
+    /// chain can cross a settlement boundary.
+    reusable_next: Option<CommandFrameChain>,
 }
 
 struct CommandFramePage {
@@ -116,11 +125,16 @@ struct CommandTimelineMark {
     pending_input: PackedJournalMark,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CommandFrameChain {
+    head: CommandFrameKey,
+    tail: CommandFrameKey,
+}
+
 struct CommandTimelineFork {
     prefix_tail: CommandFrameKey,
-    detached_head: Option<CommandFrameKey>,
-    detached_tail: Option<CommandFrameKey>,
-    candidate_head: Option<CommandFrameKey>,
+    detached: Option<CommandFrameChain>,
+    candidate: Option<CommandFrameChain>,
 }
 
 enum CommandRootUndo<G> {
@@ -192,10 +206,11 @@ impl<G> Default for CommandTimeline<G> {
             next_serial: 0,
             owner: NEXT_COMMAND_TIMELINE_OWNER.fetch_add(1, Ordering::Relaxed),
             frame_pages: Vec::new(),
-            free_frames: Vec::new(),
+            fresh_frames: Vec::new(),
+            reusable_frames: None,
             frame_head: None,
             frame_tail: None,
-            live_frames: 0,
+            occupied_frames: 0,
             scalars: PackedJournal::default(),
             pending_input: PackedJournal::default(),
             touched_scalars: 0,
@@ -205,6 +220,10 @@ impl<G> Default for CommandTimeline<G> {
             fork: None,
             frames_released: 0,
             frames_reused: 0,
+            frame_chain_transfers: 0,
+            frame_reuse_link_visits: 0,
+            frame_reuse_visits: 0,
+            frame_reuse_incarnations: 0,
         }
     }
 }
@@ -231,11 +250,12 @@ impl<G> CommandTimeline<G> {
             frame: None,
             previous: None,
             next: None,
+            reusable_next: None,
         })
         .take(COMMAND_FRAMES_PER_PAGE)
         .collect::<Box<[_]>>();
         self.frame_pages.push(CommandFramePage { slots });
-        self.free_frames
+        self.fresh_frames
             .extend((start..end).rev().map(|slot| CommandFrameKey {
                 slot: slot as u32,
                 generation: 1,
@@ -269,15 +289,22 @@ impl<G> CommandTimeline<G> {
         &mut self,
         frame: CommandTimelineFrame,
     ) -> Result<CommandFrameKey, CommandSummaryError> {
-        if self.free_frames.is_empty() {
-            self.add_frame_page()?;
-        } else {
+        let (key, reused) = if let Some(key) = self.take_reusable_frame() {
             self.frames_reused = self.frames_reused.saturating_add(1);
-        }
-        let key = self
-            .free_frames
-            .pop()
-            .expect("frame page publication supplied free rows");
+            (key, true)
+        } else {
+            if self.fresh_frames.is_empty() {
+                self.add_frame_page()?;
+            }
+            let key = self
+                .fresh_frames
+                .pop()
+                .expect("frame page publication supplied fresh rows");
+            self.frames_reused = self
+                .frames_reused
+                .saturating_add(u64::from(key.generation != 1));
+            (key, false)
+        };
         let slot = key.slot as usize;
         let page = &mut self.frame_pages[slot / COMMAND_FRAMES_PER_PAGE];
         let slot = &mut page.slots[slot % COMMAND_FRAMES_PER_PAGE];
@@ -286,51 +313,103 @@ impl<G> CommandTimeline<G> {
         slot.frame = Some(frame);
         slot.previous = self.frame_tail;
         slot.next = None;
+        slot.reusable_next = None;
         if let Some(tail) = self.frame_tail {
-            self.frame_slot_mut(tail)
-                .expect("command frame tail remains live")
-                .next = Some(key);
+            let tail = self
+                .frame_slot_mut(tail)
+                .expect("command frame tail remains live");
+            tail.next = Some(key);
+            tail.reusable_next = None;
         } else {
             self.frame_head = Some(key);
         }
         self.frame_tail = Some(key);
-        self.live_frames = self.live_frames.saturating_add(1);
-        if let Some(fork) = &mut self.fork
-            && fork.candidate_head.is_none()
-        {
-            fork.candidate_head = Some(key);
+        self.occupied_frames = self.occupied_frames.saturating_add(usize::from(!reused));
+        let candidate = if let Some(fork) = &mut self.fork {
+            match &mut fork.candidate {
+                Some(candidate) => {
+                    candidate.tail = key;
+                }
+                None => {
+                    fork.candidate = Some(CommandFrameChain {
+                        head: key,
+                        tail: key,
+                    });
+                }
+            }
+            fork.candidate
+        } else {
+            None
+        };
+        if let Some(candidate) = candidate {
+            self.prepare_reusable_chain(candidate);
         }
         Ok(key)
     }
 
-    fn retire_unlinked_frame(&mut self, key: CommandFrameKey) {
-        let index = key.slot as usize;
-        let page = &mut self.frame_pages[index / COMMAND_FRAMES_PER_PAGE];
-        let slot = &mut page.slots[index % COMMAND_FRAMES_PER_PAGE];
-        assert_eq!(
-            slot.generation, key.generation,
-            "retiring a live command frame"
-        );
-        assert!(slot.frame.take().is_some(), "retiring a live command frame");
+    fn take_reusable_frame(&mut self) -> Option<CommandFrameKey> {
+        let mut chain = self.reusable_frames?;
+        let stale = chain.head;
+        let index = stale.slot as usize;
+        let slot = &mut self.frame_pages[index / COMMAND_FRAMES_PER_PAGE].slots
+            [index % COMMAND_FRAMES_PER_PAGE];
+        assert_eq!(slot.generation, stale.generation);
+        assert!(slot.frame.take().is_some());
+        let next = slot.next;
+        let reusable_next = slot.reusable_next;
         slot.previous = None;
         slot.next = None;
+        slot.reusable_next = None;
         slot.generation = slot.generation.wrapping_add(1).max(1);
-        self.free_frames.push(CommandFrameKey {
-            slot: key.slot,
+        let fresh = CommandFrameKey {
+            slot: stale.slot,
             generation: slot.generation,
-        });
-        self.live_frames = self.live_frames.saturating_sub(1);
-        self.frames_released = self.frames_released.saturating_add(1);
+        };
+        if chain.head == chain.tail {
+            self.reusable_frames = reusable_next;
+        } else {
+            chain.head = next.expect("reusable frame chain reaches its tail");
+            self.reusable_frames = Some(chain);
+        }
+        self.refresh_detached_reusable_link();
+        self.frame_reuse_visits = self.frame_reuse_visits.saturating_add(1);
+        self.frame_reuse_incarnations = self.frame_reuse_incarnations.saturating_add(1);
+        Some(fresh)
     }
 
-    fn retire_chain(&mut self, mut cursor: Option<CommandFrameKey>) -> usize {
-        let mut released = 0usize;
-        while let Some(key) = cursor {
-            cursor = self.next_frame(key);
-            self.retire_unlinked_frame(key);
-            released = released.saturating_add(1);
-        }
-        released
+    fn chain_from(&self, head: Option<CommandFrameKey>) -> Option<CommandFrameChain> {
+        let head = head?;
+        let tail = self.frame_tail.expect("nonempty suffix has a tail");
+        Some(CommandFrameChain { head, tail })
+    }
+
+    fn retire_chain(&mut self, chain: Option<CommandFrameChain>) {
+        let Some(chain) = chain else {
+            return;
+        };
+        self.reusable_frames = Some(chain);
+        self.frame_chain_transfers = self.frame_chain_transfers.saturating_add(1);
+    }
+
+    fn prepare_reusable_chain(&mut self, chain: CommandFrameChain) {
+        // Settlement must only move `chain`. Install the link to the older
+        // reusable owner while the tail is already being selected or
+        // published, then refresh it if lazy allocation advances that owner.
+        let reusable = self.reusable_frames;
+        let index = chain.tail.slot as usize;
+        let slot = &mut self.frame_pages[index / COMMAND_FRAMES_PER_PAGE].slots
+            [index % COMMAND_FRAMES_PER_PAGE];
+        assert_eq!(slot.generation, chain.tail.generation);
+        assert!(slot.frame.is_some());
+        slot.reusable_next = reusable;
+        self.frame_reuse_link_visits = self.frame_reuse_link_visits.saturating_add(1);
+    }
+
+    fn refresh_detached_reusable_link(&mut self) {
+        let Some(detached) = self.fork.as_ref().and_then(|fork| fork.detached) else {
+            return;
+        };
+        self.prepare_reusable_chain(detached);
     }
 
     fn release_frame(&mut self, mark: CommandTimelineMark) -> bool {
@@ -357,7 +436,27 @@ impl<G> CommandTimeline<G> {
         } else {
             self.frame_tail = previous;
         }
-        self.retire_unlinked_frame(mark.frame);
+        self.frame_slot_mut(mark.frame)
+            .expect("released command frame remains live")
+            .previous = None;
+        self.frame_slot_mut(mark.frame)
+            .expect("released command frame remains live")
+            .next = None;
+        let index = mark.frame.slot as usize;
+        let slot = &mut self.frame_pages[index / COMMAND_FRAMES_PER_PAGE].slots
+            [index % COMMAND_FRAMES_PER_PAGE];
+        assert_eq!(slot.generation, mark.frame.generation);
+        assert!(slot.frame.take().is_some());
+        slot.previous = None;
+        slot.next = None;
+        slot.reusable_next = None;
+        slot.generation = slot.generation.wrapping_add(1).max(1);
+        self.fresh_frames.push(CommandFrameKey {
+            slot: mark.frame.slot,
+            generation: slot.generation,
+        });
+        self.occupied_frames = self.occupied_frames.saturating_sub(1);
+        self.frames_released = self.frames_released.saturating_add(1);
         true
     }
 
@@ -388,7 +487,7 @@ impl<G> CommandTimeline<G> {
                     .sum::<usize>(),
             )
             .saturating_add(
-                self.free_frames
+                self.fresh_frames
                     .capacity()
                     .saturating_mul(std::mem::size_of::<CommandFrameKey>()),
             )
@@ -397,7 +496,7 @@ impl<G> CommandTimeline<G> {
     }
 
     fn live_frame_count(&self) -> usize {
-        self.live_frames
+        self.occupied_frames
     }
 
     fn frame_capacity(&self) -> usize {
@@ -439,6 +538,10 @@ impl<G> CommandTimeline<G> {
             accepted_chunks_released: scalar
                 .accepted_chunks_released
                 .saturating_add(pending.accepted_chunks_released),
+            frame_chain_transfers: self.frame_chain_transfers,
+            frame_reuse_link_visits: self.frame_reuse_link_visits,
+            frame_reuse_visits: self.frame_reuse_visits,
+            frame_reuse_incarnations: self.frame_reuse_incarnations,
             ..CommandTimelineCounters::default()
         }
     }
@@ -612,17 +715,18 @@ impl<G> CommandTimeline<G> {
         self.pending_input.restore(mark.pending_input, |inverse| {
             std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
         });
-        let suffix = self.next_frame(mark.frame);
+        let suffix = self.chain_from(self.next_frame(mark.frame));
         self.frame_slot_mut(mark.frame)
             .expect("restored command frame remains live")
             .next = None;
         self.frame_tail = Some(mark.frame);
-        if let Some(head) = suffix {
-            self.frame_slot_mut(head)
+        if let Some(suffix) = suffix {
+            self.frame_slot_mut(suffix.head)
                 .expect("restored command suffix remains live")
                 .previous = None;
+            self.prepare_reusable_chain(suffix);
+            self.retire_chain(Some(suffix));
         }
-        self.retire_chain(suffix);
         self.touched_scalars = 0;
         self.pending_input_touched = false;
         true
@@ -650,22 +754,21 @@ impl<G> CommandTimeline<G> {
             .begin_checkpoint_candidate(mark.pending_input, |inverse| {
                 std::mem::swap(&mut inverse.0, &mut roots.pending_input_open);
             });
-        let detached_head = self.next_frame(mark.frame);
-        let detached_tail = detached_head.and(self.frame_tail);
+        let detached = self.chain_from(self.next_frame(mark.frame));
         self.frame_slot_mut(mark.frame)
             .expect("prevalidated command mark begins the sole fork")
             .next = None;
-        if let Some(head) = detached_head {
-            self.frame_slot_mut(head)
+        if let Some(detached) = detached {
+            self.frame_slot_mut(detached.head)
                 .expect("detached command suffix remains live")
                 .previous = None;
+            self.prepare_reusable_chain(detached);
         }
         self.frame_tail = Some(mark.frame);
         self.fork = Some(CommandTimelineFork {
             prefix_tail: mark.frame,
-            detached_head,
-            detached_tail,
-            candidate_head: None,
+            detached,
+            candidate: None,
         });
         self.touched_scalars = 0;
         self.pending_input_touched = false;
@@ -684,21 +787,21 @@ impl<G> CommandTimeline<G> {
         self.frame_slot_mut(fork.prefix_tail)
             .expect("candidate prefix tail remains live")
             .next = None;
-        if let Some(head) = fork.candidate_head {
-            self.frame_slot_mut(head)
+        if let Some(candidate) = fork.candidate {
+            self.frame_slot_mut(candidate.head)
                 .expect("candidate command suffix remains live")
                 .previous = None;
         }
-        self.retire_chain(fork.candidate_head);
-        if let Some(head) = fork.detached_head {
+        self.retire_chain(fork.candidate);
+        if let Some(detached) = fork.detached {
             self.frame_slot_mut(fork.prefix_tail)
                 .expect("candidate prefix tail remains live")
-                .next = Some(head);
-            self.frame_slot_mut(head)
+                .next = Some(detached.head);
+            self.frame_slot_mut(detached.head)
                 .expect("detached command suffix remains live")
                 .previous = Some(fork.prefix_tail);
         }
-        self.frame_tail = fork.detached_tail.or(Some(fork.prefix_tail));
+        self.frame_tail = Some(fork.detached.map_or(fork.prefix_tail, |chain| chain.tail));
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
@@ -710,7 +813,7 @@ impl<G> CommandTimeline<G> {
             .expect("command acceptance requires a candidate fork");
         self.scalars.accept_checkpoint_candidate();
         self.pending_input.accept_checkpoint_candidate();
-        self.retire_chain(fork.detached_head);
+        self.retire_chain(fork.detached);
         self.touched_scalars = 0;
         self.pending_input_touched = false;
     }
@@ -732,8 +835,10 @@ pub struct CommandTimelineCounters {
     pub accepted_redo_records: u64,
     pub candidate_chunks_released: u64,
     pub accepted_chunks_released: u64,
-    pub frame_index_searches: u64,
-    pub frame_keys_copied: u64,
+    pub frame_chain_transfers: u64,
+    pub frame_reuse_link_visits: u64,
+    pub frame_reuse_visits: u64,
+    pub frame_reuse_incarnations: u64,
     pub logical_payload_admissions: u64,
     pub full_frame_history_clones: u64,
     pub logical_records: u64,
