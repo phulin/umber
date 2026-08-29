@@ -401,6 +401,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             distribution_ahash64: opts.distribution_ahash64.clone(),
             offline: opts.offline,
             expansion_fuel: opts.expansion_fuel,
+            execution_steps: opts.execution_steps,
         })?;
     if let Some(path) = &opts.pdf_font_closure_out {
         accepted.write_pdf_font_closure_receipt(path)?;
@@ -685,6 +686,7 @@ struct RunCliOptions {
     distribution_ahash64: Option<String>,
     offline: bool,
     expansion_fuel: Option<u64>,
+    execution_steps: Option<u64>,
     #[cfg(feature = "profiling")]
     profiling_stats: bool,
 }
@@ -707,6 +709,7 @@ impl RunCliOptions {
         let mut distribution_ahash64 = None;
         let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
         let mut expansion_fuel = None;
+        let mut execution_steps = None;
         #[cfg(feature = "profiling")]
         let mut profiling_stats = false;
         let mut args = args.peekable();
@@ -726,6 +729,18 @@ impl RunCliOptions {
                     expansion_fuel =
                         Some(value.parse::<u64>().ok().filter(|value| *value > 0).ok_or(
                             CliError::Usage("--expansion-fuel must be a positive integer"),
+                        )?);
+                }
+                "--execution-steps" => {
+                    if execution_steps.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --execution-steps"));
+                    }
+                    let value = args.next().ok_or(CliError::Usage(
+                        "missing positive integer for --execution-steps",
+                    ))?;
+                    execution_steps =
+                        Some(value.parse::<u64>().ok().filter(|value| *value > 0).ok_or(
+                            CliError::Usage("--execution-steps must be a positive integer"),
                         )?);
                 }
                 "--distribution" => {
@@ -940,6 +955,7 @@ impl RunCliOptions {
             distribution_ahash64,
             offline,
             expansion_fuel,
+            execution_steps,
             #[cfg(feature = "profiling")]
             profiling_stats,
         })
@@ -1186,6 +1202,55 @@ impl From<umber::cli_resource::NativeRunError> for CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_parser_keeps_expansion_fuel_and_execution_steps_independent() {
+        let options = RunCliOptions::parse(
+            [
+                "--expansion-fuel",
+                "50000000",
+                "--execution-steps",
+                "100000000",
+                "main.tex",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .expect("independent run guards");
+
+        assert_eq!(options.expansion_fuel, Some(50_000_000));
+        assert_eq!(options.execution_steps, Some(100_000_000));
+    }
+
+    #[test]
+    fn run_parser_rejects_invalid_or_duplicate_execution_step_caps() {
+        for (arguments, expected) in [
+            (
+                vec!["--execution-steps", "0", "main.tex"],
+                "--execution-steps must be a positive integer",
+            ),
+            (
+                vec!["--execution-steps", "word", "main.tex"],
+                "--execution-steps must be a positive integer",
+            ),
+            (
+                vec![
+                    "--execution-steps",
+                    "1",
+                    "--execution-steps",
+                    "2",
+                    "main.tex",
+                ],
+                "run accepts at most one --execution-steps",
+            ),
+        ] {
+            let error = match RunCliOptions::parse(arguments.into_iter().map(str::to_owned)) {
+                Ok(_) => panic!("invalid execution-step cap was accepted"),
+                Err(error) => error,
+            };
+            assert!(matches!(error, CliError::Usage(message) if message == expected));
+        }
+    }
 
     #[test]
     fn causal_diagnostic_is_bounded_and_content_free() {

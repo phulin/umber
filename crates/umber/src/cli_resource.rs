@@ -48,6 +48,16 @@ pub struct NativeRunOptions {
     pub distribution_ahash64: Option<String>,
     pub offline: bool,
     pub expansion_fuel: Option<u64>,
+    /// Explicit committed executor-step cap for this run, independent of
+    /// expansion fuel.
+    pub execution_steps: Option<u64>,
+}
+
+/// The two independent command-execution guards selected for one native run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeEngineGuards {
+    expansion_fuel: u64,
+    execution_steps: u64,
 }
 
 #[derive(Debug)]
@@ -411,6 +421,8 @@ pub fn run_for_finalization(
 /// long-lived watch sessions.
 pub struct NativeCompileSession<'owner> {
     session: VirtualCompileSession<'owner>,
+    #[cfg(test)]
+    guards: NativeEngineGuards,
     distribution: DistributionResolver,
     local: LocalResolver,
     source: String,
@@ -506,33 +518,33 @@ impl<'owner> NativeCompileSession<'owner> {
             .and_then(|name| name.to_str())
             .unwrap_or("texput")
             .to_owned();
-        let engine_fuel = options
-            .expansion_fuel
-            .or(env::var("UMBER_ENGINE_FUEL")
-                .ok()
-                .map(|value| {
-                    value.parse::<u64>().map_err(|_| {
-                        NativeRunError::Selection(format!(
-                            "UMBER_ENGINE_FUEL must be an unsigned integer: {value}"
-                        ))
-                    })
-                })
-                .transpose()?)
-            .unwrap_or(SessionLimits::default().engine_fuel);
-        let env_limit = |name: &'static str, default: u64| -> Result<u64, NativeRunError> {
-            env::var(name).map_or(Ok(default), |value| {
-                value.parse::<u64>().map_err(|_| {
-                    NativeRunError::Selection(format!(
-                        "{name} must be an unsigned integer: {value}"
-                    ))
-                })
-            })
-        };
         let defaults = SessionLimits::default();
-        let engine_steps = env_limit("UMBER_ENGINE_STEPS", defaults.engine_steps)?;
-        let input_frames = env_limit("UMBER_INPUT_FRAMES", defaults.input_frames)?;
-        let journal_bytes = env_limit("UMBER_JOURNAL_BYTES", defaults.journal_bytes)?;
-        let effects = env_limit("UMBER_EFFECTS", defaults.effects)?;
+        let engine_fuel = selected_limit(
+            options.expansion_fuel,
+            "UMBER_ENGINE_FUEL",
+            defaults.engine_fuel,
+        )?;
+        let engine_steps = selected_limit(
+            options.execution_steps,
+            "UMBER_ENGINE_STEPS",
+            defaults.engine_steps,
+        )?;
+        let guards = NativeEngineGuards {
+            expansion_fuel: engine_fuel,
+            execution_steps: engine_steps,
+        };
+        if options.expansion_fuel.is_some()
+            || options.execution_steps.is_some()
+            || env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1")
+        {
+            eprintln!(
+                "RUN_GUARDS expansion_fuel_cap={} execution_steps_cap={}",
+                guards.expansion_fuel, guards.execution_steps
+            );
+        }
+        let input_frames = selected_limit(None, "UMBER_INPUT_FRAMES", defaults.input_frames)?;
+        let journal_bytes = selected_limit(None, "UMBER_JOURNAL_BYTES", defaults.journal_bytes)?;
+        let effects = selected_limit(None, "UMBER_EFFECTS", defaults.effects)?;
         let restore_started = std::time::Instant::now();
         let mut session = VirtualCompileSession::new_with_store(
             reachability_store,
@@ -596,6 +608,8 @@ impl<'owner> NativeCompileSession<'owner> {
         let startup_time = setup_started.elapsed();
         Ok(Self {
             session,
+            #[cfg(test)]
+            guards,
             distribution,
             local,
             source,
@@ -731,10 +745,43 @@ impl<'owner> NativeCompileSession<'owner> {
         self.host_telemetry
     }
 
+    #[cfg(test)]
+    #[must_use]
+    const fn engine_guards(&self) -> NativeEngineGuards {
+        self.guards
+    }
+
     #[must_use]
     pub fn revision(&self) -> Option<tex_incr::RevisionId> {
         self.session.revision()
     }
+}
+
+fn selected_limit(
+    explicit: Option<u64>,
+    environment_name: &'static str,
+    default: u64,
+) -> Result<u64, NativeRunError> {
+    let environment = env::var(environment_name).ok();
+    selected_limit_value(explicit, environment.as_deref(), environment_name, default)
+}
+
+fn selected_limit_value(
+    explicit: Option<u64>,
+    environment: Option<&str>,
+    environment_name: &'static str,
+    default: u64,
+) -> Result<u64, NativeRunError> {
+    if let Some(explicit) = explicit {
+        return Ok(explicit);
+    }
+    environment.map_or(Ok(default), |value| {
+        value.parse::<u64>().map_err(|_| {
+            NativeRunError::Selection(format!(
+                "{environment_name} must be an unsigned integer: {value}"
+            ))
+        })
+    })
 }
 
 fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {

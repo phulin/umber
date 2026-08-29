@@ -79,6 +79,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
+- `run-pinned-pdflatex-50m-authority-row.sh`: exact offline pdfLaTeX
+  authority-row command with separately receipted 50,000,000 expansion-fuel
+  and 100,000,000 committed-step caps.
+- `test-run-pinned-pdflatex-50m-authority-row.sh`: hermetic argument and guard-receipt contract for that command.
 - `build-html-r2.sh`: deterministic two-build staging for the immutable contract-v1 HTML-only R2 profile and curated font catalog.
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 12-bit shard policy.
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures

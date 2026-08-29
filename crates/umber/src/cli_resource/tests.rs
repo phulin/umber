@@ -8,6 +8,66 @@ use umber_distribution::{ManifestShard, pack_shard};
 use super::*;
 
 #[test]
+fn native_engine_guard_selection_preserves_precedence_and_default() {
+    assert_eq!(SessionLimits::default().engine_steps, 10_000_000);
+    assert_eq!(
+        selected_limit_value(None, None, "UMBER_ENGINE_STEPS", 10_000_000)
+            .expect("ordinary default"),
+        10_000_000
+    );
+    assert_eq!(
+        selected_limit_value(
+            Some(100_000_000),
+            Some("invalid-environment-value"),
+            "UMBER_ENGINE_STEPS",
+            10_000_000,
+        )
+        .expect("explicit per-run authority wins"),
+        100_000_000
+    );
+    assert_eq!(
+        selected_limit_value(None, Some("42000000"), "UMBER_ENGINE_STEPS", 10_000_000)
+            .expect("environment compatibility override"),
+        42_000_000
+    );
+}
+
+#[test]
+fn native_session_installs_independent_explicit_engine_guards() {
+    let directory = TempDir::new().expect("temporary project");
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        initial_prefetch_keys: Vec::new(),
+        engine: EngineMode::Tex82,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: None,
+        distribution_ahash64: None,
+        offline: true,
+        expansion_fuel: Some(50_000_000),
+        execution_steps: Some(100_000_000),
+    };
+
+    let session = NativeCompileSession::new_with_cache(
+        &options,
+        &FetchCancellation::new(),
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+
+    assert_eq!(
+        session.engine_guards(),
+        NativeEngineGuards {
+            expansion_fuel: 50_000_000,
+            execution_steps: 100_000_000,
+        }
+    );
+}
+
+#[test]
 fn pdf_font_closure_receipt_preserves_typed_outcomes_and_manifest_keys() {
     let vf = FileRequestKey::new(FileKind::VirtualFont, "root.vf").expect("VF request");
     let program =
@@ -58,6 +118,7 @@ fn native_session_allows_the_hard_bounded_resource_attempt_count() {
         distribution_ahash64: None,
         offline: true,
         expansion_fuel: None,
+        execution_steps: None,
     };
 
     let session = NativeCompileSession::new_with_cache(
@@ -111,6 +172,7 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
         distribution_ahash64: None,
         offline: false,
         expansion_fuel: None,
+        execution_steps: None,
     };
     let cache_root = directory.path().join("cache");
     let cache = ObjectCache::new(&cache_root);
@@ -165,6 +227,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
         distribution_ahash64: Some(hex_digest(&root)),
         offline: true,
         expansion_fuel: None,
+        execution_steps: None,
     };
     let cache = ObjectCache::new(directory.path().join("cache"));
     let owner = NativeDistributionOwner::with_cache(&options, cache);
@@ -387,6 +450,7 @@ fn cancelled_pending_revision_can_be_superseded() {
         distribution_ahash64: None,
         offline: true,
         expansion_fuel: None,
+        execution_steps: None,
     };
     let cancellation = FetchCancellation::new();
     let mut session = NativeCompileSession::new_with_cache(
@@ -1378,6 +1442,7 @@ fn native_compile_uses_local_file_after_shadowed_distribution_hint() {
         offline: false,
         initial_prefetch_keys: Vec::new(),
         expansion_fuel: None,
+        execution_steps: None,
     };
     let cancellation = FetchCancellation::new();
     let mut session = NativeCompileSession::new_with_cache(
@@ -1530,6 +1595,7 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
                 distribution_ahash64: None,
                 offline: false,
                 expansion_fuel: None,
+                execution_steps: None,
             },
             &cancellation,
             cache.clone(),

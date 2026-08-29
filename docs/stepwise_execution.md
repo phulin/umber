@@ -451,9 +451,11 @@ frames, 256 MiB of environment journal, 1,000,000 pending effects, and
 100,000,000 command-fuel units. Engine sessions accept only
 `1..=1,000,000,000`; zero and larger values are typed configuration errors.
 `SessionLimits` configures the legacy ceilings uniformly for native and WASM
-sessions; native CLI runs additionally
-accept `UMBER_ENGINE_STEPS`, `UMBER_INPUT_FRAMES`, `UMBER_JOURNAL_BYTES`, and
-`UMBER_EFFECTS`.
+sessions. Native CLI runs expose the expansion and committed-step guards as
+the independent `--expansion-fuel` and `--execution-steps` flags, with
+`UMBER_ENGINE_FUEL` and `UMBER_ENGINE_STEPS` retained as compatibility
+fallbacks. They additionally accept `UMBER_INPUT_FRAMES`,
+`UMBER_JOURNAL_BYTES`, and `UMBER_EFFECTS`.
 
 Node, input-depth, recursion, output, generated-file, resource, and decoded
 font/image limits remain hard terminal errors. A limit reached during a step

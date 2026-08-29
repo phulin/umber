@@ -416,6 +416,7 @@ fn options(input: PathBuf, distribution: PathBuf, manifest_digest: String) -> Na
         distribution_ahash64: Some(manifest_digest),
         offline: true,
         expansion_fuel: None,
+        execution_steps: None,
     }
 }
 

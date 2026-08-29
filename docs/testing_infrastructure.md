@@ -634,6 +634,29 @@ engine expansion-fuel setting on the exercised `ExecutionContext`. Native
 resource sessions accept the bounded `UMBER_ENGINE_FUEL` override; invalid or
 hard-maximum-exceeding values fail before execution.
 
+Native `umber run` commands expose the independent per-revision guards as
+`--expansion-fuel` and `--execution-steps`. Explicit flags take precedence over
+the compatibility environment variables `UMBER_ENGINE_FUEL` and
+`UMBER_ENGINE_STEPS`; without either form, the ordinary execution-step cap
+remains exactly 10,000,000. An explicit guarded run prints one `RUN_GUARDS`
+diagnostic naming `expansion_fuel_cap` and `execution_steps_cap` separately.
+
+The pinned 50M pdfLaTeX authority command is
+`scripts/run-pinned-pdflatex-50m-authority-row.sh`. It fixes expansion fuel at
+50,000,000 and committed executor steps at 100,000,000, the validated hard
+maximum. The latter is 10 times the independently observed ordinary-step
+endpoint and is headroom, not a conversion between step and fuel units. Pass
+the same script and inputs to both binaries in a matched comparison. Its
+`authority.receipt` records both caps, their distinct units, the distribution
+pin, source epoch, prefetch count, and the SHA-256 identities of the binary,
+input, format, distribution root, and ordered prefetch closure. Invoke it as:
+
+```bash
+scripts/run-pinned-pdflatex-50m-authority-row.sh \
+  BINARY SOURCE_ROOT INPUT FORMAT DISTRIBUTION DISTRIBUTION_AHASH64 \
+  PREFETCH_KEYS OUTPUT SOURCE_DATE_EPOCH
+```
+
 The explicit stepwise recent-arXiv validation tier is:
 
 ```bash

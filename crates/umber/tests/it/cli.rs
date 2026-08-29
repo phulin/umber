@@ -2413,6 +2413,66 @@ fn run_writes_a_sorted_deduplicated_input_record_receipt() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_reports_independent_expansion_fuel_and_execution_step_caps() {
+    let temp_dir = tempfile::tempdir().expect("create guard receipt temp dir");
+    let source = temp_dir.path().join("main.tex");
+    fs::write(&source, "\\end\n").expect("write guard receipt source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg("--expansion-fuel")
+        .arg("50000000")
+        .arg("--execution-steps")
+        .arg("100000000")
+        .arg(&source)
+        .output()
+        .expect("run explicitly guarded fixture");
+
+    assert!(
+        output.status.success(),
+        "explicitly guarded run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("RUN_GUARDS expansion_fuel_cap=50000000 execution_steps_cap=100000000"),
+        "guard diagnostic must name both independent caps:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn step_cap_failure_reports_both_independent_guards() {
+    let temp_dir = tempfile::tempdir().expect("create step guard temp dir");
+    let source = temp_dir.path().join("main.tex");
+    fs::write(&source, "\\shipout\\hbox{}\\shipout\\hbox{}\\end\n")
+        .expect("write step guard source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg("--expansion-fuel")
+        .arg("50000000")
+        .arg("--execution-steps")
+        .arg("1")
+        .arg(&source)
+        .output()
+        .expect("run step-limited fixture");
+
+    assert!(!output.status.success(), "step-limited run must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("RUN_GUARDS expansion_fuel_cap=50000000 execution_steps_cap=1"),
+        "guard diagnostic must name both independent caps:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("execution steps budget 1 exceeded at 2"),
+        "terminal diagnostic must identify the committed-step cap:\n{stderr}"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_resolves_quoted_openin_through_texinputs() {
     let temp_dir = tempfile::tempdir().expect("create TeX stream search temp dir");
     let job_dir = temp_dir.path().join("latex/base");
