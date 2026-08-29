@@ -362,15 +362,26 @@ directly into the typed collector continuation. The destination therefore
 does not retain commands across a generation or act as a hidden result cache.
 
 The same scanner frame retains the deferred-diagnostic cursor established
-when its parameter and replacement sinks opened. Successful completion finds
-no episode-owned runaway report and returns without allocating, copying, or
-rendering diagnostic context. If EOF or outer-validity recovery did publish a
-report, completion borrows those existing sinks before their scope retires and
-walks each word once into the report's final selector-aware partial string,
-carrying the macro match character across the synthetic `->` separator. No
-diagnostic token vector, second token traversal, or success-path string exists;
-resource suspension retains only the sinks and cursor already owned by the
-scanner frame.
+when its parameter and replacement sink routes opened. For a macro definition,
+both routes name the same `AttemptDefinitionId` builder rather than separate
+lists. Successful completion finds no episode-owned runaway report and returns
+without allocating, copying, or rendering diagnostic context. If EOF or
+outer-validity recovery did publish a report, completion borrows those existing
+sinks before their scope retires and walks each word once into the report's
+final selector-aware partial string, carrying the macro match character across
+the synthetic `->` separator. No diagnostic token vector, second token
+traversal, or success-path string exists; resource suspension retains only the
+sinks and cursor already owned by the scanner frame.
+
+Suspension publication is one owner transaction. The execution-scratch lane
+preflights its slot, free-list capacity, and checked serial successor before it
+moves `PendingScanToks`. If admission fails, the payload remains with the
+caller. If admission succeeds but the processor baton already contains a key,
+the displaced key is restored before the just-admitted frame is taken back.
+Both paths then abort the nested continuation deepest-first, finish the scanner
+episode, close its scope, and truncate through the pre-sink attempt mark. The
+lane slot and definition/token-buffer capacity remain reusable; no moved child,
+status, sink coordinate, or attempt row survives the failed publication.
 
 TeX82's separate `read_toks` collector wraps scanner-status installation,
 `align_state := 1000000`, builder setup, line collection, sealing, and scope

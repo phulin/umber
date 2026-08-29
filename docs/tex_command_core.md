@@ -709,9 +709,10 @@ remain crate-private.
 semantics cross token, macro, and source boundaries. `scan_balanced_text` and
 `scan_macro_definition` reuse the one canonical `scan_toks` collector and
 return frozen `TracedTokenList` values plus deterministic first-token
-provenance. The latter returns parameter and replacement lists separately;
-expanded balanced scans continue to use the canonical macro matcher, so macro
-arguments never become executor-owned input.
+provenance. The latter returns one `AttemptDefinitionId` whose checked builder
+advances through its parameter and replacement phases; it does not return two
+independently staged lists. Expanded balanced scans continue to use the
+canonical macro matcher, so macro arguments never become executor-owned input.
 
 The collector applies TeX82 §479's parameter-character rule -- `#<digit>`
 becomes an out-parameter token and `##` becomes one parameter character --

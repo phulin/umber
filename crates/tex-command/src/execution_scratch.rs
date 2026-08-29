@@ -85,6 +85,25 @@ impl<G> ScannerFrameKey<G> {
     pub(crate) fn is_structured_scanner(&self) -> bool {
         self.kind == ContinuationKind::StructuredScanner
     }
+
+    #[cfg(test)]
+    pub(crate) const fn injected_scan_toks_publication_collision() -> Self {
+        Self {
+            id: ResumeFrameId {
+                slot: u32::MAX,
+                serial: u64::MAX,
+                _generation: PhantomData,
+            },
+            kind: ContinuationKind::Scanner,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn is_injected_scan_toks_publication_collision(&self) -> bool {
+        self.id.slot == u32::MAX
+            && self.id.serial == u64::MAX
+            && matches!(self.kind, ContinuationKind::Scanner)
+    }
 }
 
 /// One structurally owned child edge and the caller phase that receives it.
@@ -172,7 +191,8 @@ impl<T, G> Default for ResumeFrameLane<T, G> {
 
 impl<T, G> ResumeFrameLane<T, G> {
     fn insert(&mut self, payload: T) -> Result<ResumeFrameId<G>, ScratchError> {
-        self.allocate(payload)
+        let mut payload = Some(payload);
+        self.insert_from(&mut payload)
     }
 
     fn take(&mut self, id: ResumeFrameId<G>) -> Result<T, ScratchError> {
@@ -197,8 +217,27 @@ impl<T, G> ResumeFrameLane<T, G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
-    fn allocate(&mut self, payload: T) -> Result<ResumeFrameId<G>, ScratchError> {
-        let index = if let Some(index) = self.free_slots.pop() {
+    /// Preflights every fallible coordinate and allocation before moving the
+    /// payload out of `payload`. An error therefore leaves both the owner and
+    /// the lane's reusable logical state unchanged.
+    fn insert_from(&mut self, payload: &mut Option<T>) -> Result<ResumeFrameId<G>, ScratchError> {
+        if payload.is_none() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let serial = self.next_serial;
+        let next_serial = serial
+            .checked_add(1)
+            .filter(|serial| *serial != 0)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        let reused = self.free_slots.last().copied();
+        let index = if let Some(index) = reused {
+            let slot = self
+                .slots
+                .get(index as usize)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            if slot.payload.is_some() {
+                return Err(ScratchError::InvalidCoordinate);
+            }
             index
         } else {
             let index =
@@ -209,18 +248,23 @@ impl<T, G> ResumeFrameLane<T, G> {
             self.free_slots
                 .try_reserve(1)
                 .map_err(|_| ScratchError::AllocationFailed)?;
-            self.slots.push(ResumeFrameSlot::default());
             index
         };
-        let serial = self.next_serial;
-        self.next_serial = self.next_serial.wrapping_add(1).max(1);
-        let slot = &mut self.slots[index as usize];
-        if slot.payload.is_some() {
-            return Err(ScratchError::InvalidCoordinate);
+
+        if reused.is_some() {
+            let popped = self
+                .free_slots
+                .pop()
+                .expect("preflighted reusable resume slot remains present");
+            debug_assert_eq!(popped, index);
+        } else {
+            self.slots.push(ResumeFrameSlot::default());
         }
+        self.next_serial = next_serial;
+        let slot = &mut self.slots[index as usize];
         *slot = ResumeFrameSlot {
             serial,
-            payload: Some(payload),
+            payload: payload.take(),
             _generation: PhantomData,
         };
         Ok(ResumeFrameId {
@@ -627,6 +671,14 @@ pub(crate) enum ScratchError {
     AllocationFailed,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InjectedScannerFrameStoreFailure {
+    Allocation,
+    Capacity,
+    Serial,
+}
+
 pub(crate) struct MacroWords<'a, G> {
     lane: &'a MacroWordLane,
     position: u32,
@@ -681,6 +733,10 @@ pub(crate) struct ExecutionScratch<G> {
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
     physical_macro_word_copies: u64,
+    #[cfg(test)]
+    fail_next_scanner_frame_store: Option<InjectedScannerFrameStoreFailure>,
+    #[cfg(test)]
+    inject_scan_toks_publication_collision: bool,
     /// Successful matching should append and classify, never read its stored
     /// words back for paragraph or outer-group decisions. Diagnostic tracing
     /// and observed token payloads are deliberate readers and remain visible
@@ -707,6 +763,10 @@ impl<G> Default for ExecutionScratch<G> {
             _generation: PhantomData,
             #[cfg(test)]
             physical_macro_word_copies: 0,
+            #[cfg(test)]
+            fail_next_scanner_frame_store: None,
+            #[cfg(test)]
+            inject_scan_toks_publication_collision: false,
             #[cfg(any(test, feature = "profiling"))]
             match_word_reads: Cell::new(0),
         }
@@ -829,14 +889,56 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn store_scanner_frame(
         &mut self,
-        pending: crate::scan_toks::PendingScanToks<G>,
+        pending: &mut Option<crate::scan_toks::PendingScanToks<G>>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.scanner_resumes
-            .insert(ContinuationFrame::Scanner(pending))
-            .map(|id| ScannerFrameKey {
-                id,
-                kind: ContinuationKind::Scanner,
-            })
+        #[cfg(test)]
+        if let Some(failure) = self.fail_next_scanner_frame_store.take() {
+            return Err(match failure {
+                InjectedScannerFrameStoreFailure::Allocation => ScratchError::AllocationFailed,
+                InjectedScannerFrameStoreFailure::Capacity
+                | InjectedScannerFrameStoreFailure::Serial => ScratchError::CapacityOverflow,
+            });
+        }
+        let mut frame = pending.take().map(ContinuationFrame::Scanner);
+        let result = self.scanner_resumes.insert_from(&mut frame);
+        if let Err(error) = result {
+            *pending = match frame {
+                Some(ContinuationFrame::Scanner(pending)) => Some(pending),
+                _ => return Err(ScratchError::InvalidCoordinate),
+            };
+            return Err(error);
+        }
+        result.map(|id| ScannerFrameKey {
+            id,
+            kind: ContinuationKind::Scanner,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_scanner_frame_store_failure(
+        &mut self,
+        failure: InjectedScannerFrameStoreFailure,
+    ) {
+        self.fail_next_scanner_frame_store = Some(failure);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_scan_toks_publication_collision(&mut self) {
+        self.inject_scan_toks_publication_collision = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_scan_toks_publication_collision(&mut self) -> bool {
+        core::mem::take(&mut self.inject_scan_toks_publication_collision)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scanner_resume_storage_counts(&self) -> (usize, usize, usize) {
+        (
+            self.scanner_resumes.slots.len(),
+            self.scanner_resumes.free_slots.len(),
+            self.scanner_resumes.live_len(),
+        )
     }
 
     pub(crate) fn take_scanner_frame(
@@ -1792,6 +1894,38 @@ mod tests {
                 scratch.macro_slots[pending].parent_slot,
             ),
             before_commit
+        );
+    }
+
+    #[test]
+    fn scanner_frame_serial_failure_retains_payload_and_lane_state() {
+        let mut lane = ResumeFrameLane::<u32, ()> {
+            next_serial: u64::MAX,
+            ..ResumeFrameLane::default()
+        };
+        let mut payload = Some(7);
+        let before = (
+            lane.slots.len(),
+            lane.slots.capacity(),
+            lane.free_slots.len(),
+            lane.free_slots.capacity(),
+            lane.next_serial,
+        );
+
+        assert_eq!(
+            lane.insert_from(&mut payload),
+            Err(ScratchError::CapacityOverflow)
+        );
+        assert_eq!(payload, Some(7));
+        assert_eq!(
+            (
+                lane.slots.len(),
+                lane.slots.capacity(),
+                lane.free_slots.len(),
+                lane.free_slots.capacity(),
+                lane.next_serial,
+            ),
+            before
         );
     }
 

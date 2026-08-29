@@ -774,13 +774,13 @@ pub struct ExpandedWriteText {
     pub error_context: Option<String>,
 }
 
-/// The two immutable lists collected for a macro definition.
+/// One checked attempt-local macro-definition builder.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedMacroDefinition {
     /// The raw control-sequence (or active-character) target accepted by
     /// TeX82's `prefixed_command`.  Target delivery is command-owned so the
     /// executor never has to reopen raw input between the primitive and its
-    /// parameter/replacement scan.
+    /// single-builder parameter/replacement scan.
     pub target: Symbol,
     pub definition: AttemptDefinitionId,
     pub provenance: StructuredProvenance,

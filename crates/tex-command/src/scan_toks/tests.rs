@@ -1,5 +1,5 @@
 use tex_state::env::AssignmentScope;
-use tex_state::meaning::{MeaningFlags, MeaningWord};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
 use tex_state::token::{Catcode, Token, TokenWord};
 
 use super::{ScanToksMode, reset_runaway_render_count, runaway_render_count};
@@ -53,6 +53,137 @@ fn assert_read_failure_is_fully_cleaned(finalize: bool) {
         command
             .rollback_attempt_operation(operation)
             .expect("failed read leaves an exact operation scope");
+        assert!(command.attempt.is_empty());
+    });
+}
+
+fn assert_suspended_scan_store_failure_is_transactional(
+    failure: crate::execution_scratch::InjectedScannerFrameStoreFailure,
+) {
+    crate::test_harness::with_universe(|universe| {
+        let file_size = universe.intern("filesize").expect("file-size primitive");
+        universe
+            .assign_meaning(
+                file_size,
+                MeaningWord::from_static(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::FileSize,
+                )),
+                AssignmentScope::Global,
+            )
+            .expect("file-size meaning");
+        let mut command = CommandState::default();
+        let operation = command.begin_attempt_operation();
+        let before = command.attempt.arena().mark();
+        command.scratch.inject_scanner_frame_store_failure(failure);
+        crate::test_harness::push(
+            &mut command,
+            [
+                token('{', Catcode::BeginGroup),
+                Token::Cs(file_size.symbol()),
+                token('{', Catcode::BeginGroup),
+                token('x', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+                token('}', Catcode::EndGroup),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert!(matches!(
+            processor.scan_toks_buffers(ScanToksMode::General { expanded: true }),
+            Err(crate::CommandError::Fatal(_))
+        ));
+        assert!(processor.command.scanner.is_quiescent());
+        assert!(processor.scanner_resume.is_none());
+        assert_eq!(processor.command.attempt.arena().mark(), before);
+        let (slots, free, live) = processor.command.scratch.scanner_resume_storage_counts();
+        assert_eq!(live, 0);
+        assert_eq!(free, slots);
+        drop(processor);
+        command
+            .rollback_attempt_operation(operation)
+            .expect("failed scanner publication leaves the operation exact");
+        assert!(command.attempt.is_empty());
+    });
+}
+
+#[test]
+fn suspended_scan_store_failures_restore_all_moved_owners() {
+    use crate::execution_scratch::InjectedScannerFrameStoreFailure as Failure;
+
+    for failure in [Failure::Allocation, Failure::Capacity, Failure::Serial] {
+        assert_suspended_scan_store_failure_is_transactional(failure);
+    }
+}
+
+#[test]
+fn suspended_scan_publication_collision_restores_the_displaced_key() {
+    crate::test_harness::with_universe(|universe| {
+        let file_size = universe.intern("filesize").expect("file-size primitive");
+        universe
+            .assign_meaning(
+                file_size,
+                MeaningWord::from_static(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::FileSize,
+                )),
+                AssignmentScope::Global,
+            )
+            .expect("file-size meaning");
+        let mut command = CommandState::default();
+        let operation = command.begin_attempt_operation();
+        let before = command.attempt.arena().mark();
+        command.scratch.inject_scan_toks_publication_collision();
+        crate::test_harness::push(
+            &mut command,
+            [
+                token('{', Catcode::BeginGroup),
+                Token::Cs(file_size.symbol()),
+                token('{', Catcode::BeginGroup),
+                token('x', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+                token('}', Catcode::EndGroup),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert!(matches!(
+            processor.scan_toks_buffers(ScanToksMode::General { expanded: true }),
+            Err(crate::CommandError::InputInvariant(_))
+        ));
+        assert!(processor.command.scanner.is_quiescent());
+        assert_eq!(processor.command.attempt.arena().mark(), before);
+        assert!(
+            processor
+                .scanner_resume
+                .take()
+                .is_some_and(|key| key.is_injected_scan_toks_publication_collision())
+        );
+        let (slots, free, live) = processor.command.scratch.scanner_resume_storage_counts();
+        assert_eq!(live, 0);
+        assert_eq!(free, slots);
+        drop(processor);
+        command
+            .rollback_attempt_operation(operation)
+            .expect("collision cleanup leaves the operation exact");
         assert!(command.attempt.is_empty());
     });
 }
@@ -430,7 +561,7 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
 }
 
 #[test]
-fn macro_definition_scan_keeps_parameter_and_replacement_lists_separate() {
+fn macro_definition_scan_shares_one_checked_builder_coordinate() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
         let _operation = command.begin_attempt_operation();

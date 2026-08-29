@@ -12,7 +12,9 @@ use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::attempt::{AttemptDefinitionId, AttemptError, AttemptTokenBufferId, AttemptTokenListId};
+use crate::attempt::{
+    AttemptDefinitionId, AttemptError, AttemptMark, AttemptTokenBufferId, AttemptTokenListId,
+};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
@@ -133,11 +135,13 @@ struct ScanToksConfig {
     status_visibility: ScannerStatusVisibility,
 }
 
-/// The two fixed mutable sinks owned by one `scan_toks` scope.
+/// The two fixed mutable sink routes owned by one `scan_toks` scope.
 ///
 /// Both coordinates are reserved when the scope opens, before delivery can
 /// suspend and a younger direct-operation scope can be admitted. Nested macro
-/// retirement therefore never captures either parent sink.
+/// retirement therefore never captures either parent sink. A general scan has
+/// two token-buffer coordinates; a macro-definition scan routes both phases
+/// through one `AttemptDefinitionId` and its single checked builder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ScanToksSinks {
     parameter_text: ScanToksSink,
@@ -181,6 +185,13 @@ impl ScannedWords<'_> {
 /// Exact command-owned continuation of one host-suspended token collector.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingScanToks<G> {
+    /// Exact parent suffix before either mutable sink was admitted.
+    ///
+    /// Successful completion publishes the sinks to the parent operation.
+    /// Cancellation or failed continuation publication first closes the live
+    /// scanner scope, then truncates through this mark so no unreachable sink
+    /// row survives the failed transaction.
+    attempt_opening: AttemptMark,
     scope: crate::attempt::OwnedAttemptScope,
     sinks: ScanToksSinks,
     /// First deferred diagnostic which can belong to this scanner episode.
@@ -534,14 +545,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take_continuation_frame(key)
             .map_err(scratch_command_error)?;
         match frame {
-            crate::execution_scratch::ContinuationFrame::Scanner(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                self.finish_scanner_episode(pending.episode);
-                self.command
-                    .discard_attempt_scope_suffix(pending.scope)
-                    .map_err(attempt_command_error)
+            crate::execution_scratch::ContinuationFrame::Scanner(pending) => {
+                self.settle_failed_scan_toks(pending)
             }
             crate::execution_scratch::ContinuationFrame::Scalar(mut pending) => {
                 let expression_stack_mark = pending.expression_stack_mark();
@@ -742,22 +747,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             ),
             None => None,
         };
-        let (scope, sinks, diagnostic_start, episode, phase) = match pending {
+        let (attempt_opening, scope, sinks, diagnostic_start, episode, phase) = match pending {
             Some(pending) if pending.config == config => (
+                pending.attempt_opening,
                 pending.scope,
                 pending.sinks,
                 pending.diagnostic_start,
                 pending.episode,
                 pending.phase,
             ),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                self.finish_scanner_episode(pending.episode);
-                self.command
-                    .discard_attempt_scope_suffix(pending.scope)
-                    .map_err(attempt_command_error)?;
+            Some(pending) => {
+                self.settle_failed_scan_toks(pending)?;
                 return Err(CommandError::input_invariant());
             }
             None => {
@@ -765,11 +765,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // scanner's scratch child. Returning a synchronous child to a
                 // still-live macro can therefore truncate its suffix without
                 // copying or invalidating either completed result.
-                let sinks = match config.grammar {
-                    ScanToksGrammar::General => ScanToksSinks {
+                let attempt_opening = self.command.attempt.arena().mark();
+                let sinks = match (|| match config.grammar {
+                    ScanToksGrammar::General => Ok(ScanToksSinks {
                         parameter_text: ScanToksSink::Tokens(self.begin_attempt_token_list()?),
                         replacement_text: ScanToksSink::Tokens(self.begin_attempt_token_list()?),
-                    },
+                    }),
                     ScanToksGrammar::MacroDefinition => {
                         let definition = self
                             .command
@@ -777,21 +778,39 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .arena_mut()
                             .allocate_definition_builder(self.state.definition_identity_policy())
                             .map_err(attempt_command_error)?;
-                        ScanToksSinks {
+                        Ok(ScanToksSinks {
                             parameter_text: ScanToksSink::DefinitionParameters(definition),
                             replacement_text: ScanToksSink::DefinitionReplacement(definition),
-                        }
+                        })
+                    }
+                })() {
+                    Ok(sinks) => sinks,
+                    Err(error) => {
+                        self.command
+                            .attempt
+                            .arena_mut()
+                            .truncate(attempt_opening)
+                            .map_err(attempt_command_error)?;
+                        return Err(error);
                     }
                 };
-                let scope = self
-                    .command
-                    .begin_attempt_scanner_scope()
-                    .map_err(attempt_command_error)?;
+                let scope = match self.command.begin_attempt_scanner_scope() {
+                    Ok(scope) => scope,
+                    Err(error) => {
+                        self.command
+                            .attempt
+                            .arena_mut()
+                            .truncate(attempt_opening)
+                            .map_err(attempt_command_error)?;
+                        return Err(attempt_command_error(error));
+                    }
+                };
                 let builder = TokenBuilderId(self.command.transient.next_builder_identity);
                 self.command.transient.next_builder_identity =
                     self.command.transient.next_builder_identity.wrapping_add(1);
                 let warning = ScannerWarning(builder.0);
                 (
+                    attempt_opening,
                     scope,
                     sinks,
                     self.command.semantic_diagnostics.len(),
@@ -807,21 +826,54 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = match result {
             Ok(result) => result,
             Err(failure) if failure.error.is_resource_suspension() => {
-                let mut continuation = failure.continuation;
-                continuation.retain_child(&mut self.scanner_resume)?;
-                let key = self
-                    .command
-                    .scratch
-                    .store_scanner_frame(PendingScanToks {
-                        scope,
-                        sinks,
-                        diagnostic_start,
-                        config,
-                        episode,
-                        phase: continuation,
-                    })
-                    .map_err(scratch_command_error)?;
-                if self.scanner_resume.replace(key).is_some() {
+                let mut pending = PendingScanToks {
+                    attempt_opening,
+                    scope,
+                    sinks,
+                    diagnostic_start,
+                    config,
+                    episode,
+                    phase: failure.continuation,
+                };
+                if let Err(error) = pending.phase.retain_child(&mut self.scanner_resume) {
+                    self.settle_failed_scan_toks(pending)?;
+                    return Err(error);
+                }
+                if self.scanner_resume.is_some() {
+                    self.settle_failed_scan_toks(pending)?;
+                    return Err(CommandError::input_invariant());
+                }
+                let mut pending = Some(pending);
+                let key = match self.command.scratch.store_scanner_frame(&mut pending) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        self.settle_failed_scan_toks(
+                            pending
+                                .take()
+                                .expect("failed scratch insertion retains the scanner owner"),
+                        )?;
+                        return Err(scratch_command_error(error));
+                    }
+                };
+                debug_assert!(pending.is_none());
+                #[cfg(test)]
+                if self.command.scratch.take_scan_toks_publication_collision() {
+                    debug_assert!(self.scanner_resume.is_none());
+                    self.scanner_resume = Some(
+                        crate::execution_scratch::ScannerFrameKey::injected_scan_toks_publication_collision(),
+                    );
+                }
+                if let Some(displaced) = self.scanner_resume.replace(key) {
+                    let parked = self
+                        .scanner_resume
+                        .replace(displaced)
+                        .expect("publication collision installed the new scanner key");
+                    let pending = self
+                        .command
+                        .scratch
+                        .take_scanner_frame(parked)
+                        .map_err(scratch_command_error)?;
+                    self.settle_failed_scan_toks(pending)?;
                     return Err(CommandError::input_invariant());
                 }
                 return Err(failure.error);
@@ -843,6 +895,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command
                     .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
+                self.command
+                    .attempt
+                    .arena_mut()
+                    .truncate(attempt_opening)
+                    .map_err(attempt_command_error)?;
                 return Err(failure.error);
             }
         };
@@ -851,6 +908,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.finish_scanner_episode(episode);
             self.command
                 .discard_attempt_scope_suffix(scope)
+                .map_err(attempt_command_error)?;
+            self.command
+                .attempt
+                .arena_mut()
+                .truncate(attempt_opening)
                 .map_err(attempt_command_error)?;
             return Err(CommandError::input_invariant());
         }
@@ -898,6 +960,29 @@ impl<G> CommandProcessor<'_, '_, G> {
             .defer_attempt_scope_retirement(scope)
             .map_err(attempt_command_error)?;
         Ok(result)
+    }
+
+    /// Rejects one unpublished scanner continuation deepest-first.
+    ///
+    /// The scanner scope opens after its parent-owned result sinks so normal
+    /// completion can return them without a copy. Failure therefore closes
+    /// the scope first and separately truncates the exact pre-sink suffix.
+    fn settle_failed_scan_toks(
+        &mut self,
+        mut pending: PendingScanToks<G>,
+    ) -> Result<(), CommandError> {
+        if let Some(child) = pending.take_child() {
+            self.abort_continuation(child)?;
+        }
+        self.finish_scanner_episode(pending.episode);
+        self.command
+            .discard_attempt_scope_suffix(pending.scope)
+            .map_err(attempt_command_error)?;
+        self.command
+            .attempt
+            .arena_mut()
+            .truncate(pending.attempt_opening)
+            .map_err(attempt_command_error)
     }
 
     /// Completes TeX82 §306's partial-list display only when this exact

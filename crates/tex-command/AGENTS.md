@@ -310,7 +310,12 @@ collector (see `src/conditionals.rs`).
   buffers. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their
   scratch with scanner output. A suspended scan carries branded frame indices
-  under the same exclusive current-generation lease. Its semantic
+  under the same exclusive current-generation lease. Scratch-frame insertion
+  preflights allocation, capacity, and serial advance before moving that scan;
+  failed insertion or a conflicting processor-baton publication restores the
+  prior baton, aborts the nested child deepest-first, finishes scanner status,
+  and reclaims both the scanner suffix and its parent-owned sink rows while
+  retaining reusable lane and builder capacity. Its semantic
   `ScanToksMode` constructors are parsed once
   into a typed internal grammar, opener, expansion, warning owner,
   observation purpose, and status-visibility configuration. It also owns
