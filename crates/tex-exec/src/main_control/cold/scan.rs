@@ -616,11 +616,7 @@ pub(in crate::main_control) fn scan<G>(
             let request = processor
                 .scan_font_definition(global)
                 .map_err(command_error)?;
-            Ok(ColdOperation::FontDefinition {
-                request,
-                resource: Box::new(None),
-                global,
-            })
+            Ok(ColdOperation::FontDefinition { request, global })
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfCopyFont

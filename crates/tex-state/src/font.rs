@@ -206,7 +206,7 @@ const FONT_PAYLOAD_CHUNK_CAPACITY: usize = 32;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FontPayloadId {
     chunk: u32,
-    offset: u8,
+    offset: u32,
 }
 
 /// Coarse physical-generation owner for immutable validated font contexts.
@@ -222,6 +222,26 @@ struct FontPayloadArena {
 }
 
 impl FontPayloadArena {
+    /// Adopts a decoded immutable prefix as one sealed coarse allocation.
+    /// Format restoration already builds the destination `Vec<LoadedFont>`;
+    /// retaining it whole avoids moving every wide record into append chunks.
+    fn from_frozen(fonts: Vec<LoadedFont>) -> (Self, Vec<FontPayloadId>) {
+        let len = fonts.len();
+        let ids = (0..len)
+            .map(|offset| FontPayloadId {
+                chunk: 0,
+                offset: u32::try_from(offset).expect("frozen font offset fits u32"),
+            })
+            .collect();
+        (
+            Self {
+                chunks: vec![Arc::new(fonts)],
+                len,
+            },
+            ids,
+        )
+    }
+
     fn push(&mut self, font: LoadedFont) -> FontPayloadId {
         let append_to_last = self.chunks.last().is_some_and(|chunk| {
             chunk.len() < FONT_PAYLOAD_CHUNK_CAPACITY && Arc::strong_count(chunk) == 1
@@ -238,7 +258,7 @@ impl FontPayloadArena {
         self.len += 1;
         FontPayloadId {
             chunk: u32::try_from(chunk_index).expect("font payload chunk index fits u32"),
-            offset: u8::try_from(offset).expect("font payload chunk offset fits u8"),
+            offset: u32::try_from(offset).expect("font payload chunk offset fits u32"),
         }
     }
 
@@ -611,6 +631,8 @@ impl FontStore {
 
         let row_count = rows.len();
         let mut restored = Vec::with_capacity(row_count);
+        let mut identifiers = Vec::with_capacity(row_count);
+        let mut expansions = Vec::with_capacity(row_count);
         let mut runtimes = Vec::with_capacity(row_count);
         for row in rows {
             let FormatFont {
@@ -683,38 +705,49 @@ impl FontStore {
                         .ok_or("format font identifier is not live")
                 })
                 .transpose()?;
-            restored.push((font, identifier, expansion));
+            restored.push(font);
+            identifiers.push(identifier);
+            expansions.push(expansion);
             runtimes.push(runtime);
         }
-        Ok((Self::from_frozen(restored, interner)?, runtimes))
+        Ok((
+            Self::from_frozen(restored, identifiers, expansions, interner)?,
+            runtimes,
+        ))
     }
 
     pub(crate) fn from_frozen(
-        rows: Vec<(LoadedFont, Option<SymbolId>, Option<FontExpansion>)>,
+        fonts: Vec<LoadedFont>,
+        identifiers: Vec<Option<SymbolId>>,
+        expansion_specs: Vec<Option<FontExpansion>>,
         interner: &crate::interner::Interner,
     ) -> Result<Self, &'static str> {
-        let count = u32::try_from(rows.len()).map_err(|_| "frozen font count exceeds u32")?;
-        if rows.is_empty() || rows.len() > MAX_FONT_COUNT {
+        let count = u32::try_from(fonts.len()).map_err(|_| "frozen font count exceeds u32")?;
+        if fonts.is_empty() || fonts.len() > MAX_FONT_COUNT {
             return Err("frozen font count is outside bank capacity");
         }
+        if identifiers.len() != fonts.len() || expansion_specs.len() != fonts.len() {
+            return Err("frozen font sidecars do not match the payload count");
+        }
         let identities = IdentityAllocator::from_frozen_len(1, count);
-        let mut payloads = FontPayloadArena::default();
-        let mut font_payloads = Vec::with_capacity(rows.len());
-        let mut identifiers = Vec::with_capacity(rows.len());
-        let mut expansion_specs = Vec::with_capacity(rows.len());
         let mut by_key = BTreeMap::new();
         let mut hash_fragments = Vec::new();
         let mut hash_fragments_by_key = BTreeMap::new();
-        let mut font_hash_fragments = Vec::with_capacity(rows.len());
-        let mut complete_hash_fragments = Vec::with_capacity(rows.len());
+        let mut font_hash_fragments = Vec::with_capacity(fonts.len());
+        let mut complete_hash_fragments = Vec::with_capacity(fonts.len());
         let mut non_parameter_font_info_words = 0_usize;
-        for (raw, (font, identifier, expansion)) in rows.into_iter().enumerate() {
+        for (raw, ((font, identifier), expansion)) in fonts
+            .iter()
+            .zip(&identifiers)
+            .zip(&expansion_specs)
+            .enumerate()
+        {
             if expansion.is_some()
                 && matches!(font.construction(), FontConstruction::Expanded { .. })
             {
                 return Err("frozen expanded font has an expansion specification");
             }
-            let fragment_key = FontHashFragmentKey::from(&font);
+            let fragment_key = FontHashFragmentKey::from(font);
             let fragment = match hash_fragments_by_key.get(&fragment_key).copied() {
                 Some(fragment) => fragment,
                 None => {
@@ -724,7 +757,7 @@ impl FontStore {
                     fragment
                 }
             };
-            let identifier_text = match identifier {
+            let identifier_text = match *identifier {
                 Some(symbol) if interner.contains_id(symbol) => Some((
                     interner
                         .kind_id(symbol)
@@ -759,11 +792,9 @@ impl FontStore {
                     return Err("duplicate frozen loaded-font key");
                 }
             }
-            font_payloads.push(payloads.push(font));
-            identifiers.push(identifier);
-            expansion_specs.push(expansion);
             font_hash_fragments.push(hash_fragments[fragment]);
         }
+        let (payloads, font_payloads) = FontPayloadArena::from_frozen(fonts);
         Ok(Self {
             accepted: None,
             payloads,
@@ -798,12 +829,19 @@ impl FontStore {
                 .is_none()
     }
 
-    pub(crate) fn intern(&mut self, font: LoadedFont) -> Result<FontId, FontStoreCapacityError> {
-        let deduplicate = matches!(font.construction(), FontConstruction::Loaded);
+    /// Publishes one staged immutable font by draining its caller-owned slot.
+    /// All admission and hashing inspect a borrowed view; only the final
+    /// payload append moves the wide `LoadedFont` record.
+    pub(crate) fn intern_staged(
+        &mut self,
+        font: &mut Option<LoadedFont>,
+    ) -> Result<FontId, FontStoreCapacityError> {
+        let view = font.as_ref().expect("font publication slot is occupied");
+        let deduplicate = matches!(view.construction(), FontConstruction::Loaded);
         let key = FontKey {
-            name: font.name().to_owned(),
-            size: font.size(),
-            content_hash: font.content_hash(),
+            name: view.name().to_owned(),
+            size: view.size(),
+            content_hash: view.content_hash(),
         };
         if deduplicate && let Some(id) = self.lookup_key(&key) {
             return Ok(id);
@@ -811,12 +849,12 @@ impl FontStore {
         if self.len() >= MAX_FONT_COUNT {
             return Err(FontStoreCapacityError);
         }
-        let hash_fragment_key = FontHashFragmentKey::from(&font);
+        let hash_fragment_key = FontHashFragmentKey::from(view);
         let hash_fragment = match self.cached_fragment(&hash_fragment_key) {
             Some(fragment) => fragment,
             None => {
                 let fragment = self.hash_fragments.len();
-                let value = font_hash_fragment(&font);
+                let value = font_hash_fragment(view);
                 Arc::make_mut(&mut self.hash_fragments).push(value);
                 Arc::make_mut(&mut self.hash_fragments_by_key).insert(hash_fragment_key, fragment);
                 value
@@ -828,10 +866,13 @@ impl FontStore {
                 .expect("font store exceeds u32 ids"),
         );
         self.non_parameter_font_info_words = self.non_parameter_font_info_words.saturating_add(
-            font.font_info_words()
-                .saturating_sub(font.parameters().len()),
+            view.font_info_words()
+                .saturating_sub(view.parameters().len()),
         );
-        let payload = self.payloads.push(font);
+        let payload = self.payloads.push(
+            font.take()
+                .expect("admitted font publication slot is occupied"),
+        );
         Arc::make_mut(&mut self.font_payloads).push(payload);
         Arc::make_mut(&mut self.identifiers).push(None);
         Arc::make_mut(&mut self.expansion_specs).push(None);
@@ -852,6 +893,12 @@ impl FontStore {
             Arc::make_mut(&mut self.by_key).insert(key, id);
         }
         Ok(id)
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn intern(&mut self, font: LoadedFont) -> Result<FontId, FontStoreCapacityError> {
+        let mut font = Some(font);
+        self.intern_staged(&mut font)
     }
 
     pub(crate) fn set_identifier(
@@ -1688,6 +1735,8 @@ mod tests {
 
     #[test]
     fn frozen_loaded_fonts_keep_slot_order_and_deduplicate_in_place() {
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(std::mem::size_of::<LoadedFont>(), 1_288);
         let mut source = FontStore::new();
         let first_font = test_font();
         let second_font = LoadedFont::new(
@@ -1702,15 +1751,29 @@ mod tests {
         );
         let first = source.intern(first_font.clone()).expect("first font");
         let second = source.intern(second_font.clone()).expect("second font");
-        let rows = vec![
-            (source.get(NULL_FONT).clone(), None, None),
-            (source.get(first).clone(), None, None),
-            (source.get(second).clone(), None, None),
+        let first_artifact_recipe = source.artifact_recipe(first);
+        let fonts = vec![
+            source.get(NULL_FONT).clone(),
+            source.get(first).clone(),
+            source.get(second).clone(),
         ];
+        let frozen_allocation = fonts.as_ptr();
         let interner = crate::interner::Interner::new(
             crate::interner::InternerBudget::new(16, 16, 256).expect("budget"),
         );
-        let mut loaded = FontStore::from_frozen(rows, &interner).expect("loaded font prefix");
+        let mut loaded = FontStore::from_frozen(fonts, vec![None; 3], vec![None; 3], &interner)
+            .expect("loaded font prefix");
+
+        assert_eq!(loaded.payloads.chunks.len(), 1);
+        assert_eq!(
+            std::ptr::from_ref(loaded.get(NULL_FONT)),
+            frozen_allocation,
+            "format restore adopts the decoded font allocation without moving its records"
+        );
+        assert_eq!(
+            loaded.artifact_recipe(loaded.id_at(1).expect("first restored font is live")),
+            first_artifact_recipe
+        );
 
         assert_eq!(loaded.intern(first_font).expect("reused first").raw(), 1);
         assert_eq!(loaded.intern(second_font).expect("reused second").raw(), 2);

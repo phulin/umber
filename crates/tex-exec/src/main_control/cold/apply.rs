@@ -1276,11 +1276,7 @@ pub(in crate::main_control) fn apply<G>(
             });
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::FontDefinition {
-            request,
-            resource,
-            global,
-        } => {
+        ColdOperation::FontDefinition { request, global } => {
             // TeX82 §1257 records `font_id_text(f):=t` at `common_ending`,
             // including the `f=null_font` recovery path. Active targets use
             // the synthesized string `FONT<char>` rather than their bare
@@ -1320,8 +1316,11 @@ pub(in crate::main_control) fn apply<G>(
                         },
                     )
                 };
-            let resource =
-                (*resource).expect("font resource is resolved after the processor borrow");
+            let path = crate::canonical_font_resource_path(&request.name);
+            let resource = command
+                .capabilities
+                .font(&path)
+                .expect("font resource is resolved after the processor borrow");
             if matches!(resource, FontResource::Unavailable) {
                 // TeX.web §§1257/561 diagnose the failed TFM open before
                 // continuing with the selector bound to `null_font`. The
@@ -1373,7 +1372,8 @@ pub(in crate::main_control) fn apply<G>(
                 }
                 Err(error) => return Err(error),
             };
-            let id = match stores.try_intern_font_with_identifier(loaded, identifier) {
+            let mut loaded = Some(loaded);
+            let id = match stores.try_intern_font_with_identifier(&mut loaded, identifier) {
                 Ok(id) => id,
                 Err(_) => {
                     let selector = stores.resolve(request.target).to_owned();

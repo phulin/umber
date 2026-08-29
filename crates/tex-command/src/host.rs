@@ -96,6 +96,64 @@ pub enum FontResource {
     OpenType(tex_fonts::OpenTypeFont),
 }
 
+/// Compact coordinate into the capability owner's immutable font-resource
+/// payloads. Paths remain lookup keys only; moving the ordered index must not
+/// shift the much larger resource values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HostFontResourceId(u32);
+
+const HOST_FONT_RESOURCE_CHUNK_CAPACITY: usize = 32;
+
+/// One authoritative append owner for host-selected immutable font inputs.
+/// Fixed-capacity chunks prevent later registration from relocating earlier
+/// wide resources; ordered lookup retains only their compact coordinates.
+#[derive(Debug, Default)]
+struct HostFontResources {
+    chunks: Vec<Vec<FontResource>>,
+    len: u32,
+}
+
+impl HostFontResources {
+    fn push(&mut self, resource: FontResource) -> HostFontResourceId {
+        if self
+            .chunks
+            .last()
+            .is_none_or(|chunk| chunk.len() == HOST_FONT_RESOURCE_CHUNK_CAPACITY)
+        {
+            self.chunks
+                .push(Vec::with_capacity(HOST_FONT_RESOURCE_CHUNK_CAPACITY));
+        }
+        let id = HostFontResourceId(self.len);
+        self.chunks
+            .last_mut()
+            .expect("font resource owner has an append chunk")
+            .push(resource);
+        self.len = self
+            .len
+            .checked_add(1)
+            .expect("font capability count exceeds u32");
+        id
+    }
+
+    fn get(&self, id: HostFontResourceId) -> Option<&FontResource> {
+        let raw = id.0 as usize;
+        self.chunks
+            .get(raw / HOST_FONT_RESOURCE_CHUNK_CAPACITY)?
+            .get(raw % HOST_FONT_RESOURCE_CHUNK_CAPACITY)
+    }
+
+    fn replace(&mut self, id: HostFontResourceId, resource: FontResource) {
+        let raw = id.0 as usize;
+        self.chunks[raw / HOST_FONT_RESOURCE_CHUNK_CAPACITY]
+            [raw % HOST_FONT_RESOURCE_CHUNK_CAPACITY] = resource;
+    }
+
+    #[cfg(test)]
+    const fn len(&self) -> u32 {
+        self.len
+    }
+}
+
 /// Host-completed result for a canonical pdfTeX image request.
 ///
 /// Parsed metadata and retained immutable bytes are safe to hand to the
@@ -181,7 +239,8 @@ pub struct CommandHostCapabilities {
     unavailable_input_requests: BTreeSet<String>,
     input_probes: BTreeMap<String, FileEnquiryResource>,
     unavailable_input_probes: BTreeSet<String>,
-    fonts: BTreeMap<PathBuf, FontResource>,
+    font_paths: BTreeMap<PathBuf, HostFontResourceId>,
+    font_resources: HostFontResources,
     images: Vec<(PdfImageRequest, PdfImageResource)>,
     job_name: String,
     conditional_state: ConditionalState,
@@ -200,7 +259,8 @@ impl Default for CommandHostCapabilities {
             unavailable_input_requests: BTreeSet::new(),
             input_probes: BTreeMap::new(),
             unavailable_input_probes: BTreeSet::new(),
-            fonts: BTreeMap::new(),
+            font_paths: BTreeMap::new(),
+            font_resources: HostFontResources::default(),
             images: Vec::new(),
             job_name: String::new(),
             // A processor outside main control observes TeX's initial outer
@@ -276,7 +336,13 @@ impl CommandHostCapabilities {
 
     /// Registers a host-acquired immutable font resource for one request path.
     pub fn register_font(&mut self, path: impl Into<PathBuf>, resource: FontResource) {
-        self.fonts.insert(path.into(), resource);
+        let path = path.into();
+        if let Some(id) = self.font_paths.get(&path).copied() {
+            self.font_resources.replace(id, resource);
+            return;
+        }
+        let id = self.font_resources.push(resource);
+        self.font_paths.insert(path, id);
     }
 
     /// Registers a validated immutable image response for its exact request.
@@ -303,8 +369,9 @@ impl CommandHostCapabilities {
     /// Borrows a registered font resource for one replay operation. The
     /// capability owner itself is transient and excluded from snapshots.
     #[must_use]
-    pub fn font(&self, path: &Path) -> Option<FontResource> {
-        self.fonts.get(path).cloned()
+    pub fn font(&self, path: &Path) -> Option<&FontResource> {
+        let id = self.font_paths.get(path)?;
+        self.font_resources.get(*id)
     }
 
     /// Borrows immutable bytes selected by the host for an input-stream
@@ -484,7 +551,7 @@ impl<'a> CommandHostContext<'a> {
     /// Resolves a previously registered font only while the host capability
     /// is borrowed by a bounded replay operation.
     #[must_use]
-    pub fn font(&self, path: &Path) -> Option<FontResource> {
+    pub fn font(&self, path: &Path) -> Option<&FontResource> {
         self._capabilities.font(path)
     }
 
@@ -529,7 +596,50 @@ impl<'a> CommandHostContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::CommandHostCapabilities;
+    use super::{CommandHostCapabilities, FontResource, HostFontResourceId};
+    use std::path::PathBuf;
+
+    #[test]
+    fn font_capability_index_is_compact_and_stable_across_ordered_insertions() {
+        assert_eq!(std::mem::size_of::<HostFontResourceId>(), 4);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(std::mem::size_of::<FontResource>(), 512);
+        assert!(
+            std::mem::size_of::<(PathBuf, HostFontResourceId)>()
+                < std::mem::size_of::<(PathBuf, FontResource)>(),
+            "the ordered path index must not carry the wide resource payload"
+        );
+
+        let mut capabilities = CommandHostCapabilities::default();
+        let retained = PathBuf::from("retained.tfm");
+        capabilities.register_font(&retained, FontResource::Unavailable);
+        let retained_id = capabilities.font_paths[&retained];
+        let retained_address = std::ptr::from_ref(
+            capabilities
+                .font(&retained)
+                .expect("registered resource is available"),
+        );
+        for index in 0..64 {
+            capabilities.register_font(format!("before-{index:02}.tfm"), FontResource::Unavailable);
+        }
+
+        assert_eq!(capabilities.font_paths[&retained], retained_id);
+        assert_eq!(
+            std::ptr::from_ref(
+                capabilities
+                    .font(&retained)
+                    .expect("retained resource is available"),
+            ),
+            retained_address,
+            "later registration must not relocate an immutable resource"
+        );
+        assert!(matches!(
+            capabilities.font(&retained),
+            Some(FontResource::Unavailable)
+        ));
+        capabilities.register_font(&retained, FontResource::Unavailable);
+        assert_eq!(capabilities.font_resources.len(), 65);
+    }
 
     #[test]
     fn startup_job_name_is_the_filename_stem_without_its_area() {

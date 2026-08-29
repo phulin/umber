@@ -1137,12 +1137,12 @@ pub(in crate::main_control) fn assign_math_family_font<G>(
 
 pub(in crate::main_control) fn load_font(
     request: &FontLoadRequest,
-    resource: FontResource,
+    resource: &FontResource,
 ) -> Result<tex_fonts::LoadedFont, ExecError> {
     let display_name = request.name.strip_suffix(".tfm").unwrap_or(&request.name);
-    let from_tfm = |metrics: tex_state::world::FileContent,
-                    opentype: Option<tex_fonts::OpenTypeFont>,
-                    mapped: Option<(tex_fonts::OpenTypeFont, tex_fonts::LegacyEncodingMap)>|
+    let from_tfm = |metrics: &tex_state::world::FileContent,
+                    opentype: Option<&tex_fonts::OpenTypeFont>,
+                    mapped: Option<(&tex_fonts::OpenTypeFont, &tex_fonts::LegacyEncodingMap)>|
      -> Result<tex_fonts::LoadedFont, ExecError> {
         let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), request.size)?;
         let mut font = tfm.into_loaded_font(
@@ -1151,15 +1151,15 @@ pub(in crate::main_control) fn load_font(
             tex_fonts::font_content_hash(metrics.bytes()),
         );
         if let Some((selection, encoding_map)) = mapped {
-            font = font.with_mapped_opentype(selection, encoding_map);
+            font = font.with_mapped_opentype(selection.clone(), encoding_map.clone());
         } else if let Some(selection) = opentype {
-            font = font.with_opentype(selection);
+            font = font.with_opentype(selection.clone());
         }
         Ok(font)
     };
     match resource {
         FontResource::Unavailable => unreachable!("unavailable resources recover before parsing"),
-        FontResource::Tfm { metrics, opentype } => from_tfm(metrics, opentype, None),
+        FontResource::Tfm { metrics, opentype } => from_tfm(metrics, opentype.as_ref(), None),
         FontResource::MappedTfm {
             metrics,
             opentype,
@@ -1183,7 +1183,7 @@ pub(in crate::main_control) fn load_font(
                     .unwrap_or(&request.name),
                 design_size,
                 size,
-                selection,
+                selection.clone(),
             ))
         }
     }

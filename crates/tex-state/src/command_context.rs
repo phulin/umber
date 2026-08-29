@@ -1699,11 +1699,13 @@ impl<'a, G> CommandContext<'a, G> {
     /// operation. Runtime resource loading should map capacity failure before
     /// entering the mutation episode.
     pub fn intern_font(&mut self, font: tex_fonts::LoadedFont) -> crate::ids::FontId {
-        let allocates = self.fonts.would_allocate(&font);
+        let mut font = Some(font);
+        let view = font.as_ref().expect("font publication slot is occupied");
+        let allocates = self.fonts.would_allocate(view);
         assert!(
             !allocates
                 || (self.has_font_slot_capacity()
-                    && font.font_info_words()
+                    && view.font_info_words()
                         <= self
                             .engine_usage
                             .capacities()
@@ -1716,12 +1718,12 @@ impl<'a, G> CommandContext<'a, G> {
         let prepared = allocates.then(|| {
             self.admitted
                 .state()
-                .prepare_font_runtime(font.parameters(), default_hyphen_char, default_skew_char)
+                .prepare_font_runtime(view.parameters(), default_hyphen_char, default_skew_char)
                 .expect("validated font runtime state exceeds memory")
         });
         let id = self
             .fonts
-            .intern(font)
+            .intern_staged(&mut font)
             .expect("validated font exceeds the live font store capacity");
         if let Some(prepared) = prepared {
             self.admitted
@@ -1762,13 +1764,14 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn try_intern_font_with_identifier(
         &mut self,
-        font: tex_fonts::LoadedFont,
+        font: &mut Option<tex_fonts::LoadedFont>,
         identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
-        let allocates = self.fonts.would_allocate(&font);
+        let view = font.as_ref().expect("font publication slot is occupied");
+        let allocates = self.fonts.would_allocate(view);
         if allocates
             && (!self.has_font_slot_capacity()
-                || font.font_info_words()
+                || view.font_info_words()
                     > self
                         .engine_usage
                         .capacities()
@@ -1782,14 +1785,14 @@ impl<'a, G> CommandContext<'a, G> {
         let prepared = allocates
             .then(|| {
                 self.admitted.state().prepare_font_runtime(
-                    font.parameters(),
+                    view.parameters(),
                     default_hyphen_char,
                     default_skew_char,
                 )
             })
             .transpose()
             .map_err(|_| crate::font::FontStoreCapacityError)?;
-        let id = self.fonts.intern(font)?;
+        let id = self.fonts.intern_staged(font)?;
         if let Some(prepared) = prepared {
             self.admitted
                 .state()
@@ -1863,10 +1866,14 @@ impl<'a, G> CommandContext<'a, G> {
         preserve_pdf_settings: bool,
         disable_ligatures: bool,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
-        let allocates = self.fonts.would_allocate(&font);
+        let mut font = Some(font);
+        let view = font
+            .as_ref()
+            .expect("derived font publication slot is occupied");
+        let allocates = self.fonts.would_allocate(view);
         if allocates
             && (!self.has_font_slot_capacity()
-                || font.font_info_words()
+                || view.font_info_words()
                     > self
                         .engine_usage
                         .capacities()
@@ -1882,7 +1889,7 @@ impl<'a, G> CommandContext<'a, G> {
                 self.admitted.state().prepare_derived_font_runtime(
                     crate::env::DerivedFontRuntimeRequest {
                         source,
-                        parameters: font.parameters(),
+                        parameters: view.parameters(),
                         preserve_character_settings,
                         preserve_pdf_settings,
                         disable_ligatures,
@@ -1893,7 +1900,7 @@ impl<'a, G> CommandContext<'a, G> {
             })
             .transpose()
             .map_err(|_| crate::font::FontStoreCapacityError)?;
-        let id = self.fonts.intern(font)?;
+        let id = self.fonts.intern_staged(&mut font)?;
         if let Some(prepared) = prepared {
             self.admitted
                 .state()

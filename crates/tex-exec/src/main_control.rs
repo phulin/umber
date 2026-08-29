@@ -3016,20 +3016,16 @@ impl<G> MainControl<G> {
         scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), ExecError> {
-        let ColdOperation::<G>::FontDefinition {
-            request, resource, ..
-        } = scanned
-        else {
+        let ColdOperation::<G>::FontDefinition { request, .. } = scanned else {
             return Ok(());
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
-        let Some(resolved_resource) = self.capabilities.font(&path) else {
+        if self.capabilities.font(&path).is_none() {
             return Err(ExecError::MissingFont {
                 request: request.clone(),
             });
-        };
-        **resource = Some(resolved_resource);
+        }
         Ok(())
     }
 

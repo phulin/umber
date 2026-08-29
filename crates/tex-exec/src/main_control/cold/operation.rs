@@ -837,7 +837,6 @@ pub(in crate::main_control) enum ColdOperation<
     },
     FontDefinition {
         request: FontLoadRequest,
-        resource: Box<Option<FontResource>>,
         global: bool,
     },
     GeneratedFontDefinition {
@@ -1870,15 +1869,9 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
             selector,
             global,
         },
-        ColdOperation::FontDefinition {
-            request,
-            resource,
-            global,
-        } => ColdOperation::FontDefinition {
-            request,
-            resource,
-            global,
-        },
+        ColdOperation::FontDefinition { request, global } => {
+            ColdOperation::FontDefinition { request, global }
+        }
         ColdOperation::GeneratedFontDefinition { definition, global } => {
             ColdOperation::GeneratedFontDefinition { definition, global }
         }
