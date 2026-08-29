@@ -455,7 +455,11 @@ fields and immediately reuses the empty slot; resource suspension moves that
 exact frame into the attempt instead of boxing a prepared operation or
 retaining completed operations in a generation-long lane. `MainControl` owns one singular
 direct-retry slot: the same operation capability moves together with exactly
-one preflight or alignment destination. A settled command discovered by
+one in-place operation frame or alignment destination. The operation frame
+owns its admitted `CurrentCommand`, parked expansion, scalar phase, delivery
+cursor, scanner child, and partial direct-scan phase directly; no nested
+preflight projection is constructed or extracted at preparation, suspension,
+or resumption. A settled command discovered by
 alignment dispatch installs its command/cursor destination before operand
 scanning, so a resource failure cannot resume alignment past that command and
 strand its scanner child. Resume consumes the owner; cancellation drops it.

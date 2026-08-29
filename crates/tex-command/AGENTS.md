@@ -99,8 +99,9 @@ collector (see `src/conditionals.rs`).
   scanning, and moves it only into an actual retry or another semantic owner;
   it never enters a durable snapshot or format boundary.
 - `src/processor/expand.rs`: canonical expanded delivery, including the
-  same-borrow preflight settlement that reports and discards undefined
-  commands before returning the following command to the executor. The
+  same-borrow preflight settlement that advances the caller's already-occupied
+  destination in place and reports and discards undefined commands before
+  returning the following command to the executor. The
   ordinary driver owns one live
   current command and lends it through macro and ranked primitive expansion;
   it moves that value into continuation state only after a typed immutable-host

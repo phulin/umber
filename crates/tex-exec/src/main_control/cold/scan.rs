@@ -19,7 +19,7 @@ fn material_origin<G>(
 #[allow(clippy::too_many_arguments)] // mirrors the typed main-control context
 pub(in crate::main_control) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut PreflightCommand<G>,
+    command: &mut OperationFrame<G>,
     global: bool,
     mode: Mode,
     boxes: &ReplayBoxes<G>,

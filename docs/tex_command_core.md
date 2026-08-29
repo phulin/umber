@@ -3934,12 +3934,21 @@ occurred while alignment still owned delivery. Retry therefore resumes the
 exact caller rather than fetching past a settled command or reconstructing an
 owner coordinate from command state.
 
-The call-local destination is empty on entry, is cleared only while a
-canonical filler loop continues, and never crosses a resource barrier.
-Preflight settlement consumes the command already in that slot and writes its
-settled replacement back into the same slot; it does not back up or redeliver
-the command. Replay completion and alignment events remain compact status
-variants and leave no command-bearing return envelope.
+The call-local destination is empty on initial delivery, is cleared only while
+a canonical filler loop continues, and never crosses a resource barrier.
+Preflight settlement accepts that already-occupied destination and advances it
+in place; the executor does not take the command merely for the command core to
+write it back. It does not back up or redeliver the command. Replay completion
+and alignment events remain compact status variants and leave no
+command-bearing return envelope.
+
+The executor's caller-loop `OperationFrame` owns those command, parked
+expansion, delivery-cursor, scanner-child, operation-scan, and scalar-phase
+fields directly beside its prepared/application payloads. There is no nested
+preflight-command projection. Preparation borrows and advances that frame;
+commit clears its occupied fields, while a real suspension moves the same
+frame intact into the typed retry owner and resumption restores it without
+reconstructing an equivalent command carrier.
 
 Each bounded `MainControl` episode settles commands through the sole live
 command, mode, Universe, output, and World owners. A command-core

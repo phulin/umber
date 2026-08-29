@@ -215,6 +215,72 @@ fn one_and_4096_ordinary_expansions_reuse_one_slot_with_exact_linear_work() {
 }
 
 #[test]
+fn preflight_settlement_advances_the_occupied_command_slot_in_place() {
+    crate::test_harness::with_universe(|universe| {
+        let replacement = Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        };
+        let definition = universe
+            .allocate_definition(&[], &[TokenWord::pack(replacement)])
+            .expect("definition");
+        let symbol = universe.intern("m").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_with_replay_completion_into(&mut destination)
+                .expect("raw macro delivery"),
+            crate::DeliveryStatus::Command
+        );
+        let address = destination
+            .as_ref()
+            .map(std::ptr::from_ref)
+            .expect("raw delivery occupies the destination");
+        let ownership_before = crate::command::command_ownership_counters();
+        assert_eq!(
+            processor
+                .settle_preflight_command_into(false, &mut destination)
+                .expect("in-place settlement"),
+            crate::DeliveryStatus::Command
+        );
+        let settled = destination
+            .as_ref()
+            .expect("settlement preserves the occupied destination");
+        assert_eq!(std::ptr::from_ref(settled), address);
+        assert_eq!(settled.spelling().semantic_token(), replacement);
+        assert_eq!(
+            settled.meaning(),
+            Meaning::CharToken {
+                ch: 'A',
+                cat: Catcode::Letter
+            }
+        );
+        let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(ownership_after.clones - ownership_before.clones, 0);
+    });
+}
+
+#[test]
 fn noexpand_suppresses_exactly_one_expandable_delivery() {
     crate::test_harness::with_universe(|universe| {
         let noexpand = install_static(

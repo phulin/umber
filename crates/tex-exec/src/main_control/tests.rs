@@ -6286,14 +6286,12 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
         assert!(matches!(
             control.pending_direct_operation.as_ref(),
             Some(PendingDirectOperation::Retained {
-                destination: PendingDirectDestination::Preflight(
-                    PreflightCommand {
-                        command: Some(command),
-                        phase: PreflightCommandPhase::Settled,
-                        scanner: Some(_),
-                        ..
-                    }
-                ),
+                destination: PendingDirectDestination::Frame(OperationFrame {
+                    command: Some(command),
+                    phase: Some(PreflightCommandPhase::Settled),
+                    scanner: Some(_),
+                    ..
+                }),
                 ..
             }) if matches!(
                 command.meaning(),
@@ -6303,6 +6301,54 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
             )
         ));
     });
+}
+
+#[cfg(feature = "profiling")]
+fn operation_frame_phase_evidence(
+    repetitions: usize,
+) -> (tex_state::measurement::HotCoreAllocationMeasurement, usize) {
+    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let mut scalar_transitions = 0;
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        let mut frame = OperationFrame::<()>::default();
+        for _ in 0..repetitions {
+            frame.admit_immediate_pdf(UnexpandablePrimitive::PdfObject);
+            assert!(matches!(
+                frame.phase,
+                Some(PreflightCommandPhase::ImmediatePdfRetry(
+                    UnexpandablePrimitive::PdfObject
+                ))
+            ));
+            scalar_transitions += 1;
+            frame.clear_preflight();
+            frame.assert_empty();
+            scalar_transitions += 1;
+        }
+    }
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    (
+        tex_state::measurement::HotCoreAllocationMeasurement {
+            calls: after.calls - before.calls,
+            requested_bytes: after.requested_bytes - before.requested_bytes,
+        },
+        scalar_transitions,
+    )
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_operation_frame_phase_cycles_are_allocation_free_and_scalar() {
+    let (one_allocations, one_transitions) = operation_frame_phase_evidence(1);
+    let (many_allocations, many_transitions) = operation_frame_phase_evidence(4_096);
+
+    assert_eq!(one_allocations.calls, 0);
+    assert_eq!(one_allocations.requested_bytes, 0);
+    assert_eq!(many_allocations.calls, 0);
+    assert_eq!(many_allocations.requested_bytes, 0);
+    assert_eq!(one_transitions, 2);
+    assert_eq!(many_transitions, 8_192);
 }
 
 #[test]

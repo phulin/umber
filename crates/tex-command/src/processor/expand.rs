@@ -754,8 +754,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: CurrentCommand<G>,
         main_loop: bool,
     ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
-        let mut destination = None;
-        let result = self.settle_preflight_command_into(command, main_loop, &mut destination)?;
+        let mut destination = Some(command);
+        let result = self.settle_preflight_command_into(main_loop, &mut destination)?;
         Ok(match result {
             DeliveryStatus::End => None,
             DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
@@ -771,12 +771,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Settles a preflight command into caller-provided final storage.
     pub fn settle_preflight_command_into(
         &mut self,
-        command: CurrentCommand<G>,
         main_loop: bool,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
-        *destination = Some(command);
+        debug_assert!(destination.is_some());
         let result = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {

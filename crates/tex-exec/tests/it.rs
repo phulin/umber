@@ -385,8 +385,15 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!control.contains("struct PreparedColdOperation"));
     assert!(!control.contains("struct PrepareOperationError"));
     assert!(!control.contains("Prepared(Box<ColdOperation"));
-    assert!(control.contains("struct PreflightCommand<G>"));
-    assert!(control.contains("command: Option<PreflightCommand<G>>"));
+    let operation_frame = control
+        .split("struct OperationFrame<G>")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> Default for OperationFrame<G>").next())
+        .expect("locate authoritative operation frame");
+    assert!(operation_frame.contains("command: Option<tex_command::CurrentCommand<G>>"));
+    assert!(operation_frame.contains("phase: Option<PreflightCommandPhase>"));
+    assert!(!control.contains("struct PreflightCommand<G>"));
+    assert!(!control.contains("command: Option<PreflightCommand<G>>"));
     for retired in [
         "PendingPreflightCommand",
         "struct PendingOperationScan",
@@ -395,6 +402,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         "fn for_delivery(",
         "fn with_cursor(",
         "fn with_scanner(",
+        "PreflightDeliveryError",
     ] {
         assert!(
             !control.contains(retired),
