@@ -708,7 +708,7 @@ fn pdf_checkpoint_capture_allocates_nothing_independent_of_payload_size() {
         state
             .allocate_external_image(
                 PdfExternalImageSource {
-                    identity: ContentHash::new([9; 8]),
+                    identity: ContentHash::new([9; 32]),
                     metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
                         format: PdfRasterFormat::Png,
                         width: 1,
