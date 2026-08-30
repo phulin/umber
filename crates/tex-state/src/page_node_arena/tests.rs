@@ -1,6 +1,7 @@
 use super::{
     PageListId, PageListSpan, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion,
 };
+use crate::fork_arena::ForkArenaError;
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_region::NodePool;
@@ -96,6 +97,46 @@ fn warmed_resident_slot_construction_is_allocation_free() {
     );
     assert_eq!(arena.list(list).expect("measured list view").len(), NODES);
     assert_eq!(arena.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn page_chunk_cursor_rejects_rollback_and_reused_pool_slots() {
+    page_arena!(arena, pool, state, 32);
+    let operation = arena.operation_mark();
+    let source = arena
+        .publish_owned(penalties(&(0..128).collect::<Vec<_>>()))
+        .expect("publish cursor source");
+    let span = arena.admit_span(source).expect("admit cursor source");
+    let tail = arena
+        .span_tail_chunk(span)
+        .expect("resolve direct tail")
+        .expect("source is nonempty");
+    arena
+        .restore_operation(operation)
+        .expect("rollback cursor source");
+    let replacement = arena
+        .publish_owned(penalties(&(128..256).collect::<Vec<_>>()))
+        .expect("reuse rolled-back pool slots");
+    let warmed_reuse_bytes = arena.allocated_heap_bytes();
+
+    assert_eq!(replacement.len(), source.len());
+    assert_eq!(
+        arena.span_chunk_node(span, &tail, 0).map(|_| ()),
+        Err(ForkArenaError::InvalidRange),
+        "a stale direct cursor cannot alias the replacement incarnation"
+    );
+    arena
+        .restore_operation(operation)
+        .expect("rollback first replacement");
+    let second_replacement = arena
+        .publish_owned(penalties(&(256..384).collect::<Vec<_>>()))
+        .expect("reuse the same warmed pool slots again");
+    assert_eq!(second_replacement.len(), source.len());
+    assert_eq!(
+        arena.allocated_heap_bytes(),
+        warmed_reuse_bytes,
+        "repeated rollback and incarnation-safe slot reuse reaches a fixed plateau"
+    );
 }
 
 #[test]

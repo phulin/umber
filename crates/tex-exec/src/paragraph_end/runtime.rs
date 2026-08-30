@@ -1246,37 +1246,105 @@ fn normalize_paragraph_infinite_shrink<G>(
         diagnostic_effects,
         &mut reported,
     )?;
-    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut output);
-    for index in 0..nodes.len() {
-        let replacement = match stores
-            .page_node_list(nodes)
-            .expect("paragraph belongs to the live page arena")
-            .nodes()
-            .owned_node(index)
-        {
-            Some(Node::Glue { spec, kind, leader })
-                if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
-            {
-                Some((*spec, *kind, *leader))
-            }
-            _ => None,
-        };
-        if let Some((mut spec, kind, leader)) = replacement {
-            normalize_paragraph_glue(
-                stores,
-                &mut spec,
-                tracing,
-                diagnostic_context,
-                diagnostic_effects,
-                &mut reported,
-            )?;
-            stores.push_page_active_list(&mut output, Node::Glue { spec, kind, leader });
-        } else {
-            stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
-        }
+    let source = stores
+        .admit_page_node_span(nodes)
+        .expect("paragraph belongs to the live page arena");
+    let mut output = None;
+    let mut retained_start = 0;
+    if let Some(tail) = stores
+        .page_node_span_tail_chunk(source)
+        .expect("paragraph source remains admitted")
+    {
+        normalize_paragraph_chunk_prefix(
+            stores,
+            source,
+            tail,
+            tracing,
+            diagnostic_context,
+            diagnostic_effects,
+            &mut reported,
+            &mut output,
+            &mut retained_start,
+        )?;
+    }
+    let Some(mut output) = output else {
+        return Ok(nodes);
+    };
+    if retained_start < source.len() {
+        stores.append_page_active_span_range(&mut output, source, retained_start..source.len());
     }
     Ok(stores.finalize_page_active_list(&mut output))
+}
+
+#[allow(clippy::too_many_arguments)] // The direct walk keeps diagnostic and output ownership explicit.
+fn normalize_paragraph_chunk_prefix<G>(
+    stores: &mut CommandContext<'_, G>,
+    source: tex_state::page_node_arena::PageListSpan,
+    chunk: tex_state::page_node_arena::PageListChunkCursor,
+    tracing: bool,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_effects: &mut DiagnosticEffects,
+    reported: &mut bool,
+    output: &mut Option<tex_state::page_node_arena::PageMaterialActiveListBuilder>,
+    retained_start: &mut usize,
+) -> Result<(), ExecError> {
+    if let Some(previous) = stores
+        .page_node_span_previous_chunk(source, &chunk)
+        .expect("paragraph source chunk remains live")
+    {
+        normalize_paragraph_chunk_prefix(
+            stores,
+            source,
+            previous,
+            tracing,
+            diagnostic_context,
+            diagnostic_effects,
+            reported,
+            output,
+            retained_start,
+        )?;
+    }
+    for offset in 0..chunk.len() {
+        let (index, replacement) = {
+            let (index, node) = stores
+                .page_node_span_chunk_node(source, &chunk, offset)
+                .expect("paragraph source chunk remains live");
+            let replacement = match node {
+                Node::Glue { spec, kind, leader }
+                    if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
+                {
+                    Some((*spec, *kind, *leader))
+                }
+                _ => None,
+            };
+            (index, replacement)
+        };
+        let Some((mut spec, kind, leader)) = replacement else {
+            continue;
+        };
+        if output.is_none() {
+            let mut builder = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+            stores.open_page_active_list(&mut builder);
+            *output = Some(builder);
+        }
+        let output = output
+            .as_mut()
+            .expect("offending glue opens the normalized paragraph builder");
+        if *retained_start < index {
+            stores.append_page_active_span_range(output, source, *retained_start..index);
+        }
+        normalize_paragraph_glue(
+            stores,
+            &mut spec,
+            tracing,
+            diagnostic_context,
+            diagnostic_effects,
+            reported,
+        )?;
+        stores.push_page_active_list(output, Node::Glue { spec, kind, leader });
+        *retained_start = index + 1;
+    }
+    Ok(())
 }
 
 fn normalize_paragraph_glue<G>(
