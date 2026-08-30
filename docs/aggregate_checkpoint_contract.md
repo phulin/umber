@@ -449,6 +449,16 @@ marks. There is no complete-row list owner, parallel `NodePiece` stream,
 linked-node lane, `Vec<Node>` mirror, recursive rope, overlay, per-node owner,
 dependency-counted page batch, compaction, or per-chunk heap.
 
+Retained page succession permits exactly two arena lineages over a sealed
+self-contained suffix. Per-chunk metadata has two lineage-position slots and a
+publication-time direct-child floor; each lineage has its own chunk list and
+private mutable tail. Sharing and dropping walk chunk keys only, never nodes.
+Dropping one lineage releases exclusive chunks and leaves shared chunks under
+the other slot; the last drop destroys payload and advances incarnations. A
+third lineage, an unsealed suffix, or a child dependency before the suffix is
+rejected before ownership changes. Page-to-durable closure publication remains
+an explicit semantic copy.
+
 An operation mark may include a partial tail and is never retainable. A
 checkpoint mark can be created only by consuming live builders and sealing
 payload and descriptor tails. Fork ownership is exactly `Accepted` or `Forked

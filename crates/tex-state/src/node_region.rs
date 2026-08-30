@@ -117,6 +117,13 @@ impl NodePool {
 
     pub(crate) fn start_region<Role>(&mut self) -> Result<NodeRegion<Role>, ForkArenaError> {
         let arena = ForkArena::new();
+        self.install_region(arena)
+    }
+
+    fn install_region<Role>(
+        &mut self,
+        arena: ForkArena<RegionNode, PageMaterialLane>,
+    ) -> Result<NodeRegion<Role>, ForkArenaError> {
         let arena_identity = arena.region_identity();
         let (slot, generation) = if let Some(slot) = self.free_regions.pop() {
             let entry = self
@@ -149,6 +156,24 @@ impl NodePool {
             next_closure_build: 1,
             _role: PhantomData,
         })
+    }
+
+    fn share_region<Role, const N: usize>(
+        &mut self,
+        source: &mut NodeRegion<Role>,
+        mark: ClosureBuildMark<Role>,
+        roots: [PageListId; N],
+    ) -> Result<NodeRegion<Role>, ForkArenaError> {
+        self.validate_region(source)?;
+        if mark.region != source.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let coordinates = roots.map(PageListId::coordinate);
+        let arena =
+            source
+                .pub_arena
+                .share_sealed_prefix(&mut self.chunks, mark.batch, &coordinates)?;
+        self.install_region(arena)
     }
 
     fn validate_region<Role>(&self, region: &NodeRegion<Role>) -> Result<(), ForkArenaError> {
@@ -285,6 +310,30 @@ impl<Role> NodeRegion<Role> {
             rollback,
             _role: PhantomData,
         })
+    }
+
+    pub(crate) fn can_share_sealed_prefix<const N: usize>(
+        &self,
+        pool: &NodePool,
+        mark: &ClosureBuildMark<Role>,
+        roots: [PageListId; N],
+    ) -> Result<(), ForkArenaError> {
+        pool.validate_region(self)?;
+        if mark.region != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let coordinates = roots.map(PageListId::coordinate);
+        self.pub_arena
+            .can_share_sealed_prefix(&pool.chunks, &mark.batch, &coordinates)
+    }
+
+    pub(crate) fn share_sealed_prefix<const N: usize>(
+        &mut self,
+        pool: &mut NodePool,
+        mark: ClosureBuildMark<Role>,
+        roots: [PageListId; N],
+    ) -> Result<NodeRegion<Role>, ForkArenaError> {
+        pool.share_region(self, mark, roots)
     }
 
     pub(crate) fn cancel_closure_build(

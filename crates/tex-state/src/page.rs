@@ -1021,6 +1021,9 @@ struct PreparedPageRegionSuccessor {
     /// A completely consumed predecessor whose construction suffix can keep
     /// its arena identity, sealed chunks, and mutable partial tail.
     unique_adoption: Option<(PageClosureBuildMark, PagePayloadRoots)>,
+    /// A retained predecessor whose sealed arena prefix becomes the immutable
+    /// prefix of one isolated current lineage.
+    shared_prefix: Option<(PageClosureBuildMark, PagePayloadRoots)>,
 }
 
 impl Default for PageRegionHistory {
@@ -1405,11 +1408,15 @@ impl PageRegionHistory {
 
     pub(crate) fn cancel_prepared_shipout(&mut self) {
         if let Some(prepared) = self.pending_successor.take() {
-            match (prepared.current, prepared.unique_adoption) {
-                (Some(current), None) => current
+            match (
+                prepared.current,
+                prepared.unique_adoption,
+                prepared.shared_prefix,
+            ) {
+                (Some(current), None, None) => current
                     .retire(&mut self.pool)
                     .expect("canceled successor is a quiescent unpublished region"),
-                (None, Some((build, _))) => self
+                (None, Some((build, _)), None) | (None, None, Some((build, _))) => self
                     .regions
                     .last_mut()
                     .expect("page history always has a current region")
@@ -1742,6 +1749,7 @@ impl PageRegion {
             current: Some(current),
             held_over: Some(held_over),
             unique_adoption: None,
+            shared_prefix: None,
         })
     }
 
@@ -1793,6 +1801,25 @@ impl PageRegion {
                     build.expect("unique-successor preflight requires one build"),
                     roots,
                 )),
+                shared_prefix: None,
+            });
+        }
+
+        let shareable_retained_prefix = !self.checkpoints.is_empty()
+            && build.as_ref().is_some_and(|build| {
+                self.nodes
+                    .can_share_sealed_prefix(pool, build, root_lists)
+                    .is_ok()
+            });
+        if shareable_retained_prefix {
+            return Ok(PreparedPageRegionSuccessor {
+                current: None,
+                held_over: None,
+                unique_adoption: None,
+                shared_prefix: Some((
+                    build.expect("retained-prefix preflight requires one build"),
+                    roots,
+                )),
             });
         }
 
@@ -1841,6 +1868,7 @@ impl PageRegion {
                             current: Some(current),
                             held_over: None,
                             unique_adoption: None,
+                            shared_prefix: None,
                         });
                     }
                     Err((_error, Some(build))) => fallback_build = Some(build),
@@ -1929,6 +1957,7 @@ impl PageRegion {
             current: Some(current),
             held_over: None,
             unique_adoption: None,
+            shared_prefix: None,
         })
     }
 
@@ -1968,10 +1997,45 @@ impl PageRegion {
                 held_over: PageListId::empty(),
             };
         }
+        if let Some((build, roots)) = prepared.shared_prefix {
+            debug_assert!(prepared.current.is_none());
+            debug_assert!(!self.checkpoints.is_empty());
+            let root_lists = [
+                roots.contribution.list(),
+                roots.current_page.list(),
+                roots.page_discards.list(),
+                roots.split_discards.list(),
+            ];
+            let nodes = PageMaterialRegion::share_sealed_prefix_from(
+                pool,
+                &mut self.nodes,
+                build,
+                root_lists,
+            )
+            .expect("prepared retained prefix remains shareable");
+            let builder = self.builder.successor_with_roots(roots);
+            let mut counters = self.counters;
+            counters.page_regions_started = counters.page_regions_started.saturating_add(1);
+            counters.page_regions_retained = counters.page_regions_retained.saturating_add(1);
+            self.counters.page_regions_retained =
+                self.counters.page_regions_retained.saturating_add(1);
+            return PageRegionSuccession {
+                current: PageRegion {
+                    nodes,
+                    builder,
+                    checkpoints: Vec::with_capacity(64),
+                    next_boundary: 1,
+                    counters,
+                },
+                retained_prior: Some(self),
+                held_over: PageListId::empty(),
+            };
+        }
         let PreparedPageRegionSuccessor {
             current,
             held_over,
             unique_adoption: None,
+            shared_prefix: None,
         } = prepared
         else {
             unreachable!("unique adoption returned before materialized succession")

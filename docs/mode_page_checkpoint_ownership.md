@@ -219,10 +219,27 @@ sealed output boundary and no checkpoint retains the predecessor, succession
 consumes that predecessor and adopts its whole suffix chunks and partial tail
 without copying or changing their physical arena identity. It drops prefix
 chunks and advances the generation key; the ownership change is O(1) per
-adopted chunk. A retained checkpoint or a root crossing the boundary instead
-keeps the bounded, explicitly counted closure copy because predecessor and
-successor tails must remain independently owned. An old region remains live
-only while its checkpoint interval remains retained, then drops wholesale.
+adopted chunk.
+
+When a checkpoint retains the predecessor, the same sealed successor suffix
+instead becomes an immutable prefix in exactly two arena lineages. Each chunk
+has two bounded lineage-position slots, and each lineage owns a compact chunk
+list. Direct child-position floors are folded into chunk metadata while nodes
+are published, so sharing validates the sealed suffix from chunk metadata and
+never traverses the node tree. The prior and current lineages append only to
+separate fresh tails. Dropping either lineage walks only its chunk list:
+exclusive chunks return to the pool, while shared chunks remain admitted by
+the other lineage. The last drop runs payload destructors and advances chunk
+incarnations. A third lineage is structurally rejected. A root that crosses
+the sealed boundary or lacks complete publication metadata takes the existing
+explicit structural-copy seam rather than weakening ownership.
+
+Rollback selects the prior region id and roots; forward execution allocates
+only current-tail chunks. Region generations still stale old top-level
+handles, while shared raw chunk keys and payload addresses remain unchanged.
+Page-to-durable publication is a genuine lifetime transition and retains its
+explicitly counted closure copy. An old region remains live only while its
+checkpoint interval remains retained, then drops wholesale.
 
 Prepared DVI receipts have their own direct `OutputLedger` owner. An engine
 checkpoint stores one fixed receipt-count mark into that accepted ledger.

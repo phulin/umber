@@ -1355,7 +1355,7 @@ fn canceled_unique_successor_prepare_rearms_the_same_build_suffix() {
 }
 
 #[test]
-fn retained_checkpoint_keeps_production_succession_as_a_genuine_copy() {
+fn retained_checkpoint_shares_sealed_successor_prefix() {
     let mut history = PageRegionHistory::default();
     let checkpoint = history
         .seal_checkpoint()
@@ -1393,18 +1393,19 @@ fn retained_checkpoint_keeps_production_succession_as_a_genuine_copy() {
     assert!(history.validates_checkpoint(checkpoint));
     assert!(!history.nodes().contains(shipped_prefix));
     let roots = history.builder().payload_roots();
-    assert_ne!(
+    assert_eq!(
         history
             .nodes_mut()
             .span_list(roots.contribution)
-            .expect("copied contribution")
+            .expect("shared contribution")
             .get(0)
             .map(std::ptr::from_ref),
         Some(old_address)
     );
     let material = history.current().material_counters();
-    assert_eq!(material.source_nodes_copied, 6);
+    assert_eq!(material.source_nodes_copied, 0);
     assert_eq!(material.chunks_promoted, 0);
+    assert!(material.sealed_prefix_chunks_shared > 0);
     assert_eq!(
         list_nodes(&history.nodes_mut(), roots.contribution),
         [kern(11), kern(12)]
@@ -1434,6 +1435,122 @@ fn retained_checkpoint_keeps_production_succession_as_a_genuine_copy() {
         .release_checkpoint(checkpoint)
         .expect("release retained predecessor");
     assert!(!history.pool.validates_id(old_region));
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(11), kern(12)],
+        "dropping prior keeps shared chunks admitted by current"
+    );
+}
+
+fn retained_successor_copy_evidence(shareable: bool) -> crate::fork_arena::ForkArenaCounters {
+    const NODES: i32 = 4_096;
+    let mut history = PageRegionHistory::default();
+    history
+        .seal_checkpoint()
+        .expect("retained predecessor checkpoint");
+    let _shipped = publish_nodes(&mut history.nodes_mut(), (10_000..10_128).map(kern));
+    let contribution = if shareable {
+        history.arm_output_successor_build();
+        publish_nodes(&mut history.nodes_mut(), (0..NODES).map(kern))
+    } else {
+        let contribution = publish_nodes(&mut history.nodes_mut(), (0..NODES).map(kern));
+        history.arm_output_successor_build();
+        contribution
+    };
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, contribution);
+    }
+    history
+        .prepare_production_shipout()
+        .expect("retained successor prepares");
+    history
+        .commit_prepared_shipout()
+        .expect("retained successor commits");
+    let roots = history.builder().payload_roots();
+    let nodes = history.nodes_mut();
+    let view = nodes
+        .span_list(roots.contribution)
+        .expect("successor contribution");
+    assert_eq!(view.len(), NODES as usize);
+    assert_eq!(view.get(0), Some(&kern(0)));
+    assert_eq!(view.get(NODES as usize - 1), Some(&kern(NODES - 1)));
+    history.current().material_counters()
+}
+
+#[test]
+fn retained_successor_fallback_copy_evidence() {
+    let counters = retained_successor_copy_evidence(false);
+    assert_eq!(counters.source_nodes_copied, 4_096);
+    assert_eq!(counters.sealed_prefix_chunks_shared, 0);
+}
+
+#[test]
+fn retained_successor_shared_prefix_copy_evidence() {
+    let counters = retained_successor_copy_evidence(true);
+    assert_eq!(counters.source_nodes_copied, 0);
+    assert!(counters.sealed_prefix_chunks_shared > 0);
+}
+
+#[test]
+fn retained_shared_prefix_survives_rejection_and_retires_on_acceptance() {
+    let mut history = PageRegionHistory::default();
+    let checkpoint = history
+        .seal_checkpoint()
+        .expect("retained predecessor checkpoint");
+    let prior_region = history.current().id();
+    let _shipped = publish_nodes(&mut history.nodes_mut(), (100..228).map(kern));
+    history.arm_output_successor_build();
+    let contribution = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, contribution);
+    }
+    history
+        .prepare_production_shipout()
+        .expect("shared successor prepares");
+    history
+        .commit_prepared_shipout()
+        .expect("shared successor commits");
+    let current_region = history.current().id();
+    let current_roots = history.builder().payload_roots();
+    assert_ne!(current_region, prior_region);
+    assert!(
+        history
+            .current()
+            .material_counters()
+            .sealed_prefix_chunks_shared
+            > 0
+    );
+
+    let rejected = history
+        .begin_checkpoint_candidate(checkpoint)
+        .expect("select shared prior");
+    assert_eq!(history.current().id(), prior_region);
+    let candidate = publish_nodes(&mut history.nodes_mut(), [kern(9)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, candidate);
+    }
+    history
+        .reject_checkpoint_candidate(rejected)
+        .expect("restore shared current lineage");
+    assert_eq!(history.current().id(), current_region);
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), current_roots.contribution),
+        [kern(1), kern(2)]
+    );
+
+    let accepted = history
+        .begin_checkpoint_candidate(checkpoint)
+        .expect("reselect shared prior");
+    history
+        .accept_checkpoint_candidate(accepted)
+        .expect("accept prior and retire shared current");
+    assert_eq!(history.current().id(), prior_region);
+    assert!(!history.pool.validates_id(current_region));
+    assert!(history.validates_checkpoint(checkpoint));
+    assert!(!history.nodes().contains(current_roots.contribution.list()));
 }
 
 #[test]

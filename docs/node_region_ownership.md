@@ -335,12 +335,27 @@ per adopted chunk and copies or rebrands no payload.
 
 Prepare only proves that ownership shape and records the build mark; cancel
 re-arms the same suffix without changing chunks or counters. If a checkpoint
-keeps the predecessor live, or any successor root crosses the boundary, the
-implementation copies exactly the live closure so both regions own independent
-tails. It never copies the shipped page, the complete old region, or unrelated
-checkpoint material. Page-to-durable box255 publication remains a separate
-lifetime boundary and retains its explicitly counted copy while page and
-durable owners coexist.
+keeps the predecessor live, a self-contained sealed successor suffix is shared
+at arena granularity. The source and destination keep separate chunk lists and
+one of two fixed lineage-position slots per shared chunk. The suffix is an
+immutable prefix in the destination, and both regions allocate subsequent
+values only in private tails. Direct child-position floors accumulated during
+publication prove suffix closure from chunk metadata; succession performs no
+node-tree traversal, payload clone, rebrand, census, or per-node reference
+count.
+
+Dropping a lineage visits its chunk keys only. It clears that lineage's slot
+and returns an exclusive chunk immediately; a shared chunk remains live until
+the other lineage drops it, at which point payload destructors run and the
+chunk incarnation advances. Reuse therefore rejects stale keys, and retiring
+prior before current or current before prior releases exactly the unreachable
+chunks. A third lineage is rejected by the bounded metadata. A successor root
+which crosses the build boundary or was not published through the checked
+dependency-folding seam retains the explicit structural-copy fallback. The
+shipped page, complete old region, and unrelated checkpoint material are never
+copied into the new owner. Page-to-durable box255 publication remains a
+separate lifetime boundary and retains its explicitly counted copy while page
+and durable owners coexist.
 
 An old page region is retained precisely when at least one retained restart
 row belongs to its contiguous boundary interval. If a page contains no

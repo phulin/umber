@@ -396,6 +396,31 @@ impl PageMaterialRegion {
         Ok((copied.page_list(), count))
     }
 
+    pub(crate) fn can_share_sealed_prefix(
+        &self,
+        pool: &NodePool,
+        mark: &ClosureBuildMark<PageRole>,
+        roots: [PageListId; 4],
+    ) -> Result<(), ForkArenaError> {
+        self.region.can_share_sealed_prefix(pool, mark, roots)
+    }
+
+    pub(crate) fn share_sealed_prefix_from(
+        pool: &mut NodePool,
+        source: &mut Self,
+        mark: ClosureBuildMark<PageRole>,
+        roots: [PageListId; 4],
+    ) -> Result<Self, ForkArenaError> {
+        let region = source.region.share_sealed_prefix(pool, mark, roots)?;
+        Ok(Self {
+            region,
+            list_scratch: Vec::new(),
+            coordinate_scratch: Vec::new(),
+            semantic_identity_enabled: source.semantic_identity_enabled,
+            durable_transitions: source.durable_transitions,
+        })
+    }
+
     /// Transfers one self-contained construction suffix between page owners.
     /// A seal rejection returns the still-live build authority so the caller
     /// can roll it back before selecting an exact structural-copy fallback.
@@ -957,11 +982,15 @@ impl<'a> PageMaterialArena<'a> {
             .identity
             .as_ref()
             .map(|_| semantic_node_identity(&node));
-        let slot = self.region.pub_arena.reserve_active_list_slot(
-            &mut self.pool.chunks,
-            &mut builder.inner,
-            item_identity,
-        )?;
+        let slot = self
+            .region
+            .pub_arena
+            .reserve_region_value_active_list_slot(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                &node,
+                item_identity,
+            )?;
         assert!(slot.is_none(), "reserved page-node destination is vacant");
         *slot = Some(node);
         if let Some(item_identity) = item_identity {

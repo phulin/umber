@@ -17,6 +17,12 @@ impl Clone for CloneTracked {
     }
 }
 
+impl super::RegionValue<ActiveLane> for CloneTracked {
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 enum ActiveLane {}
 enum PageLane {}
 
@@ -48,6 +54,12 @@ impl super::RegionValue<ActiveLane> for u64 {
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
+impl super::RegionValue<ActiveLane> for DropTracked {
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 #[test]
 fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     let mut pool = ChunkPool::<u64>::with_chunk_bytes(32);
@@ -57,15 +69,19 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     );
     let mut keys = Vec::new();
     for value in 0..17_u64 {
-        let key = pool.payload.allocate(7).expect("chunk allocation");
-        *pool.payload.reserve(key, 7, None).expect("chunk slot").slot = Some(value);
+        let key = pool.payload.allocate(7, 9).expect("chunk allocation");
+        *pool
+            .payload
+            .reserve(key, 7, 9, None, None, false)
+            .expect("chunk slot")
+            .slot = Some(value);
         keys.push(key);
     }
     assert_eq!(pool.page_count(), 2);
     assert_eq!(pool.payload.get(keys[0], 7, 0), Some(&0));
     let stale = keys[0];
     assert_eq!(pool.payload.release(stale, 7), Ok(1));
-    let replacement = pool.payload.allocate(7).expect("reused chunk");
+    let replacement = pool.payload.allocate(7, 9).expect("reused chunk");
     assert_eq!(replacement.slot, stale.slot);
     assert_ne!(replacement.generation, stale.generation);
     assert_eq!(pool.payload.get(stale, 7, 0), None);
@@ -76,9 +92,13 @@ fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     let drops = Rc::new(RefCell::new(Vec::new()));
     let did_panic = Rc::new(Cell::new(false));
     let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(512);
-    let key = pool.payload.allocate(7).expect("chunk allocation");
+    let key = pool.payload.allocate(7, 9).expect("chunk allocation");
     for value in 1..=3 {
-        *pool.payload.reserve(key, 7, None).expect("chunk slot").slot = Some(DropTracked {
+        *pool
+            .payload
+            .reserve(key, 7, 9, None, None, false)
+            .expect("chunk slot")
+            .slot = Some(DropTracked {
             value,
             drops: Rc::clone(&drops),
             panic_on: 2,
@@ -96,7 +116,7 @@ fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     assert_eq!(pool.payload.release(key, 7), Ok(3));
     assert_eq!(*drops.borrow(), vec![1, 2, 3]);
 
-    let replacement = pool.payload.allocate(7).expect("reused chunk");
+    let replacement = pool.payload.allocate(7, 9).expect("reused chunk");
     assert_eq!(replacement.slot, key.slot);
     assert_ne!(replacement.generation, key.generation);
     assert!(pool.payload.get(key, 7, 0).is_none());
@@ -832,6 +852,157 @@ fn checkpoint_marks_are_whole_chunk_boundaries_and_rejection_reattaches_prior() 
         .reject_checkpoint_candidate(&mut pool, settlement)
         .expect("reject empty sibling");
     assert!(arena.counters().accepted_chunks_reattached > 0);
+}
+
+#[test]
+fn sealed_prefix_has_two_bounded_lineages_with_isolated_tails() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(8);
+    let mut prior = ForkArena::<u32, ActiveLane>::new();
+    let shipped = list(&mut prior, &mut pool, [1, 2, 3, 4]);
+    let build = prior.begin_batch(&mut pool).expect("successor boundary");
+    let retained = region_list(&mut prior, &mut pool, [10, 11, 12, 13]);
+    let shared_key = retained.head.raw;
+    let mut current = prior
+        .share_sealed_prefix(&mut pool, build, &[retained])
+        .expect("second lineage");
+
+    assert_eq!(
+        current
+            .list(&pool, shipped)
+            .expect_err("shipped prefix excluded"),
+        ForkArenaError::InvalidRange
+    );
+    assert_eq!(
+        current
+            .list(&pool, retained)
+            .expect("shared prefix")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![10, 11, 12, 13]
+    );
+    assert_eq!(
+        pool.payload
+            .validate(shared_key, prior.owner)
+            .expect("shared chunk")
+            .lineages
+            .iter()
+            .filter(|entry| entry.id != 0)
+            .count(),
+        2
+    );
+
+    let prior_tail = list(&mut prior, &mut pool, [20]);
+    let current_tail = list(&mut current, &mut pool, [30]);
+    assert_eq!(
+        prior
+            .list(&pool, current_tail)
+            .expect_err("current tail isolated"),
+        ForkArenaError::InvalidRange
+    );
+    assert_eq!(
+        current
+            .list(&pool, prior_tail)
+            .expect_err("prior tail isolated"),
+        ForkArenaError::InvalidRange
+    );
+    assert_eq!(
+        prior.list(&pool, retained).expect("prior root").get(0),
+        Some(&10)
+    );
+    assert_eq!(
+        current.list(&pool, retained).expect("current root").get(0),
+        Some(&10)
+    );
+
+    prior.retire_region(&mut pool).expect("drop prior lineage");
+    assert_eq!(
+        current
+            .list(&pool, retained)
+            .expect("current keeps shared chunk")
+            .get(3),
+        Some(&13)
+    );
+    current
+        .retire_region(&mut pool)
+        .expect("drop current lineage");
+    assert!(pool.payload.get(shared_key, prior.owner, 0).is_none());
+}
+
+#[test]
+fn shared_chunk_destructors_run_only_after_the_last_lineage_drops() {
+    let drops = Rc::new(RefCell::new(Vec::new()));
+    let did_panic = Rc::new(Cell::new(false));
+    let tracked = |value| DropTracked {
+        value,
+        drops: Rc::clone(&drops),
+        panic_on: 0,
+        did_panic: Rc::clone(&did_panic),
+    };
+    let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(512);
+    let mut prior = ForkArena::<DropTracked, ActiveLane>::new();
+    let _shipped = {
+        let mut builder = prior.begin_builder(&mut pool).expect("prefix builder");
+        builder.push(tracked(1)).expect("prefix value");
+        builder.seal().expect("prefix")
+    };
+    let build = prior.begin_batch(&mut pool).expect("successor boundary");
+    let retained = region_list(&mut prior, &mut pool, [tracked(2)]);
+    let mut current = prior
+        .share_sealed_prefix(&mut pool, build, &[retained])
+        .expect("shared lineage");
+
+    prior.retire_region(&mut pool).expect("drop prior");
+    assert_eq!(*drops.borrow(), vec![1]);
+    current.retire_region(&mut pool).expect("drop current");
+    assert_eq!(*drops.borrow(), vec![1, 2]);
+}
+
+#[test]
+fn shared_chunk_current_first_drop_keeps_prior_and_reuses_only_after_last_drop() {
+    let drops = Rc::new(RefCell::new(Vec::new()));
+    let did_panic = Rc::new(Cell::new(false));
+    let tracked = |value| DropTracked {
+        value,
+        drops: Rc::clone(&drops),
+        panic_on: 0,
+        did_panic: Rc::clone(&did_panic),
+    };
+    let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(512);
+    let mut prior = ForkArena::<DropTracked, ActiveLane>::new();
+    let _shipped = region_list(&mut prior, &mut pool, [tracked(1)]);
+    let build = prior.begin_batch(&mut pool).expect("successor boundary");
+    let retained = region_list(&mut prior, &mut pool, [tracked(2)]);
+    let shared_key = retained.head.raw;
+    let mut current = prior
+        .share_sealed_prefix(&mut pool, build, &[retained])
+        .expect("shared lineage");
+
+    current
+        .retire_region(&mut pool)
+        .expect("drop current first");
+    assert!(drops.borrow().is_empty());
+    assert_eq!(
+        prior
+            .list(&pool, retained)
+            .expect("prior keeps shared chunk")
+            .get(0)
+            .map(|value| value.value),
+        Some(2)
+    );
+
+    prior.retire_region(&mut pool).expect("drop final prior");
+    assert_eq!(*drops.borrow(), vec![1, 2]);
+    assert!(pool.payload.get(shared_key, prior.owner, 0).is_none());
+
+    let mut replacement = ForkArena::<DropTracked, ActiveLane>::new();
+    let replacement_list = region_list(&mut replacement, &mut pool, [tracked(3)]);
+    assert_eq!(replacement_list.head.raw.slot, shared_key.slot);
+    assert_ne!(replacement_list.head.raw.generation, shared_key.generation);
+    replacement
+        .retire_region(&mut pool)
+        .expect("drop replacement");
+    assert_eq!(*drops.borrow(), vec![1, 2, 3]);
 }
 
 #[test]
@@ -1586,4 +1757,28 @@ fn list<const N: usize>(
         builder.push(value).expect("append");
     }
     builder.seal().expect("seal")
+}
+
+fn region_list<T>(
+    arena: &mut ForkArena<T, ActiveLane>,
+    pool: &mut ChunkPool<T>,
+    values: impl IntoIterator<Item = T>,
+) -> super::ArenaListId<ActiveLane>
+where
+    T: super::RegionValue<ActiveLane>,
+{
+    let mut builder = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(pool, &mut builder)
+        .expect("region builder");
+    for value in values {
+        let slot = arena
+            .reserve_region_value_active_list_slot(pool, &mut builder, &value, None)
+            .expect("region value");
+        *slot = Some(value);
+    }
+    arena
+        .finalize_active_list(pool, &mut builder)
+        .expect("region seal");
+    builder.take_sealed().expect("region root")
 }
